@@ -5,7 +5,6 @@
 import { usePathname,useRouter,useSearchParams } from "next/navigation";
 import React from "react";
 
-import { AdminBadge } from "@/components/admin/shared/AdminBadge";
 import { Tabs,TabsContent,TabsList,TabsTrigger } from "@/components/ui/tabs";
 
 import { AdminSecretsManager } from "./AdminSecretsManager";
@@ -26,22 +25,12 @@ export function AdminCredentialManagementPanel({ readOnly = false }: { readOnly?
   const updateTab = (value: string) => {
     setActiveTab(value);
     const params = new URLSearchParams(searchParams.toString());
-    params.set("tab", "credentials");
     params.set("credentialsTab", value);
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
 
   return (
     <section className="space-y-8">
-      <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold">
-          Credentials
-          <AdminBadge />
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Review saved secrets, connected apps, access, usage, and recent activity.
-        </p>
-      </div>
       <Tabs value={activeTab} onValueChange={updateTab} className="space-y-6">
         <TabsList>
           <TabsTrigger value="secrets">Secrets</TabsTrigger>

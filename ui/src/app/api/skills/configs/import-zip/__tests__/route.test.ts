@@ -157,12 +157,14 @@ describe("runZipImport — import phase", () => {
       "SKILL.md": FRONTMATTER("brand-new"),
     });
     const persistSpy = jest.fn().mockResolvedValue(undefined);
+    const reconcileAccess = jest.fn().mockResolvedValue(undefined);
     const result = await runZipImport({
       buffer,
       resolutions: [],
       user: baseUser,
       loadVisibleSkills: async () => [],
       persistSkill: persistSpy,
+      reconcileAccess,
     });
     if (result.phase !== "import") throw new Error("expected import");
     expect(result.imported).toHaveLength(1);
@@ -170,6 +172,10 @@ describe("runZipImport — import phase", () => {
     expect(result.imported[0].name).toBe("brand-new");
     expect(persistSpy).toHaveBeenCalledTimes(1);
     expect(persistSpy.mock.calls[0][1]).toBe("create");
+    expect(reconcileAccess).toHaveBeenCalledWith(
+      persistSpy.mock.calls[0][0],
+      "create",
+    );
     // Scan ran inline ("scan before save").
     expect(scanMock).toHaveBeenCalledTimes(1);
     // Revision #1 was recorded with trigger "import".
@@ -182,7 +188,7 @@ describe("runZipImport — import phase", () => {
       "SKILL.md": FRONTMATTER("team-imported"),
     });
     const persistSpy = jest.fn().mockResolvedValue(undefined);
-    const grantTeamAccess = jest.fn().mockResolvedValue(undefined);
+    const reconcileAccess = jest.fn().mockResolvedValue(undefined);
     const result = await runZipImport({
       buffer,
       resolutions: [],
@@ -190,13 +196,37 @@ describe("runZipImport — import phase", () => {
       teamRefs: ["platform"],
       loadVisibleSkills: async () => [],
       persistSkill: persistSpy,
-      grantTeamAccess,
+      reconcileAccess,
     });
     if (result.phase !== "import") throw new Error("expected import");
     const [savedSkill] = persistSpy.mock.calls[0];
     expect(savedSkill.visibility).toBe("team");
     expect(savedSkill.shared_with_teams).toBeUndefined();
-    expect(grantTeamAccess).toHaveBeenCalledWith(["platform"], [savedSkill.id]);
+    expect(reconcileAccess).toHaveBeenCalledWith(savedSkill, "create");
+  });
+
+  it("rolls back a private import when owner reconciliation fails", async () => {
+    const buffer = await makeZipBuffer({
+      "SKILL.md": FRONTMATTER("ownerless"),
+    });
+    const rollback = jest.fn().mockResolvedValue(undefined);
+    const result = await runZipImport({
+      buffer,
+      resolutions: [],
+      user: baseUser,
+      loadVisibleSkills: async () => [],
+      persistSkill: jest.fn().mockResolvedValue({ rollback }),
+      reconcileAccess: jest.fn().mockRejectedValue(new Error("OpenFGA unavailable")),
+    });
+    if (result.phase !== "import") throw new Error("expected import");
+    expect(result.imported[0]).toEqual(
+      expect.objectContaining({
+        outcome: "failed",
+        error: "OpenFGA unavailable",
+      }),
+    );
+    expect(rollback).toHaveBeenCalledTimes(1);
+    expect(recordRevisionMock).not.toHaveBeenCalled();
   });
 
   it("respects a 'skip' decision and does not call the scanner or persist", async () => {
@@ -274,6 +304,7 @@ describe("runZipImport — import phase", () => {
       } as AgentSkill,
     ];
     const persistSpy = jest.fn().mockResolvedValue(undefined);
+    const reconcileAccess = jest.fn().mockResolvedValue(undefined);
     const decision: ImportConflictDecision = {
       candidateId: "(root)",
       candidateName: "foo",
@@ -287,6 +318,7 @@ describe("runZipImport — import phase", () => {
       user: baseUser,
       loadVisibleSkills: async () => existing,
       persistSkill: persistSpy,
+      reconcileAccess,
     });
     if (result.phase !== "import") throw new Error("expected import");
     expect(result.imported[0].outcome).toBe("overwritten");
@@ -296,10 +328,46 @@ describe("runZipImport — import phase", () => {
     expect(savedSkill.id).toBe("skill-foo-existing");
     expect(savedSkill.skill_content).toContain("# foo");
     expect(savedSkill.tasks[0].llm_prompt).toContain("# foo");
+    expect(reconcileAccess).toHaveBeenCalledWith(savedSkill, "overwrite", existing[0]);
     // Two revisions: pre-overwrite update + post-overwrite import.
     expect(recordRevisionMock).toHaveBeenCalledTimes(2);
     expect(recordRevisionMock.mock.calls[0][0].trigger).toBe("update");
     expect(recordRevisionMock.mock.calls[1][0].trigger).toBe("import");
+  });
+
+  it("rolls back an overwrite and records no revisions when access reconciliation fails", async () => {
+    const buffer = await makeZipBuffer({
+      "SKILL.md": FRONTMATTER("foo", "newer description"),
+    });
+    const existing = {
+      id: "skill-foo-existing",
+      name: "foo",
+      description: "older",
+      owner_id: baseUser.email,
+      is_system: false,
+      skill_content: "old body",
+      tasks: [{ display_text: "Old", llm_prompt: "old", subagent: "skills" }],
+    } as AgentSkill;
+    const rollback = jest.fn().mockResolvedValue(undefined);
+    const decision: ImportConflictDecision = {
+      candidateId: "(root)",
+      candidateName: "foo",
+      existingName: "foo",
+      existingId: existing.id,
+      action: "overwrite",
+    };
+    const result = await runZipImport({
+      buffer,
+      resolutions: [decision],
+      user: baseUser,
+      loadVisibleSkills: async () => [existing],
+      persistSkill: jest.fn().mockResolvedValue({ rollback }),
+      reconcileAccess: jest.fn().mockRejectedValue(new Error("OpenFGA unavailable")),
+    });
+    if (result.phase !== "import") throw new Error("expected import");
+    expect(result.imported[0].outcome).toBe("failed");
+    expect(rollback).toHaveBeenCalledTimes(1);
+    expect(recordRevisionMock).not.toHaveBeenCalled();
   });
 
   it("rejects overwrite of a built-in skill with a 403", async () => {

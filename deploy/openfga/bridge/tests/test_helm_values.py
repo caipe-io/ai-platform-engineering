@@ -41,6 +41,10 @@ def test_parent_chart_renders_bridge_token_validation_env() -> None:
             "openfga-authz-bridge.tokenValidation.audiences[1]=caipe-platform",
             "--set",
             "openfga-authz-bridge.audit.serviceUrl=http://audit-service:8010",
+            "--set",
+            "openfga-authz-bridge.organizationKey=example-org",
+            "--set",
+            "openfga-authz-bridge.restrictedMcpServers[0]=scheduler",
         ],
         check=True,
         cwd=_repo_root(),
@@ -56,6 +60,8 @@ def test_parent_chart_renders_bridge_token_validation_env() -> None:
     assert 'value: "RS256"' in rendered
     assert "name: AUDIT_SERVICE_URL" in rendered
     assert 'value: "http://audit-service:8010"' in rendered
+    assert "name: CAIPE_ORG_KEY" in rendered
+    assert 'value: "example-org"' in rendered
     assert "name: CAIPE_RESTRICTED_MCP_SERVERS" in rendered
     assert 'value: "scheduler"' in rendered
     assert "name: MONGODB_DATABASE" not in rendered
@@ -134,7 +140,7 @@ def test_umbrella_values_define_webex_bot_section() -> None:
     assert webex["config"]["WEBEX_ADMIN_JWT_AUDIENCE"] == "caipe-webex-bot-admin"
     assert webex["config"]["WEBEX_ADMIN_API_ENABLED"] == "true"
     assert webex["config"]["WEBEX_ADMIN_API_PORT"] == "3002"
-    assert "ghcr.io/cnoe-io/caipe-webex-bot" in webex["image"]["repository"]
+    assert "ghcr.io/caipe-io/caipe-webex-bot" in webex["image"]["repository"]
 
 
 def test_caipe_ui_values_wire_webex_bot_admin_env() -> None:

@@ -44,7 +44,15 @@ jest.mock("@/lib/api-middleware", () => {
   const { ApiError } = jest.requireActual("@/lib/api-error");
   return {
     ApiError,
-    requireRbacPermission: (...args: unknown[]) => mockRequireRbacPermission(...args),
+    getAuthFromBearerOrSession: async () => {
+      const { getServerSession } = jest.requireMock("next-auth") as {
+        getServerSession: jest.Mock;
+      };
+      const session = await getServerSession();
+      return { session, user: session?.user };
+    },
+    requireRbacPermission: (...args: unknown[]) =>
+      mockRequireRbacPermission(...args),
     handleApiError: (error: unknown) =>
       Response.json(
         {
@@ -57,14 +65,17 @@ jest.mock("@/lib/api-middleware", () => {
 });
 
 jest.mock("@/lib/rbac/resource-authz", () => ({
-  requireResourcePermission: (...args: unknown[]) => mockRequireResourcePermission(...args),
-  filterResourcesByPermission: (...args: unknown[]) => mockFilterResourcesByPermission(...args),
+  requireResourcePermission: (...args: unknown[]) =>
+    mockRequireResourcePermission(...args),
+  filterResourcesByPermission: (...args: unknown[]) =>
+    mockFilterResourcesByPermission(...args),
   // The shared `resolveShareableOwnershipWrite` decision (in shareable-resource.ts)
   // calls this for transfers. These cases are first-set/share-only (no owner
   // CHANGE), so it's never the deciding gate here; default-allow keeps the
   // import resolvable. Actual transfer authorization is covered in
   // mcp-tool-ownership.test.ts and shareable-resource-write.test.ts.
-  canTransferResourceOwnership: (...args: unknown[]) => mockCanTransferResourceOwnership(...args),
+  canTransferResourceOwnership: (...args: unknown[]) =>
+    mockCanTransferResourceOwnership(...args),
 }));
 
 jest.mock("@/lib/rbac/openfga", () => ({
@@ -95,7 +106,11 @@ beforeEach(() => {
   // Default: not org admin.
   mockCheckOpenFgaTuple.mockResolvedValue({ allowed: false });
   mockCanTransferResourceOwnership.mockResolvedValue(true);
-  mockReconcileMcpToolRelationships.mockResolvedValue({ enabled: true, writes: 0, deletes: 0 });
+  mockReconcileMcpToolRelationships.mockResolvedValue({
+    enabled: true,
+    writes: 0,
+    deletes: 0,
+  });
 });
 
 function ragRequest(path: string, init?: RequestInit): NextRequest {
@@ -123,7 +138,11 @@ function setupFetch(opts: {
   previousTools?: Array<Record<string, unknown>>;
   upstreamStatus?: number;
 }) {
-  const calls: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+  const calls: Array<{
+    url: string;
+    method: string;
+    body?: Record<string, unknown>;
+  }> = [];
   global.fetch = jest.fn((url: string | URL, init?: RequestInit) => {
     const u = String(url);
     const method = (init?.method ?? "GET").toUpperCase();
@@ -166,9 +185,13 @@ function jsonInit(method: string, body: unknown): RequestInit {
   };
 }
 
-const CREATE_CTX = { params: Promise.resolve({ path: ["v1", "mcp", "custom-tools"] }) };
+const CREATE_CTX = {
+  params: Promise.resolve({ path: ["v1", "mcp", "custom-tools"] }),
+};
 const UPSERT_CTX = {
-  params: Promise.resolve({ path: ["v1", "mcp", "custom-tools", "custom-search"] }),
+  params: Promise.resolve({
+    path: ["v1", "mcp", "custom-tools", "custom-search"],
+  }),
 };
 
 describe("POST /v1/mcp/custom-tools — owner-team assignment guard", () => {
@@ -178,14 +201,21 @@ describe("POST /v1/mcp/custom-tools — owner-team assignment guard", () => {
     const { ApiError } = await import("@/lib/api-middleware");
     // requireResourcePermission is called for { type:'team', action:'use' }.
     mockRequireResourcePermission.mockRejectedValue(
-      new ApiError("You must belong to the owner team to assign it.", 403, "team#use"),
+      new ApiError(
+        "You must belong to the owner team to assign it.",
+        403,
+        "team#use",
+      ),
     );
 
     const { POST } = await import("@/app/api/rag/[...path]/route");
     const res = await POST(
       ragRequest(
         "/api/rag/v1/mcp/custom-tools",
-        jsonInit("POST", { tool_id: "custom-search", owner_team_slug: "platform" }),
+        jsonInit("POST", {
+          tool_id: "custom-search",
+          owner_team_slug: "platform",
+        }),
       ),
       CREATE_CTX,
     );
@@ -203,7 +233,10 @@ describe("POST /v1/mcp/custom-tools — owner-team assignment guard", () => {
     await POST(
       ragRequest(
         "/api/rag/v1/mcp/custom-tools",
-        jsonInit("POST", { tool_id: "custom-search", owner_team_slug: "platform" }),
+        jsonInit("POST", {
+          tool_id: "custom-search",
+          owner_team_slug: "platform",
+        }),
       ),
       CREATE_CTX,
     );
@@ -266,7 +299,11 @@ describe("POST /v1/mcp/custom-tools — org-wide + shared-team reconcile wiring"
     const res = await POST(
       ragRequest(
         "/api/rag/v1/mcp/custom-tools",
-        jsonInit("POST", { tool_id: "custom-search", owner_team_slug: "platform", shared_with_org: true }),
+        jsonInit("POST", {
+          tool_id: "custom-search",
+          owner_team_slug: "platform",
+          shared_with_org: true,
+        }),
       ),
       CREATE_CTX,
     );
@@ -297,7 +334,11 @@ describe("PUT /v1/mcp/custom-tools/<id> — toggling org sharing off", () => {
       ragRequest(
         "/api/rag/v1/mcp/custom-tools/custom-search",
         // shared_with_org omitted → false (turn off).
-        jsonInit("PUT", { tool_id: "custom-search", owner_team_slug: "platform", shared_with_teams: ["data-eng"] }),
+        jsonInit("PUT", {
+          tool_id: "custom-search",
+          owner_team_slug: "platform",
+          shared_with_teams: ["data-eng"],
+        }),
       ),
       UPSERT_CTX,
     );

@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 """Phase 2.3 — Webex DM (1:1) agent resolver.
 

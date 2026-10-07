@@ -275,6 +275,14 @@ class WebexBotAdminService:
             "bot": self.bot_policy(bot_id),
         }
 
+    def inspect_space(self, *, bot_id: str, space_id: str) -> dict[str, Any]:
+        """Return provider-owned metadata used by publication risk policy."""
+
+        return self._space_discovery.inspect_space(
+            bot_id=bot_id,
+            space_id=space_id,
+        )
+
     def reload_routes(
         self,
         *,
@@ -292,6 +300,52 @@ class WebexBotAdminService:
             }
         self._resolver.invalidate_all()
         return {"reloaded": "all"}
+
+    def send_notification(self, *, space_id: str, markdown: str) -> dict[str, str]:
+        """Send an operator-configured publication approval notification."""
+        normalized_space_id = space_id.strip()
+        normalized_markdown = markdown.strip()
+        if not normalized_space_id:
+            raise ValueError("space_id is required")
+        if not normalized_markdown:
+            raise ValueError("markdown is required")
+        if len(normalized_markdown) > 4000:
+            raise ValueError("markdown must not exceed 4000 characters")
+
+        configured = configured_webex_bots()
+        preferred_bot_id = os.environ.get("WEBEX_APPROVAL_NOTIFICATION_BOT_ID", "").strip()
+        selected = next(
+            (
+                bot
+                for bot in configured
+                if (not preferred_bot_id or bot.id == preferred_bot_id)
+                and os.environ.get(bot.token_env, "").strip()
+            ),
+            None,
+        )
+        token = (
+            os.environ.get(selected.token_env, "").strip()
+            if selected is not None
+            else os.environ.get("WEBEX_INTEGRATION_BOT_ACCESS_TOKEN", "").strip()
+        )
+        if not token:
+            raise RuntimeError("No configured Webex bot token is available for notifications")
+        response = requests.post(
+            "https://webexapis.com/v1/messages",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json={"roomId": normalized_space_id, "markdown": normalized_markdown},
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return {
+            "message_id": str(payload.get("id") or ""),
+            "space_id": normalized_space_id,
+            "bot_id": selected.id if selected is not None else "default",
+        }
 
     def sync_from_config(
         self,
@@ -559,6 +613,42 @@ class _WebexAdminRequestHandler(BaseHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Webex admin config sync failed: %s", exc)
                 self._write_json({"error": str(exc)}, status=500)
+            return
+        if path == "/admin/webex/notifications":
+            if not self._authorize(scope_env="WEBEX_ADMIN_NOTIFICATION_SCOPE"):
+                return
+            try:
+                self._write_json(
+                    self.service.send_notification(
+                        space_id=_required_string(body.get("space_id"), "space_id"),
+                        markdown=_required_string(body.get("markdown"), "markdown"),
+                    )
+                )
+            except ValueError as exc:
+                self._write_json({"error": str(exc)}, status=400)
+            except RuntimeError as exc:
+                self._write_json({"error": str(exc)}, status=503)
+            except requests.RequestException as exc:
+                logger.warning("Webex approval notification failed: %s", exc)
+                self._write_json({"error": "webex_api_unavailable"}, status=502)
+            return
+        if path == "/admin/webex/spaces/inspect":
+            if not self._authorize(scope_env="WEBEX_ADMIN_STATUS_SCOPE"):
+                return
+            try:
+                self._write_json(
+                    self.service.inspect_space(
+                        bot_id=_required_string(body.get("bot_id"), "bot_id"),
+                        space_id=_required_string(body.get("space_id"), "space_id"),
+                    )
+                )
+            except ValueError as exc:
+                self._write_json({"error": str(exc)}, status=400)
+            except RuntimeError as exc:
+                self._write_json({"error": str(exc)}, status=503)
+            except requests.RequestException as exc:
+                logger.warning("Webex space inspection failed: %s", exc)
+                self._write_json({"error": "webex_api_unavailable"}, status=502)
             return
         self._write_json({"error": "not_found"}, status=404)
 

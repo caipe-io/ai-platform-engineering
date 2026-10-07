@@ -10,7 +10,7 @@ It has no Mongo or k8s API access by design - the only secret it sees is its own
 which is mounted from a k8s Secret at fire time.
 
 The runner is a thin, low-privilege caller. It does NOT authenticate as the schedule owner and
-never sends a user identity the chat API is asked to trust. Instead it presents the shared 
+never sends a user identity the chat API is asked to trust. Instead it presents the shared
 X-Scheduler-Token to prove it is the scheduler subsystem, and the BFF (the platform auth boundary)
 loads the immutable owner from the schedule DB record and mints a real owner bearer via Keycloak
 token exchange before forwarding to Dynamic Agents. See docs/scheduled-job-auth-approaches.md.

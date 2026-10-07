@@ -76,7 +76,7 @@ caipe-ui:
 
   # CAIPE UI application configuration
   image:
-    repository: "ghcr.io/cnoe-io/caipe-ui"
+    repository: "ghcr.io/caipe-io/caipe-ui"
     pullPolicy: "Always"
 
   service:

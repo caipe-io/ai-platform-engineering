@@ -151,7 +151,7 @@ test.describe("RBAC e2e — MCP server permission gating", () => {
     await expect(page.getByRole("button", { name: "Create Server" })).toBeVisible();
   });
 
-  test("hides repair, probe, test, and delete actions for read-only MCP rows", async ({ page }) => {
+  test("hides probe, test, and delete actions for read-only MCP rows", async ({ page }) => {
     await installMcpPermissionMocks(page, {
       servers: [
         {
@@ -168,7 +168,6 @@ test.describe("RBAC e2e — MCP server permission gating", () => {
 
     await page.goto("/dynamic-agents?tab=mcp-servers", { waitUntil: "domcontentloaded" });
     await expect(page.getByText("Read Only MCP")).toBeVisible();
-    await expect(page.getByRole("button", { name: /Repair AgentGateway/i })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Test MCP tools for Read Only MCP/i })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Delete Read Only MCP/i })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Probe tools for Read Only MCP/i })).toHaveCount(0);
@@ -220,16 +219,17 @@ test.describe("RBAC e2e — MCP server permission gating", () => {
     });
 
     await page.goto("/dynamic-agents?tab=mcp-servers", { waitUntil: "domcontentloaded" });
-    const mcpServersPanel = page.getByLabel("MCP Servers");
+    const healthyServer = page.getByRole("group",{ name: "MCP server Healthy MCP" });
+    const degradedServer = page.getByRole("group",{ name: "MCP server Degraded MCP" });
     await expect(page.getByText("Healthy MCP")).toBeVisible();
     await expect(page.getByText("Degraded MCP")).toBeVisible();
 
     await page.getByRole("button", { name: /Probe tools for Healthy MCP/i }).click();
-    await expect(mcpServersPanel.getByText("Healthy", { exact: true })).toBeVisible();
+    await expect(healthyServer.getByText("Healthy",{ exact: true })).toBeVisible();
     await expect(page.getByText("1 tool(s) available")).toBeVisible();
 
     await page.getByRole("button", { name: /Probe tools for Degraded MCP/i }).click();
-    await expect(mcpServersPanel.getByText("Degraded", { exact: true })).toBeVisible();
+    await expect(degradedServer.getByText("Degraded",{ exact: true })).toBeVisible();
     await expect(page.getByText("Tool Scan Degraded")).toBeVisible();
     await expect(page.getByText("MCP initialize failed with HTTP 500")).toBeVisible();
   });
@@ -318,7 +318,7 @@ test.describe("RBAC e2e — MCP server permission gating", () => {
     await expect(page.getByRole("button", { name: /Probe tools for Argocd/i })).toBeVisible();
   });
 
-  test("shows repair AgentGateway only when list capability is granted", async ({ page }) => {
+  test("does not expose the unsafe AgentGateway repair action", async ({ page }) => {
     await installMcpPermissionMocks(page, {
       servers: [
         {
@@ -334,7 +334,7 @@ test.describe("RBAC e2e — MCP server permission gating", () => {
     });
 
     await page.goto("/dynamic-agents?tab=mcp-servers", { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("button", { name: /Repair AgentGateway/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Repair AgentGateway/i })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Delete Managed MCP/i })).toBeVisible();
   });
 

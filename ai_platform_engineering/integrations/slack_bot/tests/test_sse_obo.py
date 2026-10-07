@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 """Tests for Spec 104 Story 3 — OBO token plumbing in SSEClient.
 

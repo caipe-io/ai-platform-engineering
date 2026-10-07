@@ -11,7 +11,7 @@ import { oneDark } from "@codemirror/theme-one-dark";
 let mockResolvedTheme: string | undefined = "light";
 let lastCodeMirrorProps: Record<string, unknown> = {};
 
-jest.mock("next-themes", () => ({
+jest.mock("@/components/theme-provider", () => ({
   useTheme: () => ({ resolvedTheme: mockResolvedTheme }),
 }));
 
@@ -41,6 +41,12 @@ beforeEach(() => {
 describe("RichCodeEditor — theme", () => {
   it("uses the light theme when resolvedTheme is light", () => {
     mockResolvedTheme = "light";
+    render(<RichCodeEditor value="" onChange={() => {}} />);
+    expect(lastCodeMirrorProps.theme).toBe("light");
+  });
+
+  it("uses the light editor theme for Legacy Light", () => {
+    mockResolvedTheme = "legacy-light";
     render(<RichCodeEditor value="" onChange={() => {}} />);
     expect(lastCodeMirrorProps.theme).toBe("light");
   });

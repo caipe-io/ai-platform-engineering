@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+from typing import Any
+
+import pytest
 
 from ai_platform_engineering.integrations.slack_bot.utils.config_models import (
     AgentBinding,
@@ -30,6 +33,17 @@ class _RoutesCollection:
         upsert: bool = False,
     ) -> None:
         self.update_calls.append((filter_query, update, upsert))
+
+
+class _Response:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
 
 
 class _Resolver:
@@ -106,6 +120,48 @@ def test_status_reports_route_cache_and_static_config() -> None:
     assert status["route_mode"] in {"config", "db_prefer", "db_only"}
     assert status["static_config"]["channels"] == 1
     assert status["route_cache"]["cache_size"] == 1
+
+
+def test_channel_inspection_uses_provider_owned_workspace_name_and_audience(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SLACK_INTEGRATION_BOT_TOKEN", "test-token")
+    calls: list[str] = []
+
+    def request_get(url: str, **_kwargs: object) -> _Response:
+        calls.append(url)
+        if url.endswith("conversations.info"):
+            return _Response(
+                {
+                    "ok": True,
+                    "channel": {
+                        "id": "C123",
+                        "name": "example-channel",
+                        "is_member": True,
+                        "num_members": 17,
+                    },
+                }
+            )
+        return _Response({"ok": True, "team_id": "TEXAMPLE"})
+
+    service = SlackBotAdminService(
+        config=_config(),
+        resolver=_Resolver(),
+        request_get=request_get,  # type: ignore[arg-type]
+    )
+
+    inspected = service.inspect_channel(channel_id="C123")
+
+    assert inspected == {
+        "workspace_id": "TEXAMPLE",
+        "channel_id": "C123",
+        "channel_name": "example-channel",
+        "member_count": 17,
+    }
+    assert calls == [
+        "https://slack.com/api/conversations.info",
+        "https://slack.com/api/auth.test",
+    ]
 
 
 def test_config_defaults_returns_loaded_channel_agents_without_yaml_body() -> None:

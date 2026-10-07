@@ -79,8 +79,8 @@ The dynamic-agents chart `NOTES.txt` warns on `helm install` when gateway MCP ro
 
 ## Related issues
 
-- [#1920](https://github.com/cnoe-io/ai-platform-engineering/issues/1920) — signed agent context for per-agent `tools/call`
-- [#1928](https://github.com/cnoe-io/ai-platform-engineering/issues/1928) — 403 on `tools/call` when HMAC was missing on dynamic-agents in Kubernetes
+- [#1920](https://github.com/caipe-io/ai-platform-engineering/issues/1920) — signed agent context for per-agent `tools/call`
+- [#1928](https://github.com/caipe-io/ai-platform-engineering/issues/1928) — 403 on `tools/call` when HMAC was missing on dynamic-agents in Kubernetes
 
 ## Code references
 

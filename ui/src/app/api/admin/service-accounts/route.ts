@@ -3,11 +3,11 @@ import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth-config";
 import { ApiError } from "@/lib/api-error";
+import { reconcileTupleDiff } from "@/lib/authz";
 import {
+  batchCheckOpenFgaTuples,
   checkOpenFgaTuple,
-  deleteExactOpenFgaTuples,
   listOpenFgaObjects,
-  writeOpenFgaTuples,
 } from "@/lib/rbac/openfga";
 import type { OpenFgaTupleKey } from "@/lib/rbac/openfga";
 import {
@@ -41,7 +41,7 @@ const NAME_MAX = 64;
 const NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9 ._-]*[A-Za-z0-9])?$/;
 const DESCRIPTION_MAX = 256;
 const TEAM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const MAX_SCOPES = 100;
+const MAX_SCOPES = 500;
 
 interface CreateBody {
   name: string;
@@ -58,7 +58,11 @@ function parseCreateBody(raw: unknown): { body?: CreateBody; error?: string } {
   const obj = raw as Record<string, unknown>;
 
   const name = typeof obj.name === "string" ? obj.name.trim() : "";
-  if (name.length < NAME_MIN || name.length > NAME_MAX || !NAME_PATTERN.test(name)) {
+  if (
+    name.length < NAME_MIN ||
+    name.length > NAME_MAX ||
+    !NAME_PATTERN.test(name)
+  ) {
     return {
       error: `name must be ${NAME_MIN}-${NAME_MAX} chars (letters, digits, space, . _ -)`,
     };
@@ -66,8 +70,13 @@ function parseCreateBody(raw: unknown): { body?: CreateBody; error?: string } {
 
   let description: string | undefined;
   if (obj.description !== undefined && obj.description !== null) {
-    if (typeof obj.description !== "string" || obj.description.length > DESCRIPTION_MAX) {
-      return { error: `description must be a string ≤ ${DESCRIPTION_MAX} chars` };
+    if (
+      typeof obj.description !== "string" ||
+      obj.description.length > DESCRIPTION_MAX
+    ) {
+      return {
+        error: `description must be a string ≤ ${DESCRIPTION_MAX} chars`,
+      };
     }
     description = obj.description.trim() || undefined;
   }
@@ -124,7 +133,12 @@ interface ServiceAccountListItem {
   created_at: Date;
   status: ServiceAccount["status"];
   protected: boolean;
-  scope_counts: { agents: number; tools: number };
+  scope_counts: {
+    agents: number;
+    tools: number;
+    datasources: number;
+    collections: number;
+  };
 }
 
 /** Strip the OpenFGA `team:` prefix from a list-objects result. */
@@ -135,14 +149,20 @@ function teamIdFromObject(object: string): string {
 function scopeCounts(snapshot: ServiceAccountScope[] | undefined): {
   agents: number;
   tools: number;
+  datasources: number;
+  collections: number;
 } {
   let agents = 0;
   let tools = 0;
+  let datasources = 0;
+  let collections = 0;
   for (const scope of snapshot ?? []) {
     if (scope.type === "agent") agents += 1;
     else if (scope.type === "tool") tools += 1;
+    else if (scope.type === "datasource") datasources += 1;
+    else if (scope.type === "collection") collections += 1;
   }
-  return { agents, tools };
+  return { agents, tools, datasources, collections };
 }
 
 export async function GET(request: NextRequest) {
@@ -173,7 +193,8 @@ export async function GET(request: NextRequest) {
     }
     throw error;
   }
-  const effectiveSubject = simulationScope?.openfgaUser ?? `user:${session.sub}`;
+  const effectiveSubject =
+    simulationScope?.openfgaUser ?? `user:${session.sub}`;
   // Org admins (real, session-backed) see every team's SAs unless a preview
   // subject narrows the view. `hasOrganizationAdmin` works for both Bearer
   // and session-cookie callers — unlike the stale `session.role === "admin"`
@@ -198,7 +219,9 @@ export async function GET(request: NextRequest) {
   // Pagination + search are OPT-IN via `page`, mirroring `admin/teams`: a
   // caller that omits `page` still gets the full unpaginated list.
   const paginated = searchParams.has("page");
-  const page = paginated ? Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1) : 1;
+  const page = paginated
+    ? Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1)
+    : 1;
   const pageSizeRaw = parseInt(searchParams.get("page_size") || "24", 10) || 24;
   const pageSize = Math.min(100, Math.max(1, pageSizeRaw));
   const search = (searchParams.get("search") || "").trim();
@@ -371,12 +394,25 @@ export async function POST(request: NextRequest) {
       scopes.push(scope);
     }
 
-    const scopeChecks = await Promise.all(
-      scopes.map(async (scope) => ({
-        scope,
-        allowed: (await checkOpenFgaTuple(scopeCheckTuple(scope, caller))).allowed,
-      })),
-    );
+    // The grantable picker exposes the full catalog to organization admins.
+    // Match the add-scope endpoint: org-admin authority is sufficient even
+    // when it is implemented as a BFF/RAG super-grant instead of one direct
+    // tuple on every resource.
+    const platformAdmin =
+      scopes.length > 0 ? await hasOrganizationAdmin(session) : false;
+    // Batched, not one checkOpenFgaTuple call per scope (matches the bulk
+    // add-scopes route's approach): raising MAX_SCOPES means a single create
+    // could otherwise fan out to hundreds of individual OpenFGA HTTP calls.
+    const scopeChecks =
+      scopes.length === 0
+        ? []
+        : platformAdmin
+          ? scopes.map((scope) => ({ scope, allowed: true }))
+          : (
+              await batchCheckOpenFgaTuples(
+                scopes.map((scope) => scopeCheckTuple(scope, caller)),
+              )
+            ).map((allowed, i) => ({ scope: scopes[i], allowed }));
     const rejected = scopeChecks.filter((r) => !r.allowed).map((r) => r.scope);
     if (rejected.length > 0) {
       return NextResponse.json(
@@ -411,11 +447,37 @@ export async function POST(request: NextRequest) {
       relation: "caller",
       object: "mcp_gateway:list",
     };
-    const scopeTuples = scopes.map((scope) => scopeWriteTuple(scope, saSubject));
-    const writes = [ownerTuple, gatewayBaselineTuple, ...scopeTuples];
+    // RAG has a feature-level organization gate in addition to datasource
+    // ACLs. Keep that implementation detail out of the self-service picker:
+    // selecting knowledge adds the harmless search baseline, while the selected
+    // datasource or collection reader tuples remain the actual data boundary.
+    const ragSearchBaselineTuple: OpenFgaTupleKey | null = scopes.some(
+      (scope) => scope.type === "datasource" || scope.type === "collection",
+    )
+      ? {
+          user: saSubject,
+          relation: "searcher",
+          object: organizationObjectId(),
+        }
+      : null;
+    const scopeTuples = scopes.map((scope) =>
+      scopeWriteTuple(scope, saSubject),
+    );
+    const writes = [
+      ownerTuple,
+      gatewayBaselineTuple,
+      ...(ragSearchBaselineTuple ? [ragSearchBaselineTuple] : []),
+      ...scopeTuples,
+    ];
 
     try {
-      await writeOpenFgaTuples({ writes, deletes: [] });
+      await reconcileTupleDiff(
+        { writes, deletes: [] },
+        {
+          caller: { type: "user", id: callerSub },
+          source: "service_account_create",
+        },
+      );
     } catch (writeError) {
       // Compensate: remove the just-created Keycloak client so a failed write
       // leaves no orphaned credential.
@@ -443,7 +505,13 @@ export async function POST(request: NextRequest) {
       });
     } catch (mongoError) {
       // Compensate fully: delete tuples + the Keycloak client.
-      await deleteExactOpenFgaTuples(writes).catch(() => {});
+      await reconcileTupleDiff(
+        { writes: [], deletes: writes },
+        {
+          caller: { type: "user", id: callerSub },
+          source: "service_account_create_rollback",
+        },
+      ).catch(() => {});
       await deleteServiceAccountClient(client.clientUuid).catch(() => {});
       throw mongoError;
     }
@@ -455,7 +523,7 @@ export async function POST(request: NextRequest) {
       scope: "admin",
       resourceRef: `service_account:${client.saSub}`,
       email: session.user.email ?? undefined,
-      correlationId: `service_account.create:${client.saSub}:${body.owning_team_id}:agents=${grantedSnapshot.filter((s) => s.type === "agent").length},tools=${grantedSnapshot.filter((s) => s.type === "tool").length}`,
+      correlationId: `service_account.create:${client.saSub}:${body.owning_team_id}:agents=${grantedSnapshot.filter((s) => s.type === "agent").length},tools=${grantedSnapshot.filter((s) => s.type === "tool").length},datasources=${grantedSnapshot.filter((s) => s.type === "datasource").length},collections=${grantedSnapshot.filter((s) => s.type === "collection").length}`,
     });
 
     // Credential returned ONCE (FR-005).

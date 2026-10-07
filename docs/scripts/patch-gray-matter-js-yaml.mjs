@@ -1,4 +1,3 @@
-// assisted-by Codex Codex-sonnet-4-6
 import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 

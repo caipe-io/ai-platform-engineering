@@ -95,6 +95,15 @@ class AgentMetrics:
         )
 
         # -----------------------------------------------------------------
+        # Input file metrics
+        # -----------------------------------------------------------------
+        self.dropped_input_files_total = Counter(
+            "da_dropped_input_files_total",
+            "Total input files attached but dropped from the user turn",
+            labelnames=["agent_name", "model_id", "reason"],
+        )
+
+        # -----------------------------------------------------------------
         # Runtime init metrics
         # -----------------------------------------------------------------
         self.runtime_init_duration_seconds = Histogram(

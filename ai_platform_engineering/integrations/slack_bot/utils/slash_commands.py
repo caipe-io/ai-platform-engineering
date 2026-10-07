@@ -1,18 +1,14 @@
-"""Slack slash-command handlers for /{cmd}-list, /{cmd}-use, /{cmd}-help.
+"""Slack slash-command handlers for list, use, effort, and help.
 
 The command prefix (``cmd``) is derived from the ``APP_NAME`` /
 ``SLACK_INTEGRATION_APP_NAME`` environment variable at runtime
 (default: ``caipe``).  When ``APP_NAME=Forge`` the commands become
-``/forge-list``, ``/forge-use``, and ``/forge-help``.
+``/forge-list``, ``/forge-use``, ``/forge-effort``, and ``/forge-help``.
 
-All three commands are DM-only.  Invoking them in a public channel
+Agent selection and effort changes are DM-only. Invoking them in a public channel
 returns an ephemeral error pointing the user to a DM.  The one
 exception is ``/forge-use default``, which clears a saved preference
 and is intentionally allowed anywhere.
-
-Phase 2 of spec ``2026-05-24-derive-team-from-channel``. These
-handlers implement FR-028 / FR-029 / FR-029a / FR-030 / FR-033 /
-FR-034 / FR-035 / FR-036 / FR-037.
 
 Design:
 
@@ -38,6 +34,7 @@ from .accessible_agents_client import AccessibleAgentsClient
 from .command_rate_limiter import CommandRateLimiter
 from .dm_authz_client import DmAuthzClient
 from .dm_thread_overrides import OverrideKey
+from .reasoning_effort import PendingEffortKey, PendingEffortStore, REASONING_EFFORTS
 from .user_preferences_client import UserPreferencesClient
 
 
@@ -99,6 +96,7 @@ def help_message() -> str:
         f"• `/{cmd}-list` — show the agents you can use\n"
         f"• `/{cmd}-use <agent>` — route this DM thread to a specific agent "
         f"(use `/{cmd}-use default` to clear your saved preference)\n"
+        f"• `/{cmd}-effort <low|medium|high|max>` — set reasoning effort for your next DM message\n"
         f"• `/{cmd}-help` — show this message\n"
         "\n"
         "Direct messages dispatch via: thread override → your Slack default "
@@ -242,6 +240,34 @@ def handle_list_command(
         else:
             lines.append(f"• `{agent.id}` — {agent.name}")
     return SlashCommandResult(text="\n".join(lines), code="list_ok")
+
+
+def handle_effort_command(
+    *,
+    user_key: str,
+    raw_text: str,
+    is_dm: bool,
+    pending_key: PendingEffortKey | None,
+    pending_store: PendingEffortStore,
+    rate_limiter: Optional[CommandRateLimiter] = None,
+) -> SlashCommandResult:
+    """Stage a portable effort for the next message in this DM."""
+    if not is_dm or pending_key is None:
+        return SlashCommandResult(text=dm_only_message("effort"), code="dm_only")
+    if _rate_limited(rate_limiter, user_key):
+        return SlashCommandResult(text=RATE_LIMITED_MESSAGE, code="rate_limited")
+    effort = (raw_text or "").strip().lower()
+    if effort not in REASONING_EFFORTS:
+        cmd = _cmd_prefix()
+        return SlashCommandResult(
+            text=f"Usage: `/{cmd}-effort <low|medium|high|max>`.",
+            code="effort_invalid",
+        )
+    pending_store.set(pending_key, effort)
+    return SlashCommandResult(
+        text=f"Reasoning effort changed to `{effort}`. It applies to your next DM message and that chat.",
+        code="effort_ok",
+    )
 
 
 def handle_use_command(

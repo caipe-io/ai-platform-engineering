@@ -213,7 +213,7 @@ test.describe("mocked RBAC e2e — chat multimodal input", () => {
         });
       }
 
-      const composer = page.locator("textarea").first();
+      const composer = page.getByRole("textbox", { name: "Message" });
       await composer.fill(`What is in this ${label} file?`);
       await composer.press("Enter");
 
@@ -266,7 +266,7 @@ test.describe("mocked RBAC e2e — chat multimodal input", () => {
     await installMultimodalMocks(page, streamStartRequests);
     await openComposer(page);
 
-    const composer = page.locator("textarea").first();
+    const composer = page.getByRole("textbox", { name: "Message" });
     await composer.fill("plain text, no attachment");
     await composer.press("Enter");
 

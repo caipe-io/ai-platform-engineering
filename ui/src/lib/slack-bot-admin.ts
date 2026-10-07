@@ -32,7 +32,7 @@ function getSlackBotAdminDevToken(): string | null {
   return token;
 }
 
-async function getSlackBotAdminToken(): Promise<string> {
+async function getSlackBotAdminToken(signal?: AbortSignal): Promise<string> {
   const devToken = getSlackBotAdminDevToken();
   if (devToken) {
     return devToken;
@@ -61,6 +61,7 @@ async function getSlackBotAdminToken(): Promise<string> {
 
   const response = await fetch(slackBotAdminTokenUrl(), {
     method: "POST",
+    signal,
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
   });
@@ -80,12 +81,13 @@ async function getSlackBotAdminToken(): Promise<string> {
 
 export async function callSlackBotAdmin<T>(
   path: string,
-  options: { method?: "GET" | "POST"; body?: unknown } = {}
+  options: { method?: "GET" | "POST"; body?: unknown; signal?: AbortSignal } = {}
 ): Promise<T> {
-  const token = await getSlackBotAdminToken();
+  const token = await getSlackBotAdminToken(options.signal);
   const method = options.method ?? "GET";
   const response = await fetch(`${slackBotAdminBaseUrl()}${path}`, {
     method,
+    signal: options.signal,
     headers: {
       Authorization: `Bearer ${token}`,
       ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),

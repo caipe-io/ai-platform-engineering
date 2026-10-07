@@ -66,7 +66,7 @@ A developer updates the Helm chart values on `release/0.3.0` (e.g., adjusting a 
 
 **Why this priority**: Without chart RCs for release branches, there is no automated way to validate chart-only fixes before shipping.
 
-**Independent Test**: Push a chart change to `release/0.3.0`. Confirm that a pre-release Helm chart with version `0.3.0-rc.N` is published and installable via `helm upgrade --install ... oci://ghcr.io/.../pre-release-helm-charts/ai-platform-engineering --version 0.3.0-rc.N`.
+**Independent Test**: Push a chart change to `release/0.3.0`. Confirm that a pre-release Helm chart with version `0.3.0-rc.N` is published and installable via `helm upgrade --install ... oci://ghcr.io/.../charts/ai-platform-engineering --version 0.3.0-rc.N`.
 
 **Acceptance Scenarios**:
 
@@ -157,7 +157,7 @@ A developer opens a pull request targeting `release/0.3.0` with a chart change. 
 ## Dependencies
 
 - Existing image-build CI workflows (`ci-a2a-sub-agent.yml`, `ci-mcp-sub-agent.yml`, `ci-a2a-rag.yml`, `ci-supervisor-agent.yml`, `ci-caipe-ui.yml`, `ci-slack-bot.yml`) that respond to any git tag — these provide the container image builds and require no modification.
-- GHCR pre-release Helm registry (`oci://ghcr.io/.../pre-release-helm-charts`) — must be writable with the existing `GITHUB_TOKEN`.
+- GHCR Helm registry (`oci://ghcr.io/.../charts`) — must be writable with the existing `GITHUB_TOKEN`.
 - `.github/agents.json` — agent list config consumed by the RC tag workflow.
 - GitHub Actions `GH_PAT` / `GITHUB_TOKEN` secrets — must have `contents: write` and `packages: write`.
 

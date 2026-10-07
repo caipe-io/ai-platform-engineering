@@ -10,44 +10,60 @@
  * - Are re-applied on every server restart (config is source of truth)
  * - Stale config-driven entities (removed from YAML) are cleaned up
  *
- * Ported from DA services/seed_config.py — DA no longer seeds configs.
+ * The gateway owns config seeding; Dynamic Agents remains stateless here.
  */
 
-import { getCollection,isMongoDBConfigured } from "@/lib/mongodb";
+import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
 import { BUILTIN_MCP_CREDENTIAL_SOURCES } from "@/lib/rbac/agentgateway-mcp-discovery";
-import { computeIngestionSourceId, type IngestionSourceIdentity } from "@/lib/ingestion-source-id";
-import { writeOpenFgaTuples, isOpenFgaReconciliationEnabled } from "@/lib/rbac/openfga";
+import { computeIngestionSourceId } from "@/lib/ingestion-source-id";
+import {
+  extractIngestionSourceTypeFields,
+  optionalInteger,
+  validateSourceSpecificInputFields,
+} from "@/lib/ingestion-source-config";
+import {
+  writeOpenFgaTuples,
+  isOpenFgaReconciliationEnabled,
+  mapWithConcurrency,
+} from "@/lib/rbac/openfga";
 import { reconcileAgentRelationships } from "@/lib/rbac/openfga-agent-tools";
 import {
-reconcileConfigDrivenLlmModelRelationships,
-reconcileConfigDrivenMcpServerRelationships,
-reconcileIngestionSourceRelationships,
-reconcileShareableResource,
+  resolveUnlinkedServiceAccountSub,
+  resolveUnlinkedServiceAccountGrantState,
+} from "@/lib/rbac/unlinked-service-account";
+import {
+  deleteAllIngestionSourceRelationshipTuples,
+  reconcileConfigDrivenLlmModelRelationships,
+  reconcileConfigDrivenMcpServerRelationships,
+  reconcileDataSourceRelationships,
+  reconcileIngestionSourceRelationships,
+  reconcileKnowledgeBaseRelationships,
+  reconcileShareableResource,
 } from "@/lib/rbac/openfga-owned-resources-reconcile";
 import { caipeOrgKey } from "@/lib/rbac/organization";
 import {
-normalizeSharedWithTeamSlugs,
-repairWorkflowConfigTeamSlugRefs,
+  normalizeSharedWithTeamSlugs,
+  repairWorkflowConfigTeamSlugRefs,
 } from "@/lib/rbac/workflow-config-rebac";
 import type {
-DynamicAgentConfig,
-MCPServerConfig,
-SubAgentRef,
-TransportType,
-VisibilityType,
+  DynamicAgentConfig,
+  MCPServerConfig,
+  SubAgentRef,
+  TransportType,
+  VisibilityType,
 } from "@/types/dynamic-agent";
 import type {
-IngestionSourceConfig,
-IngestionSourceType,
-IngestionSourceVisibility,
+  IngestionSourceConfig,
+  IngestionSourceVisibility,
 } from "@/types/ingestion-source";
 import type {
-StepEntry,
-WorkflowConfig,
-WorkflowConfigVisibility,
+  StepEntry,
+  WorkflowConfig,
+  WorkflowConfigVisibility,
 } from "@/types/workflow-config";
 import fs from "fs";
-import yaml from "js-yaml";
+import { createHash } from "node:crypto";
+import { load } from "js-yaml";
 
 // Pattern to match ${VAR_NAME} or ${VAR_NAME:-default}
 const ENV_VAR_PATTERN = /\$\{([^}:]+)(?::-([^}]*))?\}/g;
@@ -71,6 +87,16 @@ interface SeedConfig {
   rag_sources: Record<string, unknown>[];
 }
 
+function emptySeedConfig(): SeedConfig {
+  return {
+    models: [],
+    agents: [],
+    mcp_servers: [],
+    workflow_configs: [],
+    rag_sources: [],
+  };
+}
+
 /** Shape of documents in the llm_models collection. */
 interface LLMModelDoc {
   _id: string; // model_id
@@ -91,7 +117,7 @@ interface LLMModelDoc {
  *
  * In Kubernetes, Helm resolves values before creating the ConfigMap,
  * so the mounted YAML contains literal values. But in docker-compose
- * dev mode, the raw config.yaml is mounted and uses ${VAR:-default}
+ * dev mode, the raw app-config.yaml is mounted and uses ${VAR:-default}
  * syntax, so we need this expansion for dev compatibility.
  */
 function expandEnvVars(value: unknown): unknown {
@@ -133,11 +159,14 @@ export function loadSeedConfig(configPath: string): SeedConfig {
     console.warn(
       `[seed-config] Config not found at ${configPath}, skipping seed`,
     );
-    return { models: [], agents: [], mcp_servers: [], workflow_configs: [], rag_sources: [] };
+    return emptySeedConfig();
   }
 
   const raw = fs.readFileSync(configPath, "utf-8");
-  const parsed = (yaml.load(raw) as Record<string, unknown>) || {};
+  if (raw.trim().length === 0) {
+    return emptySeedConfig();
+  }
+  const parsed = (load(raw) as Record<string, unknown> | null) ?? {};
 
   // Models don't need env var expansion (no secrets)
   const models = (parsed.models ?? []) as SeedModel[];
@@ -150,10 +179,9 @@ export function loadSeedConfig(configPath: string): SeedConfig {
     string,
     unknown
   >[];
-  const workflow_configs = expandEnvVars(parsed.workflow_configs ?? []) as Record<
-    string,
-    unknown
-  >[];
+  const workflow_configs = expandEnvVars(
+    parsed.workflow_configs ?? [],
+  ) as Record<string, unknown>[];
   const rag_sources = expandEnvVars(parsed.rag_sources ?? []) as Record<
     string,
     unknown
@@ -170,7 +198,10 @@ type AgentAllowedTools = DynamicAgentConfig["allowed_tools"];
 
 function normalizeStringArray(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
-  return raw.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  return raw.filter(
+    (value): value is string =>
+      typeof value === "string" && value.trim().length > 0,
+  );
 }
 
 async function reconcileSeededAgentRelationships(input: {
@@ -183,10 +214,10 @@ async function reconcileSeededAgentRelationships(input: {
   previousSharedTeamSlugs?: string[];
   globalUserAccess?: boolean;
   previousGlobalUserAccess?: boolean;
+  unlinkedServiceAccountSub?: string | null;
   logContext: string;
 }): Promise<void> {
   try {
-    // assisted-by Codex Codex-sonnet-4-6
     await reconcileAgentRelationships({
       agentId: input.agentId,
       previousAllowedTools: input.previousAllowedTools ?? {},
@@ -199,6 +230,7 @@ async function reconcileSeededAgentRelationships(input: {
       previousSharedTeamSlugs: input.previousSharedTeamSlugs ?? [],
       globalUserAccess: input.globalUserAccess === true,
       previousGlobalUserAccess: input.previousGlobalUserAccess === true,
+      unlinkedServiceAccountSub: input.unlinkedServiceAccountSub ?? null,
       failClosed: false,
     });
   } catch (error) {
@@ -209,13 +241,15 @@ async function reconcileSeededAgentRelationships(input: {
   }
 }
 
-async function seedAgents(
+export async function seedAgents(
   agents: Record<string, unknown>[],
 ): Promise<number> {
   if (agents.length === 0) return 0;
 
-  const collection =
-    await getCollection<DynamicAgentConfig>("dynamic_agents");
+  const collection = await getCollection<DynamicAgentConfig>("dynamic_agents");
+  // Resolve once per seed pass rather than per agent — the sub is the same
+  // for every agent seeded in this call.
+  const unlinkedServiceAccountSub = await resolveUnlinkedServiceAccountSub();
   let count = 0;
 
   for (const agentData of agents) {
@@ -253,13 +287,32 @@ async function seedAgents(
       (agentData.shared_with_teams as string[] | undefined) ?? []
     ).filter((slug) => slug && slug !== ownerTeamSlug);
 
+    const allowedTools =
+      (agentData.allowed_tools as Record<string, string[] | boolean>) ?? {};
+    const hasConfiguredDatasourceIds = Array.isArray(agentData.datasource_ids);
+    const hasConfiguredCollectionIds = Array.isArray(
+      agentData.rag_collection_ids,
+    );
+    // A config-driven agent with neither field configured falls through to
+    // whatever it already had (undefined for a brand-new agent), which is
+    // left unrestricted: the RAG server always independently intersects
+    // results with the caller's own accessible datasources at query time, so
+    // "no configured scope" never means "unrestricted access" - it means "as
+    // much as the calling user can already see." Explicit empty arrays in
+    // Mongo or YAML remain a deliberate opt-out.
+    const configuredDatasourceIds = hasConfiguredDatasourceIds
+      ? normalizeStringArray(agentData.datasource_ids)
+      : existing?.datasource_ids;
+    const configuredCollectionIds = hasConfiguredCollectionIds
+      ? normalizeStringArray(agentData.rag_collection_ids)
+      : existing?.rag_collection_ids;
+
     const doc = {
       _id: agentId,
       name: (agentData.name as string) ?? agentId,
       description: (agentData.description as string) ?? "",
       system_prompt: (agentData.system_prompt as string) ?? "",
-      allowed_tools:
-        (agentData.allowed_tools as Record<string, string[]>) ?? {},
+      allowed_tools: allowedTools,
       // Support both legacy (model_id/model_provider) and new (model.id/model.provider) formats
       model: agentData.model
         ? (agentData.model as { id: string; provider: string })
@@ -267,18 +320,24 @@ async function seedAgents(
             id: (agentData.model_id as string) ?? "",
             provider: (agentData.model_provider as string) ?? "",
           },
-      visibility: ((agentData.visibility as string) ?? "global") as VisibilityType,
+      visibility: ((agentData.visibility as string) ??
+        "global") as VisibilityType,
       shared_with_teams:
         sharedTeamSlugs.length > 0 ? sharedTeamSlugs : undefined,
       owner_team_slug: ownerTeamSlug ?? undefined,
       subagents: (agentData.subagents as SubAgentRef[]) ?? [],
       skills: (agentData.skills as string[]) ?? [],
+      datasource_ids: configuredDatasourceIds,
+      rag_collection_ids: configuredCollectionIds,
       builtin_tools:
         (agentData.builtin_tools as DynamicAgentConfig["builtin_tools"]) ??
         undefined,
       ui: (agentData.ui as DynamicAgentConfig["ui"]) ?? undefined,
-      features: (agentData.features as DynamicAgentConfig["features"]) ?? undefined,
-      interrupt_on: (agentData.interrupt_on as DynamicAgentConfig["interrupt_on"]) ?? undefined,
+      features:
+        (agentData.features as DynamicAgentConfig["features"]) ?? undefined,
+      interrupt_on:
+        (agentData.interrupt_on as DynamicAgentConfig["interrupt_on"]) ??
+        undefined,
       enabled: (agentData.enabled as boolean) ?? true,
       owner_id: "system",
       is_system: false,
@@ -298,9 +357,12 @@ async function seedAgents(
       ownerTeamSlug,
       previousOwnerTeamSlug: existing?.owner_team_slug ?? null,
       nextSharedTeamSlugs: sharedTeamSlugs,
-      previousSharedTeamSlugs: normalizeStringArray(existing?.shared_with_teams),
+      previousSharedTeamSlugs: normalizeStringArray(
+        existing?.shared_with_teams,
+      ),
       globalUserAccess: doc.visibility === "global",
       previousGlobalUserAccess: existing?.visibility === "global",
+      unlinkedServiceAccountSub,
       logContext: "config seed",
     });
 
@@ -337,15 +399,22 @@ export async function adoptConfigImportedAgents(
   );
   const adopted: string[] = [];
   const skipped: string[] = [];
+  const unlinkedServiceAccountSub = await resolveUnlinkedServiceAccountSub();
 
   for (const agentId of agentIds) {
     const existing = await collection.findOne({ _id: agentId });
-    if (!existing || existing.config_driven !== true || existing.config_import_adopted === true) {
+    if (
+      !existing ||
+      existing.config_driven !== true ||
+      existing.config_import_adopted === true
+    ) {
       skipped.push(agentId);
       continue;
     }
 
-    const nextVisibility: VisibilityType = ownerTeamSlug ? "team" : existing.visibility;
+    const nextVisibility: VisibilityType = ownerTeamSlug
+      ? "team"
+      : existing.visibility;
     const now = new Date().toISOString();
 
     await collection.updateOne(
@@ -356,7 +425,8 @@ export async function adoptConfigImportedAgents(
           config_import_adopted: true,
           visibility: nextVisibility,
           owner_team_slug: ownerTeamSlug ?? undefined,
-          shared_with_teams: sharedTeamSlugs.length > 0 ? sharedTeamSlugs : undefined,
+          shared_with_teams:
+            sharedTeamSlugs.length > 0 ? sharedTeamSlugs : undefined,
           updated_at: now,
         },
       },
@@ -372,6 +442,7 @@ export async function adoptConfigImportedAgents(
       previousSharedTeamSlugs: normalizeStringArray(existing.shared_with_teams),
       globalUserAccess: nextVisibility === "global",
       previousGlobalUserAccess: existing.visibility === "global",
+      unlinkedServiceAccountSub,
       logContext: "config import adopt",
     });
 
@@ -470,7 +541,10 @@ async function seedAgentGatewayAdminAccess(): Promise<void> {
       deletes: [],
     });
   } catch (error) {
-    console.warn("[seed-config] Failed to seed AgentGateway admin access:", error);
+    console.warn(
+      "[seed-config] Failed to seed AgentGateway admin access:",
+      error,
+    );
   }
 }
 
@@ -542,10 +616,13 @@ async function seedWorkflowConfigs(
     const existing = await collection.findOne({ _id: cfgId });
     const createdAt = existing?.created_at ?? now;
 
-    const visibility = ((cfgData.visibility as string) ?? "global") as WorkflowConfigVisibility;
+    const visibility = ((cfgData.visibility as string) ??
+      "global") as WorkflowConfigVisibility;
     const steps = (cfgData.steps ?? []) as StepEntry[];
     let sharedWithTeams =
-      visibility === "team" ? ((cfgData.shared_with_teams as string[]) ?? undefined) : undefined;
+      visibility === "team"
+        ? ((cfgData.shared_with_teams as string[]) ?? undefined)
+        : undefined;
     if (sharedWithTeams?.length) {
       sharedWithTeams = await normalizeSharedWithTeamSlugs(sharedWithTeams);
     }
@@ -576,11 +653,15 @@ async function seedWorkflowConfigs(
         objectType: "task",
         objectId: cfgId,
         sharedWithOrg: visibility === "global",
-        previousSharedWithOrg: existing?.visibility === "global" && visibility !== "global",
+        previousSharedWithOrg:
+          existing?.visibility === "global" && visibility !== "global",
         memberRelations: ["reader", "user"],
-        nextSharedTeamSlugs: visibility === "team" ? (sharedWithTeams ?? []) : [],
+        nextSharedTeamSlugs:
+          visibility === "team" ? (sharedWithTeams ?? []) : [],
         previousSharedTeamSlugs:
-          existing?.visibility === "team" ? existing.shared_with_teams ?? [] : [],
+          existing?.visibility === "team"
+            ? (existing.shared_with_teams ?? [])
+            : [],
       });
     } catch (err) {
       console.warn(
@@ -595,95 +676,32 @@ async function seedWorkflowConfigs(
   return count;
 }
 
-const INGESTION_SOURCE_TYPES: readonly IngestionSourceType[] = [
-  "slack_channel",
-  "confluence_space",
-  "jira_project",
-  "web_url",
-  "webex_space",
-];
+export {
+  extractIngestionSourceTypeFields as extractRagSourceTypeFields,
+} from "@/lib/ingestion-source-config";
 
-/**
- * Extract the `source_type`-specific identity/config fields from a raw YAML
- * entry, keyed identically to the discriminated `IngestionSourceConfig`
- * union (ui/src/types/ingestion-source.ts). Returns `null` when the entry's
- * `source_type` is missing/unrecognized or its required identity fields are
- * absent, so the caller can skip the entry the same way `seedAgents` skips
- * entries missing `id`.
- */
-function extractRagSourceTypeFields(
-  sourceData: Record<string, unknown>,
-): { identity: IngestionSourceIdentity; fields: Record<string, unknown> } | null {
-  const sourceType = sourceData.source_type as IngestionSourceType | undefined;
-  if (!sourceType || !INGESTION_SOURCE_TYPES.includes(sourceType)) return null;
-
-  switch (sourceType) {
-    case "slack_channel": {
-      const channelId = sourceData.channel_id as string | undefined;
-      if (!channelId) return null;
-      return {
-        identity: { source_type: "slack_channel", channel_id: channelId },
-        fields: {
-          source_type: sourceType,
-          channel_id: channelId,
-          lookback_days: sourceData.lookback_days as number | undefined,
-          include_bots: sourceData.include_bots as boolean | undefined,
-        },
-      };
-    }
-    case "confluence_space": {
-      const confluenceUrl = sourceData.confluence_url as string | undefined;
-      const spaceKey = sourceData.space_key as string | undefined;
-      if (!confluenceUrl || !spaceKey) return null;
-      return {
-        identity: { source_type: "confluence_space", confluence_url: confluenceUrl, space_key: spaceKey },
-        fields: { source_type: sourceType, confluence_url: confluenceUrl, space_key: spaceKey },
-      };
-    }
-    case "jira_project": {
-      const projectKey = sourceData.project_key as string | undefined;
-      const sourceSlug = sourceData.source_slug as string | undefined;
-      if (!projectKey || !sourceSlug) return null;
-      return {
-        identity: { source_type: "jira_project", project_key: projectKey, source_slug: sourceSlug },
-        fields: {
-          source_type: sourceType,
-          project_key: projectKey,
-          source_slug: sourceSlug,
-          jql: (sourceData.jql as string) ?? "",
-          include_comments: sourceData.include_comments as boolean | undefined,
-        },
-      };
-    }
-    case "web_url": {
-      const url = sourceData.url as string | undefined;
-      if (!url) return null;
-      return {
-        identity: { source_type: "web_url", url },
-        fields: { source_type: sourceType, url },
-      };
-    }
-    case "webex_space": {
-      const spaceId = sourceData.space_id as string | undefined;
-      if (!spaceId) return null;
-      return {
-        identity: { source_type: "webex_space", space_id: spaceId },
-        fields: { source_type: sourceType, space_id: spaceId },
-      };
-    }
-  }
-}
-
-async function seedRagSources(
+export async function seedRagSources(
   sources: Record<string, unknown>[],
 ): Promise<number> {
   if (sources.length === 0) return 0;
 
-  const collection = await getCollection<IngestionSourceConfig>("rag_ingestion_sources");
+  const collection = await getCollection<IngestionSourceConfig>(
+    "rag_ingestion_sources",
+  );
   let count = 0;
 
   for (const sourceData of sources) {
-    const extracted = extractRagSourceTypeFields(sourceData);
+    let extracted: ReturnType<typeof extractIngestionSourceTypeFields>;
+    try {
+      validateSourceSpecificInputFields(sourceData);
+      extracted = extractIngestionSourceTypeFields(sourceData);
+    } catch (error) {
+      console.warn(
+        `[seed-config] Skipping invalid rag source ${sourceData.name ?? "unknown"}:`,
+        error,
+      );
+      continue;
+    }
     if (!extracted) {
       console.warn(
         `[seed-config] Skipping rag source with missing identity fields: ${sourceData.name ?? "unknown"}`,
@@ -691,6 +709,46 @@ async function seedRagSources(
       continue;
     }
     const sourceId = computeIngestionSourceId(extracted.identity);
+    let defaultChunkSize: number;
+    let defaultChunkOverlap: number;
+    let reloadInterval: number;
+    try {
+      defaultChunkSize =
+        optionalInteger(
+          sourceData.default_chunk_size,
+          "default_chunk_size",
+          100,
+          100000,
+        ) ?? 10000;
+      defaultChunkOverlap =
+        optionalInteger(
+          sourceData.default_chunk_overlap,
+          "default_chunk_overlap",
+          0,
+          10000,
+        ) ?? 2000;
+      reloadInterval =
+        optionalInteger(sourceData.reload_interval, "reload_interval", 60) ??
+        86400;
+    } catch (error) {
+      console.warn(
+        `[seed-config] Skipping invalid rag source ${sourceData.name ?? sourceId}:`,
+        error,
+      );
+      continue;
+    }
+    if (defaultChunkOverlap >= defaultChunkSize) {
+      console.warn(
+        `[seed-config] Skipping rag source ${sourceData.name ?? sourceId}: default_chunk_overlap must be smaller than default_chunk_size`,
+      );
+      continue;
+    }
+    if (extracted.fields.source_type === "jira_project" && !extracted.fields.jql) {
+      console.warn(
+        `[seed-config] Skipping rag source ${sourceData.name ?? sourceId}: jql is required`,
+      );
+      continue;
+    }
 
     const now = new Date().toISOString();
     const existing = await collection.findOne({ source_id: sourceId } as never);
@@ -703,45 +761,135 @@ async function seedRagSources(
     }
 
     const createdAt = existing?.created_at ?? now;
-    const ownerTeamSlug = (sourceData.owner_team as string | undefined)?.trim() || null;
-    const sharedTeamSlugs = ((sourceData.shared_with_teams as string[] | undefined) ?? []).filter(
-      (slug) => slug && slug !== ownerTeamSlug,
+    const ownerTeamSlug =
+      (sourceData.owner_team as string | undefined)?.trim() || null;
+    // RAG source management has exactly one optional owner team. Retain the
+    // legacy field only long enough to revoke its old tuples below; never
+    // project or persist management shares for a newly-seeded record.
+    const previousManagementSharedTeamSlugs = normalizeStringArray(
+      existing?.shared_with_teams,
     );
     // Config-driven sources default to global visibility (an operator declaring a
     // source in Helm with no owner_team is very likely intending it to be broadly
     // readable) — mirrors seedAgents' `visibility ?? "global"` default, unlike
     // API-created sources which default to "team".
-    const visibility = ((sourceData.visibility as string) ?? "global") as IngestionSourceVisibility;
+    const visibility = ((sourceData.visibility as string) ??
+      "global") as IngestionSourceVisibility;
+    const hasCanonicalSearchPolicy = Object.prototype.hasOwnProperty.call(
+      sourceData,
+      "search_with_teams",
+    );
+    const hasExplicitSearchPolicy =
+      hasCanonicalSearchPolicy ||
+      Object.prototype.hasOwnProperty.call(sourceData, "search_owner_team") ||
+      Object.prototype.hasOwnProperty.call(
+        sourceData,
+        "search_shared_with_teams",
+      );
+    const legacySearchOwnerTeamSlug =
+      (sourceData.search_owner_team as string | undefined)?.trim() || null;
+    const rawSearchTeamSlugs = hasCanonicalSearchPolicy
+      ? normalizeStringArray(sourceData.search_with_teams)
+      : [
+          ...(legacySearchOwnerTeamSlug ? [legacySearchOwnerTeamSlug] : []),
+          ...normalizeStringArray(sourceData.search_shared_with_teams),
+        ];
+    const searchTeamSlugs = Array.from(
+      new Set(rawSearchTeamSlugs.map((slug) => slug.trim()).filter(Boolean)),
+    );
+    const previousSearchTeamSlugs = Array.isArray(existing?.search_with_teams)
+      ? Array.from(
+          new Set(
+            existing.search_with_teams
+              .map((slug) => slug.trim())
+              .filter(Boolean),
+          ),
+        )
+      : existing?.search_owner_team_slug
+        ? [existing.search_owner_team_slug]
+        : [];
+    const persistedSearchTeamSlugs = hasExplicitSearchPolicy
+      ? searchTeamSlugs
+      : previousSearchTeamSlugs;
+    const configHash = createHash("sha256")
+      .update(
+        JSON.stringify({
+          fields: extracted.fields,
+          name: (sourceData.name as string) ?? sourceId,
+          description: (sourceData.description as string) ?? "",
+          default_chunk_size: defaultChunkSize,
+          default_chunk_overlap: defaultChunkOverlap,
+          reload_interval: reloadInterval,
+          visibility,
+          owner_team_slug: ownerTeamSlug,
+          search_with_teams: persistedSearchTeamSlugs,
+        }),
+      )
+      .digest("hex");
+    const configChanged = existing?.config_hash !== configHash;
 
     const doc = {
       source_id: sourceId,
       ...extracted.fields,
       name: (sourceData.name as string) ?? sourceId,
       description: (sourceData.description as string) ?? "",
-      default_chunk_size: (sourceData.default_chunk_size as number) ?? 10000,
-      default_chunk_overlap: (sourceData.default_chunk_overlap as number) ?? 2000,
-      reload_interval: (sourceData.reload_interval as number) ?? 86400,
-      status: existing?.status ?? "pending",
+      default_chunk_size: defaultChunkSize,
+      default_chunk_overlap: defaultChunkOverlap,
+      reload_interval: reloadInterval,
+      status: configChanged ? "pending" : (existing?.status ?? "pending"),
       visibility,
-      shared_with_teams: sharedTeamSlugs,
+      shared_with_teams: [],
+      search_with_teams: persistedSearchTeamSlugs,
       owner_team_slug: ownerTeamSlug ?? undefined,
       owner_id: ownerTeamSlug ? undefined : "system",
       config_driven: true,
       config_import_adopted: false,
+      config_hash: configHash,
+      ...(!configChanged && existing?.ingestion_job_id
+        ? { ingestion_job_id: existing.ingestion_job_id }
+        : {}),
+      ...(!configChanged && existing?.last_error
+        ? { last_error: existing.last_error }
+        : {}),
       created_at: createdAt,
       updated_at: now,
     } as unknown as IngestionSourceConfig;
 
-    await collection.replaceOne({ source_id: sourceId } as never, doc, { upsert: true });
-
+    // Management and Search Access are separate. Config supports the new
+    // `search_with_teams` list while accepting the two old search aliases for
+    // a transition period. Legacy management shares are revoked on the next
+    // seed, and a search team never receives a manager tuple.
+    const previousOwnerTeamSlug = existing?.owner_team_slug ?? null;
     await reconcileIngestionSourceRelationships({
       sourceId,
       ownerTeamSlug,
-      previousOwnerTeamSlug: existing?.owner_team_slug ?? null,
-      nextSharedTeamSlugs: sharedTeamSlugs,
-      previousSharedTeamSlugs: normalizeStringArray(existing?.shared_with_teams),
+      previousOwnerTeamSlug,
+      nextSharedTeamSlugs: [],
+      previousSharedTeamSlugs: previousManagementSharedTeamSlugs,
       globalUserAccess: visibility === "global",
       previousGlobalUserAccess: existing?.visibility === "global",
+    });
+    if (hasExplicitSearchPolicy) {
+      await reconcileKnowledgeBaseRelationships({
+        knowledgeBaseId: sourceId,
+        ownerTeamSlug: null,
+        // The prior alias modeled this team as a KB owner. Treat it as the
+        // previous owner once so its stale manager tuple is removed while its
+        // explicit Search grant remains in the desired reader set.
+        previousOwnerTeamSlug:
+          existing?.search_owner_team_slug ?? legacySearchOwnerTeamSlug,
+        nextSharedTeamSlugs: searchTeamSlugs,
+        previousSharedTeamSlugs: previousSearchTeamSlugs,
+        previousSharedTeamAdminsManage: true,
+      });
+      await reconcileDataSourceRelationships({
+        dataSourceId: sourceId,
+        parentKnowledgeBaseId: sourceId,
+      });
+    }
+
+    await collection.replaceOne({ source_id: sourceId } as never, doc, {
+      upsert: true,
     });
 
     console.log(`[seed-config] Seeded rag source: ${sourceId}`);
@@ -751,60 +899,166 @@ async function seedRagSources(
   return count;
 }
 
+/** Why a source_id was skipped by {@link adoptConfigImportedRagSources}. */
+export type RagSourceAdoptSkipReason =
+  | "not_found"
+  | "not_config_driven"
+  | "already_adopted";
+
+export interface RagSourceAdoptSkip {
+  source_id: string;
+  reason: RagSourceAdoptSkipReason;
+}
+
 /**
  * Adopt a set of config-driven rag ingestion sources into the DB as the
- * source of truth. Mirrors `adoptConfigImportedAgents` exactly: only sources
- * currently `{config_driven: true, config_import_adopted: {$ne: true}}` are
- * eligible — already-adopted or DB-native sources are skipped so a re-run
- * (or an overlapping id list) can't silently reassign teams on sources
- * outside the batch the admin picked.
+ * source of truth. Mirrors `adoptConfigImportedAgents`'s eligibility guard
+ * (only sources currently `{config_driven: true, config_import_adopted:
+ * {$ne: true}}` are eligible, so a re-run or an overlapping id list can't
+ * silently reassign teams on sources outside the batch the admin picked),
+ * but reports *why* each id was skipped — the migrate-from-config admin
+ * preview needs to distinguish "already adopted" (fine, no-op) from "not
+ * found" / "not config-driven" (caller error) rather than lumping them
+ * together as `adoptConfigImportedAgents` does.
  */
 export async function adoptConfigImportedRagSources(
   sourceIds: string[],
-  teamAssignment: { ownerTeamSlug: string | null; sharedTeamSlugs: string[] },
-): Promise<{ adopted: string[]; skipped: string[] }> {
-  const collection = await getCollection<IngestionSourceConfig>("rag_ingestion_sources");
-  const ownerTeamSlug = teamAssignment.ownerTeamSlug;
-  const sharedTeamSlugs = teamAssignment.sharedTeamSlugs.filter((slug) => slug !== ownerTeamSlug);
-  const adopted: string[] = [];
-  const skipped: string[] = [];
+  ownership: {
+    ownerTeamSlug: string | null;
+    ownerSubject?: string | null;
+  },
+  /**
+   * Search Access to grant on adoption. A collection grants no access to
+   * its members, so the admin sets this directly on the source rather
+   * than picking a destination collection. Adoption never wrote
+   * knowledge_base/data_source grants before this, so the reconcile below
+   * treats "previous" as empty - additive only, never revokes a grant
+   * from another path (e.g. the source's own `visibility: "global"`).
+   */
+  search?: {
+    teamSlugs?: readonly string[];
+    userSubjects?: readonly string[];
+  },
+): Promise<{ adopted: string[]; skipped: RagSourceAdoptSkip[] }> {
+  const collection = await getCollection<IngestionSourceConfig>(
+    "rag_ingestion_sources",
+  );
+  const ownerTeamSlug = ownership.ownerTeamSlug;
+  const ownerSubject = ownerTeamSlug ? null : (ownership.ownerSubject ?? null);
+  const searchTeamSlugs = normalizeStringArray(search?.teamSlugs);
+  const searchUserSubjects = normalizeStringArray(search?.userSubjects);
 
-  for (const sourceId of sourceIds) {
-    const existing = await collection.findOne({ source_id: sourceId } as never);
-    if (!existing || existing.config_driven !== true || existing.config_import_adopted === true) {
-      skipped.push(sourceId);
-      continue;
-    }
-
-    const nextVisibility: IngestionSourceVisibility = ownerTeamSlug ? "team" : existing.visibility;
-    const now = new Date().toISOString();
-
-    await collection.updateOne(
-      { source_id: sourceId } as never,
-      {
-        $set: {
-          config_driven: false,
-          config_import_adopted: true,
-          visibility: nextVisibility,
-          owner_team_slug: ownerTeamSlug ?? undefined,
-          shared_with_teams: sharedTeamSlugs,
-          updated_at: now,
-        },
-      } as never,
-    );
-
-    await reconcileIngestionSourceRelationships({
+  // An admin can adopt up to MAX_ADOPTION_SOURCES (500) sources in one
+  // request - bounded concurrency instead of a fully serial loop, or a
+  // large batch risks a platform request timeout.
+  const ADOPTION_CONCURRENCY = 10;
+  const results = await mapWithConcurrency(
+    sourceIds,
+    ADOPTION_CONCURRENCY,
+    async (
       sourceId,
-      ownerTeamSlug,
-      previousOwnerTeamSlug: existing.owner_team_slug ?? null,
-      nextSharedTeamSlugs: sharedTeamSlugs,
-      previousSharedTeamSlugs: normalizeStringArray(existing.shared_with_teams),
-      globalUserAccess: nextVisibility === "global",
-      previousGlobalUserAccess: existing.visibility === "global",
-    });
+    ): Promise<
+      | { status: "skipped"; skip: RagSourceAdoptSkip }
+      | { status: "adopted"; sourceId: string }
+    > => {
+      const existing = await collection.findOne({ source_id: sourceId } as never);
+      if (!existing) {
+        return { status: "skipped", skip: { source_id: sourceId, reason: "not_found" } };
+      }
+      // Adoption flips config_driven to false, so an already-adopted record
+      // also fails the config_driven check below — check config_import_adopted
+      // first so its skip reason takes precedence.
+      if (existing.config_import_adopted === true) {
+        return {
+          status: "skipped",
+          skip: { source_id: sourceId, reason: "already_adopted" },
+        };
+      }
+      if (existing.config_driven !== true) {
+        return {
+          status: "skipped",
+          skip: { source_id: sourceId, reason: "not_config_driven" },
+        };
+      }
 
-    console.log(`[seed-config] Adopted config-imported rag source: ${sourceId}`);
-    adopted.push(sourceId);
+      const nextVisibility: IngestionSourceVisibility = ownerTeamSlug || ownerSubject
+        ? "team"
+        : existing.visibility;
+      const now = new Date().toISOString();
+
+      // Adoption sets management ownership and, when the admin picked one, a
+      // Search Access grant - both applied directly to this source rather
+      // than inherited from a destination collection (see the `search` param
+      // doc comment above).
+      const previousOwnerTeamSlug = existing.owner_team_slug ?? null;
+      const previousOwnerSubject = existing.owner_subject ?? null;
+      const previousSharedTeamSlugs = normalizeStringArray(
+        existing.shared_with_teams,
+      );
+      await reconcileIngestionSourceRelationships({
+        sourceId,
+        ownerSubject,
+        previousOwnerSubject,
+        ownerTeamSlug,
+        previousOwnerTeamSlug,
+        nextSharedTeamSlugs: [],
+        previousSharedTeamSlugs,
+        globalUserAccess: nextVisibility === "global",
+        previousGlobalUserAccess: existing.visibility === "global",
+      });
+      if (searchTeamSlugs.length > 0 || searchUserSubjects.length > 0) {
+        await reconcileKnowledgeBaseRelationships({
+          knowledgeBaseId: sourceId,
+          ownerTeamSlug: null,
+          previousOwnerTeamSlug: null,
+          nextSharedTeamSlugs: searchTeamSlugs,
+          previousSharedTeamSlugs: [],
+          nextSharedUserSubjects: searchUserSubjects,
+          previousSharedUserSubjects: [],
+        });
+        await reconcileDataSourceRelationships({
+          dataSourceId: sourceId,
+          parentKnowledgeBaseId: sourceId,
+        });
+      }
+      await collection.updateOne(
+        { source_id: sourceId } as never,
+        {
+          $set: {
+            config_driven: false,
+            config_import_adopted: true,
+            visibility: nextVisibility,
+            ...(ownerTeamSlug ? { owner_team_slug: ownerTeamSlug } : {}),
+            ...(ownerSubject ? { owner_subject: ownerSubject } : {}),
+            shared_with_teams: [],
+            ...(searchTeamSlugs.length > 0
+              ? { search_with_teams: searchTeamSlugs }
+              : {}),
+            ...(searchUserSubjects.length > 0
+              ? { search_with_users: searchUserSubjects }
+              : {}),
+            updated_at: now,
+          },
+          $unset: ownerTeamSlug
+            ? { owner_subject: "" }
+            : ownerSubject
+              ? { owner_team_slug: "" }
+              : {},
+        } as never,
+      );
+
+      console.log(
+        `[seed-config] Adopted config-imported rag source: ${sourceId}`,
+      );
+      return { status: "adopted", sourceId };
+    },
+  );
+
+  const adopted: string[] = [];
+  const skipped: RagSourceAdoptSkip[] = [];
+  for (const result of results) {
+    if (result.status === "adopted") adopted.push(result.sourceId);
+    else skipped.push(result.skip);
   }
 
   return { adopted, skipped };
@@ -817,7 +1071,7 @@ export async function adoptConfigImportedRagSources(
 /**
  * Remove config-driven entities that are no longer in the config.
  *
- * When an entity is removed from config.yaml, it should be deleted
+ * When an entity is removed from app-config.yaml, it should be deleted
  * from the database on the next server restart.
  */
 export async function cleanupStaleConfigDriven(
@@ -831,7 +1085,10 @@ export async function cleanupStaleConfigDriven(
   const agentCollection =
     await getCollection<DynamicAgentConfig>("dynamic_agents");
   const staleAgents = await agentCollection
-    .find({ config_driven: true, config_import_adopted: { $ne: true } } as never)
+    .find({
+      config_driven: true,
+      config_import_adopted: { $ne: true },
+    } as never)
     .toArray();
   let agentsDeleted = 0;
   for (const agent of staleAgents) {
@@ -853,8 +1110,7 @@ export async function cleanupStaleConfigDriven(
   // every restart wiped them (the seed config declares no `mcp_servers`),
   // which silently removed e.g. the `knowledge-base` server and reintroduced
   // the empty-Bearer 401 until the operator re-synced.
-  const serverCollection =
-    await getCollection<MCPServerConfig>("mcp_servers");
+  const serverCollection = await getCollection<MCPServerConfig>("mcp_servers");
   const staleServers = await serverCollection
     .find({ config_driven: true, source: { $ne: "agentgateway" } } as never)
     .toArray();
@@ -886,7 +1142,8 @@ export async function cleanupStaleConfigDriven(
   }
 
   // Cleanup stale workflow configs
-  const workflowCollection = await getCollection<WorkflowConfig>("workflow_configs");
+  const workflowCollection =
+    await getCollection<WorkflowConfig>("workflow_configs");
   const staleWorkflows = await workflowCollection
     .find({ config_driven: true })
     .toArray();
@@ -905,9 +1162,14 @@ export async function cleanupStaleConfigDriven(
   // extra guard needed — unlike MCP servers, nothing else discovers/writes
   // `rag_ingestion_sources` records at runtime with `config_driven: true`
   // outside this seed path.
-  const ragSourceCollection = await getCollection<IngestionSourceConfig>("rag_ingestion_sources");
+  const ragSourceCollection = await getCollection<IngestionSourceConfig>(
+    "rag_ingestion_sources",
+  );
   const staleRagSources = await ragSourceCollection
-    .find({ config_driven: true, config_import_adopted: { $ne: true } } as never)
+    .find({
+      config_driven: true,
+      config_import_adopted: { $ne: true },
+    } as never)
     .toArray();
   let ragSourcesDeleted = 0;
   for (const source of staleRagSources) {
@@ -915,12 +1177,26 @@ export async function cleanupStaleConfigDriven(
       console.log(
         `[seed-config] Removing stale config-driven rag source: ${source.source_id}`,
       );
-      await ragSourceCollection.deleteOne({ source_id: source.source_id } as never);
+      // Removing declarative source configuration does not implicitly purge
+      // already-indexed content or its independent query grants. It does need
+      // exact management-tuple cleanup.
+      if (isOpenFgaReconciliationEnabled()) {
+        await deleteAllIngestionSourceRelationshipTuples(source.source_id);
+      }
+      await ragSourceCollection.deleteOne({
+        source_id: source.source_id,
+      } as never);
       ragSourcesDeleted++;
     }
   }
 
-  if (agentsDeleted || serversDeleted || modelsDeleted || workflowsDeleted || ragSourcesDeleted) {
+  if (
+    agentsDeleted ||
+    serversDeleted ||
+    modelsDeleted ||
+    workflowsDeleted ||
+    ragSourcesDeleted
+  ) {
     console.log(
       `[seed-config] Cleaned up stale config-driven entities: ` +
         `${agentsDeleted} agents, ${serversDeleted} servers, ${modelsDeleted} models, ${workflowsDeleted} workflows, ${ragSourcesDeleted} rag sources`,
@@ -1001,8 +1277,7 @@ Be concise and helpful.`,
 export async function bootstrapDefaultDynamicAgentIfEmpty(): Promise<boolean> {
   if (!isMongoDBConfigured) return false;
 
-  const collection =
-    await getCollection<DynamicAgentConfig>("dynamic_agents");
+  const collection = await getCollection<DynamicAgentConfig>("dynamic_agents");
   const existingCount = await collection.countDocuments({});
   if (existingCount > 0) return false;
 
@@ -1023,6 +1298,7 @@ export async function bootstrapDefaultDynamicAgentIfEmpty(): Promise<boolean> {
       previousSharedTeamSlugs: [],
       globalUserAccess: true,
       previousGlobalUserAccess: false,
+      unlinkedServiceAccountSub: await resolveUnlinkedServiceAccountSub(),
       logContext: "bootstrap insert",
     });
   } catch (err) {
@@ -1051,10 +1327,10 @@ export async function bootstrapDefaultDynamicAgentIfEmpty(): Promise<boolean> {
 export async function reconcileHelloWorldBootstrapAgent(): Promise<boolean> {
   if (!isMongoDBConfigured) return false;
 
-  const collection =
-    await getCollection<DynamicAgentConfig>("dynamic_agents");
+  const collection = await getCollection<DynamicAgentConfig>("dynamic_agents");
   const now = new Date().toISOString();
   const doc = buildHelloWorldAgentDoc(now);
+  const unlinkedServiceAccountSub = await resolveUnlinkedServiceAccountSub();
 
   const result = await collection.updateOne(
     {
@@ -1092,6 +1368,7 @@ export async function reconcileHelloWorldBootstrapAgent(): Promise<boolean> {
       previousSharedTeamSlugs: [],
       globalUserAccess: true,
       previousGlobalUserAccess: false,
+      unlinkedServiceAccountSub,
       logContext: "bootstrap revision update",
     });
     console.log(
@@ -1114,6 +1391,7 @@ export async function reconcileHelloWorldBootstrapAgent(): Promise<boolean> {
       previousSharedTeamSlugs: normalizeStringArray(existing.shared_with_teams),
       globalUserAccess: existing.visibility === "global",
       previousGlobalUserAccess: existing.visibility === "global",
+      unlinkedServiceAccountSub,
       logContext: "bootstrap self-heal",
     });
   }
@@ -1126,10 +1404,10 @@ export async function reconcileHelloWorldBootstrapAgent(): Promise<boolean> {
  * Exposed so admins can recognize the seeded rule in the Admin UI / API and
  * tests can target it.
  */
-export const AUTO_CREATE_TEAMS_BOOTSTRAP_RULE_ID = "auto-create-teams-bootstrap";
+export const AUTO_CREATE_TEAMS_BOOTSTRAP_RULE_ID =
+  "auto-create-teams-bootstrap";
 
-const AUTO_CREATE_TEAMS_BOOTSTRAP_ACTOR =
-  "system:auto-create-teams-bootstrap";
+const AUTO_CREATE_TEAMS_BOOTSTRAP_ACTOR = "system:auto-create-teams-bootstrap";
 
 /**
  * Build the permissive default identity-group-sync rule. One rule that:
@@ -1194,14 +1472,18 @@ export async function bootstrapDefaultIdentityGroupSyncRuleIfEmpty(): Promise<bo
   }
   if (!isMongoDBConfigured) return false;
 
-  const collection = await getCollection<{ id: string; provider_id?: string; name?: string }>(
-    "identity_group_sync_rules",
-  );
+  const collection = await getCollection<{
+    id: string;
+    provider_id?: string;
+    name?: string;
+  }>("identity_group_sync_rules");
 
   const now = new Date().toISOString();
   const rule = buildAutoCreateTeamsBootstrapRule(now);
 
-  const existing = await collection.findOne({ id: AUTO_CREATE_TEAMS_BOOTSTRAP_RULE_ID } as { id: string });
+  const existing = await collection.findOne({
+    id: AUTO_CREATE_TEAMS_BOOTSTRAP_RULE_ID,
+  } as { id: string });
 
   if (!existing) {
     try {
@@ -1225,14 +1507,20 @@ export async function bootstrapDefaultIdentityGroupSyncRuleIfEmpty(): Promise<bo
   // Rule exists — update fields that may be stale from an older seed (e.g.
   // provider_id was "oidc-claims" before the wildcard "*" was introduced).
   const needsUpdate =
-    existing.provider_id !== rule.provider_id ||
-    existing.name !== rule.name;
+    existing.provider_id !== rule.provider_id || existing.name !== rule.name;
 
   if (!needsUpdate) return false;
 
   await collection.updateOne(
     { id: AUTO_CREATE_TEAMS_BOOTSTRAP_RULE_ID } as { id: string },
-    { $set: { provider_id: rule.provider_id, name: rule.name, updated_at: now, updated_by: AUTO_CREATE_TEAMS_BOOTSTRAP_ACTOR } } as object,
+    {
+      $set: {
+        provider_id: rule.provider_id,
+        name: rule.name,
+        updated_at: now,
+        updated_by: AUTO_CREATE_TEAMS_BOOTSTRAP_ACTOR,
+      },
+    } as object,
   );
   console.log(
     `[seed-config] Updated identity-group-sync bootstrap rule: provider_id=${rule.provider_id}`,
@@ -1357,7 +1645,10 @@ export async function reconcileExistingPlatformMcpServerOpenFgaTuples(): Promise
   for (const server of servers) {
     const serverId = String(server._id ?? "").trim();
     if (!serverId) continue;
-    await reconcileConfigDrivenMcpServerRelationships({ serverId, organizationId: orgId });
+    await reconcileConfigDrivenMcpServerRelationships({
+      serverId,
+      organizationId: orgId,
+    });
   }
 
   if (servers.length > 0) {
@@ -1375,25 +1666,37 @@ export async function reconcileExistingPlatformMcpServerOpenFgaTuples(): Promise
 export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
   if (!isMongoDBConfigured || !isOpenFgaReconciliationEnabled()) return 0;
 
-  const { getPlatformDefaultAgentId } = await import("@/lib/rbac/platform-default");
+  const { getPlatformDefaultAgentId } = await import(
+    "@/lib/rbac/platform-default"
+  );
   const platformDefaultAgentId = await getPlatformDefaultAgentId();
 
   const collection = await getCollection<DynamicAgentConfig>("dynamic_agents");
   const agents = await collection
-    .find({}, {
-      projection: {
-        _id: 1,
-        allowed_tools: 1,
-        owner_subject: 1,
-        owner_id: 1,
-        owner_team_slug: 1,
-        shared_with_teams: 1,
-        visibility: 1,
+    .find(
+      {},
+      {
+        projection: {
+          _id: 1,
+          allowed_tools: 1,
+          owner_subject: 1,
+          owner_id: 1,
+          owner_team_slug: 1,
+          shared_with_teams: 1,
+          visibility: 1,
+        },
       },
-    })
+    )
     .toArray();
 
   const orgId = caipeOrgKey();
+  // Resolved once for the whole sweep. `explicitAgentIds` records the agents an
+  // admin explicitly granted the unlinked SA via the Unlinked Access panel;
+  // those grants are owned by the admin, not by visibility, so the sweep must
+  // re-assert (self-heal) them rather than delete them. For global agents the
+  // sub also drives the everyone-can-use backfill.
+  const { sub: unlinkedServiceAccountSub, explicitAgentIds } =
+    await resolveUnlinkedServiceAccountGrantState();
   for (const agent of agents) {
     const agentId = String(agent._id ?? "").trim();
     if (!agentId) continue;
@@ -1415,12 +1718,19 @@ export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
       // Sweep stale org-wide chat grants on team agents (including agents
       // demoted from global before reconcile carried delete flags).
       previousGlobalUserAccess: !isGlobal && !retainPlatformDefaultGrant,
+      unlinkedServiceAccountSub,
+      // An explicit admin grant survives the sweep: preserve the unlinked SA's
+      // `can_use` tuple for non-global agents the admin granted directly, and
+      // re-assert it if a prior visibility-driven delete removed it.
+      unlinkedGrantIsExplicit: explicitAgentIds.has(agentId),
       failClosed: false,
     });
   }
 
   if (agents.length > 0) {
-    console.log(`[seed-config] Reconciled OpenFGA tuples for ${agents.length} dynamic agent(s)`);
+    console.log(
+      `[seed-config] Reconciled OpenFGA tuples for ${agents.length} dynamic agent(s)`,
+    );
   }
   return agents.length;
 }
@@ -1438,9 +1748,7 @@ export async function applySeedConfig(): Promise<void> {
   if (!configPath) {
     console.log("[seed-config] APP_CONFIG_PATH not set, skipping seed");
   } else if (!isMongoDBConfigured) {
-    console.warn(
-      "[seed-config] MongoDB not configured, skipping seed",
-    );
+    console.warn("[seed-config] MongoDB not configured, skipping seed");
   } else {
     try {
       const config = loadSeedConfig(configPath);
@@ -1455,29 +1763,28 @@ export async function applySeedConfig(): Promise<void> {
 
       // Extract current IDs for stale cleanup
       const currentAgentIds = new Set(
-        config.agents
-          .map((a) => a.id as string)
-          .filter(Boolean),
+        config.agents.map((a) => a.id as string).filter(Boolean),
       );
       const currentServerIds = new Set(
-        config.mcp_servers
-          .map((s) => s.id as string)
-          .filter(Boolean),
+        config.mcp_servers.map((s) => s.id as string).filter(Boolean),
       );
       const currentModelIds = new Set(
-        config.models
-          .map((m) => m.model_id)
-          .filter(Boolean),
+        config.models.map((m) => m.model_id).filter(Boolean),
       );
       const currentWorkflowIds = new Set(
-        config.workflow_configs
-          .map((w) => w.id as string)
-          .filter(Boolean),
+        config.workflow_configs.map((w) => w.id as string).filter(Boolean),
       );
       const currentRagSourceIds = new Set(
         config.rag_sources
-          .map((s) => extractRagSourceTypeFields(s)?.identity)
-          .filter((identity): identity is IngestionSourceIdentity => identity !== undefined)
+          .flatMap((source) => {
+            try {
+              validateSourceSpecificInputFields(source);
+              const extracted = extractIngestionSourceTypeFields(source);
+              return extracted ? [extracted.identity] : [];
+            } catch {
+              return [];
+            }
+          })
           .map((identity) => computeIngestionSourceId(identity)),
       );
 
@@ -1546,7 +1853,26 @@ export async function applySeedConfig(): Promise<void> {
     try {
       await reconcileExistingAgentOpenFgaTuples();
     } catch (err) {
-      console.error("[seed-config] Dynamic agent OpenFGA reconcile threw:", err);
+      console.error(
+        "[seed-config] Dynamic agent OpenFGA reconcile threw:",
+        err,
+      );
+    }
+    try {
+      const { reconcileExistingUnlinkedKnowledgeAccess } = await import(
+        "@/lib/rbac/unlinked-knowledge-access"
+      );
+      const result = await reconcileExistingUnlinkedKnowledgeAccess();
+      if (result.datasourceCount > 0 || result.collectionCount > 0) {
+        console.log(
+          `[seed-config] Reconciled unlinked access for ${result.datasourceCount} datasource(s) and ${result.collectionCount} collection(s)`,
+        );
+      }
+    } catch (err) {
+      console.error(
+        "[seed-config] Unlinked knowledge access reconcile threw:",
+        err,
+      );
     }
   }
 

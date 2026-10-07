@@ -174,7 +174,7 @@ test.describe("mocked workflow agent service auth", () => {
     await page.getByText("SRE Agent", { exact: true }).click();
     await expect(page.getByText(/Edit Agent - SRE Agent/i)).toBeVisible();
 
-    await page.getByRole("button", { name: "5 Advanced" }).click();
+    await page.getByRole("button", { name: /^\d+ Advanced$/ }).click();
     await page.getByRole("button", { name: /^Workflows/i }).click();
     await expect(page.getByText("Platform team workflow")).toBeVisible();
     await page.getByRole("button", { name: /Platform team workflow/i }).click();

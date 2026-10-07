@@ -18,12 +18,17 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       serviceAccountName: {{ include "openfga-authz-bridge.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: openfga-authz-bridge
-          image: "{{ include "openfga-authz-bridge.imageRepository" (dict "root" . "repository" .Values.image.repository) }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: OPENFGA_HTTP
@@ -38,6 +43,8 @@ spec:
               value: {{ .Values.openfga.relation | quote }}
             - name: OPENFGA_OBJECT
               value: {{ .Values.openfga.object | quote }}
+            - name: CAIPE_ORG_KEY
+              value: {{ .Values.organizationKey | quote }}
             {{- if .Values.openfga.bypassSubs }}
             - name: OPENFGA_BYPASS_SUBS
               value: {{ .Values.openfga.bypassSubs | quote }}
@@ -70,6 +77,12 @@ spec:
               value: {{ .Values.audit.tenantId | quote }}
             - name: AUDIT_SUBJECT_SALT
               value: {{ .Values.audit.subjectSalt | quote }}
+            {{- if .Values.audit.fullFidelityAllows }}
+            - name: AUDIT_FULL_FIDELITY_ALLOWS
+              value: "true"
+            {{- end }}
+            - name: AUDIT_ALLOW_ROLLUP_FLUSH_SECONDS
+              value: {{ .Values.audit.allowRollupFlushSeconds | quote }}
             {{- end }}
             {{- if .Values.callerToolCheck.enabled }}
             - name: CAIPE_CALLER_TOOL_CHECK_ENABLED

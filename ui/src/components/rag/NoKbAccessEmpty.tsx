@@ -21,7 +21,7 @@ export function NoKbAccessEmpty({ surface, secondary }: NoKbAccessEmptyProps) {
   const headline = `You don't have access to any knowledge bases yet.`;
   const detail =
     secondary ??
-    `Ask a team admin to share a knowledge base with your team, then come back to ${surface}.`;
+    `Ask an admin for Search access to an existing knowledge base or permission to create a datasource, then come back to ${surface}.`;
 
   return (
     <div className="flex flex-col items-center justify-center gap-4 p-12 text-center">

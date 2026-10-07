@@ -28,7 +28,7 @@ const webexBot = { id: "primary", name: "Primary bot", available: true };
 
 function webexHandler(state: {
   routeWrites: unknown[];
-  defaultsRequests: unknown[];
+  onboardingRequests: unknown[];
   routes: unknown[];
 }): MockRouteHandler {
   return async ({ route, path, method }) => {
@@ -125,18 +125,11 @@ function webexHandler(state: {
       return true;
     }
 
-    if (path === "/api/admin/webex/spaces/defaults" && method === "POST") {
-      state.defaultsRequests.push(await postJson(route));
+    if (path === "/api/admin/webex/spaces/onboard" && method === "POST") {
+      state.onboardingRequests.push(await postJson(route));
       await fulfillJson(route, {
-        data: {
-          summary: {
-            spaces_onboarded: 1,
-            spaces_assigned_team: 1,
-            space_grants_ensured: 1,
-            routes_ensured: 1,
-            routes_preserved: 0,
-          },
-        },
+        success: true,
+        data: { pending_approval: false },
       });
       return true;
     }
@@ -217,7 +210,7 @@ test.describe("mocked Webex workflow agent routing regression", () => {
   test("onboards a Webex space to the same MCP-backed agent used in workflows", async ({
     page,
   }) => {
-    const defaultsRequests: unknown[] = [];
+    const onboardingRequests: unknown[] = [];
     const routeWrites: unknown[] = [];
     const routes: unknown[] = [];
 
@@ -225,12 +218,15 @@ test.describe("mocked Webex workflow agent routing regression", () => {
       isAdmin: true,
       session: adminSession,
       gates: { webex: true },
-      handlers: [webexHandler({ routeWrites, defaultsRequests, routes })],
+      handlers: [webexHandler({ routeWrites, onboardingRequests, routes })],
     });
 
-    await page.goto("/admin?cat=integrations&tab=webex", {
+    await page.goto("/admin/integrations/webex", {
       waitUntil: "domcontentloaded",
     });
+    // Default landing tab is "Configured spaces"; switch to "Configure
+    // spaces" for onboarding.
+    await page.getByRole("tab", { name: "Configure spaces" }).click();
     await expect(
       page.getByRole("region", { name: "Configure spaces" }),
     ).toBeVisible();
@@ -239,9 +235,12 @@ test.describe("mocked Webex workflow agent routing regression", () => {
     await expect(
       page.getByRole("status", { name: /Discovered: 2/i }),
     ).toBeVisible();
-    await page
-      .getByRole("checkbox", { name: /Import Incident Bridge/i })
-      .check();
+    await expect(
+      page.getByRole("checkbox", { name: /Import Incident Bridge/i }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("checkbox", { name: /Import Workflow Alerts/i }),
+    ).toBeChecked();
     await page
       .getByRole("combobox", { name: "Bulk team for selected rows" })
       .click();
@@ -249,21 +248,15 @@ test.describe("mocked Webex workflow agent routing regression", () => {
       .getByRole("option", { name: /Platform Team.*team:platform/i })
       .click();
     await page
-      .getByRole("button", { name: "Bulk Dynamic Agent for selected rows" })
+      .getByRole("combobox", { name: "Bulk Dynamic Agent for selected rows" })
       .click();
     await page
       .getByRole("option", { name: new RegExp(workflowAgent.name, "i") })
       .click();
     await page
-      .getByRole("button", { name: /^Apply to 2 selected rows$/i })
+      .getByRole("button", { name: /^Apply to 1 selected row$/i })
       .click();
 
-    await expect(
-      page.getByRole("combobox", { name: /Team for Incident Bridge/i }),
-    ).toContainText("Platform Team");
-    await expect(
-      page.getByRole("button", { name: /Dynamic Agent for Incident Bridge/i }),
-    ).toContainText(workflowAgent.name);
     await expect(
       page.getByRole("checkbox", { name: /Import Workflow Alerts/i }),
     ).toBeChecked();
@@ -271,63 +264,20 @@ test.describe("mocked Webex workflow agent routing regression", () => {
       page.getByRole("combobox", { name: /Team for Workflow Alerts/i }),
     ).toContainText("Platform Team");
     await expect(
-      page.getByRole("button", { name: /Dynamic Agent for Workflow Alerts/i }),
+      page.getByRole("combobox", { name: /Dynamic Agent for Workflow Alerts/i }),
     ).toContainText(workflowAgent.name);
-    await page.getByRole("button", { name: /^Set up 2 spaces$/ }).click();
+    await page.getByRole("button", { name: /^Submit 1 space$/ }).click();
 
-    await expect.poll(() => defaultsRequests.length).toBe(1);
-    expect(defaultsRequests[0]).toMatchObject({
+    await expect.poll(() => onboardingRequests.length).toBe(1);
+    expect(onboardingRequests[0]).toMatchObject({
+      bot_id: webexBot.id,
+      space_id: "space-onboard-new",
+      space_name: "Workflow Alerts",
       team_slug: "platform",
       agent_id: workflowAgent.id,
-      create_routes: true,
-      manual_spaces: [
-        { id: "space-incidents", name: "Incident Bridge", bot_id: webexBot.id },
-        { id: "space-onboard-new", name: "Workflow Alerts", bot_id: webexBot.id },
-      ],
+      listen: "mention",
+      create_route: true,
     });
-  });
-
-  test("fixes Webex listen mode so the bot can dispatch plain messages to the workflow agent", async ({
-    page,
-  }) => {
-    const routeWrites: unknown[] = [];
-    const routes: unknown[] = [
-      {
-        agent_id: workflowAgent.id,
-        enabled: true,
-        priority: 100,
-        users: { enabled: true, listen: "mention" },
-      },
-    ];
-
-    await installMockedRbacApp(page, {
-      isAdmin: false,
-      session: teamMemberSession,
-      gates: {
-        webex: true,
-        settings: false,
-        teams: false,
-        users: false,
-        metrics: false,
-        health: false,
-      },
-      handlers: [webexHandler({ routeWrites, defaultsRequests: [], routes })],
-    });
-
-    await page.goto("/admin?cat=integrations&tab=webex", {
-      waitUntil: "domcontentloaded",
-    });
-    await expect(page.getByText("My Webex Space Settings")).toBeVisible();
-    await expect(page.getByText("Incident Bridge")).toBeVisible();
-    await page.getByText("Incident Bridge").click();
-    const fixButton = page.getByRole("button", {
-      name: new RegExp(`Fix routing for ${workflowAgent.id}`),
-    });
-    await expect(fixButton).toBeVisible();
-    await fixButton.click();
-
-    await expect.poll(() => routeWrites.length).toBe(1);
-    expect(JSON.stringify(routeWrites[0])).toContain('"listen":"all"');
   });
 
   test("lets a non-org-admin team member manage Webex routing for a team-shared space", async ({
@@ -354,20 +304,22 @@ test.describe("mocked Webex workflow agent routing regression", () => {
         metrics: false,
         health: false,
       },
-      handlers: [webexHandler({ routeWrites, defaultsRequests: [], routes })],
+      handlers: [webexHandler({ routeWrites, onboardingRequests: [], routes })],
     });
 
-    await page.goto("/admin?cat=integrations&tab=webex", {
+    await page.goto("/admin/integrations/webex", {
       waitUntil: "domcontentloaded",
     });
-    await expect(page.getByText("My Webex Space Settings")).toBeVisible();
+    await expect(page.getByText("Webex spaces", { exact: true })).toBeVisible();
     await expect(
       page.getByText(
-        "Manage bot routing behavior only for Webex spaces where OpenFGA grants you space admin access.",
+        "Manage existing Webex integrations or request onboarding for a space your team uses.",
       ),
     ).toBeVisible();
     await page.getByText("Incident Bridge").click();
-    await expect(page.getByText(workflowAgent.id)).toBeVisible();
+    await expect(
+      page.getByText(`agent:${workflowAgent.id}`, { exact: true }),
+    ).toBeVisible();
     await expect(page.getByRole("tab", { name: "Onboard spaces" })).toHaveCount(
       0,
     );

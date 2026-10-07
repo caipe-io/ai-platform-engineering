@@ -547,6 +547,32 @@ export function MetricsTab() {
           />
         </div>
       </section>
+
+      <section className="space-y-4">
+        <div>
+          <h3 className="text-lg font-semibold">Input Files</h3>
+          <p className="text-sm text-muted-foreground">
+            Attached files dropped from the user turn, by reason. A rise in <code>not_accepted_by_model</code> points to a model or capability regression rather than user behavior.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <TimeseriesChart
+            title="Dropped Input Files Over Time"
+            description={`Files dropped in each rolling ${smartDurationFormat(range.rateWindowSeconds)} window, by reason`}
+            state={metricState(dependencies, "dropped_input_files_trend")}
+            labelKey="reason"
+            formatValue={smartCountFormat}
+            formatTime={formatTimestamp}
+            type="line"
+          />
+          <DonutChart
+            title="Dropped Input Files by Reason"
+            description={`Why attached files were dropped over ${range.label}`}
+            state={metricState(dependencies, "dropped_input_files_by_reason")}
+            labelKey="reason"
+          />
+        </div>
+      </section>
     </div>
   );
 }

@@ -36,6 +36,7 @@ interface TeamDocument {
   _id?: unknown;
   slug: string;
   name: string;
+  status?: string;
 }
 
 // Directory member as returned by a connector, before we resolve its subject.
@@ -61,13 +62,16 @@ function memberResolveConcurrency(): number {
 }
 
 
-async function listExistingTeams(): Promise<Array<{ id: string; slug: string; name: string }>> {
+async function listExistingTeams(): Promise<
+  Array<{ id: string; slug: string; name: string; status?: string }>
+> {
   const col = await getCollection<TeamDocument>("teams");
-  const teams = await col.find({}).project({ id: 1, slug: 1, name: 1 }).toArray();
+  const teams = await col.find({}).project({ id: 1, slug: 1, name: 1, status: 1 }).toArray();
   return teams.map((t) => ({
     id: t.id ?? String(t._id ?? t.slug),
     slug: t.slug,
     name: t.name,
+    status: t.status,
   }));
 }
 
@@ -414,7 +418,8 @@ export async function executeSyncRun(runId: string, provider: string, actor: str
     console.log(
       `[IdpSync] run ${runId} success: ${groups.length} groups, ` +
         `+${result.membershipSourcesAdded}/-${result.membershipSourcesRemoved} memberships, ` +
-        `${totalArchived} teams archived (${sweptArchived} from sweep)`
+        `${totalArchived} teams archived (${sweptArchived} from sweep), ` +
+        `${result.teamsUnarchived} team(s) unarchived`
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -10,8 +10,7 @@
   - a denied authorize never reaches the storage write (fail-closed);
   - the endpoints are protected by ``require_authenticated_user`` (``401`` with
     no token);
-  - a coarse-ADMIN service principal is permitted through the *real* helper
-    (backward-compat short-circuit).
+  - a coarse role does not replace an explicit OpenFGA grant.
 
 The TestClient is used WITHOUT a ``with`` block so the app lifespan (Milvus /
 Redis / Neo4j connections) is not triggered.
@@ -127,14 +126,22 @@ def test_create_passes_owner_team_slug_to_authorize(client, _wire, monkeypatch):
     spy.assert_awaited_once_with(ANY, "platform")
 
 
-def test_create_allows_coarse_admin_via_real_helper(client, monkeypatch):
-    """A coarse-ADMIN service principal is permitted by the REAL authorize
-    helper's backward-compat short-circuit (no monkeypatch of authorize)."""
+def test_create_does_not_trust_coarse_admin_via_real_helper(client, monkeypatch):
     restapi.app.dependency_overrides[require_authenticated_user] = lambda: _user(role=Role.ADMIN)
+    monkeypatch.setenv("OPENFGA_HTTP", "http://openfga")
+
+    async def _deny_org_admin(_user):
+        return False
+
+    async def _deny_team(_user, _relation, _object_type, _object_id):
+        return False
+
+    monkeypatch.setattr("server.rbac._openfga_check_org_admin", _deny_org_admin)
+    monkeypatch.setattr("server.rbac._openfga_check_object", _deny_team)
 
     res = client.post("/v1/mcp/custom-tools", json=_tool_body(owner_team_slug="platform"))
 
-    assert res.status_code == 201
+    assert res.status_code == 403
 
 
 # ---------------------------------------------------------------------------

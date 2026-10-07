@@ -19,6 +19,7 @@ Trivial-change carve-outs (so we don't fail PRs that legitimately
 don't need a doc update):
 
   - Pure formatting / whitespace changes (rare in practice).
+  - Copyright and SPDX license-header-only changes.
   - Test files (``tests/`` or ``__tests__/`` segment in the path).
   - Markdown files anywhere in the repo (including ADRs).
   - The `BLOCKERS.md` and `CHECKLIST.md` files (operator notes, not docs).
@@ -178,6 +179,45 @@ def _changed_files(base: str, head: str) -> list[str]:
     return [line.strip() for line in raw.splitlines() if line.strip()]
 
 
+def _is_license_header_line(line: str) -> bool:
+    """Return whether a changed line is copyright/SPDX metadata."""
+    stripped = line.lstrip()
+    for marker in ("//", "/*", "#", "*", ";"):
+        if stripped.startswith(marker):
+            content = stripped.removeprefix(marker).strip().lower()
+            break
+    else:
+        return False
+    return content.startswith(
+        (
+            "copyright ",
+            "spdx-filecopyrighttext:",
+            "spdx-license-identifier:",
+        )
+    )
+
+
+def _has_substantive_change(base: str, head: str, path: str) -> bool:
+    """Return whether a file diff changes more than license metadata."""
+    raw = _git(
+        [
+            "diff",
+            "--unified=0",
+            "--no-ext-diff",
+            f"{base}...{head}",
+            "--",
+            path,
+        ]
+    )
+    for line in raw.splitlines():
+        if line.startswith(("+++", "---")) or not line.startswith(("+", "-")):
+            continue
+        content = line[1:].strip()
+        if content and not _is_license_header_line(content):
+            return True
+    return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Fail if RBAC code changed but how-rbac-works.md didn't."
@@ -207,8 +247,13 @@ def main() -> int:
         print("validate_rbac_docs: no files changed; nothing to check.")
         return 0
 
-    rbac_changes = [
+    rbac_candidates = [
         f for f in files if _is_rbac_code(f) and not _is_trivial(f)
+    ]
+    rbac_changes = [
+        f
+        for f in rbac_candidates
+        if _has_substantive_change(base, args.head, f)
     ]
     doc_updated = any(d in files for d in CANONICAL_DOCS)
 

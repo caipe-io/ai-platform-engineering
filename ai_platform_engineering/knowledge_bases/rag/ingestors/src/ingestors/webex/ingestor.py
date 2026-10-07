@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-"""
-Webex message ingestor for RAG.
-Fetches messages from configured Webex spaces and ingests them as documents.
-Each space becomes a datasource, and messages are grouped into thread-based documents.
-"""
+"""Webex message ingestor for persisted and on-demand RAG datasources."""
 
 import os
-import json
 import time
+import traceback
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 import requests
@@ -16,19 +12,25 @@ from urllib3.util.retry import Retry
 from langchain_core.documents import Document
 
 from common.ingestor import IngestorBuilder, Client
+from common.ingestor_listener import reload_persisted_datasources, run_ingestor_listener
 from common.models.rag import DataSourceInfo, DocumentMetadata
-from common.job_manager import JobStatus
+from common.models.server import (
+  WebexIngestRequest,
+  WebexIngestorCommand,
+  WebexReloadRequest,
+)
+from common.job_manager import JobStatus, JobManager
 from common.utils import get_logger, get_fresh_until
 
 logger = get_logger(__name__)
 
 
-# Sync interval (also used to calculate fresh_until)
-sync_interval = int(os.environ.get("SYNC_INTERVAL", "86400"))  # Default 24 hours
 init_delay = int(os.environ.get("INIT_DELAY_SECONDS", "0"))
 
 # Webex API base URL
 WEBEX_API_BASE = "https://webexapis.com/v1"
+
+MAX_INGESTION_TASKS = int(os.environ.get("WEBEX_MAX_INGESTION_TASKS", "5"))
 
 
 def iso_to_timestamp(iso_string: str) -> int:
@@ -107,7 +109,13 @@ class WebexSpaceSyncer:
     """Get details about a specific space."""
     return self._make_request("GET", f"rooms/{space_id}")
 
-  def fetch_space_messages(self, space_id: str, space_name: str, last_message_time: Optional[str] = None) -> tuple[List[Dict], str]:
+  def fetch_space_messages(
+    self,
+    space_id: str,
+    space_name: str,
+    last_message_time: Optional[str] = None,
+    raise_on_error: bool = False,
+  ) -> tuple[List[Dict], str]:
     """
     Fetch new messages from a Webex space since last sync.
     Note: Webex API doesn't support 'since' parameter, so we fetch latest messages
@@ -182,6 +190,8 @@ class WebexSpaceSyncer:
 
     except Exception as e:
       logger.error(f"Error fetching messages from '{space_name}': {e}")
+      if raise_on_error:
+        raise
       return [], last_message_time or ""
 
   def get_message_details(self, message_id: str) -> Dict:
@@ -380,116 +390,230 @@ class WebexSpaceSyncer:
     return Document(page_content=content, metadata=metadata.model_dump())
 
 
-async def sync_webex_spaces(client: Client):
-  """Sync function that processes all configured Webex spaces"""
-
-  # Read and validate config at runtime so missing creds don't crash the container at import
-  bot_name = os.environ.get("WEBEX_BOT_NAME")
-  if not bot_name:
-    raise ValueError("WEBEX_BOT_NAME environment variable is required")
-
-  webex_token = os.environ.get("WEBEX_ACCESS_TOKEN")
-  if not webex_token:
-    logger.warning("WEBEX_ACCESS_TOKEN not set — skipping sync")
-    return
-
-  spaces_json = os.environ.get("WEBEX_SPACES", "{}")
+async def process_space_ingestion(
+  client: Client,
+  job_manager: JobManager,
+  ingest_request: WebexIngestRequest,
+  job_id: str,
+) -> None:
+  """Process on-demand space ingestion from Redis (server already created datasource+job)."""
   try:
-    spaces = json.loads(spaces_json)
-  except json.JSONDecodeError:
-    spaces = {}
-  if not spaces:
-    logger.warning("No spaces configured (WEBEX_SPACES not set or empty) — skipping sync")
-    return
+    datasource_id = f"webex-space-{ingest_request.space_id}"
 
-  # Initialize Webex syncer
-  syncer = WebexSpaceSyncer(webex_token)
+    datasources = await client.list_datasources(ingestor_id=client.ingestor_id)
+    datasource_info = next((ds for ds in datasources if ds.datasource_id == datasource_id), None)
 
-  # Load timestamps from previous runs (stored in datasource metadata)
-  existing_datasources = await client.list_datasources(ingestor_id=client.ingestor_id)
-  timestamp_map = {}
-  for ds in existing_datasources:
-    if ds.metadata and "last_message_time" in ds.metadata:
-      # Extract space_id from datasource_id (format: webex-space-{space_id})
-      space_id = ds.datasource_id.replace("webex-space-", "")
-      timestamp_map[space_id] = ds.metadata["last_message_time"]
+    if not datasource_info:
+      error_msg = f"Datasource not found: {datasource_id}"
+      logger.error(error_msg)
+      raise ValueError(error_msg)
 
-  # Process each space
-  for space_id, config in spaces.items():
-    space_name = config.get("name", space_id)
-    include_bots = config.get("include_bots", False)
+    job = await job_manager.get_job(job_id)
+    if not job or job.datasource_id != datasource_id:
+      raise ValueError(f"Job {job_id} does not belong to datasource {datasource_id}")
 
-    logger.info(f"Processing space: '{space_name}' (ID: {space_id})")
+    if job.status == JobStatus.TERMINATED:
+      logger.info(f"Job {job_id} was already terminated, skipping processing")
+      return
 
-    # Create or update datasource
-    datasource_id = f"webex-space-{space_id}"
-    last_message_time = timestamp_map.get(space_id)
+    space_name = ingest_request.space_name or (datasource_info.metadata or {}).get("space_name", ingest_request.space_id)
 
-    # Fetch messages
-    messages, newest_time = syncer.fetch_space_messages(space_id, space_name, last_message_time)
+    await job_manager.upsert_job(job_id=job_id, status=JobStatus.IN_PROGRESS, message=f"Starting Webex space ingestion for '{space_name}'")
+    logger.info(f"Processing job: {job_id} for datasource: {datasource_id}")
+
+    webex_token = os.environ.get("WEBEX_ACCESS_TOKEN")
+    if not webex_token:
+      error_msg = "WEBEX_ACCESS_TOKEN not set"
+      logger.error(error_msg)
+      await job_manager.upsert_job(job_id=job_id, status=JobStatus.FAILED, message=error_msg)
+      return
+
+    syncer = WebexSpaceSyncer(webex_token)
+
+    messages, newest_time = syncer.fetch_space_messages(
+      ingest_request.space_id,
+      space_name,
+      None,
+      raise_on_error=True,
+    )
+
+    datasource_info.last_updated = int(time.time())
+    if datasource_info.metadata is None:
+      datasource_info.metadata = {}
+    datasource_info.metadata.update(
+      {
+        "space_id": ingest_request.space_id,
+        "space_name": space_name,
+        "last_message_time": newest_time,
+        "include_bots": ingest_request.include_bots,
+      }
+    )
+    await client.upsert_datasource(datasource_info)
 
     if not messages:
-      logger.info(f"No new messages for space '{space_name}'")
-      continue
+      await job_manager.upsert_job(job_id=job_id, status=JobStatus.COMPLETED, message=f"No messages found for '{space_name}'")
+      return
 
-    # Create datasource
-    datasource = DataSourceInfo(
-      datasource_id=datasource_id,
-      name=f"Webex: {space_name}",
-      ingestor_id=client.ingestor_id or "",
-      description=f"Webex messages from space '{space_name}'",
-      source_type="webex",
-      last_updated=int(time.time()),
-      default_chunk_size=10000,
-      default_chunk_overlap=2000,
-      reload_interval=sync_interval,
-      metadata={"space_id": space_id, "space_name": space_name, "last_message_time": newest_time, "bot_name": bot_name},
-    )
-    await client.upsert_datasource(datasource)
-
-    # Convert messages to documents
-    documents = syncer.group_messages_into_documents(messages, space_id, space_name, include_bots, datasource_id, client.ingestor_id or "")
+    documents = syncer.group_messages_into_documents(messages, ingest_request.space_id, space_name, ingest_request.include_bots, datasource_id, client.ingestor_id or "")
 
     if not documents:
-      logger.info(f"No documents created for space '{space_name}'")
-      continue
+      await job_manager.upsert_job(job_id=job_id, status=JobStatus.COMPLETED, message=f"No documents created for '{space_name}'")
+      return
 
-    logger.info(f"Created {len(documents)} documents for space '{space_name}'")
+    await job_manager.upsert_job(job_id=job_id, total=len(documents), message=f"Ingesting {len(documents)} messages from '{space_name}'")
 
-    # Create job
-    job_response = await client.create_job(datasource_id=datasource_id, job_status=JobStatus.IN_PROGRESS, message=f"Ingesting {len(documents)} messages from space '{space_name}'", total=len(documents))
-    job_id = job_response["job_id"]
+    fresh_until = get_fresh_until(datasource_info.reload_interval)
+    await client.ingest_documents(job_id=job_id, datasource_id=datasource_id, documents=documents, fresh_until=fresh_until)
+
+    await job_manager.upsert_job(job_id=job_id, status=JobStatus.COMPLETED, message=f"Successfully ingested {len(documents)} documents from '{space_name}'")
+    logger.info(f"✓ Successfully ingested {len(documents)} documents from '{space_name}'")
+
+  except Exception as e:
+    error_msg = f"Error processing Webex space {ingest_request.space_id}: {str(e)}"
+    logger.error(error_msg)
+    logger.error(traceback.format_exc())
 
     try:
-      # Ingest documents with fresh_until based on sync interval (not message timestamp)
-      fresh_until = get_fresh_until(sync_interval)
-      await client.ingest_documents(job_id=job_id, datasource_id=datasource_id, documents=documents, fresh_until=fresh_until)
+      if job_id:
+        await job_manager.add_error_msg(job_id, error_msg)
+    except Exception as status_error:
+      logger.warning(
+        f"Failed to record the Webex ingestion error for job {job_id}: {status_error}"
+      )
 
-      # Update job status
-      await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully ingested {len(documents)} documents from space '{space_name}'")
+    raise
 
-      logger.info(f"✓ Successfully ingested {len(documents)} documents from space '{space_name}'")
 
-    except Exception as e:
-      logger.error(f"Error ingesting documents for space '{space_name}': {e}")
-      await client.add_job_error(job_id, [str(e)])
-      await client.update_job(job_id=job_id, job_status=JobStatus.FAILED, message=f"Failed to ingest documents: {str(e)}")
+async def reload_datasource(
+  client: Client,
+  job_manager: JobManager,
+  datasource_info: DataSourceInfo,
+  job_id: str | None = None,
+) -> None:
+  """Reload a single Webex space datasource (incremental sync since its stored last_message_time)."""
+  try:
+    metadata = datasource_info.metadata or {}
+    space_id = metadata.get("space_id", datasource_info.datasource_id.replace("webex-space-", ""))
+    space_name = metadata.get("space_name", space_id)
+    last_message_time = metadata.get("last_message_time")
+    include_bots = metadata.get("include_bots", False)
+
+    webex_token = os.environ.get("WEBEX_ACCESS_TOKEN")
+    if not webex_token:
+      raise RuntimeError("WEBEX_ACCESS_TOKEN not set")
+
+    logger.info(f"Reloading Webex space datasource: {datasource_info.datasource_id}")
+    if job_id is not None:
+      await job_manager.upsert_job(
+        job_id,
+        status=JobStatus.IN_PROGRESS,
+        message=f"Reloading Webex space '{space_name}'",
+      )
+
+    syncer = WebexSpaceSyncer(webex_token)
+
+    messages, newest_time = syncer.fetch_space_messages(
+      space_id,
+      space_name,
+      last_message_time,
+      raise_on_error=job_id is not None,
+    )
+
+    datasource_info.last_updated = int(time.time())
+    datasource_info.metadata = {**metadata, "last_message_time": newest_time if newest_time else last_message_time}
+    await client.upsert_datasource(datasource_info)
+
+    if not messages:
+      logger.info(f"No new messages for '{space_name}' during reload")
+      if job_id is not None:
+        await job_manager.upsert_job(
+          job_id,
+          status=JobStatus.COMPLETED,
+          message=f"No new messages found for '{space_name}'",
+        )
+      return
+
+    documents = syncer.group_messages_into_documents(messages, space_id, space_name, include_bots, datasource_info.datasource_id, client.ingestor_id or "")
+
+    if not documents:
+      logger.info(f"No documents created for '{space_name}' during reload")
+      if job_id is not None:
+        await job_manager.upsert_job(
+          job_id,
+          status=JobStatus.COMPLETED,
+          message=f"No new documents created for '{space_name}'",
+        )
+      return
+
+    if job_id is None:
+      job_response = await client.create_job(datasource_id=datasource_info.datasource_id, job_status=JobStatus.IN_PROGRESS, message=f"Reloading {len(documents)} messages from '{space_name}'", total=len(documents))
+      job_id = job_response["job_id"]
+    else:
+      await job_manager.upsert_job(
+        job_id,
+        total=len(documents),
+        message=f"Reloading {len(documents)} messages from '{space_name}'",
+      )
+
+    fresh_until = get_fresh_until(datasource_info.reload_interval)
+    await client.ingest_documents(job_id=job_id, datasource_id=datasource_info.datasource_id, documents=documents, fresh_until=fresh_until)
+    await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully reloaded {len(documents)} documents from '{space_name}'")
+    logger.info(f"✓ Successfully reloaded {len(documents)} documents from '{space_name}'")
+
+  except Exception as e:
+    logger.error(f"Error reloading {datasource_info.datasource_id}: {e}")
+    logger.error(traceback.format_exc())
+    if job_id:
+      await job_manager.add_error_msg(job_id, str(e))
+    raise
+
+
+async def redis_listener(client: Client):
+  """Run Webex commands through the shared per-ingestor listener."""
+
+  await run_ingestor_listener(
+    client,
+    ingest_command=WebexIngestorCommand.INGEST_SPACE,
+    ingest_model=WebexIngestRequest,
+    ingest_handler=process_space_ingestion,
+    reload_all_command=WebexIngestorCommand.RELOAD_ALL,
+    reload_all_handler=reload_all_webex_spaces,
+    reload_datasource_command=WebexIngestorCommand.RELOAD_DATASOURCE,
+    reload_model=WebexReloadRequest,
+    reload_handler=reload_datasource,
+    max_tasks=MAX_INGESTION_TASKS,
+    describe_ingest=lambda request: f"Webex space ingestion: {request.space_id}",
+  )
+
+
+async def periodic_reload(client: Client) -> None:
+  """Refresh persisted Webex datasources whose interval is due."""
+  await reload_persisted_datasources(client, reload_datasource)
+
+
+async def reload_all_webex_spaces(client: Client) -> None:
+  """Force a reload of every Webex datasource assigned to this worker."""
+  await reload_persisted_datasources(client, reload_datasource, due_only=False)
 
 
 def main():
   """Main entry point for the Webex ingestor"""
 
   bot_name = os.environ.get("WEBEX_BOT_NAME", "webex")
-  spaces_json = os.environ.get("WEBEX_SPACES", "{}")
-  try:
-    spaces = json.loads(spaces_json)
-  except json.JSONDecodeError:
-    spaces = {}
 
-  # Build and run ingestor
-  IngestorBuilder().name(f"webex-{bot_name}").type("webex").description(f"Webex ingestor for bot {bot_name}").metadata({"bot_name": bot_name, "sync_interval": sync_interval, "init_delay": init_delay, "spaces": spaces}).sync_with_fn(sync_webex_spaces).every(sync_interval).with_init_delay(
-    init_delay
-  ).run()
+  # The on-demand queue and persisted per-datasource schedules share one worker.
+  (
+    IngestorBuilder()
+    .name(f"webex-{bot_name}")
+    .type("webex")
+    .description(f"Webex ingestor for bot {bot_name}")
+    .metadata({"bot_name": bot_name, "init_delay": init_delay})
+    .sync_with_fn(periodic_reload)
+    .with_startup(redis_listener)
+    .schedule_from_datasources()
+    .with_init_delay(init_delay)
+    .run()
+  )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 """Phase 2.3 — Slack DM agent resolver (spec 2026-05-24 FR-023).
 

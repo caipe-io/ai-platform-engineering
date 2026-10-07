@@ -1,6 +1,11 @@
 # Per-KB Ontology Graph Filtering (Phase 4 Follow-Up)
 
-**Branch**: TBD &middot; **Date**: 2026-05-27 &middot; **Status**: Draft
+**Branch**: TBD &middot; **Date**: 2026-05-27 &middot; **Status**: Partially implemented
+
+> **2026-08 update:** datasource-provenance filtering is implemented for the
+> data graph. The ontology store still has no datasource provenance; bounded
+> callers now fail closed on ontology REST/MCP reads and use the scoped Data
+> view. This spec remains open for a provenance-aware ontology design.
 
 **Origin**: Phase 5 of the 2026-05-27 fine-grained KB ReBAC plan
 deliberately deferred per-entity ontology-graph filtering. That phase

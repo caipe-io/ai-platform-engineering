@@ -47,3 +47,6 @@ npm test
 ```
 
 Use route files under `ui/src/app/api` as the source of truth for BFF behavior.
+
+Use the [selection control decision table](./selection-controls.md) before
+adding a select, combobox, listbox, or picker.

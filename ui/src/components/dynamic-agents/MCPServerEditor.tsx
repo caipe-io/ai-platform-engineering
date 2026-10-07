@@ -7,6 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Card,CardContent,CardDescription,CardHeader,CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ProviderSelect } from "@/components/ui/provider-select";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
+import { Select } from "@/components/ui/select";
 import { TeamPicker,type TeamPickerOption } from "@/components/ui/team-picker";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -1009,7 +1012,7 @@ export function MCPServerEditor({ server, readOnly, onSave, onCancel, initialVal
 
                   return (
                   <div key={i} className="grid gap-2 md:grid-cols-[1fr_1fr_1fr_2fr_auto]">
-                    <select
+                    <Select
                       aria-label="Credential kind"
                       className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
                       value={source.kind}
@@ -1021,8 +1024,8 @@ export function MCPServerEditor({ server, readOnly, onSave, onCancel, initialVal
                     >
                       <option value="secret_ref">Saved secret</option>
                       <option value="provider_connection">Connected app</option>
-                    </select>
-                    <select
+                    </Select>
+                    <Select
                       aria-label="Credential target"
                       className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
                       value={source.target}
@@ -1032,10 +1035,10 @@ export function MCPServerEditor({ server, readOnly, onSave, onCancel, initialVal
                     >
                       <option value="env">Environment</option>
                       <option value="header">Header</option>
-                    </select>
+                    </Select>
                     {source.target === "header" ? (
                       <div className="space-y-1">
-                        <select
+                        <Select
                           aria-label="Credential header"
                           className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                           value={HEADER_NAME_OPTIONS.includes(source.name as (typeof HEADER_NAME_OPTIONS)[number])
@@ -1051,7 +1054,7 @@ export function MCPServerEditor({ server, readOnly, onSave, onCancel, initialVal
                             </option>
                           ))}
                           <option value={CUSTOM_HEADER_VALUE}>Custom header</option>
-                        </select>
+                        </Select>
                         {!HEADER_NAME_OPTIONS.includes(source.name as (typeof HEADER_NAME_OPTIONS)[number]) ? (
                           <Input
                             aria-label="Custom header name"
@@ -1082,23 +1085,30 @@ export function MCPServerEditor({ server, readOnly, onSave, onCancel, initialVal
                     )}
                     {source.kind === "secret_ref" ? (
                       <div className="space-y-1">
-                        <select
-                          aria-label="Secret"
-                          className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                          value={source.secret_ref ?? ""}
-                          onChange={(event) => handleUpdateCredentialSource(i, "secret_ref", event.target.value)}
+                        <SearchablePicker
+                          options={secretOptions}
+                          selected={selectedSecret}
+                          onSelect={(secret) =>
+                            handleUpdateCredentialSource(i, "secret_ref", secret.id)
+                          }
+                          getOptionKey={(secret) => secret.id}
+                          getOptionLabel={secretOptionLabel}
+                          getSearchText={(secret) => [
+                            secret.id,
+                            secretOptionLabel(secret),
+                          ]}
+                          placeholder={
+                            secretOptions.length === 0
+                              ? "No saved secrets"
+                              : "Select a secret"
+                          }
+                          searchPlaceholder="Search secrets..."
+                          emptyLabel="No secrets match"
+                          ariaLabel="Secret"
+                          required
                           disabled={readOnly || secretOptions.length === 0}
-                          {...SUPPRESS_SECRET_LIKE_INPUT_PROPS}
-                        >
-                          <option value="" disabled>
-                            {secretOptions.length === 0 ? "No saved secrets" : "Select a secret"}
-                          </option>
-                          {secretOptions.map((secret) => (
-                            <option key={secret.id} value={secret.id}>
-                              {secretOptionLabel(secret)}
-                            </option>
-                          ))}
-                        </select>
+                          triggerClassName="h-10 text-sm"
+                        />
                         {selectedSecret?.maskedPreview ? (
                           <p className="inline-flex rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
                             Preview {selectedSecret.maskedPreview}
@@ -1114,34 +1124,34 @@ export function MCPServerEditor({ server, readOnly, onSave, onCancel, initialVal
                          * for all callers" (pinned) option was removed because
                          * it let one user act as another's identity upstream.
                          */}
-                        <select
-                          aria-label="Provider"
-                          className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        <ProviderSelect
+                          ariaLabel="Provider"
+                          className="h-10 w-full text-sm"
+                          options={[
+                            ...(source.provider &&
+                            !oauthConnectorOptions.some(
+                              (connector) =>
+                                connector.provider === source.provider,
+                            )
+                              ? [
+                                  {
+                                    provider: source.provider,
+                                    name: `${source.provider} (not yet connected — set up in Credentials)`,
+                                  },
+                                ]
+                              : []),
+                            ...oauthConnectorOptions.map((connector) => ({
+                              provider: connector.provider,
+                              name: connector.name,
+                            })),
+                          ]}
                           value={source.provider ?? ""}
-                          onChange={(event) =>
-                            handleUpdateCredentialSource(i, "provider", event.target.value)
+                          onChange={(provider) =>
+                            handleUpdateCredentialSource(i, "provider", provider)
                           }
                           disabled={readOnly || oauthConnectorOptions.length === 0}
-                          {...SUPPRESS_PASSWORD_MANAGER_INPUT_PROPS}
-                        >
-                          <option value="" disabled>
-                            {oauthConnectorOptions.length === 0
-                              ? "No OAuth providers"
-                              : "Select a provider"}
-                          </option>
-                          {/* Show a placeholder when the pre-filled provider isn't configured yet */}
-                          {source.provider &&
-                            !oauthConnectorOptions.some((c) => c.provider === source.provider) && (
-                              <option value={source.provider}>
-                                {source.provider} (not yet connected — set up in Credentials)
-                              </option>
-                            )}
-                          {oauthConnectorOptions.map((connector) => (
-                            <option key={connector.id} value={connector.provider}>
-                              {connector.name}
-                            </option>
-                          ))}
-                        </select>
+                          placeholder="Select a provider"
+                        />
                         <p className="text-xs text-muted-foreground">
                           Each caller uses their own connected {" "}
                           {oauthConnectorOptions.find((c) => c.provider === source.provider)?.name ??

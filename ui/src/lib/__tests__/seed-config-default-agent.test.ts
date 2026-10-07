@@ -102,6 +102,7 @@ describe("bootstrapDefaultDynamicAgentIfEmpty", () => {
       previousSharedTeamSlugs: [],
       globalUserAccess: true,
       previousGlobalUserAccess: false,
+      unlinkedServiceAccountSub: null,
       failClosed: false,
     });
   });
@@ -184,6 +185,7 @@ describe("reconcileHelloWorldBootstrapAgent", () => {
       previousSharedTeamSlugs: [],
       globalUserAccess: true,
       previousGlobalUserAccess: true,
+      unlinkedServiceAccountSub: null,
       failClosed: false,
     });
   });

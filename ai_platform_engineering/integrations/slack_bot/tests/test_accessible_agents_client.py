@@ -1,4 +1,4 @@
-# Copyright 2025 CNOE Contributors
+# Copyright 2025 CAIPE Contributors
 # SPDX-License-Identifier: Apache-2.0
 """Tests for ``slack_bot/utils/accessible_agents_client.py``.
 

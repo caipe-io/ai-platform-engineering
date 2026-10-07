@@ -15,7 +15,10 @@ import {
 filterResourcesByPermission,
 requireSkillPermission,
 } from "@/lib/rbac/resource-authz";
-import { reconcileSkillTeamShares } from "@/lib/rbac/skill-team-grants";
+import {
+readSkillSharedTeamSlugsFromOpenFga,
+reconcileSkillTeamShares,
+} from "@/lib/rbac/skill-team-grants";
 import {
 generateSkillIdFromName,
 type ImportConflictAction,
@@ -127,10 +130,18 @@ interface RunZipImportArgs {
    */
   loadVisibleSkills: () => Promise<AgentSkill[]>;
   /** Provider for inserting/overwriting; same testability rationale. */
-  persistSkill: (skill: AgentSkill, mode: "create" | "overwrite") => Promise<void>;
+  persistSkill: (
+    skill: AgentSkill,
+    mode: "create" | "overwrite",
+  ) => Promise<{ rollback?: () => Promise<void> } | void>;
   /** Concrete authorization hook for overwriting an existing skill. */
   canOverwriteSkill?: (skill: AgentSkill) => Promise<void>;
-  grantTeamAccess?: (teamRefs: string[], skillIds: string[]) => Promise<void>;
+  /** Reconcile owner and optional team grants after persistence. */
+  reconcileAccess?: (
+    skill: AgentSkill,
+    mode: "create" | "overwrite",
+    previousSkill?: AgentSkill,
+  ) => Promise<void>;
 }
 
 /**
@@ -203,6 +214,7 @@ export async function runZipImport(
         teamRefs,
         persistSkill: args.persistSkill,
         canOverwriteSkill: args.canOverwriteSkill,
+        reconcileAccess: args.reconcileAccess,
       });
       imported.push(summary);
     } catch (err) {
@@ -227,14 +239,6 @@ export async function runZipImport(
     }
   }
 
-  const grantSkillIds = imported
-    .filter((skill) => skill.outcome === "created" || skill.outcome === "overwritten")
-    .map((skill) => skill.skillId)
-    .filter(Boolean);
-  if (teamRefs.length > 0 && grantSkillIds.length > 0 && args.grantTeamAccess) {
-    await args.grantTeamAccess(teamRefs, grantSkillIds);
-  }
-
   return { phase: "import", imported };
 }
 
@@ -244,14 +248,24 @@ interface ImportOneArgs {
   existingByName: Map<string, AgentSkill>;
   user: { email: string; role?: string };
   teamRefs: string[];
-  persistSkill: (skill: AgentSkill, mode: "create" | "overwrite") => Promise<void>;
+  persistSkill: RunZipImportArgs["persistSkill"];
   canOverwriteSkill?: (skill: AgentSkill) => Promise<void>;
+  reconcileAccess?: RunZipImportArgs["reconcileAccess"];
 }
 
 async function importOne(
   args: ImportOneArgs,
 ): Promise<ImportedSkillSummary> {
-  const { candidate, decision, existingByName, user, teamRefs, persistSkill, canOverwriteSkill } = args;
+  const {
+    candidate,
+    decision,
+    existingByName,
+    user,
+    teamRefs,
+    persistSkill,
+    canOverwriteSkill,
+    reconcileAccess,
+  } = args;
 
   // No conflict resolution provided: the candidate name didn't
   // collide at analyze time, so we treat it as a brand-new import.
@@ -309,6 +323,7 @@ async function importOne(
       teamRefs,
       persistSkill,
       canOverwriteSkill,
+      reconcileAccess,
       durationMs: Date.now() - tStart,
     });
   }
@@ -321,6 +336,7 @@ async function importOne(
     user,
     teamRefs,
     persistSkill,
+    reconcileAccess,
     durationMs: Date.now() - tStart,
   });
 }
@@ -331,12 +347,22 @@ interface CreateNewArgs {
   scanResult: { scan_status: ScanStatus; scan_summary?: string };
   user: { email: string; role?: string };
   teamRefs: string[];
-  persistSkill: (skill: AgentSkill, mode: "create" | "overwrite") => Promise<void>;
+  persistSkill: RunZipImportArgs["persistSkill"];
+  reconcileAccess?: RunZipImportArgs["reconcileAccess"];
   durationMs: number;
 }
 
 async function createNew(args: CreateNewArgs): Promise<ImportedSkillSummary> {
-  const { candidate, saveAsName, scanResult, user, teamRefs, persistSkill, durationMs } = args;
+  const {
+    candidate,
+    saveAsName,
+    scanResult,
+    user,
+    teamRefs,
+    persistSkill,
+    reconcileAccess,
+    durationMs,
+  } = args;
   const id = generateSkillIdFromName(saveAsName);
   const now = new Date();
   const normalizedTeamRefs = normalizeStringList(teamRefs);
@@ -373,7 +399,13 @@ async function createNew(args: CreateNewArgs): Promise<ImportedSkillSummary> {
     is_quick_start: true,
   };
 
-  await persistSkill(skill, "create");
+  const persisted = await persistSkill(skill, "create");
+  try {
+    await reconcileAccess?.(skill, "create");
+  } catch (error) {
+    if (persisted) await persisted.rollback?.();
+    throw error;
+  }
 
   await recordScanEvent({
     trigger: "auto_save",
@@ -412,8 +444,9 @@ interface OverwriteArgs {
   scanResult: { scan_status: ScanStatus; scan_summary?: string };
   user: { email: string; role?: string };
   teamRefs: string[];
-  persistSkill: (skill: AgentSkill, mode: "create" | "overwrite") => Promise<void>;
+  persistSkill: RunZipImportArgs["persistSkill"];
   canOverwriteSkill?: (skill: AgentSkill) => Promise<void>;
+  reconcileAccess?: RunZipImportArgs["reconcileAccess"];
   durationMs: number;
 }
 
@@ -430,6 +463,7 @@ async function overwriteExisting(
     teamRefs,
     persistSkill,
     canOverwriteSkill,
+    reconcileAccess,
     durationMs,
   } = args;
   const existing = existingByName.get(normalise(decision.existingName)) ||
@@ -451,17 +485,6 @@ async function overwriteExisting(
 
   const now = new Date();
   const normalizedTeamRefs = normalizeStringList(teamRefs);
-  // Capture the pre-overwrite state as a revision BEFORE we mutate
-  // the row. The Versions tab in the workspace lets the owner
-  // restore that revision if the import wasn't what they wanted.
-  await recordRevision({
-    skillId: existing.id,
-    snapshot: extractSnapshot(existing),
-    trigger: "update",
-    actor: user.email,
-    note: `Pre-import snapshot before overwrite from zip (${candidate.directory || "(root)"})`,
-  });
-
   const updated: AgentSkill = {
     ...existing,
     name: saveAsName,
@@ -496,7 +519,24 @@ async function overwriteExisting(
         ],
   };
 
-  await persistSkill(updated, "overwrite");
+  const persisted = await persistSkill(updated, "overwrite");
+  try {
+    await reconcileAccess?.(updated, "overwrite", existing);
+  } catch (error) {
+    if (persisted) await persisted.rollback?.();
+    throw error;
+  }
+
+  // Record the before/after timeline only after persistence and access
+  // reconciliation both succeed. The snapshots themselves are already in
+  // memory, so the pre-import state is still faithfully preserved.
+  await recordRevision({
+    skillId: existing.id,
+    snapshot: extractSnapshot(existing),
+    trigger: "update",
+    actor: user.email,
+    note: `Pre-import snapshot before overwrite from zip (${candidate.directory || "(root)"})`,
+  });
 
   await recordScanEvent({
     trigger: "auto_save",
@@ -658,29 +698,57 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       canOverwriteSkill: async (skill) => {
         await requireSkillPermission(session, skill.id, "write");
       },
-      grantTeamAccess: async (refs, skillIds) => {
+      reconcileAccess: async (skill, mode, previousSkill) => {
         const ownerSubject =
           typeof session?.sub === "string" && session.sub.trim() ? session.sub.trim() : null;
-        for (const skillId of skillIds) {
-          await reconcileSkillTeamShares({
-            skillId,
-            ownerSubject,
-            previousTeamRefs: [],
-            nextTeamRefs: refs,
-            nextVisibility: refs.length > 0 ? "team" : "private",
-          });
+        if (!ownerSubject) {
+          throw new ApiError(
+            "A stable user subject is required to import a skill.",
+            401,
+          );
         }
+        const previousTeamRefs =
+          mode === "overwrite"
+            ? await readSkillSharedTeamSlugsFromOpenFga(skill.id)
+            : [];
+        const nextTeamRefs =
+          skill.visibility === "team"
+            ? teamRefs.length > 0
+              ? teamRefs
+              : previousTeamRefs
+            : [];
+        await reconcileSkillTeamShares({
+          skillId: skill.id,
+          ownerSubject,
+          previousTeamRefs,
+          nextTeamRefs,
+          nextVisibility: skill.visibility ?? "private",
+          previousVisibility: previousSkill?.visibility ?? "private",
+        });
       },
       persistSkill: async (skill, mode) => {
         const mongoRow = { ...skill };
         delete mongoRow.shared_with_teams;
         if (mode === "create") {
           await collection.insertOne(mongoRow as AgentSkill);
+          return {
+            rollback: async () => {
+              await collection.deleteOne({ id: skill.id });
+            },
+          };
         } else {
+          const previous = await collection.findOne({ id: skill.id });
           await collection.updateOne(
             { id: skill.id },
             { $set: mongoRow, $unset: { shared_with_teams: "" } },
           );
+          return {
+            rollback: async () => {
+              if (previous) {
+                await collection.replaceOne({ id: skill.id }, previous);
+              }
+            },
+          };
         }
       },
     });

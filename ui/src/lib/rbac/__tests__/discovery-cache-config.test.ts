@@ -26,11 +26,12 @@ import {
   normalizeDiscoveryCacheTtlMinutes,
 } from "../discovery-cache-config";
 
-function mockMongoTtl(value: unknown): void {
+function mockMongoTtls(slack: unknown, webex: unknown = undefined): void {
   mockGetCollection.mockResolvedValue({
     findOne: jest.fn().mockResolvedValue({
       _id: "platform_settings",
-      discovery_cache_ttl_minutes: value,
+      slack_discovery_cache_ttl_minutes: slack,
+      webex_discovery_cache_ttl_minutes: webex,
     }),
   });
 }
@@ -74,50 +75,55 @@ describe("normalizeDiscoveryCacheTtlMinutes", () => {
 describe("getDiscoveryCacheTtlMs", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    delete process.env.DISCOVERY_CACHE_TTL_MINUTES;
+    delete process.env.SLACK_DISCOVERY_CACHE_TTL_MINUTES;
+    delete process.env.WEBEX_DISCOVERY_CACHE_TTL_MINUTES;
     __resetDiscoveryCacheConfigForTests();
   });
 
   it("uses the Mongo-backed value when one is configured", async () => {
-    mockMongoTtl(30);
-    expect(await getDiscoveryCacheTtlMs()).toBe(30 * 60_000);
+    mockMongoTtls(30, 90);
+    expect(await getDiscoveryCacheTtlMs("slack")).toBe(30 * 60_000);
+    expect(await getDiscoveryCacheTtlMs("webex")).toBe(90 * 60_000);
   });
 
-  it("falls back to DISCOVERY_CACHE_TTL_MINUTES env var when Mongo is unset", async () => {
-    mockMongoTtl(undefined);
-    process.env.DISCOVERY_CACHE_TTL_MINUTES = "15";
-    expect(await getDiscoveryCacheTtlMs()).toBe(15 * 60_000);
+  it("uses separate provider environment fallbacks", async () => {
+    mockMongoTtls(undefined, undefined);
+    process.env.SLACK_DISCOVERY_CACHE_TTL_MINUTES = "15";
+    process.env.WEBEX_DISCOVERY_CACHE_TTL_MINUTES = "25";
+    expect(await getDiscoveryCacheTtlMs("slack")).toBe(15 * 60_000);
+    expect(await getDiscoveryCacheTtlMs("webex")).toBe(25 * 60_000);
   });
 
   it("falls back to the default 60 minutes when neither Mongo nor env is set", async () => {
-    mockMongoTtl(undefined);
-    expect(await getDiscoveryCacheTtlMs()).toBe(DEFAULT_DISCOVERY_CACHE_TTL_MINUTES * 60_000);
+    mockMongoTtls(undefined, undefined);
+    expect(await getDiscoveryCacheTtlMs("slack")).toBe(DEFAULT_DISCOVERY_CACHE_TTL_MINUTES * 60_000);
+    expect(await getDiscoveryCacheTtlMs("webex")).toBe(DEFAULT_DISCOVERY_CACHE_TTL_MINUTES * 60_000);
   });
 
   it("honours 0 from Mongo as 'caching disabled' (does NOT fall through to env)", async () => {
-    mockMongoTtl(0);
-    process.env.DISCOVERY_CACHE_TTL_MINUTES = "999";
-    expect(await getDiscoveryCacheTtlMs()).toBe(0);
+    mockMongoTtls(0, 45);
+    process.env.SLACK_DISCOVERY_CACHE_TTL_MINUTES = "999";
+    expect(await getDiscoveryCacheTtlMs("slack")).toBe(0);
+    expect(await getDiscoveryCacheTtlMs("webex")).toBe(45 * 60_000);
   });
 
   it("clamps an out-of-range Mongo value rather than crashing the picker", async () => {
-    mockMongoTtl(99_999);
-    expect(await getDiscoveryCacheTtlMs()).toBe(MAX_DISCOVERY_CACHE_TTL_MINUTES * 60_000);
+    mockMongoTtls(99_999);
+    expect(await getDiscoveryCacheTtlMs("slack")).toBe(MAX_DISCOVERY_CACHE_TTL_MINUTES * 60_000);
   });
 
   it("falls back to defaults when Mongo throws (so a Mongo outage doesn't break discovery)", async () => {
     mockGetCollection.mockRejectedValue(new Error("mongo unreachable"));
-    process.env.DISCOVERY_CACHE_TTL_MINUTES = "20";
-    expect(await getDiscoveryCacheTtlMs()).toBe(20 * 60_000);
+    process.env.SLACK_DISCOVERY_CACHE_TTL_MINUTES = "20";
+    expect(await getDiscoveryCacheTtlMs("slack")).toBe(20 * 60_000);
   });
 
   it("memoises the read so back-to-back calls in the same request hit Mongo only once", async () => {
-    mockMongoTtl(45);
-    await getDiscoveryCacheTtlMs();
-    await getDiscoveryCacheTtlMs();
-    await getDiscoveryCacheTtlMs();
-    // getCollection is the only mocked entry point; a single call covers all
-    // three TTL reads thanks to the in-process memo.
-    expect(mockGetCollection).toHaveBeenCalledTimes(1);
+    mockMongoTtls(45, 75);
+    await getDiscoveryCacheTtlMs("slack");
+    await getDiscoveryCacheTtlMs("slack");
+    await getDiscoveryCacheTtlMs("webex");
+    await getDiscoveryCacheTtlMs("webex");
+    expect(mockGetCollection).toHaveBeenCalledTimes(2);
   });
 });

@@ -1,3 +1,5 @@
+# Shell scripts must use LF so Linux containers can exec them (Windows CRLF breaks shebang)
+*.sh text eol=lf
 
 # Use bd merge for beads JSONL files
 .beads/issues.jsonl merge=beads

@@ -411,8 +411,8 @@ describe("SkillsGallery — search and filter", () => {
 
   it("filters by category picker", async () => {
     await renderGallery();
-    fireEvent.click(screen.getByRole("button", { name: /category filter/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Cloud" }));
+    fireEvent.click(screen.getByRole("combobox", { name: /category filter/i }));
+    fireEvent.click(await screen.findByRole("option", { name: "Cloud" }));
     expect(screen.getByText("Cost Explorer")).toBeInTheDocument();
     expect(screen.queryByText("DevOps Health Check")).not.toBeInTheDocument();
   });
@@ -501,7 +501,8 @@ describe("SkillsGallery — source filter (built-in vs custom)", () => {
                   name: "random",
                   description: "random",
                   source: "agent_skills",
-                  source_id: "test@example.com",
+                  source_id: mongoId,
+                  owner_id: "test@example.com",
                   visibility: "private",
                   metadata: { is_system: false, category: "Custom" },
                 },
@@ -519,6 +520,44 @@ describe("SkillsGallery — source filter (built-in vs custom)", () => {
     const card = heading.closest("div[class*='group']") ?? heading.parentElement!;
     expect(within(card as HTMLElement).getByText("Custom")).toBeInTheDocument();
     expect(within(card as HTMLElement).queryByText("Built-in")).not.toBeInTheDocument();
+  });
+
+  it("keeps catalog-projected Mongo skills editable under their real id", async () => {
+    const mongoId = "skill-imported-real-id";
+    _configs = [];
+    (global.fetch as jest.Mock).mockImplementation((url: string | URL | Request) => {
+      const urlStr = requestUrl(url);
+      if (urlStr.includes("/api/skills?")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              skills: [
+                {
+                  id: mongoId,
+                  name: "Imported editable skill",
+                  description: "",
+                  source: "agent_skills",
+                  source_id: mongoId,
+                  owner_id: "test@example.com",
+                  content: "# Imported",
+                  ancillary_files: { "scripts/run.sh": "echo ok" },
+                  metadata: { is_system: false, category: "imported" },
+                },
+              ],
+            }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) } as Response);
+    });
+
+    await renderGallery();
+
+    expect(screen.getByRole("heading", { name: "Imported editable skill" })).toBeInTheDocument();
+    expect(screen.getAllByTitle("Edit").length).toBeGreaterThan(0);
+    expect(screen.getAllByTitle("Delete").length).toBeGreaterThan(0);
+    expect(screen.getByTestId(`scan-complete-${mongoId}`)).toBeInTheDocument();
+    expect(screen.queryByTestId(`scan-complete-catalog-${mongoId}`)).not.toBeInTheDocument();
   });
 
   it("does not duplicate a Mongo skill when catalog returns the same agent_skills id", async () => {
@@ -547,7 +586,8 @@ describe("SkillsGallery — source filter (built-in vs custom)", () => {
                   name: "random",
                   description: "random",
                   source: "agent_skills",
-                  source_id: "test@example.com",
+                  source_id: mongoId,
+                  owner_id: "test@example.com",
                   visibility: "private",
                   metadata: { is_system: false, category: "Custom" },
                 },
@@ -663,7 +703,7 @@ describe("SkillsGallery — Try Skill", () => {
     }] as AgentSkill[];
   });
 
-  it("calls createConversation, setPendingMessage with 'Lookup skill and use:', and router.push on Try Skill", async () => {
+  it("creates a conversation, stages the prompt, and opens the chat on Try Skill", async () => {
     await renderGallery();
     await act(async () => { fireEvent.click(screen.getByText("Chat Skill")); });
     const tryBtn = screen.getByRole("button", { name: /try skill/i });

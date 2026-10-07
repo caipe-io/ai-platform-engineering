@@ -29,6 +29,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "agent.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -39,7 +40,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          image: "{{ include "agent-ontology.imageRepository" (dict "root" . "repository" .Values.image.repository) }}:{{ .Values.image.tag | default (include "agent.appVersion" .) }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (include "agent.appVersion" .) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- if .Values.image.command }}
           command:

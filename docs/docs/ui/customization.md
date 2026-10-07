@@ -85,7 +85,9 @@ SPINNER_COLOR=#1a73e8
 
 ## UI Personalization Defaults
 
-These variables set the **initial defaults** for new users who haven't yet customized their preferences in the UI Personalization panel. Once a user makes a selection, their preference (stored in localStorage or MongoDB) takes precedence.
+These variables set the **initial defaults** for users who have not customized
+**Settings → Appearance**. Appearance changes save to the user's account and
+also use a local browser cache so the interface can apply them immediately.
 
 The precedence order is:
 
@@ -128,13 +130,15 @@ Available font families:
 
 | Variable | Default | Allowed Values | Description |
 |----------|---------|----------------|-------------|
-| `DEFAULT_THEME` | `dark` | `light`, `dark`, `midnight`, `nord`, `tokyo`, `cyberpunk`, `tron`, `matrix` | Default color theme for new users |
+| `DEFAULT_THEME` | `dark` | `system`, `light`, `legacy-light`, `dark`, `midnight`, `nord`, `tokyo`, `cyberpunk`, `tron`, `matrix` | Default color theme for new users. `legacy-light` preserves the original bright palette for comparison. |
 
 Available themes:
 
 | Value | Description |
 |-------|-------------|
-| `light` | Bright and clean, white backgrounds |
+| `system` | Follow the operating system light or dark preference |
+| `light` | Balanced tonal surfaces with restrained brand color |
+| `legacy-light` | Original bright, near-white light palette for comparison |
 | `dark` | Dark backgrounds, easy on the eyes |
 | `midnight` | Pure black (optimized for OLED displays) |
 | `nord` | Arctic cool tones (inspired by Nord color palette) |
@@ -163,7 +167,10 @@ Available gradient themes:
 | `matrix` | Green → Dark Green | Phosphor glow, digital rain |
 
 :::info
-The gradient theme selected by the user in the UI Personalization panel overrides both the `DEFAULT_GRADIENT_THEME` and the `GRADIENT_FROM`/`GRADIENT_TO` env vars. The env-level gradient colors only apply when no gradient theme is active.
+The gradient selected in **Settings → Appearance** overrides both
+`DEFAULT_GRADIENT_THEME` and the `GRADIENT_FROM`/`GRADIENT_TO` environment
+variables. Environment-level gradient colors apply only when no user gradient
+is active.
 :::
 
 ### Example: Professional Defaults
@@ -197,7 +204,7 @@ Control which links appear in the application header.
 
 ```bash
 DOCS_URL=https://docs.caipe.example.com
-SOURCE_URL=https://github.com/cnoe-io/ai-platform-engineering
+SOURCE_URL=https://github.com/caipe-io/ai-platform-engineering
 ```
 
 ## Login Page Customization
@@ -337,5 +344,5 @@ ui:
 ## Next Steps
 
 - [Configuration Guide](configuration.md) — Core settings (connection, auth, storage)
-- [Features Guide](features.md) — Full feature walkthrough including the UI Personalization panel
+- [Admin settings](../features/admin-settings.md) — Personal and platform Settings Center routes
 - [Development Guide](development.md) — Local development setup

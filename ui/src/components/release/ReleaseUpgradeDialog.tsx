@@ -27,7 +27,7 @@ interface ReleaseUpgradeDialogProps {
   isDismissing?: boolean;
 }
 
-const CHANGELOG_URL = "https://github.com/cnoe-io/ai-platform-engineering/blob/main/CHANGELOG.md";
+const CHANGELOG_URL = "https://github.com/caipe-io/ai-platform-engineering/blob/main/CHANGELOG.md";
 
 function userVisibleSections(sections: ReleaseNote["sections"], isAdmin: boolean): ReleaseNote["sections"] {
   if (isAdmin) return sections;

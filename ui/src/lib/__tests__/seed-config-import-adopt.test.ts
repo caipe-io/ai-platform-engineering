@@ -45,6 +45,9 @@ jest.mock("@/lib/rbac/workflow-config-rebac", () => ({
   normalizeSharedWithTeamSlugs: jest.fn(async (slugs: string[]) => slugs),
   repairWorkflowConfigTeamSlugRefs: jest.fn(async () => 0),
 }));
+jest.mock("@/lib/rbac/unlinked-service-account", () => ({
+  resolveUnlinkedServiceAccountSub: jest.fn(async () => null),
+}));
 
 import { adoptConfigImportedAgents, cleanupStaleConfigDriven } from "../seed-config";
 

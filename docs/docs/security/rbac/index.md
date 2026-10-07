@@ -8,9 +8,11 @@ This is the canonical reference for how authentication and authorization work in
 |---|---|
 | Explain the feature front to back to CAIPE users, admins, operators, or security reviewers | [Enterprise RBAC and ReBAC Feature Guide](./feature-guide.md) |
 | Understand each component (Keycloak, UI, AgentGateway, Dynamic Agents) and how they're wired | [Architecture](./architecture.md) |
+| Understand the Access API foundation and the target shared authorization boundary | [Access API](./access-api.md) |
 | Get the short end-to-end summary of the Comprehensive RBAC refactor, including Keycloak roles, AgentGateway, and OpenFGA | [Comprehensive RBAC Refactor](./comprehensive-rbac-refactor.md) |
 | Understand how JWT identity and OpenFGA relationship checks work together | [JWT and OpenFGA](./jwt-and-openfga.md) |
 | Understand exactly where OpenFGA union/computed permissions are evaluated, what gets stored vs. computed, and follow a worked end-to-end Probe-button example | [OpenFGA Permission Evaluation](./openfga-permission-evaluation.md) |
+| See which authorization decisions and relationship mutations still bypass CAS, why, and in what order to migrate them | [CAS Coverage and Migration Gaps](./cas-coverage-gaps.md) |
 | Trace a request — login, OBO token-exchange, end-to-end Slack/Webex flow, Slack channel or Webex space → agent routing | [Workflows](./workflows.md) |
 | Log in, exercise a role, verify a denial, link a Slack/Webex user, run the demo | [Usage](./usage.md) |
 | Find the file that owns a specific piece of the auth path | [File map](./file-map.md) |
@@ -149,7 +151,7 @@ Key fields for security architects:
 | PDP outage fail-open | AgentGateway `extAuthz.failureMode.denyWithStatus=403` fails closed if OpenFGA/bridge is unavailable |
 | AgentGateway admin exposure | Only the data-plane listener (`4000`) should be ingress-exposed; the admin listener (`15000`) remains private inside the cluster |
 | Unlinked Slack/Webex users bypassing RBAC | Bot runtime gates block unlinked users before any backend agent is called |
-| `AUTH_ENABLED=false` in production | Startup log emits a `WARNING` when auth is disabled; also documented in [Architecture › Dynamic Agents env vars](./architecture.md#key-environment-variables-2) |
+| `AUTH_ENABLED=false` in production | Startup log emits a `WARNING` when auth is disabled; also documented in [RBAC architecture](./architecture.md#key-environment-variables) |
 | Bootstrap admin left permanently enabled | No automatic enforcement — documented operational risk; must be removed post-setup |
 
 ---

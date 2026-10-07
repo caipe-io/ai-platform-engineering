@@ -34,6 +34,7 @@ interface CatalogApiKeyDocument {
   scopes: string[];
   created_at: number;
   revoked_at: number | null;
+  expires_at?: number | null;
   last_used_at?: number | null;
 }
 
@@ -219,10 +220,13 @@ export async function verifyCatalogApiKey(
   const collection = await getCollection<CatalogApiKeyDocument>(COLLECTION);
   const doc = await collection.findOne(
     { key_id: keyId, revoked_at: null },
-    { projection: { key_hash: 1, owner_user_id: 1 } },
+    { projection: { key_hash: 1, owner_user_id: 1, scopes: 1, expires_at: 1 } },
   );
   if (
     !doc ||
+    (typeof doc.expires_at === "number" && doc.expires_at <= Date.now() / 1000) ||
+    !Array.isArray(doc.scopes) ||
+    !doc.scopes.includes("catalog:read") ||
     !(await isCatalogApiKeySecretMatch(keyId,secret,doc.key_hash))
   ) {
     return null;

@@ -111,6 +111,21 @@ describe("MetricsTab PromQL planning", () => {
     expect(queryIds).not.toContain("cache_utilization");
   });
 
+  it("plans dropped-input-file panels grouped by reason", () => {
+    const range = resolveMetricsRange("24h", undefined, 1_800_000_000);
+    const queries = buildDependencyQueries(range);
+
+    const byReason = queries.find((query) => query.id === "dropped_input_files_by_reason");
+    expect(byReason?.query).toContain("increase(da_dropped_input_files_total[86400s])");
+    expect(byReason?.query).toContain("by (reason)");
+    expect(byReason?.time).toBe(String(range.end));
+
+    const trend = queries.find((query) => query.id === "dropped_input_files_trend");
+    expect(trend?.type).toBe("range");
+    expect(trend?.query).toContain(`increase(da_dropped_input_files_total[${range.rateWindowSeconds}s])`);
+    expect(trend?.query).toContain("by (reason)");
+  });
+
   it("keeps every async section under the batch endpoint limit", () => {
     const range = resolveMetricsRange("24h", undefined, 1_800_000_000);
 

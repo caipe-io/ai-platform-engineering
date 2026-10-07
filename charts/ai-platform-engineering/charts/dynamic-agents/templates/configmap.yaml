@@ -5,6 +5,14 @@ metadata:
   labels:
     {{- include "dynamic-agents.labels" . | nindent 4 }}
 data:
+  {{- /*
+    Attachment blob-store keys are resolved (with global.storage.s3 fallback and
+    auto->local/s3 backend resolution) by dynamic-agents.attachmentConfig below,
+    so skip them here even when set explicitly in config to avoid a duplicate
+    ConfigMap key. ATTACHMENT_LOCAL_PATH is not managed by the helper and flows
+    through normally.
+  */ -}}
+  {{- $attachmentManaged := list "ATTACHMENT_BACKEND" "ATTACHMENT_S3_BUCKET" "ATTACHMENT_S3_PREFIX" "ATTACHMENT_S3_REGION" "ATTACHMENT_S3_ENDPOINT_URL" -}}
   {{- range $key, $value := .Values.config }}
   {{- /*
     Skip keys whose value is the empty string so the rendered ConfigMap
@@ -14,7 +22,8 @@ data:
     mode). Operators who want to set a key explicitly to "" should set it
     to a single space instead.
   */ -}}
-  {{- if not (eq (toString $value) "") }}
+  {{- if and (not (has $key $attachmentManaged)) (not (eq (toString $value) "")) }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
   {{- end }}
+  {{- include "dynamic-agents.attachmentConfig" . | nindent 2 }}

@@ -10,7 +10,6 @@ import {
   type ReactNode,
 } from "react";
 import { formatDistance } from "date-fns";
-import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   Bot,
@@ -46,8 +45,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { humanizeCron } from "@/lib/cron-humanize";
 import { getConfig } from "@/lib/config";
+import { pushWithNavigationProgress } from "@/lib/navigation-progress";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
 import { useChatStore } from "@/store/chat-store";
+import { useRouter } from "next/navigation";
 
 interface ScheduleRun {
   ts: string | null;
@@ -147,6 +148,7 @@ interface SchedulesResponse {
     items: ScheduleItem[];
     total: number;
     server_now?: string;
+    minimum_schedule_interval_seconds?: number;
   };
   error?: string;
 }
@@ -173,6 +175,19 @@ interface PlatformConfigResponse {
 }
 
 const SCHEDULES_TABLE_MIN_WIDTH = 1160;
+const DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS = 30 * 60;
+
+function formatScheduleInterval(seconds: number): string {
+  if (seconds % 3600 === 0) {
+    const hours = seconds / 3600;
+    return `${hours} hour${hours === 1 ? "" : "s"}`;
+  }
+  if (seconds % 60 === 0) {
+    const minutes = seconds / 60;
+    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+  return `${seconds} second${seconds === 1 ? "" : "s"}`;
+}
 
 interface TableScrollMetrics {
   scrollWidth: number;
@@ -504,6 +519,8 @@ export default function SchedulesPage() {
   const [editCron, setEditCron] = useState("");
   const [editTz, setEditTz] = useState("");
   const [editMessage, setEditMessage] = useState("");
+  const [minimumScheduleIntervalSeconds, setMinimumScheduleIntervalSeconds] =
+    useState(DEFAULT_MINIMUM_SCHEDULE_INTERVAL_SECONDS);
   const [clockTick, setClockTick] = useState(() => Date.now());
   const [serverClock, setServerClock] = useState<{
     serverNowMs: number;
@@ -548,6 +565,14 @@ export default function SchedulesPage() {
         clientNowMs,
       });
       setClockTick(Date.now());
+      const configuredMinimum = body.data.minimum_schedule_interval_seconds;
+      if (
+        typeof configuredMinimum === "number" &&
+        Number.isInteger(configuredMinimum) &&
+        configuredMinimum > 0
+      ) {
+        setMinimumScheduleIntervalSeconds(configuredMinimum);
+      }
       setItems(
         body.data.items.map((item) => ({
           ...item,
@@ -774,7 +799,7 @@ export default function SchedulesPage() {
             "Please fetch the schedule first, verify it belongs to me, then help me make the change safely.",
           ].join("\n")
         );
-        router.push(`/chat/${conversationId}`);
+        pushWithNavigationProgress(router,`/chat/${conversationId}`);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -807,7 +832,8 @@ export default function SchedulesPage() {
                   Scheduled Jobs
                 </h1>
                 <p className="text-sm text-muted-foreground">
-                  Recurring agent jobs created for your account.
+                  Recurring agent jobs created for your account. Minimum recurring
+                  interval: {formatScheduleInterval(minimumScheduleIntervalSeconds)}.
                 </p>
               </div>
               <Button
@@ -910,6 +936,11 @@ export default function SchedulesPage() {
                               onChange={(event) => setEditCron(event.target.value)}
                               className="font-mono"
                             />
+                            <p className="text-[11px] text-muted-foreground">
+                              Runs must be at least {formatScheduleInterval(
+                                minimumScheduleIntervalSeconds
+                              )} apart.
+                            </p>
                           </div>
                           <div className="space-y-2">
                             <Label htmlFor="schedule-tz">Timezone</Label>

@@ -31,6 +31,8 @@ CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ModelPicker } from "@/components/ui/model-picker";
+import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
@@ -64,6 +66,11 @@ export interface ReviewConfigEditorProps {
 
 export interface ReviewConfigEditorHandle {
   save: () => Promise<void>;
+}
+
+interface PlatformLlm {
+  id: string;
+  provider: string;
 }
 
 interface FormState {
@@ -149,6 +156,8 @@ export const ReviewConfigEditor = React.forwardRef<ReviewConfigEditorHandle, Rev
     { model_id: string; name: string; provider: string }[]
   >([]);
   const [modelsLoading, setModelsLoading] = React.useState(true);
+  const [platformLlm, setPlatformLlm] = React.useState<PlatformLlm | null>(null);
+  const [platformLlmLoading, setPlatformLlmLoading] = React.useState(true);
 
   const dirty = JSON.stringify(state) !== JSON.stringify(savedState);
 
@@ -187,16 +196,45 @@ export const ReviewConfigEditor = React.forwardRef<ReviewConfigEditorHandle, Rev
     };
   }, []);
 
-  // Default the picker to the first available model when the persisted
-  // config didn't pin one. Mirrors DynamicAgentEditor's first-in-list default.
+  // Fetch the Platform LLM so the picker can offer deferring to it instead of
+  // pinning a model here.
   React.useEffect(() => {
-    if (availableModels.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/platform-config");
+        if (!res.ok) return;
+        const body = (await res.json()) as {
+          data?: { platform_llm?: { id?: string; provider?: string } | null };
+        };
+        const llm = body.data?.platform_llm;
+        if (!cancelled && llm?.id && llm?.provider) setPlatformLlm(llm as PlatformLlm);
+      } catch {
+        // Leave the option hidden; an explicit model is still selectable.
+      } finally {
+        if (!cancelled) setPlatformLlmLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Default the picker to the first available model when the persisted config
+  // didn't pin one. Skipped once a Platform LLM exists, where the better
+  // default is to defer to it rather than silently pin an arbitrary model.
+  // Waits for the Platform LLM fetch to settle first: if the model list
+  // resolves before it, deciding early can auto-pin a model that a later
+  // Platform LLM response should have made unnecessary, and nothing then
+  // undoes that pin.
+  React.useEffect(() => {
+    if (platformLlmLoading || availableModels.length === 0 || platformLlm) return;
     setState((s) => {
       if (s.model_id && s.model_provider) return s;
       const first = availableModels[0];
       return { ...s, model_id: first.model_id, model_provider: first.provider };
     });
-  }, [availableModels]);
+  }, [availableModels, platformLlm, platformLlmLoading]);
 
   // Load the persisted config (which self-seeds defaults on first read).
   React.useEffect(() => {
@@ -283,10 +321,13 @@ export const ReviewConfigEditor = React.forwardRef<ReviewConfigEditorHandle, Rev
     setError(null);
     setSaving(true);
     try {
+      // Explicitly null, not undefined: `JSON.stringify` drops undefined, and the
+      // API reads an absent `model` as "leave it alone". Only null clears the
+      // pinned model so this target falls back to the Platform LLM.
       const modelObj =
         state.model_id && state.model_provider
           ? { id: state.model_id, provider: state.model_provider }
-          : undefined;
+          : null;
 
       const payload: ReviewConfigUpdate = {
         enabled: state.enabled,
@@ -540,45 +581,31 @@ export const ReviewConfigEditor = React.forwardRef<ReviewConfigEditorHandle, Rev
         <CardContent>
           <div className="space-y-1.5 max-w-md">
             <Label htmlFor={`rc-model-${target}`}>LLM Model</Label>
-            <select
+            <ModelPicker
               id={`rc-model-${target}`}
-              value={
-                state.model_id && state.model_provider
-                  ? `${state.model_id}::${state.model_provider}`
-                  : ""
-              }
-              onChange={(e) => {
-                const v = e.target.value;
-                const lastDelimiter = v.lastIndexOf("::");
-                if (lastDelimiter > 0) {
-                  setState((s) => ({
-                    ...s,
-                    model_id: v.slice(0, lastDelimiter),
-                    model_provider: v.slice(lastDelimiter + 2),
-                  }));
-                }
+              options={availableModels}
+              modelId={state.model_id}
+              modelProvider={state.model_provider}
+              onChange={(modelId, modelProvider) => {
+                setState((s) => ({
+                  ...s,
+                  model_id: modelId,
+                  model_provider: modelProvider,
+                }));
               }}
-              disabled={modelsLoading || availableModels.length === 0}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {modelsLoading ? (
-                <option value="">Loading models…</option>
-              ) : availableModels.length === 0 ? (
-                <option value="">No models available</option>
-              ) : (
-                availableModels.map((m) => (
-                  <option
-                    key={`${m.model_id}::${m.provider}`}
-                    value={`${m.model_id}::${m.provider}`}
-                  >
-                    {m.name}
-                    {m.provider && m.provider !== "default"
-                      ? ` (${m.provider})`
-                      : ""}
-                  </option>
-                ))
-              )}
-            </select>
+              loading={modelsLoading}
+              platformLlmLabel={
+                platformLlm
+                  ? `Use Platform LLM (${
+                      availableModels.find(
+                        (model) =>
+                          model.model_id === platformLlm.id &&
+                          model.provider === platformLlm.provider,
+                      )?.name ?? platformLlm.id
+                    })`
+                  : null
+              }
+            />
           </div>
         </CardContent>
       </Card>
@@ -645,7 +672,7 @@ export const ReviewConfigEditor = React.forwardRef<ReviewConfigEditorHandle, Rev
                   </div>
                   <div className="md:col-span-2 space-y-1">
                     <Label className="text-[11px]">Severity</Label>
-                    <select
+                    <Select
                       value={c.severity}
                       onChange={(e) =>
                         updateCriterion(idx, {
@@ -657,7 +684,7 @@ export const ReviewConfigEditor = React.forwardRef<ReviewConfigEditorHandle, Rev
                       <option value="error">error</option>
                       <option value="warning">warning</option>
                       <option value="info">info</option>
-                    </select>
+                    </Select>
                   </div>
                   <div className="md:col-span-2 space-y-1">
                     <Label className="text-[11px]">Weight</Label>

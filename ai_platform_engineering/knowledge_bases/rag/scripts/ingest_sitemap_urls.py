@@ -11,12 +11,13 @@ Usage:
 """
 import argparse
 import asyncio
+import os
 import sys
 import xml.etree.ElementTree as ET
 
 import httpx
 
-DEFAULT_SITEMAP = "https://outshift.cisco.com/sitemap.xml"
+DEFAULT_SITEMAP = "https://example.com/sitemap.xml"
 DEFAULT_SERVER = "http://localhost:9446"
 
 
@@ -26,11 +27,20 @@ def parse_sitemap(content: str) -> list[str]:
     return [loc.text.strip() for loc in root.findall(".//sm:loc", ns) if loc.text]
 
 
-async def ingest_url(client: httpx.AsyncClient, server: str, url: str) -> tuple[str, bool, str]:
+async def ingest_url(
+    client: httpx.AsyncClient,
+    server: str,
+    url: str,
+    reload_interval: int,
+) -> tuple[str, bool, str]:
     try:
         resp = await client.post(
             f"{server}/v1/ingest/webloader/url",
-            json={"url": url, "description": f"Outshift page: {url}"},
+            json={
+                "url": url,
+                "description": f"Example page: {url}",
+                "reload_interval": reload_interval,
+            },
             timeout=30,
         )
         resp.raise_for_status()
@@ -42,16 +52,23 @@ async def ingest_url(client: httpx.AsyncClient, server: str, url: str) -> tuple[
         return url, False, str(e)
 
 
-async def main():
+async def main() -> None:
     parser = argparse.ArgumentParser(description="Ingest each sitemap URL as a separate datasource")
     parser.add_argument("--sitemap", default=DEFAULT_SITEMAP)
     parser.add_argument("--server", default=DEFAULT_SERVER)
     parser.add_argument("--token", default=None, help="Bearer token (or set BEARER_TOKEN env)")
     parser.add_argument("--concurrency", type=int, default=3, help="Parallel requests (default: 3)")
+    parser.add_argument(
+        "--reload-interval",
+        type=int,
+        default=86400,
+        help="Datasource refresh interval in seconds (default: 86400)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print URLs without ingesting")
     args = parser.parse_args()
+    if args.reload_interval < 60:
+        parser.error("--reload-interval must be at least 60 seconds")
 
-    import os
     token = args.token or os.getenv("BEARER_TOKEN")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
@@ -72,9 +89,17 @@ async def main():
     sem = asyncio.Semaphore(args.concurrency)
     ok = fail = 0
 
-    async def bounded(client, url):
+    async def bounded(
+        client: httpx.AsyncClient,
+        url: str,
+    ) -> tuple[str, bool, str]:
         async with sem:
-            return await ingest_url(client, args.server, url)
+            return await ingest_url(
+                client,
+                args.server,
+                url,
+                args.reload_interval,
+            )
 
     async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
         tasks = [bounded(client, u) for u in urls]

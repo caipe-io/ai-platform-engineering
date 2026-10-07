@@ -28,13 +28,25 @@ const mockCheckOpenFgaTuple = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
-    constructor(message: string, public statusCode = 500, public code?: string) {
+    constructor(
+      message: string,
+      public statusCode = 500,
+      public code?: string,
+    ) {
       super(message);
     }
   }
   return {
     ApiError,
-    requireRbacPermission: (...args: unknown[]) => mockRequireRbacPermission(...args),
+    getAuthFromBearerOrSession: async () => {
+      const { getServerSession } = jest.requireMock("next-auth") as {
+        getServerSession: jest.Mock;
+      };
+      const session = await getServerSession();
+      return { session, user: session?.user };
+    },
+    requireRbacPermission: (...args: unknown[]) =>
+      mockRequireRbacPermission(...args),
     handleApiError: (error: unknown) =>
       Response.json(
         { error: error instanceof Error ? error.message : "error" },
@@ -44,8 +56,10 @@ jest.mock("@/lib/api-middleware", () => {
 });
 
 jest.mock("@/lib/rbac/resource-authz", () => ({
-  requireResourcePermission: (...args: unknown[]) => mockRequireResourcePermission(...args),
-  filterResourcesByPermission: (...args: unknown[]) => mockFilterResourcesByPermission(...args),
+  requireResourcePermission: (...args: unknown[]) =>
+    mockRequireResourcePermission(...args),
+  filterResourcesByPermission: (...args: unknown[]) =>
+    mockFilterResourcesByPermission(...args),
 }));
 
 jest.mock("@/lib/rbac/openfga", () => ({
@@ -82,7 +96,9 @@ function ragRequest(path: string, init?: RequestInit): NextRequest {
   return new NextRequest(new URL(path, "http://localhost:3000"), init);
 }
 
-const PATH_PARAMS = { params: Promise.resolve({ path: ["v1", "mcp", "custom-tools"] }) };
+const PATH_PARAMS = {
+  params: Promise.resolve({ path: ["v1", "mcp", "custom-tools"] }),
+};
 
 describe("GET /v1/mcp/custom-tools BFF filter", () => {
   it("filters the bare JSON array using mcp_tool#can_read with bypassForOrgAdmin: true", async () => {
@@ -111,7 +127,9 @@ describe("GET /v1/mcp/custom-tools BFF filter", () => {
     // simulate non-admin who can only read `infra-search`
     mockFilterResourcesByPermission.mockImplementation(
       async (_session: unknown, resources: unknown[]) =>
-        (resources as Array<{ tool_id: string }>).filter((r) => r.tool_id === "infra-search"),
+        (resources as Array<{ tool_id: string }>).filter(
+          (r) => r.tool_id === "infra-search",
+        ),
     );
 
     const { GET } = await import("@/app/api/rag/[...path]/route");
@@ -122,7 +140,9 @@ describe("GET /v1/mcp/custom-tools BFF filter", () => {
 
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body).toEqual([{ tool_id: "infra-search", description: "Team infra search" }]);
+    expect(body).toEqual([
+      { tool_id: "infra-search", description: "Team infra search" },
+    ]);
     expect(mockFilterResourcesByPermission).toHaveBeenCalledWith(
       expect.objectContaining({ sub: "alice-sub" }),
       expect.any(Array),
@@ -144,10 +164,7 @@ describe("GET /v1/mcp/custom-tools BFF filter", () => {
       Promise.resolve({
         ok: true,
         status: 200,
-        json: async () => [
-          { tool_id: "search" },
-          { tool_id: "infra-search" },
-        ],
+        json: async () => [{ tool_id: "search" }, { tool_id: "infra-search" }],
       } as Response),
     ) as jest.Mock;
 

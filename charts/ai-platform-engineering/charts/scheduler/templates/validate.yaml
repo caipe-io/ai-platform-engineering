@@ -1,3 +1,6 @@
 {{- if and (not .Values.mongo.existingSecret) (not .Values.mongo.uri) -}}
 {{- fail "scheduler.mongo.existingSecret or scheduler.mongo.uri is required; use the same MongoDB as CAIPE UI" -}}
 {{- end -}}
+{{- if lt (int .Values.limits.minimumScheduleIntervalSeconds) 1 -}}
+{{- fail "scheduler.limits.minimumScheduleIntervalSeconds must be at least 1" -}}
+{{- end -}}

@@ -16,6 +16,7 @@ export const PortalContainerContext = React.createContext<HTMLElement | null>(nu
 
 interface PopoverProps {
   children: React.ReactNode;
+  className?: string;
   open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -35,6 +36,7 @@ const PopoverStateContext = React.createContext<PopoverContextValue>({
 
 export function Popover({
   children,
+  className,
   open: controlledOpen,
   defaultOpen = false,
   onOpenChange,
@@ -55,6 +57,7 @@ export function Popover({
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape" && open) {
         setOpen(false);
+        triggerRef.current?.focus();
       }
     };
     document.addEventListener("keydown", handleEscape);
@@ -63,7 +66,7 @@ export function Popover({
 
   return (
     <PopoverStateContext.Provider value={{ open, setOpen, triggerRef }}>
-      <div className="relative inline-flex">{children}</div>
+      <div className={cn("relative inline-flex",className)}>{children}</div>
     </PopoverStateContext.Provider>
   );
 }
@@ -78,6 +81,7 @@ export function PopoverTrigger({ children, asChild }: PopoverTriggerProps) {
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (e.currentTarget.getAttribute("aria-disabled") === "true") return;
     setOpen(!open);
   };
 
@@ -98,7 +102,7 @@ export function PopoverTrigger({ children, asChild }: PopoverTriggerProps) {
     const childWithRef = children as React.ReactElement<ChildProps> & {
       ref?: React.Ref<HTMLElement>;
     };
-    const existingRef = childWithRef.ref;
+    const existingRef = childWithRef.props.ref;
     const mergedRef = (node: HTMLElement | null) => {
       setRef(node);
       if (typeof existingRef === "function") existingRef(node);
@@ -126,6 +130,10 @@ interface PopoverContentProps {
   sideOffset?: number;
   alignOffset?: number;
   className?: string;
+  onBlurCapture?: React.FocusEventHandler<HTMLDivElement>;
+  onFocusCapture?: React.FocusEventHandler<HTMLDivElement>;
+  onMouseEnter?: React.MouseEventHandler<HTMLDivElement>;
+  onMouseLeave?: React.MouseEventHandler<HTMLDivElement>;
   portalled?: boolean;
 }
 
@@ -134,14 +142,10 @@ interface PopoverContentProps {
  * or into a `PortalContainerContext` element (e.g. a Radix Dialog) when one is
  * present.
  *
- * The previous implementation used `position: absolute` inside the trigger's
- * relative parent, which meant any ancestor with `overflow: hidden` (e.g. a
- * narrow resizable panel like the Skill workspace Files tree) clipped the
- * popover. Portalling + computing fixed-position coordinates from the
- * trigger's `getBoundingClientRect()` lets the popover escape those clipping
- * contexts and stay anchored under any layout. We also clamp the final
- * coordinates to the viewport so a narrow panel can never push the popover
- * off-screen — the bug that motivated this change.
+ * Fixed positioning and coordinates from the trigger's
+ * `getBoundingClientRect()` keep the popover anchored without being clipped by
+ * an ancestor's overflow. Viewport clamping also keeps the content on-screen
+ * when the trigger lives in a narrow panel.
  *
  * When portalled into a container that has a CSS transform (Radix Dialog uses
  * `translate-*-[-50%]` to center itself), that container — not the viewport —
@@ -161,6 +165,10 @@ export function PopoverContent({
   sideOffset = 8,
   alignOffset = 0,
   className,
+  onBlurCapture,
+  onFocusCapture,
+  onMouseEnter,
+  onMouseLeave,
   portalled = true,
 }: PopoverContentProps) {
   const { open, setOpen, triggerRef } = React.useContext(PopoverStateContext);
@@ -265,11 +273,23 @@ export function PopoverContent({
     const onChange = () => computeCoords();
     window.addEventListener("resize", onChange);
     window.addEventListener("scroll", onChange, true);
+
+    // Popover contents can grow after opening (for example, once permission-
+    // gated navigation finishes loading). Recompute from the final dimensions
+    // so every consumer gets the same viewport-aware placement without having
+    // to predict its content height or implement its own flyout logic.
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(onChange);
+    if (contentRef.current) resizeObserver?.observe(contentRef.current);
+    if (triggerRef.current) resizeObserver?.observe(triggerRef.current);
+
     return () => {
       window.removeEventListener("resize", onChange);
       window.removeEventListener("scroll", onChange, true);
+      resizeObserver?.disconnect();
     };
-  }, [open, computeCoords]);
+  }, [open,computeCoords,triggerRef]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -298,6 +318,10 @@ export function PopoverContent({
       <div
         ref={contentRef}
         data-popover-content=""
+        onBlurCapture={onBlurCapture}
+        onFocusCapture={onFocusCapture}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
         className={cn(
           "absolute left-0 top-full z-[60] mt-2 pointer-events-auto rounded-lg bg-popover text-popover-foreground shadow-lg border border-border",
           "animate-in fade-in-0 zoom-in-95 slide-in-from-top-2",
@@ -313,6 +337,10 @@ export function PopoverContent({
     <div
       ref={contentRef}
       data-popover-content=""
+      onBlurCapture={onBlurCapture}
+      onFocusCapture={onFocusCapture}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       style={{
         position: "fixed",
         top: coords?.top ?? -9999,

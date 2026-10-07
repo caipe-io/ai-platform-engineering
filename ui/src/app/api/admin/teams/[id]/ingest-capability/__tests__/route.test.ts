@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const mockGetAuthFromBearerOrSession = jest.fn();
 const mockRequireRbacPermission = jest.fn();
+const mockRequireResourcePermission = jest.fn();
 const mockWriteOpenFgaTuples = jest.fn();
 const mockReadOpenFgaTuples = jest.fn();
 const mockCollections: Record<string, unknown> = {};
@@ -67,6 +68,10 @@ jest.mock("@/lib/rbac/organization", () => ({
   organizationObjectId: () => "organization:caipe",
 }));
 
+jest.mock("@/lib/rbac/resource-authz", () => ({
+  requireResourcePermission: (...args: unknown[]) => mockRequireResourcePermission(...args),
+}));
+
 import { GET, PUT, DELETE } from "@/app/api/admin/teams/[id]/ingest-capability/route";
 
 const TEAM_ID = new ObjectId().toHexString();
@@ -100,6 +105,7 @@ describe("/api/admin/teams/[id]/ingest-capability", () => {
       session: {},
     });
     mockRequireRbacPermission.mockResolvedValue(undefined);
+    mockRequireResourcePermission.mockResolvedValue(undefined);
     mockWriteOpenFgaTuples.mockResolvedValue({ enabled: true, writes: 1, deletes: 0 });
     mockReadOpenFgaTuples.mockResolvedValue({ tuples: [] });
   });
@@ -109,7 +115,11 @@ describe("/api/admin/teams/[id]/ingest-capability", () => {
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.data.can_author_data_sources).toBe(false);
-    expect(mockRequireRbacPermission).toHaveBeenCalledWith({}, "admin_ui", "view");
+    expect(mockRequireResourcePermission).toHaveBeenCalledWith(
+      {},
+      { type: "team", id: TEAM_SLUG, action: "read" },
+      { bypassForOrgAdmin: true },
+    );
   });
 
   it("GET reports true when the capability tuple exists", async () => {
@@ -117,6 +127,14 @@ describe("/api/admin/teams/[id]/ingest-capability", () => {
     const res = await GET(req(), ctx());
     const body = await res.json();
     expect(body.data.can_author_data_sources).toBe(true);
+  });
+
+  it("GET denies callers who cannot view the team", async () => {
+    const { ApiError } = jest.requireMock("@/lib/api-middleware");
+    mockRequireResourcePermission.mockRejectedValue(new ApiError("Forbidden", 403));
+    const res = await GET(req(), ctx());
+    expect(res.status).toBe(403);
+    expect(mockReadOpenFgaTuples).not.toHaveBeenCalled();
   });
 
   it("PUT grants the capability (org-admin only) and writes the member tuple", async () => {

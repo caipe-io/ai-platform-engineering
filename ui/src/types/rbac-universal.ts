@@ -22,7 +22,8 @@ export type UniversalRebacResourceAction =
   | "invoke"
   | "map"
   | "ingest"
-  | "read-metadata";
+  | "read-metadata"
+  | "automate";
 
 /**
  * Canonical, runtime-enumerable list of universal ReBAC resource (object) types.
@@ -53,6 +54,7 @@ export const UNIVERSAL_REBAC_RESOURCE_TYPE_NAMES = [
   "mcp_gateway",
   "mcp_server",
   "tool",
+  "rag_collection",
   "knowledge_base",
   "data_source",
   "mcp_tool",
@@ -68,7 +70,8 @@ export const UNIVERSAL_REBAC_RESOURCE_TYPE_NAMES = [
   "system_config",
 ] as const;
 
-export type UniversalRebacResourceType = (typeof UNIVERSAL_REBAC_RESOURCE_TYPE_NAMES)[number];
+export type UniversalRebacResourceType =
+  (typeof UNIVERSAL_REBAC_RESOURCE_TYPE_NAMES)[number];
 
 export type UniversalRebacSubjectType =
   | "user"

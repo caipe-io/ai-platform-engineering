@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en" data-base-path="__WEATHER_BASE_PATH__">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Weather Example</title>
+    <link rel="stylesheet" href="__WEATHER_BASE_PATH__/assets/app.css" />
+    <script src="__WEATHER_BASE_PATH__/assets/app.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header class="hero">
+        <div>
+          <p class="eyebrow">External App example</p>
+          <h1>Weather</h1>
+          <p class="lede">
+            A small base-path-safe application served through CAIPE’s authenticated runtime gateway.
+          </p>
+        </div>
+        <form id="weather-form" class="search-form">
+          <label for="city">Location</label>
+          <div class="search-row">
+            <input id="city" name="city" value="Berlin" maxlength="120" required />
+            <button type="submit">Load forecast</button>
+          </div>
+        </form>
+      </header>
+
+      <section class="toolbar" aria-label="Display preferences">
+        <label for="units">Units</label>
+        <select id="units">
+          <option value="metric">Metric</option>
+          <option value="us">US customary</option>
+        </select>
+        <span id="preference-status" class="muted" role="status"></span>
+      </section>
+
+      <p id="status" class="status" role="status" aria-live="polite">Loading weather…</p>
+
+      <div id="dashboard" hidden>
+        <section class="current-panel" aria-labelledby="location-heading">
+          <div>
+            <p class="eyebrow">Current conditions</p>
+            <h2 id="location-heading"></h2>
+            <p id="observed-at" class="muted"></p>
+          </div>
+          <div id="current-metrics" class="metrics"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="forecast-heading">
+          <h2 id="forecast-heading">Seven-day forecast</h2>
+          <div id="forecast" class="forecast-grid"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="air-heading">
+          <h2 id="air-heading">Air quality</h2>
+          <div id="air-quality"></div>
+        </section>
+      </div>
+
+      <footer>
+        <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">
+          Weather data by Open-Meteo.com
+        </a>
+        <span> · normalized for this example · </span>
+        <a
+          href="https://creativecommons.org/licenses/by/4.0/"
+          target="_blank"
+          rel="noreferrer"
+        >
+          CC BY 4.0
+        </a>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -3,6 +3,7 @@ tags:
   complete: false
   caipe-ui: false
   dynamic-agents: false
+  autonomous-agents: false
   mcp-argocd: false
   mcp-aws: false
   mcp-backstage: false
@@ -12,6 +13,7 @@ tags:
   mcp-jira: false
   mcp-komodor: false
   mcp-pagerduty: false
+  mcp-sharepoint: false
   mcp-slack: false
   mcp-splunk: false
   mcp-victorops: false
@@ -30,11 +32,18 @@ global:
   # Individual subchart `image.tag` values still take highest precedence.
   image:
     tag: ""
-    # -- Image repository channel for maintained CAIPE images.
-    # Empty means auto: rc/hotfix/dev chart appVersions use `pre-release/`,
-    # final release appVersions use the root published image repositories.
-    # Set to `pre-release` or `release` to force either repository channel.
-    channel: ""
+
+  # -- Shared object storage for CAIPE. Set the bucket ONCE here and every
+  # subchart that needs durable object storage derives from it:
+  #   * audit-service writes audit logs under its `audit` prefix
+  #   * dynamic-agents writes multimodal attachment blobs under `attachments`
+  # Same bucket/region, ambient (IRSA) credentials via each subchart's
+  # serviceAccount role-arn. A subchart's own storage value still wins when set.
+  storage:
+    s3:
+      bucket: ""        # empty => each subchart falls back to its own value / local disk
+      region: ""        # applies to all subcharts; a subchart's own region is used only when this is empty
+      endpointUrl: ""   # S3-compatible endpoint (MinIO/localstack); empty = real AWS S3
 
   # Scheduled Dynamic Agent runs. Enabling this installs the scheduler service,
   # cron runner integration, scheduler MCP, and UI server-side token wiring.
@@ -56,6 +65,20 @@ global:
     enableGraphRag: true
     openfga:
       httpUrl: ""
+    # The standalone RAG ingestors use the existing caipe-platform client for
+    # their narrow heartbeat/job/document transport. `tpl` is evaluated by the
+    # RAG subcharts so the bundled Keycloak service follows the release name.
+    # Operators that rename keycloak.platformClient.secretRef must update this
+    # Secret name as well.
+    ingestorOidc:
+      issuer: ""
+      discoveryUrl: "http://{{ .Release.Name }}-keycloak:8080/realms/caipe/.well-known/openid-configuration"
+      jwksUrl: "http://{{ .Release.Name }}-keycloak:8080/realms/caipe/protocol/openid-connect/certs"
+      clientId: "caipe-platform"
+      scope: ""
+      clientSecretRef:
+        name: "caipe-platform-secret"
+        key: "OIDC_CLIENT_SECRET"
 
   metrics:
     enabled: true
@@ -168,7 +191,7 @@ global:
       configBridge:
         enabled: true
         image:
-          repository: ghcr.io/cnoe-io/agentgateway-config-bridge
+          repository: ghcr.io/caipe-io/agentgateway-config-bridge
           tag: ""              # defaults to agentgateway subchart appVersion
           pullPolicy: IfNotPresent
         pollSeconds: 5
@@ -352,8 +375,8 @@ metrics:
     labels:
       grafana_dashboard: "1"
 
-# Extra Kubernetes resources to deploy
-extraDeploy: []
+# -- Extra Kubernetes resources keyed by a stable, deployment-defined name. Use this form when Helm --set/--set-file must target individual resources.
+extraDeployMap: {}
 
 # ---------------------------------------------------------------------------
 # Live-skills command template (rendered as the `/skills` slash command
@@ -378,11 +401,11 @@ skillsLiveSkills: ""           # Inline custom live-skills skill (overrides ever
 mcp-argocd:
   nameOverride: "mcp-argocd"
   image:
-    repository: "ghcr.io/cnoe-io/mcp-argocd"
+    repository: "ghcr.io/caipe-io/mcp-argocd"
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-argocd"
+      repository: "ghcr.io/caipe-io/mcp-argocd"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -402,7 +425,7 @@ mcp-backstage:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-backstage"
+      repository: "ghcr.io/caipe-io/mcp-backstage"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -420,7 +443,7 @@ mcp-confluence:
   mcp:
     image:
       repository: "ghcr.io/sooperset/mcp-atlassian"
-      tag: "latest"
+      tag: "0.23.0"
       pullPolicy: "IfNotPresent"
     mode: "http" # Options: stdio, http
     port: 8000
@@ -433,7 +456,7 @@ mcp-confluence:
 mcp-github:
   nameOverride: "mcp-github"
   image:
-    repository: "ghcr.io/cnoe-io/mcp-github"
+    repository: "ghcr.io/caipe-io/mcp-github"
     pullPolicy: "IfNotPresent"
   mcp:
     mode: "stdio"
@@ -457,7 +480,7 @@ mcp-gitlab:
   mcp:
     image:
       repository: "zereight050/gitlab-mcp"
-      tag: "latest"
+      tag: "2.1.46"
       pullPolicy: "IfNotPresent"
     mode: "http" # Options: stdio, http
     port: 8000
@@ -506,7 +529,7 @@ mcp-jira:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-jira"
+      repository: "ghcr.io/caipe-io/mcp-jira"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -523,7 +546,7 @@ mcp-pagerduty:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-pagerduty"
+      repository: "ghcr.io/caipe-io/mcp-pagerduty"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -531,6 +554,28 @@ mcp-pagerduty:
     port: 8000
     agentgateway:
       enabled: false
+      protocol: StreamableHTTP
+
+mcp-sharepoint:
+  nameOverride: "mcp-sharepoint"
+  mcpSecrets:
+    requiresSecret: true
+    create: false
+    secretName: "mcp-sharepoint-secret"
+  mcp:
+    image:
+      repository: "ghcr.io/caipe-io/mcp-sharepoint"
+      # tag defaults to .Chart.AppVersion when not specified
+      tag: ""
+      pullPolicy: "IfNotPresent"
+    mode: "http"
+    port: 8000
+    env:
+      MCP_AUTH_MODE: "none"
+    agentgateway:
+      enabled: true
+      id: sharepoint
+      pathPrefix: /mcp/sharepoint
       protocol: StreamableHTTP
 
 mcp-slack:
@@ -563,7 +608,7 @@ mcp-aws:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-aws"
+      repository: "ghcr.io/caipe-io/mcp-aws"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -593,7 +638,7 @@ mcp-splunk:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-splunk"
+      repository: "ghcr.io/caipe-io/mcp-splunk"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -610,7 +655,7 @@ mcp-victorops:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-victorops"
+      repository: "ghcr.io/caipe-io/mcp-victorops"
       tag: ""
       pullPolicy: "IfNotPresent"
     mode: "http" # Options: stdio, http
@@ -626,7 +671,7 @@ mcp-webex:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-webex"
+      repository: "ghcr.io/caipe-io/mcp-webex"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -642,7 +687,7 @@ mcp-webex-meetings:
     requiresSecret: false
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-webex-meetings"
+      repository: "ghcr.io/caipe-io/mcp-webex-meetings"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -666,7 +711,7 @@ mcp-komodor:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-komodor"
+      repository: "ghcr.io/caipe-io/mcp-komodor"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -685,7 +730,7 @@ mcp-netutils:
     pullPolicy: "IfNotPresent"
   mcp:
     image:
-      repository: "ghcr.io/cnoe-io/mcp-netutils"
+      repository: "ghcr.io/caipe-io/mcp-netutils"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
@@ -721,7 +766,7 @@ caipe-ui:
     secretKey: "KC_SCHEDULER_CLIENT_SECRET"
     clientId: "caipe-scheduler-runner"
   image:
-    repository: "ghcr.io/cnoe-io/caipe-ui"
+    repository: "ghcr.io/caipe-io/caipe-ui"
     # tag defaults to .Chart.AppVersion when not specified
     tag: ""
     pullPolicy: "IfNotPresent"
@@ -784,6 +829,9 @@ caipe-ui:
     # When set, only listed templates are seeded; unlisted ones are removed on deploy.
     # When unset or empty, all built-in templates are seeded automatically.
     # BUILTIN_SKILL_IDS: "qs-deploy-status,qs-pr-review"
+    # Dynamic Agents: set to "true" to enable custom agent creation and management
+    # Requires admin role and MongoDB storage mode
+    DYNAMIC_AGENTS_ENABLED: "false"
     # Dynamic Agents service URL. Leave empty to use the chart default.
     # DYNAMIC_AGENTS_URL: ""
     # Scheduler service used by the Schedules page and scheduled-run BFF path.
@@ -802,6 +850,12 @@ caipe-ui:
     # controls the legacy fixed-provider variables; oauthConnectors below is
     # always bootstrapped when non-empty.
     CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS: "false"
+    # Autonomous Agents: set to "true" to enable the admin-gated Autonomous tab
+    # (UI proxies to the service at /api/autonomous). Requires tags.autonomous-agents=true.
+    ENABLE_AUTONOMOUS_AGENTS: "false"
+    # Autonomous Agents service URL (only used when ENABLE_AUTONOMOUS_AGENTS is "true")
+    # AUTONOMOUS_AGENTS_URL: ""
+
     # Standalone skill-scanner microservice (cisco-ai-defense/skill-scanner).
     # Active when global.skillScanner.enabled=true. Leave empty to use the
     # in-cluster default (derived from .Release.Name in the deployment template).
@@ -932,7 +986,9 @@ caipe-ui:
   #   oauth mode → IDENTITY_SYNC_OKTA_OAUTH_PRIVATE_KEY (PEM PKCS#8)
   existingSecret: ""
 
-  # MongoDB configuration for CAIPE UI persistence (in-cluster; disable for BYO)
+  # Enable switch for the in-cluster MongoDB-compatible persistence subchart.
+  # Provider/image/auth values are configured under the top-level `mongodb`
+  # alias below; this path remains here for backward-compatible enablement.
   mongodb:
     nameOverride: "mongodb"
     enabled: false  # Set to true to enable MongoDB
@@ -976,6 +1032,39 @@ caipe-ui:
         #     key: dev/mongodb
         #     property: password
 
+# Values passed to the `mongodb` dependency alias. MongoDB remains the default;
+# set provider=documentdb together with caipe-ui.mongodb.enabled=true to use the
+# MIT-licensed PostgreSQL-backed implementation.
+mongodb:
+  provider: mongodb
+  nameOverride: mongodb
+  image:
+    repository: mongo
+    tag: "7.0"
+    pullPolicy: IfNotPresent
+  documentdb:
+    image:
+      repository: ghcr.io/documentdb/documentdb/documentdb-local
+      tag: "pg17-0.113.0"
+      pullPolicy: IfNotPresent
+    port: 10260
+    postgresPort: 9712
+    dataPath: /data
+    tlsMode: allowTLS
+    logLevel: warn
+    telemetryEnabled: false
+  service:
+    port: 27017
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 10Gi
+  auth:
+    rootUsername: admin
+    rootPassword: changeme
+    database: caipe
+  strictPasswords: false
+
 ######### LiteLLM MCP configuration #########
 # Standalone MCP server for LiteLLM FinOps reporting.
 # Enable this when dynamic agents should call LiteLLM tools directly.
@@ -986,7 +1075,7 @@ litellmMcp:
   replicaCount: 1
   revisionHistoryLimit: 3
   image:
-    repository: "ghcr.io/cnoe-io/mcp-litellm"
+    repository: "ghcr.io/caipe-io/mcp-litellm"
     # tag defaults to .Chart.AppVersion when not specified
     tag: ""
     pullPolicy: "IfNotPresent"
@@ -1057,7 +1146,7 @@ litellmMcp:
 dynamic-agents:
   nameOverride: "dynamic-agents"
   image:
-    repository: "ghcr.io/cnoe-io/caipe-dynamic-agents"
+    repository: "ghcr.io/caipe-io/caipe-dynamic-agents"
     # tag defaults to .Chart.AppVersion when not specified
     tag: ""
     pullPolicy: "IfNotPresent"
@@ -1098,6 +1187,9 @@ dynamic-agents:
     # the in-cluster default http://<release-name>-caipe-ui:3000; override only
     # when pointing dynamic-agents at an external CAIPE UI/BFF.
     CAIPE_API_URL: ""
+    AUTHZ_SERVICE_URL: ""
+    # Must match caipe-ui.config.CAIPE_ORG_KEY.
+    CAIPE_ORG_KEY: "caipe"
     CREDENTIAL_SERVICE_AUDIENCE: "caipe-credential-service"
     USE_IMPERSONATION_TOKENS: "false"
     # MCP server IDs routed through AgentGateway. "all" only applies to
@@ -1127,20 +1219,99 @@ dynamic-agents:
       #     key: dev/dynamic-agents
       #     property: OPENAI_API_KEY
 
+######### Autonomous Agents configuration #########
+# Autonomous Agents - standalone scheduler that fires tasks (cron / interval /
+# webhook) at the dynamic-agents runtime. Tasks and run history are managed
+# through the UI's admin-gated /api/autonomous proxy; this service is the
+# upstream that proxy targets.
+# Enable with: tags.autonomous-agents=true
+# Requires: MongoDB (uses same MongoDB as CAIPE UI) and dynamic-agents.
+# Also set the UI flags (caipe-ui.config.ENABLE_AUTONOMOUS_AGENTS /
+# AUTONOMOUS_AGENTS_URL) -- see values-autonomous-agents.yaml.example for the
+# full recipe.
+autonomous-agents:
+  nameOverride: "autonomous-agents"
+  # Restrict which supported webhook providers users may configure.
+  enabledWebhookProviders:
+    - github
+    - jira
+    - slack
+    - pagerduty
+  image:
+    repository: "ghcr.io/caipe-io/caipe-autonomous-agents"
+    # tag defaults to .Chart.AppVersion when not specified
+    tag: ""
+    pullPolicy: "IfNotPresent"
+  service:
+    port: 8002
+  # Mint the task owner's bearer with the bundled Keycloak scheduler-runner
+  # client. Dynamic Agents uses that identity for both authorization and
+  # caller-scoped MCP credentials. External IdPs must support RFC 8693
+  # requested_subject token exchange.
+  dynamicAgentsAuth:
+    enabled: true
+    tokenUrl: ""
+    clientId: "caipe-scheduler-runner"
+    audience: "caipe-platform"
+    scope: ""
+    clientSecretRef:
+      name: ""
+      key: "KC_SCHEDULER_CLIENT_SECRET"
+  # ConfigMap for non-sensitive configuration.
+  # DYNAMIC_AGENTS_URL defaults to the in-release dynamic-agents Service in the
+  # autonomous-agents subchart helper. Set it here only to override that default.
+  config:
+    # Dynamic-agents runtime endpoint -- every autonomous task runs against a
+    # dynamic agent selected by the task's dynamic_agent_id.
+    DYNAMIC_AGENTS_URL: ""
+    # Minimum gap between cron/interval fires. Webhook triggers are exempt.
+    MINIMUM_SCHEDULE_INTERVAL_SECONDS: "1800"
+    # Reject larger webhook bodies before parsing/signature verification.
+    WEBHOOK_MAX_PAYLOAD_BYTES: "1048576"
+    # Each task is a single-consumer FIFO. Bound queued work separately from
+    # execution concurrency across different tasks.
+    WEBHOOK_MAX_PENDING_PER_TASK: "100"
+    WEBHOOK_MAX_PENDING_PER_OWNER: "500"
+    WEBHOOK_MAX_PENDING_GLOBAL: "5000"
+    WEBHOOK_MAX_PENDING_PAYLOAD_BYTES_GLOBAL: "67108864"
+    WEBHOOK_MAX_CONCURRENT_PER_OWNER: "20"
+    WEBHOOK_MAX_CONCURRENT_GLOBAL: "100"
+    # MongoDB configuration (uses same database as CAIPE UI)
+    MONGODB_DATABASE: "caipe"
+  # Pre-existing secret with MONGODB_URI (required), WEBHOOK_SECRET, and
+  # optional WEBEX_* values -- see the subchart values.yaml for the full list
+  existingSecret: ""
+  # External Secrets configuration for sensitive data (MongoDB URI, webhook secrets)
+  externalSecrets:
+    enabled: false  # Set to true to enable external secrets
+    apiVersion: "v1beta1"
+    secretStoreRef:
+      name: "vault"  # Your secret store name
+      kind: "ClusterSecretStore"
+    data: []
+      # - secretKey: MONGODB_URI
+      #   remoteRef:
+      #     key: dev/autonomous-agents
+      #     property: MONGODB_URI
+      # - secretKey: WEBHOOK_SECRET
+      #   remoteRef:
+      #     key: dev/autonomous-agents
+      #     property: WEBHOOK_SECRET
+
 ######### Scheduler service configuration #########
 # Enable with global.scheduler.enabled=true. Dynamic Agents and Keycloak are
 # required separately for authenticated scheduled execution.
 scheduler:
   fullnameOverride: "caipe-scheduler"
   image:
-    repository: "ghcr.io/cnoe-io/caipe-scheduler"
+    repository: "ghcr.io/caipe-io/caipe-scheduler"
     tag: ""
     pullPolicy: "IfNotPresent"
   command: []
   args: []
   cronRunner:
     image:
-      repository: "ghcr.io/cnoe-io/caipe-cron-runner"
+      repository: "ghcr.io/caipe-io/caipe-cron-runner"
       tag: ""
       pullPolicy: "IfNotPresent"
   caipe:
@@ -1158,13 +1329,16 @@ scheduler:
     existingSecret: ""
     existingSecretKey: "token"
     value: ""
+  limits:
+    # -- Minimum permitted gap, in seconds, between recurring cron fires.
+    minimumScheduleIntervalSeconds: 1800
 # Scheduler MCP. Rendered whenever the scheduler feature is enabled unless this
 # narrower switch is disabled. It shares the scheduler service token Secret.
 schedulerMcp:
   enabled: true
   nameOverride: "mcp-scheduler"
   image:
-    repository: "ghcr.io/cnoe-io/mcp-scheduler"
+    repository: "ghcr.io/caipe-io/mcp-scheduler"
     tag: ""
     pullPolicy: "IfNotPresent"
   command: ["mcp-server-scheduler"]
@@ -1190,7 +1364,7 @@ schedulerMcp:
 # Enable with: global.integrations.slackBot.enabled=true
 slack-bot:
   image:
-    repository: "ghcr.io/cnoe-io/caipe-slack-bot"
+    repository: "ghcr.io/caipe-io/caipe-slack-bot"
     # tag defaults to .Chart.AppVersion when not specified
     tag: ""
     pullPolicy: "IfNotPresent"
@@ -1267,10 +1441,6 @@ slack-bot:
       #   remoteRef:
       #     key: prod/slack-bot
       #     property: slack_client_secret
-      # - secretKey: SLACK_LINK_HMAC_SECRET
-      #   remoteRef:
-      #     key: prod/slack-bot
-      #     property: slack_link_hmac_secret
       # - secretKey: OAUTH2_CLIENT_SECRET
       #   remoteRef:
       #     key: prod/slack-bot
@@ -1293,7 +1463,7 @@ slack-bot:
 # Enable with Helm tag: webex-bot=true
 webex-bot:
   image:
-    repository: "ghcr.io/cnoe-io/caipe-webex-bot"
+    repository: "ghcr.io/caipe-io/caipe-webex-bot"
     tag: ""
     pullPolicy: "IfNotPresent"
 
@@ -1453,6 +1623,13 @@ openfga:
     enabled: true
     storeName: caipe-openfga
     seedTuples: []
+    platformClient:
+      enabled: false
+      clientId: caipe-platform
+      clientSecretRef:
+        name: caipe-platform-secret
+        key: OIDC_CLIENT_SECRET
+      orgObject: organization:caipe
   datastore:
     engine: memory
     uriSecretRef:
@@ -1471,9 +1648,12 @@ openfgaAuthzBridge:
 # above is kept as the dependency condition flag.
 openfga-authz-bridge:
   image:
-    repository: ghcr.io/cnoe-io/openfga-authz-bridge
+    repository: ghcr.io/caipe-io/openfga-authz-bridge
     tag: ""
     pullPolicy: IfNotPresent
+  # Must match caipe-ui.config.CAIPE_ORG_KEY.
+  organizationKey: caipe
+  imagePullSecrets: []
   openfga:
     httpUrl: ""
     storeName: caipe-openfga
@@ -1497,6 +1677,11 @@ openfga-authz-bridge:
     serviceUrl: ""
     tenantId: default
     subjectSalt: caipe-098-audit
+    # Routine allows are stored as periodic aggregate counts; denials and policy
+    # changes are always stored per-event. Enable only for a bounded
+    # investigation or compliance window.
+    fullFidelityAllows: false
+    allowRollupFlushSeconds: 60
 
 ######### RAG Stack configuration #########
 # RAG Stack - Complete stack including web, server, agent, Redis, and Milvus
@@ -1512,19 +1697,18 @@ rag-stack:
   rag-server:
     enabled: true
     image:
-      repository: "ghcr.io/cnoe-io/caipe-rag-server"
+      repository: "ghcr.io/caipe-io/caipe-rag-server"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"
     env:
-      RBAC_TEAM_SCOPE_ENABLED: "true"
       OPENFGA_STORE_NAME: "caipe-openfga"
       CAIPE_UNSAFE_RBAC_BYPASS: "false"
 
   agent-rag:
     enabled: true
     image:
-      repository: "ghcr.io/cnoe-io/caipe-rag-agent-rag"
+      repository: "ghcr.io/caipe-io/caipe-rag-agent-rag"
       # tag defaults to .Chart.AppVersion when not specified
       tag: ""
       pullPolicy: "IfNotPresent"

@@ -2,9 +2,10 @@
 
 import { cn } from "@/lib/utils";
 import { CheckCircle2,Clock,ExternalLink,Loader2,PauseCircle,Workflow,XCircle } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useCallback,useEffect,useState } from "react";
 import { MetadataInputForm,type InputField } from "@/components/chat/MetadataInputForm";
+import { pushWithNavigationProgress } from "@/lib/navigation-progress";
+import { useRouter } from "next/navigation";
 
 interface WorkflowRunInfo {
   runId: string;
@@ -185,7 +186,7 @@ function RunCard({ runId }: { runId: string }) {
           description={interruptDescription}
           inputFields={effectiveFields}
           onSubmit={(formData) => handleResume(JSON.stringify({ type: "form_input", values: formData }))}
-          onCancel={() => router.push(`/workflows/run/${runId}`)}
+          onCancel={() => pushWithNavigationProgress(router,`/workflows/run/${runId}`)}
           disabled={isSubmitting}
         />
       );
@@ -203,7 +204,7 @@ function RunCard({ runId }: { runId: string }) {
             )}
           </div>
           <button
-            onClick={() => router.push(`/workflows/run/${runId}`)}
+            onClick={() => pushWithNavigationProgress(router,`/workflows/run/${runId}`)}
             className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
             title="Open workflow run"
           >
@@ -259,14 +260,14 @@ function RunCard({ runId }: { runId: string }) {
             {stepProgress && <span className="text-[10px] text-muted-foreground">{stepProgress}</span>}
           </div>
           <button
-            onClick={() => router.push(`/workflows/run/${runId}`)}
+            onClick={() => pushWithNavigationProgress(router,`/workflows/run/${runId}`)}
             className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
           >
             <ExternalLink className="h-3.5 w-3.5" />
           </button>
         </div>
         <button
-          onClick={() => router.push(`/workflows/run/${runId}`)}
+          onClick={() => pushWithNavigationProgress(router,`/workflows/run/${runId}`)}
           className="w-full text-left text-xs font-medium text-amber-500 hover:text-amber-400 transition-colors"
         >
           Respond to workflow →
@@ -282,7 +283,7 @@ function RunCard({ runId }: { runId: string }) {
         "flex items-center gap-3 rounded-lg border p-3 transition-colors cursor-pointer hover:bg-muted/50",
         cfg?.bg || "border-border bg-card/50"
       )}
-      onClick={() => router.push(`/workflows/run/${runId}`)}
+      onClick={() => pushWithNavigationProgress(router,`/workflows/run/${runId}`)}
     >
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10">
         <Workflow className="h-4 w-4 text-primary" />

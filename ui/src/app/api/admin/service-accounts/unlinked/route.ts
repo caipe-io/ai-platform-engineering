@@ -9,9 +9,12 @@
  * org-admin. Mirrors the guard used by admin-tab-gates/route.ts. Bootstrap-
  * admin email is also accepted (break-glass parity).
  *
- * Response shape: { success, data: { id, sa_sub, name, scopes } }
- * where `scopes` is the Mongo display snapshot (cheap read; authoritative
- * scopes are fetched per-SA via the existing /[id] detail route when editing).
+ * Response shape: { success, data: { id, name, scopes } } where each scope is
+ * tagged with a `source`: agent grants for an Everyone-shared (global) agent
+ * are `"everyone"` (owned by the agent's visibility, not removable here);
+ * everything else is `"explicit"` (added via this panel, removable). Agent
+ * grants are read authoritatively from OpenFGA (`can_use`) so auto-grants from
+ * global agents are visible; tools come from the Mongo snapshot.
  *
  * 403 for non-admins. 404 when the unlinked SA has not been bootstrapped yet.
  *
@@ -23,7 +26,10 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth-config";
 import { getUnlinkedServiceAccount } from "@/lib/rbac/unlinked-service-account";
 import { isPlatformAdmin } from "@/lib/rbac/platform-admin";
-import type { ScopeRef } from "@/lib/service-account-scopes";
+import { listOpenFgaObjects } from "@/lib/rbac/openfga";
+import { findAgentVisibilities } from "@/lib/dynamic-agent-visibility";
+import { refFromObject, type UnlinkedScope } from "@/lib/service-account-scopes";
+import { listEveryoneKnowledgeScopes } from "@/lib/rbac/unlinked-knowledge-access";
 import type { ServiceAccountScope } from "@/types/mongodb";
 
 export async function GET() {
@@ -57,10 +63,70 @@ export async function GET() {
       );
     }
 
-    const scopes: ScopeRef[] = (sa.scopes_snapshot ?? []).map((s: ServiceAccountScope) => ({
-      type: s.type,
-      ref: s.ref,
+    // Agent grants are authoritative in OpenFGA: this surfaces auto-grants
+    // written when an agent is shared with Everyone, which never touch the
+    // Mongo snapshot. Tool grants stay snapshot-driven.
+    const [agentObjects, everyoneKnowledge] = await Promise.all([
+      listOpenFgaObjects({
+        user: `service_account:${sa.sa_sub}`,
+        relation: "can_use",
+        type: "agent",
+      }),
+      listEveryoneKnowledgeScopes(),
+    ]);
+    const agentIds = agentObjects.objects.map(refFromObject);
+    const visibilityById = await findAgentVisibilities(agentIds);
+
+    const agentScopes: UnlinkedScope[] = agentIds.map((ref) => ({
+      type: "agent",
+      ref,
+      source: visibilityById.get(ref) === "global" ? "everyone" : "explicit",
     }));
+
+    const toolScopes: UnlinkedScope[] = (sa.scopes_snapshot ?? [])
+      .filter((s: ServiceAccountScope) => s.type === "tool")
+      .map((s: ServiceAccountScope) => ({ type: "tool", ref: s.ref, source: "explicit" }));
+
+    const explicitKnowledge = new Map(
+      (sa.scopes_snapshot ?? [])
+        .filter(
+          (scope: ServiceAccountScope) =>
+            scope.type === "datasource" || scope.type === "collection",
+        )
+        .map((scope: ServiceAccountScope) => [
+          `${scope.type}:${scope.ref}`,
+          scope,
+        ]),
+    );
+    const knowledgeScopes = new Map<string, UnlinkedScope>();
+    for (const ref of everyoneKnowledge.datasourceIds) {
+      knowledgeScopes.set(`datasource:${ref}`, {
+        type: "datasource",
+        ref,
+        source: "everyone",
+      });
+    }
+    for (const ref of everyoneKnowledge.collectionIds) {
+      knowledgeScopes.set(`collection:${ref}`, {
+        type: "collection",
+        ref,
+        source: "everyone",
+      });
+    }
+    for (const [key, scope] of explicitKnowledge) {
+      if (knowledgeScopes.has(key)) continue;
+      knowledgeScopes.set(key, {
+        type: scope.type as "datasource" | "collection",
+        ref: scope.ref,
+        source: "explicit",
+      });
+    }
+
+    const scopes: UnlinkedScope[] = [
+      ...agentScopes,
+      ...toolScopes,
+      ...knowledgeScopes.values(),
+    ];
 
     return NextResponse.json({
       success: true,

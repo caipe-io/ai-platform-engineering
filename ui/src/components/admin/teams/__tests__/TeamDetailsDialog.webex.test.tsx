@@ -13,6 +13,7 @@ const team: Team = {
   created_at: new Date("2026-01-01"),
   updated_at: new Date("2026-01-01"),
   members: [],
+  can_manage: true,
 };
 
 beforeEach(() => {
@@ -115,4 +116,24 @@ it("removes an assigned Webex space and saves from the team dialog", async () =>
       })
     )
   );
+});
+
+it("shows Webex assignments without edit controls in read-only mode", async () => {
+  render(
+    <TeamDetailsDialog
+      team={{ ...team, can_manage: false }}
+      mode="webex"
+      open
+      onOpenChange={jest.fn()}
+      onTeamUpdated={jest.fn()}
+    />
+  );
+
+  expect(await screen.findByText("Alerts")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /Remove from team/i }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Save spaces" }),
+  ).not.toBeInTheDocument();
 });

@@ -3,19 +3,15 @@
 // assisted-by Codex Codex-sonnet-4-6
 
 import { cn } from "@/lib/utils";
+import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
+import { config } from "@/lib/config";
 import { ArrowRight,Bot,Database,MessageSquare,Server,Workflow,Zap } from "lucide-react";
-import Link from "next/link";
-
-interface CapabilityCardsProps {
-  ragEnabled: boolean;
-}
 
 const capabilities = [
   {
     id: "chat",
     title: "Chat",
-    description:
-      "Have natural conversations with AI agents to manage infrastructure, debug issues, and automate tasks.",
+    description: "Ask agents questions, troubleshoot issues, and get work done.",
     icon: MessageSquare,
     href: "/chat",
     color: "text-blue-400",
@@ -25,8 +21,7 @@ const capabilities = [
   {
     id: "agents",
     title: "Agents",
-    description:
-      "Create and manage custom AI agents with models, prompts, skills, and tool access for your team.",
+    description: "Build AI agents with the models, skills, and tools your team needs.",
     icon: Bot,
     href: "/dynamic-agents",
     color: "text-cyan-400",
@@ -36,8 +31,7 @@ const capabilities = [
   {
     id: "mcp-servers",
     title: "Tools",
-    description:
-      "Connect agents to APIs, infrastructure systems, and internal services.",
+    description: "Connect agents to APIs, infrastructure, and internal services.",
     icon: Server,
     href: "/dynamic-agents?tab=mcp-servers",
     color: "text-teal-400",
@@ -47,8 +41,7 @@ const capabilities = [
   {
     id: "skills",
     title: "Skills",
-    description:
-      "Browse and run pre-built agent workflows for common platform engineering tasks across your stack.",
+    description: "Discover reusable skills and templates for common tasks.",
     icon: Zap,
     href: "/skills",
     color: "text-amber-400",
@@ -58,8 +51,7 @@ const capabilities = [
   {
     id: "workflows",
     title: "Workflows",
-    description:
-      "Create and manage self-service workflows that chain agent actions into repeatable multi-step tasks.",
+    description: "Automate repeatable, multi-step work across your tools.",
     icon: Workflow,
     href: "/workflows",
     color: "text-violet-400",
@@ -69,10 +61,9 @@ const capabilities = [
   {
     id: "knowledge-bases",
     title: "Knowledge Bases",
-    description:
-      "Search and explore your organization's knowledge through RAG-powered semantic search and graph views.",
+    description: "Search trusted organizational knowledge and data sources.",
     icon: Database,
-    href: "/knowledge-bases",
+    href: "/knowledge-bases/search",
     color: "text-emerald-400",
     bgColor: "bg-emerald-500/10",
     borderColor: "hover:border-emerald-500/30",
@@ -80,9 +71,9 @@ const capabilities = [
   },
 ];
 
-export function CapabilityCards({ ragEnabled }: CapabilityCardsProps) {
+export function CapabilityCards() {
   const visibleCapabilities = capabilities.filter(
-    (c) => !c.requiresRag || ragEnabled
+    (c) => !c.requiresRag || config.ragEnabled
   );
 
   return (
@@ -92,7 +83,7 @@ export function CapabilityCards({ ragEnabled }: CapabilityCardsProps) {
       </h2>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {visibleCapabilities.map((cap) => (
-          <Link
+          <NavigationProgressLink
             key={cap.id}
             href={cap.href}
             data-testid={`capability-card-${cap.id}`}
@@ -123,7 +114,7 @@ export function CapabilityCards({ ragEnabled }: CapabilityCardsProps) {
                 </p>
               </div>
             </div>
-          </Link>
+          </NavigationProgressLink>
         ))}
       </div>
     </div>

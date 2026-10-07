@@ -115,8 +115,8 @@ if response and response.data:
 
 ## Examples
 
-- "Review the PR at https://github.com/cnoe-io/ai-platform-engineering/pull/42"
-- "Can you do a code review of cnoe-io/ai-platform-engineering#123"
+- "Review the PR at https://github.com/caipe-io/ai-platform-engineering/pull/42"
+- "Can you do a code review of caipe-io/ai-platform-engineering#123"
 - "Review PR #567 in the ai-platform-engineering repo"
 
 ## Guidelines

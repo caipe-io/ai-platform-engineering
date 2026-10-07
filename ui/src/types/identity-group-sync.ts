@@ -129,6 +129,14 @@ export interface IdentityGroupSyncDryRunResult {
   ignored_groups: ExternalGroup[];
   teams_to_create: Array<{ slug: string; name: string; source_group_id: string }>;
   teams_to_update: Array<{ slug: string; name: string; source_group_id: string }>;
+  /**
+   * Slugs of existing identity_group_sync teams that are currently
+   * `status: "archived"` but regained at least one active managed
+   * membership in this sync — the reconciler flips these back to
+   * `status: "active"`. Optional so existing plan literals in tests
+   * don't need updating.
+   */
+  teams_to_unarchive?: string[];
   membership_sources_to_refresh: TeamMembershipSource[];
   membership_sources_to_add: TeamMembershipSource[];
   membership_sources_to_remove: TeamMembershipSource[];

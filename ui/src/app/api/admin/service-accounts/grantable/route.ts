@@ -7,13 +7,20 @@ import { listRebacCatalog } from "@/lib/rbac/resource-catalog";
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
 import { hasOrganizationAdmin } from "@/lib/rbac/platform-admin";
 import { authenticateRequest, buildBackendHeaders } from "@/lib/da-proxy";
-import { cacheMcpToolCatalog, listCachedMcpTools } from "@/lib/rbac/mcp-tool-catalog";
+import {
+  cacheMcpToolCatalog,
+  listCachedMcpTools,
+} from "@/lib/rbac/mcp-tool-catalog";
 import type { MCPToolInfo } from "@/types/dynamic-agent";
+import {
+  RAG_COLLECTIONS_COLLECTION,
+  type RagCollection,
+} from "@/types/rag-collection";
 
 /**
  * GET /api/admin/service-accounts/grantable
  *
- * Returns the agents and tools the caller can grant, to populate the create /
+ * Returns the agents, tools, and RAG knowledge the caller can grant, to populate the create /
  * add-scope picker (FR-009). Normal users can only delegate their own holdings
  * (FR-007). Platform admins can grant from the full enabled platform catalog,
  * because org-admin authority is administrative and may not be materialized as
@@ -22,7 +29,7 @@ import type { MCPToolInfo } from "@/types/dynamic-agent";
  * Backed by `listOpenFgaObjects(user:<caller>, can_use, agent)` and the tool
  * equivalent (`can_call`, `tool`). See research.md R-8.
  *
- * Response: { success, data: { agents: [{ref,name}], tools: [{ref,name}] } }
+ * Response: { success, data: { agents, tools, datasources, collections } }
  * Credential material is never involved here.
  */
 
@@ -43,7 +50,16 @@ interface MCPServerLite {
   enabled?: boolean;
 }
 
-const DYNAMIC_AGENTS_URL = process.env.DYNAMIC_AGENTS_URL || "http://localhost:8100";
+const DYNAMIC_AGENTS_URL =
+  process.env.DYNAMIC_AGENTS_URL || "http://localhost:8100";
+
+function getRagServerUrl(): string {
+  return (
+    process.env.RAG_SERVER_URL ||
+    process.env.NEXT_PUBLIC_RAG_URL ||
+    "http://localhost:9446"
+  );
+}
 
 /** Strip the OpenFGA `<type>:` prefix, returning the bare object id. */
 function stripType(object: string, type: string): string {
@@ -64,10 +80,15 @@ function isValidToolName(value: string): boolean {
   return /^[A-Za-z0-9._-]+$/.test(value);
 }
 
-function toolNameForProbeResult(serverId: string, tool: Partial<MCPToolInfo>): string | null {
+function toolNameForProbeResult(
+  serverId: string,
+  tool: Partial<MCPToolInfo>,
+): string | null {
   const raw = tool.name || tool.namespaced_name;
   if (!raw) return null;
-  const name = raw.startsWith(`${serverId}/`) ? raw.slice(serverId.length + 1) : raw;
+  const name = raw.startsWith(`${serverId}/`)
+    ? raw.slice(serverId.length + 1)
+    : raw;
   return isValidToolName(name) ? name : null;
 }
 
@@ -125,8 +146,16 @@ async function hydrateMissingMcpToolCatalog(
           );
           if (!response.ok) return;
           const payload = await response.json().catch(() => null);
-          const probeResult = (payload?.data ?? payload) as { success?: boolean; tools?: unknown } | null;
-          if (!probeResult || probeResult.success === false || !Array.isArray(probeResult.tools)) return;
+          const probeResult = (payload?.data ?? payload) as {
+            success?: boolean;
+            tools?: unknown;
+          } | null;
+          if (
+            !probeResult ||
+            probeResult.success === false ||
+            !Array.isArray(probeResult.tools)
+          )
+            return;
 
           const tools = probeResult.tools as Array<Partial<MCPToolInfo>>;
           const items = grantableItemsForProbeTools(serverId, tools);
@@ -135,7 +164,10 @@ async function hydrateMissingMcpToolCatalog(
           try {
             await cacheMcpToolCatalog({ serverId, tools, source: "probe" });
           } catch (cacheError) {
-            console.warn("[service-accounts/grantable] failed to cache hydrated tool catalog:", cacheError);
+            console.warn(
+              "[service-accounts/grantable] failed to cache hydrated tool catalog:",
+              cacheError,
+            );
           }
         } catch (error) {
           console.warn(
@@ -161,11 +193,15 @@ async function listFullPlatformCatalog(
   const mcpCol = await getCollection<MCPServerLite>("mcp_servers");
   const [allAgents, initialServers] = await Promise.all([
     agentsCol
-      .find({ enabled: { $ne: false } } as never, { projection: { _id: 1, name: 1 } })
+      .find({ enabled: { $ne: false } } as never, {
+        projection: { _id: 1, name: 1 },
+      })
       .sort({ name: 1 })
       .toArray(),
     mcpCol
-      .find({ enabled: { $ne: false } } as never, { projection: { _id: 1, name: 1 } })
+      .find({ enabled: { $ne: false } } as never, {
+        projection: { _id: 1, name: 1 },
+      })
       .sort({ name: 1 })
       .toArray(),
   ]);
@@ -176,10 +212,14 @@ async function listFullPlatformCatalog(
       // Match the MCP Servers tab: AgentGateway-discovered servers are runtime
       // state, so a grantable catalog request should recover them if startup
       // seeded zero YAML-backed servers.
-      const { syncSelectedAgentGatewayMcpServers } = await import("@/app/api/mcp-servers/agentgateway/_lib");
+      const { syncSelectedAgentGatewayMcpServers } = await import(
+        "@/app/api/mcp-servers/agentgateway/_lib"
+      );
       await syncSelectedAgentGatewayMcpServers();
       allServers = await mcpCol
-        .find({ enabled: { $ne: false } } as never, { projection: { _id: 1, name: 1 } })
+        .find({ enabled: { $ne: false } } as never, {
+          projection: { _id: 1, name: 1 },
+        })
         .sort({ name: 1 })
         .toArray();
     } catch (error) {
@@ -194,17 +234,31 @@ async function listFullPlatformCatalog(
     ref: agent._id,
     name: agent.name ?? agent._id,
   }));
-  const cachedToolCatalog = await listCachedMcpTools(allServers.map((server) => server._id));
+  const cachedToolCatalog = await listCachedMcpTools(
+    allServers.map((server) => server._id),
+  );
   const missingToolServerIds = allServers
-    .filter((server) => (cachedToolCatalog.toolsByServer.get(server._id)?.length ?? 0) === 0)
+    .filter(
+      (server) =>
+        (cachedToolCatalog.toolsByServer.get(server._id)?.length ?? 0) === 0,
+    )
     .map((server) => server._id);
-  const hydratedToolsByServer = await hydrateMissingMcpToolCatalog(request, missingToolServerIds);
+  const hydratedToolsByServer = await hydrateMissingMcpToolCatalog(
+    request,
+    missingToolServerIds,
+  );
   const tools = allServers.flatMap((server) => {
     const wildcardRef = `${server._id}/*`;
-    const wildcardItem = { ref: wildcardRef, name: humanizeToolRef(wildcardRef) };
+    const wildcardItem = {
+      ref: wildcardRef,
+      name: humanizeToolRef(wildcardRef),
+    };
     const cached = cachedToolCatalog.toolsByServer.get(server._id);
     if (cached && cached.length > 0) {
-      return [wildcardItem, ...cached.map((tool) => ({ ref: tool.ref, name: tool.name }))];
+      return [
+        wildcardItem,
+        ...cached.map((tool) => ({ ref: tool.ref, name: tool.name })),
+      ];
     }
     const hydrated = hydratedToolsByServer.get(server._id);
     if (hydrated && hydrated.length > 0) {
@@ -218,9 +272,115 @@ async function listFullPlatformCatalog(
   return { agents, tools };
 }
 
+async function listGrantableDatasources(input: {
+  caller: string;
+  accessToken?: string;
+  org?: string;
+  platformAdmin?: boolean;
+}): Promise<GrantableItem[]> {
+  const objects = await listOpenFgaObjects({
+    user: input.caller,
+    relation: "can_read",
+    type: "data_source",
+  });
+  let ids = objects.objects.map((object) => stripType(object, "data_source"));
+
+  const names = new Map<string, string>();
+  if (input.accessToken && (input.platformAdmin || ids.length > 0)) {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${input.accessToken}`,
+      "Content-Type": "application/json",
+    };
+    if (input.org) headers["X-Tenant-Id"] = input.org;
+    try {
+      const response = await fetch(`${getRagServerUrl()}/v1/datasources`, {
+        method: "GET",
+        headers,
+      });
+      if (response.ok) {
+        const payload = (await response.json()) as { datasources?: unknown };
+        if (Array.isArray(payload.datasources)) {
+          const registryIds: string[] = [];
+          for (const raw of payload.datasources) {
+            if (!raw || typeof raw !== "object") continue;
+            const row = raw as Record<string, unknown>;
+            const id =
+              typeof row.datasource_id === "string" ? row.datasource_id : "";
+            if (!id) continue;
+            registryIds.push(id);
+            const label =
+              typeof row.name === "string" && row.name.trim()
+                ? row.name.trim()
+                : id;
+            names.set(id, label);
+          }
+          // Org-admin access to RAG is an intentional policy bypass and is not
+          // necessarily materialized as one data_source tuple per object. The
+          // admin catalog therefore uses the server's own admin-filtered list,
+          // while normal callers remain restricted to their OpenFGA objects.
+          if (input.platformAdmin) {
+            ids = Array.from(new Set([...ids, ...registryIds]));
+          }
+        }
+      }
+    } catch {
+      // Labels are decorative. The OpenFGA result remains authoritative and
+      // raw ids keep the picker functional while RAG is temporarily offline.
+    }
+  }
+
+  return ids
+    .map((ref) => ({ ref, name: names.get(ref) ?? ref }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function listGrantableCollections(input: {
+  caller: string;
+  platformAdmin?: boolean;
+}): Promise<GrantableItem[]> {
+  let ids: string[] = [];
+  if (!input.platformAdmin) {
+    const readable = await listOpenFgaObjects({
+      user: input.caller,
+      relation: "can_read",
+      type: "rag_collection",
+    });
+    ids = readable.objects.map((object) => stripType(object, "rag_collection"));
+  }
+  const names = new Map<string, string>();
+
+  if (isMongoDBConfigured && (input.platformAdmin || ids.length > 0)) {
+    try {
+      const collection = await getCollection<RagCollection>(
+        RAG_COLLECTIONS_COLLECTION,
+      );
+      const query = input.platformAdmin ? {} : { _id: { $in: ids } };
+      const rows = await collection
+        .find(query as never, { projection: { _id: 1, name: 1 } })
+        .toArray();
+      for (const row of rows) {
+        const ref = String(row._id);
+        names.set(ref, row.name || ref);
+      }
+      if (input.platformAdmin) ids = rows.map((row) => String(row._id));
+    } catch (error) {
+      console.warn(
+        "[service-accounts/grantable] collection labels unavailable:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  return Array.from(new Set(ids))
+    .map((ref) => ({ ref, name: names.get(ref) ?? ref }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
 export async function GET(request?: NextRequest | Request) {
   const session = (await getServerSession(authOptions)) as {
     sub?: string;
+    accessToken?: string;
+    org?: string;
     user?: { email?: string | null };
   } | null;
 
@@ -238,21 +398,48 @@ export async function GET(request?: NextRequest | Request) {
   try {
     const platformAdmin = await hasOrganizationAdmin(session);
     if (platformAdmin) {
-      const data = await listFullPlatformCatalog(request);
-      return NextResponse.json({ success: true, data });
+      const [catalog, datasources, collections] = await Promise.all([
+        listFullPlatformCatalog(request),
+        listGrantableDatasources({
+          caller,
+          accessToken: session.accessToken,
+          org: session.org,
+          platformAdmin: true,
+        }),
+        listGrantableCollections({ caller, platformAdmin: true }),
+      ]);
+      return NextResponse.json({
+        success: true,
+        data: { ...catalog, datasources, collections },
+      });
     }
 
     if (isUnlinkedContext) {
-        return NextResponse.json(
-          { success: false, error: "Forbidden" },
-          { status: 403 },
-        );
+      return NextResponse.json(
+        { success: false, error: "Forbidden" },
+        { status: 403 },
+      );
     }
 
-    const [agentObjects, toolObjects] = await Promise.all([
-      listOpenFgaObjects({ user: caller, relation: "can_use", type: "agent" }),
-      listOpenFgaObjects({ user: caller, relation: "can_call", type: "tool" }),
-    ]);
+    const [agentObjects, toolObjects, datasources, collections] =
+      await Promise.all([
+        listOpenFgaObjects({
+          user: caller,
+          relation: "can_use",
+          type: "agent",
+        }),
+        listOpenFgaObjects({
+          user: caller,
+          relation: "can_call",
+          type: "tool",
+        }),
+        listGrantableDatasources({
+          caller,
+          accessToken: session.accessToken,
+          org: session.org,
+        }),
+        listGrantableCollections({ caller }),
+      ]);
 
     // Resolve friendly names best-effort from the ReBAC resource catalog;
     // fall back to the ref itself so the picker is always usable even if the
@@ -281,7 +468,10 @@ export async function GET(request?: NextRequest | Request) {
     agents.sort((a, b) => a.name.localeCompare(b.name));
     tools.sort((a, b) => a.name.localeCompare(b.name));
 
-    return NextResponse.json({ success: true, data: { agents, tools } });
+    return NextResponse.json({
+      success: true,
+      data: { agents, tools, datasources, collections },
+    });
   } catch (error) {
     console.error("[service-accounts/grantable] failed:", error);
     return NextResponse.json(

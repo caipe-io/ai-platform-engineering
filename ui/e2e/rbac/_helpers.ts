@@ -4,8 +4,17 @@
  */
 
 import { encode } from "next-auth/jwt";
-import { Page, expect } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import type { RbacEnv } from "./_env";
+
+export async function chooseSearchablePickerOption(
+  page: Page,
+  trigger: Locator,
+  optionName: string | RegExp,
+): Promise<void> {
+  await trigger.click();
+  await page.getByRole("option", { name: optionName }).click();
+}
 
 type TestSessionInput = {
   email: string;
@@ -157,6 +166,24 @@ export async function installChatBootMocks(
         data: {
           default_agent_id: options.agentId ?? null,
           release_notes: { enabled: false },
+        },
+      }),
+    });
+  });
+
+  await page.route("**/api/user/preferences", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        data: {
+          web_default_agent_id: null,
+          platform_default_agent_id: options.agentId ?? null,
         },
       }),
     });
@@ -453,7 +480,7 @@ export async function expectChatComposerReady(
   page: Page,
   timeoutMs = 30_000,
 ): Promise<void> {
-  const composer = page.locator("textarea").first();
+  const composer = page.getByRole("textbox", { name: "Message" });
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
@@ -575,6 +602,29 @@ export async function installTestSession(
         ? { hasRefreshToken: input.hasRefreshToken }
         : {}),
     },
+  });
+
+  // Keep the client-side session check deterministic when the production
+  // app is running with a deliberately unreachable MongoDB URI. The SSR
+  // guard still exercises the signed cookie above; this route only replaces
+  // the browser's follow-up /api/auth/session request. Tests that need to
+  // exercise that endpoint register their own route afterward, which wins
+  // because Playwright evaluates routes in reverse registration order.
+  await page.route("**/api/auth/session", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        user: { name: input.email, email: input.email },
+        role: input.role ?? "admin",
+        isAuthorized: true,
+        canViewAdmin: true,
+        canAccessDynamicAgents: true,
+        accessToken: "rbac-e2e-local-access-token",
+        expiresAt: tokenExpiresAt,
+        expires: new Date((tokenExpiresAt + 60) * 1000).toISOString(),
+      }),
+    });
   });
 
   await page.context().addCookies([

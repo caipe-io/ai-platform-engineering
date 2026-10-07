@@ -79,6 +79,27 @@ export interface AgentToolTupleDiffInput {
    * everyone-can-use grant. Mirrors `previousOwnerTeamSlug`.
    */
   previousGlobalUserAccess?: boolean;
+  /**
+   * The platform unlinked service account's `sa_sub`, when known. When
+   * `globalUserAccess` is set, we also write
+   * `service_account:<sub> user agent:<id>` so callers with no linked user
+   * identity (Slack/Webex bots routed through the unlinked SA) are treated
+   * as "everyone" too — `user:*` only matches `user:`-typed subjects, never
+   * `service_account:` ones. Pass `null`/`undefined` to skip this grant
+   * (e.g. the unlinked SA isn't bootstrapped yet); the `user:*` grant is
+   * unaffected either way.
+   */
+  unlinkedServiceAccountSub?: string | null;
+  /**
+   * When `true`, an admin has explicitly granted the unlinked service account
+   * `can_use` on this agent via the Unlinked Access panel. That grant is owned
+   * by the admin, not by the agent's visibility, so we must NOT delete the
+   * `service_account:<sub> user agent:<id>` tuple when visibility leaves
+   * `global` — only the panel's own removal may. The `user:*` wildcard grant is
+   * still deleted on demotion (it has no explicit-grant equivalent). Defaults to
+   * `false`: a demotion with no explicit grant revokes the unlinked SA as before.
+   */
+  unlinkedGrantIsExplicit?: boolean;
 }
 
 export interface ReconcileAgentToolTuplesInput extends AgentToolTupleDiffInput {
@@ -241,9 +262,39 @@ export function buildAgentRelationshipTupleDiff(input: AgentToolTupleDiffInput):
       relation: "user",
       object: `agent:${input.agentId}`,
     });
+    if (isValidOpenFgaId(input.unlinkedServiceAccountSub)) {
+      writes.push({
+        user: `service_account:${input.unlinkedServiceAccountSub}`,
+        relation: "user",
+        object: `agent:${input.agentId}`,
+      });
+    }
   } else if (input.previousGlobalUserAccess) {
     deletes.push({
       user: "user:*",
+      relation: "user",
+      object: `agent:${input.agentId}`,
+    });
+    if (isValidOpenFgaId(input.unlinkedServiceAccountSub) && !input.unlinkedGrantIsExplicit) {
+      deletes.push({
+        user: `service_account:${input.unlinkedServiceAccountSub}`,
+        relation: "user",
+        object: `agent:${input.agentId}`,
+      });
+    }
+  }
+
+  // An explicit admin grant persists independently of visibility. Re-assert it
+  // for non-global agents (global agents already wrote it above) so the
+  // reconcile sweep self-heals a grant that a prior visibility-driven delete
+  // may have removed. Idempotent at the OpenFGA layer.
+  if (
+    !input.globalUserAccess &&
+    input.unlinkedGrantIsExplicit &&
+    isValidOpenFgaId(input.unlinkedServiceAccountSub)
+  ) {
+    writes.push({
+      user: `service_account:${input.unlinkedServiceAccountSub}`,
       relation: "user",
       object: `agent:${input.agentId}`,
     });

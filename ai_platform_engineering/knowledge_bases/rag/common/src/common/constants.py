@@ -43,6 +43,7 @@ KV_ONTOLOGY_VERSION_ID_KEY = "graph_rag/ontology_version_id"  # Ontology version
 REDIS_DATASOURCE_PREFIX = "rag/datasource:"
 REDIS_DATASOURCE_DOCUMENTS_PREFIX = "rag/datasource_documents:"
 REDIS_INGESTOR_PREFIX = "rag/ingestor:"
+REDIS_INGESTOR_PREVIEW_RESPONSE_PREFIX = "rag/ingestor_preview:"
 
 # Redis keys for MCP tool configuration
 REDIS_MCP_TOOL_CONFIG_PREFIX = "rag/mcp/tool:"  # per-tool: {prefix}{tool_id}
@@ -68,12 +69,38 @@ CONFLUENCE_INGESTOR_REDIS_QUEUE = "ingestor:confluence:requests"
 CONFLUENCE_INGESTOR_TYPE = "confluence"
 CONFLUENCE_INGESTOR_NAME = "default_confluence"
 
+SLACK_INGESTOR_REDIS_QUEUE = "ingestor:slack:requests"
+SLACK_INGESTOR_TYPE = "slack"
+SLACK_INGESTOR_NAME = "default_slack"
+
+JIRA_INGESTOR_REDIS_QUEUE = "ingestor:jira:requests"
+JIRA_INGESTOR_TYPE = "jira"
+JIRA_INGESTOR_NAME = "default_jira"
+
+WEBEX_INGESTOR_REDIS_QUEUE = "ingestor:webex:requests"
+WEBEX_INGESTOR_TYPE = "webex"
+WEBEX_INGESTOR_NAME = "default_webex"
+
+
+def ingestor_request_queue(ingestor_type: str, ingestor_id: str) -> str:
+  """Return the queue owned by one logical ingestor instance.
+
+  Replicas with the same stable id intentionally share a queue for work
+  distribution. Different ids never consume and discard each other's jobs.
+  """
+  return f"ingestor:{ingestor_type}:{ingestor_id}:requests"
+
 # Default reload interval for datasources without an explicit reload_interval in metadata (in seconds)
 DEFAULT_RELOAD_INTERVAL = 86400  # 24 hours
 
 # Minimum reload interval for datasources (in seconds)
 # Prevents excessive resource usage from too-frequent reloads
 MIN_RELOAD_INTERVAL = 60
+
+# Database-managed ingestors periodically re-read datasource schedules so a
+# source added while the worker is sleeping is picked up promptly. This is an
+# internal scheduling detail, not a datasource refresh setting.
+DATASOURCE_SCHEDULE_CHECK_INTERVAL = 60
 
 
 # Redis key prefix for userinfo cache (fetched from OIDC userinfo endpoint)

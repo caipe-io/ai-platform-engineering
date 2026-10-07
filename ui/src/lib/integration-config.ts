@@ -56,3 +56,25 @@ export function getIntegrationAvailability(): IntegrationAvailability {
     webex: isWebexIntegrationEnabled(),
   };
 }
+
+const WEBEX_LINK_DEFAULT_SCOPES = "spark:people_read";
+
+// Requires the org allowlist too: without it the callback can't enforce
+// that a linked Webex account actually belongs to this org, so the
+// feature must stay off rather than accept any Webex account.
+export function isWebexIdentityLinkingEnabled(): boolean {
+  return (
+    Boolean(envValue("WEBEX_LINK_CLIENT_ID")) &&
+    Boolean(envValue("WEBEX_LINK_CLIENT_SECRET")) &&
+    Boolean(envValue("WEBEX_LINK_REDIRECT_URI")) &&
+    Boolean(envValue("WEBEX_LINK_ALLOWED_ORG_ID"))
+  );
+}
+
+export function getWebexLinkScopes(): string {
+  return envValue("WEBEX_LINK_SCOPES") ?? WEBEX_LINK_DEFAULT_SCOPES;
+}
+
+export function getWebexLinkAllowedOrgId(): string | null {
+  return envValue("WEBEX_LINK_ALLOWED_ORG_ID");
+}

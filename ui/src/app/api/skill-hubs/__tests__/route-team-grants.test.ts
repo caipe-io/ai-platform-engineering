@@ -64,7 +64,7 @@ describe("skill hubs team grants config", () => {
                 {
                   id: "hub-1",
                   type: "github",
-                  location: "cnoe-io/ai-platform-engineering",
+                  location: "caipe-io/ai-platform-engineering",
                   enabled: true,
                   credentials_ref: null,
                   labels: [],
@@ -99,7 +99,7 @@ describe("skill hubs team grants config", () => {
     expect(body.hubs).toEqual([
       expect.objectContaining({
         id: "hub-1",
-        location: "cnoe-io/ai-platform-engineering",
+        location: "caipe-io/ai-platform-engineering",
       }),
     ]);
   });

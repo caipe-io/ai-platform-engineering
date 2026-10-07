@@ -1,6 +1,7 @@
 # CAS Architecture Diagrams
 
 **Date:** 2026-06-07
+**Last reviewed:** 2026-08-15
 **Companion to:** [`spec.md`](./spec.md) · [`research.md`](./research.md) · [`../2026-06-05-centralized-bff-authz-pdp-agnostic/solution-architecture.md`](../2026-06-05-centralized-bff-authz-pdp-agnostic/solution-architecture.md)
 
 > One decision core, multiple transports, PDP-agnostic. Additive today; consumers migrate incrementally.
@@ -31,7 +32,7 @@ flowchart TB
     AD --> P
   end
 
-  DA["Dynamic Agents — next"] -->|HTTP + user JWT| V1
+  DA["Dynamic Agents chat ✓ migrated"] -->|HTTP + user JWT| V1
   RB["RAG · Slack · Webex — later"] -->|HTTP| V1
   OFA --> STORE[("OpenFGA store")]
   AU --> M[("audit_events — Mongo")]
@@ -43,7 +44,10 @@ flowchart TB
 **Key points**
 - The **OpenFGA adapter is private** to `lib/authz` (ESLint silo boundary). Swapping in Cedar/OPA later = a new adapter behind the same `PolicyEngine` / `PolicyAdmin` interfaces.
 - The **bridge** stays data-plane (per-MCP-call `ext_authz`); it does **not** route through the BFF.
-- DA/RAG/bots are **not migrated yet** — only the in-process `workflow-runs` route consumes CAS today.
+- Dynamic Agents chat and the workflow engine use CAS. Standard BFF
+  resource-scoped helpers also use CAS by default.
+- RAG, bots, legacy BFF gates, and the bridge are not fully migrated. See the
+  [living CAS gap inventory](../../security/rbac/cas-coverage-gaps.md).
 
 ---
 
@@ -104,14 +108,14 @@ sequenceDiagram
 ```mermaid
 flowchart LR
   subgraph now["Today (additive)"]
-    n1["workflow-runs route → CAS"]
-    n2["legacy paths untouched<br/>DA openfga_authz · RAG rbac · bridge"]
+    n1["workflow engine · DA chat<br/>BFF resource helpers → CAS"]
+    n2["legacy paths remain<br/>RAG · bots · bridge · coarse BFF gates"]
   end
   subgraph next["Incremental"]
-    x1["DA → CAS HTTP<br/>(delete openfga_authz, workflow_execution_authz)"]
+    x1["Internal CAS transport<br/>for AgentGateway"]
     x2["RAG → CAS"]
-    x3["bots → CAS"]
-    x4["bridge: align vocabulary/audit"]
+    x3["bots and legacy BFF gates → CAS"]
+    x4["relationship mutations<br/>→ CAS reconcile"]
   end
   now --> next
 ```

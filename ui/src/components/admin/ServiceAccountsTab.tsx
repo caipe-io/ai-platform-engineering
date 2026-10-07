@@ -15,7 +15,9 @@ import {
   Bot,
   ChevronLeft,
   ChevronRight,
+  Database,
   KeyRound,
+  Layers3,
   Loader2,
   Plus,
   RefreshCw,
@@ -37,8 +39,14 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { MultiSelect } from "@/components/ui/multi-select";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
+import { fetchCollectionMemberDatasourceIds } from "@/lib/rag-collections-client";
+import { labelledGrantOptions, type GrantableItem } from "@/lib/grantable-options";
 import { TeamPicker, type TeamPickerOption } from "@/components/ui/team-picker";
-import { ProviderSelect, type ProviderOption } from "@/components/ui/provider-select";
+import {
+  ProviderSelect,
+  type ProviderOption,
+} from "@/components/ui/provider-select";
 import { CopyButton } from "@/components/ui/copy-button";
 import { withAdminSimulationParams } from "@/lib/rbac/admin-simulation-query";
 import type { AdminSimulationQueryTarget } from "@/lib/rbac/admin-simulation-query";
@@ -47,6 +55,11 @@ import { getProviderDisplayName } from "@/lib/credentials/provider-display-names
 
 // Matches the BFF default (`page_size` defaults to 24 server-side too).
 const PAGE_SIZE = 24;
+// Mirrors MAX_SCOPES in /api/admin/service-accounts/route.ts: the create
+// endpoint only accepts this many scopes per request body.
+const MAX_CREATE_SCOPES = 500;
+// Mirrors MAX_BULK_SCOPES in /api/admin/service-accounts/[id]/scopes/bulk/route.ts.
+const MAX_BULK_SCOPES = 1000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types (mirror the BFF contract; never include secret material on list/detail)
@@ -61,28 +74,41 @@ interface ServiceAccountListItem {
   created_at: string;
   status: "active" | "revoked";
   protected?: boolean;
-  scope_counts: { agents: number; tools: number };
-}
-
-interface GrantableItem {
-  ref: string;
-  name: string;
+  scope_counts: {
+    agents: number;
+    tools: number;
+    datasources: number;
+    collections: number;
+  };
 }
 
 interface GrantableData {
   agents: GrantableItem[];
   tools: GrantableItem[];
+  datasources: GrantableItem[];
+  collections: GrantableItem[];
+}
+
+function normalizeGrantableData(
+  value: Partial<GrantableData> | null | undefined,
+): GrantableData {
+  return {
+    agents: Array.isArray(value?.agents) ? value.agents : [],
+    tools: Array.isArray(value?.tools) ? value.tools : [],
+    datasources: Array.isArray(value?.datasources) ? value.datasources : [],
+    collections: Array.isArray(value?.collections) ? value.collections : [],
+  };
+}
+
+interface ScopeRef {
+  type: "agent" | "tool" | "datasource" | "collection";
+  ref: string;
 }
 
 interface CreatedCredential {
   client_id: string;
   client_secret: string;
   token_url: string;
-}
-
-interface ScopeRef {
-  type: "agent" | "tool";
-  ref: string;
 }
 
 interface ServiceAccountDetail {
@@ -114,7 +140,6 @@ interface ServiceAccountCredential {
   connectorId?: string;
 }
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
@@ -135,6 +160,9 @@ export function ServiceAccountsTab({
   const [createOpen, setCreateOpen] = useState(false);
   const [credential, setCredential] = useState<CreatedCredential | null>(null);
   const [createdName, setCreatedName] = useState<string>("");
+  const [credentialWarning, setCredentialWarning] = useState<string | null>(
+    null,
+  );
   const [manageId, setManageId] = useState<string | null>(null);
 
   const [searchDraft, setSearchDraft] = useState("");
@@ -144,12 +172,15 @@ export function ServiceAccountsTab({
   // Debounce typed input before it drives a fetch, resetting to page 1 so a
   // new search always starts from the top of the result set.
   useEffect(() => {
+    const nextSearch = searchDraft.trim();
+    if (nextSearch === search) return;
+
     const id = window.setTimeout(() => {
-      setSearch(searchDraft.trim());
+      setSearch(nextSearch);
       setPage(1);
     }, 300);
     return () => window.clearTimeout(id);
-  }, [searchDraft]);
+  }, [search, searchDraft]);
 
   const listUrl = useMemo(() => {
     const params = new URLSearchParams();
@@ -162,24 +193,31 @@ export function ServiceAccountsTab({
     );
   }, [page, search, simulationTarget]);
 
-  const loadList = useCallback(async (isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
-    try {
-      const res = await fetch(listUrl);
-      const body = await res.json();
-      if (!res.ok || !body.success) {
-        throw new Error(body.error || "Failed to load service accounts");
+  const loadList = useCallback(
+    async (isRefresh = false) => {
+      if (isRefresh) setRefreshing(true);
+      try {
+        const res = await fetch(listUrl);
+        const body = await res.json();
+        if (!res.ok || !body.success) {
+          throw new Error(body.error || "Failed to load service accounts");
+        }
+        setItems(body.data.items ?? []);
+        setTotal(body.data.total ?? body.data.items?.length ?? 0);
+        setError(null);
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to load service accounts",
+        );
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-      setItems(body.data.items ?? []);
-      setTotal(body.data.total ?? body.data.items?.length ?? 0);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load service accounts");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [listUrl]);
+    },
+    [listUrl],
+  );
 
   useEffect(() => {
     void loadList();
@@ -188,34 +226,30 @@ export function ServiceAccountsTab({
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const handleCreated = useCallback(
-    (cred: CreatedCredential, name: string) => {
+    (cred: CreatedCredential, name: string, warning?: string) => {
       setCreateOpen(false);
       setCredential(cred);
       setCreatedName(name);
+      setCredentialWarning(warning ?? null);
       void loadList(true);
     },
     [loadList],
   );
 
   // Rotate (from the manage dialog) reuses the same see-once reveal.
-  const handleRotated = useCallback(
-    (cred: CreatedCredential, name: string) => {
-      setCredential(cred);
-      setCreatedName(name);
-    },
-    [],
-  );
+  const handleRotated = useCallback((cred: CreatedCredential, name: string) => {
+    setCredential(cred);
+    setCreatedName(name);
+  }, []);
 
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">Service Accounts</h2>
-          <p className="text-sm text-muted-foreground">
-            Machine identities owned by your teams. Each can only use the agents and tools
-            its creator holds. The credential is shown once at creation.
-          </p>
-        </div>
+        <p className="max-w-2xl text-sm text-muted-foreground">
+          Machine identities owned by your teams. Each can only use the agents,
+          tools, and knowledge bases its creator can access. The credential is
+          shown once at creation.
+        </p>
         <div className="flex gap-2">
           <Button
             type="button"
@@ -261,13 +295,16 @@ export function ServiceAccountsTab({
 
       {loading ? (
         <div className="flex items-center justify-center py-12 text-muted-foreground">
-          <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading service accounts...
+          <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading service
+          accounts...
         </div>
       ) : items.length === 0 ? (
         search ? (
           <div className="rounded-lg border border-dashed py-12 text-center">
             <Search className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
-            <h3 className="mb-1 text-lg font-semibold">No matching service accounts</h3>
+            <h3 className="mb-1 text-lg font-semibold">
+              No matching service accounts
+            </h3>
             <p className="text-muted-foreground">
               No service accounts match &ldquo;{search}&rdquo;.
             </p>
@@ -275,9 +312,12 @@ export function ServiceAccountsTab({
         ) : (
           <div className="rounded-lg border border-dashed py-12 text-center">
             <Bot className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
-            <h3 className="mb-1 text-lg font-semibold">No service accounts yet</h3>
+            <h3 className="mb-1 text-lg font-semibold">
+              No service accounts yet
+            </h3>
             <p className="mb-4 text-muted-foreground">
-              Create one to give an external integration scoped, auditable access.
+              Create one to give an external integration scoped, auditable
+              access.
             </p>
             <Button
               className="gap-2"
@@ -299,6 +339,7 @@ export function ServiceAccountsTab({
                   <th className="px-4 py-3">Team</th>
                   <th className="px-4 py-3 w-24">Agents</th>
                   <th className="px-4 py-3 w-24">Tools</th>
+                  <th className="px-4 py-3 w-36">RAG access</th>
                   <th className="px-4 py-3 w-24">Status</th>
                   <th className="px-4 py-3 w-28 text-right">Actions</th>
                 </tr>
@@ -369,7 +410,11 @@ export function ServiceAccountsTab({
             key={credential?.client_id ?? "no-credential"}
             credential={credential}
             name={createdName}
-            onClose={() => setCredential(null)}
+            warning={credentialWarning}
+            onClose={() => {
+              setCredential(null);
+              setCredentialWarning(null);
+            }}
           />
         </>
       )}
@@ -401,7 +446,10 @@ function ServiceAccountRow({
               className="h-4 w-4 shrink-0 text-muted-foreground"
               aria-label="Protected service account"
             >
-              <title>Protected: this service account can&apos;t be revoked or moved to another team.</title>
+              <title>
+                Protected: this service account can&apos;t be revoked or moved
+                to another team.
+              </title>
             </ShieldCheck>
           )}
           {sa.name}
@@ -410,7 +458,9 @@ function ServiceAccountRow({
           <div className="text-xs text-muted-foreground">{sa.description}</div>
         )}
       </td>
-      <td className="px-4 py-2.5 align-top text-muted-foreground">{sa.owning_team_id}</td>
+      <td className="px-4 py-2.5 align-top text-muted-foreground">
+        {sa.owning_team_id}
+      </td>
       <td className="px-4 py-2.5 align-top">
         <span className="inline-flex items-center gap-1 text-muted-foreground">
           <Bot className="h-3.5 w-3.5" /> {sa.scope_counts.agents}
@@ -420,6 +470,18 @@ function ServiceAccountRow({
         <span className="inline-flex items-center gap-1 text-muted-foreground">
           <Wrench className="h-3.5 w-3.5" /> {sa.scope_counts.tools}
         </span>
+      </td>
+      <td className="px-4 py-2.5 align-top">
+        <div className="flex items-center gap-3 text-muted-foreground">
+          <span className="inline-flex items-center gap-1" title="Datasources">
+            <Database className="h-3.5 w-3.5" />
+            {sa.scope_counts.datasources ?? 0}
+          </span>
+          <span className="inline-flex items-center gap-1" title="Collections">
+            <Layers3 className="h-3.5 w-3.5" />
+            {sa.scope_counts.collections ?? 0}
+          </span>
+        </div>
       </td>
       <td className="px-4 py-2.5 align-top">
         <StatusBadge status={sa.status} />
@@ -459,6 +521,139 @@ function StatusBadge({ status }: { status: "active" | "revoked" }) {
 // Create dialog
 // ─────────────────────────────────────────────────────────────────────────────
 
+interface BulkScopesCallResult {
+  ok: boolean;
+  body: { success?: boolean; error?: string; data?: unknown };
+}
+
+/**
+ * POST a batch of scopes to `/scopes/bulk`. Shared by the edit-modal add-scope
+ * flow (`addScope`) and `createServiceAccountBatched`'s overflow attach —
+ * both already hold state they can't afford to lose (an existing SA's scopes,
+ * or a just-issued one-time credential), so a thrown fetch (network blip,
+ * timeout) degrades to the same `{ok: false}` shape as a bad response instead
+ * of propagating as an unhandled rejection.
+ */
+async function postScopesBulk(
+  saId: string,
+  scopes: ScopeRef[],
+): Promise<BulkScopesCallResult> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `/api/admin/service-accounts/${encodeURIComponent(saId)}/scopes/bulk`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scopes }),
+      },
+    );
+  } catch {
+    return { ok: false, body: { success: false } };
+  }
+  const body = await res.json().catch(() => ({ success: false }));
+  return { ok: res.ok, body };
+}
+
+export interface CreateServiceAccountBatchedResult {
+  success: boolean;
+  credential?: CreatedCredential;
+  name?: string;
+  /** Set when some scopes beyond the first batch failed to attach. */
+  warning?: string;
+  error?: string;
+  /** Set on a 403 with rejected_scopes — refs the caller doesn't hold. */
+  rejectedScopeRefs?: string[];
+}
+
+const WARNING_REFS_SHOWN = 10;
+
+/**
+ * Create a service account whose selected scopes may exceed what the create
+ * endpoint accepts in one request (MAX_CREATE_SCOPES, mirrored server-side as
+ * MAX_SCOPES). The first batch is sent in the create body; anything beyond
+ * that is attached afterward via the bulk `/scopes/bulk` endpoint (the same
+ * one the edit/unlinked-SA "add scopes" flow uses) in chunks of
+ * MAX_BULK_SCOPES — a handful of requests instead of one per scope, per the
+ * same "avoid hundreds of round trips" rationale that endpoint exists for.
+ *
+ * Extracted from CreateServiceAccountDialog.submit so this orchestration can
+ * be unit-tested without driving the MultiSelect pickers through the DOM.
+ */
+export async function createServiceAccountBatched({
+  name,
+  description,
+  owningTeamId,
+  scopes,
+  createBatchSize = MAX_CREATE_SCOPES,
+  bulkBatchSize = MAX_BULK_SCOPES,
+}: {
+  name: string;
+  description?: string;
+  owningTeamId: string;
+  scopes: ScopeRef[];
+  createBatchSize?: number;
+  bulkBatchSize?: number;
+}): Promise<CreateServiceAccountBatchedResult> {
+  const firstBatch = scopes.slice(0, createBatchSize);
+  const remaining = scopes.slice(createBatchSize);
+
+  const res = await fetch("/api/admin/service-accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name,
+      description,
+      owning_team_id: owningTeamId,
+      scopes: firstBatch,
+    }),
+  });
+  const body = await res.json();
+  if (!res.ok || !body.success) {
+    return {
+      success: false,
+      error: body.error || "Failed to create service account.",
+      rejectedScopeRefs:
+        res.status === 403 && body.data?.rejected_scopes?.length
+          ? body.data.rejected_scopes.map((s: { ref: string }) => s.ref)
+          : undefined,
+    };
+  }
+
+  let warning: string | undefined;
+  if (remaining.length > 0) {
+    const saId = body.data.id as string;
+    // Bulk writes are atomic per chunk (see .../scopes/bulk/route.ts): if any
+    // scope in a chunk isn't held, the WHOLE chunk is rejected together, so
+    // there's no per-scope split within a failed chunk to report — every ref
+    // in that chunk genuinely didn't get attached.
+    const failedRefs: ScopeRef[] = [];
+    for (let i = 0; i < remaining.length; i += bulkBatchSize) {
+      const chunk = remaining.slice(i, i + bulkBatchSize);
+      const { ok, body: bulkBody } = await postScopesBulk(saId, chunk);
+      if (!ok || !bulkBody.success) failedRefs.push(...chunk);
+    }
+    if (failedRefs.length > 0) {
+      const shown = failedRefs
+        .slice(0, WARNING_REFS_SHOWN)
+        .map((s) => s.ref)
+        .join(", ");
+      const more =
+        failedRefs.length > WARNING_REFS_SHOWN
+          ? ` and ${failedRefs.length - WARNING_REFS_SHOWN} more`
+          : "";
+      warning = `${failedRefs.length} of ${remaining.length} additional scope(s) beyond the first ${createBatchSize} could not be attached (${shown}${more}). Add them from Manage → Scopes.`;
+    }
+  }
+
+  return {
+    success: true,
+    credential: body.data.credential as CreatedCredential,
+    name: body.data.name as string,
+    warning,
+  };
+}
+
 function CreateServiceAccountDialog({
   open,
   onOpenChange,
@@ -466,19 +661,33 @@ function CreateServiceAccountDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: (cred: CreatedCredential, name: string) => void;
+  onCreated: (cred: CreatedCredential, name: string, warning?: string) => void;
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [owningTeam, setOwningTeam] = useState("");
   const [teams, setTeams] = useState<MyTeam[]>([]);
-  const [grantable, setGrantable] = useState<GrantableData>({ agents: [], tools: [] });
+  const [grantable, setGrantable] = useState<GrantableData>({
+    agents: [],
+    tools: [],
+    datasources: [],
+    collections: [],
+  });
   const [grantableError, setGrantableError] = useState(false);
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  const [selectedDatasources, setSelectedDatasources] = useState<string[]>([]);
+  const [selectedCollections, setSelectedCollections] = useState<string[]>([]);
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [collectionPickNote, setCollectionPickNote] = useState<string | null>(
+    null,
+  );
+  // Gates the bulk-add picker so two overlapping picks (the popover reopens
+  // instantly after a select) can't both decide the same member id is "not
+  // yet selected" and each add it, producing a duplicate ref.
+  const [addingFromCollection, setAddingFromCollection] = useState(false);
 
   // Reset + load pickers each time the dialog opens.
   useEffect(() => {
@@ -488,16 +697,22 @@ function CreateServiceAccountDialog({
     setOwningTeam("");
     setSelectedAgents([]);
     setSelectedTools([]);
+    setSelectedDatasources([]);
+    setSelectedCollections([]);
     setFormError(null);
+    setCollectionPickNote(null);
+    setAddingFromCollection(false);
     setGrantableError(false);
-    setGrantable({ agents: [], tools: [] });
+    setGrantable({ agents: [], tools: [], datasources: [], collections: [] });
     setLoadingOptions(true);
 
     let cancelled = false;
     (async () => {
       try {
         const [teamsRes, grantableRes] = await Promise.all([
-          fetch("/api/auth/my-roles").then((r) => r.json()).catch(() => ({})),
+          fetch("/api/auth/my-roles")
+            .then((r) => r.json())
+            .catch(() => ({})),
           fetch("/api/admin/service-accounts/grantable")
             .then((r) => r.json())
             .catch(() => ({ success: false })),
@@ -507,7 +722,9 @@ function CreateServiceAccountDialog({
         setTeams(myTeams);
         if (myTeams.length === 1) setOwningTeam(myTeams[0].slug);
         if (grantableRes.success) {
-          setGrantable(grantableRes.data as GrantableData);
+          setGrantable(
+            normalizeGrantableData(grantableRes.data as Partial<GrantableData>),
+          );
         } else {
           // Distinguish a load FAILURE from a genuine zero-grant user (#40):
           // both leave the pickers empty, but only the failure should tell the
@@ -529,6 +746,53 @@ function CreateServiceAccountDialog({
   const agentRefToLabel = new Map(grantable.agents.map((a) => [a.ref, a.name]));
   const toolLabelToRef = new Map(grantable.tools.map((t) => [t.name, t.ref]));
   const toolRefToLabel = new Map(grantable.tools.map((t) => [t.ref, t.name]));
+  const datasourceOptions = labelledGrantOptions(grantable.datasources);
+  const datasourceLabelToRef = new Map(
+    datasourceOptions.map((o) => [o.label, o.ref]),
+  );
+  const datasourceRefToLabel = new Map(
+    datasourceOptions.map((o) => [o.ref, o.label]),
+  );
+  const collectionOptions = labelledGrantOptions(grantable.collections);
+  const collectionLabelToRef = new Map(
+    collectionOptions.map((o) => [o.label, o.ref]),
+  );
+  const collectionRefToLabel = new Map(
+    collectionOptions.map((o) => [o.ref, o.label]),
+  );
+
+  const addDatasourcesFromCollection = useCallback(
+    async (collectionId: string) => {
+      if (addingFromCollection) return;
+      setAddingFromCollection(true);
+      setCollectionPickNote(null);
+      try {
+        const memberIds = await fetchCollectionMemberDatasourceIds(collectionId);
+        const grantableRefs = new Set(grantable.datasources.map((d) => d.ref));
+        const alreadySelected = new Set(selectedDatasources);
+        const addable = memberIds.filter(
+          (id) => grantableRefs.has(id) && !alreadySelected.has(id),
+        );
+        if (addable.length === 0) {
+          setCollectionPickNote(
+            "No datasources you can grant are in that collection.",
+          );
+          return;
+        }
+        setSelectedDatasources((prev) => [...prev, ...addable]);
+        setCollectionPickNote(
+          `Queued ${addable.length} datasource${addable.length === 1 ? "" : "s"} from the collection — they'll be granted when you create the account.`,
+        );
+      } catch (err) {
+        setCollectionPickNote(
+          err instanceof Error ? err.message : "Could not load collection",
+        );
+      } finally {
+        setAddingFromCollection(false);
+      }
+    },
+    [addingFromCollection, grantable.datasources, selectedDatasources],
+  );
 
   const submit = useCallback(async () => {
     setFormError(null);
@@ -545,36 +809,55 @@ function CreateServiceAccountDialog({
       const scopes = [
         ...selectedAgents.map((ref) => ({ type: "agent" as const, ref })),
         ...selectedTools.map((ref) => ({ type: "tool" as const, ref })),
+        ...selectedDatasources.map((ref) => ({
+          type: "datasource" as const,
+          ref,
+        })),
+        ...selectedCollections.map((ref) => ({
+          type: "collection" as const,
+          ref,
+        })),
       ];
-      const res = await fetch("/api/admin/service-accounts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          description: description.trim() || undefined,
-          owning_team_id: owningTeam,
-          scopes,
-        }),
+      const result = await createServiceAccountBatched({
+        name: name.trim(),
+        description: description.trim() || undefined,
+        owningTeamId: owningTeam,
+        scopes,
       });
-      const body = await res.json();
-      if (!res.ok || !body.success) {
-        if (res.status === 403 && body.data?.rejected_scopes?.length) {
-          const refs = body.data.rejected_scopes
-            .map((s: { ref: string }) => s.ref)
-            .join(", ");
-          setFormError(`You cannot grant scopes you do not hold: ${refs}`);
+      if (!result.success) {
+        if (result.rejectedScopeRefs?.length) {
+          setFormError(
+            `You cannot grant scopes you do not hold: ${result.rejectedScopeRefs.join(", ")}`,
+          );
         } else {
-          setFormError(body.error || "Failed to create service account.");
+          setFormError(result.error || "Failed to create service account.");
         }
         return;
       }
-      onCreated(body.data.credential as CreatedCredential, body.data.name as string);
+      onCreated(
+        result.credential as CreatedCredential,
+        result.name as string,
+        result.warning,
+      );
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Failed to create service account.");
+      setFormError(
+        err instanceof Error
+          ? err.message
+          : "Failed to create service account.",
+      );
     } finally {
       setSubmitting(false);
     }
-  }, [name, description, owningTeam, selectedAgents, selectedTools, onCreated]);
+  }, [
+    name,
+    description,
+    owningTeam,
+    selectedAgents,
+    selectedTools,
+    selectedDatasources,
+    selectedCollections,
+    onCreated,
+  ]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -582,14 +865,15 @@ function CreateServiceAccountDialog({
         <DialogHeader>
           <DialogTitle>Create Service Account</DialogTitle>
           <DialogDescription>
-            Owned by one of your teams. You can only grant agents and tools you currently
-            hold — the credential is shown once.
+            Owned by one of your teams. You can only grant agents, tools, and
+            knowledge you currently hold — the credential is shown once.
           </DialogDescription>
         </DialogHeader>
 
         {loadingOptions ? (
           <div className="flex items-center justify-center py-8 text-muted-foreground">
-            <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading your teams and grants...
+            <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading your teams
+            and grants...
           </div>
         ) : teams.length === 0 ? (
           <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-3 text-sm">
@@ -613,7 +897,8 @@ function CreateServiceAccountDialog({
 
             <div className="space-y-1">
               <label htmlFor="sa-desc" className="text-sm font-medium">
-                Description <span className="text-muted-foreground">(optional)</span>
+                Description{" "}
+                <span className="text-muted-foreground">(optional)</span>
               </label>
               <input
                 id="sa-desc"
@@ -631,7 +916,10 @@ function CreateServiceAccountDialog({
                 ariaLabel="Owning team"
                 value={owningTeam}
                 onChange={setOwningTeam}
-                options={teams.map<TeamPickerOption>((t) => ({ slug: t.slug, name: t.name }))}
+                options={teams.map<TeamPickerOption>((t) => ({
+                  slug: t.slug,
+                  name: t.name,
+                }))}
                 placeholder="Select one of your teams..."
                 portalled={false}
               />
@@ -639,8 +927,8 @@ function CreateServiceAccountDialog({
 
             {grantableError && (
               <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                Couldn&apos;t load your grantable resources — the agent/tool lists below may be
-                incomplete. Close and reopen this dialog to try again.
+                Couldn&apos;t load your grantable resources — the lists below
+                may be incomplete. Close and reopen this dialog to try again.
               </div>
             )}
 
@@ -686,6 +974,89 @@ function CreateServiceAccountDialog({
               />
             </div>
 
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Datasources</label>
+              <MultiSelect
+                options={datasourceOptions.map((o) => o.label)}
+                selected={selectedDatasources
+                  .map((ref) => datasourceRefToLabel.get(ref))
+                  .filter((v): v is string => Boolean(v))}
+                onChange={(labels) =>
+                  setSelectedDatasources(
+                    labels
+                      .map((l) => datasourceLabelToRef.get(l))
+                      .filter((v): v is string => Boolean(v)),
+                  )
+                }
+                placeholder="Grant datasources..."
+                emptyLabel="You hold no datasources to grant"
+                badgeLabel="datasources"
+                portalled={false}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Collections</label>
+              <MultiSelect
+                options={collectionOptions.map((o) => o.label)}
+                selected={selectedCollections
+                  .map((ref) => collectionRefToLabel.get(ref))
+                  .filter((v): v is string => Boolean(v))}
+                onChange={(labels) =>
+                  setSelectedCollections(
+                    labels
+                      .map((l) => collectionLabelToRef.get(l))
+                      .filter((v): v is string => Boolean(v)),
+                  )
+                }
+                placeholder="Grant collections..."
+                emptyLabel="You hold no collections to grant"
+                badgeLabel="collections"
+                portalled={false}
+              />
+              <p className="text-xs text-muted-foreground">
+                A collection grant lets the service account search using that
+                collection as a filter; it does not grant access to its
+                member datasources. Grant datasources directly, or use
+                &quot;Add datasources from a collection&quot; below, for
+                content access.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium">
+                Add datasources from a collection
+              </label>
+              <SearchablePicker
+                options={grantable.collections}
+                selected={undefined}
+                onSelect={(item) => void addDatasourcesFromCollection(item.ref)}
+                getOptionKey={(item) => item.ref}
+                getOptionLabel={(item) => item.name}
+                getSearchText={(item) => [item.ref, item.name]}
+                placeholder="Select a collection to bulk-add its datasources..."
+                searchPlaceholder="Search collections..."
+                emptyLabel="No collections available"
+                ariaLabel="Add datasources from a collection"
+                disabled={
+                  grantable.collections.length === 0 || addingFromCollection
+                }
+                portalled={false}
+                triggerClassName="h-9 w-full text-sm"
+              />
+              {collectionPickNote && (
+                <p className="text-xs text-muted-foreground">
+                  {collectionPickNote}
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Queues every datasource in the collection that you can grant
+                into the Datasources list above. This does not add the
+                collection itself — grant it separately above if the service
+                account should also use it as a search filter.
+              </p>
+            </div>
+
             {formError && (
               <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
                 {formError}
@@ -695,7 +1066,11 @@ function CreateServiceAccountDialog({
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
             Cancel
           </Button>
           <Button
@@ -728,24 +1103,45 @@ function ManageServiceAccountDialog({
   onRotated: (cred: CreatedCredential, name: string) => void;
 }) {
   const [detail, setDetail] = useState<ServiceAccountDetail | null>(null);
-  const [grantable, setGrantable] = useState<GrantableData>({ agents: [], tools: [] });
+  const [grantable, setGrantable] = useState<GrantableData>({
+    agents: [],
+    tools: [],
+    datasources: [],
+    collections: [],
+  });
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   const [confirmRotate, setConfirmRotate] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<ScopeRef | null>(null);
+  const [scopeFilter, setScopeFilter] = useState("");
+  // Adding scopes is one bulk call (server batches the check + writes + a
+  // single snapshot refresh — see .../scopes/bulk/route.ts), but a batch of
+  // hundreds can still take a couple of seconds. A visible "Adding N
+  // scopes..." label makes that wait legible from the very first click — a
+  // bare spinner icon is easy to miss at the exact moment Add is clicked.
+  const [addCount, setAddCount] = useState<number | null>(null);
   // Add-scope selection — ref arrays, mirroring the create dialog's grantable
   // pickers (#54: styled MultiSelect, not native <select>).
   const [addAgents, setAddAgents] = useState<string[]>([]);
   const [addTools, setAddTools] = useState<string[]>([]);
+  const [addDatasources, setAddDatasources] = useState<string[]>([]);
+  const [addCollections, setAddCollections] = useState<string[]>([]);
+  const [collectionPickNote, setCollectionPickNote] = useState<string | null>(
+    null,
+  );
 
   // ── Tokens section state ───────────────────────────────────────────────────
-  const [credentials, setCredentials] = useState<ServiceAccountCredential[]>([]);
+  const [credentials, setCredentials] = useState<ServiceAccountCredential[]>(
+    [],
+  );
   const [credLoading, setCredLoading] = useState(false);
   const [credBusy, setCredBusy] = useState(false);
   const [credError, setCredError] = useState<string | null>(null);
-  const [pendingRemoveCred, setPendingRemoveCred] = useState<string | null>(null);
+  const [pendingRemoveCred, setPendingRemoveCred] = useState<string | null>(
+    null,
+  );
   // The selectable providers are the platform's *enabled, token-capable* MCP
   // servers (#3) — fetched from /api/admin/service-accounts/token-providers,
   // which derives the list from enabled mcp_servers that declare a
@@ -775,9 +1171,14 @@ function ManageServiceAccountDialog({
       const [credRes, providerRes] = await Promise.all([
         fetch(
           `/api/admin/service-accounts/${encodeURIComponent(saId)}/credentials`,
-        ).then((r) => r.json()).catch(() => ({ success: false })),
+        )
+          .then((r) => r.json())
+          .catch(() => ({ success: false })),
         fetch("/api/admin/service-accounts/token-providers")
-          .then(async (r) => ({ status: r.status, body: await r.json().catch(() => ({ success: false })) }))
+          .then(async (r) => ({
+            status: r.status,
+            body: await r.json().catch(() => ({ success: false })),
+          }))
           .catch(() => ({ status: 0, body: { success: false } })),
       ]);
       // A 404 from token-providers means the SA Tokens feature is disabled —
@@ -787,7 +1188,8 @@ function ManageServiceAccountDialog({
         return;
       }
       setTokensEnabled(true);
-      if (credRes.success) setCredentials(credRes.data as ServiceAccountCredential[]);
+      if (credRes.success)
+        setCredentials(credRes.data as ServiceAccountCredential[]);
       else setCredError(credRes.error || "Failed to load tokens");
       if (providerRes.body.success && Array.isArray(providerRes.body.data)) {
         const opts: ProviderOption[] = (
@@ -844,7 +1246,11 @@ function ManageServiceAccountDialog({
       ]);
       if (detailRes.success) setDetail(detailRes.data as ServiceAccountDetail);
       else setError(detailRes.error || "Failed to load service account");
-      if (grantableRes.success) setGrantable(grantableRes.data as GrantableData);
+      if (grantableRes.success) {
+        setGrantable(
+          normalizeGrantableData(grantableRes.data as Partial<GrantableData>),
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -858,12 +1264,20 @@ function ManageServiceAccountDialog({
   }, [saId, refresh, refreshCredentials]);
 
   // Held refs available to ADD (exclude ones the SA already has), per type.
-  const existingRefs = new Set((detail?.scopes ?? []).map((s) => `${s.type}:${s.ref}`));
+  const existingRefs = new Set(
+    (detail?.scopes ?? []).map((s) => `${s.type}:${s.ref}`),
+  );
   const addableAgents = grantable.agents.filter(
     (item) => !existingRefs.has(`agent:${item.ref}`),
   );
   const addableTools = grantable.tools.filter(
     (item) => !existingRefs.has(`tool:${item.ref}`),
+  );
+  const addableDatasources = grantable.datasources.filter(
+    (item) => !existingRefs.has(`datasource:${item.ref}`),
+  );
+  const addableCollections = grantable.collections.filter(
+    (item) => !existingRefs.has(`collection:${item.ref}`),
   );
   // label↔ref maps so the MultiSelect shows friendly names while we submit refs
   // (same pattern as the create dialog).
@@ -871,44 +1285,107 @@ function ManageServiceAccountDialog({
   const agentRefToLabel = new Map(addableAgents.map((a) => [a.ref, a.name]));
   const toolLabelToRef = new Map(addableTools.map((t) => [t.name, t.ref]));
   const toolRefToLabel = new Map(addableTools.map((t) => [t.ref, t.name]));
+  const collectionNameByRef = new Map(
+    grantable.collections.map((item) => [item.ref, item.name]),
+  );
+  const datasourceNameByRef = new Map(
+    grantable.datasources.map((item) => [item.ref, item.name]),
+  );
+  const addableDatasourceOptions = labelledGrantOptions(addableDatasources);
+  const addDatasourceLabelToRef = new Map(
+    addableDatasourceOptions.map((o) => [o.label, o.ref]),
+  );
+  const addDatasourceRefToLabel = new Map(
+    addableDatasourceOptions.map((o) => [o.ref, o.label]),
+  );
+  const addableCollectionOptions = labelledGrantOptions(addableCollections);
+  const addCollectionLabelToRef = new Map(
+    addableCollectionOptions.map((o) => [o.label, o.ref]),
+  );
+  const addCollectionRefToLabel = new Map(
+    addableCollectionOptions.map((o) => [o.ref, o.label]),
+  );
+
+  const addDatasourcesFromCollection = useCallback(
+    async (collectionId: string) => {
+      if (busy) return;
+      setBusy(true);
+      setCollectionPickNote(null);
+      try {
+        const memberIds = await fetchCollectionMemberDatasourceIds(collectionId);
+        const addableRefs = new Set(addableDatasources.map((d) => d.ref));
+        const alreadyQueued = new Set(addDatasources);
+        const addable = memberIds.filter(
+          (id) => addableRefs.has(id) && !alreadyQueued.has(id),
+        );
+        if (addable.length === 0) {
+          setCollectionPickNote(
+            "No datasources you can grant are in that collection.",
+          );
+          return;
+        }
+        setAddDatasources((prev) => [...prev, ...addable]);
+        setCollectionPickNote(
+          `Queued ${addable.length} datasource${addable.length === 1 ? "" : "s"} from the collection — click Add to apply.`,
+        );
+      } catch (err) {
+        setCollectionPickNote(
+          err instanceof Error ? err.message : "Could not load collection",
+        );
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, addableDatasources, addDatasources],
+  );
 
   const addScope = useCallback(async () => {
     if (!saId) return;
     const selected: ScopeRef[] = [
       ...addAgents.map((ref) => ({ type: "agent" as const, ref })),
       ...addTools.map((ref) => ({ type: "tool" as const, ref })),
+      ...addDatasources.map((ref) => ({ type: "datasource" as const, ref })),
+      ...addCollections.map((ref) => ({ type: "collection" as const, ref })),
     ];
     if (selected.length === 0) return;
     setBusy(true);
     setError(null);
+    setAddCount(selected.length);
     try {
-      for (const scope of selected) {
-        const res = await fetch(
-          `/api/admin/service-accounts/${encodeURIComponent(saId)}/scopes`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(scope),
-          },
-        );
-        const body = await res.json();
-        if (!res.ok || !body.success) {
-          const message = body.error || `Failed to add ${scope.type} ${scope.ref}`;
-          // Refresh so any scopes that DID get added show, then stop.
-          await refresh();
-          onMutated();
-          setError(message);
-          return;
-        }
+      // One bulk call, not one POST per scope: the server batches the
+      // held-scope check and the OpenFGA writes, and re-derives the
+      // snapshot ONCE instead of once per scope — the whole point of the
+      // bulk endpoint is avoiding hundreds of full rescans.
+      const { ok, body } = await postScopesBulk(saId, selected);
+      if (!ok || !body.success) {
+        // Refresh in case the batch's OpenFGA write itself partially landed
+        // before a later failure (e.g. the snapshot refresh throwing) —
+        // the held-scope check and the tuple write are each atomic on
+        // their own, but the two together aren't a single transaction.
+        await refresh();
+        onMutated();
+        setError(body.error || "Failed to add scopes");
+        return;
       }
       setAddAgents([]);
       setAddTools([]);
+      setAddDatasources([]);
+      setAddCollections([]);
       await refresh();
       onMutated();
     } finally {
       setBusy(false);
+      setAddCount(null);
     }
-  }, [saId, addAgents, addTools, refresh, onMutated]);
+  }, [
+    saId,
+    addAgents,
+    addTools,
+    addDatasources,
+    addCollections,
+    refresh,
+    onMutated,
+  ]);
 
   const removeScope = useCallback(
     async (scope: ScopeRef) => {
@@ -965,9 +1442,12 @@ function ManageServiceAccountDialog({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/admin/service-accounts/${encodeURIComponent(saId)}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `/api/admin/service-accounts/${encodeURIComponent(saId)}`,
+        {
+          method: "DELETE",
+        },
+      );
       const body = await res.json();
       if (!res.ok || !body.success) {
         setError(body.error || "Failed to revoke service account");
@@ -1000,14 +1480,19 @@ function ManageServiceAccountDialog({
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ provider: addCredProvider, token: tokenSnapshot }),
+            body: JSON.stringify({
+              provider: addCredProvider,
+              token: tokenSnapshot,
+            }),
           },
         );
       } catch (networkErr) {
         // Network-level failure (no response) — surface as a credError instead
         // of an unhandled rejection.
         setCredError(
-          networkErr instanceof Error ? networkErr.message : "Network error — please retry",
+          networkErr instanceof Error
+            ? networkErr.message
+            : "Network error — please retry",
         );
         return;
       }
@@ -1053,13 +1538,19 @@ function ManageServiceAccountDialog({
   );
 
   return (
-    <Dialog open={Boolean(saId)} onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog
+      open={Boolean(saId)}
+      onOpenChange={(o) => {
+        if (!o) onClose();
+      }}
+    >
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{detail?.name ?? "Service account"}</DialogTitle>
           <DialogDescription>
-            Manage scopes, rotate the credential, or revoke this service account. Super admins
-            can add enabled platform catalog scopes; other users can add scopes they currently hold.
+            Manage scopes, rotate the credential, or revoke this service
+            account. Super admins can add enabled platform catalog scopes; other
+            users can add scopes they currently hold.
           </DialogDescription>
         </DialogHeader>
 
@@ -1088,18 +1579,54 @@ function ManageServiceAccountDialog({
           // Dialog scroll: cap height and let content scroll vertically so the
           // dialog doesn't overflow the viewport when credentials + scopes stack up.
           <div className="max-h-[65vh] overflow-y-auto space-y-4 pr-1">
-            {/* Current scopes */}
+            {/* Current scopes.
+                KEEP IN SYNC: the filter-input-above-8-items + bounded
+                max-h-56 scroll container mirrors UnlinkedServiceAccountModal.tsx's
+                "Current scopes" list — a service account (unlinked or not)
+                can hold hundreds of datasource scopes, so both lists need
+                their own scroll region and a way to narrow it down
+                independent of the surrounding dialog's scroll. */}
             <div className="space-y-2">
               <span className="text-sm font-medium">Current scopes</span>
               {detail.scopes.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  No scopes — this account cannot use any agent or tool yet.
+                  No scopes — this account cannot use any agent, tool, or RAG
+                  knowledge yet.
                 </p>
               ) : (
-                <ul className="space-y-1">
-                  {detail.scopes.map((scope) => {
+                <>
+                  {detail.scopes.length > 8 && (
+                    <Input
+                      value={scopeFilter}
+                      onChange={(e) => setScopeFilter(e.target.value)}
+                      placeholder="Filter current scopes..."
+                      aria-label="Filter current scopes"
+                      className="h-8 text-xs"
+                    />
+                  )}
+                  <ul className="max-h-56 space-y-1 overflow-y-auto pr-1">
+                  {detail.scopes
+                    .filter((scope) => {
+                      const displayName =
+                        scope.type === "collection"
+                          ? collectionNameByRef.get(scope.ref)
+                          : scope.type === "datasource"
+                            ? datasourceNameByRef.get(scope.ref)
+                            : undefined;
+                      const haystack =
+                        `${scope.type} ${scope.ref} ${displayName ?? ""}`.toLowerCase();
+                      return haystack.includes(scopeFilter.trim().toLowerCase());
+                    })
+                    .map((scope) => {
                     const isPending =
-                      pendingRemove?.type === scope.type && pendingRemove?.ref === scope.ref;
+                      pendingRemove?.type === scope.type &&
+                      pendingRemove?.ref === scope.ref;
+                    const displayName =
+                      scope.type === "collection"
+                        ? collectionNameByRef.get(scope.ref)
+                        : scope.type === "datasource"
+                          ? datasourceNameByRef.get(scope.ref)
+                          : undefined;
                     return (
                       <li
                         key={`${scope.type}:${scope.ref}`}
@@ -1108,16 +1635,28 @@ function ManageServiceAccountDialog({
                         <span className="inline-flex items-center gap-1.5 text-sm">
                           {scope.type === "agent" ? (
                             <Bot className="h-3.5 w-3.5 text-muted-foreground" />
+                          ) : scope.type === "datasource" ? (
+                            <Database className="h-3.5 w-3.5 text-muted-foreground" />
+                          ) : scope.type === "collection" ? (
+                            <Layers3 className="h-3.5 w-3.5 text-muted-foreground" />
                           ) : (
                             <Wrench className="h-3.5 w-3.5 text-muted-foreground" />
                           )}
-                          <code className="text-xs">{scope.ref}</code>
+                          <code
+                            className="text-xs"
+                            title={scope.ref}
+                            data-testid={`scope-${scope.type}-${scope.ref}`}
+                          >
+                            {displayName ?? scope.ref}
+                          </code>
                         </span>
                         {isPending ? (
                           // Delete-confirm (T028): removal can be unrecoverable via the
                           // UI if the editor no longer holds the scope, so confirm first.
                           <span className="inline-flex items-center gap-1.5">
-                            <span className="text-xs text-muted-foreground">Remove?</span>
+                            <span className="text-xs text-muted-foreground">
+                              Remove?
+                            </span>
                             <Button
                               size="sm"
                               variant="destructive"
@@ -1125,7 +1664,9 @@ function ManageServiceAccountDialog({
                               disabled={busy}
                               onClick={() => removeScope(scope)}
                             >
-                              {busy && <Loader2 className="h-3 w-3 animate-spin" />}
+                              {busy && (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              )}
                               Confirm
                             </Button>
                             <Button
@@ -1153,17 +1694,27 @@ function ManageServiceAccountDialog({
                       </li>
                     );
                   })}
-                </ul>
+                  </ul>
+                </>
               )}
             </div>
 
             {/* Add scope (bounded by what the editor holds). Uses the app's
                 styled MultiSelect — same picker as the create dialog (#54), not
-                native browser <select>. */}
+                native browser <select>.
+                KEEP IN SYNC: this block (4 MultiSelects + staged Add + the
+                "Add datasources from a collection" bulk picker) is
+                intentionally mirrored by UnlinkedServiceAccountModal.tsx's
+                "Add scopes" block. If you change the UX/copy/behavior here,
+                change it there too, and vice versa — editing the unlinked SA
+                should look and behave exactly like editing any other
+                service account. */}
             <div className="space-y-3 rounded-md border border-dashed border-input p-3">
               <span className="text-sm font-medium">Add scopes</span>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Agents</label>
+                <label className="text-xs font-medium text-muted-foreground">
+                  Agents
+                </label>
                 <MultiSelect
                   options={addableAgents.map((a) => a.name)}
                   selected={addAgents
@@ -1183,7 +1734,9 @@ function ManageServiceAccountDialog({
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Tools</label>
+                <label className="text-xs font-medium text-muted-foreground">
+                  Tools
+                </label>
                 <MultiSelect
                   options={addableTools.map((t) => t.name)}
                   selected={addTools
@@ -1202,12 +1755,109 @@ function ManageServiceAccountDialog({
                   portalled={false}
                 />
               </div>
-              <div className="flex justify-end">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">
+                  Datasources
+                </label>
+                <MultiSelect
+                  options={addableDatasourceOptions.map((o) => o.label)}
+                  selected={addDatasources
+                    .map((ref) => addDatasourceRefToLabel.get(ref))
+                    .filter((v): v is string => Boolean(v))}
+                  onChange={(labels) =>
+                    setAddDatasources(
+                      labels
+                        .map((l) => addDatasourceLabelToRef.get(l))
+                        .filter((v): v is string => Boolean(v)),
+                    )
+                  }
+                  placeholder="Add datasources..."
+                  emptyLabel="No more datasources you can grant"
+                  badgeLabel="datasources"
+                  portalled={false}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">
+                  Collections
+                </label>
+                <MultiSelect
+                  options={addableCollectionOptions.map((o) => o.label)}
+                  selected={addCollections
+                    .map((ref) => addCollectionRefToLabel.get(ref))
+                    .filter((v): v is string => Boolean(v))}
+                  onChange={(labels) =>
+                    setAddCollections(
+                      labels
+                        .map((l) => addCollectionLabelToRef.get(l))
+                        .filter((v): v is string => Boolean(v)),
+                    )
+                  }
+                  placeholder="Add collections..."
+                  emptyLabel="No more collections you can grant"
+                  badgeLabel="collections"
+                  portalled={false}
+                />
+                <p className="text-xs text-muted-foreground">
+                  A collection grant lets the service account search using
+                  that collection as a filter; it does not grant access to
+                  its member datasources. Grant datasources directly, or use
+                  &quot;Add datasources from a collection&quot; below, for
+                  content access.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">
+                  Add datasources from a collection
+                </label>
+                <SearchablePicker
+                  options={grantable.collections}
+                  selected={undefined}
+                  onSelect={(item) =>
+                    void addDatasourcesFromCollection(item.ref)
+                  }
+                  getOptionKey={(item) => item.ref}
+                  getOptionLabel={(item) => item.name}
+                  getSearchText={(item) => [item.ref, item.name]}
+                  placeholder="Select a collection to bulk-add its datasources..."
+                  searchPlaceholder="Search collections..."
+                  emptyLabel="No collections available"
+                  ariaLabel="Add datasources from a collection"
+                  disabled={busy || grantable.collections.length === 0}
+                  portalled={false}
+                  triggerClassName="h-9 w-full text-sm"
+                />
+                {collectionPickNote && (
+                  <p className="text-xs text-muted-foreground">
+                    {collectionPickNote}
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Queues every datasource in the collection that you can
+                  grant into the Datasources list above — click Add to
+                  apply. This does not add the collection itself — grant it
+                  separately above if the service account should also use
+                  it as a search filter.
+                </p>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                {addCount !== null && (
+                  <span className="text-xs text-muted-foreground">
+                    Adding {addCount} scope{addCount === 1 ? "" : "s"}...
+                  </span>
+                )}
                 <Button
                   onClick={addScope}
-                  disabled={busy || (addAgents.length === 0 && addTools.length === 0)}
+                  disabled={
+                    busy ||
+                    (addAgents.length === 0 &&
+                      addTools.length === 0 &&
+                      addDatasources.length === 0 &&
+                      addCollections.length === 0)
+                  }
                   className="gap-1.5"
                 >
+                  {busy && <Loader2 className="h-4 w-4 animate-spin" />}
                   <Plus className="h-4 w-4" />
                   Add
                 </Button>
@@ -1226,133 +1876,146 @@ function ManageServiceAccountDialog({
                 flag-off deployment never flashes it
                 (CAIPE_SERVICE_ACCOUNT_TOKENS_ENABLED=false → token-providers 404). */}
             {tokensEnabled === true && (
-            <div className="space-y-2 border-t pt-3">
-              <div className="flex items-center gap-1.5">
-                <KeyRound className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium">Tokens</span>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Add a personal/project access token so this service account uses its
-                own token when an agent calls that provider&apos;s tools. If no token
-                is set for a provider, the platform falls back to the shared org token
-                (if one is configured) — the same behaviour as for user accounts.
-              </p>
-
-              {/* Current tokens list */}
-              {credLoading ? (
-                <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading tokens…
+              <div className="space-y-2 border-t pt-3">
+                <div className="flex items-center gap-1.5">
+                  <KeyRound className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Tokens</span>
                 </div>
-              ) : credentials.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No tokens added — this service account uses the shared org token
-                  (if configured) for every provider.
-                </p>
-              ) : (
-                <ul className="space-y-1">
-                  {credentials.map((cred) => {
-                    const providerLabel = getProviderDisplayName(cred.provider);
-                    const isPendingRemove = pendingRemoveCred === cred.id;
-                    return (
-                      <li
-                        key={cred.id}
-                        className="flex items-center justify-between gap-2 rounded-md border border-input px-2.5 py-1.5"
-                      >
-                        <span className="inline-flex items-center gap-1.5 text-sm">
-                          <KeyRound className="h-3.5 w-3.5 text-muted-foreground" />
-                          <span className="font-medium">{providerLabel}</span>
-                          <span
-                            className={cn(
-                              "rounded-full px-1.5 py-0.5 text-xs font-medium",
-                              cred.status === "connected"
-                                ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                                : "bg-muted text-muted-foreground",
-                            )}
-                          >
-                            {cred.status}
-                          </span>
-                          {cred.connectedAt && (
-                            <span className="text-xs text-muted-foreground">
-                              {new Date(cred.connectedAt).toLocaleDateString()}
-                            </span>
-                          )}
-                        </span>
-                        {isPendingRemove ? (
-                          <span className="inline-flex items-center gap-1.5">
-                            <span className="text-xs text-muted-foreground">Remove?</span>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              className="h-7 gap-1.5"
-                              disabled={credBusy}
-                              onClick={() => removeCredential(cred.id)}
-                            >
-                              {credBusy && <Loader2 className="h-3 w-3 animate-spin" />}
-                              Confirm
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-7"
-                              disabled={credBusy}
-                              onClick={() => setPendingRemoveCred(null)}
-                            >
-                              Cancel
-                            </Button>
-                          </span>
-                        ) : (
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-7 w-7 text-destructive hover:text-destructive"
-                            aria-label={`Remove ${providerLabel} credential`}
-                            disabled={credBusy}
-                            onClick={() => setPendingRemoveCred(cred.id)}
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-
-              {/* Add token form */}
-              <div className="space-y-2 rounded-md border border-dashed border-input p-3">
-                <span className="text-sm font-medium">Add a token</span>
                 <p className="text-xs text-muted-foreground">
-                  The token is stored encrypted and is <span className="font-semibold">never shown again</span> after
-                  submission.
+                  Add a personal/project access token so this service account
+                  uses its own token when an agent calls that provider&apos;s
+                  tools. If no token is set for a provider, the platform falls
+                  back to the shared org token (if one is configured) — the same
+                  behaviour as for user accounts.
                 </p>
+
+                {/* Current tokens list */}
                 {credLoading ? (
-                  // Don't render the "no integrations" message until the provider
-                  // list has actually loaded — otherwise the empty initial state
-                  // flashes a false "ask an admin to enable an MCP" claim.
                   <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading providers…
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading
+                    tokens…
                   </div>
-                ) : providerOptions.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    No token-capable integrations are enabled on this platform. Ask
-                    an admin to enable an MCP server that supports token passthrough
-                    (e.g. GitLab) before adding a token.
-                  </p>
-                ) : availableProviders.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    A token has been added for every available provider. Remove one
-                    above to replace it.
+                ) : credentials.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No tokens added — this service account uses the shared org
+                    token (if configured) for every provider.
                   </p>
                 ) : (
-                  <div className="flex gap-2">
-                    <ProviderSelect
-                      options={availableProviders}
-                      value={addCredProvider}
-                      onChange={setAddCredProvider}
-                      disabled={credBusy}
-                      ariaLabel="Token provider"
-                    />
-                    {/* This is a pasted external token — we want NO browser
+                  <ul className="space-y-1">
+                    {credentials.map((cred) => {
+                      const providerLabel = getProviderDisplayName(
+                        cred.provider,
+                      );
+                      const isPendingRemove = pendingRemoveCred === cred.id;
+                      return (
+                        <li
+                          key={cred.id}
+                          className="flex items-center justify-between gap-2 rounded-md border border-input px-2.5 py-1.5"
+                        >
+                          <span className="inline-flex items-center gap-1.5 text-sm">
+                            <KeyRound className="h-3.5 w-3.5 text-muted-foreground" />
+                            <span className="font-medium">{providerLabel}</span>
+                            <span
+                              className={cn(
+                                "rounded-full px-1.5 py-0.5 text-xs font-medium",
+                                cred.status === "connected"
+                                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                                  : "bg-muted text-muted-foreground",
+                              )}
+                            >
+                              {cred.status}
+                            </span>
+                            {cred.connectedAt && (
+                              <span className="text-xs text-muted-foreground">
+                                {new Date(
+                                  cred.connectedAt,
+                                ).toLocaleDateString()}
+                              </span>
+                            )}
+                          </span>
+                          {isPendingRemove ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="text-xs text-muted-foreground">
+                                Remove?
+                              </span>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                className="h-7 gap-1.5"
+                                disabled={credBusy}
+                                onClick={() => removeCredential(cred.id)}
+                              >
+                                {credBusy && (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                )}
+                                Confirm
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7"
+                                disabled={credBusy}
+                                onClick={() => setPendingRemoveCred(null)}
+                              >
+                                Cancel
+                              </Button>
+                            </span>
+                          ) : (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-destructive hover:text-destructive"
+                              aria-label={`Remove ${providerLabel} credential`}
+                              disabled={credBusy}
+                              onClick={() => setPendingRemoveCred(cred.id)}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+
+                {/* Add token form */}
+                <div className="space-y-2 rounded-md border border-dashed border-input p-3">
+                  <span className="text-sm font-medium">Add a token</span>
+                  <p className="text-xs text-muted-foreground">
+                    The token is stored encrypted and is{" "}
+                    <span className="font-semibold">never shown again</span>{" "}
+                    after submission.
+                  </p>
+                  {credLoading ? (
+                    // Don't render the "no integrations" message until the provider
+                    // list has actually loaded — otherwise the empty initial state
+                    // flashes a false "ask an admin to enable an MCP" claim.
+                    <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading
+                      providers…
+                    </div>
+                  ) : providerOptions.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      No token-capable integrations are enabled on this
+                      platform. Ask an admin to enable an MCP server that
+                      supports token passthrough (e.g. GitLab) before adding a
+                      token.
+                    </p>
+                  ) : availableProviders.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      A token has been added for every available provider.
+                      Remove one above to replace it.
+                    </p>
+                  ) : (
+                    <div className="flex gap-2">
+                      <ProviderSelect
+                        options={availableProviders}
+                        value={addCredProvider}
+                        onChange={setAddCredProvider}
+                        disabled={credBusy}
+                        ariaLabel="Token provider"
+                      />
+                      {/* This is a pasted external token — we want NO browser
                         autocomplete/autofill of any kind (no saved-password
                         injection, no "save password" prompt, no generation).
                         autoComplete="off" is the primary signal; the extra
@@ -1361,53 +2024,55 @@ function ManageServiceAccountDialog({
                           - data-1p-ignore / data-lpignore: 1Password / LastPass
                           - data-form-type="other": Dashlane
                           - name="" so there's no field name to match a saved entry. */}
-                    <input
-                      type="password"
-                      name=""
-                      aria-label="Access token"
-                      value={addCredToken}
-                      onChange={(e) => setAddCredToken(e.target.value)}
-                      onKeyDown={(e) => {
-                        // Enter submits, matching the Add button's enabled guard.
-                        if (
-                          e.key === "Enter" &&
-                          !credBusy &&
-                          addCredToken.trim() &&
-                          addCredProvider
-                        ) {
-                          e.preventDefault();
-                          void addCredential();
+                      <input
+                        type="password"
+                        name=""
+                        aria-label="Access token"
+                        value={addCredToken}
+                        onChange={(e) => setAddCredToken(e.target.value)}
+                        onKeyDown={(e) => {
+                          // Enter submits, matching the Add button's enabled guard.
+                          if (
+                            e.key === "Enter" &&
+                            !credBusy &&
+                            addCredToken.trim() &&
+                            addCredProvider
+                          ) {
+                            e.preventDefault();
+                            void addCredential();
+                          }
+                        }}
+                        placeholder="Paste access token…"
+                        autoComplete="off"
+                        data-1p-ignore
+                        data-lpignore="true"
+                        data-form-type="other"
+                        className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+                      />
+                      <Button
+                        onClick={addCredential}
+                        disabled={
+                          credBusy || !addCredToken.trim() || !addCredProvider
                         }
-                      }}
-                      placeholder="Paste access token…"
-                      autoComplete="off"
-                      data-1p-ignore
-                      data-lpignore="true"
-                      data-form-type="other"
-                      className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
-                    />
-                    <Button
-                      onClick={addCredential}
-                      disabled={credBusy || !addCredToken.trim() || !addCredProvider}
-                      className="gap-1.5"
-                    >
-                      {credBusy ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Plus className="h-4 w-4" />
-                      )}
-                      Add
-                    </Button>
+                        className="gap-1.5"
+                      >
+                        {credBusy ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Plus className="h-4 w-4" />
+                        )}
+                        Add
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {credError && (
+                  <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                    {credError}
                   </div>
                 )}
               </div>
-
-              {credError && (
-                <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                  {credError}
-                </div>
-              )}
-            </div>
             )}
 
             {/* Credential lifecycle (rotate / revoke). Both are destructive and
@@ -1418,7 +2083,8 @@ function ManageServiceAccountDialog({
               {confirmRotate ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm text-muted-foreground">
-                    Rotate credential? The current secret stops working immediately.
+                    Rotate credential? The current secret stops working
+                    immediately.
                   </span>
                   <Button
                     variant="default"
@@ -1477,7 +2143,8 @@ function ManageServiceAccountDialog({
               ) : confirmRevoke ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm text-muted-foreground">
-                    Delete service account{detail.name ? ` ${detail.name}` : ""}? This is permanent.
+                    Delete service account{detail.name ? ` ${detail.name}` : ""}
+                    ? This is permanent.
                   </span>
                   <Button
                     variant="destructive"
@@ -1533,10 +2200,12 @@ function ManageServiceAccountDialog({
 function CredentialRevealDialog({
   credential,
   name,
+  warning,
   onClose,
 }: {
   credential: CreatedCredential | null;
   name: string;
+  warning?: string | null;
   onClose: () => void;
 }) {
   // This component is remounted per credential (via `key` on the parent), so
@@ -1546,27 +2215,46 @@ function CredentialRevealDialog({
   if (!credential) return null;
 
   return (
-    <Dialog open={Boolean(credential)} onOpenChange={(o) => { if (!o && acknowledged) onClose(); }}>
-      <DialogContent className="max-w-lg" onInteractOutside={(e) => e.preventDefault()}>
+    <Dialog
+      open={Boolean(credential)}
+      onOpenChange={(o) => {
+        if (!o && acknowledged) onClose();
+      }}
+    >
+      <DialogContent
+        className="max-w-lg"
+        onInteractOutside={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="h-5 w-5 text-emerald-600" />
             Service account created
           </DialogTitle>
           <DialogDescription>
-            Copy these credentials now for <span className="font-medium">{name}</span>. The
-            client secret is shown <span className="font-semibold">only once</span> and cannot be
+            Copy these credentials now for{" "}
+            <span className="font-medium">{name}</span>. The client secret is
+            shown <span className="font-semibold">only once</span> and cannot be
             retrieved again. If you lose it, rotate the credential.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
           <CredentialField label="Client ID" value={credential.client_id} />
-          <CredentialField label="Client secret" value={credential.client_secret} secret />
+          <CredentialField
+            label="Client secret"
+            value={credential.client_secret}
+            secret
+          />
           <CredentialField label="Token URL" value={credential.token_url} />
         </div>
 
         <EnvBlock credential={credential} />
+
+        {warning && (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm">
+            {warning}
+          </div>
+        )}
 
         <label className="flex items-center gap-2 pt-2 text-sm">
           <input
@@ -1574,7 +2262,8 @@ function CredentialRevealDialog({
             checked={acknowledged}
             onChange={(e) => setAcknowledged(e.target.checked)}
           />
-          I have copied the client secret and understand it won&apos;t be shown again.
+          I have copied the client secret and understand it won&apos;t be shown
+          again.
         </label>
 
         <DialogFooter>
@@ -1604,7 +2293,12 @@ function CredentialField({
         {/* break-all (not truncate) so long secrets/URLs WRAP inside the box
             instead of overflowing the dialog to the right (#51). min-w-0 lets
             the flex child shrink so the copy button stays in view. */}
-        <code className={cn("min-w-0 flex-1 break-all text-xs", secret && "tracking-wider")}>
+        <code
+          className={cn(
+            "min-w-0 flex-1 break-all text-xs",
+            secret && "tracking-wider",
+          )}
+        >
           {value}
         </code>
         <CopyButton value={value} label={`Copy ${label.toLowerCase()}`} />
@@ -1629,7 +2323,10 @@ function deriveApiBase(): string {
   }
   const { protocol, hostname, host } = window.location;
   const isLoopback =
-    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]" ||
+    hostname === "::1";
   if (isLoopback && protocol === "https:") {
     // Loopback dev is HTTP — downgrade the scheme so paste-and-go curl works.
     return `http://${host}`;
@@ -1661,7 +2358,11 @@ function EnvBlock({ credential }: { credential: CreatedCredential }) {
     <div className="space-y-1 pt-1">
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-muted-foreground">.env</span>
-        <CopyButton value={envText} label="Copy .env block" copiedLabel="Copied .env">
+        <CopyButton
+          value={envText}
+          label="Copy .env block"
+          copiedLabel="Copied .env"
+        >
           Copy block
         </CopyButton>
       </div>

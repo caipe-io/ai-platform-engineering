@@ -41,6 +41,7 @@ describe("universal ReBAC resource model", () => {
       "mcp_gateway",
       "mcp_server",
       "tool",
+      "rag_collection",
       "knowledge_base",
       "data_source",
       "mcp_tool",
@@ -79,6 +80,8 @@ describe("universal ReBAC resource model", () => {
     expect(isSupportedResourceAction("secret_ref", "share")).toBe(true);
     expect(isSupportedResourceAction("secret_ref", "audit")).toBe(true);
     expect(isSupportedResourceAction("knowledge_base", "share")).toBe(false);
+    expect(isSupportedResourceAction("organization", "automate")).toBe(true);
+    expect(isSupportedResourceAction("agent", "automate")).toBe(false);
   });
 
   it("validates relationships and explains unsupported actions", () => {

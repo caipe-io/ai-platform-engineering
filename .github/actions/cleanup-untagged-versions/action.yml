@@ -1,0 +1,132 @@
+name: Clean up untagged registry versions
+description: >
+  Deletes untagged container/chart versions across every package in the org,
+  once they are old enough that no in-flight build could still need them.
+  Protects any version still referenced as a child manifest (per-architecture
+  image) of a currently tagged multi-arch image.
+
+inputs:
+  owner:
+    description: GitHub organization that owns the packages.
+    required: true
+  min_age_hours:
+    description: Only delete untagged versions at least this many hours old.
+    required: false
+    default: '48'
+  registry_username:
+    description: GitHub Container Registry username.
+    required: true
+  registry_token:
+    description: Token with org packages read and delete access.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+      with:
+        registry: ghcr.io
+        username: ${{ inputs.registry_username }}
+        password: ${{ inputs.registry_token }}
+
+    - name: Delete stale untagged versions
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        OWNER: ${{ inputs.owner }}
+        MIN_AGE_HOURS: ${{ inputs.min_age_hours }}
+      with:
+        github-token: ${{ inputs.registry_token }}
+        script: |
+          const owner = process.env.OWNER;
+          const minAgeMs = Number(process.env.MIN_AGE_HOURS) * 60 * 60 * 1000;
+          const packageType = 'container';
+          const cutoff = Date.now() - minAgeMs;
+
+          // A multi-arch image is a manifest list referencing one child
+          // manifest per platform; those children are their own package
+          // versions and must survive as long as the parent tag does.
+          const inspectChildren = async (owner, packageName, tag) => {
+            const imageRef = `ghcr.io/${owner}/${packageName}:${tag}`;
+            const result = await exec.getExecOutput(
+              'docker',
+              ['buildx', 'imagetools', 'inspect', '--raw', imageRef],
+              {ignoreReturnCode: true, silent: true},
+            );
+            if (result.exitCode !== 0) {
+              // Not every artifact type (e.g. a Helm chart) is inspectable
+              // this way — treat as childless rather than failing the run.
+              core.info(`Could not inspect ${imageRef}, treating as childless: ${result.stderr || result.exitCode}`);
+              return new Set();
+            }
+            try {
+              const manifest = JSON.parse(result.stdout);
+              return new Set((manifest.manifests || []).map(item => item.digest));
+            } catch {
+              return new Set();
+            }
+          };
+
+          const packages = await github.paginate(
+            github.rest.packages.listPackagesForOrganization,
+            {org: owner, package_type: packageType, per_page: 100},
+          );
+          core.info(`Found ${packages.length} container package(s) in ${owner}`);
+
+          let totalDeleted = 0;
+
+          for (const pkg of packages) {
+            const packageName = pkg.name;
+            try {
+              const versions = await github.paginate(
+                github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg,
+                {org: owner, package_type: packageType, package_name: packageName, per_page: 100},
+              );
+              const tagsFor = version => version.metadata?.container?.tags || [];
+
+              const retainedChildren = new Set();
+              for (const version of versions) {
+                const tags = tagsFor(version);
+                if (tags.length === 0) continue;
+                for (const digest of await inspectChildren(owner, packageName, tags[0])) {
+                  retainedChildren.add(digest);
+                }
+              }
+
+              const candidates = versions.filter(version => {
+                if (tagsFor(version).length > 0) return false;
+                if (retainedChildren.has(version.name)) return false;
+                return new Date(version.created_at).getTime() < cutoff;
+              });
+
+              for (const version of candidates) {
+                try {
+                  await github.rest.packages.deletePackageVersionForOrg({
+                    org: owner,
+                    package_type: packageType,
+                    package_name: packageName,
+                    package_version_id: version.id,
+                  });
+                  totalDeleted += 1;
+                } catch (error) {
+                  // Deleting a manifest list can also remove an untagged child.
+                  if (error.status !== 404) throw error;
+                }
+              }
+
+              if (candidates.length > 0) {
+                core.info(`Deleted ${candidates.length} untagged version(s) for ${packageName}`);
+              }
+            } catch (error) {
+              if (error.status === 404) {
+                core.info(`Package ${packageName} not found, skipping.`);
+              } else {
+                core.warning(`Failed to clean up ${packageName}: ${error.message}`);
+              }
+            }
+          }
+
+          core.info(`Total untagged versions deleted: ${totalDeleted}`);

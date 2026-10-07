@@ -266,30 +266,30 @@ describe("hub-crawl.ts GitHub URL normalization", () => {
   }
 
   it("strips github.com prefix from full URL", () => {
-    expect(normalizeCrawlLoc("https://github.com/cnoe-io/ai-platform-engineering")).toBe(
-      "cnoe-io/ai-platform-engineering"
+    expect(normalizeCrawlLoc("https://github.com/caipe-io/ai-platform-engineering")).toBe(
+      "caipe-io/ai-platform-engineering"
     );
   });
 
   it("strips github subdomain prefix", () => {
-    expect(normalizeCrawlLoc("https://raw.github.com/cnoe-io/ai-platform-engineering")).toBe(
-      "cnoe-io/ai-platform-engineering"
+    expect(normalizeCrawlLoc("https://raw.github.com/caipe-io/ai-platform-engineering")).toBe(
+      "caipe-io/ai-platform-engineering"
     );
   });
 
   it("does NOT strip evil-github.com", () => {
-    const raw = "https://evil-github.com/cnoe-io/ai-platform-engineering";
+    const raw = "https://evil-github.com/caipe-io/ai-platform-engineering";
     expect(normalizeCrawlLoc(raw)).toBe(raw);
   });
 
   it("does NOT strip github.com.attacker.com", () => {
-    const raw = "https://github.com.attacker.com/cnoe-io/ai-platform-engineering";
+    const raw = "https://github.com.attacker.com/caipe-io/ai-platform-engineering";
     expect(normalizeCrawlLoc(raw)).toBe(raw);
   });
 
   it("passes through plain owner/repo string", () => {
-    expect(normalizeCrawlLoc("cnoe-io/ai-platform-engineering")).toBe(
-      "cnoe-io/ai-platform-engineering"
+    expect(normalizeCrawlLoc("caipe-io/ai-platform-engineering")).toBe(
+      "caipe-io/ai-platform-engineering"
     );
   });
 });

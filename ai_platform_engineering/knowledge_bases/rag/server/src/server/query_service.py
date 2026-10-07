@@ -1,3 +1,4 @@
+import json
 from typing import Any, Dict, List, Optional
 import re
 import traceback
@@ -66,7 +67,7 @@ class VectorDBQueryService:
       return f'metadata["{nested_key}"]'
     return filter_name
 
-  async def validate_filter_keys(self, filters: Dict[str, "str | bool | List[str]"]):
+  async def validate_filter_keys(self, filters: Dict[str, "str | bool | List[str]"]) -> None:
     """Validate filter keys and values"""
     valid_filter_keys = valid_metadata_keys()
     for filter_name, filter_value in filters.items():
@@ -81,6 +82,44 @@ class VectorDBQueryService:
         logger.warning(f"Invalid filter value for {filter_name}: {filter_value}, must be a string, boolean, or list of strings")
         raise ValueError(f"Invalid filter value for {filter_name}: {filter_value}, must be a string, boolean, or list of strings")
 
+  @staticmethod
+  def _quote_string(value: str) -> str:
+    """Return a Milvus string literal without permitting expression injection."""
+    return json.dumps(value, ensure_ascii=False)
+
+  async def build_filter_expression(
+    self,
+    filters: Optional[Dict[str, "str | bool | List[str]"]],
+  ) -> Optional[str]:
+    """Validate filters and compile them to a safe Milvus expression."""
+    if not filters:
+      return None
+
+    filters = self._coerce_filter_values(filters)
+    await self.validate_filter_keys(filters)
+
+    filter_expr_parts: List[str] = []
+    for key, value in filters.items():
+      milvus_field = self._to_milvus_field_name(key)
+      if isinstance(value, bool):
+        filter_expr_parts.append(f"{milvus_field} == {str(value).lower()}")
+      elif isinstance(value, list):
+        exact = [v for v in value if not v.endswith("*")]
+        prefixes = [v[:-1] for v in value if v.endswith("*")]
+        parts: List[str] = []
+        if exact:
+          values_str = ", ".join(self._quote_string(v) for v in exact)
+          parts.append(f"{milvus_field} in [{values_str}]")
+        for prefix in prefixes:
+          parts.append(f"{milvus_field} like {self._quote_string(f'{prefix}%')}")
+        if not parts:
+          # An empty intersection is an explicit deny, never a missing filter.
+          parts.append(f"{milvus_field} in [{self._quote_string('__noresults__')}]")
+        filter_expr_parts.append(parts[0] if len(parts) == 1 else f"({' or '.join(parts)})")
+      else:
+        filter_expr_parts.append(f"{milvus_field} == {self._quote_string(value)}")
+    return " AND ".join(filter_expr_parts)
+
   async def query(self, query: str, filters: Optional[Dict[str, "str | bool | List[str]"]] = None, limit: int = 10, ranker: str = "", ranker_params: Optional[Dict[str, Any]] = None) -> List[QueryResult]:
     """
     Query the vector database with optional filters and ranking.
@@ -94,39 +133,7 @@ class VectorDBQueryService:
     :return: QueryResults containing the results and their scores.
     """
 
-    # Coerce and validate filters
-    if filters:
-      filters = self._coerce_filter_values(filters)
-      await self.validate_filter_keys(filters)
-
-      # Build filter expressions for filtering if specified
-      filter_expr_parts = []
-      for key, value in (filters or {}).items():
-        # Convert filter key to Milvus field reference (handles metadata.* -> metadata["*"])
-        milvus_field = self._to_milvus_field_name(key)
-        if isinstance(value, bool):
-          # For boolean values, don't use quotes
-          filter_expr_parts.append(f"{milvus_field} == {str(value).lower()}")
-        elif isinstance(value, list):
-          # Split into exact values and prefix patterns (ending with *)
-          exact = [v for v in value if not v.endswith("*")]
-          prefixes = [v[:-1] for v in value if v.endswith("*")]
-          parts = []
-          if exact:
-            values_str = ", ".join([f'"{v}"' for v in exact])
-            parts.append(f"{milvus_field} in [{values_str}]")
-          for prefix in prefixes:
-            parts.append(f'{milvus_field} like "{prefix}%"')
-          if len(parts) == 1:
-            filter_expr_parts.append(parts[0])
-          else:
-            filter_expr_parts.append(f"({' or '.join(parts)})")
-        else:
-          # For string values, use quotes
-          filter_expr_parts.append(f"{milvus_field} == '{value}'")
-      filter_expr = " AND ".join(filter_expr_parts)
-    else:
-      filter_expr = None  # No filters
+    filter_expr = await self.build_filter_expression(filters)
 
     logger.info(f"Searching docs vector db with filters - {filter_expr}, query: {query}")
     try:

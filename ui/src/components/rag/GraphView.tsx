@@ -42,10 +42,18 @@ type GraphViewType = 'ontology' | 'data';
 interface GraphViewProps {
     exploreEntityData?: { entityType: string; primaryKey: string } | null;
     onExploreComplete?: () => void;
+    /** The ontology is deployment-global and is safe only for unrestricted callers. */
+    allowOntology?: boolean;
 }
 
-export default function GraphView({ exploreEntityData, onExploreComplete }: GraphViewProps) {
-    const [activeView, setActiveView] = useState<GraphViewType>('ontology');
+export default function GraphView({
+    exploreEntityData,
+    onExploreComplete,
+    allowOntology = false,
+}: GraphViewProps) {
+    const [activeView, setActiveView] = useState<GraphViewType>(
+        allowOntology ? 'ontology' : 'data'
+    );
     const [graphRagEnabled, setGraphRagEnabled] = useState<boolean | null>(null);
     const [loading, setLoading] = useState(true);
 
@@ -73,6 +81,12 @@ export default function GraphView({ exploreEntityData, onExploreComplete }: Grap
         }
     }, [exploreEntityData]);
 
+    useEffect(() => {
+        if (!allowOntology && activeView === 'ontology') {
+            setActiveView('data');
+        }
+    }, [activeView, allowOntology]);
+
     if (loading) {
         return (
             <div className="h-full flex flex-col bg-background overflow-hidden">
@@ -91,7 +105,7 @@ export default function GraphView({ exploreEntityData, onExploreComplete }: Grap
                             <GitFork className="h-5 w-5 text-white" />
                         </div>
                         <div>
-                            <h1 className="text-lg font-bold gradient-text">Knowledge Graph</h1>
+                            <h2 className="text-lg font-bold gradient-text">Knowledge Graph</h2>
                             <p className="text-muted-foreground text-xs">
                                 Loading configuration...
                             </p>
@@ -127,7 +141,7 @@ export default function GraphView({ exploreEntityData, onExploreComplete }: Grap
                             <GitFork className="h-5 w-5 text-muted-foreground" />
                         </div>
                         <div>
-                            <h1 className="text-lg font-bold text-muted-foreground">Knowledge Graph</h1>
+                            <h2 className="text-lg font-bold text-muted-foreground">Knowledge Graph</h2>
                             <p className="text-muted-foreground text-xs">
                                 Graph RAG is currently disabled
                             </p>
@@ -189,25 +203,29 @@ export default function GraphView({ exploreEntityData, onExploreComplete }: Grap
                             <GitFork className="h-5 w-5 text-white" />
                         </div>
                         <div>
-                            <h1 className="text-lg font-bold gradient-text">Knowledge Graph</h1>
+                            <h2 className="text-lg font-bold gradient-text">Knowledge Graph</h2>
                             <p className="text-muted-foreground text-xs">
-                                Explore entity relationships and ontology
+                                {allowOntology
+                                    ? 'Explore entity relationships and ontology'
+                                    : 'Explore entity relationships from your accessible data sources'}
                             </p>
                         </div>
                     </div>
 
                     {/* Tab Navigation */}
                     <div className="flex bg-card rounded-md shadow-sm border border-border overflow-hidden">
-                        <button
-                            onClick={() => setActiveView('ontology')}
-                            className={`px-3 py-1.5 text-xs font-medium transition-all duration-200 flex items-center gap-1.5 ${
-                                activeView === 'ontology'
-                                    ? 'bg-primary text-primary-foreground shadow-inner'
-                                    : 'bg-card text-muted-foreground hover:bg-muted hover:text-foreground'
-                            }`}
-                        >
-                            <span className="text-sm">🌐</span> Ontology
-                        </button>
+                        {allowOntology ? (
+                            <button
+                                onClick={() => setActiveView('ontology')}
+                                className={`px-3 py-1.5 text-xs font-medium transition-all duration-200 flex items-center gap-1.5 ${
+                                    activeView === 'ontology'
+                                        ? 'bg-primary text-primary-foreground shadow-inner'
+                                        : 'bg-card text-muted-foreground hover:bg-muted hover:text-foreground'
+                                }`}
+                            >
+                                <span className="text-sm">🌐</span> Ontology
+                            </button>
+                        ) : null}
                         <button
                             onClick={() => setActiveView('data')}
                             className={`px-3 py-1.5 text-xs font-medium transition-all duration-200 flex items-center gap-1.5 ${
@@ -224,7 +242,7 @@ export default function GraphView({ exploreEntityData, onExploreComplete }: Grap
 
             {/* Graph Content */}
             <div className="flex-1 min-h-0 bg-muted/30 relative">
-                {activeView === 'ontology' ? (
+                {allowOntology && activeView === 'ontology' ? (
                     <OntologyGraphSigma />
                 ) : (
                     <DataGraphSigma

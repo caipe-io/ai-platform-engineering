@@ -15,6 +15,8 @@ import {
   type PlatformHealthCapability,
   type PlatformDiagnosticProbe,
 } from "@/hooks/use-platform-health-probes";
+import { useVersion } from "@/hooks/use-version";
+import { formatBuildIdentifier,formatComponentVersion } from "@/lib/build-identifier";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
@@ -165,6 +167,7 @@ function capabilityToUiStatus(status: PlatformHealthCapability["status"]): UiSta
 }
 
 export function HealthTab() {
+  const { versionInfo } = useVersion();
   const {
     capabilities,
     summary,
@@ -179,11 +182,18 @@ export function HealthTab() {
     platformStatus === "checking" ? "unknown" : platformStatus;
   const overallConfig = STATUS_CONFIG[systemStatus];
   const OverallIcon = overallConfig.icon;
+  const buildIdentifier = formatBuildIdentifier({
+    version: versionInfo?.version,
+    packageVersion: versionInfo?.packageVersion,
+    gitCommit: versionInfo?.gitCommit,
+  }) ?? "Development";
   const [slackStatus, setSlackStatus] = useState<SlackDirectoryStatus | null>(null);
   const [slackStatusError, setSlackStatusError] = useState<string | null>(null);
   const [webexStatus, setWebexStatus] = useState<WebexDirectoryStatus | null>(null);
   const [webexStatusError, setWebexStatusError] = useState<string | null>(null);
   const [selectedCapability, setSelectedCapability] = useState<PlatformHealthCapability | null>(null);
+  const [resolvingNotification,setResolvingNotification] = useState(false);
+  const [resolutionMessage,setResolutionMessage] = useState<string | null>(null);
 
   const loadSlackStatus = useCallback(async () => {
     try {
@@ -245,8 +255,54 @@ export function HealthTab() {
     ? diagnosticsForCapability(selectedCapability.id, probes)
     : [];
 
+  const resolveNotification = useCallback(async () => {
+    if (!selectedCapability) return;
+    setResolvingNotification(true);
+    setResolutionMessage(null);
+    try {
+      const response = await fetch(`/api/admin/platform/health/notifications/${encodeURIComponent(selectedCapability.id)}`,{
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: "Reviewed and resolved by a platform administrator." }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || "Could not resolve the platform notification");
+      setResolutionMessage("Platform notification resolved for everyone.");
+      window.dispatchEvent(new Event("in-app-notifications:refresh"));
+    } catch (error) {
+      setResolutionMessage(error instanceof Error ? error.message : "Could not resolve the platform notification");
+    } finally {
+      setResolvingNotification(false);
+    }
+  },[selectedCapability]);
+
   return (
     <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Build information</CardTitle>
+          <CardDescription>
+            Running CAIPE UI build. Component release versions appear beside each capability below.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid gap-3 rounded-lg border border-border/70 p-4 text-sm sm:grid-cols-3">
+            <div>
+              <dt className="text-xs text-muted-foreground">Version</dt>
+              <dd className="mt-1 font-medium">{buildIdentifier}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">Commit</dt>
+              <dd className="mt-1 truncate font-mono text-xs">{versionInfo?.gitCommit ?? "Unavailable"}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">Built</dt>
+              <dd className="mt-1 text-xs">{versionInfo?.buildDate ?? "Unavailable"}</dd>
+            </div>
+          </dl>
+        </CardContent>
+      </Card>
+
       <Card
         className={cn(
           "border-l-4",
@@ -360,8 +416,14 @@ export function HealthTab() {
       <CapabilityDiagnosticsDialog
         capability={selectedCapability}
         probes={selectedCapabilityProbes}
+        onResolveNotification={resolveNotification}
+        resolvingNotification={resolvingNotification}
+        resolutionMessage={resolutionMessage}
         onOpenChange={(open) => {
-          if (!open) setSelectedCapability(null);
+          if (!open) {
+            setSelectedCapability(null);
+            setResolutionMessage(null);
+          }
         }}
       />
     </div>
@@ -393,6 +455,7 @@ function CapabilityRow({
   const status = capabilityToUiStatus(capability.status);
   const cfg = STATUS_CONFIG[status];
   const Icon = cfg.icon;
+  const version = formatComponentVersion(capability.version);
   const statusNote =
     capability.status === "down" && capability.required
       ? "Required capability unavailable; platform status is down."
@@ -438,9 +501,16 @@ function CapabilityRow({
           </p>
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <Icon className={cn("h-4 w-4", cfg.color)} />
-        <span className="text-sm">{cfg.label}</span>
+      <div className="flex shrink-0 items-center gap-3">
+        <div className="text-right">
+          <div className="flex items-center justify-end gap-2">
+            <Icon className={cn("h-4 w-4", cfg.color)} />
+            <span className="text-sm">{cfg.label}</span>
+          </div>
+          <p className="mt-1 font-mono text-[10px] text-muted-foreground/80">
+            {version ?? "Version not reported"}
+          </p>
+        </div>
         <ChevronRight className="h-4 w-4 text-muted-foreground" />
       </div>
     </button>
@@ -455,10 +525,16 @@ function CapabilityDiagnosticsDialog({
   capability,
   probes,
   onOpenChange,
+  onResolveNotification,
+  resolvingNotification,
+  resolutionMessage,
 }: {
   capability: PlatformHealthCapability | null;
   probes: PlatformDiagnosticProbe[];
   onOpenChange: (open: boolean) => void;
+  onResolveNotification: () => void;
+  resolvingNotification: boolean;
+  resolutionMessage: string | null;
 }) {
   if (!capability) return null;
 
@@ -495,6 +571,18 @@ function CapabilityDiagnosticsDialog({
                 {cfg.label}
               </div>
             </div>
+            {capability.status === "degraded" || capability.status === "down" ? (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-3">
+                <p className="text-xs text-muted-foreground">
+                  Human resolution closes the shared Platform notification for every user. A continuing failure can reopen it after audit confirmation.
+                </p>
+                <Button disabled={resolvingNotification} onClick={onResolveNotification} size="sm" variant="outline">
+                  {resolvingNotification ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                  Resolve notification
+                </Button>
+              </div>
+            ) : null}
+            {resolutionMessage ? <p className="mt-2 text-xs text-muted-foreground">{resolutionMessage}</p> : null}
           </section>
 
           {probes.length > 0 ? (

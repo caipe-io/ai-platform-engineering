@@ -34,7 +34,15 @@ jest.mock("@/lib/api-middleware", () => {
   const { ApiError } = jest.requireActual("@/lib/api-error");
   return {
     ApiError,
-    requireRbacPermission: (...args: unknown[]) => mockRequireRbacPermission(...args),
+    getAuthFromBearerOrSession: async () => {
+      const { getServerSession } = jest.requireMock("next-auth") as {
+        getServerSession: jest.Mock;
+      };
+      const session = await getServerSession();
+      return { session, user: session?.user };
+    },
+    requireRbacPermission: (...args: unknown[]) =>
+      mockRequireRbacPermission(...args),
     handleApiError: (error: unknown) =>
       Response.json(
         {
@@ -47,9 +55,12 @@ jest.mock("@/lib/api-middleware", () => {
 });
 
 jest.mock("@/lib/rbac/resource-authz", () => ({
-  requireResourcePermission: (...args: unknown[]) => mockRequireResourcePermission(...args),
-  filterResourcesByPermission: (...args: unknown[]) => mockFilterResourcesByPermission(...args),
-  canTransferResourceOwnership: (...args: unknown[]) => mockCanTransferResourceOwnership(...args),
+  requireResourcePermission: (...args: unknown[]) =>
+    mockRequireResourcePermission(...args),
+  filterResourcesByPermission: (...args: unknown[]) =>
+    mockFilterResourcesByPermission(...args),
+  canTransferResourceOwnership: (...args: unknown[]) =>
+    mockCanTransferResourceOwnership(...args),
 }));
 
 jest.mock("@/lib/rbac/openfga", () => ({
@@ -63,7 +74,8 @@ jest.mock("@/lib/rbac/organization", () => ({
 jest.mock("@/lib/rbac/openfga-owned-resources-reconcile", () => ({
   reconcileKnowledgeBaseRelationships: jest.fn(),
   reconcileDataSourceRelationships: jest.fn(),
-  reconcileMcpToolRelationships: (...args: unknown[]) => mockReconcileMcpToolRelationships(...args),
+  reconcileMcpToolRelationships: (...args: unknown[]) =>
+    mockReconcileMcpToolRelationships(...args),
   deleteAllMcpToolRelationshipTuples: jest.fn(),
 }));
 
@@ -94,7 +106,11 @@ function mockFetch() {
       } as Response);
     }
     // Upstream forward (PUT) — succeeds with no content.
-    return Promise.resolve({ ok: true, status: 204, json: async () => ({}) } as Response);
+    return Promise.resolve({
+      ok: true,
+      status: 204,
+      json: async () => ({}),
+    } as Response);
   }) as jest.Mock;
 }
 
@@ -111,15 +127,23 @@ async function asUser(sub = "alice-sub") {
 
 function putToolRequest(body: unknown): NextRequest {
   const payload = JSON.stringify(body);
-  return new NextRequest(new URL("http://localhost:3000/api/rag/v1/mcp/custom-tools/infra-search"), {
-    method: "PUT",
-    body: payload,
-    headers: { "content-type": "application/json", "content-length": String(payload.length) },
-  });
+  return new NextRequest(
+    new URL("http://localhost:3000/api/rag/v1/mcp/custom-tools/infra-search"),
+    {
+      method: "PUT",
+      body: payload,
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(payload.length),
+      },
+    },
+  );
 }
 
 const PUT_PARAMS = {
-  params: Promise.resolve({ path: ["v1", "mcp", "custom-tools", "infra-search"] }),
+  params: Promise.resolve({
+    path: ["v1", "mcp", "custom-tools", "infra-search"],
+  }),
 };
 
 beforeEach(() => {
@@ -127,7 +151,11 @@ beforeEach(() => {
   mockRequireRbacPermission.mockResolvedValue(undefined);
   mockRequireResourcePermission.mockResolvedValue(undefined);
   mockCheckOpenFgaTuple.mockResolvedValue({ allowed: false });
-  mockReconcileMcpToolRelationships.mockResolvedValue({ enabled: true, writes: 2, deletes: 1 });
+  mockReconcileMcpToolRelationships.mockResolvedValue({
+    enabled: true,
+    writes: 2,
+    deletes: 1,
+  });
   mockFetch();
 });
 
@@ -137,7 +165,10 @@ describe("PUT /v1/mcp/custom-tools/<id> — ownership transfer (US3)", () => {
     mockCanTransferResourceOwnership.mockResolvedValue(false);
 
     const { PUT } = await import("@/app/api/rag/[...path]/route");
-    const res = await PUT(putToolRequest({ owner_team_slug: "team-new" }), PUT_PARAMS);
+    const res = await PUT(
+      putToolRequest({ owner_team_slug: "team-new" }),
+      PUT_PARAMS,
+    );
 
     expect(res.status).toBe(403);
     expect((await res.json()).code).toBe("TRANSFER_FORBIDDEN");
@@ -150,7 +181,10 @@ describe("PUT /v1/mcp/custom-tools/<id> — ownership transfer (US3)", () => {
     mockRequireResourcePermission.mockResolvedValue(undefined); // member of destination
 
     const { PUT } = await import("@/app/api/rag/[...path]/route");
-    const res = await PUT(putToolRequest({ owner_team_slug: "team-new" }), PUT_PARAMS);
+    const res = await PUT(
+      putToolRequest({ owner_team_slug: "team-new" }),
+      PUT_PARAMS,
+    );
 
     expect(res.status).toBe(204);
     expect(mockReconcileMcpToolRelationships).toHaveBeenCalledWith(
@@ -167,10 +201,15 @@ describe("PUT /v1/mcp/custom-tools/<id> — ownership transfer (US3)", () => {
     await asUser("alice-sub");
     mockCanTransferResourceOwnership.mockResolvedValue(true);
     const ApiErrorClass = jest.requireMock("@/lib/api-middleware").ApiError;
-    mockRequireResourcePermission.mockRejectedValue(new ApiErrorClass("forbidden", 403));
+    mockRequireResourcePermission.mockRejectedValue(
+      new ApiErrorClass("forbidden", 403),
+    );
 
     const { PUT } = await import("@/app/api/rag/[...path]/route");
-    const res = await PUT(putToolRequest({ owner_team_slug: "team-new" }), PUT_PARAMS);
+    const res = await PUT(
+      putToolRequest({ owner_team_slug: "team-new" }),
+      PUT_PARAMS,
+    );
 
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("TRANSFER_NOT_MEMBER_UNCONFIRMED");
@@ -181,7 +220,9 @@ describe("PUT /v1/mcp/custom-tools/<id> — ownership transfer (US3)", () => {
     await asUser("alice-sub");
     mockCanTransferResourceOwnership.mockResolvedValue(true);
     const ApiErrorClass = jest.requireMock("@/lib/api-middleware").ApiError;
-    mockRequireResourcePermission.mockRejectedValue(new ApiErrorClass("forbidden", 403));
+    mockRequireResourcePermission.mockRejectedValue(
+      new ApiErrorClass("forbidden", 403),
+    );
 
     const { PUT } = await import("@/app/api/rag/[...path]/route");
     const res = await PUT(
@@ -191,7 +232,10 @@ describe("PUT /v1/mcp/custom-tools/<id> — ownership transfer (US3)", () => {
 
     expect(res.status).toBe(204);
     expect(mockReconcileMcpToolRelationships).toHaveBeenCalledWith(
-      expect.objectContaining({ ownerTeamSlug: "team-new", previousOwnerTeamSlug: "team-old" }),
+      expect.objectContaining({
+        ownerTeamSlug: "team-new",
+        previousOwnerTeamSlug: "team-old",
+      }),
     );
   });
 
@@ -199,7 +243,10 @@ describe("PUT /v1/mcp/custom-tools/<id> — ownership transfer (US3)", () => {
     await asUser("alice-sub");
 
     const { PUT } = await import("@/app/api/rag/[...path]/route");
-    const res = await PUT(putToolRequest({ shared_with_teams: ["share-a", "share-b"] }), PUT_PARAMS);
+    const res = await PUT(
+      putToolRequest({ shared_with_teams: ["share-a", "share-b"] }),
+      PUT_PARAMS,
+    );
 
     expect(res.status).toBe(204);
     expect(mockCanTransferResourceOwnership).not.toHaveBeenCalled();

@@ -272,5 +272,15 @@ export function buildDependencyQueries(range: MetricsRange): BatchQuery[] {
       `sum by (status) (increase(da_tool_calls_total[${window}]))`,
       range,
     ),
+    instantQuery(
+      "dropped_input_files_by_reason",
+      `sum by (reason) (increase(da_dropped_input_files_total[${window}]))`,
+      range,
+    ),
+    rangeQuery(
+      "dropped_input_files_trend",
+      `sum by (reason) (increase(da_dropped_input_files_total[${rateWindow}]))`,
+      range,
+    ),
   ];
 }

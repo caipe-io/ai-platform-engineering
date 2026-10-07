@@ -1,6 +1,5 @@
-// Shared helper for reading the admin-configurable discovery cache TTL
-// applied to Slack channel discovery (`/api/admin/slack/available-channels`)
-// and Webex space discovery (`/api/admin/webex/available-spaces`).
+// Reads the connector-specific discovery cache TTL used by Slack channel or
+// Webex space discovery.
 //
 // Background: both routes maintain an in-process snapshot of the
 // provider's room/channel list so admins can search/scroll without
@@ -10,7 +9,9 @@
 // to a brand-new private channel; that channel didn't appear in the
 // picker for up to 10 minutes).
 //
-// The TTL now lives in `platform_config.discovery_cache_ttl_minutes`:
+// Each TTL has its own field in `platform_config`:
+//   - `slack_discovery_cache_ttl_minutes`
+//   - `webex_discovery_cache_ttl_minutes`
 //   - default 60 minutes (good for typical admin workflows)
 //   - range 0..1440 — 0 disables the cache entirely (every request hits
 //     the upstream API; useful for debugging bot-membership rollouts)
@@ -44,13 +45,31 @@ export const MIN_DISCOVERY_CACHE_TTL_MINUTES = 0;
  * Node process memory, so it auto-resets on UI worker restart.
  */
 const MEMO_TTL_MS = 30_000;
-let memoizedAt = 0;
-let memoizedMs: number | null = null;
+export type DiscoveryCacheProvider = "slack" | "webex";
+
+const memoizedByProvider = new Map<
+  DiscoveryCacheProvider,
+  { cachedAt: number; milliseconds: number }
+>();
 
 interface PlatformConfigDoc {
   _id?: string;
-  discovery_cache_ttl_minutes?: unknown;
+  slack_discovery_cache_ttl_minutes?: unknown;
+  webex_discovery_cache_ttl_minutes?: unknown;
 }
+
+const CONFIG_FIELD_BY_PROVIDER: Record<
+  DiscoveryCacheProvider,
+  keyof PlatformConfigDoc
+> = {
+  slack: "slack_discovery_cache_ttl_minutes",
+  webex: "webex_discovery_cache_ttl_minutes",
+};
+
+const ENV_FIELD_BY_PROVIDER: Record<DiscoveryCacheProvider, string> = {
+  slack: "SLACK_DISCOVERY_CACHE_TTL_MINUTES",
+  webex: "WEBEX_DISCOVERY_CACHE_TTL_MINUTES",
+};
 
 /**
  * Validates and clamps a raw value (from Mongo, the env, or a PATCH
@@ -72,37 +91,44 @@ export function normalizeDiscoveryCacheTtlMinutes(value: unknown): number | null
  * is honored by callers as a per-request live read.
  *
  * Resolution order:
- *   1. `platform_config.discovery_cache_ttl_minutes` (admin-set)
- *   2. `DISCOVERY_CACHE_TTL_MINUTES` env (for locked-down envs that
- *      bake the value into Helm)
+ *   1. The provider's `platform_config` field (admin-set)
+ *   2. The provider's environment variable
  *   3. `DEFAULT_DISCOVERY_CACHE_TTL_MINUTES` (60 min)
  *
  * Any failure to reach Mongo falls back through (2) → (3) so a failed
  * Mongo lookup doesn't break the discovery picker.
  */
-export async function getDiscoveryCacheTtlMs(): Promise<number> {
+export async function getDiscoveryCacheTtlMs(
+  provider: DiscoveryCacheProvider,
+): Promise<number> {
   const now = Date.now();
-  if (memoizedMs !== null && now - memoizedAt < MEMO_TTL_MS) {
-    return memoizedMs;
+  const memoized = memoizedByProvider.get(provider);
+  if (memoized && now - memoized.cachedAt < MEMO_TTL_MS) {
+    return memoized.milliseconds;
   }
-  let minutes = await readMongoMinutes();
+  let minutes = await readMongoMinutes(provider);
   if (minutes === null) {
-    minutes = normalizeDiscoveryCacheTtlMinutes(process.env.DISCOVERY_CACHE_TTL_MINUTES);
+    minutes = normalizeDiscoveryCacheTtlMinutes(
+      process.env[ENV_FIELD_BY_PROVIDER[provider]],
+    );
   }
   if (minutes === null) {
     minutes = DEFAULT_DISCOVERY_CACHE_TTL_MINUTES;
   }
   const ms = minutes * 60_000;
-  memoizedMs = ms;
-  memoizedAt = now;
+  memoizedByProvider.set(provider, { cachedAt: now, milliseconds: ms });
   return ms;
 }
 
-async function readMongoMinutes(): Promise<number | null> {
+async function readMongoMinutes(
+  provider: DiscoveryCacheProvider,
+): Promise<number | null> {
   try {
     const col = await getCollection<PlatformConfigDoc>("platform_config");
     const doc = await col.findOne({ _id: CONFIG_ID } as never);
-    return normalizeDiscoveryCacheTtlMinutes(doc?.discovery_cache_ttl_minutes);
+    return normalizeDiscoveryCacheTtlMinutes(
+      doc?.[CONFIG_FIELD_BY_PROVIDER[provider]],
+    );
   } catch {
     // If Mongo is unreachable, fall through to env/default. Discovery
     // pickers should keep working in that scenario; only the TTL itself
@@ -117,6 +143,5 @@ async function readMongoMinutes(): Promise<number | null> {
  * not import this.
  */
 export function __resetDiscoveryCacheConfigForTests(): void {
-  memoizedAt = 0;
-  memoizedMs = null;
+  memoizedByProvider.clear();
 }

@@ -246,33 +246,6 @@ view of earlier messages from that Webex thread. Use
 `WEBEX_THREAD_CONTEXT_MAX_MESSAGES` and `WEBEX_THREAD_CONTEXT_MAX_CHARS` to cap
 that additional context.
 
-## Legacy Single-Bot Records
-
-Legacy ownership is never inferred at startup. Go to **Admin > Integrations >
-Webex > Legacy migration** and select **Probe legacy data**. The probe lists
-botless Mongo mappings/routes and legacy physical-space OpenFGA agent grants.
-For each space, an administrator must either select the bot that originally
-owned it and migrate it, or delete the legacy records. Applying a migration
-writes the bot-scoped OpenFGA identity and agent tuples, stamps the matching
-Mongo records with `bot_id`, and then deletes that space's old physical-space
-agent tuples.
-
-The current model permits one agent route per bot/space. If a legacy space has
-conflicting agent routes, review it under **Configured spaces** after migration
-and save the intended agent; that save converges the records to the canonical
-single-route key.
-
-The migration intentionally does not modify:
-
-- `webex_space_grants`, which remain attached to the physical Webex space and
-  are shared by bot-specific routes.
-- `webex_direct_user_routes`, which were introduced with multi-bot ownership
-  and already require `bot_id`.
-
-Legacy MongoDB documents do not contain the historical bot identity. The
-platform therefore cannot independently prove which bot originally owned a
-record; the admin selection is intentionally mandatory.
-
 ## Important Environment Variables
 
 | Variable | Purpose |

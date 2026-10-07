@@ -22,7 +22,7 @@ export interface Team {
   description?: string;
   source?: 'manual' | 'identity_sync' | 'identity_group_sync' | 'bootstrap' | 'migration';
   status?: 'active' | 'archived' | 'pending_review' | 'disabled';
-  owner_id: string; // User email who created the team
+  owner_id: string; // Creator metadata; authorization comes from team membership roles
   created_by?: string;
   updated_by?: string;
   created_at: Date;

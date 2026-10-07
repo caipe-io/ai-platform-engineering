@@ -105,6 +105,7 @@ describe("identity group sync apply reconciler", () => {
       tupleDeletes: 0,
       openFgaEnabled: true,
       teamsArchived: 0,
+      teamsUnarchived: 0,
     });
 
     expect(upsertTeamMembershipSource).toHaveBeenCalledTimes(1);
@@ -535,6 +536,107 @@ describe("identity group sync apply reconciler", () => {
     expect(result.teamsArchived).toBe(0);
     expect(teamsUpdateMany).not.toHaveBeenCalled();
     expect(stripArchivedTeamResourceGrants).not.toHaveBeenCalled();
+  });
+
+  describe("Phase 3a — unarchive teams that regained membership", () => {
+    it("unarchives identity_group_sync teams flagged in teams_to_unarchive", async () => {
+      teamsUpdateMany.mockResolvedValueOnce({ matchedCount: 1, modifiedCount: 1 });
+      const { applyIdentityGroupSyncPlan } = await import("../../identity-group-sync-reconciler");
+
+      const result = await applyIdentityGroupSyncPlan({
+        plan: {
+          matched_groups: [],
+          ignored_groups: [],
+          teams_to_create: [],
+          teams_to_unarchive: ["sg-cloud-o11y-ai-in-eng"],
+          membership_sources_to_add: [
+            {
+              team_id: "team-1",
+              team_slug: "sg-cloud-o11y-ai-in-eng",
+              user_subject: "bob-sub",
+              relationship: "member",
+              source_type: "okta",
+              managed: true,
+              status: "active",
+              created_at: "2026-08-31T00:00:00.000Z",
+            },
+          ],
+          membership_sources_to_remove: [],
+          tuple_writes: [{ user: "user:bob-sub", relation: "member", object: "team:sg-cloud-o11y-ai-in-eng" }],
+          tuple_deletes: [],
+          skipped_users: [],
+          conflicts: [],
+        },
+        actor: "admin@example.test",
+        now: "2026-08-31T01:00:00.000Z",
+      });
+
+      expect(result.teamsUnarchived).toBe(1);
+      expect(teamsUpdateMany).toHaveBeenCalledWith(
+        { slug: { $in: ["sg-cloud-o11y-ai-in-eng"] }, source: "identity_group_sync", status: "archived" },
+        expect.objectContaining({
+          $set: expect.objectContaining({ status: "active", updated_by: "admin@example.test" }),
+        }),
+      );
+      // Unarchiving never touches OpenFGA — no grant-strip counterpart to replay.
+      expect(stripArchivedTeamResourceGrants).not.toHaveBeenCalled();
+    });
+
+    it("does not call updateMany when teams_to_unarchive is empty or absent", async () => {
+      const { applyIdentityGroupSyncPlan } = await import("../../identity-group-sync-reconciler");
+
+      const result = await applyIdentityGroupSyncPlan({
+        plan: {
+          matched_groups: [],
+          ignored_groups: [],
+          teams_to_create: [],
+          membership_sources_to_add: [],
+          membership_sources_to_remove: [],
+          tuple_writes: [],
+          tuple_deletes: [],
+          skipped_users: [],
+          conflicts: [],
+        },
+        actor: "admin@example.test",
+        now: "2026-08-31T01:00:00.000Z",
+      });
+
+      expect(result.teamsUnarchived).toBe(0);
+      expect(teamsUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("swallows an unarchive failure and still resolves the overall call successfully", async () => {
+      const consoleErrSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        teamsUpdateMany.mockRejectedValueOnce(new Error("mongo unreachable"));
+        const { applyIdentityGroupSyncPlan } = await import("../../identity-group-sync-reconciler");
+
+        const result = await applyIdentityGroupSyncPlan({
+          plan: {
+            matched_groups: [],
+            ignored_groups: [],
+            teams_to_create: [],
+            teams_to_unarchive: ["sg-cloud-o11y-ai-in-eng"],
+            membership_sources_to_add: [],
+            membership_sources_to_remove: [],
+            tuple_writes: [],
+            tuple_deletes: [],
+            skipped_users: [],
+            conflicts: [],
+          },
+          actor: "admin@example.test",
+          now: "2026-08-31T01:00:00.000Z",
+        });
+
+        expect(result.teamsUnarchived).toBe(0);
+        expect(consoleErrSpy).toHaveBeenCalledWith(
+          expect.stringContaining("phase 3a team unarchival failed"),
+          expect.any(Error),
+        );
+      } finally {
+        consoleErrSpy.mockRestore();
+      }
+    });
   });
 
   describe("Phase 3 — orphan team archival + grant strip", () => {

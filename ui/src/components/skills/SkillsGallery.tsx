@@ -21,16 +21,17 @@ DialogHeader,
 DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Popover,PopoverContent,PopoverTrigger } from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
 import { useToast } from "@/components/ui/toast";
 import { useAdminRole } from "@/hooks/use-admin-role";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
+import { mapCatalogSkillToAgentSkill } from "@/lib/catalog-skill-mapping";
 import { getConfig } from "@/lib/config";
+import { pushWithNavigationProgress } from "@/lib/navigation-progress";
 import { cn } from "@/lib/utils";
 import { useAgentSkillsStore } from "@/store/agent-skills-store";
 import { useChatStore } from "@/store/chat-store";
-import type { AgentSkill,ScanOverride } from "@/types/agent-skill";
+import type { AgentSkill } from "@/types/agent-skill";
 import { AnimatePresence,motion } from "framer-motion";
 import {
 Activity,
@@ -40,9 +41,7 @@ Archive,
 ArrowRight,
 BarChart,
 Bug,
-Check,
 CheckCircle,
-ChevronsUpDown,
 CircleDot,
 Cloud,
 Container,
@@ -91,7 +90,7 @@ X,
 Zap,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
-import Link from "next/link";
+import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
 import { useRouter } from "next/navigation";
 import React,{ useCallback,useEffect,useMemo,useState } from "react";
 
@@ -381,8 +380,6 @@ export function SkillsGallery({
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
-  const [categoryPopoverOpen, setCategoryPopoverOpen] = useState(false);
-  const [categoryQuery, setCategoryQuery] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AgentSkill | null>(null);
   const [viewerTarget, setViewerTarget] = useState<AgentSkill | null>(null);
@@ -579,61 +576,7 @@ export function SkillsGallery({
       if (!res.ok) return;
       const data = await res.json();
       if (!data?.skills) return;
-      const mapped: AgentSkill[] = data.skills.map(
-        (s: {
-          id: string;
-          name: string;
-          source: string;
-          source_id?: string | null;
-          description?: string;
-          metadata?: Record<string, unknown>;
-          visibility?: string;
-          content?: string | null;
-          scan_status?: "passed" | "flagged" | "unscanned";
-          scan_summary?: string;
-          scan_updated_at?: string;
-          scan_override?: ScanOverride;
-        }) => {
-          const isBuiltin =
-            s.source === "default" || Boolean(s.metadata?.is_system);
-          return {
-            id: `catalog-${s.id}`,
-            name: s.name,
-            description: s.description || "",
-            category: (s.metadata?.category as string) || "Custom",
-            tasks: [],
-            owner_id:
-              s.source === "agent_skills" && s.source_id
-                ? String(s.source_id)
-                : "",
-            is_system: isBuiltin,
-            is_quick_start: isBuiltin,
-            visibility:
-              (s.visibility as AgentSkill["visibility"]) ??
-              (s.metadata?.visibility as AgentSkill["visibility"]) ??
-              undefined,
-            created_at: new Date(),
-            updated_at: new Date(),
-            thumbnail: (s.metadata?.icon as string) || "Zap",
-            skill_content: s.content ?? undefined,
-            metadata: {
-              tags: (s.metadata?.tags as string[]) || [],
-              catalog_source: s.source,
-              catalog_source_id: s.source_id ?? null,
-              catalog_visibility: s.visibility,
-              hub_location: (s.metadata?.hub_location as string) || "",
-              hub_type: (s.metadata?.hub_type as string) || "",
-              hub_path: (s.metadata?.path as string) || "",
-            },
-            scan_status: s.scan_status,
-            scan_summary: s.scan_summary,
-            scan_updated_at: s.scan_updated_at
-              ? new Date(s.scan_updated_at)
-              : undefined,
-            scan_override: s.scan_override,
-          } as AgentSkill;
-        },
-      );
+      const mapped: AgentSkill[] = data.skills.map(mapCatalogSkillToAgentSkill);
       setCatalogSkills(mapped);
     } catch {
       // Silent — this fetch is best-effort; the agent_skills branch
@@ -726,15 +669,10 @@ export function SkillsGallery({
     return Array.from(merged).sort((a, b) => a.localeCompare(b));
   }, [allConfigs]);
 
-  const filteredCategoryOptions = useMemo(() => {
-    const q = categoryQuery.trim().toLowerCase();
-    if (!q) return categoryPickerOptions;
-    return categoryPickerOptions.filter((c) => c.toLowerCase().includes(q));
-  }, [categoryPickerOptions, categoryQuery]);
-
-  useEffect(() => {
-    if (!categoryPopoverOpen) setCategoryQuery("");
-  }, [categoryPopoverOpen]);
+  const categoryFilterOptions = useMemo(
+    () => ["All", ...categoryPickerOptions],
+    [categoryPickerOptions],
+  );
 
   const mySkillsCount = useMemo(() =>
     allConfigs.filter(c => !c.is_system && c.owner_id === currentUserEmail).length,
@@ -808,7 +746,7 @@ export function SkillsGallery({
       const conversationId = await createConversation(await resolveUsableChatAgentId());
       setPendingMessage(message);
       setActiveFormConfig(null);
-      router.push(`/chat/${conversationId}`);
+      pushWithNavigationProgress(router,`/chat/${conversationId}`);
     } catch (error) {
       const msg =
         error instanceof Error ? error.message : "Failed to create a chat conversation";
@@ -971,9 +909,12 @@ export function SkillsGallery({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header + filter panel — z-40 + overflow-visible so category popover stacks above skill cards */}
-      <div className="relative z-40 overflow-visible border-b border-border/60 mb-5 -mx-4 sm:-mx-6 px-4 sm:px-6 pt-0 pb-4">
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-transparent pointer-events-none" />
+      {/* Header + filter panel — the shallow card-to-transparent wash continues
+          AppHeader's surface into the page instead of introducing a second,
+          bordered header directly beneath it. z-40 + overflow-visible keep the
+          category popover above skill cards. */}
+      <div className="relative z-40 -mx-4 -mt-3 overflow-visible px-4 pb-4 pt-3 sm:-mx-6 sm:px-6">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-card/45 via-card/15 to-transparent" />
         <div className="relative space-y-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="flex items-start gap-3 min-w-0">
@@ -991,9 +932,9 @@ export function SkillsGallery({
                 </div>
                 <p className="text-sm text-muted-foreground leading-snug">
                   Catalog skills and templates — repo hubs in{" "}
-                  <Link href="/admin?tab=skills" className="text-primary hover:underline">
+                  <NavigationProgressLink href="/admin/platform/skill-hubs" className="text-primary hover:underline">
                     Admin
-                  </Link>
+                  </NavigationProgressLink>
                 </p>
               </div>
             </div>
@@ -1003,7 +944,7 @@ export function SkillsGallery({
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => router.push("/skills/scan-history")}
+                onClick={() => pushWithNavigationProgress(router,"/skills/scan-history")}
                 aria-label="Open skill scanner audit log"
                 title="Audit log of every skill scanner run"
                 className="gap-2 h-9 text-sm px-3 font-medium"
@@ -1020,7 +961,7 @@ export function SkillsGallery({
               <Button
                 type="button"
                 size="sm"
-                onClick={() => router.push("/skills/gateway")}
+                onClick={() => pushWithNavigationProgress(router,"/skills/gateway")}
                 aria-label="Open Skills Gateway — OpenAPI, auth, and agent integration"
                 title="Skills Gateway: OpenAPI, API keys, and coding-agent setup"
                 className={cn(
@@ -1111,7 +1052,7 @@ export function SkillsGallery({
               On narrow viewports the row wraps naturally; the search
               input keeps `flex-1` so it always claims the leftover
               width when groups wrap. */}
-          <div className="rounded-xl border border-border/50 bg-muted/25 p-3">
+          <div className="rounded-xl bg-card/20 p-2.5 backdrop-blur-sm">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
               <div className="relative flex-1 min-w-[12rem]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
@@ -1199,97 +1140,23 @@ export function SkillsGallery({
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
                   Category
                 </span>
-                <Popover open={categoryPopoverOpen} onOpenChange={setCategoryPopoverOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      aria-label="Category filter"
-                      aria-expanded={categoryPopoverOpen}
-                      // Compact inline pill — sized to fit the
-                      // single-row filter bar instead of the
-                      // previous full-width treatment that consumed
-                      // half the screen on its own row.
-                      className="h-8 min-w-[10rem] max-w-[16rem] justify-between gap-2 font-normal text-xs bg-background/80 rounded-full"
-                    >
-                      <span className="truncate text-left">
-                        {selectedCategory === "All" ? "All categories" : selectedCategory}
-                      </span>
-                      <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    side="bottom"
-                    align="start"
-                    className="w-[min(17rem,calc(100vw-2rem))] p-0 overflow-hidden z-[200] shadow-xl"
-                  >
-                    <div className="border-b border-border/50 p-2">
-                      <Input
-                        placeholder="Search categories…"
-                        value={categoryQuery}
-                        onChange={(e) => setCategoryQuery(e.target.value)}
-                        className="h-9 text-sm"
-                        autoComplete="off"
-                        onKeyDown={(e) => e.stopPropagation()}
-                      />
-                    </div>
-                    <ScrollArea className="h-[min(240px,40vh)]">
-                      <div className="p-1">
-                        <button
-                          type="button"
-                          className={cn(
-                            "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm",
-                            selectedCategory === "All"
-                              ? "bg-muted text-foreground"
-                              : "hover:bg-muted/70",
-                          )}
-                          onClick={() => {
-                            setSelectedCategory("All");
-                            setCategoryPopoverOpen(false);
-                          }}
-                        >
-                          <Check
-                            className={cn(
-                              "h-4 w-4 shrink-0",
-                              selectedCategory === "All" ? "opacity-100" : "opacity-0",
-                            )}
-                          />
-                          All categories
-                        </button>
-                        {filteredCategoryOptions.length === 0 ? (
-                          <p className="px-2 py-3 text-center text-xs text-muted-foreground">
-                            No matching categories
-                          </p>
-                        ) : (
-                          filteredCategoryOptions.map((cat) => (
-                            <button
-                              key={cat}
-                              type="button"
-                              className={cn(
-                                "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm",
-                                selectedCategory === cat
-                                  ? "bg-muted text-foreground"
-                                  : "hover:bg-muted/70",
-                              )}
-                              onClick={() => {
-                                setSelectedCategory(cat);
-                                setCategoryPopoverOpen(false);
-                              }}
-                            >
-                              <Check
-                                className={cn(
-                                  "h-4 w-4 shrink-0",
-                                  selectedCategory === cat ? "opacity-100" : "opacity-0",
-                                )}
-                              />
-                              <span className="truncate">{cat}</span>
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    </ScrollArea>
-                  </PopoverContent>
-                </Popover>
+                <div className="w-[min(16rem,40vw)] min-w-[10rem]">
+                  <SearchablePicker
+                    options={categoryFilterOptions}
+                    selected={selectedCategory}
+                    onSelect={setSelectedCategory}
+                    getOptionKey={(category) => category}
+                    getOptionLabel={(category) =>
+                      category === "All" ? "All categories" : category
+                    }
+                    placeholder="All categories"
+                    searchPlaceholder="Search categories…"
+                    emptyLabel="No matching categories"
+                    ariaLabel="Category filter"
+                    triggerClassName="h-8 rounded-full bg-background/80 py-1 text-xs font-normal"
+                    contentClassName="w-[min(17rem,calc(100vw-2rem))] z-[200] shadow-xl"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -1574,9 +1441,9 @@ export function SkillsGallery({
               <Sparkles className="h-12 w-12 text-muted-foreground/50" />
               <p className="text-muted-foreground text-center max-w-md">
                 No skills match your search or filters. Try another source filter, or add repo-backed skills via{" "}
-                <Link href="/admin?tab=skills" className="text-primary font-medium hover:underline">
+                <NavigationProgressLink href="/admin/platform/skill-hubs" className="text-primary font-medium hover:underline">
                   Admin → Skill Hubs
-                </Link>
+                </NavigationProgressLink>
                 .
               </p>
             </div>

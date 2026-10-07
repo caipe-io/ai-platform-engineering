@@ -20,7 +20,6 @@ export const RBAC_COLLECTION_NAMES = {
   webexSpaceGrants: "webex_space_grants",
   webexSpaceTeamMappings: "webex_space_team_mappings",
   webexDirectUserRoutes: "webex_direct_user_routes",
-  webexLinkNonces: "webex_link_nonces",
   webexUserMetrics: "webex_user_metrics",
   rebacEnforcementStatus: "rebac_enforcement_status",
   rebacDriftFindings: "rebac_drift_findings",

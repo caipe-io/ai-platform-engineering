@@ -7,7 +7,7 @@ fullnameOverride: ""
 
 # Container image configuration
 image:
-  repository: "ghcr.io/cnoe-io/caipe-dynamic-agents"
+  repository: "ghcr.io/caipe-io/caipe-dynamic-agents"
   pullPolicy: "Always"
   # tag defaults to .Chart.AppVersion when not specified
   tag: ""
@@ -18,7 +18,7 @@ imagePullSecrets: []
 # Service account configuration
 serviceAccount:
   create: true
-  automount: true
+  automount: false
   annotations: {}
   name: ""
 
@@ -130,6 +130,14 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
+# PodDisruptionBudget: prevents simultaneous eviction of all replicas during voluntary disruptions.
+# Enable in production; leave disabled for local/single-node environments.
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+  # minAvailable: 1  # alternative: require at least N pods available (multi-replica only)
+  annotations: {}
+
 # ConfigMap for non-sensitive configuration
 config:
   # ─── Keycloak / OIDC (REQUIRED in production) ───────────────────────────
@@ -169,6 +177,10 @@ config:
   # get the in-cluster default http://<release-name>-caipe-ui:3000; override
   # only when pointing dynamic-agents at an external CAIPE UI/BFF.
   CAIPE_API_URL: ""
+  # CAS endpoint used for agent access and Autonomous entitlement checks.
+  AUTHZ_SERVICE_URL: ""
+  # Must match caipe-ui.config.CAIPE_ORG_KEY.
+  CAIPE_ORG_KEY: "caipe"
   CREDENTIAL_SERVICE_AUDIENCE: "caipe-credential-service"
   USE_IMPERSONATION_TOKENS: "false"
   # Agent runtime TTL in seconds (purged after this much inactivity)
@@ -201,18 +213,18 @@ config:
   # this backend; only a reference is persisted to the Mongo checkpoint, and
   # the rehydration middleware fetches the bytes back into the model request at
   # inference time. Keeps the checkpoint small and under Mongo's 16MB cap.
-  #   ATTACHMENT_BACKEND: "local" (default; dev/local disk) | "s3"
-  # For s3, set ATTACHMENT_S3_BUCKET (deploy values) and rely on ambient (IRSA)
-  # credentials — the pod's service account role grants S3 access, no secret.
-  # Empty-string values are skipped by the ConfigMap (code default wins).
-  ATTACHMENT_BACKEND: "local"
+  #
+  # ATTACHMENT_BACKEND / ATTACHMENT_S3_* are resolved by the
+  # dynamic-agents.attachmentConfig helper (templates/_helpers.tpl), not here:
+  #   * backend defaults to "auto" -> "s3" when a bucket is available, else "local"
+  #   * ATTACHMENT_S3_BUCKET / _REGION / _ENDPOINT_URL fall back to
+  #     global.storage.s3 so the bucket is set once for the whole platform
+  # For s3, rely on ambient (IRSA) credentials — the pod's service account role
+  # grants S3 access, no secret. To pin any value, set it explicitly here (an
+  # explicit value always wins over the global); e.g. ATTACHMENT_BACKEND: "s3".
   ATTACHMENT_LOCAL_PATH: "/var/lib/caipe-attachments"
-  ATTACHMENT_S3_BUCKET: ""
-  ATTACHMENT_S3_PREFIX: "attachments"
-  ATTACHMENT_S3_REGION: "us-west-2"
-  ATTACHMENT_S3_ENDPOINT_URL: ""
   # ─── Bedrock prompt caching ─────────────────────────────────────────────
-  # Selects ChatBedrockConverse (via cnoe_agent_utils.LLMFactory) and lets the
+  # Selects ChatBedrockConverse and lets the
   # rehydration middleware insert cachePoint markers so the large stable prefix
   # (system + tools + completed turns and their re-sent file bytes) is cached
   # and only the newest turn is billed uncached. REQUIRED for the attachment
@@ -244,4 +256,3 @@ externalSecrets:
     name: "vault"
     kind: "ClusterSecretStore"
   data: []
-

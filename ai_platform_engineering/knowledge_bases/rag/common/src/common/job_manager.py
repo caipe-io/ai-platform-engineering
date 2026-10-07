@@ -37,6 +37,20 @@ class JobInfo(BaseModel):
   chunk_count: Optional[int] = Field(description="Number of chunks created", default=0)
 
 
+# Ingestors dequeue their Redis list within ~1s (blpop timeout=1), so a job
+# still PENDING well past that means the ingestor pod that should have
+# dequeued it crashed, was scaled down, or never started - not that ingestion
+# is genuinely still queued.
+DEFAULT_STALE_PENDING_JOB_SECONDS = 15 * 60
+
+
+def is_stale_pending_job(job: JobInfo, max_age_seconds: int = DEFAULT_STALE_PENDING_JOB_SECONDS) -> bool:
+  """Returns True if a PENDING job has been abandoned by its ingestor rather than genuinely still queued."""
+  if job.status != JobStatus.PENDING:
+    return False
+  return int(time.time()) - job.created_at > max_age_seconds
+
+
 class JobManager:
   """Manages job status updates in Redis using atomic operations."""
 
@@ -312,6 +326,39 @@ class JobManager:
 
     logger.debug(f"Added error message to job {job_id}, new list length: {new_length}")
     return new_length  # type: ignore
+
+  async def fail_stale_pending_job(self, job_id: str) -> bool:
+    """
+    Marks an abandoned PENDING job as FAILED so it stops blocking retries for its datasource.
+
+    :param job_id: The ID of the job to fail.
+    :return: True if the job was updated.
+    """
+    # Compare-and-set in Redis: the worker may move PENDING -> IN_PROGRESS
+    # between the guard's read and this write. Never overwrite that progress.
+    script = """
+      if redis.call('HGET', KEYS[1], 'status') == ARGV[1] then
+        redis.call('HSET', KEYS[1],
+          'status', ARGV[2],
+          'message', ARGV[3],
+          'completed_at', ARGV[4])
+        return 1
+      end
+      return 0
+    """
+    changed = await self.redis_client.eval(
+      script,
+      1,
+      self._get_job_key(job_id),
+      JobStatus.PENDING.value,
+      JobStatus.FAILED.value,
+      "No ingestor picked up this job before it went stale; marked as failed.",
+      str(int(time.time())),
+    )
+    success = bool(changed)
+    if success:
+      logger.warning(f"Marked stale pending job {job_id} as FAILED")
+    return success
 
   async def terminate_job(self, job_id: str) -> bool:
     """

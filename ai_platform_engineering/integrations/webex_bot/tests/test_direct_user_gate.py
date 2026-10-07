@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from typing import Any, Optional
+
+import pytest
 
 from ai_platform_engineering.integrations.webex_bot import app as app_module
 from ai_platform_engineering.integrations.webex_bot.utils.dm_authz_client import (
@@ -126,31 +129,91 @@ def _run(
     )
 
 
-def test_unonboarded_direct_user_is_silently_ignored_before_identity_linking(monkeypatch) -> None:
-    monkeypatch.delenv("WEBEX_WORKSPACE_ALIAS", raising=False)
-    monkeypatch.delenv("WEBEX_WORKSPACE_ID", raising=False)
-    identity = _Identity()
-    result = _run(
-        _DirectUsers(WebexDirectUserAccess(False, None, None, "not_onboarded")),
-        identity,
-    )
-
-    assert result.ignored is True
-    assert result.reason_code == app_module.REASON_DM_NOT_ONBOARDED
-    assert result.deny_message is None
-    assert identity.resolve_calls == 0
-    assert identity.link_calls == 0
-
-
-def test_onboarded_unlinked_user_receives_identity_link() -> None:
+def test_unlinked_direct_user_is_prompted_to_link_before_dm_access_is_checked() -> None:
     identity = _Identity(user_id=None)
-    result = _run(
-        _DirectUsers(WebexDirectUserAccess(True, "kc-user-1", "agent-1", "allowlist_route")),
-        identity,
-    )
+    direct_users = _DirectUsers(WebexDirectUserAccess(False, None, None, "not_onboarded"))
+    result = _run(direct_users, identity)
 
+    assert result.ignored is False
     assert result.reason_code == app_module.REASON_USER_NOT_LINKED
     assert result.linking_url == "https://ui.example/link"
+    assert identity.resolve_calls == 1
+    assert identity.link_calls == 1
+    assert direct_users.calls == []
+
+
+def test_unlinked_direct_user_is_ignored_silently_when_dm_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "WEBEX_INTEGRATION_BOTS_JSON",
+        json.dumps(
+            [
+                {
+                    "id": "secondary",
+                    "name": "Secondary",
+                    "tokenEnv": "SECONDARY_TOKEN",
+                    "spaces": {"accessMode": "allowlist"},
+                    "directMessages": {"accessMode": "disabled"},
+                },
+            ]
+        ),
+    )
+    identity = _Identity(user_id=None)
+    direct_users = _DirectUsers(WebexDirectUserAccess(False, None, None, "not_onboarded"))
+    result = _run(direct_users, identity)
+
+    assert result.ignored is True
+    assert result.reason_code == app_module.REASON_DM_DISABLED
+    assert result.linking_url is None
+    assert identity.resolve_calls == 1
+    assert identity.link_calls == 0
+    assert direct_users.calls == []
+
+
+def test_linked_but_not_onboarded_direct_user_gets_an_explicit_deny() -> None:
+    result = _run(
+        _DirectUsers(WebexDirectUserAccess(False, None, None, "not_onboarded")),
+        _Identity(),
+    )
+
+    assert result.ignored is False
+    assert result.allowed is False
+    assert result.reason_code == app_module.REASON_DM_NOT_ONBOARDED
+    assert result.deny_message is not None
+    assert result.explicit_invocation is True
+
+
+def test_linked_direct_user_is_ignored_silently_when_dm_is_disabled() -> None:
+    """A linked deployment user must be ignored the same way as an unlinked
+    sender when this bot's DM channel is disabled deployment-wide — not told
+    to ask an admin to enable something a per-user allowlist change can never
+    fix."""
+    identity = _Identity()
+    direct_users = _DirectUsers(WebexDirectUserAccess(False, None, None, "disabled"))
+    calls: list[dict[str, Any]] = []
+    result = _run(direct_users, identity, dispatch_calls=calls)
+
+    assert result.ignored is True
+    assert result.allowed is False
+    assert result.reason_code == app_module.REASON_DM_DISABLED
+    assert result.deny_message is None
+    assert calls == []
+
+
+def test_onboarded_direct_user_resolver_receives_the_linked_identity() -> None:
+    identity = _Identity()
+    direct_users = _DirectUsers(
+        WebexDirectUserAccess(True, "kc-user-1", "agent-1", "allowlist_route")
+    )
+    result = _run(direct_users, identity)
+
+    assert result.reason_code == app_module.REASON_DISPATCH_ALLOWED
+    assert direct_users.calls == [{
+        "bot_id": "secondary",
+        "webex_user_id": "person1234",
+        "keycloak_user_id": "kc-user-1",
+    }]
 
 
 def test_onboarded_direct_user_dispatches_selected_agent_with_user_obo() -> None:
@@ -166,9 +229,14 @@ def test_onboarded_direct_user_dispatches_selected_agent_with_user_obo() -> None
     assert direct_users.calls == [{
         "bot_id": "secondary",
         "webex_user_id": "person1234",
-        "person_email": "user@example.com",
+        "keycloak_user_id": "kc-user-1",
     }]
     assert authz.calls == [{"agent_id": "agent-1", "bearer_token": "obo-token"}]
+    # DM dispatch payloads must carry is_direct=True so downstream Webex
+    # conversation/message metadata can be excluded from space-scoped Insights
+    # breakdowns (Top Spaces / Configured Spaces) while still counting the
+    # activity in aggregate totals.
+    assert calls[0]["is_direct"] is True
     assert calls[0]["agent_id"] == "agent-1"
     assert calls[0]["bot_id"] == "secondary"
     assert calls[0]["keycloak_user_id"] == "kc-user-1"

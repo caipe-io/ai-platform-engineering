@@ -23,8 +23,15 @@ jest.mock("@/lib/auth-config", () => ({
 }));
 
 const mockCheckOpenFgaTuple = jest.fn();
+const mockListOpenFgaObjects = jest.fn();
 jest.mock("@/lib/rbac/openfga", () => ({
   checkOpenFgaTuple: (...args: unknown[]) => mockCheckOpenFgaTuple(...args),
+  listOpenFgaObjects: (...args: unknown[]) => mockListOpenFgaObjects(...args),
+}));
+
+const mockFindAgentVisibilities = jest.fn();
+jest.mock("@/lib/dynamic-agent-visibility", () => ({
+  findAgentVisibilities: (...args: unknown[]) => mockFindAgentVisibilities(...args),
 }));
 
 jest.mock("@/lib/rbac/organization", () => ({
@@ -34,6 +41,11 @@ jest.mock("@/lib/rbac/organization", () => ({
 const mockGetUnlinkedServiceAccount = jest.fn();
 jest.mock("@/lib/rbac/unlinked-service-account", () => ({
   getUnlinkedServiceAccount: () => mockGetUnlinkedServiceAccount(),
+}));
+
+const mockListEveryoneKnowledgeScopes = jest.fn();
+jest.mock("@/lib/rbac/unlinked-knowledge-access", () => ({
+  listEveryoneKnowledgeScopes: () => mockListEveryoneKnowledgeScopes(),
 }));
 
 // QUAL-7: isPlatformAdmin is now imported from @/lib/rbac/platform-admin in the route.
@@ -70,6 +82,13 @@ beforeEach(() => {
   jest.clearAllMocks();
   // Default: non-admin. Individual tests override as needed.
   mockIsPlatformAdmin.mockResolvedValue(false);
+  // Default authoritative reads: no agent grants, empty visibility map.
+  mockListOpenFgaObjects.mockResolvedValue({ objects: [] });
+  mockFindAgentVisibilities.mockResolvedValue(new Map());
+  mockListEveryoneKnowledgeScopes.mockResolvedValue({
+    datasourceIds: new Set<string>(),
+    collectionIds: new Set<string>(),
+  });
 });
 
 describe("GET /api/admin/service-accounts/unlinked", () => {
@@ -103,11 +122,23 @@ describe("GET /api/admin/service-accounts/unlinked", () => {
     expect(mockGetUnlinkedServiceAccount).not.toHaveBeenCalled();
   });
 
-  it("200s for org-admin with correct SA payload", async () => {
+  it("200s for org-admin with authoritative scopes tagged by source", async () => {
     mockGetServerSession.mockResolvedValue(ADMIN_SESSION);
     mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
     mockIsPlatformAdmin.mockResolvedValue(true);
     mockGetUnlinkedServiceAccount.mockResolvedValue(ANON_SA_DOC);
+    // Authoritative agent grants come from OpenFGA, not the Mongo snapshot.
+    // `hello-world` is explicitly granted (team-scoped); `default` is global
+    // (auto-granted because it is shared with Everyone).
+    mockListOpenFgaObjects.mockResolvedValue({
+      objects: ["agent:hello-world", "agent:default"],
+    });
+    mockFindAgentVisibilities.mockResolvedValue(
+      new Map([
+        ["hello-world", "team"],
+        ["default", "global"],
+      ]),
+    );
 
     const res = await GET();
     expect(res.status).toBe(200);
@@ -118,10 +149,65 @@ describe("GET /api/admin/service-accounts/unlinked", () => {
     // QUAL-10: sa_sub is no longer in the response — only id/name/scopes
     expect(body.data.sa_sub).toBeUndefined();
     expect(body.data.name).toBe("unlinked");
+    // Agents are tagged: global → "everyone" (locked), otherwise "explicit".
+    // Tools remain explicit. `jira/search` still comes from the snapshot.
+    expect(body.data.scopes).toEqual(
+      expect.arrayContaining([
+        { type: "agent", ref: "hello-world", source: "explicit" },
+        { type: "agent", ref: "default", source: "everyone" },
+        { type: "tool", ref: "jira/search", source: "explicit" },
+      ]),
+    );
+    expect(body.data.scopes).toHaveLength(3);
+    // The OpenFGA read is keyed on the SA's can_use agent objects.
+    expect(mockListOpenFgaObjects).toHaveBeenCalledWith({
+      user: "service_account:anon-sub-abc",
+      relation: "can_use",
+      type: "agent",
+    });
+  });
+
+  it("does not surface a global agent as a removable explicit scope even if it lingers in the snapshot", async () => {
+    mockGetServerSession.mockResolvedValue(ADMIN_SESSION);
+    mockIsPlatformAdmin.mockResolvedValue(true);
+    mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
+    // Snapshot still carries a stale manual entry for `default` (a global agent).
+    mockGetUnlinkedServiceAccount.mockResolvedValue({
+      ...ANON_SA_DOC,
+      scopes_snapshot: [
+        { type: "agent", ref: "default", added_by: "admin-sub", added_at: new Date() },
+      ],
+    });
+    mockListOpenFgaObjects.mockResolvedValue({ objects: ["agent:default"] });
+    mockFindAgentVisibilities.mockResolvedValue(new Map([["default", "global"]]));
+
+    const res = await GET();
+    const body = await res.json();
+    // `default` appears exactly once, tagged everyone (locked) — never as a
+    // second explicit chip from the stale snapshot.
     expect(body.data.scopes).toEqual([
-      { type: "agent", ref: "hello-world" },
-      { type: "tool", ref: "jira/search" },
+      { type: "agent", ref: "default", source: "everyone" },
     ]);
+  });
+
+  it("surfaces Everyone-shared knowledge as automatic access", async () => {
+    mockGetServerSession.mockResolvedValue(ADMIN_SESSION);
+    mockIsPlatformAdmin.mockResolvedValue(true);
+    mockGetUnlinkedServiceAccount.mockResolvedValue(ANON_SA_DOC);
+    mockListEveryoneKnowledgeScopes.mockResolvedValue({
+      datasourceIds: new Set(["published-source"]),
+      collectionIds: new Set(["platform-rag"]),
+    });
+
+    const res = await GET();
+    const body = await res.json();
+
+    expect(body.data.scopes).toEqual(
+      expect.arrayContaining([
+        { type: "datasource", ref: "published-source", source: "everyone" },
+        { type: "collection", ref: "platform-rag", source: "everyone" },
+      ]),
+    );
   });
 
   it("does not return credential material in the response", async () => {

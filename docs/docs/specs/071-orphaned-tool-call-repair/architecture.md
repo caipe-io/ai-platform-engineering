@@ -70,7 +70,7 @@ CONTEXT_ID=$(python3 -c 'import uuid;print(uuid.uuid4())')
 curl -sN -X POST http://localhost:8000 \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":"t1","method":"message/stream","params":{"message":{"role":"user","parts":[{"kind":"text","text":"List 2 recent open PRs for cnoe-io/ai-platform-engineering"}],"messageId":"m1","contextId":"'$CONTEXT_ID'"}}}'
+  -d '{"jsonrpc":"2.0","id":"t1","method":"message/stream","params":{"message":{"role":"user","parts":[{"kind":"text","text":"List 2 recent open PRs for caipe-io/ai-platform-engineering"}],"messageId":"m1","contextId":"'$CONTEXT_ID'"}}}'
 
 # Turn 2: ArgoCD sub-agent (same context, builds history)
 # Turn 3: Cross-reference (triggers summarization pressure)

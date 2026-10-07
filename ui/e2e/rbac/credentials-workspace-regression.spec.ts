@@ -16,7 +16,11 @@ import {
   installMcpBrowserMocks,
   openAddMcpServerEditor,
 } from "./_mcp-browser-fixtures";
-import { dismissReleaseUpgradeDialog, installTestSession } from "./_helpers";
+import {
+  chooseSearchablePickerOption,
+  dismissReleaseUpgradeDialog,
+  installTestSession,
+} from "./_helpers";
 import { mockedRbacEnabled } from "./_mocked-rbac";
 
 function minimalSessionEnv() {
@@ -32,9 +36,11 @@ async function assertPersonalCredentialsAvailable(page: Page): Promise<void> {
   await gotoPersonalCredentialsSecrets(page);
   await dismissReleaseUpgradeDialog(page);
   try {
-    await expect(page.getByRole("heading", { name: "Credentials" })).toBeVisible({
-      timeout: 10_000,
-    });
+    await expect(
+      page
+        .getByRole("navigation",{ name: "Breadcrumb" })
+        .getByRole("link",{ name: "Credentials",exact: true }),
+    ).toBeVisible({ timeout: 10_000 });
   } catch {
     test.skip(
       true,
@@ -146,7 +152,7 @@ test.describe("mocked credentials workspace browser regression", () => {
 
       await page.getByRole("button", { name: /more details/i }).click();
       await expect(page.getByText("Secret added")).toBeVisible();
-      await expect(page.getByText("other@caipe.local")).toHaveCount(0);
+      await expect(page.getByText("other@example.com")).toHaveCount(0);
     });
   });
 
@@ -223,8 +229,7 @@ test.describe("mocked credentials workspace browser regression", () => {
       await page.getByRole("button", { name: /view details for github token/i }).click();
       const dialog = page.getByRole("dialog", { name: /github token details/i });
       await expect(dialog).toBeVisible();
-      await expect(page.getByText("Preview ghp_...abcd")).toBeVisible();
-      await expect(dialog.getByText(/saved value stays protected; this preview is masked/i)).toBeVisible();
+      await expect(page.getByText("Preview ...bcd")).toBeVisible();
       await expect(dialog.getByText("Workspace Owner")).toBeVisible();
       await expect(dialog.getByText(/GitHub MCP/)).toBeVisible();
       await expect(dialog.getByText(RAW_SECRET_VALUE)).toHaveCount(0);
@@ -238,7 +243,7 @@ test.describe("mocked credentials workspace browser regression", () => {
       await page.getByRole("button", { name: /share github token/i }).click();
       const sharePanel = page.getByRole("region", { name: /github token team access/i });
       await expect(sharePanel).toBeVisible();
-      await sharePanel.getByRole("button", { name: /team access/i }).click();
+      await sharePanel.getByRole("combobox", { name: /team access/i }).click();
       await page.getByRole("option", { name: /Ops Team/ }).click();
       await sharePanel.getByRole("button", { name: /grant access/i }).click();
       await expect.poll(() => credentialsMocks.shareRequests.length).toBe(1);
@@ -256,7 +261,7 @@ test.describe("mocked credentials workspace browser regression", () => {
       await expect.poll(() => credentialsMocks.rotateRequests).toEqual([
         { action: "rotate", value: "rotated-secret-value" },
       ]);
-      await expect(page.getByText("Preview rot_...ated")).toBeVisible();
+      await expect(page.getByText("Preview ...ted")).toBeVisible();
 
       await page.getByRole("button", { name: /delete github token/i }).click();
       await page.getByRole("button", { name: /confirm delete github token/i }).click();
@@ -297,13 +302,13 @@ test.describe("mocked credentials workspace browser regression", () => {
             data: {
               ok: true,
               provider: "atlassian",
-              accessible_resources: [{ name: "CAIPE Jira", scopes: ["read:jira-user"] }],
+              accessible_resources: [{ name: "Example Site", scopes: ["read:jira-user"] }],
               diagnostics: [
                 {
                   id: "atlassian_accessible_resources",
                   label: "Accessible Atlassian sites",
                   status: "passed",
-                  detail: "CAIPE Jira is accessible.",
+                  detail: "Example Site is accessible.",
                   action: "No action needed.",
                 },
               ],
@@ -322,14 +327,14 @@ test.describe("mocked credentials workspace browser regression", () => {
       await relayPage.waitForLoadState("domcontentloaded");
       await relayPage.close().catch(() => undefined);
 
-      await expect(page).toHaveURL(/\/credentials#connections$/);
+      await expect(page).toHaveURL(/\/credentials\/connections$/);
       await expect(page.getByRole("heading", { name: "Connected Apps" })).toBeVisible();
       await expect(page.getByText("Atlassian Cloud")).toBeVisible();
       await expect(page.getByText("healthy")).toBeVisible();
       await expect(page.getByText("expired")).toHaveCount(0);
 
       await page.getByRole("button", { name: /test atlassian connection/i }).click();
-      await expect(page.getByText(/Atlassian access check passed: CAIPE Jira/i)).toBeVisible();
+      await expect(page.getByText(/Atlassian access check passed: Example Site/i)).toBeVisible();
       expect(profileChecks).toEqual(["new-atlassian-connection"]);
     });
   });
@@ -358,7 +363,11 @@ test.describe("mocked credentials workspace browser regression", () => {
 
       await page.getByRole("button", { name: "Add Credential" }).click();
       await page.getByLabel(/Credential header/i).selectOption("Authorization");
-      await page.getByLabel(/^Secret$/).selectOption("secret-jira-token");
+      await chooseSearchablePickerOption(
+        page,
+        page.getByLabel(/^Secret$/),
+        "Jira API token",
+      );
 
       await page.getByRole("button", { name: "Create Server" }).click();
 
