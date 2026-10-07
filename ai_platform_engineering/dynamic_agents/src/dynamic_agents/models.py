@@ -541,6 +541,14 @@ class DynamicAgentConfigBase(BaseModel):
             "list = specific tools only, [] = legacy (treated as true)"
         ),
     )
+    allowed_remote_agents: list[str] = Field(
+        default_factory=list,
+        description="Remote A2A agent registry IDs available to this agent",
+    )
+    remote_agent_timeouts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Per-agent timeout overrides in seconds for selected A2A agents",
+    )
     model: ModelConfig = Field(..., description="LLM model configuration (id + provider)")
     visibility: VisibilityType = Field(VisibilityType.PRIVATE, description="Visibility scope")
     shared_with_teams: list[str] | None = Field(None, description="Team IDs when visibility=team")

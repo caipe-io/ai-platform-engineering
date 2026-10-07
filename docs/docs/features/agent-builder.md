@@ -25,11 +25,13 @@ Agent Builder is the no-code path for managed agents. Choose the [developer
 guide](../development/creating-an-agent.md) when you need to package an agent
 as application code or control its deployment yourself.
 
-:::note Planned connector
+:::note Remote A2A tools
 
-A2A is not currently a CAIPE platform transport. The planned reintroduction is
-as an optional connector tool configured from Agent Builder; until it is
-available, use MCP servers for external tools and services.
+Platform admins register remote A2A endpoints in the **Remote A2A Agents**
+section of the Tools step. Agent authors then select the registered endpoints
+each agent may call and configure a timeout for each selection. Dynamic Agents
+forwards the active caller's bearer token to the remote endpoint. The official
+A2A SDK negotiates the remote server's supported protocol binding.
 
 :::
 
@@ -101,7 +103,7 @@ Agent Builder guides you through six steps:
 |------|-----------|
 | **Basic Info** | Name, description, owner team, and team or global visibility |
 | **Instructions** | System prompt, model, and model parameters |
-| **Tools** | Registered MCP tools and CAIPE built-in tools |
+| **Tools** | Registered MCP tools, selected remote A2A agents, and CAIPE built-in tools |
 | **Knowledge** | Individual data sources and reusable collections |
 | **Skills** | Reusable instructions and packaged capabilities |
 | **Advanced** | Subagents, human approval rules, middleware, and workflow access |
@@ -126,6 +128,14 @@ and skills later without rebuilding the agent.
 ## Knowledge and tool scope
 
 - MCP servers can connect over `stdio`, SSE, or Streamable HTTP.
+- Remote A2A agents are admin-managed registry entries. The registry stores the
+  endpoint and Agent Card metadata; agent documents store registry IDs rather
+  than arbitrary endpoint URLs.
+- Configure `REMOTE_AGENT_URLS` as a comma-separated deployment seed when
+  needed. Seeded entries still need to be selected in the agent's Tools step.
+- A2A tools use the official Python SDK for JSON-RPC and HTTP+JSON protocol
+  negotiation, forward the caller's bearer token, and enforce the configured
+  per-agent timeout.
 - Built-in tools include URL fetch, current date and time, user information,
   wait, human input requests, and workflow execution.
 - Selecting data sources or collections narrows the knowledge available to the agent.

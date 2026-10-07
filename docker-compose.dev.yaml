@@ -466,6 +466,7 @@ services:
     profiles:
       - netutils-agent
       - mcp-servers
+      - all-agents
 
   # Optional app-only SharePoint integration. Keep this out of mcp-servers so
   # first-time OSS installs do not require Microsoft credentials.
@@ -1181,6 +1182,39 @@ services:
     restart: unless-stopped
     profiles:
       - dynamic-agents
+
+  # Thin A2A endpoint over the existing netutils MCP service. It uses the
+  # Dynamic Agents runtime image so the server, MCP adapter, and client share
+  # the same pinned A2A SDK version.
+  netutils-agent:
+    build:
+      context: .
+      dockerfile: ai_platform_engineering/dynamic_agents/build/Dockerfile
+    image: ghcr.io/caipe-io/caipe-dynamic-agents:${IMAGE_TAG:-localtag}
+    container_name: netutils-agent
+    command: ["uvicorn", "dynamic_agents.netutils_agent.server:app", "--host", "0.0.0.0", "--port", "8120"]
+    ports: ["8120:8120"]
+    volumes:
+      - ./ai_platform_engineering/dynamic_agents/src:/app/dynamic_agents/src
+      - ${HOME}/.aws:/home/app/.aws:ro
+    env_file: [.env]
+    environment:
+      - NETUTILS_MCP_URL=http://mcp-netutils:8000/mcp
+      - NETUTILS_AGENT_URL=http://netutils-agent:8120/
+      - AWS_CONFIG_FILE=/home/app/.aws/config
+      - AWS_SHARED_CREDENTIALS_FILE=/home/app/.aws/credentials
+    depends_on:
+      mcp-netutils:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8120/healthz',timeout=3); sys.exit(0 if r.status==200 and json.load(r).get('status')=='healthy' else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    profiles:
+      - netutils-agent
+      - all-agents
 
   ####################################################################################################
   #                                    Autonomous Agents Service                                     #

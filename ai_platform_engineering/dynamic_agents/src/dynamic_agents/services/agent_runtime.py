@@ -1246,36 +1246,40 @@ class AgentRuntime:
             f"tools={len(tools)}, subagents={len(subagents) if subagents else 0}"
         )
 
-    async def _build_remote_agent_tools(self) -> list:
-        """Build one delegation tool per remote A2A agent in ``REMOTE_AGENT_URLS``.
-
-        Returns:
-            List of LangChain tools, one per configured remote agent URL.
-        """
-        urls = [u.strip() for u in (self.settings.remote_agent_urls or "").split(",") if u.strip()]
-        if not urls:
+    async def _build_remote_agent_tools(self, config: DynamicAgentConfig | None = None) -> list:
+        """Build tools for a dynamic agent's selected A2A registry entries."""
+        agent_config = config or self.config
+        if not self._mongo_service or not agent_config.allowed_remote_agents:
             return []
 
-        # Resolve every card at once. Awaiting them one at a time meant an
-        # unreachable endpoint burned the full card timeout before the next
-        # request even started, so startup delay grew linearly with the number of
-        # configured agents. Concurrently, the slowest agent sets the cost
-        # instead of the sum of all of them. Cards are cached by URL, so only the
-        # first build after a restart pays anything at all.
+        remote_agents = self._mongo_service.get_remote_agents_by_ids(agent_config.allowed_remote_agents)
+        if not remote_agents:
+            return []
+
+        # Build selected tools concurrently. One invalid registry entry must not
+        # hide the other selected tools from this runtime.
         results = await asyncio.gather(
             *(
-                create_remote_agent_tool(a2a_url=url, bearer_token=self._auth_bearer)
-                for url in urls
+                create_remote_agent_tool(
+                    a2a_url=remote_agent["endpoint"],
+                    name=remote_agent.get("name"),
+                    description=remote_agent.get("description"),
+                    bearer_token=self._auth_bearer,
+                    timeout=int(
+                        agent_config.remote_agent_timeouts.get(
+                            remote_agent["_id"], remote_agent.get("timeout_seconds", 120)
+                        )
+                    ),
+                )
+                for remote_agent in remote_agents
             ),
             return_exceptions=True,
         )
 
-        # One bad endpoint must not cost the agent every other remote tool, which
-        # is what a bare gather would do by propagating the first exception.
         tools = []
-        for url, result in zip(urls, results, strict=True):
+        for remote_agent, result in zip(remote_agents, results, strict=True):
             if isinstance(result, BaseException):
-                logger.warning(f"Skipping remote agent {url}: {result}")
+                logger.warning("Skipping remote agent %s: %s", remote_agent.get("_id"), result)
                 continue
             tools.append(result)
 
@@ -1591,14 +1595,18 @@ class AgentRuntime:
                     )
                 tools.extend(mcp_tools)
 
-        # 2. Add built-in tools based on subagent's config
+        # 2. Add only the remote A2A agents selected on this subagent.
+        remote_tools = await self._build_remote_agent_tools(subagent_config)
+        tools.extend(remote_tools)
+
+        # 3. Add built-in tools based on subagent's config
         client_ctx = self._client_context.model_dump() if self._client_context else None
         builtin_tools = self._build_builtin_tools(self._user, subagent_config, client_context=client_ctx)
         builtin_tool_names = {tool.name for tool in builtin_tools}
         if builtin_tools:
             tools.extend(builtin_tools)
 
-        # 3. Wrap all subagent tools with error handling
+        # 4. Wrap all subagent tools with error handling
         if tools:
             tools = wrap_tools_with_error_handling(tools, agent_name=subagent_config.name)
 

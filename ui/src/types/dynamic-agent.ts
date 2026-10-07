@@ -61,6 +61,16 @@ export interface MCPServerConfig {
   updated_at: string;
 }
 
+export interface RemoteAgentRegistryEntry {
+  _id: string;
+  name: string;
+  description?: string;
+  endpoint?: string;
+  timeout_seconds: number;
+  protocol_version?: string;
+  protocol_bindings?: string[];
+}
+
 /** Per-row OpenFGA decisions returned by GET /api/mcp-servers (batch-checked). */
 export interface MCPServerRowPermissions {
   can_manage: boolean;
@@ -414,6 +424,8 @@ export interface DynamicAgentConfig {
   description?: string;
   system_prompt: string;
   allowed_tools: Record<string, string[] | boolean>; // server_id -> tool names, true=all, false=disabled
+  allowed_remote_agents?: string[];
+  remote_agent_timeouts?: Record<string, number>;
   builtin_tools?: BuiltinToolsConfig; // Built-in tools configuration
   model: ModelConfig; // Required: LLM model configuration
   visibility: VisibilityType;
@@ -488,6 +500,8 @@ export interface DynamicAgentConfigCreate {
   description?: string;
   system_prompt: string;
   allowed_tools?: Record<string, string[] | boolean>;
+  allowed_remote_agents?: string[];
+  remote_agent_timeouts?: Record<string, number>;
   builtin_tools?: BuiltinToolsConfig;
   model: ModelConfig; // Required: LLM model configuration
   /** Accepts legacy `'private'` for back-compat; the BFF coerces it to `'team'`. */
@@ -514,6 +528,8 @@ export interface DynamicAgentConfigUpdate {
   description?: string;
   system_prompt?: string;
   allowed_tools?: Record<string, string[] | boolean>;
+  allowed_remote_agents?: string[];
+  remote_agent_timeouts?: Record<string, number>;
   builtin_tools?: BuiltinToolsConfig;
   model?: ModelConfig;
   /** Accepts legacy `'private'` for back-compat; the BFF coerces it to `'team'`. */

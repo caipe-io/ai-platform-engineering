@@ -73,6 +73,7 @@ import { MiddlewarePicker } from "./MiddlewarePicker";
 import { SkillsSelector } from "./SkillsSelector";
 import { SubagentPicker } from "./SubagentPicker";
 import { WorkflowToolsPicker } from "./WorkflowToolsPicker";
+import { RemoteAgentsPicker } from "./RemoteAgentsPicker";
 import type { AgentSetupStep } from "./deep-linking";
 
 // Lazy-load CodeMirror to avoid SSR issues
@@ -451,6 +452,8 @@ export function DynamicAgentEditor({
   const [allowedTools, setAllowedTools] = React.useState<
     Record<string, string[] | boolean>
   >(source?.allowed_tools || {});
+  const [allowedRemoteAgents, setAllowedRemoteAgents] = React.useState<string[]>(source?.allowed_remote_agents || []);
+  const [remoteAgentTimeouts, setRemoteAgentTimeouts] = React.useState<Record<string, number>>(source?.remote_agent_timeouts || {});
   const [builtinTools, setBuiltinTools] = React.useState<
     BuiltinToolsConfig | undefined
   >(source?.builtin_tools);
@@ -855,6 +858,8 @@ export function DynamicAgentEditor({
       sharedWithTeams,
       ownerTeamSlug,
       allowedTools,
+      allowedRemoteAgents,
+      remoteAgentTimeouts,
       builtinTools,
       subagents,
       skills,
@@ -874,6 +879,8 @@ export function DynamicAgentEditor({
       sharedWithTeams,
       ownerTeamSlug,
       allowedTools,
+      allowedRemoteAgents,
+      remoteAgentTimeouts,
       builtinTools,
       subagents,
       skills,
@@ -1189,6 +1196,8 @@ export function DynamicAgentEditor({
           shared_with_teams:
             visibility === "team" ? sharedWithTeams : undefined,
           allowed_tools: allowedTools,
+          allowed_remote_agents: allowedRemoteAgents,
+          remote_agent_timeouts: remoteAgentTimeouts,
           builtin_tools: builtinTools,
           subagents: subagents.length > 0 ? subagents : undefined,
           skills,
@@ -1239,6 +1248,8 @@ export function DynamicAgentEditor({
           shared_with_teams:
             visibility === "team" ? sharedWithTeams : undefined,
           allowed_tools: allowedTools,
+          allowed_remote_agents: allowedRemoteAgents,
+          remote_agent_timeouts: remoteAgentTimeouts,
           builtin_tools: builtinTools,
           subagents: subagents.length > 0 ? subagents : undefined,
           skills,
@@ -2358,6 +2369,15 @@ export function DynamicAgentEditor({
                     onChange={setAllowedTools}
                     disabled={loading || !!readOnly}
                   />
+                  <div className="border-t pt-4">
+                    <RemoteAgentsPicker
+                      value={allowedRemoteAgents}
+                      onChange={setAllowedRemoteAgents}
+                      timeoutValues={remoteAgentTimeouts}
+                      onTimeoutChange={(id, seconds) => setRemoteAgentTimeouts((current) => ({ ...current, [id]: seconds }))}
+                      disabled={loading || !!readOnly}
+                    />
+                  </div>
                 </div>
               </div>
             )}

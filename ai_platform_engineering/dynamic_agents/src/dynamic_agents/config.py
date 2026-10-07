@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     mcp_servers_collection: str = "mcp_servers"
     autonomous_tasks_collection: str = "autonomous_tasks"
     autonomous_runs_collection: str = "autonomous_runs"
+    remote_agents_collection: str = "remote_agents"
 
     # CORS
     cors_origins: list[str] = ["*"]
@@ -89,11 +90,6 @@ class Settings(BaseSettings):
 
     # When set, MCP HTTP/SSE clients use this base URL (e.g. http://agentgateway:4000/mcp/{server_id})
     agent_gateway_url: str | None = None
-
-    # Comma-separated JSON-RPC endpoints of remote A2A agents (env:
-    # REMOTE_AGENT_URLS). Each becomes a tool every agent can call to delegate
-    # to that remote agent — e.g. "http://netutils-agent:8000/".
-    remote_agent_urls: str = ""
 
     # CAIPE credential service API used when USE_IMPERSONATION_TOKENS=true.
     credential_api_url: str | None = None
