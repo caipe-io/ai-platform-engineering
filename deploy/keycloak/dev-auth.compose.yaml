@@ -1,0 +1,52 @@
+# Opt-in local development: use with the canonical docker-compose.dev.yaml.
+services:
+  caipe-ui:
+    ports: !override ["127.0.0.1:3000:3000"]
+    environment:
+      SSO_ENABLED: "true"
+      NEXT_PUBLIC_SSO_ENABLED: "true"
+      NEXTAUTH_URL: http://localhost:3000
+      E2E_RUN: "false"
+      OIDC_ISSUER: http://localhost:7080/realms/caipe
+      OIDC_CLIENT_ID: caipe-ui
+      OIDC_CLIENT_SECRET: caipe-ui-dev-secret
+      OIDC_DISCOVERY_URL: http://keycloak:7080/realms/caipe
+      OIDC_GROUP_CLAIM: groups
+      OIDC_REQUIRED_GROUP: ""
+      OIDC_REQUIRED_ADMIN_GROUP: ""
+      OIDC_REQUIRED_DYNAMIC_AGENTS_GROUP: ""
+      OIDC_REQUIRED_ADMIN_VIEW_GROUP: ""
+      KEYCLOAK_URL: http://keycloak:7080
+      KEYCLOAK_REALM: caipe
+      KEYCLOAK_ADMIN_CLIENT_ID: caipe-platform
+      KEYCLOAK_ADMIN_CLIENT_SECRET: caipe-platform-dev-secret
+      KEYCLOAK_RESOURCE_SERVER_ID: caipe-platform
+      KEYCLOAK_CLIENT_SECRET: caipe-platform-dev-secret
+      ALLOW_KEYCLOAK_ADMIN_PASSWORD_FALLBACK: "false"
+      BOOTSTRAP_ADMIN_EMAILS: test-admin@example.test
+      RBAC_BOOTSTRAP_ADMIN_EMAILS: test-admin@example.test
+      OPENFGA_HTTP: http://openfga:8080
+      OPENFGA_STORE_NAME: caipe-openfga
+      ALLOW_DEV_ADMIN_WHEN_SSO_DISABLED: "false"
+      ALLOW_ANONYMOUS_ADMIN: "false"
+      CAIPE_UNSAFE_RBAC_BYPASS: "false"
+  dynamic-agents:
+    environment:
+      AUTH_ENABLED: "true"
+      DA_REQUIRE_BEARER: "true"
+      KEYCLOAK_URL: http://keycloak:7080
+      KEYCLOAK_REALM: caipe
+      OIDC_ISSUER: http://localhost:7080/realms/caipe
+      AUTHZ_SERVICE_URL: http://caipe-ui:3000
+  keycloak-init:
+    environment:
+      IDP_ISSUER: ""
+      IDP_CLIENT_ID: ""
+      IDP_CLIENT_SECRET: ""
+      KEYCLOAK_FORCE_IDP_REDIRECT: "false"
+      KEYCLOAK_UI_CLIENT_SECRET: caipe-ui-dev-secret
+      KEYCLOAK_PLATFORM_CLIENT_SECRET: caipe-platform-dev-secret
+      KEYCLOAK_STRICT_CLIENT_SECRETS: "false"
+  openfga-init:
+    environment:
+      OPENFGA_SEED_SUB: ""

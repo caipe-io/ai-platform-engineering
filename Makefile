@@ -34,6 +34,36 @@ DOCKER_COMPOSE_BUILD_ENV := DOCKER_BUILDKIT=1 COMPOSE_PARALLEL_LIMIT=$(COMPOSE_P
 
 .DEFAULT_GOAL := help
 
+## ========== Local Keycloak developer authentication ==========
+
+DEV_AUTH_ARGS ?=
+DEV_API_ARGS ?=
+DEV_AUTH_COMPOSE = docker compose --env-file .env -f docker-compose.dev.yaml -f deploy/keycloak/dev-auth.compose.yaml --profile rbac --profile caipe-ui --profile dynamic-agents --profile caipe-mongodb
+
+.PHONY: dev-auth-up dev-auth-users dev-login dev-auth-status dev-logout dev-api
+
+dev-auth-up: ## Start local Keycloak, provision test accounts, then start the authenticated UI/runtime
+	@$(DOCKER_COMPOSE_BUILD_ENV) $(DEV_AUTH_COMPOSE) up -d --build keycloak keycloak-init openfga-init caipe-mongodb
+	@$(DEV_AUTH_COMPOSE) wait keycloak-init openfga-init
+	@python3 scripts/dev_auth.py $(DEV_AUTH_ARGS) users
+	@$(DOCKER_COMPOSE_BUILD_ENV) $(DEV_AUTH_COMPOSE) up -d --build caipe-ui dynamic-agents
+	@echo "Sign in at http://localhost:3000 or run make dev-login."
+
+dev-auth-users: ## Provision managed local test accounts against an already running Keycloak
+	@python3 scripts/dev_auth.py $(DEV_AUTH_ARGS) users
+
+dev-login: ## Sign in through local Keycloak using browser authorization code + PKCE
+	@python3 scripts/dev_auth.py $(DEV_AUTH_ARGS) login
+
+dev-auth-status: ## Show the current real user; refresh expiring tokens automatically
+	@python3 scripts/dev_auth.py $(DEV_AUTH_ARGS) status
+
+dev-logout: ## Revoke the cached refresh token and remove the local login
+	@python3 scripts/dev_auth.py $(DEV_AUTH_ARGS) logout
+
+dev-api: ## Call the UI gateway with the cached user JWT: make dev-api DEV_API_ARGS='/api/dynamic-agents'
+	@python3 scripts/dev_auth.py $(DEV_AUTH_ARGS) api $(DEV_API_ARGS)
+
 ## ========== Setup & Clean ==========
 
 setup-venv:        ## Create the Python virtual environment
