@@ -36,16 +36,19 @@ that key is never reachable off-cluster.
 ### 1. Enable the subchart
 
 ```yaml
-llmRouting:
-  litellm:
-    enabled: true          # default is false
+global:
+  llmRouting:
+    litellm:
+      enabled: true        # default is false
 ```
 
-This is the dependency condition in the parent `Chart.yaml`. With it on and a
+This enables BerriAI's upstream `litellm-helm` dependency in the parent `Chart.yaml`. With it on and a
 **Helm-generated** llm-secret (`global.createLlmSecret: true`), the parent chart
 auto-injects `LLM_PROVIDER=openai` and `OPENAI_ENDPOINT=http://<release>-litellm:4000/v1`
 into the shared secret unless you set them yourself. Every agent inherits them
-via `envFrom`.
+via `envFrom`. The dynamic-agents pod template includes a checksum of the routing
+settings, so enabling routing or changing Helm-managed secret values rolls the
+deployment and reloads the environment.
 
 For the other two secret strategies, put the routing keys in the secret yourself
 (Helm does not modify a secret it did not generate):
@@ -62,21 +65,26 @@ Supply the real provider key via the secret framework and map the models agents
 request to a real upstream. Keep provider keys in Secrets, never in plaintext
 values.
 
-The real upstream key lives in a **proxy-only** secret (`upstreamSecret`), separate
-from the agent-facing shared credential, agents never see it. The proxy reads it via
-`os.environ/*` refs in `modelList`.
+Create a proxy-only Kubernetes Secret for the provider key. The upstream chart
+imports it as environment variables; agents only receive the separate shared
+credential from `llm-secret`.
 
 ```yaml
 litellm:
-  upstreamSecret:
-    name: my-llm-provider-secret         # existing/ESO secret: ANTHROPIC_API_KEY, AWS_*, AZURE_OPENAI_*
-  modelList:
-    - model_name: gpt-4o                 # what agents request
+  environmentSecrets:
+    - my-llm-provider-secret             # existing Secret with AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT
+  proxy_config:
+    model_list:
+    - model_name: gpt-4o                 # model name agents request
       litellm_params:
-        model: azure/gpt-4o              # the real upstream + native params
+        model: azure/gpt-4o              # provider's deployment/model
         api_base: os.environ/AZURE_OPENAI_ENDPOINT
         api_key: os.environ/AZURE_OPENAI_API_KEY
 ```
+
+The chart dependency is configured for the stateless LiteLLM image: the upstream
+chart's standalone database and migration job are disabled. Keep the model list
+and provider key secret in operator-managed values and Secrets.
 
 ### 3. Deploy and verify
 
@@ -121,7 +129,7 @@ point of failure for agent LLM traffic — an accepted, documented tradeoff.
 
 Central routing is opt-in and reversible:
 
-1. Set `llmRouting.litellm.enabled: false`.
+1. Set `global.llmRouting.litellm.enabled: false`.
 2. Restore the prior `LLM_PROVIDER` / endpoint (and, for a Helm-generated secret,
    remove the auto-injected `OPENAI_ENDPOINT` override if you set one).
 
@@ -132,7 +140,7 @@ orphaned secrets or config.
 
 To use your own OpenAI-compatible routing layer instead of the bundled one:
 
-- Leave the subchart **disabled** (`llmRouting.litellm.enabled: false`).
+- Leave the dependency **disabled** (`global.llmRouting.litellm.enabled: false`).
 - Point `OPENAI_ENDPOINT` (in `global.llmSecrets.data`, or your existing/external
   secret) at your proxy, and set the shared credential to its key.
 - Your BYO proxy must itself translate the OpenAI protocol to your real upstream —
@@ -165,6 +173,6 @@ i.e. the hop is negligible relative to the upstream LLM call, which dominates.
 
 ## Related
 
-- Subchart reference: `charts/ai-platform-engineering/charts/litellm/README.md`
+- Upstream chart: [BerriAI LiteLLM Helm chart](https://github.com/BerriAI/litellm/tree/main/helm/litellm-helm)
 - Endpoint contract: the routing endpoint honours the OpenAI chat-completions
   wire protocol regardless of the real upstream.

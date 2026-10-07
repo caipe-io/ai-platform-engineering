@@ -1,106 +1,110 @@
-# Copyright 2025 CNOE
+# Copyright 2026 CNOE
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Helm template unit tests for the default-off litellm routing subchart.
-
-Runs `helm template` on the subchart and asserts the rendered manifests honour
-the routing contract: a proxy-only upstream secret separate from the shared
-credential, transparent error passthrough (no retries), and the master key
-sourced only from a Secret. No cluster required.
-"""
+"""Helm template checks for central LLM routing through upstream LiteLLM."""
 
 import subprocess
 from pathlib import Path
 
-import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-LITELLM_CHART = REPO_ROOT / "charts" / "ai-platform-engineering" / "charts" / "litellm"
+CHART = REPO_ROOT / "charts" / "ai-platform-engineering"
 
 
-def _template(set_values: dict[str, str] | None = None) -> list[dict]:
-    cmd = ["helm", "template", "rel", str(LITELLM_CHART)]
-    for k, v in (set_values or {}).items():
-        cmd += ["--set", f"{k}={v}"]
+def _template(*set_values: str) -> list[dict]:
+    cmd = [
+        "helm",
+        "template",
+        "routing",
+        str(CHART),
+        "--set",
+        "tags.dynamic-agents=true",
+        "--set",
+        "tags.mcp-argocd=true",
+    ]
+    cmd.extend(item for value in set_values for item in ("--set", value))
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return [doc for doc in yaml.safe_load_all(result.stdout) if doc]
 
 
-def _kind(docs: list[dict], kind: str) -> list[dict]:
-    return [d for d in docs if d.get("kind") == kind]
+def _named(docs: list[dict], kind: str, name: str) -> dict:
+    return next(
+        doc
+        for doc in docs
+        if doc.get("kind") == kind and doc["metadata"]["name"] == name
+    )
 
 
-def _container(docs: list[dict]) -> dict:
-    return _kind(docs, "Deployment")[0]["spec"]["template"]["spec"]["containers"][0]
+def _llm_checksum(docs: list[dict]) -> str:
+    deployment = _named(docs, "Deployment", "routing-dynamic-agents")
+    return deployment["spec"]["template"]["metadata"]["annotations"]["checksum/llm-config"]
 
 
-def _proxy_config(docs: list[dict]) -> str:
-    return _kind(docs, "ConfigMap")[0]["data"]["config.yaml"]
+def test_litellm_is_disabled_by_default():
+    docs = _template("global.createLlmSecret=true", "global.llmSecrets.data.OPENAI_API_KEY=example")
+    assert not any(doc["metadata"]["name"] == "routing-litellm" for doc in docs)
+    secret = _named(docs, "Secret", "llm-secret")
+    assert "OPENAI_ENDPOINT" not in secret.get("data", {})
 
 
-def _env_from_names(container: dict) -> list[str]:
-    return [
-        e["secretRef"]["name"]
-        for e in container.get("envFrom", [])
-        if "secretRef" in e
-    ]
+def test_upstream_chart_routes_agents_and_uses_shared_secret():
+    docs = _template(
+        "global.createLlmSecret=true",
+        "global.llmSecrets.data.OPENAI_API_KEY=example",
+        "global.llmRouting.litellm.enabled=true",
+        "litellm.environmentSecrets[0]=provider-credentials",
+        "litellm.proxy_config.model_list[0].model_name=gpt-4o",
+        "litellm.proxy_config.model_list[0].litellm_params.model=openai/gpt-4o",
+        "litellm.proxy_config.model_list[0].litellm_params.api_key="
+        "os.environ/UPSTREAM_OPENAI_API_KEY",
+    )
+
+    secret = _named(docs, "Secret", "llm-secret")
+    assert secret["data"]["LLM_PROVIDER"]
+    assert secret["data"]["OPENAI_ENDPOINT"]
+
+    proxy = _named(docs, "Deployment", "routing-litellm")
+    container = proxy["spec"]["template"]["spec"]["containers"][0]
+    env = {item["name"]: item for item in container["env"]}
+    assert env["PROXY_MASTER_KEY"]["valueFrom"]["secretKeyRef"] == {
+        "name": "llm-secret",
+        "key": "OPENAI_API_KEY",
+    }
+    assert {item["secretRef"]["name"] for item in container["envFrom"]} >= {
+        "provider-credentials"
+    }
+
+    agents = _named(docs, "Deployment", "routing-dynamic-agents")
+    assert "checksum/llm-config" in agents["spec"]["template"]["metadata"]["annotations"]
+    dynamic_env = {
+        item["name"]: item.get("value")
+        for item in agents["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert dynamic_env["LLM_PROVIDER"] == "openai"
+    assert dynamic_env["OPENAI_ENDPOINT"] == "http://routing-litellm:4000/v1"
+
+    mcp = _named(docs, "Deployment", "routing-argocd-mcp")
+    mcp_env = {
+        item["name"]: item.get("value")
+        for item in mcp["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert mcp_env["LLM_PROVIDER"] == "openai"
+    assert mcp_env["OPENAI_ENDPOINT"] == "http://routing-litellm:4000/v1"
+    policy = _named(docs, "NetworkPolicy", "routing-litellm")
+    assert policy["spec"]["podSelector"]["matchLabels"]["app.kubernetes.io/name"] == "litellm"
 
 
-class TestUpstreamSecret:
-    """The proxy-only upstream secret, separate from the agent-facing credential."""
-
-    def test_default_renders_no_upstream_secret_or_envfrom(self):
-        docs = _template()
-        assert not [
-            s for s in _kind(docs, "Secret")
-            if s["metadata"]["name"].endswith("-upstream")
-        ]
-        assert _env_from_names(_container(docs)) == []
-
-    def test_create_generates_secret_and_references_it(self):
-        docs = _template({
-            "upstreamSecret.create": "true",
-            "upstreamSecret.data.ANTHROPIC_API_KEY": "sk-test",
-        })
-        secrets = [
-            s for s in _kind(docs, "Secret")
-            if s["metadata"]["name"] == "rel-litellm-upstream"
-        ]
-        assert len(secrets) == 1
-        assert "ANTHROPIC_API_KEY" in secrets[0]["data"]
-        assert "rel-litellm-upstream" in _env_from_names(_container(docs))
-
-    def test_referenced_name_is_used_without_generating_a_secret(self):
-        docs = _template({"upstreamSecret.name": "my-upstream"})
-        assert "my-upstream" in _env_from_names(_container(docs))
-        assert not [
-            s for s in _kind(docs, "Secret")
-            if s["metadata"]["name"].endswith("-upstream")
-        ]
-
-
-class TestRoutingContract:
-    def test_master_key_sourced_only_from_secret(self):
-        env = {e["name"]: e for e in _container(_template()).get("env", [])}
-        assert "LITELLM_MASTER_KEY" in env
-        assert "secretKeyRef" in env["LITELLM_MASTER_KEY"]["valueFrom"]
-
-    def test_config_disables_retries_for_transparent_passthrough(self):
-        assert "num_retries: 0" in _proxy_config(_template())
-
-    def test_config_master_key_from_env(self):
-        assert "os.environ/LITELLM_MASTER_KEY" in _proxy_config(_template())
-
-    def test_networkpolicy_enabled_by_default(self):
-        assert _kind(_template(), "NetworkPolicy"), "expected a NetworkPolicy by default"
-
-    def test_health_probes_present(self):
-        container = _container(_template())
-        assert container["readinessProbe"]["httpGet"]["path"].startswith("/health")
-        assert container["livenessProbe"]["httpGet"]["path"].startswith("/health")
-
-
-if __name__ == "__main__":
-    raise SystemExit(pytest.main([__file__, "-v"]))
+def test_llm_secret_changes_restart_dynamic_agents():
+    before = _template(
+        "global.createLlmSecret=true",
+        "global.llmSecrets.data.OPENAI_API_KEY=example",
+        "global.llmRouting.litellm.enabled=true",
+    )
+    after = _template(
+        "global.createLlmSecret=true",
+        "global.llmSecrets.data.OPENAI_API_KEY=example",
+        "global.llmSecrets.data.CAIPE_ROUTING_REVISION=changed",
+        "global.llmRouting.litellm.enabled=true",
+    )
+    assert _llm_checksum(before) != _llm_checksum(after)

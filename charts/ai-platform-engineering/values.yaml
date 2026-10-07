@@ -27,14 +27,27 @@ tags:
 
 # Global configuration shared across all subcharts
 # Central LLM routing. Default-off.
-# When enabled, CAIPE ships a stateless LiteLLM proxy (charts/litellm) and every agent routes
-# through it via provider=openai. Bring-your-own: leave this disabled and instead set
-# global.llmSecrets.data.OPENAI_ENDPOINT to your own OpenAI-compatible proxy.
-llmRouting:
-  litellm:
+# Values passed to the upstream BerriAI/litellm-helm dependency when routing is enabled.
+# Configure the provider model list and upstream credential Secret for your provider.
+litellm:
+  db:
+    deployStandalone: false
+  migrationJob:
     enabled: false
+  image:
+    repository: ghcr.io/berriai/litellm
+    tag: v1.92.0
+  masterkeySecretName: llm-secret
+  masterkeySecretKey: OPENAI_API_KEY
+  environmentSecrets: []
 
 global:
+  # Enable the upstream LiteLLM chart and route agents through it via provider=openai.
+  # For bring-your-own routing, leave this disabled and set OPENAI_ENDPOINT in llmSecrets.data.
+  llmRouting:
+    litellm:
+      enabled: false
+
   # -- Global image tag override. When set, overrides the default appVersion-based
   # image tag for ALL subcharts (MCP servers, dynamic agents, UI, etc.) in a single place.
   # Individual subchart `image.tag` values still take highest precedence.
@@ -65,12 +78,9 @@ global:
   llmSecrets:
     create: false # do not create llm secret in subcharts (use global or existing llm secret)
     secretName: "llm-secret"
-    # Central LLM routing config lives here - single source of truth. Every agent inherits it
-    # via `envFrom` the "llm-secret", and the litellm proxy reads OPENAI_API_KEY as its
-    # master_key. When llmRouting.litellm.enabled=true AND this secret is Helm-generated
-    # (global.createLlmSecret=true), LLM_PROVIDER=openai and OPENAI_ENDPOINT are auto-injected
-    # to point at the in-cluster proxy unless you set them below. The shared credential
-    # OPENAI_API_KEY must be supplied here or via existing/external secrets - never commit a key.
+    # The shared credential is supplied here or via existing/external secrets; never commit a key.
+    # When routing is enabled, agent Deployments explicitly set LLM_PROVIDER=openai and
+    # OPENAI_ENDPOINT to the in-cluster proxy. The proxy uses OPENAI_API_KEY as its master key.
     data: {}
     #   LLM_PROVIDER: openai
     #   OPENAI_ENDPOINT: http://<release-name>-litellm:4000/v1   # or your bring-your-own proxy
