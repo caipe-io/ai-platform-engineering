@@ -14,6 +14,14 @@ write tools.
   `SHAREPOINT_MAX_DOCUMENT_BYTES`, 1000 scanned direct entries, and a 40-second
   preview deadline. Over-limit previews return `within_limits: false` and no
   document list; clients must not ingest a partial set. Shortcuts are excluded.
+  With `?select_files=true`, the same authenticated route returns **all direct file
+  metadata within the 1000-entry scan bound**, even when the whole folder exceeds
+  ingestion limits. This is for choosing an explicit file subset, not permission
+  to ingest the whole list. No file bodies are downloaded. Clients must enforce
+  count/byte limits on the initial selected subset, recording existing unchecked IDs
+  as exclusions. Later direct files become eligible on future runs. Listings expose
+  Graph version tags so successfully ingested unchanged files can be skipped before
+  enforcing the ten-document per-run limit. No source records are rewritten by discovery.
 
 - The server is hard-scoped to `SHAREPOINT_SITE_URL`; tools cannot select a
   different tenant, hostname, or site.

@@ -37,6 +37,7 @@ def transport(
             return httpx.Response(200, json={"value": [{"id": "drive-1"}]})
         if path.endswith("/children"):
             assert path == "/v1.0/drives/drive-1/items/folder-1/children"
+            assert {"eTag", "cTag"}.issubset(request.url.params["$select"].split(","))
             if paginate and not request.url.params.get("$skiptoken"):
                 return httpx.Response(200, json={"value": items[:1], "@odata.nextLink": "https://graph.microsoft.com/v1.0/drives/drive-1/items/folder-1/children?$skiptoken=second"})
             return httpx.Response(200, json={"value": items[1:] if paginate else items})
@@ -79,6 +80,13 @@ async def test_selection_preview_lists_all_500_files_without_downloading() -> No
     assert result["within_limits"] is False
     assert result["limits"]["max_documents"] == 10
     assert not any(path.endswith("/content") for path in calls)
+
+
+async def test_folder_listing_exposes_graph_versions_for_change_detection() -> None:
+    items = [{**file(1), "eTag": "etag-v2", "cTag": "ctag-v1"}, {**file(2), "cTag": "ctag-v3"}]
+    async with httpx.AsyncClient(transport=transport(items, [])) as http:
+        result = await SharePointDocuments(SharePointGraphClient(config(), http)).folder_snapshot("drive-1", "folder-1", select_files=True)
+    assert [row["version"] for row in result["documents"]] == ["etag-v2", "ctag-v3"]
 
 
 async def test_empty_folder_can_be_attached_for_future_direct_files() -> None:

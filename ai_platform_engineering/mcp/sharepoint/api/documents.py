@@ -142,6 +142,7 @@ class SharePointDocuments:
                         documents.append({
                             "drive_id": drive_id, "item_id": identity,
                             "name": row["name"], "size": size, "web_url": row.get("webUrl"),
+                            "version": row.get("eTag") or row.get("cTag") or "",
                         })
                 if not page["has_more"]:
                     break

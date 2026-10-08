@@ -86,7 +86,8 @@ def register_document_routes(server: FastMCP, documents: SharePointDocuments) ->
                 select_files = request.query_params.get("select_files", "false")
                 if select_files not in {"true", "false"}:
                     return JSONResponse({"error": "Choose true or false for select_files."}, status_code=400, headers=headers)
-                return JSONResponse(await documents.folder_snapshot(args.drive_id, args.item_id, select_files=select_files == "true"), headers=headers)
+                snapshot = await documents.folder_snapshot(args.drive_id, args.item_id, select_files=select_files == "true")
+                return JSONResponse(snapshot, headers=headers)
             if request.url.path.endswith("/metadata"):
                 return JSONResponse(await documents.manifest(args.drive_id, args.item_id), headers=headers)
             format = request.query_params.get("format", "original")
