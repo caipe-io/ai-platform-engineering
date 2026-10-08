@@ -1,10 +1,11 @@
 import json
 from typing import Any, Dict, List, Optional
+import asyncio
 import re
-import traceback
 from common.utils import get_logger
 from common.models.server import QueryResult
 from langchain_milvus import Milvus
+from langchain_core.documents import Document
 from common.models.rag import valid_metadata_keys, valid_metadata_keys_with_types
 
 logger = get_logger(__name__)
@@ -135,12 +136,44 @@ class VectorDBQueryService:
 
     filter_expr = await self.build_filter_expression(filters)
 
-    logger.info(f"Searching docs vector db with filters - {filter_expr}, query: {query}")
+    logger.info(f"Searching docs vector db with filters - {filter_expr}, query: {query!r}")
     try:
-      results = await self.vector_db.asimilarity_search_with_score(query, k=limit, ranker_type=ranker, ranker_params=ranker_params, expr=filter_expr)
-    except Exception as e:
-      logger.error(traceback.format_exc())
-      logger.error(f"Error querying docs vector db: {e}")
+      if query == "" and filter_expr:
+        # Perform a direct scalar query to bypass vector search constraints when query is empty
+        milvus_results = await asyncio.to_thread(
+          self.vector_db.client.query,
+          collection_name=self.vector_db.collection_name,
+          filter=filter_expr,
+          limit=limit,
+          output_fields=["*"],
+        )
+        query_results: List[QueryResult] = []
+        for res in milvus_results:
+          metadata = dict(res.get("metadata") or {})
+          # Include any dynamic fields returned at the top level
+          for k, v in res.items():
+            if k not in ("pk", "text", "page_content", "dense", "sparse", "metadata"):
+              metadata[k] = v
+          if "pk" in res and "pk" not in metadata:
+            metadata["pk"] = res["pk"]
+
+          if "text" in res:
+            content = res["text"]
+          elif "page_content" in res:
+            content = res["page_content"]
+          else:
+            content = ""
+
+          doc = Document(
+            page_content=content or "",
+            metadata=metadata,
+          )
+          query_results.append(QueryResult(document=doc, score=1.0))
+        return query_results
+      else:
+        results = await self.vector_db.asimilarity_search_with_score(query, k=limit, ranker_type=ranker, ranker_params=ranker_params, expr=filter_expr)
+    except Exception:
+      logger.exception("Error querying docs vector db")
       return []
 
     # Format results for response
