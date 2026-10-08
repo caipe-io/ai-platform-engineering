@@ -279,7 +279,7 @@ export async function runKeycloakRbacStartupMigration(input: {
   actor?: string;
   now?: string;
 } = {}): Promise<KeycloakRbacStartupMigrationResult> {
-  const actor = input.actor ?? "webui-startup";
+  const actor = input.actor ?? process.env.HOSTNAME ?? "webui-startup";
   const now = input.now ?? nowIso();
   const warnings: string[] = [];
   // Phase 3 (spec 2026-05-24-derive-team-from-channel) removed the per-team
