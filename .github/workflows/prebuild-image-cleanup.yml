@@ -47,6 +47,7 @@ jobs:
                 "caipe-ui",
                 "caipe-dynamic-agents",
                 "openfga-authz-bridge",
+                "agentgateway-config-bridge",
                 "caipe-rag-agent-ontology",
                 "caipe-rag-ingestors",
                 "caipe-rag-server",

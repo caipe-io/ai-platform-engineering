@@ -18,7 +18,6 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
-
 from dynamic_agents.auth.token_context import current_user_token
 from dynamic_agents.models import MCPServerConfig, TransportType
 from dynamic_agents.services import mcp_client
@@ -193,6 +192,56 @@ def test_agent_context_headers_are_omitted_without_shared_secret(monkeypatch):
     monkeypatch.delenv("CAIPE_AGENT_CONTEXT_HMAC_SECRET", raising=False)
 
     assert build_agent_context_headers("agent-test-april-2025") == {}
+
+
+def _caller_token(sub: str, username: str = "test-user") -> str:
+    claims = base64.urlsafe_b64encode(json.dumps({"sub": sub, "preferred_username": username}).encode()).decode().rstrip("=")
+    return f"header.{claims}.signature"
+
+
+@pytest.mark.parametrize("username,kind", [("test-user", "user"), ("service-account-example", "service_account")])
+def test_cas_context_binds_actual_caller_and_audience(monkeypatch: pytest.MonkeyPatch, username: str, kind: str) -> None:
+    monkeypatch.setenv("CAIPE_GATEWAY_CAS_ENABLED", "true")
+    monkeypatch.setenv("CAIPE_AGENT_CONTEXT_HMAC_SECRET", "test-key-" * 4)
+    headers = build_agent_context_headers("example-agent", token=_caller_token("test-user", username), now=1000)
+    payload = _decode_agent_context(headers["X-CAIPE-Agent-Context"])
+    assert payload == {"version": 1, "audience": "caipe-gateway", "kind": "dynamic",
+                       "caller": {"type": kind, "id": "test-user"}, "agent_id": "example-agent", "iat": 1000, "exp": 1300}
+
+
+@pytest.mark.parametrize("secret,token", [("", _caller_token("test-user")), ("short", _caller_token("test-user")),
+                                         ("test-execution-key-with-at-least-32-characters", "invalid")])
+def test_cas_context_never_downgrades_when_identity_or_key_missing(monkeypatch: pytest.MonkeyPatch, secret: str, token: str) -> None:
+    monkeypatch.setenv("CAIPE_GATEWAY_CAS_ENABLED", "true")
+    monkeypatch.setenv("CAIPE_AGENT_CONTEXT_HMAC_SECRET", secret)
+    with pytest.raises(mcp_client.McpCredentialUnavailableError):
+        build_agent_context_headers("example-agent", token=token)
+
+
+@pytest.mark.asyncio
+async def test_cas_factory_refreshes_same_connection_after_five_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CAIPE_GATEWAY_CAS_ENABLED", "true")
+    monkeypatch.setenv("CAIPE_AGENT_CONTEXT_HMAC_SECRET", "test-key-" * 4)
+    now = {"value": 1000}
+    monkeypatch.setattr(mcp_client.time, "time", lambda: now["value"])
+    with _running_server() as base:
+        monkeypatch.setenv("AGENT_GATEWAY_URL", base)
+        factory = build_httpx_client_factory("example-agent")
+        ref = current_user_token.set(_caller_token("primary"))
+        try:
+            async with factory(headers={"X-CAIPE-Agent-Context": "forged"}) as client:
+                await client.get(base + "/mcp/example")
+                first = _decode_agent_context(_CapturingHandler.captured["x-caipe-agent-context"])
+                now["value"] = 2000
+                current_user_token.set(_caller_token("secondary"))
+                await client.get(base + "/mcp/example")
+                second = _decode_agent_context(_CapturingHandler.captured["x-caipe-agent-context"])
+        finally:
+            current_user_token.reset(ref)
+    assert first["caller"]["id"] == "primary"
+    assert second["caller"]["id"] == "secondary"
+    assert second["iat"] == 2000
+    assert second["exp"] == 2300
 
 
 def test_gateway_routing_routes_all_network_servers_when_gateway_is_configured(monkeypatch):

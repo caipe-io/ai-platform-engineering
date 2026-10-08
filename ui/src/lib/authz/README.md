@@ -74,9 +74,9 @@ permanent aliases. The gateway-only contract below is separate from this self-ch
 
 ## Gateway authorization foundation
 
-`/api/access/gateway/check` is an additive, workload-only HTTP authorization
-adapter. Existing gateway configuration and signed-context producers are
-**unchanged**; do not point a deployment at this endpoint yet.
+`/api/access/gateway/check` is a workload-only HTTP authorization adapter.
+The opt-in `global.agentgateway.cas.enabled` Helm setting switches the gateway,
+BFF and Dynamic Agents together. Default deployments remain unchanged.
 
 - `authorizeGateway()` owns gateway/server, caller-to-agent, agent-to-tool and
   caller-to-tool checks. It uses the shared OpenFGA engine with fresh reads.
@@ -99,6 +99,14 @@ adapter. Existing gateway configuration and signed-context producers are
   rotation. Remove it after old issuers stop and their contexts expire. Inject
   high-entropy keys through the deployment's secret mechanism; do not reuse the
   gateway credential, discovery token or `NEXTAUTH_SECRET`.
+- `CAIPE_GATEWAY_CAS_ENABLED=true` changes trusted producers to the new format.
+  Dynamic Agents refresh it per request; BFF diagnostics use direct context and
+  no temporary agent grants. Direct clients renew before `expires_at`.
+- Helm uses the internal BFF service, a named gateway backend with file-backed
+  Secret credential, a six-second gateway deadline and five-second CAS budget.
+  The route-config reconciler reapplies that policy to runtime-added MCP routes.
+  Network isolation and authenticated TLS are deployment prerequisites, not
+  provided by the dev HTTP setting.
 
 Policy, audit limitations, native proof and cutover prerequisites:
 [Gateway authorization through CAS](../../../../docs/docs/security/rbac/gateway-cas.md).

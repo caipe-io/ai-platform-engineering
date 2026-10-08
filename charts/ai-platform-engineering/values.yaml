@@ -248,6 +248,19 @@ global:
       # has no AgentgatewayPolicy timeout field; tune it there via the
       # ext_authz backend `requestTimeout` instead.
       timeout: "10s"
+    # Coordinated dev cutover: gateway + BFF + Dynamic Agents must use these
+    # images together. Static routing only; disable the old authz bridge after
+    # validation. This is a rollout switch, not mixed-version compatibility.
+    cas:
+      enabled: false
+      # Internal service authority, never the public UI URL. Empty uses the BFF service.
+      host: ""
+      existingSecret:
+        name: ""
+        key: CAIPE_GATEWAY_AUTHZ_TOKEN
+      contextSecret:
+        name: ""
+        key: CAIPE_AGENT_CONTEXT_HMAC_SECRET
     # Built-in Knowledge Base MCP route. This keeps the Dynamic Agents
     # `knowledge-base` MCP server ID aligned with the RAG server MCP backend
     # when AgentGateway is enabled in the umbrella chart.

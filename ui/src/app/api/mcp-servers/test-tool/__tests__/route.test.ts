@@ -111,6 +111,31 @@ describe("POST /api/mcp-servers/test-tool", () => {
   afterEach(() => {
     delete process.env.AGENT_GATEWAY_URL;
     delete process.env.CAIPE_AGENT_CONTEXT_HMAC_SECRET;
+    delete process.env.CAIPE_GATEWAY_CAS_ENABLED;
+  });
+
+  it("uses direct caller context in CAS and never creates temporary diagnostic grants", async () => {
+    process.env.CAIPE_GATEWAY_CAS_ENABLED = "true";
+    process.env.CAIPE_AGENT_CONTEXT_HMAC_SECRET = "test-key-".repeat(4);
+    mockGetCollection.mockResolvedValue({ findOne: jest.fn().mockResolvedValue({
+      _id: "example", name: "Example", transport: "http", enabled: true,
+      endpoint: "http://agentgateway:4000/mcp/example", source: "agentgateway",
+    }) });
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
+        status: 200, headers: { "content-type": "application/json", "mcp-session-id": "test-session" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { content: [] } }), {
+        status: 200, headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+    const { POST } = await import("../route");
+    const response = await POST(request({ serverId: "example", toolName: "get_status", params: {} }));
+    expect(response.status).toBe(200);
+    const headers = (global.fetch as jest.Mock).mock.calls[1][1].headers;
+    const payload = JSON.parse(Buffer.from(headers["X-CAIPE-Agent-Context"], "base64url").toString());
+    expect(payload).toMatchObject({ kind: "direct", caller: { type: "user", id: session.sub } });
+    expect(payload.agent_id).toBeUndefined();
+    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
   });
 
   it("sends user auth to AgentGateway and provider auth as X-CAIPE-Provider-Token", async () => {

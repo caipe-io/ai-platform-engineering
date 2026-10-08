@@ -1,7 +1,7 @@
 /** @jest-environment node */
-import { spawn, type ChildProcess } from "child_process";
+import { execFileSync, spawn, type ChildProcess } from "child_process";
 import { generateKeyPairSync, randomUUID, sign } from "crypto";
-import { mkdtempSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "fs";
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, unlinkSync, writeFileSync } from "fs";
 import { createServer, type Server } from "http";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
@@ -15,7 +15,8 @@ jest.mock("@/lib/audit", () => ({ getAuditBackend: () => ({ write: () => {} }) }
 
 const binary = process.env.CAIPE_GATEWAY_TEST_BINARY;
 const fgaUrl = process.env.OPENFGA_GATEWAY_TEST_URL;
-const suite = binary && fgaUrl ? describe : describe.skip;
+const python = process.env.CAIPE_GATEWAY_TEST_PYTHON;
+const suite = binary && fgaUrl && python ? describe : describe.skip;
 const credential = "test-native-gateway-credential-with-32-characters";
 const caller = { type: "user" as const, id: "test-user" };
 const originalEnv = { ...process.env };
@@ -27,14 +28,18 @@ suite("pinned gateway → real BFF handler → real chart-model OpenFGA → MCP"
   let server: Server;
   let gateway: ChildProcess;
   let base: string;
+  let adminBase: string;
+  let fixturePort: number;
   let sessionId: string;
   let configPath: string;
+  let credentialPath: string;
   let directory: string;
   let gatewayLogs = "";
   let toolExecutions = 0;
   let permissionChecks = 0;
   let bffUnavailable = false;
   let bffSlow = false;
+  let bffDelay = false;
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const jwk = { ...publicKey.export({ format: "jwk" }), kid: "test-key", alg: "RS256", use: "sig" };
   const tuple = { user: "user:test-user", relation: "user", object: "agent:example-agent" };
@@ -100,9 +105,10 @@ suite("pinned gateway → real BFF handler → real chart-model OpenFGA → MCP"
           permissionChecks++;
           if (bffUnavailable) { res.writeHead(503, { "content-type": "application/json" }); res.end('{"error":"test BFF outage"}'); return; }
           if (bffSlow) {
-            await new Promise((done) => setTimeout(done, 500));
+            await new Promise((done) => setTimeout(done, 7000));
             res.writeHead(200, { "content-type": "application/json" }); res.end('{"decision":"ALLOW"}'); return;
           }
+          if (bffDelay) await new Promise((done) => setTimeout(done, 300));
           const headers = new Headers();
           for (const [key, value] of Object.entries(req.headers)) if (value) headers.set(key, Array.isArray(value) ? value.join(",") : value);
           const response = await checkGatewayAccess(new NextRequest("http://localhost" + req.url, {
@@ -121,13 +127,21 @@ suite("pinned gateway → real BFF handler → real chart-model OpenFGA → MCP"
       } catch (error) { res.writeHead(500); res.end(String(error)); }
     });
     const port = await listen(server);
+    fixturePort = port;
     const reservation = createServer();
     const gatewayPort = await listen(reservation);
     await new Promise<void>((done) => reservation.close(() => done()));
+    const adminReservation = createServer();
+    const adminPort = await listen(adminReservation);
+    await new Promise<void>((done) => adminReservation.close(() => done()));
+    adminBase = `http://127.0.0.1:${adminPort}`;
     base = `http://127.0.0.1:${gatewayPort}`;
-    directory = mkdtempSync(join(tmpdir(), "caipe-gateway-test-"));
+    // The macOS watcher reports canonical paths; /var aliases must not hide updates.
+    directory = realpathSync(mkdtempSync(join(tmpdir(), "caipe-gateway-test-")));
     configPath = join(directory, "gateway.json");
-    writeFileSync(configPath, JSON.stringify({
+    credentialPath = join(directory, "token");
+    writeFileSync(credentialPath, credential); chmodSync(credentialPath, 0o600);
+    const config = {
       binds: [{ port: gatewayPort, listeners: [{ protocol: "HTTP", policies: { jwtAuth: {
         mode: "strict", issuer: "https://issuer.example.test", audiences: ["test-gateway"], jwks: { url: `http://127.0.0.1:${port}/jwks` },
       } }, routes: [{ matches: [{ path: { pathPrefix: "/mcp/example" } }], policies: {
@@ -140,8 +154,17 @@ suite("pinned gateway → real BFF handler → real chart-model OpenFGA → MCP"
           } } },
         }, authorization: { rules: [{ allow: "true" }] },
       }, backends: [{ mcp: { targets: [{ name: "example", mcp: { host: `http://127.0.0.1:${port}/mcp` } }] } }] }] }] }],
-      config: { adminAddr: "127.0.0.1:0", statsAddr: "127.0.0.1:0", readinessAddr: "127.0.0.1:0" },
-    }));
+      config: { adminAddr: `127.0.0.1:${adminPort}`, statsAddr: "127.0.0.1:0", readinessAddr: "127.0.0.1:0" },
+    };
+    // Use the production config generator, not a parallel test-only policy.
+    const configured = execFileSync(python!, ["-c", "import json,sys; import config_bridge; config=json.load(sys.stdin); config_bridge.configure_gateway_cas(config); print(json.dumps(config))"], {
+      input: JSON.stringify(config), encoding: "utf8", env: { ...process.env,
+        PYTHONPATH: resolve(process.cwd(), "../deploy/agentgateway"), CAIPE_GATEWAY_CAS_ENABLED: "true",
+        CAIPE_GATEWAY_CAS_HOST: `127.0.0.1:${port}`, CAIPE_GATEWAY_CAS_TOKEN_FILE: credentialPath,
+      },
+    });
+    expect(configured).not.toContain(credential);
+    writeFileSync(configPath, configured);
     gateway = spawn(binary!, ["--file", configPath], { env: { PATH: process.env.PATH, RUST_LOG: "warn" }, stdio: ["ignore", "pipe", "pipe"] });
     gateway.stdout?.on("data", (data) => { gatewayLogs += data; });
     gateway.stderr?.on("data", (data) => { gatewayLogs += data; });
@@ -170,6 +193,7 @@ suite("pinned gateway → real BFF handler → real chart-model OpenFGA → MCP"
     if (server) await new Promise<void>((done) => { server.closeAllConnections(); server.close(() => done()); });
     if (storeId) await fga(`/stores/${storeId}`, undefined, "DELETE");
     if (configPath) unlinkSync(configPath);
+    if (credentialPath) unlinkSync(credentialPath);
     if (directory) rmdirSync(directory);
     for (const key of envKeys) {
       if (originalEnv[key] === undefined) delete process.env[key]; else process.env[key] = originalEnv[key];
@@ -183,6 +207,58 @@ suite("pinned gateway → real BFF handler → real chart-model OpenFGA → MCP"
     if (response.status !== 200) throw new Error(`Gateway ${response.status}: ${body}\n${gatewayLogs}`);
     expect(toolExecutions).toBe(1);
     expect(permissionChecks).toBe(1);
+  });
+  it("never exposes the workload credential through config discovery", async () => {
+    const response = await fetch(adminBase + "/config", { signal: AbortSignal.timeout(2000) });
+    expect(response.status).toBe(200);
+    const config = await response.text();
+    expect(config).toContain("caipe-cas");
+    expect(config).not.toContain(credential);
+  });
+  it("hot-reloads a runtime-added route from live config without losing CAS credentials", async () => {
+    const live = await (await fetch(adminBase + "/config")).text();
+    const configured = execFileSync(python!, ["-c", "import json,sys,os; from pathlib import Path; import config_bridge as b; config=json.load(sys.stdin); config=b.merge_agentgateway_mcp_routes(config, [b.McpGatewayTarget(id=i,upstream_url=os.environ['TEST_MCP_UPSTREAM']) for i in ('example','secondary')]); b.configure_gateway_cas(config); b.write_config_atomically(Path(os.environ['TEST_CONFIG_PATH']),config); print(json.dumps(config))"], {
+      input: live, encoding: "utf8", env: { ...process.env,
+        PYTHONPATH: resolve(process.cwd(), "../deploy/agentgateway"), CAIPE_GATEWAY_CAS_ENABLED: "true",
+        CAIPE_GATEWAY_CAS_HOST: `127.0.0.1:${fixturePort}`, CAIPE_GATEWAY_CAS_TOKEN_FILE: credentialPath,
+        TEST_MCP_UPSTREAM: `http://127.0.0.1:${fixturePort}/mcp`,
+        TEST_CONFIG_PATH: configPath,
+      },
+    });
+    expect(configured).not.toContain(credential);
+    const deadline = Date.now() + 8000;
+    let response: Response;
+    for (;;) {
+      response = await fetch(base + "/mcp/secondary", { method: "POST", headers: {
+        authorization: `Bearer ${jwt()}`, "content-type": "application/json", accept: "application/json, text/event-stream",
+      }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {
+        protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "example", version: "1" },
+      } }), signal: AbortSignal.timeout(2000) });
+      if (response.status === 200) break;
+      if (Date.now() > deadline) throw new Error(`New MCP route ${response.status}: ${await response.text()}\n${gatewayLogs}`);
+      await response.text();
+      await new Promise((done) => setTimeout(done, 100));
+    }
+    const before = toolExecutions;
+    const denied = await fetch(base + "/mcp/secondary", { method: "POST", headers: {
+      authorization: `Bearer ${jwt()}`, "content-type": "application/json", accept: "application/json, text/event-stream",
+      "mcp-session-id": response.headers.get("mcp-session-id")!,
+    }, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "get_status", arguments: {} } }) });
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ failed_gate: "context" });
+    expect(toolExecutions).toBe(before);
+  }, 12000);
+  it("accepts the actual Dynamic Agents context producer", async () => {
+    const headers = JSON.parse(execFileSync(python!, ["-c", "import json,os; from dynamic_agents.services.mcp_client import build_agent_context_headers; print(json.dumps(build_agent_context_headers('example-agent', token=os.environ['TEST_CALLER_TOKEN'])))"], {
+      encoding: "utf8", env: { ...process.env, CAIPE_GATEWAY_CAS_ENABLED: "true", TEST_CALLER_TOKEN: jwt(),
+        PYTHONPATH: resolve(process.cwd(), "../ai_platform_engineering/dynamic_agents/src"),
+      },
+    }));
+    // Lower-case overrides replace the fixture's context in the Headers map.
+    expect((await tool({
+      "x-caipe-agent-context": headers["X-CAIPE-Agent-Context"],
+      "x-caipe-agent-context-signature": headers["X-CAIPE-Agent-Context-Signature"],
+    })).status).toBe(200);
   });
   it("overwrites forged caller/route assertions using verified JWT and actual path", async () => {
     expect((await tool({ "x-caipe-caller-sub": "secondary", "x-caipe-mcp-path": "/mcp/secondary" })).status).toBe(200);
@@ -221,12 +297,16 @@ suite("pinned gateway → real BFF handler → real chart-model OpenFGA → MCP"
     expect(toolExecutions).toBe(before);
     bffUnavailable = false;
   });
+  it("uses the configured backend deadline rather than the 200ms default", async () => {
+    bffDelay = true;
+    try { expect((await tool()).status).toBe(200); } finally { bffDelay = false; }
+  });
   it("never forwards after the BFF authorization deadline expires", async () => {
     bffSlow = true;
     const before = toolExecutions;
     expect((await tool()).status).toBe(503);
-    await new Promise((done) => setTimeout(done, 600));
+    await new Promise((done) => setTimeout(done, 1200));
     expect(toolExecutions).toBe(before);
     bffSlow = false;
-  });
+  }, 10000);
 });

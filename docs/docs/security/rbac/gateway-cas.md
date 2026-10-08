@@ -1,8 +1,8 @@
 # Gateway authorization through CAS
 
-**Status: additive foundation, not a deployment cutover.** The existing gRPC
-bridge still serves configured gateways. This change introduces the replacement
-decision module and proves the HTTP path without switching production traffic.
+**Status: opt-in dev cutover; default deployments are unchanged.** One Helm
+setting switches the gateway and trusted context producers together. The old
+gRPC bridge remains available until deployment validation is complete.
 
 ## One policy owner; two paths
 
@@ -63,13 +63,14 @@ The gateway-only endpoint is `/api/access/gateway/check`. It does **not** use th
 public self-check API, where HTTP 200 can legitimately contain a DENY result.
 
 - A dedicated high-entropy workload credential authenticates the gateway.
-  This is a shared bearer secret in the foundation, not a Keycloak workload JWT.
+  This is a shared bearer secret, not a Keycloak workload JWT.
   It must be separate from caller credentials and context-signing keys.
 - Caller and route assertions must be generated from the verified JWT and actual
   request. Call the BFF's internal service endpoint, not the public UI ingress;
-  keep this gateway-only route private at cutover. Use authenticated TLS in
-  deployment. A stolen gateway
-  credential permits caller assertions; protect and rotate it accordingly.
+  exclude this gateway-only route from public ingress. The dev wiring uses
+  internal HTTP: it does **not** automatically provide network isolation or TLS.
+  Production requires authenticated TLS/mTLS and network restrictions.
+  A stolen gateway credential permits caller assertions; protect and rotate it.
 - Signed execution context binds caller type/ID, audience, agent or explicit
   direct mode, and a maximum five-minute lifetime. It proves context, not grants.
 - Only ALLOW gets HTTP 200. Invalid requests, authentication failures, denials,
@@ -83,33 +84,98 @@ public self-check API, where HTTP 200 can legitimately contain a DENY result.
 Configuration/header details live in the
 [BFF authorization README](https://github.com/caipe-io/ai-platform-engineering/blob/prebuild/feat/cas-gateway-authz/ui/src/lib/authz/README.md#gateway-authorization-foundation).
 
-## Proof and remaining cutover
+## Enable for dev
+
+Use the PR's UI, Dynamic Agents and `agentgateway-config-bridge` images plus
+the matching prebuild chart. Keep the gateway binary at the pinned **v1.1.0**.
+The config bridge is the **route-discovery reconciler**, not the old authorization
+service. Image references appear in the PR's prebuild artifact comment.
+
+Create two distinct, single-line, high-entropy Kubernetes Secret values of at least 32
+characters through your normal secret-management process. Do not commit values.
+The following values supplement your existing issuer/JWKS and deployment config:
+
+```yaml
+global:
+  agentgateway:
+    enabled: true
+    routingMode: static
+    cas:
+      enabled: true
+      existingSecret:
+        name: example-gateway-auth       # key: CAIPE_GATEWAY_AUTHZ_TOKEN
+      contextSecret:
+        name: example-execution-context  # key: CAIPE_AGENT_CONTEXT_HMAC_SECRET
+    static:
+      jwtAuth:
+        enabled: true                   # keep your existing issuer/JWKS
+      configBridge:
+        image:
+          tag: <PR-prebuild-tag>
+caipe-ui:
+  image:
+    tag: <PR-prebuild-tag>
+dynamic-agents:
+  image:
+    tag: <PR-prebuild-tag>
+```
+
+- Empty `cas.host` selects the internal `<release>-caipe-ui:3000` service.
+  If you override the BFF service name, set its internal `host:port` here.
+- The workload token reaches BFF as a Secret-backed environment variable and
+  gateway as a read-only Secret file. It is not in the route ConfigMap, CEL
+  expressions or gateway `/config` output. The HMAC key reaches BFF and Dynamic
+  Agents only. Restart all affected replicas when rotating environment keys.
+- Gateway waits at most six seconds; CAS graph checks share a five-second budget.
+  These are failure bounds, not a performance guarantee.
+- Dynamic Agents refresh context on every request, including reused connections.
+  BFF probe/test calls use explicit direct-user context, without temporary agent
+  grants. Local clients must renew `/api/mcp-servers/agent-context` before the
+  returned `expires_at` (five minutes); their old cached headers are incompatible.
+- Old authorization configuration is superseded when CAS is enabled. Flag-off
+  deployments retain existing behavior; rollback is a coordinated restart, not
+  mixed-version operation. No permission-data migration is performed.
+- This slice supports static/standalone Helm routing only, not Gateway API or
+  a Compose cutover. All external clients must adopt the new context before use.
+
+## Dev acceptance
+
+1. As a non-admin, make one allowed and one denied agent tool call. Check the
+   denied response's reason, failed gate and decision ID; confirm no tool ran.
+2. Revoke agent or caller-tool access and repeat: the next execution must deny.
+3. Repeat with a service account, Search and a connection open over five minutes.
+   Exercise BFF probe/test calls and direct-client context renewal too.
+4. Make BFF/OpenFGA unavailable: no tool execution or weaker fallback. Confirm
+   401 means invalid credentials, 403 a denial, and 503 unavailable authorization.
+5. Add an MCP server at runtime. Confirm the config reconciler gives the new
+   route the same CAS policy without exposing either secret through discovery.
+
+Validate grant coverage **before** enabling this: caller-tool checks are always
+required. Keep the old bridge until these journeys pass. Audit delivery remains
+best-effort; the planned Admin decisions view is still separate work.
+
+## Local proof and remaining work
 
 The opt-in native test uses AgentGateway **v1.1.0**, the actual BFF handler over a
 local HTTP fixture, OpenFGA **1.15.1** with the chart model, and a stub MCP server.
-It is not a deployment test of a running Next.js server. It proves ALLOW/deny,
-trusted assertions, invalid JWT/context, revocation, BFF outage and timeout.
+It uses the production route-config generator and real Python context producer.
+It is not a deployment test of a running Next.js server. Twelve tests prove
+ALLOW/deny, trusted assertions, invalid JWT/context, revocation, credential
+redaction, runtime-route hot reload, BFF outage and the configured timeout.
 
 From `ui/`, with an isolated loopback OpenFGA and a verified gateway binary:
 
 ```sh
 CAIPE_GATEWAY_TEST_BINARY=/path/to/agentgateway \
+CAIPE_GATEWAY_TEST_PYTHON=/path/to/dynamic-agents-venv/bin/python \
 OPENFGA_GATEWAY_TEST_URL=http://127.0.0.1:18083 \
 npm test -- --config jest.gateway.config.js --runInBand
 ```
 
-Before switching the gateway and removing the old bridge:
-
-- Migrate Dynamic Agents and BFF/direct-client context producers together. The
-  old context format is intentionally rejected by the new endpoint.
-- Wire workload/key secrets, trusted headers, body forwarding and TLS through
-  gateway configuration and deployment; remove superseded fallback modes.
-- Align gateway/CAS deadlines and measure load. The pinned gateway's default
-  HTTP authorization timeout is 200 ms; the CAS check budget is five seconds.
-  The current fixture proves timeout denial, not a production latency guarantee.
-- Validate human/service-account journeys and errors in the deployment, then
-  retire the bridge. Keep interrupted/late permission writes
-  [#2854](https://github.com/caipe-io/ai-platform-engineering/issues/2854) as a
-  release gate before promoting the combined CAS integration to main.
+Before retirement/main: validate actual deployment and load, complete transport
+and network protections, migrate remaining clients, and remove superseded
+configuration. Interrupted/late permission writes
+[#2854](https://github.com/caipe-io/ai-platform-engineering/issues/2854) remain
+a release gate for the combined CAS integration. The rollout flag is temporary.
 
 Work item: [#2892](https://github.com/caipe-io/ai-platform-engineering/issues/2892).

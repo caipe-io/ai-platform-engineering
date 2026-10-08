@@ -99,6 +99,25 @@ describe("POST /api/mcp-servers/agent-context", () => {
 
   afterEach(() => {
     delete process.env.CAIPE_AGENT_CONTEXT_HMAC_SECRET;
+    delete process.env.CAIPE_GATEWAY_CAS_ENABLED;
+  });
+
+  it("mints caller-bound direct context for CAS without manufacturing agent grants", async () => {
+    process.env.CAIPE_GATEWAY_CAS_ENABLED = "true";
+    process.env.CAIPE_AGENT_CONTEXT_HMAC_SECRET = "test-key-".repeat(4);
+    const toArray = jest.fn().mockResolvedValue([mcpServer("example")]);
+    mockGetCollection.mockResolvedValue({ find: jest.fn().mockReturnValue({ toArray }) });
+    mockFilterResourcesByPermission.mockImplementation(async (_session, items) => items);
+    const { POST } = await import("../route");
+    const response = await POST(request());
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    const payload = decodeAgentContextPayload(body.data.headers);
+    expect(payload).toMatchObject({ version: 1, audience: "caipe-gateway", kind: "direct", caller: { type: "user", id: session.sub } });
+    expect(payload.agent_id).toBeUndefined();
+    expect(payload.exp - payload.iat).toBe(300);
+    expect(Date.parse(body.data.expires_at)).toBeGreaterThan(Date.now());
+    expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
   });
 
   it("mints one context scoped to every server the caller can invoke when serverIds is omitted", async () => {

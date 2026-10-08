@@ -91,6 +91,43 @@ DEFAULT_MCP_ROUTE_POLICIES: dict[str, Any] = {
 # transformation below (see DEFAULT_MCP_ROUTE_POLICY_OVERRIDES).
 DEFAULT_MCP_TARGET_POLICIES: dict[str, dict[str, Any]] = {}
 
+
+def configure_gateway_cas(config: dict[str, Any]) -> None:
+    """Apply the coordinated CAS cutover to every MCP route, including built-ins."""
+    if os.getenv("CAIPE_GATEWAY_CAS_ENABLED") != "true":
+        return
+    listener = _first_http_listener(config)
+    jwt = listener.get("policies", {}).get("jwtAuth", {})
+    if jwt.get("mode") != "strict":
+        raise ValueError("Gateway CAS requires strict JWT authentication")
+    host = os.getenv("CAIPE_GATEWAY_CAS_HOST", "caipe-ui:3000")
+    if not re.fullmatch(r"[A-Za-z0-9.-]+:[0-9]{1,5}", host):
+        raise ValueError("Gateway CAS requires an internal host:port")
+    backend = {
+        "name": "caipe-cas", "host": host,
+        "policies": {
+            "backendAuth": {"key": {"file": os.getenv("CAIPE_GATEWAY_CAS_TOKEN_FILE", "/etc/caipe-gateway-auth/token")}},
+            "http": {"requestTimeout": "6s"},
+        },
+    }
+    # Admin /config redacts backendAuth. Rebuild from file references, never
+    # persist its redacted value as a real credential during reconciliation.
+    config["backends"] = [item for item in config.get("backends", []) if item.get("name") != "caipe-cas"] + [backend]
+    for route in listener.get("routes", []):
+        if not _is_managed_mcp_route_path(_route_path(route)):
+            continue
+        policies = route.setdefault("policies", {})
+        policies["extAuthz"] = {
+            "backend": "/caipe-cas", "failureMode": {"denyWithStatus": 503},
+            "includeRequestHeaders": ["content-type", "x-caipe-agent-context", "x-caipe-agent-context-signature"],
+            "includeRequestBody": {"maxRequestBytes": 65536, "allowPartialMessage": False, "packAsBytes": True},
+            "protocol": {"http": {"path": '"/api/access/gateway/check"', "addRequestHeaders": {
+                "x-caipe-caller-sub": "jwt.sub", "x-caipe-caller-username": 'default(jwt.preferred_username, "")',
+                "x-caipe-mcp-path": "request.path",
+            }}},
+        }
+        policies["authorization"] = {"rules": [{"allow": "true"}]}
+
 # Route-level policy overrides shallow-merged onto DEFAULT_MCP_ROUTE_POLICIES for
 # specific servers. GitHub/GitLab upstreams expect `Authorization: Bearer <token>`.
 # Dynamic Agents resolves the caller's own OAuth token (or, when the caller has
@@ -693,7 +730,9 @@ def seed_config_from_bootstrap(config_path: Path, bootstrap_path: Path | None) -
         dir=config_path.parent,
         delete=False,
     ) as handle:
-        handle.write(bootstrap_path.read_text(encoding="utf-8"))
+        config = yaml.safe_load(bootstrap_path.read_text(encoding="utf-8"))
+        configure_gateway_cas(config)
+        handle.write(json.dumps(config))
         tmp_path = Path(handle.name)
     tmp_path.chmod(PUBLISHED_CONFIG_MODE)
     tmp_path.replace(config_path)
@@ -835,6 +874,7 @@ def reconcile_once(
         raise
     builtin_routes = load_builtin_mcp_routes(bootstrap_path)
     rendered = merge_agentgateway_mcp_routes(baseline, targets, builtin_routes=builtin_routes)
+    configure_gateway_cas(rendered)
     apply_agentgateway_logging(rendered)
     changed = write_config_atomically(config_path, rendered)
     result = {

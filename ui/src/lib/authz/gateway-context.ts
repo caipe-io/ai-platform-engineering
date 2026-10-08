@@ -7,6 +7,11 @@ const AUDIENCE = "caipe-gateway";
 const MAX_AGE_SECONDS = 300;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_.~-]{0,191}$/;
 
+/** Temporary coordinated dev cutover, not support for mixed protocol versions. */
+export function gatewayCasEnabled(): boolean {
+  return process.env.CAIPE_GATEWAY_CAS_ENABLED === "true";
+}
+
 export function isGatewayIdentifier(value: unknown): value is string {
   return typeof value === "string" && IDENTIFIER.test(value);
 }
