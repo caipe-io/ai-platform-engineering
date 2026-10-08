@@ -650,6 +650,46 @@ async def resolve_mcp_connections_credential_refs(
     return McpCredentialResolutionResult(connections=resolved, failures=failures)
 
 
+def is_tool_scope_subset(base: list[str] | bool, candidate: list[str] | bool) -> bool:
+    """Compare native tool scopes, including legacy [] as the all-tools grant."""
+    if candidate is False:
+        return True
+    if base is False:
+        return False
+    if base is True or base == []:
+        return True
+    if candidate is True or candidate == []:
+        return False
+    return set(candidate).issubset(base)
+
+
+def intersect_allowed_tools(
+    saved: dict[str, list[str] | bool],
+    current: dict[str, list[str] | bool],
+) -> dict[str, list[str] | bool]:
+    """Retain saved grants only where the current definition still permits them.
+
+    True and legacy [] both grant all server tools. An empty explicit
+    intersection must be False, since [] would accidentally restore all tools.
+    Preserve saved spelling when the effective scope has not narrowed.
+    """
+    retained: dict[str, list[str] | bool] = {}
+    for server_id, saved_scope in saved.items():
+        if server_id not in current:
+            continue
+        current_scope = current[server_id]
+        if saved_scope is False or current_scope is False:
+            retained[server_id] = False
+        elif current_scope is True or current_scope == []:
+            retained[server_id] = saved_scope.copy() if isinstance(saved_scope, list) else saved_scope
+        elif saved_scope is True or saved_scope == []:
+            retained[server_id] = current_scope.copy()
+        else:
+            narrowed = [name for name in saved_scope if name in current_scope]
+            retained[server_id] = narrowed or False
+    return retained
+
+
 def filter_tools_by_allowed(
     all_tools: list,
     allowed_tools: dict[str, list[str] | bool],

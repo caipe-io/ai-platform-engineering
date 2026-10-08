@@ -2,8 +2,8 @@
 
 Extracted from stream_events.py. Owns LangGraph-specific state (namespace
 correlation, content accumulation) while also providing stateless static
-helpers for message inspection and extraction. No event building, no
-protocol knowledge.
+helpers for message inspection and extraction. Projects typed semantic
+events once; it has no client protocol or SSE framing knowledge.
 
 Encoders instantiate one LangGraphStreamHelper per stream and delegate all
 LangGraph parsing to it, so namespace mapping and content tracking are
@@ -19,8 +19,8 @@ they already received, which contains the ``tool_call_id``.
 By streaming with ``tasks`` mode enabled, LangGraph emits task metadata
 containing both the internal task UUID and the original ``tool_call_id``. We
 build a mapping ``{namespace_uuid: tool_call_id}`` and use it to replace the
-LangGraph namespace with the correlated ``tool_call_id`` before emitting SSE
-events.
+LangGraph namespace with the correlated ``tool_call_id`` before emitting
+native events to any client protocol.
 
 This correlation is done server-side so all clients (Web UI, Slack, Webex,
 Backstage) receive pre-correlated events without duplicating logic.
@@ -28,6 +28,16 @@ Backstage) receive pre-correlated events without duplicating logic.
 
 import logging
 from typing import Any
+
+from dynamic_agents.services.context_usage import CONTEXT_USAGE_EVENT
+from dynamic_agents.services.stream_encoders.events import (
+    ContextUsage,
+    StreamEvent,
+    TextDelta,
+    ToolCompleted,
+    ToolStarted,
+    UpdatesBoundary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +103,72 @@ class LangGraphStreamHelper:
         self._last_tool_start_pos: int = 0
 
     # ── Stateful methods ──────────────────────────────────
+
+    def project_chunk(self, chunk: tuple) -> list[StreamEvent]:
+        """Project a graph chunk through the shared native event contract."""
+        namespace, mode, data = self.parse_chunk(chunk)
+        if mode == "tasks":
+            return []
+        namespace = self.correlate_namespace(namespace)
+        if mode == "messages":
+            return self.message_events(data, namespace)
+        if mode == "updates":
+            return self.update_events(data, namespace)
+        if mode == "custom":
+            return self.custom_events(data, namespace)
+        return []
+
+    def observe_event(self, event: StreamEvent) -> None:
+        """Maintain answer/thinking accumulation at either delivery boundary."""
+        if isinstance(event, TextDelta):
+            self.accumulate_content(event.text)
+        elif isinstance(event, ToolStarted):
+            self.reset_accumulated_content()
+
+    def message_events(self, data: Any, namespace: tuple[str, ...]) -> list[StreamEvent]:
+        if not isinstance(data, tuple) or len(data) != 2:
+            return []
+        message, metadata = data
+        if self.is_summarization_chunk(message, metadata) or self.is_tool_message(message) or self.has_tool_calls(message):
+            return []
+        content = self.extract_content(message)
+        return [TextDelta(text=content, namespace=namespace)] if content else []
+
+    def update_events(self, data: Any, namespace: tuple[str, ...]) -> list[StreamEvent]:
+        if not isinstance(data, dict):
+            return []
+        events: list[StreamEvent] = [UpdatesBoundary(namespace=namespace)]
+        for node_data in data.values():
+            if not isinstance(node_data, dict) or not isinstance(node_data.get("messages", []), list):
+                continue
+            messages = node_data.get("messages", [])
+            # HITL rejection resumes may replay both the original tool call
+            # and its rejection result. Neither represents new execution.
+            rejected = {
+                message.tool_call_id for message in messages
+                if getattr(message, "tool_call_id", None)
+                and "rejected" in normalize_tool_message_content(getattr(message, "content", "")).lower()
+            }
+            for message in messages:
+                for call in getattr(message, "tool_calls", None) or []:
+                    info = self.extract_tool_call(call)
+                    if info["id"] not in rejected:
+                        events.append(ToolStarted(
+                            tool_call_id=info["id"], tool_name=info["name"], args=info["args"], namespace=namespace,
+                        ))
+                tool_call_id = getattr(message, "tool_call_id", None)
+                if tool_call_id and tool_call_id not in rejected:
+                    content = normalize_tool_message_content(getattr(message, "content", ""))
+                    events.append(ToolCompleted(
+                        tool_call_id=tool_call_id, message_id=getattr(message, "id", tool_call_id), content=content,
+                        error=content if content.startswith("ERROR: ") else None, namespace=namespace,
+                    ))
+        return events
+
+    def custom_events(self, data: Any, namespace: tuple[str, ...]) -> list[StreamEvent]:
+        if not isinstance(data, dict) or data.get("type") != CONTEXT_USAGE_EVENT:
+            return []
+        return [ContextUsage(value={key: value for key, value in data.items() if key != "type"}, namespace=namespace)]
 
     def parse_chunk(self, chunk: tuple) -> tuple[tuple[str, ...], str, Any]:
         """Parse (namespace, mode, data) or (mode, data) from astream().

@@ -73,7 +73,8 @@ class Settings(BaseSettings):
 
     # /invoke endpoint persistence
     # When False (default), each /invoke call uses an ephemeral in-memory runtime that is
-    # discarded after the request — no MongoDB writes, no conversation history across calls.
+    # discarded after the request — no durable checkpoints or conversation history.
+    # Calls still coordinate active turns using transient Mongo leases.
     # Set to True to use the shared MongoDB-backed runtime cache, enabling multi-turn
     # conversation history via /invoke at the cost of additional MongoDB load.
     invoke_persist_history: bool = False

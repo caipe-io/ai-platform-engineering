@@ -36,6 +36,7 @@ from langgraph.types import Command
 from llm_wrapper.bedrock_family import resolve_bedrock_client
 from pymongo import MongoClient
 
+from dynamic_agents.auth.token_context import current_user_token
 from dynamic_agents.config import Settings, get_settings
 from dynamic_agents.metrics import metrics as prom_metrics
 from dynamic_agents.models import (
@@ -88,6 +89,7 @@ from dynamic_agents.services.model_capabilities import (
     ModelCapabilities,
     get_model_capabilities,
 )
+from dynamic_agents.services.runtime_storage import resolve_runtime_storage
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
 from dynamic_agents.services.tracing import TracingManager
 
@@ -644,34 +646,25 @@ class AgentRuntime:
             # Use shared MongoClient if provided; otherwise create our own
             self._owns_mongo_client = mongo_client is None
             self._mongo_client = mongo_client or MongoClient(self.settings.mongodb_uri, tz_aware=True)
-            # Resolve checkpoint collection — allows override via backend.config.checkpoint_collection
-            checkpoint_coll = self.settings.checkpoint_collection
-            writes_coll = self.settings.checkpoint_writes_collection
-            checkpoint_ttl = None
-            if config.backend and config.backend.config:
-                if config.backend.config.checkpoint_collection:
-                    checkpoint_coll = config.backend.config.checkpoint_collection
-                    writes_coll = f"{config.backend.config.checkpoint_collection}_writes"
-                if config.backend.config.checkpoint_ttl is not None:
-                    checkpoint_ttl = config.backend.config.checkpoint_ttl
+            storage = resolve_runtime_storage(config, session_id, self.settings)
             # Use MongoDBSaver from langgraph-checkpoint-mongodb for persistent chat history
             self._checkpointer = MongoDBSaver(
                 self._mongo_client,
-                db_name=self.settings.mongodb_database,
-                checkpoint_collection_name=checkpoint_coll,
-                writes_collection_name=writes_coll,
-                ttl=checkpoint_ttl,
+                db_name=storage.database,
+                checkpoint_collection_name=storage.checkpoint_collection,
+                writes_collection_name=storage.checkpoint_writes_collection,
+                ttl=storage.checkpoint_ttl,
             )
             # GridFS-backed store for large file content (avoids 16MB checkpoint limit)
-            fs_ttl = self._resolve_fs_ttl()
             self._store = MongoDBGridFSStore(
-                db=self._mongo_client[self.settings.mongodb_database],
-                bucket_name=self.settings.gridfs_bucket_name,
-                ttl_seconds=fs_ttl,
+                db=self._mongo_client[storage.database],
+                bucket_name=storage.gridfs_bucket_name,
+                ttl_seconds=storage.fs_ttl_seconds,
             )
         self._initialized = False
         self._active_stream_count = 0
         self._is_streaming = False  # guards LRU eviction — never evict mid-stream
+        self._cancelled = False
         self._created_at = time.time()
         self._last_interaction = time.time()
         self.tracing = TracingManager()
@@ -783,9 +776,7 @@ class AgentRuntime:
 
     def _resolve_backend_type(self) -> str:
         """Resolve effective backend type from agent config or server default."""
-        if self.config.backend and self.config.backend.type:
-            return self.config.backend.type
-        return self.settings.default_runtime_backend
+        return resolve_runtime_storage(self.config, self._session_id, self.settings).backend_type
 
     def _resolve_fs_namespace(self) -> tuple[str, str, str]:
         """Resolve filesystem namespace from config override or default.
@@ -794,29 +785,7 @@ class AgentRuntime:
         Default: (agent_id, session_id, "filesystem")
         Override: from backend.config.fs_namespace (list of 3 strings)
         """
-        if self.config.backend and self.config.backend.config and self.config.backend.config.fs_namespace:
-            ns = self.config.backend.config.fs_namespace
-            return (ns[0], ns[1], ns[2])
-        return (self.config.id, self._session_id, "filesystem")
-
-    def _resolve_fs_ttl(self) -> int:
-        """Resolve filesystem TTL from agent config or server default.
-
-        Returns 0 for infinite. Validates against max_fs_ttl_seconds.
-        """
-        ttl = None
-        if self.config.backend and self.config.backend.config:
-            ttl = self.config.backend.config.fs_ttl_seconds
-        if ttl is None:
-            ttl = self.settings.default_fs_ttl_seconds
-
-        max_ttl = self.settings.max_fs_ttl_seconds
-        if max_ttl != 0 and ttl != 0 and ttl > max_ttl:
-            logger.warning(
-                f"Agent '{self.config.name}': fs_ttl_seconds={ttl} exceeds max_fs_ttl_seconds={max_ttl}, capping to max"
-            )
-            ttl = max_ttl
-        return ttl
+        return resolve_runtime_storage(self.config, self._session_id, self.settings).fs_namespace
 
     def _credential_exchange_client(self) -> CredentialExchangeClient | None:
         """Create a credential API client when impersonation token resolution is configured."""
@@ -1615,20 +1584,23 @@ class AgentRuntime:
         self,
         agent_config: DynamicAgentConfig,
         mcp_servers: list[MCPServerConfig],
+        *,
+        user: UserContext | None = None,
+        client_context: ClientContext | None = None,
     ) -> bool:
-        """Check if cached runtime is stale due to config changes.
+        """Rebuild when admitted configuration or caller context changes.
 
-        Returns True if either the agent config or any MCP server has been
-        updated since this runtime was created.
+        Overrides can change without updated_at changing. Tools and rendered
+        prompts also capture the caller and bearer during initialization.
         """
-        if agent_config.updated_at != self._config_updated_at:
-            return True
-        if agent_config.model != self.config.model:
-            return True
-        current_mcp_max = max((s.updated_at for s in mcp_servers), default=datetime.min.replace(tzinfo=timezone.utc))
-        if current_mcp_max != self._mcp_servers_updated_at:
-            return True
-        return False
+        bearer = current_user_token.get() or ((user.obo_jwt or user.access_token) if user else None)
+        return (
+            agent_config != self.config
+            or mcp_servers != self.mcp_servers
+            or user != self._user
+            or client_context != self._client_context
+            or bearer != self._auth_bearer
+        )
 
     # ─────────────────────────────────────────────────────────────────────
     # Streaming / Resume / Interrupt
@@ -1676,16 +1648,16 @@ class AgentRuntime:
 
         return config
 
-    async def stream(
+    async def stream[OutputT](
         self,
         message: str,
         session_id: str,
         user_id: str,
         trace_id: str | None = None,
-        encoder: "StreamEncoder | None" = None,
+        encoder: "StreamEncoder[OutputT] | None" = None,
         files: list[InputFile] | None = None,
         turn_id: str | None = None,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[OutputT, None]:
         """Stream agent response for a user message.
 
         When ``files`` are provided, the user turn is sent as a multimodal
@@ -1693,7 +1665,7 @@ class AgentRuntime:
         document) instead of a plain string, so the model receives the file
         bytes.
 
-        Yields SSE frame strings produced by the encoder.
+        Yields the supplied encoder's output: native events or UI frames.
         """
         observation = _TurnObservation(started_at=time.monotonic(), turn_type="stream")
         implementation = self._stream_impl(
@@ -1710,11 +1682,11 @@ class AgentRuntime:
             async for frame in observed:
                 yield frame
 
-    async def _observe_turn(
+    async def _observe_turn[OutputT](
         self,
-        implementation: AsyncGenerator[str, None],
+        implementation: AsyncGenerator[OutputT, None],
         observation: _TurnObservation,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[OutputT, None]:
         """Record one terminal outcome and saturation state for a turn."""
         self._active_stream_count += 1
         self._is_streaming = True
@@ -1741,7 +1713,7 @@ class AgentRuntime:
 
     def _record_first_response(
         self,
-        encoder: "StreamEncoder",
+        encoder: "StreamEncoder[Any]",
         content_length_before: int,
         observation: _TurnObservation,
     ) -> None:
@@ -1868,17 +1840,17 @@ class AgentRuntime:
         )
         return str(checkpoint_id)
 
-    async def _stream_impl(
+    async def _stream_impl[OutputT](
         self,
         message: str,
         session_id: str,
         user_id: str,
         trace_id: str | None,
-        encoder: "StreamEncoder | None",
+        encoder: "StreamEncoder[OutputT] | None",
         observation: _TurnObservation,
         files: list[InputFile] | None = None,
         turn_id: str | None = None,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[OutputT, None]:
         if not self._initialized:
             await self.initialize()
 
@@ -2028,8 +2000,8 @@ class AgentRuntime:
         for frame in encoder.on_run_finish(run_id, session_id):
             yield frame
 
-    def _emit_interrupt(self, encoder: "StreamEncoder", interrupt_data: dict[str, Any]) -> list[str]:
-        """Emit the appropriate SSE interrupt event based on interrupt type."""
+    def _emit_interrupt[OutputT](self, encoder: "StreamEncoder[OutputT]", interrupt_data: dict[str, Any]) -> list[OutputT]:
+        """Emit the native interrupt data in the supplied output format."""
         return encoder.on_input_required(
             interrupt_id=interrupt_data["interrupt_id"],
             interrupt_type=interrupt_data.get("type", "form_input"),
@@ -2257,14 +2229,14 @@ class AgentRuntime:
         logger.warning("[resume] No pending interrupt found, using simple approve")
         return {"decisions": [{"type": "approve"}]}
 
-    async def resume(
+    async def resume[OutputT](
         self,
         session_id: str,
         user_id: str,
         resume_data: str,
         trace_id: str | None = None,
-        encoder: "StreamEncoder | None" = None,
-    ) -> AsyncGenerator[str, None]:
+        encoder: "StreamEncoder[OutputT] | None" = None,
+    ) -> AsyncGenerator[OutputT, None]:
         """Resume agent execution after a HITL interrupt.
 
         ``resume_data`` is a JSON string with a ``type`` discriminator:
@@ -2287,15 +2259,15 @@ class AgentRuntime:
             async for frame in observed:
                 yield frame
 
-    async def _resume_impl(
+    async def _resume_impl[OutputT](
         self,
         session_id: str,
         user_id: str,
         resume_data: str,
         trace_id: str | None,
-        encoder: "StreamEncoder | None",
+        encoder: "StreamEncoder[OutputT] | None",
         observation: _TurnObservation,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[OutputT, None]:
         if not self._initialized:
             await self.initialize()
 

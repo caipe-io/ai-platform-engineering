@@ -1,8 +1,8 @@
 """MongoDB service for Dynamic Agents.
 
-DA is a pure runtime reader — all config writes (CRUD, seeding) are
-handled by the Next.js gateway. This module provides read-only access
-to agent and MCP server configurations.
+All config writes (CRUD, seeding) are handled by the Next.js gateway.
+This module reads agent and MCP server configurations and provides the
+canonical database collection for native runtime session bindings.
 """
 
 import logging
@@ -20,6 +20,8 @@ from dynamic_agents.models import (
     DynamicAgentConfig,
     MCPServerConfig,
 )
+from dynamic_agents.services.session_bindings import SESSION_BINDINGS_COLLECTION
+from dynamic_agents.services.session_runs import SESSION_RUNS_COLLECTION
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +90,7 @@ def _strip_nulls(doc: dict) -> dict:
 
 
 class MongoDBService:
-    """MongoDB service for reading dynamic agent and MCP server configs."""
+    """Read configuration and access native session state in the canonical database."""
 
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
@@ -139,6 +141,17 @@ class MongoDBService:
         servers_coll = self._get_servers_collection()
         servers_coll.create_index([("enabled", ASCENDING)])
 
+        self.get_session_bindings_collection().create_index(
+            [("agent_id", ASCENDING), ("session_id", ASCENDING)],
+            unique=True,
+            name="native_acp_agent_session_unique",
+        )
+        self.get_session_runs_collection().create_index(
+            [("agent_id", ASCENDING), ("session_id", ASCENDING)],
+            unique=True,
+            name="native_acp_active_turn_unique",
+        )
+
         self._db["autonomous_follow_up_chats"].create_index([
             ("task_id", ASCENDING), ("owner_id", ASCENDING), ("state", ASCENDING),
         ])
@@ -157,6 +170,18 @@ class MongoDBService:
         if self._db is None:
             raise RuntimeError("MongoDB not connected")
         return self._db[self.settings.mcp_servers_collection]
+
+    def get_session_bindings_collection(self) -> Collection:
+        """Native runtime state uses the same database as configuration and history."""
+        if self._db is None:
+            raise RuntimeError("MongoDB not connected")
+        return self._db[SESSION_BINDINGS_COLLECTION]
+
+    def get_session_runs_collection(self) -> Collection:
+        """Cross-worker native turn coordination shares the canonical database."""
+        if self._db is None:
+            raise RuntimeError("MongoDB not connected")
+        return self._db[SESSION_RUNS_COLLECTION]
 
     # =========================================================================
     # Read-only agent access

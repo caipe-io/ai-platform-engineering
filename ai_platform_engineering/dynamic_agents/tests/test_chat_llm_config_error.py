@@ -48,19 +48,15 @@ class _AgentConfigStub:
     name = "Hello World"
 
 
-class _CacheStub:
-    """Stand-in for the runtime cache whose `get_or_create` raises the
-    given exception. Mirrors only what `_generate_sse_events` calls.
-    """
+class _ExecutionStub:
+    """The coordinator reports runtime failures; the HTTP route maps them."""
 
     def __init__(self, exc: Exception) -> None:
         self._exc = exc
 
-    def set_mongo_service(self, _mongo: Any) -> None:
-        pass
-
-    async def get_or_create(self, *_args: Any, **_kwargs: Any):
+    async def stream(self, *_args: Any, **_kwargs: Any):
         raise self._exc
+        yield  # async-generator contract, never reached
 
 
 class _UserStub:
@@ -83,15 +79,14 @@ async def test_llm_config_error_surfaces_actionable_message(monkeypatch):
         "dynamic-agents service."
     )
     wrapped = runtime_cache.RuntimeInitError("hello-world", cause)
-    cache = _CacheStub(wrapped)
-    monkeypatch.setattr(chat, "get_runtime_cache", lambda: cache)
+    service = _ExecutionStub(wrapped)
+    monkeypatch.setattr(chat, "AgentExecutionService", lambda _mongo: service)
 
     encoder = _CapturingEncoder()
 
     frames = await _drain(
         chat._generate_sse_events(
             agent_config=_AgentConfigStub(),
-            mcp_servers=[],
             message="hi",
             session_id="sess-1",
             user=_UserStub(),
@@ -116,15 +111,14 @@ async def test_runtime_init_error_with_unknown_cause_still_uses_generic(monkeypa
     arbitrary internals to the client.
     """
     wrapped = runtime_cache.RuntimeInitError("hello-world", RuntimeError("boom"))
-    cache = _CacheStub(wrapped)
-    monkeypatch.setattr(chat, "get_runtime_cache", lambda: cache)
+    service = _ExecutionStub(wrapped)
+    monkeypatch.setattr(chat, "AgentExecutionService", lambda _mongo: service)
 
     encoder = _CapturingEncoder()
 
     await _drain(
         chat._generate_sse_events(
             agent_config=_AgentConfigStub(),
-            mcp_servers=[],
             message="hi",
             session_id="sess-2",
             user=_UserStub(),
@@ -137,15 +131,14 @@ async def test_runtime_init_error_with_unknown_cause_still_uses_generic(monkeypa
 
 @pytest.mark.asyncio
 async def test_unrelated_exception_still_uses_generic(monkeypatch):
-    cache = _CacheStub(ValueError("something else entirely"))
-    monkeypatch.setattr(chat, "get_runtime_cache", lambda: cache)
+    service = _ExecutionStub(ValueError("something else entirely"))
+    monkeypatch.setattr(chat, "AgentExecutionService", lambda _mongo: service)
 
     encoder = _CapturingEncoder()
 
     await _drain(
         chat._generate_sse_events(
             agent_config=_AgentConfigStub(),
-            mcp_servers=[],
             message="hi",
             session_id="sess-3",
             user=_UserStub(),
