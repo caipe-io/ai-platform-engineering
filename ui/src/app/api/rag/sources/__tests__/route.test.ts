@@ -33,6 +33,7 @@ const mockCreatePublicationRequest = jest.fn();
 const mockRecordAutoApprovedPublication = jest.fn();
 const mockPrepareRagPublication = jest.fn();
 const mockRagPublicationRevision = jest.fn();
+const mockRagPublicationRevisionBasis = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
@@ -125,6 +126,8 @@ jest.mock("@/lib/rag-publication-approval.server", () => ({
     mockPrepareRagPublication(...args),
   ragPublicationRevision: (...args: unknown[]) =>
     mockRagPublicationRevision(...args),
+  ragPublicationRevisionBasis: (...args: unknown[]) =>
+    mockRagPublicationRevisionBasis(...args),
 }));
 
 function request(path: string, init?: RequestInit): NextRequest {
@@ -245,6 +248,7 @@ describe("POST /api/rag/sources", () => {
       };
     });
     mockRagPublicationRevision.mockReturnValue("revision-after-create");
+    mockRagPublicationRevisionBasis.mockReturnValue({ note: "revision-basis-after-create" });
     mockRecordAutoApprovedPublication.mockResolvedValue({ status: "approved" });
     mockCreatePublicationRequest.mockResolvedValue({
       _id: "request-primary",

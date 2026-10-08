@@ -185,7 +185,7 @@ class SlackBotAdminService:
         }
 
     def send_notification(self, *, channel_id: str, text: str) -> dict[str, str]:
-        """Send an operator-configured publication approval notification."""
+        """Send an operator-configured admin notification (approvals, platform alerts, etc.) to a Slack channel."""
 
         normalized_channel_id = channel_id.strip()
         normalized_text = text.strip()

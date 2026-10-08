@@ -35,6 +35,8 @@ export interface JWTIdentity {
    * `preferred_username = "service-account-<clientId>"`.
    */
   isServiceAccount?: boolean;
+  /** Verified `azp` client identity matching Keycloak's service-account username. */
+  serviceAccountClientId?: string;
   /**
    * Tenant/organization identifier. Sourced from `org`, `tenant_id`, or
    * `organization` claims (in priority order). Surfaces from the bearer
@@ -270,8 +272,13 @@ function extractIdentity(payload: JWTPayload): JWTIdentity {
   const preferredUsername =
     typeof payload.preferred_username === 'string' ? payload.preferred_username : '';
   const isServiceAccount = preferredUsername.startsWith('service-account-');
+  const serviceAccountClientId =
+    typeof payload.azp === 'string' && payload.azp.length > 0 &&
+    preferredUsername === `service-account-${payload.azp}`
+    ? payload.azp
+    : undefined;
 
-  return { email, name, groups, sub, org, isServiceAccount };
+  return { email, name, groups, sub, org, isServiceAccount, serviceAccountClientId };
 }
 
 /**

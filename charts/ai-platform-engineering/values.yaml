@@ -13,6 +13,7 @@ tags:
   mcp-jira: false
   mcp-komodor: false
   mcp-pagerduty: false
+  mcp-sharepoint: false
   mcp-slack: false
   mcp-splunk: false
   mcp-victorops: false
@@ -553,6 +554,28 @@ mcp-pagerduty:
     port: 8000
     agentgateway:
       enabled: false
+      protocol: StreamableHTTP
+
+mcp-sharepoint:
+  nameOverride: "mcp-sharepoint"
+  mcpSecrets:
+    requiresSecret: true
+    create: false
+    secretName: "mcp-sharepoint-secret"
+  mcp:
+    image:
+      repository: "ghcr.io/caipe-io/mcp-sharepoint"
+      # tag defaults to .Chart.AppVersion when not specified
+      tag: ""
+      pullPolicy: "IfNotPresent"
+    mode: "http"
+    port: 8000
+    env:
+      MCP_AUTH_MODE: "none"
+    agentgateway:
+      enabled: true
+      id: sharepoint
+      pathPrefix: /mcp/sharepoint
       protocol: StreamableHTTP
 
 mcp-slack:

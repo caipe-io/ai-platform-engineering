@@ -10,6 +10,7 @@ on:
   pull_request:
     paths:
       - 'ai_platform_engineering/dynamic_agents/**'
+      - 'ai_platform_engineering/llm_wrapper/**'
   workflow_dispatch:
     inputs:
       tag_version:
@@ -54,6 +55,7 @@ jobs:
           filters: |
             dynamic_agents:
               - 'ai_platform_engineering/dynamic_agents/**'
+              - 'ai_platform_engineering/llm_wrapper/**'
 
       - name: Set Outputs
         id: set-outputs
@@ -140,7 +142,7 @@ jobs:
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
-          context: ai_platform_engineering/dynamic_agents
+          context: .
           file: ${{ env.DOCKERFILE }}
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}

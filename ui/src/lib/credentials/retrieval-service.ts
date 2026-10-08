@@ -1,4 +1,4 @@
-import { allowedSourceTypesForIngestorServiceAccount } from "@/lib/rbac/ingestor-service-accounts";
+import { ApiError } from "@/lib/api-error";
 import type { ResourceAuthzSession } from "@/lib/rbac/resource-authz";
 
 import { writeCredentialAuditEvent, type CredentialAuditActor } from "./audit";
@@ -18,13 +18,12 @@ export interface CredentialRetrievalServiceOptions {
   expectedAudience: string;
   payloadStore: PayloadStore;
   authorize: AuthorizeSecretUse;
+  /** Platform client allowed to resolve credentials needed by ingestion work. */
+  internalServiceClientId?: string;
   /**
-   * Consulted only for a verified ingestor service-account session, requesting
-   * `internal_service`, that the relationship check already refused — letting
-   * that backend service read a credential the work it has been handed
-   * genuinely depends on. `intended_use` and the caller-type header are both
-   * caller-supplied, so neither can be the gate; the session subject is the
-   * one claim `getAuthFromBearerOrSession` verified against the IdP.
+   * Consulted after a policy denial only for the verified platform service
+   * account requesting `internal_service`. Its client identity comes from the
+   * signed JWT, while request headers and `intended_use` only express intent.
    */
   authorizeByUsage?: (secretRef: string) => Promise<boolean>;
 }
@@ -75,12 +74,14 @@ export class CredentialRetrievalService {
   private readonly expectedAudience: string;
   private readonly payloadStore: PayloadStore;
   private readonly authorize: AuthorizeSecretUse;
+  private readonly internalServiceClientId?: string;
   private readonly authorizeByUsage?: (secretRef: string) => Promise<boolean>;
 
   constructor(options: CredentialRetrievalServiceOptions) {
     this.expectedAudience = options.expectedAudience;
     this.payloadStore = options.payloadStore;
     this.authorize = options.authorize;
+    this.internalServiceClientId = options.internalServiceClientId?.trim() || undefined;
     this.authorizeByUsage = options.authorizeByUsage;
   }
 
@@ -95,15 +96,19 @@ export class CredentialRetrievalService {
     try {
       await this.authorize(input.session, { type: "secret_ref", id: secretRef, action: "use" });
     } catch (error) {
-      // `intended_use` is a value the caller chose; it can express intent but
-      // must never grant it. A caller that isn't a recognized ingestor
-      // service account has no path to this fallback no matter what it sets
-      // that field to.
-      const isRecognizedIngestor =
-        allowedSourceTypesForIngestorServiceAccount(input.session) !== null;
+      // A service account's type alone grants no trust: scoped external
+      // accounts also authenticate with client credentials.
+      const isPlatformService =
+        input.session.isServiceAccount === true &&
+        typeof input.session.sub === "string" &&
+        input.session.sub.trim() !== "" &&
+        this.internalServiceClientId !== undefined &&
+        input.session.serviceAccountClientId === this.internalServiceClientId;
       const allowedByUsage =
+        error instanceof ApiError &&
+        error.statusCode === 403 &&
         intendedUse === "internal_service" &&
-        isRecognizedIngestor &&
+        isPlatformService &&
         this.authorizeByUsage !== undefined &&
         (await this.authorizeByUsage(secretRef));
 

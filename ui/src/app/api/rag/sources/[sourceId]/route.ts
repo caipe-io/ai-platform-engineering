@@ -49,6 +49,7 @@ import {
   changedApprovalGatedSourceUpdate,
   prepareRagPublication,
   ragPublicationRevision,
+  ragPublicationRevisionBasis,
 } from "@/lib/rag-publication-approval.server";
 import {
   deleteAllDataSourceRelationshipTuples,
@@ -1145,6 +1146,7 @@ export const PATCH = withErrorHandler(
       publicationRequest = await createPublicationRequest({
         resource: publication.resource,
         resourceRevision: ragPublicationRevision(updated, effectiveSearch),
+        revisionBasis: ragPublicationRevisionBasis(updated, effectiveSearch),
         requestedState: publication.requestedState as unknown as Record<string, unknown>,
         effectiveState: effectiveSearch as unknown as Record<string, unknown>,
         riskFacts: publication.plan.risk_facts,
@@ -1163,6 +1165,7 @@ export const PATCH = withErrorHandler(
       await recordAutoApprovedPublication({
         resource: publication.resource,
         resourceRevision: ragPublicationRevision(updated, effectiveSearch),
+        revisionBasis: ragPublicationRevisionBasis(updated, effectiveSearch),
         requestedState: publication.requestedState as unknown as Record<string, unknown>,
         effectiveState: effectiveSearch as unknown as Record<string, unknown>,
         riskFacts: publication.plan.risk_facts,

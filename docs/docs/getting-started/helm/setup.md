@@ -218,7 +218,7 @@ helm upgrade --install ai-platform-engineering "${CAIPE_CHART}" \
 | Slack bot | `tags.slack-bot=true` | Slack integration |
 | Webex bot | `tags.webex-bot=true` | Webex integration |
 
-Available MCP tags: `mcp-argocd`, `mcp-aws`, `mcp-backstage`, `mcp-confluence`, `mcp-github`, `mcp-gitlab`, `mcp-jira`, `mcp-komodor`, `mcp-pagerduty`, `mcp-slack`, `mcp-splunk`, `mcp-victorops`, `mcp-webex`, `mcp-netutils`.
+Available MCP tags: `mcp-argocd`, `mcp-aws`, `mcp-backstage`, `mcp-confluence`, `mcp-github`, `mcp-gitlab`, `mcp-jira`, `mcp-komodor`, `mcp-pagerduty`, `mcp-sharepoint`, `mcp-slack`, `mcp-splunk`, `mcp-victorops`, `mcp-webex`, `mcp-netutils`.
 
 ---
 

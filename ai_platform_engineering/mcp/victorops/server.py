@@ -26,6 +26,7 @@ from tools import (
     api_public_v1_chat,
     api_public_v1_team,
     api_public_v2_team_oncall,
+    api_public_v1_oncall_current,
     orgs,
 )
 
@@ -70,6 +71,7 @@ def main():
     mcp.tool()(api_public_v1_chat.post_api_public_v1_chat)
     mcp.tool()(api_public_v1_team.get_api_public_v1_team)
     mcp.tool()(api_public_v2_team_oncall.get_api_public_v2_team_oncall_schedule)
+    mcp.tool()(api_public_v1_oncall_current.get_api_public_v1_oncall_current)
 
     # Run the MCP server
     if MCP_MODE.lower() == "http":

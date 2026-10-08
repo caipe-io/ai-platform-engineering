@@ -1,7 +1,8 @@
-import { _resetIngestorServiceAccountsCacheForTests } from "@/lib/rbac/ingestor-service-accounts";
+import { ApiError } from "@/lib/api-error";
 import { CredentialRetrievalService } from "@/lib/credentials/retrieval-service";
 
 const INGESTOR_SUB = "ingestor-service-account-sub";
+const PLATFORM_CLIENT = "example-platform";
 
 function service() {
   return new CredentialRetrievalService({
@@ -13,16 +14,21 @@ function service() {
   });
 }
 
-function denyingService(authorizeByUsage: jest.Mock) {
+function denyingService(
+  authorizeByUsage: jest.Mock,
+  getSecret = jest.fn(async () => "example-token-value"),
+  error = new ApiError("no direct grant", 403, "secret_ref#use", "pdp_denied"),
+) {
   return new CredentialRetrievalService({
     expectedAudience: "caipe-credential-service",
     payloadStore: {
-      getSecret: jest.fn(async () => "github-token-value"),
+      getSecret,
     },
     authorize: jest.fn(async () => {
-      throw Object.assign(new Error("no direct grant"), { statusCode: 403 });
+      throw error;
     }),
     authorizeByUsage,
+    internalServiceClientId: PLATFORM_CLIENT,
   });
 }
 
@@ -110,74 +116,99 @@ describe("CredentialRetrievalService", () => {
   });
 
   describe("internal_service usage fallback", () => {
-    afterEach(() => {
+    const headers = () => new Headers({
+      authorization: "Bearer service-token",
+      "x-caipe-credential-caller": "internal_service",
+      "x-caipe-credential-audience": "caipe-credential-service",
+    });
+    const body = { secret_ref: "referenced-secret", intended_use: "internal_service" };
+    const platformSession = {
+      sub: INGESTOR_SUB,
+      isServiceAccount: true,
+      serviceAccountClientId: PLATFORM_CLIENT,
+    };
+
+    it.each([
+      ["a human with a matching client claim", { ...platformSession, isServiceAccount: false }],
+      ["a caller without a service-account marker", { ...platformSession, isServiceAccount: undefined }],
+      ["another service account", { ...platformSession, serviceAccountClientId: "external-client" }],
+      ["a service account without a client claim", { ...platformSession, serviceAccountClientId: undefined }],
+      ["a service account without a subject", { ...platformSession, sub: undefined }],
+      ["a service account with an empty subject", { ...platformSession, sub: " " }],
+    ])("denies %s even with spoofed internal-service headers", async (_label, session) => {
+      const authorizeByUsage = jest.fn(async () => true);
+      const getSecret = jest.fn(async () => "example-token-value");
+      const retrieval = denyingService(authorizeByUsage, getSecret);
+
+      await expect(retrieval.retrieve({ headers: headers(), body, session }))
+        .rejects.toThrow("no direct grant");
+      expect(authorizeByUsage).not.toHaveBeenCalled();
+      expect(getSecret).not.toHaveBeenCalled();
+    });
+
+    it("allows the verified platform service without a subject allow-list", async () => {
+      const previous = process.env.RAG_INGESTOR_SERVICE_ACCOUNTS;
       delete process.env.RAG_INGESTOR_SERVICE_ACCOUNTS;
-      _resetIngestorServiceAccountsCacheForTests();
+      try {
+        const authorizeByUsage = jest.fn(async () => true);
+        const retrieval = denyingService(authorizeByUsage);
+
+        await expect(retrieval.retrieve({ headers: headers(), body, session: platformSession }))
+          .resolves.toEqual({ credential: "example-token-value", secret_ref: "referenced-secret" });
+        expect(authorizeByUsage).toHaveBeenCalledWith("referenced-secret");
+      } finally {
+        if (previous === undefined) delete process.env.RAG_INGESTOR_SERVICE_ACCOUNTS;
+        else process.env.RAG_INGESTOR_SERVICE_ACCOUNTS = previous;
+      }
     });
 
-    it("denies the fallback for a caller that is not a recognized ingestor service account, even when authorizeByUsage would allow it", async () => {
-      process.env.RAG_INGESTOR_SERVICE_ACCOUNTS = JSON.stringify({ [INGESTOR_SUB]: ["web_url"] });
-      _resetIngestorServiceAccountsCacheForTests();
-      const authorizeByUsage = jest.fn(async () => true);
-      const retrieval = denyingService(authorizeByUsage);
+    it("denies a credential without source usage or an active preview grant", async () => {
+      const authorizeByUsage = jest.fn(async () => false);
+      const getSecret = jest.fn(async () => "example-token-value");
+      const retrieval = denyingService(authorizeByUsage, getSecret);
 
-      await expect(
-        retrieval.retrieve({
-          headers: new Headers({
-            authorization: "Bearer stolen-or-own-token",
-            "x-caipe-credential-caller": "internal_service",
-            "x-caipe-credential-audience": "caipe-credential-service",
-          }),
-          body: { secret_ref: "someone-elses-secret", intended_use: "internal_service" },
-          // A regular authenticated user, not a service account, and not in
-          // the allow-list even if it were one.
-          session: { sub: "human-user-sub", isServiceAccount: false },
-        }),
-      ).rejects.toThrow("no direct grant");
-
-      expect(authorizeByUsage).not.toHaveBeenCalled();
-    });
-
-    it("denies the fallback for an unrecognized service account", async () => {
-      process.env.RAG_INGESTOR_SERVICE_ACCOUNTS = JSON.stringify({ [INGESTOR_SUB]: ["web_url"] });
-      _resetIngestorServiceAccountsCacheForTests();
-      const authorizeByUsage = jest.fn(async () => true);
-      const retrieval = denyingService(authorizeByUsage);
-
-      await expect(
-        retrieval.retrieve({
-          headers: new Headers({
-            authorization: "Bearer some-other-services-token",
-            "x-caipe-credential-caller": "internal_service",
-            "x-caipe-credential-audience": "caipe-credential-service",
-          }),
-          body: { secret_ref: "someone-elses-secret", intended_use: "internal_service" },
-          session: { sub: "some-other-service-sub", isServiceAccount: true },
-        }),
-      ).rejects.toThrow("no direct grant");
-
-      expect(authorizeByUsage).not.toHaveBeenCalled();
-    });
-
-    it("allows a recognized ingestor service account through the fallback", async () => {
-      process.env.RAG_INGESTOR_SERVICE_ACCOUNTS = JSON.stringify({ [INGESTOR_SUB]: ["web_url"] });
-      _resetIngestorServiceAccountsCacheForTests();
-      const authorizeByUsage = jest.fn(async () => true);
-      const retrieval = denyingService(authorizeByUsage);
-
-      await expect(
-        retrieval.retrieve({
-          headers: new Headers({
-            authorization: "Bearer ingestor-token",
-            "x-caipe-credential-caller": "internal_service",
-            "x-caipe-credential-audience": "caipe-credential-service",
-          }),
-          body: { secret_ref: "referenced-secret", intended_use: "internal_service" },
-          session: { sub: INGESTOR_SUB, isServiceAccount: true },
-        }),
-      ).resolves.toEqual({ credential: "github-token-value", secret_ref: "referenced-secret" });
-
+      await expect(retrieval.retrieve({ headers: headers(), body, session: platformSession }))
+        .rejects.toThrow("no direct grant");
       expect(authorizeByUsage).toHaveBeenCalledWith("referenced-secret");
+      expect(getSecret).not.toHaveBeenCalled();
+    });
+
+    it.each(["mcp_server", "provider_exchange"])("denies usage fallback for %s", async (intended_use) => {
+      const authorizeByUsage = jest.fn(async () => true);
+      const retrieval = denyingService(authorizeByUsage);
+
+      await expect(retrieval.retrieve({
+        headers: headers(), body: { ...body, intended_use }, session: platformSession,
+      })).rejects.toThrow("no direct grant");
+      expect(authorizeByUsage).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when the policy service is unavailable", async () => {
+      const authorizeByUsage = jest.fn(async () => true);
+      const error = new ApiError("policy unavailable", 503, "AUTHZ_UNAVAILABLE");
+      const getSecret = jest.fn(async () => "example-token-value");
+      const retrieval = denyingService(authorizeByUsage, getSecret, error);
+
+      await expect(retrieval.retrieve({ headers: headers(), body, session: platformSession }))
+        .rejects.toBe(error);
+      expect(authorizeByUsage).not.toHaveBeenCalled();
+      expect(getSecret).not.toHaveBeenCalled();
+    });
+
+    it("denies usage fallback when no internal-service client is configured", async () => {
+      const authorizeByUsage = jest.fn(async () => true);
+      const getSecret = jest.fn(async () => "example-token-value");
+      const retrieval = new CredentialRetrievalService({
+        expectedAudience: "caipe-credential-service",
+        payloadStore: { getSecret },
+        authorize: async () => { throw new ApiError("no direct grant", 403); },
+        authorizeByUsage,
+      });
+
+      await expect(retrieval.retrieve({ headers: headers(), body, session: platformSession }))
+        .rejects.toThrow("no direct grant");
+      expect(authorizeByUsage).not.toHaveBeenCalled();
+      expect(getSecret).not.toHaveBeenCalled();
     });
   });
 });

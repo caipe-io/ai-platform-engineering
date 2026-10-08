@@ -1,3 +1,51 @@
+## 1.3.0-rc.6 (2026-10-06)
+
+### Fix
+
+- **platform**: restore adaptive reasoning and chat history filters (#2878)
+
+## 1.3.0-rc.5 (2026-10-05)
+
+### Feat
+
+- **ui**: forward platform admin notifications to Slack (#2865)
+- **sharepoint**: refresh read-only MCP prebuild on latest main (#2860)
+
+### Fix
+
+- **rag**: authorize ingestion credential reads by verified platform identity (#2876)
+- **rag-stack**: preserve gp2 default with default StorageClass option (#2088)
+- **dynamic-agents**: raise MCP tool-load retry budget to 5 attempts (#2786)
+
+### Refactor
+
+- **dynamic-agents**: remove cnoe-agent-utils, add a shared llm_wrapper (#2820)
+
+## 1.3.0-rc.4 (2026-10-01)
+
+### Feat
+
+- **publication-approval**: confirm drift instead of superseding on approve (#2849)
+- **eks**: add Auto Mode RAG pool and PodDisruptionBudgets (#1446)
+- **rag**: ingest web pages behind header-based authentication (#2808)
+
+### Fix
+
+- **rag**: correct fetch_document tool name in truncation hint (#2856)
+- **ui**: fix team admin dialog search and layout issues (#2842)
+- **security**: report failed post-release Grype dispatch (#2847)
+- **deps**: resolve current Dependabot alerts (#2845)
+- **caipe-ui**: show session-expired hint for auth-interrupted turns (#1764)
+- **rag**: pin tenacity dependency (#2844)
+- **ci**: grant PR write access for size labeling (#2835)
+- **autonomous**: correct owner token forward to agent and mcp (#2708)
+- **webex-meetings-mcp**: fix timezone issue (#2838)
+- **rag**: retry ingestor POST on 429, split batch on 413 (#2600)
+
+### Refactor
+
+- **authz**: route agent execution through fresh CAS decisions (#2813)
+
 ## 1.3.0-rc.3 (2026-09-24)
 
 ## 1.3.0-rc.2 (2026-09-24)

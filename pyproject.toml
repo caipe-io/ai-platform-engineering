@@ -1,6 +1,6 @@
 [project]
 name = "ai-platform-engineering"
-version = "1.3.0-rc.3"
+version = "1.3.0-rc.6"
 description = "Multi-Agent Collaboration & Workflow Automation - AI agents collaborating across tools and teams to deliver high quality results"
 authors = [
   {name = "CAIPE Contributors"}
@@ -16,7 +16,6 @@ dependencies = [
     # `ai_platform_engineering/agents/*/uv.lock` so the platform image
     # cannot drift from sub-agents.
     "cachetools==7.1.7",
-    "cnoe-agent-utils==0.5.0",
     "cryptography==50.0.1",
     "fastapi==0.141.1",
     "httpx==0.28.1",
@@ -28,7 +27,7 @@ dependencies = [
     "langmem==0.0.30",
     "prometheus-client==0.26.0",
     "pydantic==2.13.4",
-    "pyjwt==2.14.0",
+    "pyjwt==2.15.1",
     "requests==2.34.2",
     # Dynamic agents are built on the upstream deepagents library.
     "deepagents==0.6.8",
@@ -63,11 +62,6 @@ ignore = ["F403"]
 [tool.ruff.lint.per-file-ignores]
 "ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/webloader/loader/scrapy_worker.py" = ["E402"]
 "ai_platform_engineering/knowledge_bases/rag/ingestors/src/ingestors/webloader/loader/worker_pool.py" = ["E402"]
-# Seed script contains intentionally long message strings (prose/code for MongoDB test data).
-"scripts/seed-deprecated-agent-conversations.py" = ["E501"]
-
-
-
 
 [tool.commitizen]
 name = "cz_conventional_commits"

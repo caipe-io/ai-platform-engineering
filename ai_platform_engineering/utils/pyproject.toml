@@ -11,8 +11,8 @@ requires-python = ">=3.14,<3.15"
 dependencies = [
     "httpx==0.28.1",
     "pydantic==2.13.4",
-    "pyjwt==2.14.0",
-    "pymongo==4.16.0",
+    "pyjwt==2.15.1",
+    "pymongo==4.18.2",
     "python-dotenv==1.2.2",
     "requests==2.34.2",
 ]

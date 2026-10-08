@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # Configure LLM Providers in a Docker Compose setup
 
-CAIPE leverages the [`cnoe-io/cnoe-agent-utils`](https://github.com/cnoe-io/cnoe-agent-utils) utility library to configure the `LLMFactory` class, enabling dynamic switching between LLM providers.
+CAIPE builds chat models through `ai_platform_engineering/llm_wrapper`, which maps the `LLM_PROVIDER` values below onto LangChain provider integrations. Switching providers is an environment change; no code change is needed.
 
 > Refer to the [.env.example](https://github.com/caipe-io/ai-platform-engineering/blob/main/.env.example) file for sample environment variable configurations.
 
