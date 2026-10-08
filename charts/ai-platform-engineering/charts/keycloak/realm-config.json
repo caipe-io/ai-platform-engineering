@@ -149,7 +149,9 @@
         "http://localhost:8085",
         "http://localhost:8085/*",
         "http://127.0.0.1:8085",
-        "http://127.0.0.1:8085/*"
+        "http://127.0.0.1:8085/*",
+        "cursor://anysphere.cursor-mcp/oauth/callback",
+        "cursor://anysphere.cursor-mcp/*"
       ],
       "webOrigins": [
         "http://localhost:8085",
@@ -288,6 +290,41 @@
     }
   ],
   "clientScopes": [
+    {
+      "name": "basic",
+      "description": "OpenID Connect scope for all basic token claims",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "auth_time",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "AUTH_TIME",
+            "id.token.claim": "true",
+            "introspection.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "auth_time",
+            "jsonType.label": "long"
+          }
+        },
+        {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "consentRequired": false,
+          "config": {
+            "introspection.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
     {
       "name": "profile",
       "description": "OpenID Connect built-in scope: profile",
@@ -717,6 +754,27 @@
         "config": {}
       },
       {
+        "name": "Allowed Client Scopes",
+        "providerId": "allowed-client-templates",
+        "subType": "anonymous",
+        "subComponents": {},
+        "config": {
+          "allow-default-scopes": [
+            "true"
+          ],
+          "allowed-client-scopes": [
+            "basic",
+            "openid",
+            "profile",
+            "email",
+            "roles",
+            "groups",
+            "org",
+            "offline_access"
+          ]
+        }
+      },
+      {
         "name": "Max Clients Limit",
         "providerId": "max-clients",
         "subType": "anonymous",
@@ -773,6 +831,58 @@
             "saml-user-attribute-mapper"
           ]
         }
+      }
+    ]
+  },
+  "clientProfiles": {
+    "profiles": [
+      {
+        "name": "mcp-public-pkce",
+        "description": "Require PKCE S256 for anonymously registered public MCP clients",
+        "executors": [
+          {
+            "executor": "pkce-enforcer",
+            "configuration": {
+              "auto-configure": true
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "clientPolicies": {
+    "policies": [
+      {
+        "name": "mcp-public-dcr-pkce",
+        "description": "Apply PKCE S256 to anonymous OIDC registrations for public MCP clients",
+        "enabled": true,
+        "conditions": [
+          {
+            "condition": "client-updater-context",
+            "configuration": {
+              "update-client-source": [
+                "ByAnonymous"
+              ]
+            }
+          },
+          {
+            "condition": "client-type",
+            "configuration": {
+              "protocol": "openid-connect"
+            }
+          },
+          {
+            "condition": "client-access-type",
+            "configuration": {
+              "type": [
+                "public"
+              ]
+            }
+          }
+        ],
+        "profiles": [
+          "mcp-public-pkce"
+        ]
       }
     ]
   },
