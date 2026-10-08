@@ -17,7 +17,9 @@ import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+import httpx
 import pytest
+
 from dynamic_agents.auth.token_context import current_user_token
 from dynamic_agents.models import MCPServerConfig, TransportType
 from dynamic_agents.services import mcp_client
@@ -39,6 +41,10 @@ class _CapturingHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(b'{"ok":true}')
+
+    def do_POST(self) -> None:  # noqa: N802
+        self.__class__.captured = {k.lower(): v for k, v in self.headers.items()}
+        self.send_error(500, "Unexpected MCP request")
 
     def log_message(self, *_a, **_kw):
         pass
@@ -216,6 +222,65 @@ def test_cas_context_never_downgrades_when_identity_or_key_missing(monkeypatch: 
     monkeypatch.setenv("CAIPE_AGENT_CONTEXT_HMAC_SECRET", secret)
     with pytest.raises(mcp_client.McpCredentialUnavailableError):
         build_agent_context_headers("example-agent", token=token)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "caller_token,secret,expected_error",
+    [
+        (None, "test-key-" * 4, "A valid gateway caller and execution-context key are required"),
+        ("invalid", "test-key-" * 4, "A valid gateway caller and execution-context key are required"),
+        (_caller_token("test-user"), "", "Gateway execution-context signing is not configured"),
+    ],
+)
+async def test_cas_transport_credential_failure_is_clear_and_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+    caller_token: str | None,
+    secret: str,
+    expected_error: str,
+) -> None:
+    """Real MCP task-group wrapping must preserve the cause and fail closed."""
+    monkeypatch.setenv("CAIPE_GATEWAY_CAS_ENABLED", "true")
+    monkeypatch.setenv("CAIPE_AGENT_CONTEXT_HMAC_SECRET", secret)
+    attempted_requests: list[httpx.Request] = []
+    factory = build_httpx_client_factory("example-agent")
+
+    async def record_attempt(request: httpx.Request) -> None:
+        attempted_requests.append(request)
+
+    def tracked_factory(
+        headers: dict[str, str] | None = None,
+        timeout: httpx.Timeout | None = None,
+        auth: httpx.Auth | None = None,
+    ) -> httpx.AsyncClient:
+        client = factory(headers=headers, timeout=timeout, auth=auth)
+        client.event_hooks["request"].insert(0, record_attempt)
+        return client
+
+    _CapturingHandler.captured = {}
+    ref = current_user_token.set(caller_token)
+    try:
+        with _running_server() as base:
+            monkeypatch.setenv("AGENT_GATEWAY_URL", base)
+            tools, failed, errors, statuses = await asyncio.wait_for(
+                mcp_client.get_tools_with_resilience({
+                    "example": {
+                        "transport": "streamable_http",
+                        "url": base + "/mcp/example",
+                        "httpx_client_factory": tracked_factory,
+                    },
+                }),
+                timeout=3,
+            )
+    finally:
+        current_user_token.reset(ref)
+
+    assert tools == []
+    assert failed == ["example"]
+    assert errors == {"example": expected_error}
+    assert statuses == {"example": "permanent"}
+    assert len(attempted_requests) == 1
+    assert _CapturingHandler.captured == {}
 
 
 @pytest.mark.asyncio

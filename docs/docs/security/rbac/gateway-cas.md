@@ -71,6 +71,9 @@ public self-check API, where HTTP 200 can legitimately contain a DENY result.
   internal HTTP: it does **not** automatically provide network isolation or TLS.
   Production requires authenticated TLS/mTLS and network restrictions.
   A stolen gateway credential permits caller assertions; protect and rotate it.
+  An on-path actor can also forge an ALLOW response: protect response integrity,
+  not just the token. Unprotected HTTP is limited to isolated dev testing with
+  explicit risk acceptance. Verify any service-mesh protection; do not assume it.
 - Signed execution context binds caller type/ID, audience, agent or explicit
   direct mode, and a maximum five-minute lifetime. It proves context, not grants.
 - Only ALLOW gets HTTP 200. Invalid requests, authentication failures, denials,

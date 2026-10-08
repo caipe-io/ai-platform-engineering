@@ -70,7 +70,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       "AGENT_CONTEXT_UNAVAILABLE",
     );
   }
-  return successResponse({ headers, server_ids: serverIds,
-    ...(gatewayCasEnabled() ? { expires_at: new Date(Date.now() + 300_000).toISOString() } : {}),
+  // Read the expiry from the server-signed payload, not a second clock read.
+  let expiresAt: string | undefined;
+  if (gatewayCasEnabled()) {
+    const context = JSON.parse(
+      Buffer.from(headers["X-CAIPE-Agent-Context"], "base64url").toString("utf8"),
+    ) as { exp: number };
+    expiresAt = new Date(context.exp * 1000).toISOString();
+  }
+  return successResponse({
+    headers,
+    server_ids: serverIds,
+    ...(expiresAt === undefined ? {} : { expires_at: expiresAt }),
   });
 });

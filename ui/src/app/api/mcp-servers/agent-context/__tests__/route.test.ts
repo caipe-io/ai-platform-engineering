@@ -98,6 +98,7 @@ describe("POST /api/mcp-servers/agent-context", () => {
   });
 
   afterEach(() => {
+    jest.restoreAllMocks();
     delete process.env.CAIPE_AGENT_CONTEXT_HMAC_SECRET;
     delete process.env.CAIPE_GATEWAY_CAS_ENABLED;
   });
@@ -109,6 +110,8 @@ describe("POST /api/mcp-servers/agent-context", () => {
     mockGetCollection.mockResolvedValue({ find: jest.fn().mockReturnValue({ toArray }) });
     mockFilterResourcesByPermission.mockImplementation(async (_session, items) => items);
     const { POST } = await import("../route");
+    // Fractional seconds must not make the advertised expiry later than exp.
+    jest.spyOn(Date, "now").mockReturnValue(1_000_123);
     const response = await POST(request());
     const body = await response.json();
     expect(response.status).toBe(200);
@@ -116,7 +119,7 @@ describe("POST /api/mcp-servers/agent-context", () => {
     expect(payload).toMatchObject({ version: 1, audience: "caipe-gateway", kind: "direct", caller: { type: "user", id: session.sub } });
     expect(payload.agent_id).toBeUndefined();
     expect(payload.exp - payload.iat).toBe(300);
-    expect(Date.parse(body.data.expires_at)).toBeGreaterThan(Date.now());
+    expect(Date.parse(body.data.expires_at)).toBe(payload.exp * 1000);
     expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
   });
 
@@ -140,6 +143,7 @@ describe("POST /api/mcp-servers/agent-context", () => {
     // an unbounded lifetime, since the exp is the only lifetime bound on a
     // local context.
     expect(payload.exp - payload.iat).toBe(60 * 60 * 8);
+    expect(body.data.expires_at).toBeUndefined();
 
     // No OpenFGA tuples are granted or revoked — a "local" context carries no
     // delegated authority to bound, so there's nothing to write.
