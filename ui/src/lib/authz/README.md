@@ -70,7 +70,38 @@ Grant or revoke team access (caller needs management permission):
 TypeScript contracts: `access-contract.ts`. HTTP handlers: `access-http.ts`.
 Routes are thin entry points. Existing `/api/authz/v1/*` consumers are unchanged;
 their eventual migration should remove obsolete paths rather than maintain
-permanent aliases. Trusted gateway/delegation APIs are not implemented here.
+permanent aliases. The gateway-only contract below is separate from this self-check API.
+
+## Gateway authorization foundation
+
+`/api/access/gateway/check` is an additive, workload-only HTTP authorization
+adapter. Existing gateway configuration and signed-context producers are
+**unchanged**; do not point a deployment at this endpoint yet.
+
+- `authorizeGateway()` owns gateway/server, caller-to-agent, agent-to-tool and
+  caller-to-tool checks. It uses the shared OpenFGA engine with fresh reads.
+- The adapter requires a dedicated `CAIPE_GATEWAY_AUTHZ_TOKEN` bearer credential
+  of at least 32 characters. Browser cookies and ordinary user tokens are not
+  accepted. This token authenticates the gateway, not the effective caller.
+- Trusted headers carry the JWT-verified `x-caipe-caller-sub`, optional
+  `x-caipe-caller-username`, and actual `x-caipe-mcp-path`. Service accounts retain
+  the existing `service-account-` username classification. Gateway configuration
+  must derive these assertions itself, never forward client-provided values.
+- POST forwards the original single JSON-RPC request, bounded to 64 KiB. GET and
+  DELETE are MCP transport operations. Only **ALLOW is HTTP 200**; denial is 403,
+  unavailable dependencies/configuration are 503, and invalid input is 400.
+  Bad workload credentials are 401; oversized bodies are 413; other methods 405.
+- Tool execution requires a caller-bound dynamic or explicit-direct context from
+  `signGatewayContext()`, signed with `CAIPE_AGENT_CONTEXT_HMAC_SECRET` (at least
+  32 characters). Context binds caller type/ID, audience and agent for at most
+  five minutes. It carries no grants and is incompatible with the old format.
+- Optional `CAIPE_AGENT_CONTEXT_PREVIOUS_HMAC_SECRET` supports coordinated key
+  rotation. Remove it after old issuers stop and their contexts expire. Inject
+  high-entropy keys through the deployment's secret mechanism; do not reuse the
+  gateway credential, discovery token or `NEXTAUTH_SECRET`.
+
+Policy, audit limitations, native proof and cutover prerequisites:
+[Gateway authorization through CAS](../../../../docs/docs/security/rbac/gateway-cas.md).
 
 ## OpenFGA transport
 
