@@ -228,6 +228,12 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | dynamic-agents.service.metricsPort | int | `0` |  |
 | dynamic-agents.service.port | int | `8001` |  |
 | extraDeployMap | object | `{}` |  |
+| global.agentgateway.cas.contextSecret.key | string | `"CAIPE_AGENT_CONTEXT_HMAC_SECRET"` |  |
+| global.agentgateway.cas.contextSecret.name | string | `""` |  |
+| global.agentgateway.cas.enabled | bool | `false` |  |
+| global.agentgateway.cas.existingSecret.key | string | `"CAIPE_GATEWAY_AUTHZ_TOKEN"` |  |
+| global.agentgateway.cas.existingSecret.name | string | `""` |  |
+| global.agentgateway.cas.host | string | `""` |  |
 | global.agentgateway.enabled | bool | `true` |  |
 | global.agentgateway.extAuth.enabled | bool | `false` |  |
 | global.agentgateway.extAuth.port | int | `9100` |  |

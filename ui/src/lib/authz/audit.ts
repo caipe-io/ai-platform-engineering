@@ -27,6 +27,7 @@ import type {
   Subject,
   TrustedAuthorizeContext,
 } from "./contract";
+import type { GatewayRequest, GatewayResult } from "./gateway-contract";
 
 const SUBJECT_SALT = process.env.AUDIT_SUBJECT_SALT ?? "caipe-098-audit";
 
@@ -57,6 +58,11 @@ export interface CasDecisionEvent {
   source: "cas";
   trace_id?: string;
   span_id?: string;
+  actor_ref?: string;
+  gateway_operation?: string;
+  agent_ref?: string;
+  failed_gate?: string;
+  decision_id?: string;
 }
 
 /**
@@ -199,6 +205,9 @@ function rollupKey(event: CasDecisionEvent): string {
     event.reason_code,
     event.decision_via ?? "",
     event.workflow_run_id ?? "",
+    event.actor_ref ?? "",
+    event.gateway_operation ?? "",
+    event.agent_ref ?? "",
   ]);
 }
 
@@ -208,8 +217,10 @@ export function flushAllowRollups(): void {
   const pending = Array.from(allowRollups.values());
   allowRollups.clear();
   for (const entry of pending) {
+    const sample = { ...entry.sample };
+    delete sample.decision_id; // A rollup is not one request's decision receipt.
     writeAuditEvent({
-      ...entry.sample,
+      ...sample,
       audit_event_id: randomUUID(),
       ts: entry.windowEnd,
       // This row summarizes `count` decisions, not one request, so there is no
@@ -251,6 +262,20 @@ export function emitDecisionAudit(
     return;
   }
   writeAuditEvent(event as unknown as Record<string, unknown>);
+}
+
+/** One completed gateway decision, not one row per internal graph check. */
+export function emitGatewayDecisionAudit(req: GatewayRequest, result: GatewayResult, ctx: DecisionContext): void {
+  const resource: Resource = req.toolName ? { type: "tool", id: `${req.serverId}/${req.toolName}` } :
+    { type: "mcp_server", id: req.serverId };
+  const event: CasDecisionEvent = {
+    ...buildDecisionEvent(req.caller, resource, "call", result, ctx),
+    actor_ref: "workload:agentgateway", gateway_operation: req.operation,
+    decision_id: result.decision_id, ...(result.failed_gate ? { failed_gate: result.failed_gate } : {}),
+    ...(result.agent_id ? { agent_ref: `agent:${result.agent_id}` } : {}),
+  };
+  if (event.outcome === "allow" && !fullFidelityAllows()) recordAllow(event);
+  else writeAuditEvent(event as unknown as Record<string, unknown>);
 }
 
 export function buildBatchDecisionEvent(

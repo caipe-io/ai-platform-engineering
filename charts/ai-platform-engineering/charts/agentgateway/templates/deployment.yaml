@@ -26,6 +26,7 @@ spec:
     spec:
       {{- $agwGlobal := ((.Values.global).agentgateway) | default dict }}
       {{- $static := $agwGlobal.static | default dict }}
+      {{- $cas := $agwGlobal.cas | default dict }}
       {{- $cb := $static.configBridge | default dict }}
       {{- /*
       The config-bridge dynamically reconciles runtime-added MCP servers
@@ -119,6 +120,11 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 30
           volumeMounts:
+            {{- if $cas.enabled }}
+            - name: cas-credential
+              mountPath: /etc/caipe-gateway-auth
+              readOnly: true
+            {{- end }}
             {{- if $cbEnabled }}
             - name: generated-config
               mountPath: /generated
@@ -138,6 +144,12 @@ spec:
           image: "{{ $cbImageRepo }}:{{ $cbImageTag }}"
           imagePullPolicy: {{ $cbImagePull }}
           env:
+            {{- if $cas.enabled }}
+            - name: CAIPE_GATEWAY_CAS_ENABLED
+              value: "true"
+            - name: CAIPE_GATEWAY_CAS_HOST
+              value: {{ $cas.host | default (printf "%s-caipe-ui:3000" .Release.Name) | quote }}
+            {{- end }}
             - name: AGENTGATEWAY_CONFIG_PATH
               value: /generated/config.yaml
             - name: AGENTGATEWAY_BOOTSTRAP_CONFIG_PATH
@@ -181,6 +193,15 @@ spec:
             {{- toYaml ($cb.resources | default .Values.resources) | nindent 12 }}
         {{- end }}
       volumes:
+        {{- if $cas.enabled }}
+        - name: cas-credential
+          secret:
+            secretName: {{ required "Gateway CAS requires cas.existingSecret.name" ($cas.existingSecret).name | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ ($cas.existingSecret).key | default "CAIPE_GATEWAY_AUTHZ_TOKEN" | quote }}
+                path: token
+        {{- end }}
         {{- if $cbEnabled }}
         - name: generated-config
           emptyDir: {}

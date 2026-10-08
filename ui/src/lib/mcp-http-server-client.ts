@@ -6,6 +6,9 @@
 
 import crypto from "crypto";
 
+import { signGatewayContext, gatewayCasEnabled } from "@/lib/authz";
+import { resolveCaller } from "@/lib/authz/http";
+
 import { ApiError } from "@/lib/api-middleware";
 import { resolveMcpHeaderCredentials } from "@/lib/mcp-credential-headers";
 import { writeOpenFgaTuples, type OpenFgaTupleKey } from "@/lib/rbac/openfga";
@@ -32,6 +35,8 @@ const AGENT_CONTEXT_TTL_SECONDS: Record<AgentContextKind, number> = {
 type AuthSession = {
   sub?: string;
   accessToken?: string;
+  isServiceAccount?: boolean;
+  principalType?: "oidc_user" | "service_account" | "catalog_api_key" | "skills_api_key";
 } | null | undefined;
 
 function parseSseJson(text: string): unknown | null {
@@ -71,7 +76,15 @@ export function localAgentContextId(session: AuthSession): string {
 export function buildAgentContextHeaders(
   agentId: string,
   kind: AgentContextKind = "dynamic",
+  session?: AuthSession,
 ): Record<string, string> {
+  if (gatewayCasEnabled()) {
+    const caller = resolveCaller(session);
+    if (!caller) throw new ApiError("Verified gateway caller is required", 401, "MCP_AUTH_REQUIRED");
+    // BFF diagnostics and local clients act directly as the caller, not a fake agent.
+    const signed = signGatewayContext(caller);
+    return { "X-CAIPE-Agent-Context": signed.encoded, "X-CAIPE-Agent-Context-Signature": signed.signature };
+  }
   const secret = process.env.CAIPE_AGENT_CONTEXT_HMAC_SECRET?.trim();
   if (!secret) return {};
 
@@ -237,7 +250,7 @@ async function buildMcpRequestHeaders(input: {
     });
     return {
       ...headers,
-      ...buildAgentContextHeaders(diagnosticAgentId(input.serverId, input.session)),
+      ...(input.viaAgentGateway ? buildAgentContextHeaders(diagnosticAgentId(input.serverId, input.session), "dynamic", input.session) : {}),
     };
   } catch (error) {
     if (error instanceof Error && error.message === "MCP_AUTH_REQUIRED") {
@@ -259,7 +272,7 @@ export async function listHttpMcpTools(input: {
 }): Promise<{ tools: MCPToolInfo[]; sessionId?: string }> {
   const viaAgentGateway = isAgentGatewayEndpoint(input.server);
   const diagnosticAgent = diagnosticAgentId(input.serverId, input.session);
-  const diagnosticTuples = viaAgentGateway
+  const diagnosticTuples = viaAgentGateway && !gatewayCasEnabled()
     ? await grantDiagnosticAgentAccess(input.serverId, diagnosticAgent, input.session)
     : [];
 

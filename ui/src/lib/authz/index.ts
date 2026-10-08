@@ -15,9 +15,11 @@ import type {
   Subject,
 } from "./contract";
 import { compose } from "./compose";
-import { emitBatchDecisionAudit, emitDecisionAudit, emitGrantAudit, emitListObjectsDecisionAudit } from "./audit";
+import { emitBatchDecisionAudit, emitDecisionAudit, emitGrantAudit, emitListObjectsDecisionAudit, emitGatewayDecisionAudit } from "./audit";
 import { createOpenFgaEngine, createOpenFgaAdmin } from "./engines/openfga";
 import { workflowDelegationPreCheck } from "./domains/workflow";
+import { evaluateGateway } from "./domains/gateway";
+import type { GatewayRequest, GatewayResult } from "./gateway-contract";
 
 // ─── Singleton engine (module-level, reused across requests) ──────────────────
 
@@ -26,6 +28,16 @@ const engine = compose(createOpenFgaEngine(), {
 });
 
 const admin = createOpenFgaAdmin();
+
+/** Trusted gateway boundary only; self-check callers cannot select a subject. */
+export async function authorizeGateway(req: GatewayRequest, ctx: DecisionContext = {}): Promise<GatewayResult> {
+  const result = await evaluateGateway(req);
+  emitGatewayDecisionAudit(req, result, ctx);
+  return result;
+}
+
+export { signGatewayContext, gatewayCasEnabled } from "./gateway-context";
+export type { GatewayRequest, GatewayResult } from "./gateway-contract";
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 

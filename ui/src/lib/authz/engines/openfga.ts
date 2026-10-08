@@ -240,6 +240,28 @@ async function runCheck(req: AuthorizeRequest, fresh = false): Promise<Authorize
   }
 }
 
+/** Private gateway adapter: agents are allowed here, never as public API subjects. */
+export async function checkGatewayPermission(
+  subject: Subject | { type: "agent"; id: string },
+  relation: "can_call" | "can_use" | "can_invoke" | "can_search",
+  object: string,
+  signal: AbortSignal,
+): Promise<AuthorizeResult> {
+  if (!circuitAllows()) return deny("AUTHZ_UNAVAILABLE");
+  try {
+    const storeId = await getOpenFgaStoreId();
+    signal.throwIfAborted();
+    const allowed = await fgaCheck(storeId, `${subject.type}:${subject.id}`, relation, object,
+      { consistency: "HIGHER_CONSISTENCY", signal });
+    recordSuccess();
+    return { ...(allowed ? allow() : deny()), ttl_seconds: 0 };
+  } catch (err) {
+    recordFailure();
+    console.warn("[cas/openfga] Gateway check unavailable:", err instanceof Error ? err.message : String(err));
+    return deny("AUTHZ_UNAVAILABLE");
+  }
+}
+
 async function runListObjects(subject: Subject, action: Action, resourceType: ResourceType): Promise<ListObjectsResult> {
   if (!circuitAllows()) return { ids: new Set(), reason: "AUTHZ_UNAVAILABLE" };
 
