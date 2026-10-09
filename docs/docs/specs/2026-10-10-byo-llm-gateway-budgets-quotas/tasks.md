@@ -1,0 +1,61 @@
+---
+description: "Follow-up issues for Centralise LLM Routing, Quotas and Budgets"
+---
+
+# Tasks: Centralise LLM Routing, Quotas and Budgets
+
+This PR is the spec/ADR only. Each item below becomes one issue under Epic #2537 once the spec is approved. Every PR stays under 500 changed lines.
+
+## Phase 0
+- [ ] **T001 Spike S1**: Keycloak 26.3 per-agent client-scope token exchange (claims, impersonation, scale). Outcome: [K2](./research.md#identity-option-legend) or [C1](./research.md#identity-option-legend).
+
+## Phase 1: identity preparation and agent data plane
+
+Depends on #1753 (JWT-only identity in dynamic agents) and S1. Complete identity preparation before enabling routing.
+
+- [ ] **T010** Configure the Keycloak exchanger client, backfill scopes for existing agents, and sync scopes on agent create, owner-team change (before save) and delete ([K2](./research.md#identity-option-legend) only).
+- [ ] **T011** Provision `LLM_GATEWAY_DEFAULT_TEAM` in CAIPE at startup and use it for agents without an owning team.
+- [ ] **T012** If S1 selects [C1](./research.md#identity-option-legend), configure signing key management and gateway trust; resolve agent and team claims from CAIPE data.
+- [ ] **T013** Document operator provisioning of required gateway principals and per-agent keys before phase 3, including preparation for existing agents and later agent or team changes. Gateways may instead create principals from verified JWTs.
+- [ ] **T014** Switch, provider override and auth hook inside `build_chat_model`, so paths 1–3 (runtime, middleware, `/suggest`) cannot bypass them.
+- [ ] **T015** Gateway token acquisition and cache in dynamic agents, keyed by (user, agent, owner team); autonomous runs as the task owner.
+- [ ] **T016** Key auth mode (`LLM_GATEWAY_AUTH=key`) reading per-agent keys from the credentials store.
+- [ ] **T017** `llm_model#can_read` check once per turn, through the CAS path with audit (agent action `use` already maps to OpenFGA relation `agent#can_use`).
+- [ ] **T018** Gate phase 1 on successful first calls for existing, new and ownerless agents; verify attribution after owner-team changes and fail-closed behavior when identity preparation is missing.
+
+- [ ] **T019** Verify the global switch on paths 1–3: with a configured, reachable gateway and routing disabled, direct-provider calls succeed and zero inference requests reach the gateway. With routing enabled, a gateway outage fails closed without direct-provider fallback.
+
+## Phase 2: errors and telemetry
+- [ ] **T020** `LLMQuotaExceeded` mapping (④) with declarative gateway-limit rules and operator configuration for adapter `none` (no default). Test confirmed gateway limits, forwarded provider quota errors containing "budget"/"quota", ambiguous 402/429 responses and missing rules; only confirmed gateway limits receive budget-specific classification and advice.
+- [ ] **T021** OTel GenAI metrics labelled with user, agent, team and caller kind.
+
+## Phase 3: control plane
+- [ ] **T030** `LlmGatewayAdapter` interface + `none` adapter.
+- [ ] **T031** LiteLLM adapter (reference: `ai_platform_engineering/mcp/litellm/`).
+- [ ] **T032** AgentGateway adapter.
+- [ ] **T033** Kong adapter.
+- [ ] **T034** AgentRouter adapter (optional): models listed; limits through Kubernetes CRDs or `none`; usage from Prometheus.
+- [ ] **T035** `llm_models` gateway sync.
+- [ ] **T036** Automate gateway principal provisioning through `ensure_principal` where supported, including the default team and first-use onboarding; replace phase 1 manual preparation for these gateways.
+- [ ] **T037** Admin UI: limits per user, agent and team; live usage.
+
+## Phase 4: RAG
+- [ ] **T040** Embeddings through the gateway (same model id only).
+- [ ] **T041** Ontology agent through `llm_wrapper` + the gateway.
+
+- [ ] **T042** Extend the global-switch tests to embeddings and the ontology agent: disabled mode succeeds through direct providers with zero gateway inference requests; enabled mode fails closed on gateway outage.
+
+## Phase 5: end-user UX
+- [ ] **T050** Remaining-budget display (UI) where the adapter supports it.
+- [ ] **T051** Quota-increase requests (`llm_quota_requests`) + admin approval.
+- [ ] **T052** Actionable budget messages in Slack and Webex.
+
+## Required validation
+- [ ] **T060** Build and run the [gateway conformance suite](./contracts/routing-backend-contract.md) against at least two different gateways. Record each gateway's version, configured authentication mode and results. Passing all applicable checks for every in-scope path on both gateways is required for implementation completion (SC-007), not for merging this spec/ADR.
+
+## Optional
+- [ ] **T061** OpenFGA bridge returns verified identity headers to gateways with ext_authz.
+
+## Housekeeping
+- [ ] **T070** Document `setup-caipe.sh --litellm` as a dev/demo example gateway against these contracts.
+- [ ] **T071** Fix `docs/docs/security/rbac/index.md`: the `tenant` claim row has no implementation.
