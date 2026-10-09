@@ -17,9 +17,20 @@ spec:
       app.kubernetes.io/component: mcp
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
+      {{- $llmEnabled := dig "litellm" "enabled" false (.Values.global.llmRouting | default (dict)) }}
+      {{- $podAnnotations := deepCopy (default (dict) .Values.podAnnotations) }}
+      {{- if $llmEnabled }}
+        {{- $llmConfig := dict
+          "createSecret" .Values.global.createLlmSecret
+          "secretName" .Values.global.llmSecrets.secretName
+          "data" .Values.global.llmSecrets.data
+          "externalSecret" .Values.global.llmSecrets.externalSecrets
+        }}
+        {{- $_ := set $podAnnotations "checksum/llm-config" (toYaml $llmConfig | sha256sum) }}
+      {{- end }}
+      {{- if or $llmEnabled $podAnnotations }}
       annotations:
-        {{- toYaml . | nindent 8 }}
+        {{- toYaml $podAnnotations | nindent 8 }}
       {{- end }}
       labels:
         {{- include "agent.labels" . | nindent 8 }}
@@ -73,6 +84,12 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- end }}
+            {{- if dig "litellm" "enabled" false (.Values.global.llmRouting | default (dict)) }}
+            - name: LLM_PROVIDER
+              value: openai
+            - name: OPENAI_ENDPOINT
+              value: {{ printf "http://%s-litellm:4000/v1" .Release.Name | quote }}
             {{- end }}
           {{- with .Values.mcp.startupProbe }}
           startupProbe:

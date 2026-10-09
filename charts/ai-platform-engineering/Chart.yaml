@@ -234,3 +234,9 @@ dependencies:
   - name: agentgateway
     version: 1.3.0-rc.6 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     condition: agentgateway.enabled
+  # Use LiteLLM's upstream maintained chart for the optional routing proxy.
+  - name: litellm-helm
+    version: 1.92.0
+    repository: oci://ghcr.io/berriai
+    alias: litellm
+    condition: global.llmRouting.litellm.enabled
