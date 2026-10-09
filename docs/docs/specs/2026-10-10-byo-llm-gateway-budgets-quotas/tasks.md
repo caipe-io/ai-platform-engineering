@@ -7,7 +7,7 @@ description: "Follow-up issues for Centralise LLM Routing, Quotas and Budgets"
 This PR is the spec/ADR only. Each item below becomes one issue under Epic #2537 once the spec is approved. Every PR stays under 500 changed lines.
 
 ## Phase 0
-- [ ] **T001 Spike S1**: Keycloak 26.3 per-agent client-scope token exchange (claims, impersonation, scale). Outcome: [K2](./research.md#identity-option-legend) or [C1](./research.md#identity-option-legend).
+- [ ] **T001 Spike S1**: Keycloak 26.3 per-agent client-scope token exchange (claims, autonomous delegation per #2890, scale). Outcome: [K2](./research.md#identity-option-legend) or [C1](./research.md#identity-option-legend).
 
 ## Phase 1: identity preparation and agent data plane
 
@@ -20,7 +20,7 @@ Depends on #1753 (JWT-only identity in dynamic agents) and S1. Complete identity
 - [ ] **T014** Switch, provider override and auth hook inside `build_chat_model`, so paths 1–3 (runtime, middleware, `/suggest`) cannot bypass them.
 - [ ] **T015** Gateway token acquisition and cache in dynamic agents, keyed by (user, agent, owner team); autonomous runs as the task owner.
 - [ ] **T016** Key auth mode (`LLM_GATEWAY_AUTH=key`) reading per-agent keys from the credentials store.
-- [ ] **T017** `llm_model#can_read` check once per turn, through the CAS path with audit (agent action `use` already maps to OpenFGA relation `agent#can_use`).
+- [ ] **T017** `llm_model#can_read` check once per turn, through the CAS access API (#2889) with audit (agent action `use` already maps to OpenFGA relation `agent#can_use`).
 - [ ] **T018** Gate phase 1 on successful first calls for existing, new and ownerless agents; verify attribution after owner-team changes and fail-closed behavior when identity preparation is missing.
 
 - [ ] **T019** Verify the global switch on paths 1–3: with a configured, reachable gateway and routing disabled, direct-provider calls succeed and zero inference requests reach the gateway. With routing enabled, a gateway outage fails closed without direct-provider fallback.
@@ -54,7 +54,7 @@ Depends on #1753 (JWT-only identity in dynamic agents) and S1. Complete identity
 - [ ] **T060** Build and run the [gateway conformance suite](./contracts/routing-backend-contract.md) against at least two different gateways. Record each gateway's version, configured authentication mode and results. Passing all applicable checks for every in-scope path on both gateways is required for implementation completion (SC-007), not for merging this spec/ADR.
 
 ## Optional
-- [ ] **T061** OpenFGA bridge returns verified identity headers to gateways with ext_authz.
+- [ ] **T061** Gateways with ext_authz ask the BFF CAS adapter (#2909) for the model decision and verified identity headers.
 
 ## Housekeeping
 - [ ] **T070** Document `setup-caipe.sh --litellm` as a dev/demo example gateway against these contracts.

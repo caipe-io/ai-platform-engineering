@@ -17,7 +17,7 @@
 - [x] Rollout: off by default, phased, reversible (FR-018, FR-019, plan)
 - [x] Reliability: fail closed, streaming and tool calls, clear quota errors (FR-012, FR-013)
 - [x] Observability: OTel GenAI per user, agent and team (FR-009)
-- [x] Reuse: `llm_wrapper`, Keycloak, OpenFGA bridge, `llm_models` (no parallel mechanisms)
+- [x] Reuse: `llm_wrapper`, Keycloak, CAS, `llm_models` (no parallel mechanisms)
 
 ## Readiness
 - [x] Success criteria measurable

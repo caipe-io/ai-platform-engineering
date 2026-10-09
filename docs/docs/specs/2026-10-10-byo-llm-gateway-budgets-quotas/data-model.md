@@ -54,7 +54,8 @@ Direct-provider configuration and credentials must remain available for disabled
 |---|---|---|
 | `iss` | `https://idp.example.com/realms/caipe` | signer |
 | `aud` | `LLM_GATEWAY_AUDIENCE` | setting |
-| `sub` | user or task-owner subject | caller token / task record |
+| `sub` | user or task-owner subject (effective principal) | caller token / trusted run binding (#2891) |
+| `act` | `{"sub": "service-account-dynamic-agents"}` | acting service (#2885) |
 | `org` | `example-org` | existing `org` claim (budget key namespace) |
 | `agent_id` | `agent-example` | Keycloak scope ([K2](./research.md#identity-option-legend)) or signer ([C1](./research.md#identity-option-legend)) |
 | `team_id` | `team-example` | agent `owner_team_slug`, else `LLM_GATEWAY_DEFAULT_TEAM` |

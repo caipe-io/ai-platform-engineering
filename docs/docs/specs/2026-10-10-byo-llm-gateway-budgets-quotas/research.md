@@ -73,7 +73,7 @@ flowchart TB
   slack["Slack / Webex"] -- "token exchange<br/>(impersonation)" --> bff
   bff --> da["Dynamic agents<br/>JWT validated, CAS use → OpenFGA agent#can_use"]
   auto["Autonomous runs"] -- "owner bearer via token exchange<br/>(cached per owner)" --> da
-  da -- "MCP: JWT + signed X-CAIPE-Agent-Context" --> agw["AgentGateway → ext_authz → OpenFGA bridge"]
+  da -- "MCP: JWT + signed X-CAIPE-Agent-Context" --> agw["AgentGateway → ext_authz → OpenFGA bridge<br/>(moving to BFF CAS, #2909)"]
   da -- "LLM: static key, no caller identity" --> prov["Model provider"]
 ```
 
@@ -158,6 +158,7 @@ sequenceDiagram
 | Risk | preview feature | **spike S1** | custom code | key management | per-gateway glue |
 
 - [K2](#identity-option-legend) and [C1](#identity-option-legend) trust dynamic agents equally to pick the agent. [K2](#identity-option-legend)'s gain is no new signing key and Keycloak's audit trail; `team_id` is fixed by the admin-synced scope.
+- #2901 adds operator-owned per-agent Keycloak clients for agent badges. If it lands first, K2 reuses its per-agent binding instead of adding a second per-agent Keycloak object.
 
 **[K2](#identity-option-legend) flow**
 
@@ -171,12 +172,12 @@ sequenceDiagram
   Note over DA,KC: call (cache miss)
   DA->>KC: token exchange (subject = user JWT, scope = llm-agent-ID, aud = LLM_GATEWAY_AUDIENCE)
   KC-->>DA: gateway JWT
-  Note over DA,KC: autonomous: requested_subject = owner (exchange exists today, only the scope is new)
+  Note over DA,KC: autonomous: owner from a trusted run binding (#2891), exchange mechanism per #2890
 ```
 
 **Spike S1 (gates phase 1)**
 - [ ] Keycloak 26.3 exchange emits the mappers of the requested optional scope.
-- [ ] `requested_subject` impersonation combined with the scope works for autonomous runs.
+- [ ] Autonomous runs get the scope through the mechanism #2890 selects (actor-preserving exchange, or a service token plus a trusted run binding), without depending on `requested_subject` impersonation.
 - [ ] Token issuance latency and admin performance with 1k, 5k and 10k client scopes.
 - [ ] If any check fails → [C1](#identity-option-legend) (dynamic agents sign; key optionally in Vault or a cloud KMS).
 
@@ -195,8 +196,8 @@ sequenceDiagram
 
 ## Decision 9 — Authorization at call time
 
-- **Runtime (always)**: dynamic agents use the shared authorization path (CAS) to check OpenFGA relations `agent#can_use` (CAS action `use`, already enforced) and `llm_model#can_read` (runtime check to add) once per turn per (user, agent, model). Every LLM call in that turn reuses the decision.
-- **Gateway (optional)**: where ext_authz exists, the existing `deploy/openfga/bridge` can also enforce the check and return verified identity headers.
+- **Runtime (always)**: dynamic agents use the CAS access API (#2889) to check OpenFGA relations `agent#can_use` (CAS action `use`, already enforced) and `llm_model#can_read` (runtime check to add) once per turn per (user, agent, model). Every LLM call in that turn reuses the decision.
+- **Gateway (optional)**: where ext_authz exists, the gateway asks the BFF CAS adapter (#2892, #2909), as AgentGateway does for MCP, for the same decision and verified identity headers.
 
 ## Decision 10 — Budget errors without gateway code in agents
 
@@ -213,7 +214,7 @@ sequenceDiagram
 
 ## Related work
 
-Checked 2026-10-06; no duplicate found.
+Checked 2026-10-09; no duplicate found.
 
 | Item | Relation |
 |---|---|
@@ -224,6 +225,13 @@ Checked 2026-10-06; no duplicate found.
 | #2019 FinOps alerting on LiteLLM usage | Consumes OTel GenAI usage |
 | #2300 wire setup-caipe to LiteLLM | Re-scope to the dev/demo example gateway (T070) |
 | #2813, #2841, #2828, #2854 CAS authorization | `llm_model` joins the CAS scope and its audit |
+| #2884 CAS migration inventory | The `llm_model` call-time check is registered as a CAS path |
+| #2885 canonical platform identity | Gateway token claims (`sub`, `act`, `org`) follow it |
+| #2889 Dynamic Agents on the CAS access API | Path for the `llm_model#can_read` check |
+| #2890 OBO impersonation and delegation scope | Decides the autonomous exchange mechanism (spike S1) |
+| #2891 trusted execution context for delegation | Source of the task owner for autonomous runs |
+| #2892, #2909 AgentGateway ext_authz through BFF CAS | Pattern for optional gateway-side authorization |
+| #2901 Keycloak-authenticated agent badges | Per-agent Keycloak binding that K2 can reuse |
 | #2883 ACP native runtime (draft) | May move `dynamic_agents` call sites; the hook lives in `llm_wrapper` |
 | #1037, #1048 quota-increase requests | The user journey behind T051 |
 | #549 LLM fallback on throttling | The gateway's job |
@@ -232,6 +240,6 @@ Checked 2026-10-06; no duplicate found.
 
 - `setup-caipe.sh deploy_litellm`: a dev/demo LiteLLM path; documented as one example gateway.
 - `ai_platform_engineering/llm_wrapper/`: the single build choke point and the `openai-compatible` provider.
-- `POST /api/mcp-servers/agent-context`: minting signed identity (optional bridge layer).
+- `POST /api/mcp-servers/agent-context` and the caller-bound agent context in #2909: minting short-lived signed identity.
 - `ai_platform_engineering/mcp/litellm/`: LiteLLM admin as MCP tools; a reference for the LiteLLM adapter.
 - `2026-09-24-remove-cnoe-agent-utils`: provides the `openai-compatible` provider this spec builds on.

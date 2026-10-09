@@ -66,12 +66,18 @@ Details: [data plane](./contracts/openai-endpoint.md), [gateway conformance](./c
   - Keycloak signs it via a token exchange with one client scope per agent.
   - Fallback: dynamic agents sign it (see Open Decisions).
   - For gateways that can't validate JWTs: per-agent gateway keys.
-- Q: Who governs model access? → **OpenFGA**, checked by dynamic agents. Gateways with ext_authz can also call the existing OpenFGA bridge.
+- Q: Who governs model access? → **OpenFGA through CAS**, checked by dynamic agents. Gateways with ext_authz can also ask CAS.
 - Q: Where do limits and usage live? → **In the gateway only.** Usage is read live; CAIPE keeps no copy.
 - Q: Tenancy? → **One tenant per deployment** (one realm, one OpenFGA store, one `organization`).
 - Q: Rollout? → **Phased build behind one global switch** (`LLM_GATEWAY_ENABLED`, default off).
 - Q: Must the gateway be highly available? → HA is the gateway operator's concern. CAIPE fails closed.
 - Q: Latency target? → No hard SLO; measure and document.
+
+### Session 2026-10-09
+
+- Q: Which identity contract does the gateway token follow? → **CAIPE's canonical identity contract** (#2885): platform `iss`/`sub` is the effective principal; the acting service is named separately.
+- Q: How do autonomous runs prove the task owner? → **A trusted run binding** (#2891), not an owner ID or unsigned header. The exchange mechanism follows #2890; no new dependency on `requested_subject` impersonation.
+- Q: Optional gateway-side authorization? → **The BFF CAS adapter** (#2892, #2909), the same path AgentGateway uses for MCP, instead of the OpenFGA bridge.
 
 ## User Journeys *(mandatory)*
 
@@ -152,17 +158,17 @@ flowchart LR
 - **FR-003**: With the switch on, every in-scope path MUST send `llm_models.model_id` to the gateway regardless of the stored or requested provider. This is enforced inside `llm_wrapper.build_chat_model`, not by each caller.
 
 ### Identity ②
-- **FR-004**: With `LLM_GATEWAY_AUTH=jwt` (default), every gateway call MUST carry a short-lived JWT (TTL ≤ 5 min) with `sub`, `agent_id`, `team_id` and `org`, verifiable by the gateway.
+- **FR-004**: With `LLM_GATEWAY_AUTH=jwt` (default), every gateway call MUST carry a short-lived JWT (TTL ≤ 5 min) with `sub` (effective principal), `act` (acting service), `agent_id`, `team_id` and `org`, verifiable by the gateway. Identity claims follow CAIPE's canonical identity contract (#2885).
 - **FR-005**: With `LLM_GATEWAY_AUTH=key` (gateways that can't validate JWTs), calls MUST carry a per-agent gateway key from CAIPE's credentials store. Agent and team are verified; the user is attributed through the `user` field only, so per-user limits are best-effort.
 - **FR-006**: Agents MUST NOT hold provider keys or a shared admin key.
-- **FR-007**: Autonomous and scheduled runs MUST be attributed to the task owner, not to a shared service account.
+- **FR-007**: Autonomous and scheduled runs MUST be attributed to the task owner, proven by a trusted run binding (#2891), not to a shared service account or an unsigned owner header.
 
 ### Attribution ③
 - **FR-008**: Calls MUST set the OpenAI `user` field to `sub`, and send `x-caipe-conversation-id` and W3C `traceparent`.
 - **FR-009**: CAIPE MUST emit OTel GenAI metrics labelled with user, agent, team and caller kind.
 
 ### Authorization
-- **FR-010**: Dynamic agents MUST check the OpenFGA relations `agent#can_use` and `llm_model#can_read` through CAIPE's shared authorization path (CAS; agent action `use`) once per turn per (user, agent, model), before the first LLM call. A gateway with ext_authz MAY also call the OpenFGA bridge.
+- **FR-010**: Dynamic agents MUST check the OpenFGA relations `agent#can_use` and `llm_model#can_read` through the CAS access API (#2889; agent action `use`) once per turn per (user, agent, model), before the first LLM call. A gateway with ext_authz MAY also ask the BFF CAS adapter (#2909).
 
 ### Errors ④
 - **FR-011**: Upstream provider errors MUST pass through with their class preserved.
@@ -205,6 +211,7 @@ flowchart LR
 - Keycloak 26.3 token exchange can emit per-agent scope claims (to be confirmed by spike S1, see [research.md](./research.md)).
 - The gateway can reach the token issuer's JWKS.
 - Dynamic agents authenticate callers from the bearer token alone (#1753) before the gateway token is minted.
+- The delegation mechanism for autonomous runs is decided by #2890; spike S1 tests the gateway scope against that mechanism.
 - The OpenAI wire format loses some provider-native features, such as prompt caching and thinking parameters. Native providers in `llm_wrapper` remain available while the switch is off.
 - Related work is listed in [research.md](./research.md#related-work).
 

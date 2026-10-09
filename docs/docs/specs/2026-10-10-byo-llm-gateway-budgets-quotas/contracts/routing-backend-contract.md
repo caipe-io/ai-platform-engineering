@@ -21,7 +21,7 @@ Any gateway CAIPE supports must satisfy this contract. It is what keeps gateways
 
 ## Optional capabilities
 
-- **ext_authz** to the OpenFGA bridge (`deploy/openfga/bridge`) for call-time model checks.
+- **ext_authz** to the BFF CAS adapter (#2909) for call-time model checks.
 - **Admin API** for adapter features ([gateway-adapter.md](./gateway-adapter.md)). Without it, use adapter `none`.
 
 ## Not required

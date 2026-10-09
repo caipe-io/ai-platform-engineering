@@ -26,18 +26,18 @@ flowchart LR
   p1 --> p3["3 Control plane"]
   p2 --> p4["4 RAG"]
   p3 --> p5["5 End-user UX"]
-  p1 -.-> opt["opt Bridge identity headers"]
+  p1 -.-> opt["opt Gateway authz via CAS"]
 ```
 
 | Phase | Delivers | Main code | Gate |
 |---|---|---|---|
 | 0 | Spec/ADR (this PR) + spike S1 | `docs/`, Keycloak spike | approval |
-| 1 | Identity setup and lifecycle for existing/new agents, default team; routing and authorization for agent paths 1–3 | `llm_wrapper/src/llm_wrapper/build.py`, `dynamic_agents/services/{llm_clients,llm}.py`, `dynamic_agents/auth/authz.py`, `ui/src/lib/rbac/keycloak-admin.ts`, agent lifecycle routes | S1 decides [K2](./research.md#identity-option-legend) or [C1](./research.md#identity-option-legend); #1753; identity readiness before routing (see [tasks](./tasks.md#phase-1-identity-preparation-and-agent-data-plane)) |
+| 1 | Identity setup and lifecycle for existing/new agents, default team; routing and authorization for agent paths 1–3 | `llm_wrapper/src/llm_wrapper/build.py`, `dynamic_agents/services/{llm_clients,llm}.py`, `dynamic_agents/auth/authz.py`, `ui/src/lib/rbac/keycloak-admin.ts`, agent lifecycle routes | S1 decides [K2](./research.md#identity-option-legend) or [C1](./research.md#identity-option-legend); #1753; #2890 for autonomous runs; identity readiness before routing (see [tasks](./tasks.md#phase-1-identity-preparation-and-agent-data-plane)) |
 | 2 | Budget-signal rules ④ + attribution ③ + OTel GenAI | `llm_wrapper`, `dynamic_agents` | phase 1 |
 | 3 | Control plane: adapter, automated gateway principal provisioning, `llm_models` sync, admin limits/usage UI | `ui/src/app/api/`, `ui/src/lib/`, `ui/src/lib/rbac/keycloak-admin.ts` | phase 1 |
 | 4 | RAG paths 4–5 (same embedding model id only) | `knowledge_bases/rag/` | phases 1–2 |
 | 5 | End-user UX: remaining budget, quota requests | `ui/`, bots (message text only) | phase 3 |
-| opt | OpenFGA bridge returns verified identity headers for gateways with ext_authz | `deploy/openfga/bridge/` | phase 1 |
+| opt | Gateways with ext_authz ask the BFF CAS adapter for the decision and verified identity headers | `ui/src/lib/authz/` (#2909) | phase 1 |
 
 **Implementation completion gate (SC-007):** the [required conformance task T060](./tasks.md#required-validation) must pass all applicable checks for every in-scope path against at least two different gateways, with versions, authentication modes and results recorded. This gate applies to the implemented feature; it does not block merging this spec/ADR.
 
