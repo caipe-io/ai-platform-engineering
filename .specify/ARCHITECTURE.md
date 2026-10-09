@@ -119,6 +119,17 @@ The `.specify/` directory is the persistent memory of the project. It is maintai
 
 The architecture is designed to scale from Level 1 (Tab Complete) to Level 7 (Background Agents) without restructuring, following [The 8 Levels of Agentic Engineering](https://www.bassimeledath.com/blog/levels-of-agentic-engineering) by Bassim Eledath and [Harness Engineering](https://openai.com/index/harness-engineering/) by OpenAI.
 
+### 8. LLM Routing via a Bring-Your-Own Gateway
+
+Agents reach models through any OpenAI-compatible gateway (LiteLLM, AgentGateway, Kong, AgentRouter, …) using the `openai-compatible` provider in `llm_wrapper`. CAIPE ships no gateway; it fixes the contracts. See `docs/docs/specs/2026-10-10-byo-llm-gateway-budgets-quotas/`.
+
+- **Identity**: every call carries a short-lived JWT naming the user, agent and owning team. The gateway enforces limits per user, agent and team. The agent's owning team pays.
+- **Authorization**: OpenFGA decides who may use which agent and model; dynamic agents check it once per turn.
+- **State**: limits and usage live in the gateway only. The model catalogue stays in `llm_models`.
+- **Control plane**: a capability-flagged adapter in the UI backend (`litellm` · `agentgateway` · `kong` · `agentrouter` · `none`).
+
+**Implication**: do not add gateway-specific code to agents (budget errors are matched by declarative rules), provider keys to agents, or a CAIPE copy of limits. Gateways are swappable; the global `LLM_GATEWAY_ENABLED` switch is off by default and fails closed when on.
+
 ## Data Flow: Spec to Code
 
 ```text
