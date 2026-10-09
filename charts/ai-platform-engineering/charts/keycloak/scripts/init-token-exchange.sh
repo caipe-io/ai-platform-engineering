@@ -29,6 +29,8 @@ ADMIN_USER="${KEYCLOAK_ADMIN:-${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}}"
 ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-${KC_BOOTSTRAP_ADMIN_PASSWORD:-admin}}"
 
 TAG="[init-token-exchange]"
+EVALUATOR_CLIENT_ID="${KC_EVALUATOR_CLIENT_ID:-caipe-evaluator-obo}"
+EVALUATOR_INTERNAL_ID=""
 
 # --- helper: extract a string field from JSON (no jq needed) ---
 json_field() {
@@ -349,6 +351,68 @@ else
   echo "${TAG} KC_SCHEDULER_CLIENT_ID not set; skipping scheduler-runner reconciliation."
 fi
 
+# Reconcile the evaluator-obo client secret.
+# This client is used by the evaluator background worker to mint submitter bearers
+# via requested_subject impersonation (RFC 8693 token exchange).
+if [ -n "${EVALUATOR_CLIENT_ID}" ]; then
+  EVALUATOR_CLIENTS_RESP=$(curl -sf -H "${AUTH}" \
+    "${KC_URL}/admin/realms/${REALM}/clients?clientId=${EVALUATOR_CLIENT_ID}" 2>/dev/null || echo "[]")
+  EVALUATOR_INTERNAL_ID=$(json_field "${EVALUATOR_CLIENTS_RESP}" "id")
+
+  if [ -z "${EVALUATOR_INTERNAL_ID}" ]; then
+    EVAL_SECRET_TO_USE="${KC_EVALUATOR_CLIENT_SECRET:-caipe-evaluator-obo-dev-secret}"
+    echo "${TAG} Creating missing evaluator-obo client '${EVALUATOR_CLIENT_ID}' ..."
+    EVALUATOR_CLIENT_JSON=$(EVALUATOR_CLIENT_ID="${EVALUATOR_CLIENT_ID}" \
+      EVAL_SECRET_TO_USE="${EVAL_SECRET_TO_USE}" python3 -c '
+import json
+import os
+
+print(json.dumps({
+    "clientId": os.environ["EVALUATOR_CLIENT_ID"],
+    "name": "CAIPE Evaluator OBO",
+    "description": "Confidential client scoped to evaluator submitter impersonation (RFC 8693).",
+    "enabled": True,
+    "publicClient": False,
+    "bearerOnly": False,
+    "standardFlowEnabled": False,
+    "directAccessGrantsEnabled": False,
+    "serviceAccountsEnabled": True,
+    "authorizationServicesEnabled": False,
+    "protocol": "openid-connect",
+    "fullScopeAllowed": True,
+    "defaultClientScopes": ["profile", "email", "roles", "groups", "org"],
+    "attributes": {"oidc.token.exchange.enabled": "true"},
+    "secret": os.environ["EVAL_SECRET_TO_USE"],
+}))
+')
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+      -X POST -H "${AUTH}" -H "Content-Type: application/json" \
+      "${KC_URL}/admin/realms/${REALM}/clients" \
+      -d "${EVALUATOR_CLIENT_JSON}" 2>/dev/null || echo "000")
+    if [ "${HTTP_CODE}" != "201" ] && [ "${HTTP_CODE}" != "409" ]; then
+      echo "${TAG}   ERROR: failed to create evaluator-obo client (HTTP ${HTTP_CODE})." >&2
+      exit 1
+    fi
+    EVALUATOR_CLIENTS_RESP=$(curl -sf -H "${AUTH}" \
+      "${KC_URL}/admin/realms/${REALM}/clients?clientId=${EVALUATOR_CLIENT_ID}" 2>/dev/null || echo "[]")
+    EVALUATOR_INTERNAL_ID=$(json_field "${EVALUATOR_CLIENTS_RESP}" "id")
+  fi
+
+  if [ -n "${KC_EVALUATOR_CLIENT_SECRET:-}" ] && [ -n "${EVALUATOR_INTERNAL_ID}" ]; then
+    echo "${TAG} Reconciling client_secret on '${EVALUATOR_CLIENT_ID}' from KC_EVALUATOR_CLIENT_SECRET ..."
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+      -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
+      "${KC_URL}/admin/realms/${REALM}/clients/${EVALUATOR_INTERNAL_ID}" \
+      -d "{\"clientId\":\"${EVALUATOR_CLIENT_ID}\",\"secret\":\"${KC_EVALUATOR_CLIENT_SECRET}\"}" 2>/dev/null || echo "000")
+    if [ "${HTTP_CODE}" = "204" ] || [ "${HTTP_CODE}" = "200" ]; then
+      echo "${TAG}   evaluator-obo client_secret reconciled (HTTP ${HTTP_CODE})."
+    else
+      echo "${TAG}   ERROR: failed to set evaluator-obo client_secret (HTTP ${HTTP_CODE})." >&2
+      exit 1
+    fi
+  fi
+fi
+
 # ------------------------------------------------------------------
 # 5. Get service account users + assign impersonation role
 # ------------------------------------------------------------------
@@ -432,6 +496,15 @@ if [ -n "${SCHEDULER_CLIENT_ID}" ]; then
     SCHEDULER_INTERNAL_ID=$(json_field "${SCHEDULER_CLIENTS_RESP}" "id")
   fi
   ensure_service_account_impersonation_role "${SCHEDULER_CLIENT_ID}" "${SCHEDULER_INTERNAL_ID}" "false"
+fi
+
+if [ -n "${EVALUATOR_CLIENT_ID}" ]; then
+  if [ -z "${EVALUATOR_INTERNAL_ID:-}" ]; then
+    EVALUATOR_CLIENTS_RESP=$(curl -sf -H "${AUTH}" \
+      "${KC_URL}/admin/realms/${REALM}/clients?clientId=${EVALUATOR_CLIENT_ID}" 2>/dev/null || echo "[]")
+    EVALUATOR_INTERNAL_ID=$(json_field "${EVALUATOR_CLIENTS_RESP}" "id")
+  fi
+  ensure_service_account_impersonation_role "${EVALUATOR_CLIENT_ID}" "${EVALUATOR_INTERNAL_ID}" "false"
 fi
 
 # ------------------------------------------------------------------
@@ -599,6 +672,54 @@ else
       exit 1
     }
   fi
+
+  # The evaluator performs requested_subject token exchange on behalf of a job
+  # submitter. Authorize its client policy on its own token-exchange permission,
+  # users.impersonate, and the target audience's token-exchange permission.
+  if [ -n "${EVALUATOR_INTERNAL_ID:-}" ]; then
+    echo "${TAG} Enabling management permissions on '${EVALUATOR_CLIENT_ID}' ..."
+    EVALUATOR_MGMT=$(curl -sf -H "${AUTH}" \
+      "${KC_URL}/admin/realms/${REALM}/clients/${EVALUATOR_INTERNAL_ID}/management/permissions" 2>/dev/null || echo '{"enabled":false}')
+    if [ "$(json_bool "${EVALUATOR_MGMT}" "enabled")" != "true" ]; then
+      curl -sf -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
+        "${KC_URL}/admin/realms/${REALM}/clients/${EVALUATOR_INTERNAL_ID}/management/permissions" \
+        -d '{"enabled":true}' >/dev/null 2>&1 || {
+          echo "${TAG}   ERROR: could not enable evaluator management permissions." >&2
+          exit 1
+        }
+    fi
+    EVALUATOR_MGMT=$(curl -sf -H "${AUTH}" \
+      "${KC_URL}/admin/realms/${REALM}/clients/${EVALUATOR_INTERNAL_ID}/management/permissions" 2>/dev/null || echo '{}')
+    EVALUATOR_TOKEN_EXCHANGE_PERM_ID=$(echo "${EVALUATOR_MGMT}" | grep -o '"token-exchange" *: *"[^"]*"' | sed 's/.*"\([^"]*\)"/\1/' | head -1)
+    if [ -z "${EVALUATOR_TOKEN_EXCHANGE_PERM_ID}" ] || [ -z "${IMPERSONATE_PERM_ID}" ]; then
+      echo "${TAG}   ERROR: evaluator token-exchange or users.impersonate permission is unavailable." >&2
+      exit 1
+    fi
+
+    EVALUATOR_POLICY_NAME="caipe-evaluator-obo-token-exchange-policy"
+    EVALUATOR_POLICIES=$(curl -sf -H "${AUTH}" \
+      "${KC_URL}/admin/realms/${REALM}/clients/${RM_CLIENT_ID}/authz/resource-server/policy?name=${EVALUATOR_POLICY_NAME}&max=1" 2>/dev/null || echo '[]')
+    EVALUATOR_POLICY_ID=$(json_field "${EVALUATOR_POLICIES}" "id")
+    if [ -z "${EVALUATOR_POLICY_ID}" ]; then
+      EVALUATOR_POLICY_RESP=$(curl -sf -X POST -H "${AUTH}" -H "Content-Type: application/json" \
+        "${KC_URL}/admin/realms/${REALM}/clients/${RM_CLIENT_ID}/authz/resource-server/policy/client" \
+        -d "{\"name\":\"${EVALUATOR_POLICY_NAME}\",\"description\":\"Allow ${EVALUATOR_CLIENT_ID} to perform submitter OBO token exchange\",\"logic\":\"POSITIVE\",\"clients\":[\"${EVALUATOR_INTERNAL_ID}\"]}" 2>/dev/null || echo '{}')
+      EVALUATOR_POLICY_ID=$(json_field "${EVALUATOR_POLICY_RESP}" "id")
+    fi
+    if [ -z "${EVALUATOR_POLICY_ID}" ]; then
+      echo "${TAG}   ERROR: could not resolve or create evaluator token-exchange policy." >&2
+      exit 1
+    fi
+
+    attach_policy_to_scope_permission "${RM_CLIENT_ID}" "${EVALUATOR_TOKEN_EXCHANGE_PERM_ID}" "${EVALUATOR_POLICY_ID}" "evaluator token-exchange permission" || {
+      echo "${TAG}   ERROR: could not authorize evaluator token exchange." >&2
+      exit 1
+    }
+    attach_policy_to_scope_permission "${RM_CLIENT_ID}" "${IMPERSONATE_PERM_ID}" "${EVALUATOR_POLICY_ID}" "evaluator users.impersonate permission" || {
+      echo "${TAG}   ERROR: could not authorize evaluator submitter impersonation." >&2
+      exit 1
+    }
+  fi
 fi
 
 # ------------------------------------------------------------------
@@ -671,6 +792,7 @@ if [ -n "${RM_CLIENT_ID:-}" ]; then
       _attach_bot_to_obo_target "caipe-slack-bot-token-exchange-policy" "${BOT_INTERNAL_ID:-}" "caipe-slack-bot"
       _attach_bot_to_obo_target "caipe-webex-bot-token-exchange-policy" "${WEBEX_INTERNAL_ID:-}" "caipe-webex-bot"
       _attach_bot_to_obo_target "caipe-scheduler-runner-token-exchange-policy" "${SCHEDULER_INTERNAL_ID:-}" "caipe-scheduler-runner"
+      _attach_bot_to_obo_target "caipe-evaluator-obo-token-exchange-policy" "${EVALUATOR_INTERNAL_ID:-}" "caipe-evaluator-obo"
     fi
   fi
 fi

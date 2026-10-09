@@ -1,0 +1,21 @@
+# Add this service to your existing docker-compose.yml (alongside Milvus/Ollama)
+services:
+  postgres:
+    image: postgres:16
+    container_name: caipe_eval_db
+    environment:
+      POSTGRES_DB: caipe_eval
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres   # change for anything beyond local dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - caipe_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  caipe_pgdata:

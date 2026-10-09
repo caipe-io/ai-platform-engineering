@@ -1,0 +1,36 @@
+# Python/runtime artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.venv/
+venv/
+
+
+# Local secrets and environment files
+.env
+
+# Generated benchmark artefacts
+cache/
+data/
+results/
+*.zip
+
+# Tool/test artefacts
+.deepeval/
+*.log
+logs/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store
+src/deepeval_eval/config.py
+gate_summary.md
+eval_gate_result_summary*.md
+.scannerwork
+.coveragerc

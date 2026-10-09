@@ -1,0 +1,94 @@
+nameOverride: ""
+fullnameOverride: "caipe-rag-evaluator"
+
+enabled: true
+
+image:
+  repository: "ghcr.io/cnoe-io/caipe-rag-evaluator"
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+revisionHistoryLimit: 3
+
+env: {}
+
+envFrom: []
+
+serviceAccount:
+  create: false
+  name: ""
+  automount: false
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 8000
+
+openfga:
+  httpUrl: ""
+  storeName: "caipe-openfga"
+  orgKey: "caipe"
+
+
+existingSecret: ""
+
+volumes: []
+
+volumeMounts: []
+
+postgresql:
+  host: "caipe-postgres"
+  port: 5432
+  database: "evaluator"
+  user: "evaluator"
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+  seccompProfile:
+    type: RuntimeDefault
+
+llmSecrets:
+  secretName: "llm-secret"
+
+startupProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 30
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
