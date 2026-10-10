@@ -79,7 +79,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || (inputs.tag && format('refs/tags/{0}', inputs.tag)) || github.ref }}
+
+      - name: Resolve scanned revision
+        id: revision
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Run Grype scan
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
@@ -103,8 +107,8 @@ jobs:
           # analysis to be associated with refs/pull/N/head + the head commit SHA.
           # Without this, the check shows "1 configuration not found" because the
           # merge-ref analysis is not matched against the PR head check run.
-          ref: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/head', github.event.pull_request.number) || github.ref }}
-          sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/head', github.event.pull_request.number) || (inputs.tag && format('refs/tags/{0}', inputs.tag)) || github.ref }}
+          sha: ${{ steps.revision.outputs.sha }}
           token: ${{ github.token }}
 
       - name: ℹ️ Note SARIF upload skipped for fork PR
@@ -154,6 +158,12 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+
       - name: 🔑 Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
@@ -167,6 +177,10 @@ jobs:
         env:
           DISPATCH_TAG: ${{ inputs.tag }}
         run: |
+          if [[ ! "$DISPATCH_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo "::error::The release tag must also be a valid container tag"
+            exit 1
+          fi
           printf 'tag=%s\n' "$DISPATCH_TAG" >> "$GITHUB_OUTPUT"
           printf 'sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
