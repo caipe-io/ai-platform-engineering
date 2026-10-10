@@ -269,74 +269,83 @@ test.describe("mocked credentials workspace browser regression", () => {
       await expect(page.getByText("GitHub token")).toHaveCount(0);
     });
 
-    test("returns OAuth relinks to Connected Apps and tests the newest connection", async ({
-      context,
-      page,
-    }) => {
-      const profileChecks: string[] = [];
-      await context.route("**/oauth-callback-relay", async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: "text/html; charset=utf-8",
-          body: `<!doctype html>
-<html><body><script>
-  const message = { type: "caipe.oauth.connection", status: "success", provider: "atlassian" };
-  if ("BroadcastChannel" in window) {
-    const channel = new BroadcastChannel("caipe.oauth.connection");
-    channel.postMessage(message);
-    channel.close();
-  }
-  window.opener?.postMessage(message, window.location.origin);
-</script></body></html>`,
+    for (const delivery of ["opener", "broadcast"] as const) {
+      test(`returns OAuth relinks via ${delivery} to Connected Apps and tests the newest connection`, async ({
+        context,
+        page,
+      }) => {
+        const profileChecks: string[] = [];
+        await context.route("**/oauth-callback-relay", async (route) => {
+          await route.fulfill({
+            status: 200,
+            contentType: "text/html; charset=utf-8",
+            body: `<!doctype html>
+  <html><body><script>
+    const message = { type: "caipe.oauth.connection", status: "success", provider: "atlassian" };
+    if (${JSON.stringify(delivery)} === "broadcast") {
+      const channel = new BroadcastChannel("caipe.oauth.connection");
+      channel.postMessage(message);
+      channel.close();
+    }
+    if (${JSON.stringify(delivery)} === "opener") {
+      window.opener.postMessage(message, window.location.origin);
+    }
+  </script></body></html>`,
+          });
         });
-      });
 
-      await page.route("**/api/credentials/connections/*/profile", async (route) => {
-        const connectionId = new URL(route.request().url()).pathname.split("/").at(-2) ?? "";
-        profileChecks.push(connectionId);
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({
-            success: true,
-            data: {
-              ok: true,
-              provider: "atlassian",
-              accessible_resources: [{ name: "Example Site", scopes: ["read:jira-user"] }],
-              diagnostics: [
-                {
-                  id: "atlassian_accessible_resources",
-                  label: "Accessible Atlassian sites",
-                  status: "passed",
-                  detail: "Example Site is accessible.",
-                  action: "No action needed.",
-                },
-              ],
-            },
-          }),
+        await page.route("**/api/credentials/connections/*/profile", async (route) => {
+          const connectionId = new URL(route.request().url()).pathname.split("/").at(-2) ?? "";
+          profileChecks.push(connectionId);
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              success: true,
+              data: {
+                ok: true,
+                provider: "atlassian",
+                accessible_resources: [{ name: "Example Site", scopes: ["read:jira-user"] }],
+                diagnostics: [
+                  {
+                    id: "atlassian_accessible_resources",
+                    label: "Accessible Atlassian sites",
+                    status: "passed",
+                    detail: "Example Site is accessible.",
+                    action: "No action needed.",
+                  },
+                ],
+              },
+            }),
+          });
         });
+
+        await assertPersonalCredentialsAvailable(page);
+        // Breadcrumbs are server-rendered. Loaded secrets show that hydration
+        // and the workspace's OAuth completion listeners have finished.
+        await expect(page.getByText("GitHub token", { exact: true })).toBeVisible();
+
+        const relayPagePromise = context.waitForEvent("page");
+        await page.evaluate(() => {
+          window.open("/oauth-callback-relay", "_blank");
+        });
+        const relayPage = await relayPagePromise;
+        try {
+          await relayPage.waitForLoadState("domcontentloaded");
+          await expect(page).toHaveURL(/\/credentials\/connections$/);
+        } finally {
+          await relayPage.close();
+        }
+        await expect(page.getByRole("heading", { name: "Connected Apps" })).toBeVisible();
+        await expect(page.getByText("Atlassian Cloud")).toBeVisible();
+        await expect(page.getByText("healthy")).toBeVisible();
+        await expect(page.getByText("expired")).toHaveCount(0);
+
+        await page.getByRole("button", { name: /test atlassian connection/i }).click();
+        await expect(page.getByText(/Atlassian access check passed: Example Site/i)).toBeVisible();
+        expect(profileChecks).toEqual(["new-atlassian-connection"]);
       });
-
-      await assertPersonalCredentialsAvailable(page);
-
-      const relayPagePromise = context.waitForEvent("page");
-      await page.evaluate(() => {
-        window.open("/oauth-callback-relay", "_blank");
-      });
-      const relayPage = await relayPagePromise;
-      await relayPage.waitForLoadState("domcontentloaded");
-      await relayPage.close().catch(() => undefined);
-
-      await expect(page).toHaveURL(/\/credentials\/connections$/);
-      await expect(page.getByRole("heading", { name: "Connected Apps" })).toBeVisible();
-      await expect(page.getByText("Atlassian Cloud")).toBeVisible();
-      await expect(page.getByText("healthy")).toBeVisible();
-      await expect(page.getByText("expired")).toHaveCount(0);
-
-      await page.getByRole("button", { name: /test atlassian connection/i }).click();
-      await expect(page.getByText(/Atlassian access check passed: Example Site/i)).toBeVisible();
-      expect(profileChecks).toEqual(["new-atlassian-connection"]);
-    });
+    }
   });
 
   test.describe("MCP editor credential binding", () => {
