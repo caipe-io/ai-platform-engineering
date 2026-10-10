@@ -1,10 +1,11 @@
 name: "[CI] CAIPE UI Tests"
-description: "Run CAIPE UI Jest tests and mocked RBAC Playwright regression on pull requests"
+# description: "Run CAIPE UI Jest tests and mocked RBAC Playwright regression on pull requests"
 
 on:
   pull_request:
     paths:
       - 'ui/**'
+      - 'scripts/npm/**'
       - '!ui/README.md'
       - '!ui/**/*.md'
   push:
@@ -12,6 +13,7 @@ on:
       - main
     paths:
       - 'ui/**'
+      - 'scripts/npm/**'
       - '!ui/README.md'
       - '!ui/**/*.md'
   workflow_dispatch:
@@ -49,6 +51,10 @@ jobs:
       - name: Install dependencies
         working-directory: ui
         run: npm ci
+
+      - name: Test npm security backports
+        working-directory: ui
+        run: node --test ../scripts/npm/*.test.mjs
 
       - name: Test External App examples
         working-directory: ui

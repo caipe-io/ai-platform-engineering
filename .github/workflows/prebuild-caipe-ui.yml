@@ -1,5 +1,5 @@
 name: "[Prebuild] CAIPE UI Docker Build and Push"
-description: "Build and push CAIPE UI Docker image for prebuild branches"
+# description: "Build and push CAIPE UI Docker image for prebuild branches"
 
 on:
   pull_request:
@@ -10,6 +10,7 @@ on:
       - '.github/actions/publish-prebuild-manifest/**'
       - 'ui/**'
       - 'build/Dockerfile.caipe-ui'
+      - 'scripts/npm/**'
   workflow_call:
     inputs:
       pr_number:
@@ -79,6 +80,7 @@ jobs:
               .github/actions/prebuild-status \
               .github/actions/publish-prebuild-manifest \
               ui \
+              scripts/npm \
               build/Dockerfile.caipe-ui | grep -q .; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           else
