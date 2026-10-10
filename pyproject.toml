@@ -32,9 +32,9 @@ dependencies = [
     # Dynamic agents are built on the upstream deepagents library.
     "deepagents==0.6.8",
     # MongoDB client for shared MongoDB collections (conversations, skills, audit)
-    "pymongo==4.16.0",
+    "pymongo==4.18.2",
     # MongoDB checkpoint saver for LangGraph persistence (dynamic agents)
-    "langgraph-checkpoint-mongodb==0.4.0",
+    "langgraph-checkpoint-mongodb==0.5.1",
     # Async MongoDB driver for MongoDB store
     "motor==3.7.1",
     # S3-compatible object storage client for audit log backend
