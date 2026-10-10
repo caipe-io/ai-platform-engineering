@@ -39,7 +39,7 @@ flowchart LR
 | 5 | End-user UX: remaining budget, quota requests | `ui/`, bots (message text only) | phase 3 |
 | opt | Gateways with ext_authz ask the BFF CAS adapter for the decision and verified identity headers | `ui/src/lib/authz/` (#2909) | phase 1 |
 
-**Implementation completion gate (SC-007):** the [required conformance task T060](./tasks.md#required-validation) must pass all applicable checks for every in-scope path against at least two different gateways, with versions, authentication modes and results recorded. This gate applies to the implemented feature; it does not block merging this spec/ADR.
+**Implementation completion gate (SC-007):** the [required conformance task T601](./tasks.md#required-validation) must pass all applicable checks for every in-scope path against at least two different gateways, with versions, authentication modes and results recorded. This gate applies to the implemented feature; it does not block merging this spec/ADR.
 
 ## Constitution check
 

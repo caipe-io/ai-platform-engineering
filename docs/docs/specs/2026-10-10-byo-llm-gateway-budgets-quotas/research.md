@@ -224,7 +224,7 @@ Checked 2026-10-09; no duplicate found.
 | #974, #973 dynamic LLM keys, LiteLLM keys | Answered by Decisions 6–7 |
 | #2610 tag LiteLLM requests by agent | Becomes the LiteLLM mapping of ③ |
 | #2019 FinOps alerting on LiteLLM usage | Consumes OTel GenAI usage |
-| #2300 wire setup-caipe to LiteLLM | Re-scope to the dev/demo example gateway (T070) |
+| #2300 wire setup-caipe to LiteLLM | Re-scope to the dev/demo example gateway (T801) |
 | #2813, #2841, #2828, #2854 CAS authorization | `llm_model` joins the CAS scope and its audit |
 | #2884 CAS migration inventory | The `llm_model` call-time check is registered as a CAS path |
 | #2885 canonical platform identity | Gateway token claims (`sub`, `act`, `org`) follow it |
@@ -234,7 +234,7 @@ Checked 2026-10-09; no duplicate found.
 | #2892, #2909 AgentGateway ext_authz through BFF CAS | Pattern for optional gateway-side authorization |
 | #2901 Keycloak-authenticated agent badges | Per-agent Keycloak binding that K2 can reuse |
 | #2883 ACP native runtime (draft) | May move `dynamic_agents` call sites; the hook lives in `llm_wrapper` |
-| #1037, #1048 quota-increase requests | The user journey behind T051 |
+| #1037, #1048 quota-increase requests | The user journey behind T502 |
 | #549 LLM fallback on throttling | The gateway's job |
 
 ## Prior art
