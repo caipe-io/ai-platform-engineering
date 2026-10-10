@@ -25,11 +25,21 @@ Agent Builder is the no-code path for managed agents. Choose the [developer
 guide](../development/creating-an-agent.md) when you need to package an agent
 as application code or control its deployment yourself.
 
-:::note Planned connector
+:::note Remote A2A tools
 
-A2A is not currently a CAIPE platform transport. The planned reintroduction is
-as an optional connector tool configured from Agent Builder; until it is
-available, use MCP servers for external tools and services.
+Platform admins register remote A2A endpoints in the **Remote A2A Agents**
+section of the Advanced step. Agent authors then select the registered endpoints
+each agent may call and configure a timeout for each selection. Dynamic Agents
+resolves authentication for every call using the configured header:
+
+- **User JWT**: the active caller's token (the default).
+- **Saved secret**: a secret selected from Credentials; each caller needs permission to use it.
+- **Connected credential**: each caller's connected account for the selected provider.
+
+`Authorization` uses the Bearer scheme; other headers receive the credential value
+directly. Only references are saved in the registry. **Discover Agent Card** and
+**Test connection** use the same authentication as tool calls. The official A2A
+SDK negotiates JSON-RPC or HTTP+JSON from the Agent Card.
 
 :::
 
@@ -104,7 +114,7 @@ Agent Builder guides you through six steps:
 | **Tools** | Registered MCP tools and CAIPE built-in tools |
 | **Knowledge** | Individual data sources and reusable collections |
 | **Skills** | Reusable instructions and packaged capabilities |
-| **Advanced** | Subagents, human approval rules, middleware, and workflow access |
+| **Advanced** | Subagents, remote A2A agents, human approval rules, middleware, and workflow access |
 
 After you save an agent, you can test it in chat without redeploying the runtime.
 You can also clone it, enable or disable it, and export it as YAML.
@@ -126,6 +136,14 @@ and skills later without rebuilding the agent.
 ## Knowledge and tool scope
 
 - MCP servers can connect over `stdio`, SSE, or Streamable HTTP.
+- Remote A2A agents are admin-managed registry entries. The registry stores the
+  endpoint and Agent Card metadata; agent documents store registry IDs rather
+  than arbitrary endpoint URLs.
+- Configure `REMOTE_AGENT_URLS` as a comma-separated deployment seed when
+  needed. Seeded entries still need to be selected in the agent's Advanced step.
+- A2A tools use the official Python SDK for JSON-RPC and HTTP+JSON protocol
+  negotiation, send the configured authentication header (caller JWT, saved secret, or connected credential), and enforce the configured
+  per-agent timeout.
 - Built-in tools include URL fetch, current date and time, user information,
   wait, human input requests, and workflow execution.
 - Selecting data sources or collections narrows the knowledge available to the agent.

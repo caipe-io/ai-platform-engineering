@@ -107,6 +107,10 @@ export async function consumeAgentStream(options: ConsumeOptions): Promise<Consu
         }),
       );
     },
+    onToolOutput(toolCallId, result, namespace) {
+      const event = createStreamEvent("tool_output", { tool_call_id: toolCallId, result, namespace });
+      pendingEvents.push(event);
+    },
     onToolEnd(toolCallId, toolName, err, namespace, args, result) {
       pendingEvents.push(
         createStreamEvent("tool_end", {

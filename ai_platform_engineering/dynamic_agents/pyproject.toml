@@ -40,6 +40,7 @@ dependencies = [
     # transport clients in services/llm_clients.py. Chosen by this package;
     # no longer held in lockstep with an external utility library.
     "boto3==1.43.16",
+    "a2a-sdk==1.2.2",
 ]
 
 [project.optional-dependencies]

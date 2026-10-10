@@ -100,6 +100,8 @@ class CustomStreamEncoder(StreamEncoder):
         namespace: tuple[str, ...],
     ) -> list[str]:
         """Encode transport-neutral runtime signals in the custom protocol."""
+        if isinstance(data, dict) and data.get("type") == "tool_output":
+            return [_sse_frame("tool_output", {**data, "namespace": list(namespace)})]
         if not isinstance(data, dict) or data.get("type") != CONTEXT_USAGE_EVENT:
             return []
 

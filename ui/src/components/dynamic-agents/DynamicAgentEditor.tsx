@@ -73,6 +73,7 @@ import { MiddlewarePicker } from "./MiddlewarePicker";
 import { SkillsSelector } from "./SkillsSelector";
 import { SubagentPicker } from "./SubagentPicker";
 import { WorkflowToolsPicker } from "./WorkflowToolsPicker";
+import { RemoteAgentsPicker } from "./RemoteAgentsPicker";
 import type { AgentSetupStep } from "./deep-linking";
 
 // Lazy-load CodeMirror to avoid SSR issues
@@ -182,7 +183,7 @@ const STEPS = [
   {
     id: "advanced" as const,
     label: "Advanced",
-    hint: "Subagents, approval rules, and middleware",
+    hint: "Subagents, remote agents, approval rules, and middleware",
   },
 ];
 
@@ -201,15 +202,17 @@ function StepIndicator({
   onStepClick: (stepId: StepId) => void;
 }) {
   return (
-    <div className="flex items-center gap-0 ml-auto">
+    <div className="grid w-full max-w-full grid-cols-3 gap-x-1 gap-y-1 lg:ml-auto lg:flex lg:w-auto lg:items-center lg:justify-end lg:gap-x-0">
       {steps.map((step, index) => (
         <React.Fragment key={step.id}>
-          {index > 0 && <div className="w-5 h-0.5 bg-border mx-0.5" />}
+          {index > 0 && (
+            <div className="mx-0.5 hidden h-0.5 w-5 bg-border lg:block" />
+          )}
           <button
             type="button"
             onClick={() => onStepClick(step.id)}
             className={cn(
-              "flex flex-col items-center gap-0.5 px-2.5 py-1.5 rounded-md transition-colors min-w-[64px]",
+              "flex min-w-[64px] flex-col items-center gap-0.5 rounded-md px-1.5 py-1.5 transition-colors lg:px-2.5",
               currentStep === step.id
                 ? "bg-primary/10 text-primary"
                 : "hover:bg-muted text-muted-foreground",
@@ -285,6 +288,10 @@ function AdvancedStep({
   agent,
   subagents,
   setSubagents,
+  allowedRemoteAgents,
+  setAllowedRemoteAgents,
+  remoteAgentTimeouts,
+  setRemoteAgentTimeouts,
   interruptOn,
   setInterruptOn,
   allowedTools,
@@ -300,6 +307,10 @@ function AdvancedStep({
   agent: DynamicAgentConfig | null;
   subagents: SubAgentRef[];
   setSubagents: (v: SubAgentRef[]) => void;
+  allowedRemoteAgents: string[];
+  setAllowedRemoteAgents: (v: string[]) => void;
+  remoteAgentTimeouts: Record<string, number>;
+  setRemoteAgentTimeouts: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   interruptOn: InterruptOn;
   setInterruptOn: (v: InterruptOn) => void;
   allowedTools: Record<string, string[] | boolean>;
@@ -317,6 +328,7 @@ function AdvancedStep({
     0,
   );
   const workflowCount = builtinTools?.workflows?.length ?? 0;
+  const remoteAgentCount = allowedRemoteAgents.length;
 
   return (
     <div className="space-y-4 pt-2">
@@ -337,6 +349,28 @@ function AdvancedStep({
           onChange={setSubagents}
           disabled={loading}
           parentVisibility={visibility}
+        />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title="Remote A2A Agents"
+        description="Call agents registered with the A2A protocol"
+        badge={`${remoteAgentCount} selected`}
+        defaultExpanded
+      >
+        <RemoteAgentsPicker
+          value={allowedRemoteAgents}
+          onChange={(ids) => {
+          setAllowedRemoteAgents(ids);
+          setRemoteAgentTimeouts((current) => Object.fromEntries(
+            Object.entries(current).filter(([id]) => ids.includes(id)),
+          ));
+        }}
+          timeoutValues={remoteAgentTimeouts}
+          onTimeoutChange={(id, seconds) =>
+            setRemoteAgentTimeouts((current) => ({ ...current, [id]: seconds }))
+          }
+          disabled={loading}
         />
       </CollapsibleSection>
 
@@ -451,6 +485,8 @@ export function DynamicAgentEditor({
   const [allowedTools, setAllowedTools] = React.useState<
     Record<string, string[] | boolean>
   >(source?.allowed_tools || {});
+  const [allowedRemoteAgents, setAllowedRemoteAgents] = React.useState<string[]>(source?.allowed_remote_agents || []);
+  const [remoteAgentTimeouts, setRemoteAgentTimeouts] = React.useState<Record<string, number>>(source?.remote_agent_timeouts || {});
   const [builtinTools, setBuiltinTools] = React.useState<
     BuiltinToolsConfig | undefined
   >(source?.builtin_tools);
@@ -855,6 +891,8 @@ export function DynamicAgentEditor({
       sharedWithTeams,
       ownerTeamSlug,
       allowedTools,
+      allowedRemoteAgents,
+      remoteAgentTimeouts,
       builtinTools,
       subagents,
       skills,
@@ -874,6 +912,8 @@ export function DynamicAgentEditor({
       sharedWithTeams,
       ownerTeamSlug,
       allowedTools,
+      allowedRemoteAgents,
+      remoteAgentTimeouts,
       builtinTools,
       subagents,
       skills,
@@ -1189,6 +1229,8 @@ export function DynamicAgentEditor({
           shared_with_teams:
             visibility === "team" ? sharedWithTeams : undefined,
           allowed_tools: allowedTools,
+          allowed_remote_agents: allowedRemoteAgents,
+          remote_agent_timeouts: Object.fromEntries(Object.entries(remoteAgentTimeouts).filter(([id]) => allowedRemoteAgents.includes(id))),
           builtin_tools: builtinTools,
           subagents: subagents.length > 0 ? subagents : undefined,
           skills,
@@ -1239,6 +1281,8 @@ export function DynamicAgentEditor({
           shared_with_teams:
             visibility === "team" ? sharedWithTeams : undefined,
           allowed_tools: allowedTools,
+          allowed_remote_agents: allowedRemoteAgents,
+          remote_agent_timeouts: Object.fromEntries(Object.entries(remoteAgentTimeouts).filter(([id]) => allowedRemoteAgents.includes(id))),
           builtin_tools: builtinTools,
           subagents: subagents.length > 0 ? subagents : undefined,
           skills,
@@ -1394,12 +1438,12 @@ export function DynamicAgentEditor({
   return (
     <Card>
       <CardHeader className="pb-2">
-        <div className="flex items-center gap-4">
+        <div className="flex items-start gap-3 sm:gap-4">
           <Button variant="ghost" size="icon" onClick={handleBackClick}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div>
-            <CardTitle>
+          <div className="min-w-0 flex-1">
+            <CardTitle className="break-words">
               {readOnly
                 ? `View Agent - ${agent?.name}`
                 : isEditing
@@ -1426,7 +1470,7 @@ export function DynamicAgentEditor({
               gradientTheme === "custom" ? customThemeConfig : undefined
             }
             rounded="rounded-lg"
-            size="ml-auto h-9 w-9"
+            size="ml-auto h-9 w-9 shrink-0"
             iconSize="h-5 w-5"
             className="transition-all"
           />
@@ -1435,9 +1479,9 @@ export function DynamicAgentEditor({
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Step Indicator + title inline */}
-          <div className="flex items-center gap-4 border-b pb-3 mt-2">
-            <div className="shrink-0">
-              <h3 className="text-xl font-bold text-primary">
+          <div className="mt-2 flex flex-col items-stretch gap-3 border-b pb-3 lg:flex-row lg:items-center lg:gap-4">
+            <div className="min-w-0 lg:shrink-0">
+              <h3 className="break-words text-lg font-bold text-primary sm:text-xl">
                 Step {currentStepIndex + 1}: {currentStepConfig?.label}
               </h3>
               <p className="text-xs text-muted-foreground mt-0.5">
@@ -2450,6 +2494,10 @@ export function DynamicAgentEditor({
                 agent={agent}
                 subagents={subagents}
                 setSubagents={setSubagents}
+                allowedRemoteAgents={allowedRemoteAgents}
+                setAllowedRemoteAgents={setAllowedRemoteAgents}
+                remoteAgentTimeouts={remoteAgentTimeouts}
+                setRemoteAgentTimeouts={setRemoteAgentTimeouts}
                 interruptOn={interruptOn}
                 setInterruptOn={setInterruptOn}
                 allowedTools={allowedTools}

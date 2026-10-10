@@ -526,21 +526,6 @@ forward.
   `{"code":"rbac_denied","reason":"missing_role","action":"contact_admin"}`.
   Stop Keycloak and confirm a non-bootstrap-admin receives
   `code: pdp_unavailable`, then restart Keycloak and unset the gate flag.
-- [ ] Run Slack OBO live verification against a running stack with
-  `scripts/verify-slack-obo.sh`. Confirm the decoded access token has the
-  expected `sub`, `azp`, and `act.sub` claims, and use the script's inline
-  failure hints for missing token-exchange policy, missing impersonation
-  permission, or disabled Keycloak token-exchange support. This verifies the
-  implementation behind T117/T118; Slack JIT-specific live checks remain in
-  spec 103 Phase 7.
-  ```bash
-  KEYCLOAK_URL=http://localhost:7080 \
-  KEYCLOAK_REALM=caipe \
-  KEYCLOAK_BOT_CLIENT_ID=caipe-slack-bot \
-  KEYCLOAK_BOT_CLIENT_SECRET=... \
-  TARGET_USER=admin \
-  ./scripts/verify-slack-obo.sh
-  ```
 - [ ] Wire the RBAC Playwright harness into GitHub Actions once the live stack
   can be provisioned in CI. The harness already exists under `ui/e2e/rbac/`
   with `npm run test:e2e:rbac`; the remaining work is infrastructure

@@ -44,6 +44,7 @@ from dynamic_agents.routes import (
     mcp_servers,
     middleware,
     model_capabilities,
+    remote_agents,
 )
 from dynamic_agents.services.autonomous_follow_up_cleanup import run_copy_cleanup
 from dynamic_agents.services.mongo import get_mongo_service, reset_mongo_service
@@ -175,6 +176,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(builtin_tools.router, prefix="/api/v1")
     app.include_router(mcp_servers.router, prefix="/api/v1")
+    app.include_router(remote_agents.router, prefix="/api/v1")
     app.include_router(chat.router, prefix="/api/v1")
     app.include_router(conversations.router, prefix="/api/v1")
     app.include_router(autonomous_follow_up.router, prefix="/api/v1")

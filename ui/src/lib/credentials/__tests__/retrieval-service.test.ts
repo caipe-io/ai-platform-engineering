@@ -33,7 +33,7 @@ function denyingService(
 }
 
 describe("CredentialRetrievalService", () => {
-  it("retrieves a secret for a non-browser service caller after use authorization", async () => {
+  it.each(["mcp_server", "a2a_agent"])("retrieves a secret for %s after use authorization", async (intended_use) => {
     const retrieval = service();
 
     await expect(
@@ -45,7 +45,7 @@ describe("CredentialRetrievalService", () => {
         }),
         body: {
           secret_ref: "secret-1",
-          intended_use: "mcp_server",
+          intended_use,
         },
         session: { sub: "service-sub" },
       }),
@@ -173,7 +173,7 @@ describe("CredentialRetrievalService", () => {
       expect(getSecret).not.toHaveBeenCalled();
     });
 
-    it.each(["mcp_server", "provider_exchange"])("denies usage fallback for %s", async (intended_use) => {
+    it.each(["mcp_server", "a2a_agent", "provider_exchange"])("denies usage fallback for %s", async (intended_use) => {
       const authorizeByUsage = jest.fn(async () => true);
       const retrieval = denyingService(authorizeByUsage);
 

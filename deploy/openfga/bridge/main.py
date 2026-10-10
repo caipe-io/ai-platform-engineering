@@ -27,7 +27,7 @@ import jwt
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 
 try:
-    from audit import flush_allow_rollups, log_authz_decision, start_allow_rollup_flusher
+    from audit import _hash_subject, flush_allow_rollups, log_authz_decision, start_allow_rollup_flusher
 except ModuleNotFoundError:
     audit_spec = importlib.util.spec_from_file_location(
         "openfga_bridge_audit",
@@ -40,6 +40,7 @@ except ModuleNotFoundError:
     log_authz_decision = audit_module.log_authz_decision
     flush_allow_rollups = audit_module.flush_allow_rollups
     start_allow_rollup_flusher = audit_module.start_allow_rollup_flusher
+    _hash_subject = audit_module._hash_subject
 
 OPENFGA_HTTP = os.environ.get("OPENFGA_HTTP", "http://openfga:8080").rstrip("/")
 OPENFGA_STORE_NAME = os.environ.get("OPENFGA_STORE_NAME", "caipe-openfga").strip()
@@ -709,6 +710,49 @@ def _audit_decision(
     )
 
 
+def _log_mcp_tool_call_authz(
+    *,
+    agent_context_kind: str,
+    mcp_target: str,
+    tool_name: str,
+    outcome: str,
+    reason_code: str,
+    correlation_id: str,
+    subject_hash: str,
+) -> None:
+    """Per-request companion log line for a tools/call authorization outcome.
+
+    log_authz_decision's event schema has no agent_context_kind field, and for
+    allow outcomes it only ever records an in-memory rollup (see audit.py's
+    _record_allow) that drops per-request fields entirely — so the
+    local-vs-dynamic-agent split is otherwise only recoverable from a slower,
+    deployment-specific audit-event scan. This line is emitted unconditionally
+    for every tools/call decision, independent of that pipeline. It carries
+    subject_hash rather than the raw subject, to match the exposure
+    characteristics of the existing rollup path rather than introduce a new
+    one. Best-effort: a failure here must never turn an already-decided
+    outcome into a request failure.
+    """
+    try:
+        print(
+            json.dumps(
+                {
+                    "event": "mcp_tool_call_authz",
+                    "agent_context_kind": agent_context_kind,
+                    "tool": f"{mcp_target}/{tool_name}",
+                    "outcome": outcome,
+                    "reason_code": reason_code,
+                    "correlation_id": correlation_id,
+                    "subject_hash": subject_hash,
+                },
+                separators=(",", ":"),
+            ),
+            file=sys.stderr,
+        )
+    except Exception as exc:  # noqa: BLE001 - logging must never break the request path
+        print(f"[bridge] failed to emit mcp_tool_call_authz log: {exc}", file=sys.stderr)
+
+
 class OpenFgaAuthorizationService:
     """Envoy Authorization.Check service backed by OpenFGA."""
 
@@ -827,6 +871,19 @@ class OpenFgaAuthorizationService:
                         message="missing or invalid signed agent context",
                     )
                 agent_id = agent_context.agent_id
+                tool_call_correlation_id = _request_correlation_id(request)
+                tool_call_subject_hash = _hash_subject(sub)
+
+                def _log_tool_call_authz(outcome: str, reason_code: str) -> None:
+                    _log_mcp_tool_call_authz(
+                        agent_context_kind=agent_context.kind,
+                        mcp_target=tool_call[0],
+                        tool_name=tool_call[1],
+                        outcome=outcome,
+                        reason_code=reason_code,
+                        correlation_id=tool_call_correlation_id,
+                        subject_hash=tool_call_subject_hash,
+                    )
 
                 # "local" contexts identify the caller acting as themselves —
                 # there is no separate delegated identity to bound, so we skip
@@ -872,6 +929,7 @@ class OpenFgaAuthorizationService:
                             duration_ms=(time.perf_counter() - start) * 1000,
                             subject_ref=subject_ref,
                         )
+                        _log_tool_call_authz("deny", "DENY_AGENT_USE")
                         return build_check_response(
                             allowed=False,
                             code=PERMISSION_DENIED,
@@ -889,6 +947,7 @@ class OpenFgaAuthorizationService:
                             duration_ms=(time.perf_counter() - start) * 1000,
                             subject_ref=subject_ref,
                         )
+                        _log_tool_call_authz("deny", "DENY_AGENT_TOOL")
                         return build_check_response(
                             allowed=False,
                             code=PERMISSION_DENIED,
@@ -906,6 +965,7 @@ class OpenFgaAuthorizationService:
                         duration_ms=(time.perf_counter() - start) * 1000,
                         subject_ref=subject_ref,
                     )
+                    _log_tool_call_authz("allow", "OK_LOCAL_AGENT_CONTEXT")
                 # Caller-keyed tool authorization (FR-012/012a/012b). The agent
                 # being allowed to call the tool is NOT sufficient — the calling
                 # subject (human user OR service account) must ALSO hold the tool
@@ -957,6 +1017,7 @@ class OpenFgaAuthorizationService:
                             duration_ms=(time.perf_counter() - start) * 1000,
                             subject_ref=subject_ref,
                         )
+                        _log_tool_call_authz("deny", deny_reason)
                         return build_check_response(
                             allowed=False,
                             code=PERMISSION_DENIED,
@@ -974,6 +1035,7 @@ class OpenFgaAuthorizationService:
                         duration_ms=(time.perf_counter() - start) * 1000,
                         subject_ref=subject_ref,
                     )
+                    _log_tool_call_authz("allow", allow_reason)
         except Exception as e:
             duration_ms = (time.perf_counter() - start) * 1000
             print(f"[bridge] OpenFGA check error: {e}", file=sys.stderr)

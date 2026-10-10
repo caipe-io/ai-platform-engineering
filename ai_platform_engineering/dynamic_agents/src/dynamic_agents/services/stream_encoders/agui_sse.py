@@ -133,6 +133,11 @@ class AGUIStreamEncoder(StreamEncoder):
         namespace: tuple[str, ...],
     ) -> list[str]:
         """Encode transport-neutral runtime signals as AG-UI custom events."""
+        if isinstance(data, dict) and data.get("type") == "tool_output":
+            return [_sse_frame("CUSTOM", {
+                "type": "CUSTOM", "name": "TOOL_OUTPUT",
+                "value": {**data, "namespace": list(namespace)}, "timestamp": _ts(),
+            })]
         if not isinstance(data, dict) or data.get("type") != CONTEXT_USAGE_EVENT:
             return []
 

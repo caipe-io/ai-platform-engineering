@@ -593,6 +593,7 @@ services:
       - ${HOME}/.aws:/home/app/.aws:ro
     env_file: [.env]
     environment:
+      - REMOTE_A2A_ALLOWED_HTTP_ORIGINS=${REMOTE_A2A_ALLOWED_HTTP_ORIGINS:-[]}
       - AWS_CONFIG_FILE=/home/app/.aws/config
       - AWS_SHARED_CREDENTIALS_FILE=/home/app/.aws/credentials
       - AWS_BEDROCK_STREAMING=${AWS_BEDROCK_STREAMING:-false}

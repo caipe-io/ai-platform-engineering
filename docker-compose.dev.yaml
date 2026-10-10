@@ -466,6 +466,7 @@ services:
     profiles:
       - netutils-agent
       - mcp-servers
+      - all-agents
 
   # Optional app-only SharePoint integration. Keep this out of mcp-servers so
   # first-time OSS installs do not require Microsoft credentials.
@@ -1067,6 +1068,7 @@ services:
       - dynamic_agents_attachments:/var/lib/caipe-attachments
     env_file: [.env]
     environment:
+      - REMOTE_A2A_ALLOWED_HTTP_ORIGINS=${REMOTE_A2A_ALLOWED_HTTP_ORIGINS:-[]}
       # Dev-only: DEV_HOT_RELOAD toggles the existing DEBUG-driven uvicorn reload
       # on the bind-mounted source under /app/dynamic_agents/src. Default off.
       - DEBUG=${DEV_HOT_RELOAD:-false}

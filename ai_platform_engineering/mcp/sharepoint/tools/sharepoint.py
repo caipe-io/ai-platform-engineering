@@ -15,6 +15,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import INTERNAL_ERROR, INVALID_PARAMS, ErrorData
 
 from api import SharePointGraphClient, SharePointGraphError
+from api.documents import SharePointDocuments
 from models import DriveItemInput, ListDriveItemsInput, ListItemsInput, PageInput, ReadFileInput, SearchDriveItemsInput
 
 READ_ONLY_ANNOTATIONS = {
@@ -58,7 +59,7 @@ def _tool_errors[**P, R](func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitab
     return wrapper
 
 
-def register_tools(server: FastMCP, client: SharePointGraphClient) -> None:
+def register_tools(server: FastMCP, client: SharePointGraphClient, *, documents: SharePointDocuments | None = None) -> None:
     """Register the complete read-only SharePoint tool surface."""
 
     @server.tool(name="sharepoint_get_site", annotations=READ_ONLY_ANNOTATIONS)
@@ -66,6 +67,16 @@ def register_tools(server: FastMCP, client: SharePointGraphClient) -> None:
     async def get_site() -> dict[str, Any]:
         """Get metadata for the single SharePoint site configured on this server."""
         return await client.get_site()
+
+    @server.tool(name="sharepoint_get_document_manifest", annotations=READ_ONLY_ANNOTATIONS)
+    @_tool_errors
+    async def get_document_manifest(args: DriveItemInput) -> dict[str, Any]:
+        """Get PPTX/PDF metadata and relative authenticated download routes, never file bytes or signed URLs.
+
+        An application must stage/convert the document before model ingestion.
+        These HTTP routes share this server's authentication and are not MCP tool calls.
+        """
+        return await (documents or SharePointDocuments(client)).manifest(args.drive_id, args.item_id)
 
     @server.tool(name="sharepoint_list_document_libraries", annotations=READ_ONLY_ANNOTATIONS)
     @_tool_errors

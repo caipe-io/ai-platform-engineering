@@ -122,6 +122,26 @@ class MCPCredentialSource(BaseModel):
     )
 
 
+class RemoteAgentCredentialSource(BaseModel):
+    """Caller-scoped authentication injected into an A2A HTTP header."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    kind: Literal["caller_token", "secret_ref", "provider_connection"] = "caller_token"
+    target: Literal["header"] = "header"
+    name: str = Field(default="Authorization", min_length=1, max_length=256, pattern=r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+    secret_ref: str | None = None
+    provider: str | None = None
+
+    @model_validator(mode="after")
+    def require_credential_reference(self) -> "RemoteAgentCredentialSource":
+        if self.kind == "secret_ref" and not self.secret_ref:
+            raise ValueError("A saved secret reference is required")
+        if self.kind == "provider_connection" and not self.provider:
+            raise ValueError("A connected credential provider is required")
+        return self
+
+
 class MCPServerConfig(MCPServerConfigBase):
     """Full MCP server config as stored in MongoDB."""
 
@@ -540,6 +560,14 @@ class DynamicAgentConfigBase(BaseModel):
             "true = all tools from server, false = server disabled, "
             "list = specific tools only, [] = legacy (treated as true)"
         ),
+    )
+    allowed_remote_agents: list[str] = Field(
+        default_factory=list,
+        description="Remote A2A agent registry IDs available to this agent",
+    )
+    remote_agent_timeouts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Per-agent timeout overrides in seconds for selected A2A agents",
     )
     model: ModelConfig = Field(..., description="LLM model configuration (id + provider)")
     visibility: VisibilityType = Field(VisibilityType.PRIVATE, description="Visibility scope")

@@ -39,7 +39,7 @@ export interface RetrieveCredentialResult {
   credential: string;
 }
 
-const ALLOWED_INTENDED_USES = new Set(["mcp_server", "provider_exchange", "internal_service"]);
+const ALLOWED_INTENDED_USES = new Set(["mcp_server", "a2a_agent", "provider_exchange", "internal_service"]);
 
 function validateRetrieveBody(
   body: Record<string, unknown>,

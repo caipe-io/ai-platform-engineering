@@ -405,3 +405,52 @@ dynamic_agents/
 - [SSE_EVENTS.md](./SSE_EVENTS.md) - SSE event types and streaming protocol
 - [UI Integration](../../ui/src/components/dynamic-agents/) - Frontend components
 - [MCP Protocol](https://modelcontextprotocol.io/) - Model Context Protocol specification
+
+
+## Remote A2A agents
+
+- Register endpoints in **Agents > Advanced > Remote A2A Agents** as a platform admin.
+- Select multiple registry entries for an agent or its subagents. Each entry becomes a callable tool.
+- Configure an overall execution deadline (1–600 seconds); agent authors can override it per selection.
+  The deadline includes credential resolution, Agent Card discovery, and execution; stream activity does not reset it.
+- Check **Stream responses** when adding or editing a registry entry to opt into A2A streaming. It defaults to off and applies to callers of that entry.
+- Streaming uses the official SDK and Agent Card capability negotiation. Endpoints without streaming support return complete responses.
+- Remote text appears progressively in the running tool output panel, including calls from subagents. Artifact append/replacement semantics are preserved; the completed result is passed to the parent agent. Disconnected/failed streams surface errors rather than successful partial answers.
+- Choose **User JWT**, **Saved secret**, or **Connected credential**, then set the header name.
+- `Authorization` sends a Bearer token; other headers receive the value directly.
+- Saved secrets require the invoking caller's use permission. Connected credentials resolve the invoking caller's own provider account.
+- Set `CREDENTIAL_API_URL` to the UI credential API (for example `http://caipe-ui:3000/api/credentials`) for secrets and connected accounts. `CREDENTIAL_SERVICE_AUDIENCE` defaults to `caipe-credential-service`.
+- Credentials resolve on every invocation. Registry edits invalidate cached runtimes on the next request.
+- Agent Card discovery and calls use the official A2A SDK with JSON-RPC or HTTP+JSON negotiation.
+- Calls use the registered endpoint. Register a gateway URL to gate A2A calls; `AGENT_GATEWAY_URL` configures MCP routing only.
+
+### Standalone examples
+
+- [sample_a2a_agents](https://github.com/caipe-io/sample_a2a_agents) owns the Netutils and Weather example servers, their SDK adapter, tests, Docker image, and Compose/gateway configuration.
+- Follow that repository's setup guide to attach the examples to the running platform network. They are not bundled in the Dynamic Agents image or platform Compose files.
+- Register Netutils for direct A2A calls or Weather through its Keycloak JWT gateway in **Advanced > Remote A2A Agents**. Select both, optionally enable **Stream responses**, and **Save Changes**.
+
+### Authentication and destination policy
+
+- Registry writes and Agent Card discovery require CAS `manage` permission on the configured organization.
+  The backend probe repeats this check using the validated caller JWT; context flags do not grant access.
+- Parent agent execution requires CAS `use` permission. Selected remote entries define its callable tools.
+  The remote agent or its gateway enforces its own policies with the configured credential.
+- Existing developer authentication (`DEBUG=true`) and UI dev login are unchanged.
+  Their removal is reviewed separately in PR #2904; this feature has no dependency on it.
+- A2A credentials are sent only to the registered origin. Agent Cards that advertise
+  another origin are rejected; register the externally reachable gateway origin instead.
+- HTTPS is required by default. For private/local Docker examples, set
+  `REMOTE_A2A_ALLOWED_HTTP_ORIGINS=["http://netutils-agent:8120","http://weather-agentgateway:4000"]`
+  in the DA deployment. Trusting HTTP permits plaintext credential transmission on
+  that network; do not add public HTTP origins.
+
+### A2A execution and response limits
+
+- `REMOTE_A2A_MAX_OUTPUT_BYTES`: maximum accumulated UTF-8 text (messages, artifacts, and status), default **1 MiB**.
+- `REMOTE_A2A_MAX_RESPONSE_BYTES`: total HTTP response bytes across discovery and execution in one call, default **8 MiB**. All response bytes count, including metadata, non-text payloads and SSE comments, before SDK parsing.
+- Configure these positive integer settings on the Dynamic Agents service. They apply to parent and subagent tools. UI timeouts remain bounded to 1–600 seconds.
+- Discovery probes use the response cap and a **10-second overall deadline**.
+- Requests use `Accept-Encoding: identity`; compressed responses are rejected to keep decompression from bypassing the response budget.
+- Exceeding a limit fails the tool call and closes the active response stream and SDK client. Oversized snapshots are not emitted; partial output is not returned as a successful answer. Closing a local stream does not guarantee cancellation of work already running on the remote service.
+- Remote endpoints must be trusted and administrator-approved. Mandatory AgentGateway routing, verified calling-agent identity and CAS delegation authorization are tracked in [#2914](https://github.com/caipe-io/ai-platform-engineering/issues/2914).
