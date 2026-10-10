@@ -212,6 +212,28 @@ conversation write check, so a Slack OBO token for the conversation owner can
 update thread metadata such as `last_processed_ts` without a separate
 `conversation:<id>#writer` tuple.
 
+## Autonomous Runs and Private Follow-ups
+
+- Unattended tasks request a short-lived owner bearer using the configured
+  scheduler-runner token-exchange client. The requested subject comes from the
+  stored task owner, not webhook payloads. Dynamic Agents checks the owner's
+  Autonomous eligibility (`organization:automate`) and agent access (`agent:use`)
+  through CAS before execution; downstream tools receive that owner bearer.
+- The Helm credential wiring also applies when Autonomous is enabled but the
+  separate scheduler feature is disabled. This does not narrow Keycloak's
+  token-exchange policy: operators must restrict the client credential's access
+  and review the subjects/audiences it can impersonate.
+- Private follow-up endpoints require a validated interactive-user bearer.
+  Identity and admin flags from `X-User-Context` are ignored. A token without
+  email uses the persisted subject-to-email directory; unresolved identities
+  fail closed. Task/run ownership is checked, with admin access decided by CAS's
+  organization `manage` policy. Creating a copy also requires agent-use access.
+- Each caller/run has its own private follow-up. Copy attempts are journaled and
+  lease-fenced; recovery isolates bad records and retries failed cleanup without
+  modifying successful chats. Missing destination checkpoints cannot reopen as
+  empty chats. After permanent deletion, an explicit continuation creates a new
+  copy only if the original run's saved context remains available.
+
 ## Service Account Create & External Call
 
 Service accounts (spec `2026-06-05-service-accounts`) are self-service, team-owned

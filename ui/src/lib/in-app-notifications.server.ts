@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { forwardAdminNotificationToSlack } from "@/lib/admin-notification-forwarding.server";
 import { getCollection } from "@/lib/mongodb";
 import { checkOpenFgaTuple, listOpenFgaObjects } from "@/lib/rbac/openfga";
 import { organizationObjectId } from "@/lib/rbac/organization";
@@ -106,7 +107,8 @@ export async function createInAppNotification(input: {
     NOTIFICATION_COLLECTION,
   );
   const now = new Date().toISOString();
-  await collection.updateOne(
+  const severity = input.severity ?? "info";
+  const result = await collection.updateOne(
     { event_key: input.eventKey } as never,
     {
       $setOnInsert: {
@@ -119,7 +121,7 @@ export async function createInAppNotification(input: {
         title: input.title,
         message: input.message,
         ...(input.href ? { href: input.href } : {}),
-        severity: input.severity ?? "info",
+        severity,
         category: input.category ?? "general",
         ...(input.sourceLabel ? { source_label: input.sourceLabel } : {}),
         ...(input.correlationKey ? { correlation_key: input.correlationKey } : {}),
@@ -131,6 +133,21 @@ export async function createInAppNotification(input: {
     } as never,
     { upsert: true },
   );
+
+  // Only forward genuinely new notifications — `$setOnInsert` means a
+  // duplicate `event_key` upsert leaves `upsertedCount` at 0, so a retried
+  // or re-triggered call never posts a second Slack message for the same
+  // event. Fire-and-forget: a Slack outage must never slow down or break
+  // in-app notification creation.
+  if (result.upsertedCount > 0 && recipientOrganizationAdmins) {
+    void forwardAdminNotificationToSlack({
+      title: input.title,
+      message: input.message,
+      href: input.href,
+      severity,
+      sourceLabel: input.sourceLabel,
+    }).catch(() => {});
+  }
 }
 
 export async function resolveInAppNotification(input: {

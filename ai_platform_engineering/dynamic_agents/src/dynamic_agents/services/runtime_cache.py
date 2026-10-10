@@ -166,36 +166,9 @@ class AgentRuntimeCache:
         """
         key = self._make_key(agent_config.id, session_id)
 
-        # Fast path: cached and valid
-        if key in self._cache:
-            runtime = self._cache[key]
-            if runtime.is_stale(agent_config, mcp_servers):
-                logger.info(
-                    "Runtime cache invalidated due to config change for agent %s",
-                    agent_config.id,
-                )
-                await runtime.cleanup()
-                del self._cache[key]
-                prom_metrics.runtime_cache_evictions_total.labels(reason="config_change").inc()
-                self._update_metrics()
-            elif runtime.idle_seconds >= self._ttl:
-                logger.info(
-                    "Runtime cache expired due to inactivity (%.0fs idle) for agent %s",
-                    runtime.idle_seconds,
-                    agent_config.id,
-                )
-                await runtime.cleanup()
-                del self._cache[key]
-                prom_metrics.runtime_cache_evictions_total.labels(reason="expired").inc()
-                self._update_metrics()
-            else:
-                runtime.touch()
-                logger.debug("Runtime cache hit for agent %s session %s", agent_config.id, session_id)
-                return runtime
-
         # Someone else is already initializing this key — wait for their result
         if key in self._pending:
-            return await self._pending[key]
+            return await asyncio.shield(self._pending[key])
 
         # We're the first — create a future and perform initialization
         loop = asyncio.get_event_loop()
@@ -204,6 +177,34 @@ class AgentRuntimeCache:
         self._update_metrics()
 
         try:
+            # Fast path: cached and valid
+            if key in self._cache:
+                runtime = self._cache[key]
+                if await asyncio.to_thread(runtime.is_stale, agent_config, mcp_servers):
+                    logger.info(
+                        "Runtime cache invalidated due to config change for agent %s",
+                        agent_config.id,
+                    )
+                    await runtime.cleanup()
+                    del self._cache[key]
+                    prom_metrics.runtime_cache_evictions_total.labels(reason="config_change").inc()
+                    self._update_metrics()
+                elif runtime.idle_seconds >= self._ttl:
+                    logger.info(
+                        "Runtime cache expired due to inactivity (%.0fs idle) for agent %s",
+                        runtime.idle_seconds,
+                        agent_config.id,
+                    )
+                    await runtime.cleanup()
+                    del self._cache[key]
+                    prom_metrics.runtime_cache_evictions_total.labels(reason="expired").inc()
+                    self._update_metrics()
+                else:
+                    runtime.touch()
+                    logger.debug("Runtime cache hit for agent %s session %s", agent_config.id, session_id)
+                    fut.set_result(runtime)
+                    return runtime
+
             runtime = await self._create_runtime(key, agent_config, mcp_servers, session_id, user, client_context)
             self._cache[key] = runtime
             self._update_metrics()
@@ -216,8 +217,12 @@ class AgentRuntimeCache:
                 self._max_size,
             )
             return runtime
+        except asyncio.CancelledError:
+            fut.cancel()
+            raise
         except Exception as e:
             fut.set_exception(e)
+            fut.exception()  # Consume it when no other request awaited the single-flight future.
             raise
         finally:
             self._pending.pop(key, None)
@@ -351,7 +356,7 @@ class AgentRuntimeCache:
         candidate_idle: float = -1
 
         for key, runtime in self._cache.items():
-            if runtime._is_streaming:
+            if key in self._pending or runtime._is_streaming:
                 continue
             if runtime.idle_seconds > candidate_idle:
                 candidate_idle = runtime.idle_seconds
@@ -378,7 +383,7 @@ class AgentRuntimeCache:
 
     async def _cleanup_expired(self) -> None:
         """Remove expired runtimes from cache."""
-        expired_keys = [key for key, runtime in self._cache.items() if runtime.idle_seconds >= self._ttl]
+        expired_keys = [key for key, runtime in self._cache.items() if key not in self._pending and runtime.idle_seconds >= self._ttl]
         for key in expired_keys:
             runtime = self._cache.pop(key, None)
             if runtime:
@@ -403,6 +408,8 @@ class AgentRuntimeCache:
             True if a runtime was invalidated, False if not found.
         """
         key = self._make_key(agent_id, session_id)
+        if key in self._pending:
+            await asyncio.shield(self._pending[key])
         runtime = self._cache.pop(key, None)
         if runtime:
             await runtime.cleanup()

@@ -553,6 +553,7 @@ function ToolSegmentView({ segment, isNested = false }: { segment: ToolSegment; 
   const hasParams = tool.args && Object.keys(tool.args).length > 0;
   const hasDetails = hasParams || (!isFailed && tool.result);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsVisible = detailsOpen || (isRunning && !!tool.result);
 
   return (
     <div
@@ -588,7 +589,7 @@ function ToolSegmentView({ segment, isNested = false }: { segment: ToolSegment; 
         {hasDetails && (
           <ChevronDown className={cn(
             "text-muted-foreground/50 transition-transform duration-150 shrink-0",
-            detailsOpen && "rotate-180",
+            detailsVisible && "rotate-180",
             isNested ? "h-2.5 w-2.5" : "h-3 w-3"
           )} />
         )}
@@ -617,7 +618,7 @@ function ToolSegmentView({ segment, isNested = false }: { segment: ToolSegment; 
       {hasDetails && (
         <div className={cn(
           "grid transition-all duration-150 ease-out",
-          detailsOpen ? "grid-rows-[1fr] mt-1.5" : "grid-rows-[0fr]"
+          detailsVisible ? "grid-rows-[1fr] mt-1.5" : "grid-rows-[0fr]"
         )}>
           <div className="overflow-hidden">
             <div>
@@ -642,9 +643,10 @@ function ToolSegmentView({ segment, isNested = false }: { segment: ToolSegment; 
                 <span className={cn(
                   "text-muted-foreground/50 font-medium",
                   isNested ? "text-[8px]" : "text-[10px]"
-                )}>output:</span>
+                )}>{isRunning ? "Streaming output:" : "output:"}</span>
                 <p className={cn(
-                  "text-muted-foreground/70 font-mono leading-snug whitespace-pre-wrap break-all line-clamp-6 mt-0.5",
+                  "text-muted-foreground/70 font-mono leading-snug whitespace-pre-wrap break-all mt-0.5",
+                  isRunning ? "max-h-48 overflow-y-auto" : "line-clamp-6",
                   isNested ? "text-[8px]" : "text-[10px]"
                 )}>
                   {tool.result}
@@ -712,6 +714,7 @@ function ToolGroupSegmentView({ segment, isNested = false }: { segment: ToolGrou
   const { tools } = segment;
   const completedCount = tools.filter(t => t.status === "completed").length;
   const hasRunning = tools.some(t => t.status === "running");
+  const groupExpanded = expanded || tools.some(t => t.status === "running" && !!t.result);
 
   return (
     <div className="rounded-lg border border-border/50 bg-card/50 overflow-hidden">
@@ -727,7 +730,7 @@ function ToolGroupSegmentView({ segment, isNested = false }: { segment: ToolGrou
         <span 
           className={cn(
             "shrink-0 transition-transform duration-150 ease-out",
-            expanded && "rotate-180"
+            groupExpanded && "rotate-180"
           )}
         >
           <ChevronDown className={cn("text-muted-foreground", isNested ? "h-2.5 w-2.5" : "h-3 w-3")} />
@@ -748,7 +751,7 @@ function ToolGroupSegmentView({ segment, isNested = false }: { segment: ToolGrou
       <div
         className={cn(
           "grid transition-[grid-template-rows] duration-150 ease-out",
-          expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+          groupExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
         )}
       >
         <div className="overflow-hidden">
@@ -772,6 +775,7 @@ function ToolItemView({ tool, isNested = false }: { tool: ToolInfo; isNested?: b
   const hasParams = tool.args && Object.keys(tool.args).length > 0;
   const hasDetails = hasParams || (!isFailed && tool.result);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsVisible = detailsOpen || (isRunning && !!tool.result);
 
   return (
     <div
@@ -807,7 +811,7 @@ function ToolItemView({ tool, isNested = false }: { tool: ToolInfo; isNested?: b
         {hasDetails && (
           <ChevronDown className={cn(
             "text-muted-foreground/50 transition-transform duration-150 shrink-0",
-            detailsOpen && "rotate-180",
+            detailsVisible && "rotate-180",
             isNested ? "h-2.5 w-2.5" : "h-3 w-3"
           )} />
         )}
@@ -836,7 +840,7 @@ function ToolItemView({ tool, isNested = false }: { tool: ToolInfo; isNested?: b
       {hasDetails && (
         <div className={cn(
           "grid transition-all duration-150 ease-out",
-          detailsOpen ? "grid-rows-[1fr] mt-1.5" : "grid-rows-[0fr]"
+          detailsVisible ? "grid-rows-[1fr] mt-1.5" : "grid-rows-[0fr]"
         )}>
           <div className="overflow-hidden">
             <div>
@@ -861,9 +865,10 @@ function ToolItemView({ tool, isNested = false }: { tool: ToolInfo; isNested?: b
                 <span className={cn(
                   "text-muted-foreground/50 font-medium",
                   isNested ? "text-[8px]" : "text-[10px]"
-                )}>output:</span>
+                )}>{isRunning ? "Streaming output:" : "output:"}</span>
                 <p className={cn(
-                  "text-muted-foreground/70 font-mono leading-snug whitespace-pre-wrap break-all line-clamp-6 mt-0.5",
+                  "text-muted-foreground/70 font-mono leading-snug whitespace-pre-wrap break-all mt-0.5",
+                  isRunning ? "max-h-48 overflow-y-auto" : "line-clamp-6",
                   isNested ? "text-[8px]" : "text-[10px]"
                 )}>
                   {tool.result}

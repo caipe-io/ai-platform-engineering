@@ -5,8 +5,11 @@ info:
   description: |
     OpenAPI specification for the Dynamic Agents FastAPI service (`dynamic_agents`).
     Base path is the service root (e.g. `http://localhost:8100`). JSON responses unless noted.
-    Admin-only routes require an admin claim in the JWT; others require a valid Bearer token
-    (or dev auth bypass when `AUTH_ENABLED=false`).
+    JwtAuthMiddleware validates supplied bearer tokens. Existing routes consume gateway
+    X-User-Context metadata; DEBUG=true retains the existing development admin identity.
+    Agent execution requires CAS agent-use permission. Remote Agent Card probes require
+    CAS organization-manage permission using the validated caller bearer independently
+    of DEBUG or X-User-Context flags. DA_REQUIRE_BEARER controls general middleware enforcement.
 servers:
   - url: /
     description: Dynamic Agents Service

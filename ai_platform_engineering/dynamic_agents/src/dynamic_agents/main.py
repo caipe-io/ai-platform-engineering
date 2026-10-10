@@ -10,7 +10,7 @@ dotenv.load_dotenv()  # Ensure .env is in os.environ before any boto3/httpx clie
 
 from dynamic_agents.log_config import setup_logging
 
-# Setup logging before other imports that trigger cnoe-agent-utils
+# Setup logging before other imports that configure the root logger
 logger = setup_logging()
 
 
@@ -35,6 +35,7 @@ from dynamic_agents.metrics import PrometheusHTTPMiddleware
 from dynamic_agents.routes import (
     agents,
     assistant,
+    autonomous_follow_up,
     builtin_tools,
     chat,
     conversations,
@@ -42,7 +43,10 @@ from dynamic_agents.routes import (
     health,
     mcp_servers,
     middleware,
+    model_capabilities,
+    remote_agents,
 )
+from dynamic_agents.services.autonomous_follow_up_cleanup import run_copy_cleanup
 from dynamic_agents.services.mongo import get_mongo_service, reset_mongo_service
 from dynamic_agents.services.runtime_cache import RuntimeCapacityError, RuntimeInitError, get_runtime_cache
 
@@ -67,9 +71,8 @@ async def lifespan(app: FastAPI):
     # ``dynamic_agents.services.skill_scrubber`` — see the file
     # header for the source-of-truth location.
     try:
-        from cnoe_agent_utils.tracing import TracingManager
-
         from dynamic_agents.services.skill_scrubber import install_skill_content_scrubber
+        from dynamic_agents.services.tracing import TracingManager
 
         TracingManager()
         install_skill_content_scrubber()
@@ -110,16 +113,24 @@ async def lifespan(app: FastAPI):
         store.ensure_ttl_index()
         logger.info("GridFS TTL index ensured (per-document expireAt)")
 
-    yield
-
-    # Cleanup on shutdown
-    logger.info("Shutting down Dynamic Agents service...")
-
-    # Stop sweep and clear agent runtime cache
-    await cache.stop()
-
-    # Disconnect MongoDB
-    mongo.disconnect()
+    copy_cleanup = asyncio.create_task(run_copy_cleanup(mongo))
+    try:
+        yield
+    finally:
+        logger.info("Shutting down Dynamic Agents service...")
+        try:
+            copy_cleanup.cancel()
+            try:
+                _ = await copy_cleanup
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001 — an already-failed worker must not skip shutdown
+                logger.exception("Follow-up recovery worker failed before shutdown")
+        finally:
+            try:
+                await cache.stop()
+            finally:
+                mongo.disconnect()
 
 
 def create_app() -> FastAPI:
@@ -165,11 +176,14 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(builtin_tools.router, prefix="/api/v1")
     app.include_router(mcp_servers.router, prefix="/api/v1")
+    app.include_router(remote_agents.router, prefix="/api/v1")
     app.include_router(chat.router, prefix="/api/v1")
     app.include_router(conversations.router, prefix="/api/v1")
+    app.include_router(autonomous_follow_up.router, prefix="/api/v1")
     app.include_router(files.router, prefix="/api/v1")
     app.include_router(assistant.router, prefix="/api/v1")
     app.include_router(middleware.router, prefix="/api/v1")
+    app.include_router(model_capabilities.router, prefix="/api/v1")
     # Agent reachability probe used by the autonomous-agents service
     # to verify ``dynamic_agent_id`` targets exist before scheduling.
     app.include_router(agents.router, prefix="/api/v1")

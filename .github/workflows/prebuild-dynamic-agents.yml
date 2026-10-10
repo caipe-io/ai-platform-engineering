@@ -9,6 +9,7 @@ on:
       - '.github/actions/prebuild-status/**'
       - '.github/actions/publish-prebuild-manifest/**'
       - 'ai_platform_engineering/dynamic_agents/**'
+      - 'ai_platform_engineering/llm_wrapper/**'
   workflow_call:
     inputs:
       pr_number:
@@ -49,6 +50,7 @@ jobs:
     if: |
       (github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]') &&
       startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
       github.event.action != 'closed'
     outputs:
       should_build: ${{ steps.eligibility.outputs.should_build }}
@@ -77,7 +79,8 @@ jobs:
               .github/workflows/prebuild-dynamic-agents.yml \
               .github/actions/prebuild-status \
               .github/actions/publish-prebuild-manifest \
-              ai_platform_engineering/dynamic_agents | grep -q .; then
+              ai_platform_engineering/dynamic_agents \
+              ai_platform_engineering/llm_wrapper | grep -q .; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_build=false" >> "$GITHUB_OUTPUT"
@@ -89,6 +92,7 @@ jobs:
     if: |
       needs.determine-changes.outputs.should_build == 'true' &&
       startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
       github.event.action != 'closed'
     permissions:
       contents: write
@@ -107,7 +111,7 @@ jobs:
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed  # v2.22.0
         with:
           egress-policy: audit
 
@@ -119,7 +123,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
@@ -170,9 +174,9 @@ jobs:
 
       - name: Build and push Dynamic Agents image by digest
         id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
-          context: ai_platform_engineering/dynamic_agents
+          context: .
           file: ai_platform_engineering/dynamic_agents/build/Dockerfile
           labels: |
             ${{ steps.meta.outputs.labels }}
@@ -207,6 +211,7 @@ jobs:
       needs.determine-changes.result == 'success' &&
       needs.determine-changes.outputs.should_build == 'true' &&
       startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
       github.event.action != 'closed'
     permissions:
       contents: write
@@ -214,7 +219,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 

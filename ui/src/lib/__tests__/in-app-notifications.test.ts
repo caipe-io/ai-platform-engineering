@@ -10,9 +10,15 @@ import type { InAppNotificationDocument } from "@/types/in-app-notification";
 const mockGetCollection = jest.fn();
 const mockListOpenFgaObjects = jest.fn();
 const mockCheckOpenFgaTuple = jest.fn();
+const mockForwardAdminNotificationToSlack = jest.fn();
 
 jest.mock("@/lib/mongodb", () => ({
   getCollection: (...args: unknown[]) => mockGetCollection(...args),
+}));
+
+jest.mock("@/lib/admin-notification-forwarding.server", () => ({
+  forwardAdminNotificationToSlack: (...args: unknown[]) =>
+    mockForwardAdminNotificationToSlack(...args),
 }));
 
 jest.mock("@/lib/rbac/openfga", () => ({
@@ -28,6 +34,66 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockListOpenFgaObjects.mockResolvedValue({ objects: ["team:reviewers"] });
   mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
+  mockForwardAdminNotificationToSlack.mockResolvedValue(undefined);
+});
+
+describe("Slack admin-notification forwarding", () => {
+  it("forwards a newly inserted organization-admin notification", async () => {
+    const updateOne = jest.fn().mockResolvedValue({ matchedCount: 0, upsertedCount: 1 });
+    mockGetCollection.mockResolvedValue({ updateOne });
+
+    await createInAppNotification({
+      eventKey: "publication:request-primary:requested",
+      recipientOrganizationAdmins: true,
+      title: "Approval needed",
+      message: "Jane submitted a publication request.",
+      href: "/admin/security/approvals?request=primary",
+      severity: "warning",
+    });
+
+    // Flush the fire-and-forget microtask queued by `void forward(...)`.
+    await Promise.resolve();
+
+    expect(mockForwardAdminNotificationToSlack).toHaveBeenCalledWith({
+      title: "Approval needed",
+      message: "Jane submitted a publication request.",
+      href: "/admin/security/approvals?request=primary",
+      severity: "warning",
+      sourceLabel: undefined,
+    });
+  });
+
+  it("does not forward a notification scoped to a single user", async () => {
+    const updateOne = jest.fn().mockResolvedValue({ matchedCount: 0, upsertedCount: 1 });
+    mockGetCollection.mockResolvedValue({ updateOne });
+
+    await createInAppNotification({
+      eventKey: "publication:request-primary:approved",
+      recipientUserSubjects: ["requester-subject"],
+      title: "Request approved",
+      message: "Primary source was approved.",
+      severity: "success",
+    });
+    await Promise.resolve();
+
+    expect(mockForwardAdminNotificationToSlack).not.toHaveBeenCalled();
+  });
+
+  it("does not forward again when the same event_key is re-upserted", async () => {
+    const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1, upsertedCount: 0 });
+    mockGetCollection.mockResolvedValue({ updateOne });
+
+    await createInAppNotification({
+      eventKey: "publication:request-primary:requested",
+      recipientOrganizationAdmins: true,
+      title: "Approval needed",
+      message: "Jane submitted a publication request.",
+      severity: "warning",
+    });
+    await Promise.resolve();
+
+    expect(mockForwardAdminNotificationToSlack).not.toHaveBeenCalled();
+  });
 });
 
 it("creates one durable notification per event", async () => {

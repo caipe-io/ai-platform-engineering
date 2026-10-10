@@ -34,10 +34,12 @@ function callbacks(): Required<StreamCallbacks> {
   return {
     onContent: jest.fn(),
     onToolStart: jest.fn(),
+    onToolOutput: jest.fn(),
     onToolEnd: jest.fn(),
     onInputRequired: jest.fn(),
     onToolApprovalRequired: jest.fn(),
     onWarning: jest.fn(),
+    onContextUsage: jest.fn(),
     onDone: jest.fn(),
     onError: jest.fn(),
     onRawEvent: jest.fn(),
@@ -69,8 +71,10 @@ describe("CustomStreamAdapter", () => {
       sseResponse([
         'event: content\ndata: {"text":"hello","namespace":["agent"]}\n\n',
         'event: tool_start\ndata: {"tool_call_id":"call-1","tool_name":"search","args":{"q":"rbac"},"namespace":[]}\n\n',
+        'event: tool_output\ndata: {"tool_call_id":"call-1","result":"partial","namespace":[]}\n\n',
         'event: tool_end\ndata: {"tool_call_id":"call-1","result":"ok","namespace":[]}\n\n',
         'event: warning\ndata: {"message":"careful","namespace":["agent"]}\n\n',
+        'event: context_usage\ndata: {"used_tokens":25,"compaction_threshold":100,"remaining_tokens":75,"remaining_percent":75,"namespace":[]}\n\n',
         "event: unknown\ndata: ignored\n\n",
         "event: done\ndata: {}\n\n",
       ]),
@@ -113,6 +117,7 @@ describe("CustomStreamAdapter", () => {
       { q: "rbac" },
       [],
     );
+    expect(cb.onToolOutput).toHaveBeenCalledWith("call-1", "partial", []);
     expect(cb.onToolEnd).toHaveBeenCalledWith(
       "call-1",
       undefined,
@@ -122,6 +127,15 @@ describe("CustomStreamAdapter", () => {
       "ok",
     );
     expect(cb.onWarning).toHaveBeenCalledWith("careful", ["agent"]);
+    expect(cb.onContextUsage).toHaveBeenCalledWith(
+      {
+        used_tokens: 25,
+        compaction_threshold: 100,
+        remaining_tokens: 75,
+        remaining_percent: 75,
+      },
+      [],
+    );
     expect(cb.onDone).toHaveBeenCalledTimes(1);
     expect(cb.onRawEvent).toHaveBeenCalledWith({
       type: "content",

@@ -101,7 +101,11 @@ class MongoDBGridFSStore(BaseStore):
             updated_at=upload_date,
         )
 
-    def _handle_put(self, op: PutOp) -> None:
+    def put_with_id(self, namespace: tuple[str, ...], key: str, value: dict, file_id: str) -> None:
+        """Use a caller-allocated upload ID so interrupted copies can be cleaned."""
+        self._handle_put(PutOp(namespace=namespace, key=key, value=value), file_id=file_id)
+
+    def _handle_put(self, op: PutOp, *, file_id: str | None = None) -> None:
         namespace = _coerce_namespace(op.namespace)
         # Delete existing file(s) with same namespace+key
         for doc in self._files_collection.find({"metadata.namespace": namespace, "metadata.key": op.key}):
@@ -120,6 +124,7 @@ class MongoDBGridFSStore(BaseStore):
             content.encode("utf-8"),
             filename=op.key,
             metadata=metadata,
+            **({"_id": file_id} if file_id is not None else {}),
         )
         logger.debug(f"[gridfs] PUT namespace={op.namespace} key={op.key} size={len(content)}")
 

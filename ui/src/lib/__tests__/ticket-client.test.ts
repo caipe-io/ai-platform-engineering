@@ -154,7 +154,7 @@ describe("createTicketViaAgent", () => {
     await createTicketViaAgent({
       request: {
         description: "something broke",
-        userEmail: "user@test.com",
+        userEmail: "user@example.com",
         contextUrl: "http://localhost/chat/abc",
       },
       accessToken: "tok-123",
@@ -172,7 +172,7 @@ describe("createTicketViaAgent", () => {
     await createTicketViaAgent({
       request: {
         description: "something broke",
-        userEmail: "user@test.com",
+        userEmail: "user@example.com",
         contextUrl: "http://localhost/chat/abc",
       },
       accessToken: "tok-123",
@@ -190,9 +190,32 @@ describe("createTicketViaAgent", () => {
         message: expect.stringContaining("something broke"),
         conversationId: "conv-1",
         agentId: "agent-1",
-        source: "web",
+        clientContext: expect.objectContaining({ source: "webui" }),
       }),
       expect.any(Object),
+    );
+  });
+
+  // Regression test for #2230: the custom stream consumer serializes only
+  // `client_context` into the POST body (params.source is dropped), and the
+  // backend ClientContext model requires `source` — so it MUST be inside
+  // clientContext or the request fails with 422 Unprocessable Content.
+  it("sends source inside clientContext so the backend does not 422", async () => {
+    await createTicketViaAgent({
+      request: {
+        description: "something broke",
+        userEmail: "user@example.com",
+        contextUrl: "http://localhost/chat/abc",
+      },
+    });
+
+    const callArg = mockStreamMessage.mock.calls[0][0];
+    expect(callArg.clientContext).toEqual(
+      expect.objectContaining({
+        source: "webui",
+        userEmail: "user@example.com",
+        ticketProvider: "jira",
+      })
     );
   });
 

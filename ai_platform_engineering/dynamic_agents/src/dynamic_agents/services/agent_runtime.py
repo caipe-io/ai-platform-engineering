@@ -16,13 +16,12 @@ import os
 import re
 import time
 from collections.abc import AsyncGenerator, Callable
+from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import uuid4
 
-from cnoe_agent_utils.llm_factory import resolve_bedrock_client
-from cnoe_agent_utils.tracing import TracingManager
 from deepagents import create_deep_agent
 from deepagents.backends.state import StateBackend
 from deepagents.backends.store import StoreBackend
@@ -34,6 +33,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.mongodb.saver import MongoDBSaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
+from llm_wrapper.bedrock_family import resolve_bedrock_client
 from pymongo import MongoClient
 
 from dynamic_agents.config import Settings, get_settings
@@ -88,7 +88,9 @@ from dynamic_agents.services.model_capabilities import (
     ModelCapabilities,
     get_model_capabilities,
 )
+from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
+from dynamic_agents.services.tracing import TracingManager
 
 if TYPE_CHECKING:
     from dynamic_agents.services.mongo import MongoDBService
@@ -596,6 +598,7 @@ class AgentRuntime:
         self.mcp_servers = mcp_servers
         self.settings = settings or get_settings()
         self._mongo_service = mongo_service
+        self._remote_agent_versions: dict[str, str | None] = {}
         self._user = user
         self._client_context = client_context
         # Spec 102 Phase 8 / T107: prefer the per-request bearer from
@@ -960,6 +963,11 @@ class AgentRuntime:
         if builtin_tools:
             tools = tools + builtin_tools
 
+        # 2b. Add remote A2A agents as delegation tools
+        remote_agent_tools = await self._build_remote_agent_tools()
+        if remote_agent_tools:
+            tools = tools + remote_agent_tools
+
         # 3. Wrap all tools with error handling
         #    Exceptions become LLM-visible "ERROR: ..." strings instead of crashing the agent loop.
         if tools:
@@ -981,7 +989,11 @@ class AgentRuntime:
             f"[llm] Instantiating LLM for agent '{self.config.name}': "
             f"provider={self.config.model.provider}, model={self.config.model.id}"
         )
-        llm = get_llm(self.config.model.provider, self.config.model.id)
+        llm = get_llm(
+            self.config.model.provider,
+            self.config.model.id,
+            self.config.model.reasoning_effort,
+        )
         logger.info(f"[llm] LLM instantiated for agent '{self.config.name}': type={type(llm).__name__}")
 
         # ─────────────────────────────────────────────────────────────────
@@ -1235,6 +1247,60 @@ class AgentRuntime:
             f"tools={len(tools)}, subagents={len(subagents) if subagents else 0}"
         )
 
+    async def _build_remote_agent_tools(self, config: DynamicAgentConfig | None = None) -> list:
+        """Build tools for a dynamic agent's selected A2A registry entries."""
+        agent_config = config or self.config
+        if not self._mongo_service or not agent_config.allowed_remote_agents:
+            return []
+
+        remote_agents = await asyncio.to_thread(
+            self._mongo_service.get_remote_agents_by_ids, agent_config.allowed_remote_agents
+        )
+        versions = {item["_id"]: item.get("updated_at") for item in remote_agents}
+        self._remote_agent_versions.update({agent_id: versions.get(agent_id) for agent_id in agent_config.allowed_remote_agents})
+        if not remote_agents:
+            return []
+
+        # Build selected tools concurrently. One invalid registry entry must not
+        # hide the other selected tools from this runtime.
+        results = await asyncio.gather(
+            *(
+                create_remote_agent_tool(
+                    a2a_url=remote_agent["endpoint"],
+                    allowed_http_origins=self.settings.remote_a2a_allowed_http_origins,
+                    max_response_bytes=self.settings.remote_a2a_max_response_bytes,
+                    max_output_bytes=self.settings.remote_a2a_max_output_bytes,
+                    name=remote_agent.get("name"),
+                    description=remote_agent.get("description"),
+                    bearer_token=self._auth_bearer,
+                    credential_source=remote_agent.get("credential_source"),
+                    streaming=remote_agent.get("streaming") is True,
+                    credential_api_url=self.settings.credential_api_url,
+                    credential_service_audience=self.settings.credential_service_audience,
+                    timeout=int(
+                        agent_config.remote_agent_timeouts.get(
+                            remote_agent["_id"], remote_agent.get("timeout_seconds", 120)
+                        )
+                    ),
+                )
+                for remote_agent in remote_agents
+            ),
+            return_exceptions=True,
+        )
+
+        tools = []
+        for remote_agent, result in zip(remote_agents, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.warning("Skipping remote agent %s: %s", remote_agent.get("_id"), result)
+                continue
+            tools.append(result)
+
+        logger.info(
+            f"Agent '{self.config.name}': added {len(tools)} remote agent tools: "
+            f"{[t.name for t in tools]}"
+        )
+        return tools
+
     def _build_builtin_tools(
         self,
         user: UserContext | None = None,
@@ -1437,7 +1503,11 @@ class AgentRuntime:
             subagent_prompt = subagent_config.system_prompt
 
             # Instantiate subagent LLM (uses its own configured model)
-            subagent_llm = get_llm(subagent_config.model.provider, subagent_config.model.id)
+            subagent_llm = get_llm(
+                subagent_config.model.provider,
+                subagent_config.model.id,
+                subagent_config.model.reasoning_effort,
+            )
 
             # Create SubAgent dict in deepagents format
             # Use agent_id as the name - this ensures namespace[0] from LangGraph
@@ -1537,14 +1607,18 @@ class AgentRuntime:
                     )
                 tools.extend(mcp_tools)
 
-        # 2. Add built-in tools based on subagent's config
+        # 2. Add only the remote A2A agents selected on this subagent.
+        remote_tools = await self._build_remote_agent_tools(subagent_config)
+        tools.extend(remote_tools)
+
+        # 3. Add built-in tools based on subagent's config
         client_ctx = self._client_context.model_dump() if self._client_context else None
         builtin_tools = self._build_builtin_tools(self._user, subagent_config, client_context=client_ctx)
         builtin_tool_names = {tool.name for tool in builtin_tools}
         if builtin_tools:
             tools.extend(builtin_tools)
 
-        # 3. Wrap all subagent tools with error handling
+        # 4. Wrap all subagent tools with error handling
         if tools:
             tools = wrap_tools_with_error_handling(tools, agent_name=subagent_config.name)
 
@@ -1609,14 +1683,20 @@ class AgentRuntime:
     ) -> bool:
         """Check if cached runtime is stale due to config changes.
 
-        Returns True if either the agent config or any MCP server has been
-        updated since this runtime was created.
+        Includes remote A2A registry entries selected by the parent or its subagents.
         """
         if agent_config.updated_at != self._config_updated_at:
+            return True
+        if agent_config.model != self.config.model:
             return True
         current_mcp_max = max((s.updated_at for s in mcp_servers), default=datetime.min.replace(tzinfo=timezone.utc))
         if current_mcp_max != self._mcp_servers_updated_at:
             return True
+        if self._mongo_service and self._remote_agent_versions:
+            entries = self._mongo_service.get_remote_agents_by_ids(list(self._remote_agent_versions))
+            versions = {entry["_id"]: entry.get("updated_at") for entry in entries}
+            if any(versions.get(agent_id) != version for agent_id, version in self._remote_agent_versions.items()):
+                return True
         return False
 
     # ─────────────────────────────────────────────────────────────────────
@@ -1673,6 +1753,7 @@ class AgentRuntime:
         trace_id: str | None = None,
         encoder: "StreamEncoder | None" = None,
         files: list[InputFile] | None = None,
+        turn_id: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream agent response for a user message.
 
@@ -1692,9 +1773,11 @@ class AgentRuntime:
             encoder,
             observation,
             files,
+            turn_id,
         )
-        async for frame in self._observe_turn(implementation, observation):
-            yield frame
+        async with aclosing(self._observe_turn(implementation, observation)) as observed:
+            async for frame in observed:
+                yield frame
 
     async def _observe_turn(
         self,
@@ -1706,8 +1789,9 @@ class AgentRuntime:
         self._is_streaming = True
         prom_metrics.active_streams.inc()
         try:
-            async for frame in implementation:
-                yield frame
+            async with aclosing(implementation):
+                async for frame in implementation:
+                    yield frame
         except (asyncio.CancelledError, GeneratorExit):
             observation.status = "cancelled"
             raise
@@ -1743,6 +1827,116 @@ class AgentRuntime:
             turn_type=observation.turn_type,
         ).observe(time.monotonic() - observation.started_at)
 
+    @staticmethod
+    def _checkpoint_message_text(message: Any) -> str:
+        """Return the user-visible text from a checkpoint message."""
+        content = message.get("content") if isinstance(message, dict) else getattr(message, "content", "")
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
+        return "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+
+    @staticmethod
+    def _is_checkpoint_user_message(message: Any) -> bool:
+        """Return whether a checkpoint message represents a human turn."""
+        role = (
+            message.get("role") or message.get("type")
+            if isinstance(message, dict)
+            else getattr(message, "type", None)
+        )
+        return role in {"user", "human"}
+
+    @staticmethod
+    def _checkpoint_message_id(message: Any) -> str | None:
+        """Return a checkpoint message ID when one is available."""
+        message_id = message.get("id") if isinstance(message, dict) else getattr(message, "id", None)
+        return str(message_id) if message_id else None
+
+    async def rewind_before_turn(
+        self,
+        session_id: str,
+        turn_id: str,
+        message_content: str,
+        content_occurrence: int,
+    ) -> str:
+        """Fork the conversation from the checkpoint immediately before a user turn."""
+        if not self._initialized:
+            await self.initialize()
+        if not self._graph:
+            raise RuntimeError("Agent graph is not initialized")
+        if self._is_streaming:
+            raise RuntimeError("Cannot edit a conversation while it is streaming")
+
+        config = {"configurable": {"thread_id": session_id}}
+        latest_snapshot = await self._graph.aget_state(config)
+        latest_messages = latest_snapshot.values.get("messages", [])
+        if not latest_messages:
+            raise ValueError("Conversation has no checkpoint history")
+        user_messages = [message for message in latest_messages if self._is_checkpoint_user_message(message)]
+
+        target_message = next(
+            (message for message in user_messages if self._checkpoint_message_id(message) == turn_id),
+            None,
+        )
+        if target_message is None:
+            matching_messages = [
+                message
+                for message in user_messages
+                if self._checkpoint_message_text(message) == message_content
+            ]
+            if content_occurrence < 1 or content_occurrence > len(matching_messages):
+                raise ValueError("Unable to match the selected message to checkpoint history")
+            target_message = matching_messages[content_occurrence - 1]
+
+        target_message_id = self._checkpoint_message_id(target_message)
+        target_user_index = user_messages.index(target_message)
+        rewind_snapshot = None
+
+        snapshot = latest_snapshot
+        while snapshot.parent_config:
+            snapshot = await self._graph.aget_state(snapshot.parent_config)
+            snapshot_messages = snapshot.values.get("messages", [])
+            snapshot_user_messages = [
+                message for message in snapshot_messages if self._is_checkpoint_user_message(message)
+            ]
+            if target_message_id:
+                contains_target = any(
+                    self._checkpoint_message_id(message) == target_message_id
+                    for message in snapshot_user_messages
+                )
+            else:
+                contains_target = len(snapshot_user_messages) > target_user_index
+
+            if contains_target:
+                continue
+            rewind_snapshot = snapshot
+            break
+
+        if rewind_snapshot is None:
+            raise ValueError("Unable to find a checkpoint before the selected message")
+
+        fork_config = await self._graph.aupdate_state(
+            rewind_snapshot.config,
+            None,
+            as_node="__copy__",
+        )
+        checkpoint_id = fork_config.get("configurable", {}).get("checkpoint_id")
+        if not checkpoint_id:
+            raise RuntimeError("LangGraph did not return a rewind checkpoint")
+
+        logger.info(
+            "Rewound conversation before turn: conversation_id=%s turn_id=%s checkpoint_id=%s",
+            session_id,
+            turn_id,
+            checkpoint_id,
+        )
+        return str(checkpoint_id)
+
     async def _stream_impl(
         self,
         message: str,
@@ -1752,6 +1946,7 @@ class AgentRuntime:
         encoder: "StreamEncoder | None",
         observation: _TurnObservation,
         files: list[InputFile] | None = None,
+        turn_id: str | None = None,
     ) -> AsyncGenerator[str, None]:
         if not self._initialized:
             await self.initialize()
@@ -1851,27 +2046,33 @@ class AgentRuntime:
                 user_content[0]["text"] = f"{user_content[0]['text']}\n\n{notice}".strip()
             else:
                 user_content = f"{user_content}\n\n{notice}".strip()
-        state_input: dict[str, Any] = {"messages": [{"role": "user", "content": user_content}]}
+        user_message: dict[str, Any] = {"role": "user", "content": user_content}
+        if turn_id:
+            user_message["id"] = turn_id
+        state_input: dict[str, Any] = {"messages": [user_message]}
         # Inject skills files into state for StateBackend (non-GridFS mode).
         # In GridFS mode, skills are pre-populated in the store at init time.
         if getattr(self, "_skills_files", None) and self._resolve_backend_type() != BACKEND_STORE:
             state_input["files"] = dict(self._skills_files)
-        async for chunk in self._graph.astream(
-            state_input,
-            config=config,
-            stream_mode=["messages", "updates", "tasks"],
-            subgraphs=True,
-        ):
-            if self._cancelled:
-                logger.info(f"[stream] Stream cancelled by user for agent '{self.config.name}': user={user_id}")
-                observation.status = "cancelled"
-                return
+        async with aclosing(
+            self._graph.astream(
+                state_input,
+                config=config,
+                stream_mode=["messages", "updates", "tasks", "custom"],
+                subgraphs=True,
+            )
+        ) as graph_stream:
+            async for chunk in graph_stream:
+                if self._cancelled:
+                    logger.info(f"[stream] Stream cancelled by user for agent '{self.config.name}': user={user_id}")
+                    observation.status = "cancelled"
+                    return
 
-            content_length_before = len(encoder.get_thinking_content()) + len(encoder.get_accumulated_content())
-            frames = encoder.on_chunk(chunk)
-            self._record_first_response(encoder, content_length_before, observation)
-            for frame in frames:
-                yield frame
+                content_length_before = len(encoder.get_thinking_content()) + len(encoder.get_accumulated_content())
+                frames = encoder.on_chunk(chunk)
+                self._record_first_response(encoder, content_length_before, observation)
+                for frame in frames:
+                    yield frame
 
         # ── Core lifecycle: stream end (flush) ──
         for frame in encoder.on_stream_end():
@@ -2151,8 +2352,9 @@ class AgentRuntime:
             encoder,
             observation,
         )
-        async for frame in self._observe_turn(implementation, observation):
-            yield frame
+        async with aclosing(self._observe_turn(implementation, observation)) as observed:
+            async for frame in observed:
+                yield frame
 
     async def _resume_impl(
         self,
@@ -2189,22 +2391,25 @@ class AgentRuntime:
         logger.debug(f"[resume] Resume payload: {resume_payload}")
 
         # ── Core lifecycle: chunks ──
-        async for chunk in self._graph.astream(
-            Command(resume=resume_payload),
-            config=config,
-            stream_mode=["messages", "updates", "tasks"],
-            subgraphs=True,
-        ):
-            if self._cancelled:
-                logger.info(f"[resume] Resume stream cancelled by user for agent '{self.config.name}'")
-                observation.status = "cancelled"
-                return
+        async with aclosing(
+            self._graph.astream(
+                Command(resume=resume_payload),
+                config=config,
+                stream_mode=["messages", "updates", "tasks", "custom"],
+                subgraphs=True,
+            )
+        ) as graph_stream:
+            async for chunk in graph_stream:
+                if self._cancelled:
+                    logger.info(f"[resume] Resume stream cancelled by user for agent '{self.config.name}'")
+                    observation.status = "cancelled"
+                    return
 
-            content_length_before = len(encoder.get_thinking_content()) + len(encoder.get_accumulated_content())
-            frames = encoder.on_chunk(chunk)
-            self._record_first_response(encoder, content_length_before, observation)
-            for frame in frames:
-                yield frame
+                content_length_before = len(encoder.get_thinking_content()) + len(encoder.get_accumulated_content())
+                frames = encoder.on_chunk(chunk)
+                self._record_first_response(encoder, content_length_before, observation)
+                for frame in frames:
+                    yield frame
 
         # ── Core lifecycle: stream end (flush) ──
         for frame in encoder.on_stream_end():

@@ -64,6 +64,44 @@ const COLLECTION_NAME = "dynamic_agents";
 const OPENFGA_RESOURCE_ID_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}$/;
 
+function normalizeRemoteAgentIds(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim())) {
+    throw new ApiError("allowed_remote_agents must be a list of registry IDs", 400, "INVALID_REMOTE_AGENT_IDS");
+  }
+  return [...new Set(value.map((item) => (item as string).trim()))];
+}
+
+async function validateRemoteAgentIds(value: unknown): Promise<string[]> {
+  const ids = normalizeRemoteAgentIds(value);
+  if (!ids.length) return ids;
+  const registry = await getCollection<{ _id: string; enabled?: boolean }>("remote_agents");
+  const entries = await registry.find({ _id: { $in: ids }, enabled: { $ne: false } }, { projection: { _id: 1 } }).toArray();
+  const found = new Set(entries.map((entry) => entry._id));
+  const missing = ids.filter((id) => !found.has(id));
+  if (missing.length) {
+    throw new ApiError(`Unknown or disabled remote A2A agent(s): ${missing.join(", ")}`, 400, "INVALID_REMOTE_AGENT_IDS");
+  }
+  return ids;
+}
+
+function normalizeRemoteAgentTimeouts(value: unknown, allowedIds: unknown): Record<string, number> {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ApiError("remote_agent_timeouts must be a registry-ID to seconds map", 400, "INVALID_REMOTE_AGENT_TIMEOUTS");
+  }
+  const allowed = new Set(normalizeRemoteAgentIds(allowedIds));
+  const result: Record<string, number> = {};
+  for (const [id, rawTimeout] of Object.entries(value)) {
+    const timeout = Number(rawTimeout);
+    if (!allowed.has(id) || !Number.isInteger(timeout) || timeout < 1 || timeout > 600) {
+      throw new ApiError("Each remote-agent timeout must reference a selected registry ID and be between 1 and 600 seconds", 400, "INVALID_REMOTE_AGENT_TIMEOUTS");
+    }
+    result[id] = timeout;
+  }
+  return result;
+}
+
 interface TeamOwnershipDoc {
   _id?: unknown;
   slug?: string;
@@ -211,6 +249,8 @@ const AGENT_MUTABLE_FIELDS = [
   "description",
   "system_prompt",
   "allowed_tools",
+  "allowed_remote_agents",
+  "remote_agent_timeouts",
   "builtin_tools",
   "model",
   "visibility",
@@ -235,9 +275,15 @@ function normalizeAgentDoc(
 ): Record<string, unknown> {
   // Migrate legacy model_id/model_provider → model
   if (doc.model_id && !doc.model) {
-    doc.model = { id: doc.model_id, provider: doc.model_provider || "unknown" };
+    doc.model = { id: doc.model_id, provider: doc.model_provider || "unknown", reasoning_effort: "medium" };
     delete doc.model_id;
     delete doc.model_provider;
+  }
+  if (doc.model && typeof doc.model === "object") {
+    const model = doc.model as Record<string, unknown>;
+    if (!["low", "medium", "high", "max"].includes(String(model.reasoning_effort))) {
+      model.reasoning_effort = "medium";
+    }
   }
   // A configured knowledge hand is always represented by two arrays. Older
   // rows could store the unselected half as null, which the editor must not
@@ -658,6 +704,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if (!body.model?.provider || typeof body.model.provider !== "string") {
     throw new ApiError("Model provider is required (model.provider)", 400);
   }
+  body.model.reasoning_effort ??= "medium";
+  if (!["low", "medium", "high", "max"].includes(body.model.reasoning_effort)) {
+    throw new ApiError("Invalid model.reasoning_effort", 400);
+  }
   const requestedOwnerTeamSlug = normalizeString(body.owner_team_slug);
   const requestedOwnerTeamId = normalizeString(body.owner_team_id);
   // Coerce any legacy 'private' on the wire to 'team' (private visibility was
@@ -785,6 +835,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // Build document with explicit field allowlist (Security VII)
   const ownerSubject = requireStableSubject(session);
   const now = new Date();
+  const allowedRemoteAgents = await validateRemoteAgentIds(body.allowed_remote_agents);
   const doc: DynamicAgentConfig = {
     _id: agentId,
     name: body.name as string,
@@ -792,6 +843,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     system_prompt: body.system_prompt as string,
     allowed_tools:
       (body.allowed_tools as Record<string, string[] | boolean>) ?? {},
+    allowed_remote_agents: allowedRemoteAgents,
+    remote_agent_timeouts: normalizeRemoteAgentTimeouts(body.remote_agent_timeouts, allowedRemoteAgents),
     builtin_tools: body.builtin_tools ?? undefined,
     model: body.model as DynamicAgentConfig["model"],
     visibility,
@@ -878,6 +931,15 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
   const { session } = await getAuthFromBearerOrSession(request);
 
   const body = await request.json();
+  if (body.model !== undefined) {
+    if (!body.model || typeof body.model !== "object" || Array.isArray(body.model)) {
+      throw new ApiError("model must be an object", 400);
+    }
+    body.model.reasoning_effort ??= "medium";
+    if (!["low", "medium", "high", "max"].includes(body.model.reasoning_effort)) {
+      throw new ApiError("Invalid model.reasoning_effort", 400);
+    }
+  }
   const collection = await getCollection<DynamicAgentConfig>(COLLECTION_NAME);
 
   // Verify agent exists
@@ -897,6 +959,18 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
 
   // Build update with explicit field allowlist
   const updateData = pickMutableFields(body);
+  if (Object.prototype.hasOwnProperty.call(updateData, "allowed_remote_agents")) {
+    updateData.allowed_remote_agents = await validateRemoteAgentIds(updateData.allowed_remote_agents);
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(updateData, "remote_agent_timeouts") ||
+    Object.prototype.hasOwnProperty.call(updateData, "allowed_remote_agents")
+  ) {
+    updateData.remote_agent_timeouts = normalizeRemoteAgentTimeouts(
+      updateData.remote_agent_timeouts ?? agent.remote_agent_timeouts ?? {},
+      updateData.allowed_remote_agents ?? agent.allowed_remote_agents ?? [],
+    );
+  }
   const unsetData: Record<string, "">  = {};
   const datasourceSelectionChanged = Object.prototype.hasOwnProperty.call(
     body,

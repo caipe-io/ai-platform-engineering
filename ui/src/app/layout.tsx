@@ -31,7 +31,8 @@ const sourceSans = Source_Sans_3({
 const ibmPlex = IBM_Plex_Sans({
   variable: "--font-ibm-plex",
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
+  // One variable face retains every weight without duplicate font URL rewrites.
+  weight: "variable",
   display: "swap",
   fallback: ["system-ui", "arial"],
 });

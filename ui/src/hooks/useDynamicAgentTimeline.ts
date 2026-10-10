@@ -81,6 +81,11 @@ export function useAgentTimeline(
           }
           break;
 
+        case "tool_output":
+          if (event.toolData && "result" in event.toolData) {
+            manager.pushToolOutput(event.toolData.tool_call_id, namespace, event.toolData.result || "");
+          }
+          break;
         case "tool_end":
           if (event.toolData) {
             const toolData = event.toolData as ToolEndEventData;

@@ -41,6 +41,14 @@ session, RBAC, service-account, and AgentGateway decisions on the server side.
   each new user turn can clear transient events without losing configuration
   warnings such as failed MCP servers.
 
+## Remote A2A Streaming
+
+- Registry entries expose an optional **Stream responses** checkbox; missing values behave as off.
+- The SDK negotiates streaming against the Agent Card. Unsupported agents use complete responses.
+- AG-UI `CUSTOM/TOOL_OUTPUT` and custom SSE `tool_output` map to `onToolOutput`.
+- Tool output snapshots reach the chat store and timeline while the tool remains running. Subagent namespaces and tool-call IDs isolate concurrent calls.
+- Running output panels expand automatically; completed results use the existing tool completion flow.
+
 ## Adding Stream UI Features
 
 1. Add or extend event types in `ui/src/lib/streaming/types.ts`.

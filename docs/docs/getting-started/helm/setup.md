@@ -218,7 +218,7 @@ helm upgrade --install ai-platform-engineering "${CAIPE_CHART}" \
 | Slack bot | `tags.slack-bot=true` | Slack integration |
 | Webex bot | `tags.webex-bot=true` | Webex integration |
 
-Available MCP tags: `mcp-argocd`, `mcp-aws`, `mcp-backstage`, `mcp-confluence`, `mcp-github`, `mcp-gitlab`, `mcp-jira`, `mcp-komodor`, `mcp-pagerduty`, `mcp-slack`, `mcp-splunk`, `mcp-victorops`, `mcp-webex`, `mcp-netutils`.
+Available MCP tags: `mcp-argocd`, `mcp-aws`, `mcp-backstage`, `mcp-confluence`, `mcp-github`, `mcp-gitlab`, `mcp-jira`, `mcp-komodor`, `mcp-pagerduty`, `mcp-sharepoint`, `mcp-slack`, `mcp-splunk`, `mcp-victorops`, `mcp-webex`, `mcp-netutils`.
 
 ---
 
@@ -229,6 +229,31 @@ helm list -n ai-platform-engineering
 kubectl get pods -n ai-platform-engineering
 kubectl logs -n ai-platform-engineering -l app.kubernetes.io/name=dynamic-agents
 ```
+
+---
+
+## EKS Auto Mode node pools
+
+For an EKS Auto Mode cluster, apply the RAG NodePool and the Auto Mode storage
+class from the [EKS setup guide](../eks/setup.md). The optional values overlay
+places RAG workloads on that pool and enables PodDisruptionBudgets for platform
+services. Use it with your existing values and tags:
+
+```bash
+helm upgrade --install ai-platform-engineering "${CAIPE_CHART}" \
+  --version "${CAIPE_VERSION}" \
+  --namespace ai-platform-engineering \
+  --create-namespace \
+  --values values.yaml \
+  --values charts/ai-platform-engineering/values-karpenter.yaml
+```
+
+The RAG pool uses on-demand memory-optimized instances. Other services use
+the built-in `general-purpose` pool. A PodDisruptionBudget limits voluntary
+evictions, but a single replica can still be unavailable during a node drain.
+Use multiple replicas for uninterrupted service. See the
+[NodePool guide](https://github.com/caipe-io/ai-platform-engineering/blob/main/deploy/eks/karpenter/README.md)
+for verification and troubleshooting.
 
 ---
 

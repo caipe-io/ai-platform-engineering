@@ -3,7 +3,7 @@ import { create } from "zustand";
 
 const STORAGE_KEY = "caipe-feature-flags";
 
-export type FeatureFlagIcon = "Brain" | "Bug" | "Eye" | "ArrowDownToLine" | "Clock";
+export type FeatureFlagIcon = "Brain" | "Bug" | "Eye" | "ArrowDownToLine" | "Clock" | "Gauge";
 export type FeatureFlagCategory = "ai" | "chat" | "developer";
 
 export const CATEGORY_LABELS: Record<FeatureFlagCategory, string> = {
@@ -69,6 +69,17 @@ export const FEATURE_FLAGS: FeatureFlag[] = [
     category: "chat",
     defaultValue: false,
     preferencesKey: "show_timestamps_enabled",
+  },
+  {
+    id: "showContextUsage",
+    label: "Show Context Usage",
+    description: "Show context remaining when automatic compaction is near",
+    detail:
+      "Shows a subtle percentage below Send when less than 30% of the active agent context remains. Detailed token usage appears under Advanced in Agent Info.",
+    icon: "Gauge",
+    category: "chat",
+    defaultValue: true,
+    preferencesKey: "show_context_usage_enabled",
   },
   {
     id: "debug",

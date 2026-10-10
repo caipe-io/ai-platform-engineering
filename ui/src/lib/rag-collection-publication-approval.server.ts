@@ -1,9 +1,11 @@
-import { ApiError } from "@/lib/api-error";
+import { ApiError, PublicationDriftError, withDrift } from "@/lib/api-error";
 import { getCollection } from "@/lib/mongodb";
 import {
   listPublicationActorTeamSlugs,
   planRagCollectionPublication,
   publicationActorFromSession,
+  publicationDriftDisplayValue,
+  publicationDriftValuesEqual,
   publicationResourceRevision,
   type PublicationSession,
   type RagCollectionPublicationState,
@@ -22,6 +24,7 @@ import type { IngestionSourceConfig } from "@/types/ingestion-source";
 import type { RagCollection } from "@/types/rag-collection";
 import type {
   PublicationActor,
+  PublicationDriftItem,
   PublicationPolicyPlan,
   PublicationRequestDocument,
   PublicationResourceRef,
@@ -98,6 +101,7 @@ export interface PreparedRagCollectionPublication {
   plan: PublicationPolicyPlan;
   resource: PublicationResourceRef;
   resourceRevision: string;
+  resourceRevisionBasis: Record<string, unknown>;
 }
 
 function strings(value: unknown): string[] {
@@ -125,15 +129,22 @@ export function ragCollectionPublicationState(
   };
 }
 
+export function ragCollectionPublicationRevisionBasis(
+  collection: Pick<RagCollection, "_id" | "owner_subject">,
+  state: RagCollectionPublicationState,
+): Record<string, unknown> {
+  return {
+    collection_id: collection._id,
+    owner_subject: collection.owner_subject ?? null,
+    ...ragCollectionPublicationState(state),
+  };
+}
+
 export function ragCollectionPublicationRevision(
   collection: Pick<RagCollection, "_id" | "owner_subject">,
   state: RagCollectionPublicationState,
 ): string {
-  return publicationResourceRevision({
-    collection_id: collection._id,
-    owner_subject: collection.owner_subject ?? null,
-    ...ragCollectionPublicationState(state),
-  });
+  return publicationResourceRevision(ragCollectionPublicationRevisionBasis(collection, state));
 }
 
 export async function prepareRagCollectionPublication(input: {
@@ -167,6 +178,10 @@ export async function prepareRagCollectionPublication(input: {
       label: input.collection.name,
     },
     resourceRevision: ragCollectionPublicationRevision(
+      input.collection,
+      plan.effective_state as unknown as RagCollectionPublicationState,
+    ),
+    resourceRevisionBasis: ragCollectionPublicationRevisionBasis(
       input.collection,
       plan.effective_state as unknown as RagCollectionPublicationState,
     ),
@@ -275,7 +290,8 @@ export async function applyRagCollectionPublicationState(input: {
 export async function applyRagCollectionPublicationRequest(
   request: PublicationRequestDocument,
   session: PublicationSession,
-): Promise<void> {
+  options: { acknowledgedFingerprint?: string } = {},
+): Promise<PublicationDriftItem[]> {
   if (request.resource.kind !== "rag_collection") {
     throw new ApiError("The request is not a RAG collection publication", 400);
   }
@@ -284,40 +300,112 @@ export async function applyRagCollectionPublicationRequest(
   );
   const current = await collection.findOne({ _id: request.resource.id } as never);
   if (!current) {
-    throw new ApiError("Knowledge base no longer exists", 409, "PUBLICATION_REVISION_CONFLICT");
+    throw withDrift(
+      new ApiError("Knowledge base no longer exists", 409, "PUBLICATION_REVISION_CONFLICT"),
+      [],
+    );
   }
   const currentState = ragCollectionPublicationState(current);
   const expectedDependencies = requestDependencyRevisions(request);
   const currentDependencies = await ragCollectionSourceDependencyRevisions(
     Object.keys(expectedDependencies),
   );
-  if (
-    publicationResourceRevision(currentDependencies) !==
-    publicationResourceRevision(expectedDependencies)
-  ) {
-    throw new ApiError(
-      "A datasource in this knowledge base changed after approval was requested.",
-      409,
-      "PUBLICATION_REVISION_CONFLICT",
-    );
+
+  const softItems: PublicationDriftItem[] = [];
+  for (const [sourceId, expectedRevision] of Object.entries(expectedDependencies)) {
+    const liveRevision = currentDependencies[sourceId];
+    if (liveRevision === expectedRevision) continue;
+    softItems.push({
+      field: `dependency:${sourceId}`,
+      label: `Datasource ${sourceId}`,
+      before: expectedRevision.slice(0, 12),
+      after: liveRevision.slice(0, 12),
+      overridable: true,
+    });
   }
+
+  let skipApply = false;
   if (ragCollectionPublicationRevision(current, currentState) !== request.resource_revision) {
+    const previousBasis = request.revision_basis;
+    // Check the owner unconditionally, before deciding skipApply — the
+    // revision hash includes owner_subject, so entering this block can be
+    // caused by an owner change alone even when every other field the
+    // skipApply shortcut compares still matches the request.
+    if (previousBasis) {
+      const liveOwnerSubject = current.owner_subject ?? null;
+      const previousOwnerSubject =
+        (previousBasis as { owner_subject?: unknown }).owner_subject ?? null;
+      if (String(previousOwnerSubject) !== String(liveOwnerSubject)) {
+        throw withDrift(
+          new ApiError(
+            "This knowledge base's owner changed after approval was requested. Review the newer request instead.",
+            409,
+            "PUBLICATION_REVISION_CONFLICT",
+          ),
+          softItems,
+        );
+      }
+    }
     if (
       publicationResourceRevision(currentState) ===
       publicationResourceRevision(requestState(request))
     ) {
-      return;
+      skipApply = true;
+    } else {
+      if (!previousBasis) {
+        throw withDrift(
+          new ApiError(
+            "This knowledge base changed after approval was requested. Review the newer request instead.",
+            409,
+            "PUBLICATION_REVISION_CONFLICT",
+          ),
+          softItems,
+        );
+      }
+      const requested = requestState(request);
+      const diffField = (
+        field: keyof RagCollectionPublicationState,
+        label: string,
+      ): void => {
+        const before = (previousBasis as Record<string, unknown>)[field];
+        const after = (currentState as unknown as Record<string, unknown>)[field];
+        if (publicationDriftValuesEqual(before, after)) return;
+        softItems.push({
+          field: String(field),
+          label,
+          before: publicationDriftDisplayValue(before),
+          after: publicationDriftDisplayValue(after),
+          will_apply: publicationDriftDisplayValue(
+            (requested as unknown as Record<string, unknown>)[field],
+          ),
+          overridable: true,
+        });
+      };
+      diffField("maintainer_team_slugs", "Owner teams");
+      diffField("reader_team_slugs", "Search teams");
+      diffField("global_read", "Global read");
+      diffField("source_ids", "Datasources");
     }
-    throw new ApiError(
-      "This knowledge base changed after approval was requested. Review the newer request instead.",
-      409,
-      "PUBLICATION_REVISION_CONFLICT",
-    );
   }
+
+  if (softItems.length > 0) {
+    const fingerprint = publicationResourceRevision(softItems);
+    if (options.acknowledgedFingerprint !== fingerprint) {
+      throw new PublicationDriftError(
+        "This knowledge base changed after approval was requested.",
+        softItems,
+        fingerprint,
+      );
+    }
+  }
+
+  if (skipApply) return softItems;
+
   const actor = publicationActorFromSession(session);
   await applyRagCollectionPublicationState({
     previous: current,
     nextState: requestState(request),
     actorSubject: actor.subject,
   });
+  return softItems;
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
+import { ContextUsageIndicator } from "@/components/chat/ContextUsageIndicator";
 import type { TaskItem } from "@/components/shared/timeline";
 import { MarkdownRenderer } from "@/components/shared/timeline";
 import { Button } from "@/components/ui/button";
@@ -10,20 +11,24 @@ import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/compone
 import { useAgentTimeline } from "@/hooks/useDynamicAgentTimeline";
 import { apiClient,APIClientError } from "@/lib/api-client";
 import { authErrorToastTitle,type AuthError } from "@/lib/auth-error";
+import { getDeterministicAgentThemeId } from "@/lib/agent-theme";
+import { interruptedAuthReason,interruptedTurnFallbackText } from "@/lib/chat-interrupt";
 import { getConfig } from "@/lib/config";
 import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
 import { ACCEPT_ATTRIBUTE,fileToInputFile,type InputFile,validateFiles } from "@/lib/file-attachments";
+import { getGradientColors } from "@/lib/gradient-themes";
 import { takePendingFirstMessage } from "@/lib/pending-first-message";
+import { getStorageMode } from "@/lib/storage-config";
 import { createSubagentResumeSeedEvents } from "@/lib/resume-subagent-context";
 import { createStreamAdapter,StreamError,type StreamCallbacks } from "@/lib/streaming";
 import { createStreamEvent,FILE_TOOL_NAMES,TODO_TOOL_NAME,type StreamEvent } from "@/lib/streaming/types";
-import { cn,deduplicateByKey } from "@/lib/utils";
+import { cn,deduplicateByKey,generateId } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import { buildParticipants,ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
-import type { DynamicAgentConfig } from "@/types/dynamic-agent";
-import { AnimatePresence,motion } from "framer-motion";
-import { Activity,ArrowDown,ArrowLeft,Check,ChevronUp,Copy,Loader2,Paperclip,RotateCcw,Send,ShieldCheck,Sparkles,Square,User } from "lucide-react";
+import type { DynamicAgentConfig,ReasoningEffort } from "@/types/dynamic-agent";
+import { AnimatePresence,motion,useReducedMotion } from "framer-motion";
+import { Activity,AlertTriangle,ArrowDown,ArrowLeft,Check,Copy,Loader2,Paperclip,Pencil,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
 import { AgentPicker } from "@/components/ui/agent-picker";
 import { signIn,useSession } from "next-auth/react";
@@ -31,15 +36,17 @@ import { NavigationProgressLink } from "@/components/layout/NavigationProgressLi
 import Image from "next/image";
 import React,{ useCallback,useEffect,useMemo,useRef,useState } from "react";
 import TextareaAutosize from "react-textarea-autosize";
-import { DEFAULT_AGENTS } from "./CustomCallButtons";
 import { AgentTimeline,type SubagentLookupInfo } from "./DynamicAgentTimeline";
 import { Feedback,FeedbackButton } from "./FeedbackButton";
 import { MetadataInputForm,type InputField,type UserInputMetadata } from "./MetadataInputForm";
 import { AttachmentChips,type PendingAttachment } from "./AttachmentChips";
 import { MessageAttachments } from "./MessageAttachments";
+import { RewindConfirmationDialog } from "./RewindConfirmationDialog";
 import { getFilteredCommands,SlashCommandMenu,type SlashCommand } from "./SlashCommandMenu";
 import { ToolApprovalCard } from "./ToolApprovalCard";
 import { useSlashCommands } from "./useSlashCommands";
+import { RunFollowUpButton } from "@/components/autonomous/RunFollowUpButton";
+import { useAutonomousFollowUps } from "@/hooks/use-autonomous-follow-ups";
 
 type ReadOnlyReason = 'admin_audit' | 'shared_readonly' | 'agent_deleted' | 'agent_disabled';
 
@@ -49,14 +56,52 @@ type ReadOnlyReason = 'admin_audit' | 'shared_readonly' | 'agent_deleted' | 'age
  * too, not just the words.
  */
 interface QueuedMessage {
+  id: string;
   text: string;
   files: InputFile[];
+}
+
+interface EffortStatus {
+  id: number;
+  text: string;
+  tone: "success" | "warning" | "error";
+}
+
+interface CommandPanelItem {
+  label: string;
+  description: string;
+  insertText: string;
+}
+
+interface CommandPanelSection {
+  title?: string;
+  items: CommandPanelItem[];
+}
+
+interface CommandPanelState {
+  id: number;
+  title: string;
+  message?: string;
+  loading?: boolean;
+  sections?: CommandPanelSection[];
+}
+
+function buildQueuedBatchPrompt(messages: QueuedMessage[]): string {
+  if (messages.length === 1) return messages[0].text;
+  return messages
+    .map((message, index) => {
+      const content = message.text.trim() || '(attachments only)';
+      return `[Queued message ${index + 1}]\n${content}`;
+    })
+    .join('\n\n');
 }
 
 interface ChatPanelProps {
   conversationId?: string; // MongoDB conversation UUID
   readOnly?: boolean;
   readOnlyReason?: ReadOnlyReason;
+  /** Whether this conversation is also used by an API client. */
+  apiConversation?: boolean;
   agentId: string; // Mandatory for Dynamic Agents
   agent?: DynamicAgentConfig | null; // Full agent config object
   isLoadingMessages?: boolean; // Whether messages are still loading (show skeleton)
@@ -70,6 +115,7 @@ export function ChatPanel({
   conversationId,
   readOnly,
   readOnlyReason,
+  apiConversation,
   agentId,
   agent,
   isLoadingMessages,
@@ -83,8 +129,14 @@ export function ChatPanel({
   const agentSkills = agent?.skills;
   const { data: session } = useSession();
   const { toast } = useToast();
+  const initializeFeatureFlags = useFeatureFlagStore((s) => s.initialize);
   const autoScrollEnabled = useFeatureFlagStore((s) => s.flags.autoScroll ?? true);
   const showTimestamps = useFeatureFlagStore((s) => s.flags.showTimestamps ?? false);
+  const showContextUsage = useFeatureFlagStore((s) => s.flags.showContextUsage ?? true);
+
+  useEffect(() => {
+    initializeFeatureFlags();
+  }, [initializeFeatureFlags]);
 
   /**
    * Surface a structured auth-failure (from the Web UI backend or stream adapters) to
@@ -127,11 +179,26 @@ export function ChatPanel({
     return firstName || "You";
   }, [session?.user?.name]);
 
+  const maxEffortTheme = useMemo(
+    () => getGradientColors(
+      agentGradient || getDeterministicAgentThemeId(agentId),
+      agentCustomTheme,
+    ),
+    [agentCustomTheme, agentGradient, agentId],
+  );
+
   const [input, setInput] = useState("");
   const [hasRelinkedAgent, setHasRelinkedAgent] = useState(false);
-  const panelReadOnly = readOnly && !hasRelinkedAgent;
+  const relinkRestoresWriteAccess = hasRelinkedAgent && (
+    readOnlyReason === 'agent_deleted' || readOnlyReason === 'agent_disabled'
+  );
+  const panelReadOnly = readOnly && !relinkRestoresWriteAccess;
   const panelReadOnlyReason = hasRelinkedAgent ? undefined : readOnlyReason;
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [isRewindConfirmationOpen, setIsRewindConfirmationOpen] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   // Files staged in the composer for the next turn (multimodal input).
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
@@ -140,6 +207,18 @@ export function ChatPanel({
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const [maxEffortAnimationKey, setMaxEffortAnimationKey] = useState(0);
+  const [effortStatus, setEffortStatus] = useState<EffortStatus | null>(null);
+  const [commandPanel, setCommandPanel] = useState<CommandPanelState | null>(null);
+  const [commandPanelSelectedIndex, setCommandPanelSelectedIndex] = useState(0);
+  const prefersReducedMotion = useReducedMotion();
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
+    agent?.model?.reasoning_effort ?? "medium",
+  );
+  const [supportedReasoningEfforts, setSupportedReasoningEfforts] = useState<ReasoningEffort[] | null>(null);
+  const effortStatusSequenceRef = useRef(0);
+  const commandPanelSequenceRef = useRef(0);
+  const commandPanelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -182,11 +261,8 @@ export function ChatPanel({
   const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const isAutoScrollingRef = useRef(false);
-
-  // Message window: progressive loading of older turns
-  const [visibleTurnCount, setVisibleTurnCount] = useState(INITIAL_VISIBLE_TURNS);
-  // Ref to preserve scroll position when loading more turns
-  const scrollDistanceFromBottomRef = useRef<number | null>(null);
+  const loadingOlderRef = useRef(false);
+  const queueFlushInProgressRef = useRef(false);
 
   const {
     activeConversationId,
@@ -195,15 +271,21 @@ export function ChatPanel({
     addMessage,
     updateMessage,
     appendToMessage,
+    truncateConversationFromMessage,
     addStreamEvent,
+    contextUsageByConversation,
+    setContextUsage,
     clearStreamEvents,
     setConversationStreaming,
     isConversationStreaming,
     cancelConversationRequest,
     updateMessageFeedback,
     consumePendingMessage,
-    loadMessagesFromServer,
+    saveMessagesToServer,
+    loadOlderMessagesFromServer,
+    messageHistory,
     updateConversationTitle,
+    clearConversationInputRequired,
   } = useChatStore();
 
   // Re-link this deprecated/deleted-agent conversation to the platform default agent,
@@ -271,13 +353,155 @@ export function ChatPanel({
   }, [conversationId, chosenAgentId, onAgentRelinked, toast]);
 
   // Slash command registry
-  const slashCommands = useSlashCommands(agentSkills);
+  const slashCommands = useSlashCommands(agentSkills, agent?.allowed_tools, agent?.subagents);
 
   // Get access token from session (if SSO is enabled and user is authenticated)
   const ssoEnabled = getConfig('ssoEnabled');
   const accessToken = ssoEnabled ? session?.accessToken : undefined;
 
   const conversation = getActiveConversation();
+  const isAutonomousHistory = conversation?.source === "autonomous";
+  const autonomousFollowUps = useAutonomousFollowUps(
+    isAutonomousHistory && !panelReadOnly ? conversation?.task_id : undefined,
+  );
+
+  const configuredReasoningEffort = agent?.model?.reasoning_effort ?? "medium";
+  const requestReasoningEffort = supportedReasoningEfforts?.includes(reasoningEffort)
+    ? reasoningEffort
+    : undefined;
+
+  useEffect(() => {
+    const stored = conversation?.metadata?.reasoning_effort;
+    const next = typeof stored === "string" && ["low", "medium", "high", "max"].includes(stored)
+      ? stored as ReasoningEffort
+      : configuredReasoningEffort;
+    setReasoningEffort(next);
+  }, [conversation?.id, conversation?.metadata?.reasoning_effort, configuredReasoningEffort]);
+
+  useEffect(() => {
+    if (!agent?.model?.id || !agent.model.provider) {
+      setSupportedReasoningEfforts([]);
+      return;
+    }
+    let cancelled = false;
+    setSupportedReasoningEfforts(null);
+    const params = new URLSearchParams({
+      model_id: agent.model.id,
+      provider: agent.model.provider,
+    });
+    fetch(`/api/dynamic-agents/model-capabilities?${params}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled) setSupportedReasoningEfforts(data?.reasoning_efforts ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setSupportedReasoningEfforts([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agent?.model]);
+
+  const persistReasoningEffort = useCallback(async (
+    effort: ReasoningEffort,
+    source: "selector" | "command" = "selector",
+    conversationIdOverride?: string,
+  ): Promise<"changed" | "unsupported" | "error"> => {
+    if (!supportedReasoningEfforts?.includes(effort)) {
+      if (source === "selector") {
+        toast(
+          `The selected model does not support changing reasoning effort. It will keep the provider default.`,
+          "warning",
+          6000,
+        );
+      }
+      return "unsupported";
+    }
+
+    try {
+      let convId = conversationIdOverride ?? activeConversationId;
+      if (!convId) convId = await createConversation(agentId);
+      if (getStorageMode() === "mongodb") {
+        await apiClient.patchConversationMetadata(convId, { reasoning_effort: effort });
+      }
+      useChatStore.setState((state) => ({
+        conversations: state.conversations.map((item) =>
+          item.id === convId
+            ? { ...item, metadata: { ...item.metadata, reasoning_effort: effort } }
+            : item,
+        ),
+      }));
+      setReasoningEffort(effort);
+      if (source === "selector") {
+        toast(`Reasoning effort changed to ${effort} for this chat.`, "success", 3500);
+      }
+      return "changed";
+    } catch {
+      if (source === "selector") {
+        toast("Could not save the reasoning effort. Try again.", "error", 5000);
+      }
+      return "error";
+    }
+  }, [activeConversationId, agentId, createConversation, supportedReasoningEfforts, toast]);
+
+  const showEffortStatus = useCallback((
+    text: string,
+    tone: EffortStatus["tone"],
+  ) => {
+    effortStatusSequenceRef.current += 1;
+    setEffortStatus({
+      id: effortStatusSequenceRef.current,
+      text,
+      tone,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!effortStatus) return;
+    const timeout = window.setTimeout(() => setEffortStatus(null), 3600);
+    return () => window.clearTimeout(timeout);
+  }, [effortStatus]);
+
+  const showCommandPanel = useCallback((panel: Omit<CommandPanelState, "id">) => {
+    commandPanelSequenceRef.current += 1;
+    setCommandPanelSelectedIndex(0);
+    setCommandPanel({ id: commandPanelSequenceRef.current, ...panel });
+  }, []);
+
+  const selectCommandPanelItem = useCallback((item: CommandPanelItem) => {
+    setCommandPanel(null);
+    setInput(item.insertText);
+    window.setTimeout(() => {
+      const textarea = inputRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.selectionStart = item.insertText.length;
+      textarea.selectionEnd = item.insertText.length;
+    }, 0);
+  }, []);
+
+  const commandPanelItems = useMemo(
+    () => commandPanel?.sections?.flatMap((section) => section.items) ?? [],
+    [commandPanel],
+  );
+
+  useEffect(() => {
+    const selected = commandPanelRef.current?.querySelector<HTMLElement>(
+      `[data-command-panel-index="${commandPanelSelectedIndex}"]`,
+    );
+    selected?.scrollIntoView({ block: "nearest" });
+  }, [commandPanelSelectedIndex]);
+
+  const editingMessageIndex = editingMessageId
+    ? (conversation?.messages.findIndex((message) => message.id === editingMessageId) ?? -1)
+    : -1;
+  const rewindMessageCount = editingMessageIndex >= 0
+    ? (conversation?.messages.length ?? 0) - editingMessageIndex
+    : 0;
+  const contextUsageId = conversationId ?? activeConversationId;
+  const contextUsage = contextUsageId
+    ? contextUsageByConversation[contextUsageId]
+    : undefined;
 
   // Ref to track which conversations we've checked for HITL interrupt state
   const interruptCheckedRef = useRef<Set<string>>(new Set());
@@ -366,6 +590,28 @@ export function ChatPanel({
     }
   }, []);
 
+  const loadOlderMessages = useCallback(() => {
+    if (!activeConversationId || loadingOlderRef.current) return;
+    const history = messageHistory[activeConversationId];
+    if (!history?.hasMore || history.isLoadingOlder) return;
+
+    const viewport = scrollViewportRef.current;
+    if (!viewport) return;
+    const previousScrollHeight = viewport.scrollHeight;
+    const previousScrollTop = viewport.scrollTop;
+    loadingOlderRef.current = true;
+    void loadOlderMessagesFromServer(activeConversationId).finally(() => {
+      requestAnimationFrame(() => {
+        const currentViewport = scrollViewportRef.current;
+        if (currentViewport) {
+          currentViewport.scrollTop =
+            currentViewport.scrollHeight - previousScrollHeight + previousScrollTop;
+        }
+        loadingOlderRef.current = false;
+      });
+    });
+  }, [activeConversationId, loadOlderMessagesFromServer, messageHistory]);
+
   // Handle scroll events to detect user scrolling
   const handleScroll = useCallback(() => {
     // Ignore scroll events caused by auto-scrolling
@@ -374,7 +620,16 @@ export function ChatPanel({
     const nearBottom = isNearBottom();
     setIsUserScrolledUp(!nearBottom);
     setShowScrollButton(!nearBottom);
-  }, [isNearBottom]);
+    if ((scrollViewportRef.current?.scrollTop ?? Number.POSITIVE_INFINITY) < 80) {
+      loadOlderMessages();
+    }
+  }, [isNearBottom, loadOlderMessages]);
+
+  const handleWheel = useCallback((event: WheelEvent) => {
+    if (event.deltaY < 0 && (scrollViewportRef.current?.scrollTop ?? 0) < 80) {
+      loadOlderMessages();
+    }
+  }, [loadOlderMessages]);
 
   // Set up scroll listener
   useEffect(() => {
@@ -382,8 +637,12 @@ export function ChatPanel({
     if (!viewport) return;
 
     viewport.addEventListener("scroll", handleScroll, { passive: true });
-    return () => viewport.removeEventListener("scroll", handleScroll);
-  }, [handleScroll]);
+    viewport.addEventListener("wheel", handleWheel, { passive: true });
+    return () => {
+      viewport.removeEventListener("scroll", handleScroll);
+      viewport.removeEventListener("wheel", handleWheel);
+    };
+  }, [handleScroll, handleWheel]);
 
   // Auto-scroll when new messages arrive (only if user hasn't scrolled up)
   useEffect(() => {
@@ -425,11 +684,11 @@ export function ChatPanel({
     return () => observer.disconnect();
   }, [isThisConversationStreaming, isUserScrolledUp, autoScrollEnabled]);
 
-  // Reset scroll state and visible turns when conversation changes
+  // Reset scroll state when conversation changes.
   useEffect(() => {
     setIsUserScrolledUp(false);
     setShowScrollButton(false);
-    setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
+    loadingOlderRef.current = false;
     // Scroll to bottom when switching conversations. Use rAF to wait for
     // the browser to lay out the newly rendered messages, then scroll.
     const raf = requestAnimationFrame(() => {
@@ -445,14 +704,13 @@ export function ChatPanel({
   // ═══════════════════════════════════════════════════════════════
   useEffect(() => {
     // Skip if no conversationId (new conversation) or agentId
-    if (!conversationId || !agentId) return;
+    if (!conversationId || !agentId || isAutonomousHistory) return;
     
     // Wait for messages to be loaded (race condition on page refresh:
     // this effect can fire before ChatContainer finishes loading messages
     // from MongoDB, causing lastMsg to be undefined and recovery to fail)
     if (isLoadingMessages) return;
     if (isThisConversationStreaming) return;
-    // assisted-by Codex Codex-sonnet-4-6
     // Empty chats have no assistant turn to attach restored HITL state to.
     if (!hasAssistantMessageForInterruptCheck) return;
 
@@ -546,7 +804,7 @@ export function ChatPanel({
     };
 
     checkInterruptState();
-  }, [conversationId, agentId, isLoadingMessages, isThisConversationStreaming, hasAssistantMessageForInterruptCheck]);
+  }, [conversationId, agentId, isLoadingMessages, isThisConversationStreaming, hasAssistantMessageForInterruptCheck, isAutonomousHistory]);
 
   // ═══════════════════════════════════════════════════════════════
   // FILES & TASKS FETCH (for timeline display in latest message)
@@ -683,7 +941,7 @@ export function ChatPanel({
   const lastMsgEventsLen = conversation?.messages?.[conversation.messages.length - 1]?.streamEvents?.length ?? 0;
 
   useEffect(() => {
-    if (pendingUserInput || isThisConversationStreaming) return;
+    if (pendingUserInput || isThisConversationStreaming || isAutonomousHistory) return;
     if (!conversation || conversation.messages.length === 0) return;
 
     const messages = conversation.messages;
@@ -746,7 +1004,7 @@ export function ChatPanel({
     }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeConversationId, conversation?.messages?.length, conversation?.streamEvents?.length, lastMsgEventsLen, isThisConversationStreaming, agentId]);
+  }, [activeConversationId, conversation?.messages?.length, conversation?.streamEvents?.length, lastMsgEventsLen, isThisConversationStreaming, agentId, isAutonomousHistory]);
 
   const handleCopy = async (content: string, id: string) => {
     await navigator.clipboard.writeText(content);
@@ -831,6 +1089,10 @@ export function ChatPanel({
       }
     },
 
+    onToolOutput(toolCallId, result, namespace) {
+      const event = createStreamEvent("tool_output", { tool_call_id: toolCallId, result, namespace });
+      addStreamEvent(event, convId);
+    },
     onToolEnd(toolCallId, toolName, error, namespace, args, result) {
       const resolvedName = toolName ?? toolCallIdToName.get(toolCallId);
       // Parse accumulated args string (from AG-UI TOOL_CALL_ARGS deltas) into object.
@@ -955,6 +1217,10 @@ export function ChatPanel({
       addStreamEvent(streamEvent, convId);
     },
 
+    onContextUsage(usage, namespace) {
+      if ((namespace?.length ?? 0) === 0) setContextUsage(convId,usage);
+    },
+
     onDone() {
       // Finalization handled after adapter.streamMessage resolves
     },
@@ -964,7 +1230,7 @@ export function ChatPanel({
       loopState.hasError = true;
       loopState.errorMessage = message;
     },
-  }; }, [agentId, addStreamEvent, updateMessage, setPendingUserInput, setFilesFetchKey, setTimelineTasks]);
+  }; }, [agentId, addStreamEvent, updateMessage, setPendingUserInput, setFilesFetchKey, setTimelineTasks, setContextUsage]);
 
   /**
    * Finalize a stream loop — copies conversation-level streamEvents to the
@@ -1002,8 +1268,14 @@ export function ChatPanel({
         ? Date.now() - state.startedAt
         : undefined;
 
+    const finalContent = state.accumulatedText || (
+      state.hasError && state.errorMessage
+        ? `**Error:** ${state.errorMessage}`
+        : ""
+    );
+
     updateMessage(conversationId, assistantMsgId, {
-      content: state.accumulatedText,
+      content: finalContent,
       rawStreamContent: state.rawStreamContent,
       isFinal,
       turnStatus,
@@ -1017,10 +1289,16 @@ export function ChatPanel({
     // Store's setConversationStreaming(null) hook auto-saves after 500ms.
   }, [updateMessage, setConversationStreaming, agentName]);
 
-  // Core submit function that accepts a message directly
-  const submitMessage = useCallback(async (messageToSend: string, filesToSend: InputFile[] = []) => {
-    // A turn is valid if it has text OR at least one attachment.
-    if ((!messageToSend.trim() && filesToSend.length === 0) || isThisConversationStreaming) return;
+  // A queued batch renders as separate user bubbles but is sent as one prompt,
+  // producing one coherent assistant response for the whole batch.
+  const submitMessageBatch = useCallback(async (messagesToSend: QueuedMessage[]) => {
+    if (isAutonomousHistory) return;
+    const validMessages = messagesToSend.filter(
+      (message) => message.text.trim() || message.files.length > 0,
+    );
+    if (validMessages.length === 0 || isThisConversationStreaming) return;
+    const messageToSend = buildQueuedBatchPrompt(validMessages);
+    const filesToSend = validMessages.flatMap((message) => message.files);
 
     // Create conversation if needed. This hits POST /api/chat/conversations
     // which is gated by the Web UI backend auth middleware, so we have to handle the
@@ -1067,20 +1345,22 @@ export function ChatPanel({
     // transcript (base64 size ≈ 3/4 of the string length, close enough for the
     // size label). Persistence caps large images in saveMessagesToServer.
     const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    const attachments: MessageAttachment[] = filesToSend.map((f) => ({
-      mime_type: f.mime_type,
-      name: f.name,
-      data: f.data,
-      size: Math.floor((f.data.length * 3) / 4),
-    }));
-    addMessage(convId, {
-      role: "user",
-      content: messageToSend,
-      senderEmail: session?.user?.email ?? undefined,
-      senderName: session?.user?.name ?? undefined,
-      senderImage: session?.user?.image ?? undefined,
-      ...(attachments.length > 0 && { attachments }),
-    }, turnId);
+    validMessages.forEach((queuedMessage) => {
+      const attachments: MessageAttachment[] = queuedMessage.files.map((file) => ({
+        mime_type: file.mime_type,
+        name: file.name,
+        data: file.data,
+        size: Math.floor((file.data.length * 3) / 4),
+      }));
+      addMessage(convId, {
+        role: "user",
+        content: queuedMessage.text,
+        senderEmail: session?.user?.email ?? undefined,
+        senderName: session?.user?.name ?? undefined,
+        senderImage: session?.user?.image ?? undefined,
+        ...(attachments.length > 0 && { attachments }),
+      }, turnId);
+    });
 
     // Add assistant message placeholder with same turnId
     const assistantMsgId = addMessage(convId, { role: "assistant", content: "" }, turnId);
@@ -1116,6 +1396,8 @@ export function ChatPanel({
           message: messageToSend,
           conversationId: convId,
           agentId,
+          turnId,
+          reasoningEffort: requestReasoningEffort,
           clientContext,
           ...(filesToSend.length > 0 && { files: filesToSend }),
         },
@@ -1133,6 +1415,7 @@ export function ChatPanel({
       // them as a toast (with sign-in CTA when applicable) instead of
       // burying them inside the assistant turn — see showAuthErrorToast
       // for the rationale.
+      const authInterruptedReason = interruptedAuthReason(error);
       const isAuthError = error instanceof StreamError && error.isAuthError();
       if (isAuthError) {
         const se = error as StreamError;
@@ -1146,13 +1429,137 @@ export function ChatPanel({
       } else if (!(error as Error).message?.startsWith("Session expired:")) {
         appendToMessage(convId, assistantMsgId, `\n\n**Error:** ${(error as Error).message || "Failed to connect to agent endpoint"}`);
       }
-      // Set interrupted status on error
+      // Set interrupted status on error; tag sign-in auth failures so the UI can
+      // show a session-expired hint instead of the generic "no content" copy.
       updateMessage(convId!, assistantMsgId, {
         turnStatus: "interrupted" as TurnStatus,
+        ...(authInterruptedReason ? { error: authInterruptedReason } : {}),
       });
       setConversationStreaming(convId, null);
     }
-  }, [isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
+  }, [isAutonomousHistory, isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, requestReasoningEffort, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
+
+  const submitMessage = useCallback(
+    (messageToSend: string, filesToSend: InputFile[] = []) => submitMessageBatch([{
+      id: generateId(),
+      text: messageToSend,
+      files: filesToSend,
+    }]),
+    [submitMessageBatch],
+  );
+
+  const startEditingMessage = useCallback((message: ChatMessageType) => {
+    setIsRewindConfirmationOpen(false);
+    setEditingMessageId(message.id);
+    setEditDraft(message.content);
+  }, []);
+
+  const cancelEditingMessage = useCallback(() => {
+    if (isSavingEdit) return;
+    setIsRewindConfirmationOpen(false);
+    setEditingMessageId(null);
+    setEditDraft("");
+  }, [isSavingEdit]);
+
+  const requestEditedMessageSave = useCallback(() => {
+    if (!editingMessageId || !activeConversationId || isSavingEdit) return;
+    const targetMessage = getActiveConversation()?.messages.find(
+      (message) => message.id === editingMessageId,
+    );
+    if (!targetMessage) {
+      toast("The message is no longer available to edit.", "error", 6000);
+      cancelEditingMessage();
+      return;
+    }
+    if (targetMessage.attachments?.some((attachment) => !attachment.data)) {
+      toast(
+        "This message has an attachment that is no longer available. Re-upload it in a new message instead.",
+        "error",
+        8000,
+      );
+      return;
+    }
+    if (!editDraft.trim() && !targetMessage.attachments?.length) return;
+    setIsRewindConfirmationOpen(true);
+  }, [
+    activeConversationId,
+    cancelEditingMessage,
+    editDraft,
+    editingMessageId,
+    getActiveConversation,
+    isSavingEdit,
+    toast,
+  ]);
+
+  const saveEditedMessage = useCallback(async () => {
+    if (!editingMessageId || !activeConversationId || isSavingEdit) return;
+    const targetMessage = getActiveConversation()?.messages.find(
+      (message) => message.id === editingMessageId,
+    );
+    if (!targetMessage) {
+      toast("The message is no longer available to edit.", "error", 6000);
+      cancelEditingMessage();
+      return;
+    }
+
+    const targetAttachments = targetMessage.attachments ?? [];
+    if (targetAttachments.some((attachment) => !attachment.data)) {
+      setIsRewindConfirmationOpen(false);
+      toast(
+        "This message has an attachment that is no longer available. Re-upload it in a new message instead.",
+        "error",
+        8000,
+      );
+      return;
+    }
+    if (!editDraft.trim() && targetAttachments.length === 0) return;
+
+    const files: InputFile[] = targetAttachments.map((attachment) => ({
+      mime_type: attachment.mime_type,
+      name: attachment.name,
+      data: attachment.data!,
+    }));
+
+    setIsSavingEdit(true);
+    try {
+      await saveMessagesToServer(activeConversationId);
+      await apiClient.rewindConversation(activeConversationId, {
+        agent_id: agentId,
+        message_id: editingMessageId,
+      });
+      truncateConversationFromMessage(activeConversationId, editingMessageId);
+      setQueuedMessages([]);
+      setPendingUserInput(null);
+      setPendingToolApproval(null);
+      clearConversationInputRequired(activeConversationId);
+      dismissedInputForMessageRef.current.clear();
+      setIsRewindConfirmationOpen(false);
+      setEditingMessageId(null);
+      setEditDraft("");
+      await submitMessage(editDraft, files);
+    } catch (error) {
+      toast(
+        `Could not edit message: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+        8000,
+      );
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }, [
+    activeConversationId,
+    agentId,
+    cancelEditingMessage,
+    clearConversationInputRequired,
+    editDraft,
+    editingMessageId,
+    getActiveConversation,
+    isSavingEdit,
+    saveMessagesToServer,
+    submitMessage,
+    toast,
+    truncateConversationFromMessage,
+  ]);
 
   // The Home page hero composer creates a conversation and navigates here
   // before a message can be sent (this panel only mounts once a conversation
@@ -1168,106 +1575,145 @@ export function ChatPanel({
     }
   }, [conversationId, panelReadOnly, submitMessage]);
 
-  // Handle queued messages after streaming completes
+  // Flush the entire queue atomically so it creates one assistant turn.
   useEffect(() => {
-    if (!isThisConversationStreaming && queuedMessages.length > 0) {
-      // Process first queued message
-      const [firstMessage, ...remaining] = queuedMessages;
-      setQueuedMessages(remaining);
-      // Small delay to ensure previous message is fully processed
-      setTimeout(() => {
-        submitMessage(firstMessage.text, firstMessage.files);
-      }, 300);
-    }
-  }, [isThisConversationStreaming, queuedMessages, submitMessage]);
+    if (
+      isThisConversationStreaming ||
+      queuedMessages.length === 0 ||
+      queueFlushInProgressRef.current ||
+      pendingUserInput ||
+      pendingToolApproval
+    ) return;
 
-  // Retry handler - re-sends the message content
-  const handleRetry = useCallback((content: string) => {
-    if (isThisConversationStreaming) return; // Don't retry while streaming
-    submitMessage(content);
-  }, [isThisConversationStreaming, submitMessage]);
+    const batch = queuedMessages;
+    queueFlushInProgressRef.current = true;
+    setQueuedMessages([]);
+    void submitMessageBatch(batch).finally(() => {
+      queueFlushInProgressRef.current = false;
+    });
+  }, [
+    isThisConversationStreaming,
+    pendingToolApproval,
+    pendingUserInput,
+    queuedMessages,
+    submitMessageBatch,
+  ]);
 
-  // Handle /skills chat command: show skills configured on this agent
+  // Handle /skills locally so command output stays out of conversation context.
   const handleSkillsCommand = useCallback(async () => {
-    let convId = activeConversationId;
-    if (!convId) {
-      convId = await createConversation(agentId);
-    }
-
-    const turnId = `turn-${Date.now()}`;
-    addMessage(convId, { role: "user", content: "/skills" }, turnId);
-
-    updateConversationTitle(convId, "Agent Skills");
-
-    const msgId = addMessage(convId, { role: "assistant", content: "Loading skills..." }, turnId);
-
     if (!agentSkills || agentSkills.length === 0) {
-      updateMessage(convId, msgId, {
-        content: "This agent has no skills configured. You can add skills in the agent editor.",
-        isFinal: true,
+      showCommandPanel({
+        title: "Agent skills",
+        message: "This agent has no skills configured. You can add skills in the agent editor.",
       });
       return;
     }
 
+    showCommandPanel({ title: "Agent skills", message: "Loading skills…", loading: true });
     try {
       const res = await fetch("/api/skills", { credentials: "include" });
       if (!res.ok) {
-        updateMessage(convId, msgId, { content: "Skills are temporarily unavailable. Please try again later.", isFinal: true });
+        showCommandPanel({
+          title: "Agent skills",
+          message: "Skills are temporarily unavailable. Please try again later.",
+        });
         return;
       }
       const data = await res.json();
       const allSkills = data?.skills || [];
       const skillIdSet = new Set(agentSkills);
-      const filtered = allSkills.filter((s: { id: string }) => skillIdSet.has(s.id));
+      const filtered = allSkills.filter((skill: { id: string }) => skillIdSet.has(skill.id));
 
       if (filtered.length === 0) {
-        updateMessage(convId, msgId, {
-          content: `This agent has ${agentSkills.length} skill(s) configured but none could be resolved. They may have been deleted.`,
-          isFinal: true,
+        showCommandPanel({
+          title: "Agent skills",
+          message: `This agent has ${agentSkills.length} configured skill(s), but none could be resolved.`,
         });
         return;
       }
 
-      const lines = [
-        `**Agent Skills** (${filtered.length})\n`,
-        ...filtered.map((s: { title?: string; name?: string; description?: string; category?: string }) =>
-          `- **${s.title || s.name || "Untitled"}**: ${s.description || "No description"}${s.category ? ` *(${s.category})*` : ""}`
-        ),
-        "\n*These are the skills configured on this agent. Edit in the agent settings.*",
-      ];
-      updateMessage(convId, msgId, { content: lines.join("\n"), isFinal: true });
+      showCommandPanel({
+        title: `Agent skills (${filtered.length})`,
+        sections: [{
+          items: filtered.map((skill: { title?: string; name?: string; description?: string; category?: string }) => ({
+            label: skill.title || skill.name || "Untitled",
+            description: `${skill.description || "No description"}${skill.category ? ` · ${skill.category}` : ""}`,
+            insertText: `Use the ${skill.title || skill.name || "selected"} skill to `,
+          })),
+        }],
+      });
     } catch {
-      updateMessage(convId, msgId, { content: "Skills are temporarily unavailable. Please try again later.", isFinal: true });
+      showCommandPanel({
+        title: "Agent skills",
+        message: "Skills are temporarily unavailable. Please try again later.",
+      });
     }
-  }, [activeConversationId, createConversation, addMessage, updateMessage, updateConversationTitle, agentId, agentSkills]);
+  }, [agentSkills, showCommandPanel]);
 
-  // Handle /help command: show available commands in chat
-  const handleHelpCommand = useCallback(async () => {
+  const handleEffortCommand = useCallback(async (argument: string) => {
+    const normalized = argument.trim().toLowerCase();
+    if (!["low", "medium", "high", "max"].includes(normalized)) {
+      showEffortStatus(
+        `Use /effort <low|medium|high|max>. Current effort: ${reasoningEffort}.`,
+        "warning",
+      );
+      return;
+    }
+
     let convId = activeConversationId;
-    if (!convId) {
-      convId = await createConversation(agentId);
+    if (!convId) convId = await createConversation(agentId);
+    const result = await persistReasoningEffort(
+      normalized as ReasoningEffort,
+      "command",
+      convId,
+    );
+    if (result === "changed") {
+      if (normalized === "max") {
+        setMaxEffortAnimationKey((current) => current + 1);
+      } else {
+        showEffortStatus(`Reasoning effort changed to ${normalized} for this chat.`, "success");
+      }
+      return;
     }
-    const turnId = `turn-${Date.now()}`;
-    addMessage(convId, { role: "user", content: "/help" }, turnId);
+    showEffortStatus(
+      result === "unsupported"
+        ? "This model does not support changing reasoning effort."
+        : "Could not save the reasoning effort. Try again.",
+      result === "unsupported" ? "warning" : "error",
+    );
+  }, [activeConversationId, agentId, createConversation, persistReasoningEffort, reasoningEffort, showEffortStatus]);
 
-    // Set a descriptive title instead of "/help"
-    updateConversationTitle(convId, "Help & Commands");
+  // Handle /help locally so its reference list does not become model context.
+  const handleHelpCommand = useCallback(() => {
+    const mcpItems = Object.entries(agent?.allowed_tools ?? {})
+      .filter(([, selection]) => selection !== false)
+      .map(([serverId]) => ({
+        label: `/@${serverId}`,
+        description: "MCP server",
+        insertText: `@${serverId} `,
+      }));
+    const subagentItems = (agent?.subagents ?? []).map((subagent) => ({
+      label: `/@${subagent.name || subagent.agent_id}`,
+      description: subagent.description || "Configured subagent",
+      insertText: `@${subagent.name || subagent.agent_id} `,
+    }));
 
-    const agentLines = DEFAULT_AGENTS.map(a => `  \`/@${a.id}\` — ${a.label} agent`).join("\n");
-    const helpText = [
-      "**Available Commands**\n",
-      "  `/skills` — List all available skills",
-      "  `/help` — Show this help message",
-      "  `/clear` — Clear the current conversation",
-      "",
-      "**Agents** (inserts @mention, then keep typing your question)\n",
-      agentLines,
-      "",
-      "*Type `/` to see the autocomplete menu. Use Arrow keys + Tab to select.*",
-    ].join("\n");
-
-    addMessage(convId, { role: "assistant", content: helpText, isFinal: true }, turnId);
-  }, [activeConversationId, agentId, createConversation, addMessage, updateConversationTitle]);
+    showCommandPanel({
+      title: "Available commands",
+      sections: [
+        {
+          items: [
+            { label: "/skills", description: "List available skills", insertText: "/skills" },
+            { label: "/effort <low|medium|high|max>", description: "Set reasoning effort for this chat", insertText: "/effort " },
+            { label: "/help", description: "Show this help panel", insertText: "/help" },
+            { label: "/clear", description: "Start a new conversation and reset context", insertText: "/clear" },
+          ],
+        },
+        ...(mcpItems.length ? [{ title: "MCP servers", items: mcpItems }] : []),
+        ...(subagentItems.length ? [{ title: "Subagents", items: subagentItems }] : []),
+      ],
+    });
+  }, [agent, showCommandPanel]);
 
   // Handle /clear command
   const handleClearCommand = useCallback(async () => {
@@ -1368,6 +1814,12 @@ export function ChatPanel({
 
     // Check for slash commands via the registry
     const trimmed = input.trim();
+    const effortMatch = trimmed.match(/^\/effort(?:\s+(.*))?$/i);
+    if (effortMatch) {
+      setInput("");
+      await handleEffortCommand(effortMatch[1] ?? "");
+      return;
+    }
     if (trimmed.startsWith("/")) {
       const cmdName = trimmed.slice(1).toLowerCase();
       const cmd = slashCommands.find(
@@ -1386,19 +1838,16 @@ export function ChatPanel({
       ? await Promise.all(attachments.map((a) => fileToInputFile(a.file)))
       : [];
 
-    // If streaming and not force sending, queue the message (up to 3)
+    // While a response streams, retain each prompt as a distinct queued bubble.
     if (isThisConversationStreaming && !forceSend) {
       const message = input.trim();
-
-      // Add to queue if under limit
-      if (queuedMessages.length < 3) {
-        setQueuedMessages(prev => [...prev, { text: message, files: encodedFiles }]);
-        setInput("");
-        setAttachments([]);
-      } else {
-        // Queue is full
-        console.log("Queue is full (3/3). Send or cancel messages to queue more.");
-      }
+      setQueuedMessages(prev => [...prev, {
+        id: generateId(),
+        text: message,
+        files: encodedFiles,
+      }]);
+      setInput("");
+      setAttachments([]);
       return;
     }
 
@@ -1423,7 +1872,7 @@ export function ChatPanel({
     setAttachments([]);
 
     await submitMessage(message, encodedFiles);
-  }, [input, attachments, submitMessage, isThisConversationStreaming, queuedMessages, pendingUserInput, slashCommands, executeSlashCommand, handleStop]);
+  }, [input, attachments, submitMessage, isThisConversationStreaming, pendingUserInput, slashCommands, executeSlashCommand, handleEffortCommand, handleStop]);
 
   // Auto-submit pending message from use case selection
   useEffect(() => {
@@ -1503,7 +1952,7 @@ export function ChatPanel({
       const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName);
 
       await adapter.resumeStream(
-        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData: formDataJson, clientContext },
+        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData: formDataJson, reasoningEffort: requestReasoningEffort, clientContext },
         callbacks,
       );
 
@@ -1520,7 +1969,7 @@ export function ChatPanel({
   }, [pendingUserInput, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
       appendToMessage, addStreamEvent, setConversationStreaming,
       clearStreamEvents, getActiveConversation, buildStreamCallbacks, finalizeStreamLoop,
-      suppliedClientContext]);
+      suppliedClientContext, requestReasoningEffort]);
 
   // Handle tool approval decisions (approve/reject/edit)
   // Shows cards sequentially; only resumes after all tools are decided.
@@ -1625,7 +2074,7 @@ export function ChatPanel({
     try {
       const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName);
       await adapter.resumeStream(
-        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData, clientContext },
+        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData, reasoningEffort: requestReasoningEffort, clientContext },
         callbacks,
       );
       finalizeStreamLoop(activeConversationId, assistantMsgId, loopState);
@@ -1639,11 +2088,12 @@ export function ChatPanel({
     }
   }, [pendingToolApproval, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
       addStreamEvent, setConversationStreaming, clearStreamEvents, getActiveConversation,
-      buildStreamCallbacks, finalizeStreamLoop, suppliedClientContext]);
+      buildStreamCallbacks, finalizeStreamLoop, suppliedClientContext, requestReasoningEffort]);
 
   // Handle slash command detection in input
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value;
+    setCommandPanel(null);
     setInput(newValue);
 
     const cursorPos = e.target.selectionStart;
@@ -1680,7 +2130,7 @@ export function ChatPanel({
     }
 
     // Insert commands
-    if (cmd.category === "agent") {
+    if (cmd.category === "mcp" || cmd.category === "subagent") {
       // Agent: replace /text with @agentname + trailing space
       const cursorPos = inputRef.current?.selectionStart ?? input.length;
       const textBeforeCursor = input.slice(0, cursorPos);
@@ -1708,10 +2158,38 @@ export function ChatPanel({
           updateConversationTitle(convId, `Skill: ${cmd.label}`);
         }
       });
+    } else if (cmd.category === "command") {
+      setInput(cmd.value);
+      setTimeout(() => inputRef.current?.focus(), 0);
     }
   }, [input, executeSlashCommand, submitMessage, activeConversationId, updateConversationTitle]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (commandPanel) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setCommandPanel(null);
+        return;
+      }
+      if (commandPanelItems.length > 0 && e.key === "ArrowDown") {
+        e.preventDefault();
+        setCommandPanelSelectedIndex((current) => (current + 1) % commandPanelItems.length);
+        return;
+      }
+      if (commandPanelItems.length > 0 && e.key === "ArrowUp") {
+        e.preventDefault();
+        setCommandPanelSelectedIndex(
+          (current) => (current - 1 + commandPanelItems.length) % commandPanelItems.length,
+        );
+        return;
+      }
+      if (commandPanelItems.length > 0 && e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        selectCommandPanelItem(commandPanelItems[commandPanelSelectedIndex]);
+        return;
+      }
+    }
+
     // Slash menu keyboard navigation
     if (showSlashMenu) {
       const filtered = getFilteredCommands(slashCommands, slashFilter);
@@ -1758,6 +2236,14 @@ export function ChatPanel({
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
         <ScrollArea className="flex-1" viewportRef={scrollViewportRef}>
           <div className="max-w-7xl mx-auto pl-1 pr-1 py-4 space-y-6">
+            {conversation?.source === "autonomous" && (
+              <div className="mx-3 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm text-foreground">
+                This chat contains automated runs and is read-only. Select
+                <span className="font-medium"> Continue this run</span> to discuss any result
+                in a separate manual follow-up chat. Each follow-up has its own copy of
+                that run&apos;s context.
+              </div>
+            )}
             {!conversation?.messages.length && (
               <div className="text-center py-20">
                 {isLoadingMessages ? (
@@ -1806,76 +2292,34 @@ export function ChatPanel({
             <AnimatePresence mode="popLayout">
               {(() => {
                 const allMessages = deduplicateByKey(conversation?.messages ?? [], (msg) => msg.id);
-                const turns = groupMessagesIntoTurns(allMessages);
-                
-                // Progressive loading: show only the most recent N turns
-                const totalTurns = turns.length;
-                const effectiveVisibleCount = Math.min(visibleTurnCount, totalTurns);
-                const hiddenTurnCount = Math.max(0, totalTurns - effectiveVisibleCount);
-                const visibleTurns = turns.slice(-effectiveVisibleCount);
-                
-                // Flatten visible turns to messages for rendering
-                const visibleMessages = visibleTurns.flatMap(t =>
-                  [t.userMsg, t.assistantMsg].filter(Boolean) as ChatMessageType[]
-                );
-
-                // Build a Set of visible message IDs for quick lookup
-                const visibleMsgIds = new Set(visibleMessages.map(m => m.id));
-                const renderMessages = allMessages.filter(m => visibleMsgIds.has(m.id));
-
-                // Handle loading more turns
-                const handleLoadMore = async () => {
-                  // Capture scroll position before loading
-                  if (scrollViewportRef.current) {
-                    const viewport = scrollViewportRef.current;
-                    scrollDistanceFromBottomRef.current = viewport.scrollHeight - viewport.scrollTop;
-                  }
-                  
-                  // Increase visible turn count
-                  const newVisibleCount = Math.min(visibleTurnCount + LOAD_MORE_BATCH_SIZE, totalTurns);
-                  setVisibleTurnCount(newVisibleCount);
-                  
-                  // Re-load messages from MongoDB to restore evicted content
-                  if (activeConversationId) {
-                    await loadMessagesFromServer(activeConversationId, { force: true });
-                  }
-                  
-                  // Restore scroll position after render (use rAF to wait for layout)
-                  requestAnimationFrame(() => {
-                    if (scrollViewportRef.current && scrollDistanceFromBottomRef.current !== null) {
-                      const viewport = scrollViewportRef.current;
-                      viewport.scrollTop = viewport.scrollHeight - scrollDistanceFromBottomRef.current;
-                      scrollDistanceFromBottomRef.current = null;
-                    }
-                  });
-                };
 
                 return (
                   <>
-                    {/* Load earlier turns divider */}
-                    {hiddenTurnCount > 0 && (
-                      <LoadEarlierDivider
-                        key="load-earlier"
-                        count={hiddenTurnCount}
-                        onLoad={handleLoadMore}
-                      />
+                    {activeConversationId && messageHistory[activeConversationId]?.isLoadingOlder && (
+                      <div className="flex justify-center py-3" aria-label="Loading earlier messages">
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      </div>
                     )}
 
-                    {/* Rendered messages (visible turns only) */}
-                    {renderMessages.map((msg, index, arr) => {
+                    {allMessages.map((msg, index, arr) => {
                       const isLastMessage = index === arr.length - 1;
                       const isAssistantStreaming = isThisConversationStreaming && msg.role === "assistant" && isLastMessage;
-
-                      // For retry: if user message, use its content; if assistant, find preceding user message
-                      const getRetryContent = () => {
-                        if (msg.role === "user") return msg.content;
-                        for (let i = index - 1; i >= 0; i--) {
-                          if (arr[i].role === "user") {
-                            return arr[i].content;
-                          }
-                        }
-                        return null;
-                      };
+                      const messageOwner = msg.senderEmail ?? conversation?.owner_id;
+                      const isOwnMessage = !messageOwner || !session?.user?.email ||
+                        messageOwner === session.user.email;
+                      const isConversationOwner = !conversation?.owner_id || !session?.user?.email ||
+                        conversation.owner_id === session.user.email;
+                      const isLocalCommand = msg.content.trim() === "/skills" ||
+                        msg.content.trim() === "/help";
+                      const canEditMessage = msg.role === "user" &&
+                        isOwnMessage &&
+                        isConversationOwner &&
+                        !isLocalCommand &&
+                        !panelReadOnly &&
+                        !isAutonomousHistory &&
+                        !isThisConversationStreaming &&
+                        !pendingUserInput &&
+                        !pendingToolApproval;
 
                       // Check if this is the last assistant message (latest answer)
                       const isLastAssistantMessage = msg.role === "assistant" &&
@@ -1911,10 +2355,17 @@ export function ChatPanel({
                           key={msg.id}
                           message={msg}
                           onCopy={handleCopy}
+                          canEdit={canEditMessage}
+                          isEditing={editingMessageId === msg.id}
+                          editDraft={editingMessageId === msg.id ? editDraft : undefined}
+                          isSavingEdit={isSavingEdit && editingMessageId === msg.id}
+                          onStartEdit={() => startEditingMessage(msg)}
+                          onEditDraftChange={setEditDraft}
+                          onCancelEdit={cancelEditingMessage}
+                          onSaveEdit={requestEditedMessageSave}
                           isCopied={copiedId === msg.id}
                           isStreaming={isAssistantStreaming}
                           isLatestAnswer={isLastAssistantMessage}
-                          onRetry={getRetryContent() ? () => handleRetry(getRetryContent()!) : undefined}
                           feedback={msg.feedback}
                           onFeedbackChange={(feedback) => handleFeedbackChange(msg.id, feedback)}
                           isRecovering={recoveringMessageId === msg.id}
@@ -1938,6 +2389,17 @@ export function ChatPanel({
                           deletingFilePath={deletingFilePath}
                           getSubagentInfo={getSubagentInfo}
                           pendingHitl={!!(pendingUserInput || pendingToolApproval)}
+                          autonomousFollowUp={
+                            isAutonomousHistory && !panelReadOnly &&
+                            msg.autonomousRunId && msg.autonomousExecutionContextId &&
+                            ["run_response", "run_error"].includes(msg.autonomousMessageKind ?? "")
+                              ? <RunFollowUpButton
+                                  runId={msg.autonomousRunId}
+                                  conversationId={autonomousFollowUps.links[msg.autonomousRunId]}
+                                  openChat={autonomousFollowUps.openChat}
+                                />
+                              : undefined
+                          }
                         />
                       );
                     })}
@@ -1970,6 +2432,7 @@ export function ChatPanel({
                           conversationId: activeConversationId,
                           agentId: pendingUserInput.agentId,
                           resumeData: dismissalPayload,
+                          reasoningEffort: requestReasoningEffort,
                         },
                         {}, // No callbacks — we don't render the response
                       ).catch((err) => {
@@ -2038,6 +2501,21 @@ export function ChatPanel({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {apiConversation && (
+        <div
+          role="note"
+          className="shrink-0 border-t border-amber-500/30 bg-amber-500/10 px-6 py-2.5 text-amber-800 dark:text-amber-300"
+        >
+          <div className="mx-auto flex max-w-7xl items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <p className="text-xs">
+              <span className="font-medium">API-linked chat.</span>{" "}
+              Messages sent here update the same conversation used by the API. Continuing here may interfere with that API chat, especially if both clients send at the same time.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Input Area - Fixed bottom, doesn't scroll */}
       {panelReadOnly ? (
@@ -2122,16 +2600,16 @@ export function ChatPanel({
             ) : null}
           </div>
         </div>
-      ) : (
+      ) : !isAutonomousHistory && (
       <div className="border-t border-border bg-background shrink-0">
         <div className="max-w-7xl mx-auto px-6 py-3 space-y-2">
           {/* Queued Messages Display */}
           {queuedMessages.length > 0 && (
-            <div className="space-y-2">
+            <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
               <AnimatePresence mode="popLayout">
-                {queuedMessages.map((queuedMsg, index) => (
+                {queuedMessages.map((queuedMsg) => (
                   <motion.div
-                    key={`${index}-${queuedMsg.text.slice(0, 20)}`}
+                    key={queuedMsg.id}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
@@ -2140,11 +2618,11 @@ export function ChatPanel({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs font-medium text-muted-foreground">
-                          Queued {queuedMessages.length > 1 ? `(${index + 1}/${queuedMessages.length})` : 'message'}:
+                          Queued message:
                         </span>
                         <button
                           onClick={() => {
-                            setQueuedMessages(prev => prev.filter((_, i) => i !== index));
+                            setQueuedMessages(prev => prev.filter((message) => message.id !== queuedMsg.id));
                           }}
                           className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                           title="Remove this queued message"
@@ -2165,15 +2643,84 @@ export function ChatPanel({
                   </motion.div>
                 ))}
               </AnimatePresence>
-              {queuedMessages.length >= 3 && (
-                <div className="text-xs text-muted-foreground px-3">
-                  Maximum of 3 queued messages. Send or cancel messages to queue more.
-                </div>
-              )}
             </div>
           )}
 
           <div className="relative">
+            <AnimatePresence initial={false} mode="wait">
+              {commandPanel && (
+                <motion.div
+                  ref={commandPanelRef}
+                  key={commandPanel.id}
+                  role="status"
+                  aria-live="polite"
+                  className="absolute bottom-[calc(100%+0.5rem)] left-0 z-50 w-full max-w-2xl overflow-hidden rounded-xl border border-border bg-popover/95 text-popover-foreground shadow-2xl backdrop-blur"
+                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 5, scale: 0.99 }}
+                  transition={{ duration: 0.18 }}
+                >
+                  <div className="flex items-center justify-between border-b border-border/70 px-4 py-2.5">
+                    <span className="text-sm font-semibold">{commandPanel.title}</span>
+                    <button
+                      type="button"
+                      onClick={() => setCommandPanel(null)}
+                      className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      aria-label="Close command panel"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <div className="max-h-80 overflow-y-auto px-4 py-3">
+                    {commandPanel.loading ? (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        {commandPanel.message}
+                      </div>
+                    ) : commandPanel.message ? (
+                      <p className="text-sm text-muted-foreground">{commandPanel.message}</p>
+                    ) : (
+                      <div className="space-y-4">
+                        {commandPanel.sections?.map((section, sectionIndex) => (
+                          <section key={`${section.title ?? "items"}-${sectionIndex}`}>
+                            {section.title && (
+                              <h4 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                {section.title}
+                              </h4>
+                            )}
+                            <div className="space-y-1">
+                              {section.items.map((item) => {
+                                const flatIndex = commandPanelItems.indexOf(item);
+                                const isSelected = flatIndex === commandPanelSelectedIndex;
+                                return (
+                                  <button
+                                    key={`${item.label}-${item.description}`}
+                                    type="button"
+                                    data-command-panel-index={flatIndex}
+                                    aria-current={isSelected ? "true" : undefined}
+                                    onMouseEnter={() => setCommandPanelSelectedIndex(flatIndex)}
+                                    onClick={() => selectCommandPanelItem(item)}
+                                    className={cn(
+                                      "flex w-full gap-3 rounded-md px-2 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                      isSelected ? "bg-primary/10" : "hover:bg-muted/60",
+                                    )}
+                                    title={`Insert ${item.label}`}
+                                  >
+                                    <code className="shrink-0 text-xs font-semibold text-foreground">{item.label}</code>
+                                    <span className="min-w-0 text-xs text-muted-foreground">{item.description}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </section>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {/* Slash command autocomplete menu */}
             <SlashCommandMenu
               filter={slashFilter}
@@ -2194,6 +2741,88 @@ export function ChatPanel({
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
             >
+              {maxEffortAnimationKey > 0 && (
+                <div
+                  key={`max-effort-armor-${maxEffortAnimationKey}`}
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 z-10 overflow-hidden rounded-xl"
+                  data-testid="max-effort-animation"
+                >
+                  {!prefersReducedMotion && (
+                    <>
+                      <motion.span
+                        className="absolute inset-y-1 left-0 w-[calc(50%+4rem)] rounded-r-xl border-y border-l border-white/20"
+                        style={{
+                          background: `linear-gradient(115deg, ${maxEffortTheme.from}, ${maxEffortTheme.to})`,
+                          boxShadow: `inset 0 0 18px rgb(255 255 255 / 0.24), 0 0 14px ${maxEffortTheme.to}`,
+                        }}
+                        initial={{ opacity: 0, x: "-105%" }}
+                        animate={{
+                          opacity: [0, 0.46, 0.38, 0.28, 0],
+                          x: ["-105%", "0%", "0%", "105%", "205%"],
+                        }}
+                        transition={{ duration: 2.4, times: [0, 0.2, 0.4, 0.78, 1], ease: "easeInOut" }}
+                      />
+                      <motion.span
+                        className="absolute inset-y-1 right-0 w-[calc(50%+4rem)] rounded-l-xl border-y border-r border-white/20"
+                        style={{
+                          background: `linear-gradient(245deg, ${maxEffortTheme.from}, ${maxEffortTheme.to})`,
+                          boxShadow: `inset 0 0 18px rgb(255 255 255 / 0.24), 0 0 14px ${maxEffortTheme.to}`,
+                        }}
+                        initial={{ opacity: 0, x: "105%" }}
+                        animate={{
+                          opacity: [0, 0.46, 0.38, 0.28, 0],
+                          x: ["105%", "0%", "0%", "-105%", "-205%"],
+                        }}
+                        transition={{ duration: 2.4, times: [0, 0.2, 0.4, 0.78, 1], ease: "easeInOut" }}
+                      />
+
+                      <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center text-sm font-black tracking-tight">
+                        {[
+                          { letter: "M", x: [0, 0, -24, -52] },
+                          { letter: "A", x: [0, 0, 0, 0] },
+                          { letter: "X", x: [0, 0, 24, 52] },
+                        ].map(({ letter, x }) => (
+                          <motion.span
+                            key={letter}
+                            style={{
+                              color: maxEffortTheme.to,
+                              textShadow: `0 0 10px ${maxEffortTheme.from}, 0 1px 0 rgb(255 255 255 / 0.65)`,
+                            }}
+                            initial={{ opacity: 0, scale: 0.7, x: 0 }}
+                            animate={{
+                              opacity: [0, 1, 1, 0],
+                              scale: [0.7, 1.12, 1, 0.94],
+                              x,
+                            }}
+                            transition={{
+                              delay: 0.4,
+                              duration: 1.55,
+                              times: [0, 0.16, 0.62, 1],
+                              ease: "easeInOut",
+                            }}
+                          >
+                            {letter}
+                          </motion.span>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  <motion.span
+                    className="absolute inset-0 rounded-xl border-2"
+                    style={{ borderColor: maxEffortTheme.to }}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: prefersReducedMotion ? [0, 0.75, 0] : [0, 1, 0.55, 0] }}
+                    transition={{
+                      delay: prefersReducedMotion ? 0 : 0.42,
+                      duration: prefersReducedMotion ? 0.55 : 1.65,
+                      times: prefersReducedMotion ? [0, 0.5, 1] : [0, 0.22, 0.7, 1],
+                      ease: "easeInOut",
+                    }}
+                  />
+                </div>
+              )}
+
               {/* Hidden native picker driven by the paperclip button. */}
               <input
                 ref={fileInputRef}
@@ -2207,69 +2836,135 @@ export function ChatPanel({
               {/* Staged attachment previews (above the input row). */}
               <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
 
-              <div className="flex items-center gap-3">
+              <div className="relative z-20 flex items-end gap-3">
+                <AnimatePresence initial={false} mode="wait">
+                  {effortStatus && (
+                    <motion.span
+                      key={effortStatus.id}
+                      role="status"
+                      aria-live="polite"
+                      className={cn(
+                        "absolute left-3 right-64 top-0 truncate text-[11px] font-medium max-sm:right-44",
+                        effortStatus.tone === "error"
+                          ? "text-destructive"
+                          : effortStatus.tone === "warning"
+                            ? "text-amber-600 dark:text-amber-400"
+                            : "text-muted-foreground",
+                      )}
+                      initial={{ opacity: 0, y: 3 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -3 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      {effortStatus.text}
+                    </motion.span>
+                  )}
+                </AnimatePresence>
                 <TextareaAutosize
                   ref={inputRef}
+                  aria-label="Message"
                   value={input}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
                   placeholder={
                     isThisConversationStreaming
-                      ? queuedMessages.length >= 3
-                        ? "Queue full (3/3). Send or cancel messages to queue more, or Cmd+Enter to force send..."
-                        : `Type to queue message (${queuedMessages.length}/3), or Cmd+Enter to force send...`
+                      ? `Type to queue another message${queuedMessages.length > 0 ? ` (${queuedMessages.length} queued)` : ""}, or Cmd+Enter to send now...`
                       : `Ask anything, or type / to see commands, skills, and agents...`
                   }
                   className="flex-1 bg-transparent resize-none outline-none px-3 py-2.5 text-sm"
                   minRows={1}
                   maxRows={10}
                 />
-                {/* Attach files */}
-                <Button
-                  size="icon"
-                  onClick={() => fileInputRef.current?.click()}
-                  variant="ghost"
-                  className="shrink-0"
-                  title="Attach files"
-                  aria-label="Attach files"
-                >
-                  <Paperclip className="h-4 w-4" />
-                </Button>
-                {/* Send/Stop button - toggles based on streaming state */}
-                {isThisConversationStreaming ? (
-                  <Button
-                    size="icon"
-                    onClick={handleStop}
-                    variant="destructive"
-                    className="shrink-0"
-                    title="Stop generating"
+                <div className="relative flex shrink-0 items-center gap-2 pt-5">
+                  <span
+                    className="absolute right-0 top-0 flex max-w-56 items-center gap-1 whitespace-nowrap text-[10px] font-medium text-muted-foreground max-sm:max-w-40"
+                    title={`${agent?.model?.id || "Model"} · ${reasoningEffort}`}
+                    data-testid="composer-model-effort"
                   >
-                    <Square className="h-4 w-4" />
-                  </Button>
-                ) : (
-                  <Button
-                    size="icon"
-                    onClick={() => handleSubmit(false)}
-                    disabled={!input.trim() && attachments.length === 0}
-                    variant="default"
-                    className="shrink-0"
-                    title="Send message"
-                  >
-                    <Send className="h-4 w-4" />
-                  </Button>
-                )}
+                    <span className="truncate">{agent?.model?.id || "Model"}</span>
+                    <span aria-hidden="true">·</span>
+                    <span
+                      className={cn("text-foreground/80", reasoningEffort === "max" && "font-bold")}
+                      style={reasoningEffort === "max"
+                        ? {
+                            background: `linear-gradient(90deg, ${maxEffortTheme.from}, ${maxEffortTheme.to})`,
+                            backgroundClip: "text",
+                            color: "transparent",
+                            WebkitBackgroundClip: "text",
+                            WebkitTextFillColor: "transparent",
+                          }
+                        : undefined}
+                    >
+                      {reasoningEffort}
+                    </span>
+                  </span>
+
+                  {/* Attach files */}
+                  <div className="shrink-0">
+                    <Button
+                      size="icon"
+                      onClick={() => fileInputRef.current?.click()}
+                      variant="ghost"
+                      title="Attach files"
+                      aria-label="Attach files"
+                    >
+                      <Paperclip className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  {/* Send/Stop button - toggles based on streaming state */}
+                  <div className="shrink-0">
+                    {isThisConversationStreaming ? (
+                      <Button
+                        size="icon"
+                        onClick={handleStop}
+                        variant="destructive"
+                        title="Stop generating"
+                      >
+                        <Square className="h-4 w-4" />
+                      </Button>
+                    ) : (
+                      <Button
+                        size="icon"
+                        onClick={() => handleSubmit(false)}
+                        disabled={!input.trim() && attachments.length === 0}
+                        variant="default"
+                        title="Send message"
+                      >
+                        <Send className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
-          <p className="text-xs text-muted-foreground text-center">
-            {getConfig('appName')} can make mistakes. Verify important info.
-            {getConfig('auditLogsEnabled') && ' · Conversations are logged for audit.'}
-          </p>
+          <div className="relative flex min-h-6 items-center justify-center">
+            <p className="px-28 text-center text-xs text-muted-foreground max-sm:px-0 max-sm:pr-24">
+              {getConfig('appName')} can make mistakes. Verify important info.
+              {getConfig('auditLogsEnabled') && ' · Conversations are logged for audit.'}
+            </p>
+            {showContextUsage && contextUsage && (
+              <div className="absolute right-0">
+                <ContextUsageIndicator usage={contextUsage} />
+              </div>
+            )}
+          </div>
         </div>
       </div>
       )}
+
+      <RewindConfirmationDialog
+        open={isRewindConfirmationOpen}
+        messageCount={rewindMessageCount}
+        isConfirming={isSavingEdit}
+        onCancel={() => setIsRewindConfirmationOpen(false)}
+        onConfirm={() => {
+          void saveEditedMessage();
+        }}
+      />
     </div>
   );
 }
@@ -2313,84 +3008,20 @@ function filterEventsForTurn(
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Message Window: Progressive loading of older turns
-// ─────────────────────────────────────────────────────────────────────────────
-
-const INITIAL_VISIBLE_TURNS = 3;
-const LOAD_MORE_BATCH_SIZE = 3;
-
-interface Turn {
-  userMsg?: ChatMessageType;
-  assistantMsg?: ChatMessageType;
-  preview: string;
-  timestamp: Date;
-}
-
-function groupMessagesIntoTurns(messages: ChatMessageType[]): Turn[] {
-  const turns: Turn[] = [];
-  let i = 0;
-  while (i < messages.length) {
-    const msg = messages[i];
-    if (msg.role === "user" && i + 1 < messages.length && messages[i + 1].role === "assistant") {
-      const assistantMsg = messages[i + 1];
-      turns.push({
-        userMsg: msg,
-        assistantMsg,
-        preview: msg.content.slice(0, 80).trim() + (msg.content.length > 80 ? "..." : ""),
-        timestamp: msg.timestamp,
-      });
-      i += 2;
-    } else {
-      turns.push({
-        ...(msg.role === "user" ? { userMsg: msg } : { assistantMsg: msg }),
-        preview: msg.content.slice(0, 80).trim() + (msg.content.length > 80 ? "..." : ""),
-        timestamp: msg.timestamp,
-      });
-      i += 1;
-    }
-  }
-  return turns;
-}
-
-/**
- * Subtle divider that shows how many earlier turns are available to load.
- * Clicking loads the next batch progressively.
- */
-const LoadEarlierDivider = React.memo(function LoadEarlierDivider({
-  count,
-  onLoad,
-}: {
-  count: number;
-  onLoad: () => void;
-}) {
-  return (
-    <motion.button
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      onClick={onLoad}
-      className={cn(
-        "w-full flex items-center justify-center gap-2 py-3 my-2",
-        "text-xs text-muted-foreground hover:text-foreground transition-colors group cursor-pointer"
-      )}
-    >
-      <span className="flex-1 h-px bg-border/40 group-hover:bg-border/60 transition-colors" />
-      <span className="flex items-center gap-1.5 px-3">
-        <ChevronUp className="h-3 w-3" />
-        {count} earlier
-      </span>
-      <span className="flex-1 h-px bg-border/40 group-hover:bg-border/60 transition-colors" />
-    </motion.button>
-  );
-});
-
 interface ChatMessageProps {
   message: ChatMessageType;
   onCopy: (content: string, id: string) => void;
+  canEdit?: boolean;
+  isEditing?: boolean;
+  editDraft?: string;
+  isSavingEdit?: boolean;
+  onStartEdit?: () => void;
+  onEditDraftChange?: (value: string) => void;
+  onCancelEdit?: () => void;
+  onSaveEdit?: () => void;
   isCopied: boolean;
   isStreaming?: boolean;
   isLatestAnswer?: boolean;
-  onRetry?: () => void;
   feedback?: Feedback;
   onFeedbackChange?: (feedback: Feedback) => void;
   conversationId?: string;
@@ -2414,15 +3045,24 @@ interface ChatMessageProps {
   deletingFilePath?: string;
   getSubagentInfo?: (agentId: string) => SubagentLookupInfo | undefined;
   pendingHitl?: boolean;
+  /** Open an independent manual chat for this autonomous result. */
+  autonomousFollowUp?: React.ReactNode;
 }
 
 const ChatMessage = React.memo(function ChatMessage({
   message,
   onCopy,
+  canEdit = false,
+  isEditing = false,
+  editDraft = "",
+  isSavingEdit = false,
+  onStartEdit,
+  onEditDraftChange,
+  onCancelEdit,
+  onSaveEdit,
   isCopied,
   isStreaming = false,
   isLatestAnswer = false,
-  onRetry,
   feedback,
   onFeedbackChange,
   conversationId,
@@ -2446,10 +3086,10 @@ const ChatMessage = React.memo(function ChatMessage({
   deletingFilePath,
   getSubagentInfo,
   pendingHitl = false,
+  autonomousFollowUp,
 }: ChatMessageProps) {
   const isUser = message.role === "user";
   const [isHovered, setIsHovered] = useState(false);
-
   const displayContent = message.content;
 
   // Transform SSE events into grouped timeline data for assistant messages
@@ -2473,8 +3113,8 @@ const ChatMessage = React.memo(function ChatMessage({
       onMouseLeave={() => setIsHovered(false)}
     >
       {isUser ? (
-        <div
-          className={cn(
+            <div
+              className={cn(
             "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm overflow-hidden bg-primary",
           )}
         >
@@ -2555,7 +3195,53 @@ const ChatMessage = React.memo(function ChatMessage({
                 <MessageAttachments attachments={message.attachments} align="end" />
               </div>
             )}
-            {message.content.trim() && (
+            {isEditing ? (
+              <div className="ml-auto w-full max-w-2xl rounded-xl border border-primary/40 bg-card p-3 text-left shadow-sm">
+                <TextareaAutosize
+                  autoFocus
+                  minRows={2}
+                  maxRows={12}
+                  value={editDraft}
+                  disabled={isSavingEdit}
+                  onChange={(event) => onEditDraftChange?.(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      onCancelEdit?.();
+                    }
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                      event.preventDefault();
+                      onSaveEdit?.();
+                    }
+                  }}
+                  className="w-full resize-none bg-transparent text-sm leading-relaxed outline-none placeholder:text-muted-foreground"
+                  aria-label="Edit message"
+                />
+                <div className="mt-3 flex items-center justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={isSavingEdit}
+                    onClick={onCancelEdit}
+                  >
+                    <X className="mr-1.5 h-3.5 w-3.5" />
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={isSavingEdit || (!editDraft.trim() && !message.attachments?.length)}
+                    onClick={onSaveEdit}
+                  >
+                    {isSavingEdit ? (
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Send className="mr-1.5 h-3.5 w-3.5" />
+                    )}
+                    Save and send
+                  </Button>
+                </div>
+              </div>
+            ) : message.content.trim() ? (
               <div
                 className="rounded-xl rounded-tr-sm relative overflow-hidden inline-block bg-primary text-primary-foreground px-4 py-3 max-w-full selection:bg-primary-foreground selection:text-primary"
               >
@@ -2563,14 +3249,34 @@ const ChatMessage = React.memo(function ChatMessage({
                   <MarkdownRenderer content={message.content} variant="user" />
                 </div>
               </div>
-            )}
+            ) : null}
 
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: isHovered ? 1 : 0.8 }}
-              className="flex items-center gap-1 mt-2 justify-end"
-            >
-              {onRetry && (
+            {!isEditing && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: isHovered ? 1 : 0.8 }}
+                className="flex items-center gap-1 mt-2 justify-end"
+              >
+                {canEdit && onStartEdit && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
+                          onClick={onStartEdit}
+                          aria-label="Edit message"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Edit message and rewind conversation
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -2578,40 +3284,22 @@ const ChatMessage = React.memo(function ChatMessage({
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
-                        onClick={onRetry}
+                        onClick={() => onCopy(message.content, message.id)}
                       >
-                        <RotateCcw className="h-3.5 w-3.5" />
+                        {isCopied ? (
+                          <Check className="h-3.5 w-3.5 text-green-400" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      Retry this prompt
+                      {isCopied ? "Copied!" : "Copy message"}
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
-              )}
-
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
-                      onClick={() => onCopy(message.content, message.id)}
-                    >
-                      {isCopied ? (
-                        <Check className="h-3.5 w-3.5 text-green-400" />
-                      ) : (
-                        <Copy className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {isCopied ? "Copied!" : "Copy message"}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </motion.div>
+              </motion.div>
+            )}
           </>
         ) : (
           // ── Assistant message ──
@@ -2641,17 +3329,6 @@ const ChatMessage = React.memo(function ChatMessage({
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium">Response was interrupted</p>
                     </div>
-                    {onRetry && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={onRetry}
-                        className="shrink-0 gap-1.5 border-amber-500/30 text-amber-400 hover:bg-amber-500/20 hover:text-amber-300"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        Retry
-                      </Button>
-                    )}
                   </>
                 )}
               </motion.div>
@@ -2680,38 +3357,18 @@ const ChatMessage = React.memo(function ChatMessage({
                 <MarkdownRenderer content={displayContent} />
               </div>
             ) : message.turnStatus === "interrupted" ? (
-              <div className="text-xs text-muted-foreground italic px-1">
-                This response failed to complete. No content was generated.
+              <div className="text-xs text-destructive px-1">
+                {interruptedTurnFallbackText(message.error)}
               </div>
             ) : null}
 
-            {/* Action buttons (copy, retry, collapse) */}
+            {/* Assistant message actions */}
             {displayContent && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: isHovered ? 1 : 0.8 }}
                 className="flex items-center gap-1 mt-2"
               >
-                {onRetry && (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
-                          onClick={onRetry}
-                        >
-                          <RotateCcw className="h-3.5 w-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        Regenerate response
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
-
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -2744,6 +3401,8 @@ const ChatMessage = React.memo(function ChatMessage({
                 />
               </motion.div>
             )}
+
+            {autonomousFollowUp}
 
           </>
         )}

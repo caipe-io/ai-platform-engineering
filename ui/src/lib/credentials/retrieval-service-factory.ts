@@ -4,6 +4,7 @@ import { getCollection } from "@/lib/mongodb";
 import { requireResourcePermission } from "@/lib/rbac/resource-authz";
 
 import { CREDENTIAL_COLLECTIONS } from "./collections";
+import { ingestorMayUseSecret } from "./ingest-credential-usage.server";
 import { createAwsKmsKeyWrapper,createDevLocalKeyWrapper,createLocalCmkKeyWrapper } from "./key-wrapper";
 import { MongoEnvelopeCredentialStore } from "./mongo-envelope-store";
 import { CredentialRetrievalService } from "./retrieval-service";
@@ -45,5 +46,7 @@ export async function getCredentialRetrievalService(): Promise<CredentialRetriev
       keyWrapper: createRetrievalKeyWrapper(),
     }),
     authorize: requireResourcePermission,
+    internalServiceClientId: process.env.KEYCLOAK_RESOURCE_SERVER_ID?.trim() || "caipe-platform",
+    authorizeByUsage: ingestorMayUseSecret,
   });
 }

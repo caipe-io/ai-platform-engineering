@@ -19,6 +19,7 @@
  * "@/lib/api-middleware"`) keep working unchanged.
  */
 import type { AuthFailureAction,AuthFailureReason } from "./auth-error";
+import type { PublicationDriftItem } from "@/types/publication-approval";
 
 export class ApiError extends Error {
   constructor(
@@ -32,8 +33,38 @@ export class ApiError extends Error {
     public reason?: AuthFailureReason,
     /** UI recovery hint. */
     public action?: AuthFailureAction,
+    /** Optional diff attached by publication adapters to a hard `PUBLICATION_REVISION_CONFLICT`. */
+    public drift?: PublicationDriftItem[],
   ) {
     super(message);
     this.name = "ApiError";
   }
+}
+
+/**
+ * Thrown by publication adapters when the live resource has soft drift
+ * (approvable with confirmation) that the caller has not yet acknowledged.
+ * Unlike a bare `PUBLICATION_REVISION_CONFLICT` ApiError, this always carries
+ * a diff so the approve route can hand it back to the UI for confirmation
+ * instead of superseding the request.
+ */
+export class PublicationDriftError extends ApiError {
+  constructor(
+    message: string,
+    public drift: PublicationDriftItem[],
+    public fingerprint: string,
+  ) {
+    super(message, 409, "PUBLICATION_DRIFT");
+    this.name = "PublicationDriftError";
+  }
+}
+
+/**
+ * Attach a display diff to a hard `PUBLICATION_REVISION_CONFLICT`. Every
+ * publication adapter uses this (with `[]` when no diff was computed yet)
+ * so `error.drift` is a consistent, always-present array for the approve
+ * route to hand back to the UI, rather than sometimes set and sometimes not.
+ */
+export function withDrift(error: ApiError, drift: PublicationDriftItem[]): ApiError {
+  return Object.assign(error, { drift });
 }

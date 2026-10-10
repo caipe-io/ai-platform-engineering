@@ -1,7 +1,14 @@
 /**
  * @jest-environment node
  */
-import { createOpenFgaAdmin, createOpenFgaEngine, describeFgaCheck, getEngineStats, __resetAdapterStateForTests } from "../engines/openfga";
+import {
+  createOpenFgaAdmin,
+  createOpenFgaEngine,
+  describeFgaCheck,
+  getEngineStats,
+  invalidateDecisionCache,
+  __resetAdapterStateForTests,
+} from "../engines/openfga";
 import type { AuthorizeRequest } from "../contract";
 
 const realFetch = global.fetch;
@@ -61,8 +68,8 @@ describe("OpenFGA engine adapter", () => {
   it("caches a definitive decision (second identical check hits no fetch)", async () => {
     fetchMock.mockResolvedValue(checkResponse(true));
     const engine = createOpenFgaEngine();
-    await engine.check(req);
-    await engine.check(req);
+    await engine.check({ ...req, action: "read" });
+    await engine.check({ ...req, action: "read" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -72,6 +79,58 @@ describe("OpenFGA engine adapter", () => {
     await engine.check(req);
     await engine.check(req);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([true, false])("agent execution ignores a cached batch decision of %s", async (allowed) => {
+    fetchMock.mockResolvedValueOnce(checkResponse(allowed)).mockResolvedValueOnce(checkResponse(!allowed));
+    const engine = createOpenFgaEngine();
+    await engine.batchCheck(req.subject, req.action, req.resource.type, [req.resource.id]);
+    const result = await engine.check(req);
+    expect(result).toMatchObject({ decision: allowed ? "DENY" : "ALLOW", ttl_seconds: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+      tuple_key: { user: "user:alice", relation: "can_use", object: "agent:pe" },
+      consistency: "HIGHER_CONSISTENCY",
+    });
+    expect(fetchMock.mock.calls[1][1].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("does not reuse a previous execution allow during an outage", async () => {
+    fetchMock.mockResolvedValueOnce(checkResponse(true)).mockRejectedValueOnce(new Error("down"));
+    const engine = createOpenFgaEngine();
+    expect((await engine.check(req)).decision).toBe("ALLOW");
+    expect((await engine.check(req)).reason).toBe("AUTHZ_UNAVAILABLE");
+    expect(getEngineStats().cacheSize).toBe(0);
+  });
+
+  it.each([{}, { allowed: "false" }, { allowed: 1 }])("fails closed on malformed decision %j", async (body) => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => body });
+    expect((await createOpenFgaEngine().check(req)).reason).toBe("AUTHZ_UNAVAILABLE");
+  });
+
+  it.each(["discovery", "check", "body"])("bounds a stalled %s without retrying", async (stage) => {
+    const controller = new AbortController();
+    const timeout = jest.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    if (stage === "discovery") delete process.env.OPENFGA_STORE_ID;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const stalled = (signal: AbortSignal) => new Promise<never>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      entered();
+    });
+    fetchMock.mockImplementation((_url: string, options: RequestInit) => stage === "body"
+      ? { ok: true, status: 200, json: () => stalled(options.signal as AbortSignal) }
+      : stalled(options.signal as AbortSignal));
+    try {
+      const pending = createOpenFgaEngine().check(req);
+      await started;
+      expect(timeout).toHaveBeenCalledWith(5_000);
+      controller.abort(new Error("deadline exceeded"));
+      expect((await pending).reason).toBe("AUTHZ_UNAVAILABLE");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it("opens the circuit after the failure threshold and stops calling OpenFGA", async () => {
@@ -114,6 +173,70 @@ describe("OpenFGA engine adapter", () => {
     expect(results.get("no")?.decision).toBe("DENY");
   });
 
+  it("listObjects returns the accessible set from one call, decoded from OpenFGA's type:id objects", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ objects: ["agent:a", "agent:b"] }),
+    } as unknown as Response);
+
+    const result = await createOpenFgaEngine().listObjects({ type: "user", id: "alice" }, "discover", "agent");
+
+    expect(result.reason).toBe("OK");
+    expect(result.ids).toEqual(new Set(["a", "b"]));
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain("/list-objects");
+    expect(JSON.parse((init as RequestInit).body as string)).toMatchObject({
+      user: "user:alice",
+      relation: "can_discover",
+      type: "agent",
+    });
+  });
+
+  it("listObjects fails closed to AUTHZ_UNAVAILABLE (empty set, not 'no access') when OpenFGA errors", async () => {
+    fetchMock.mockRejectedValue(new Error("down"));
+    const result = await createOpenFgaEngine().listObjects({ type: "user", id: "alice" }, "discover", "agent");
+    expect(result.reason).toBe("AUTHZ_UNAVAILABLE");
+    expect(result.ids.size).toBe(0);
+  });
+
+  it("listObjects shares the circuit breaker with check — an open circuit short-circuits both", async () => {
+    fetchMock.mockRejectedValue(new Error("down"));
+    const engine = createOpenFgaEngine();
+    for (let i = 0; i < 5; i++) await engine.check(req); // trip the breaker
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+
+    const result = await engine.listObjects({ type: "user", id: "alice" }, "discover", "agent");
+    expect(result.reason).toBe("AUTHZ_UNAVAILABLE");
+    expect(fetchMock).toHaveBeenCalledTimes(5); // short-circuited, no new fetch
+  });
+
+  it("listObjects caches a definitive result (second identical call hits no fetch)", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ objects: ["agent:a"] }),
+    } as unknown as Response);
+    const engine = createOpenFgaEngine();
+    await engine.listObjects({ type: "user", id: "alice" }, "discover", "agent");
+    await engine.listObjects({ type: "user", id: "alice" }, "discover", "agent");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("listObjects never caches an AUTHZ_UNAVAILABLE result (retries on next call)", async () => {
+    fetchMock.mockRejectedValueOnce(new Error("down")).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ objects: [] }),
+    } as unknown as Response);
+    const engine = createOpenFgaEngine();
+    const first = await engine.listObjects({ type: "user", id: "alice" }, "discover", "agent");
+    expect(first.reason).toBe("AUTHZ_UNAVAILABLE");
+    const second = await engine.listObjects({ type: "user", id: "alice" }, "discover", "agent");
+    expect(second.reason).toBe("OK");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("invalidates the cached store id and fails closed when a check returns 404", async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 404, json: async () => ({}) } as unknown as Response);
     const r = await createOpenFgaEngine().check(req);
@@ -131,8 +254,8 @@ describe("OpenFGA engine adapter", () => {
   it("getEngineStats tracks cache hits/misses and circuit state", async () => {
     fetchMock.mockResolvedValue(checkResponse(true));
     const engine = createOpenFgaEngine();
-    await engine.check(req); // miss → fetch
-    await engine.check(req); // hit
+    await engine.check({ ...req, action: "read" }); // miss → fetch
+    await engine.check({ ...req, action: "read" }); // hit
     const s = getEngineStats();
     expect(s.cacheMisses).toBe(1);
     expect(s.cacheHits).toBe(1);
@@ -192,6 +315,69 @@ describe("OpenFGA engine adapter", () => {
       expect((await p2).reason).toBe("AUTHZ_UNAVAILABLE");
       release(checkResponse(true));
       expect((await p1).decision).toBe("ALLOW");
+    });
+  });
+
+  describe("cache invalidation after a mutation", () => {
+    function writeResponse(): Response {
+      return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+    }
+    function listObjectsResponse(objects: string[]): Response {
+      return { ok: true, status: 200, json: async () => ({ objects }) } as unknown as Response;
+    }
+
+    it("invalidateDecisionCache clears both the per-decision cache and the list-objects cache", async () => {
+      fetchMock.mockResolvedValueOnce(checkResponse(true)).mockResolvedValueOnce(listObjectsResponse(["agent:a"]));
+      const engine = createOpenFgaEngine();
+      await engine.check({ ...req, action: "read" });
+      await engine.listObjects({ type: "user", id: "alice" }, "discover", "agent");
+      expect(getEngineStats().cacheSize).toBe(2);
+
+      invalidateDecisionCache();
+
+      expect(getEngineStats().cacheSize).toBe(0);
+    });
+
+    it("a stale listObjects result is not served after a grant — the exact regression the cache split introduced", async () => {
+      // Before this cache existed, a grant/revoke cleared decisionCache
+      // immediately (see below); listObjectsCache must get the same
+      // treatment or a revoked/newly-granted catalog resource can be
+      // served stale for the read-cache TTL.
+      fetchMock.mockResolvedValueOnce(listObjectsResponse(["agent:a"]));
+      const engine = createOpenFgaEngine();
+      await engine.listObjects({ type: "user", id: "alice" }, "discover", "agent");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      fetchMock.mockResolvedValueOnce(writeResponse());
+      await createOpenFgaAdmin().grant({
+        resource: { type: "agent", id: "b" },
+        grantee: { type: "user", id: "alice" },
+        capability: "use",
+      });
+
+      fetchMock.mockResolvedValueOnce(listObjectsResponse(["agent:a", "agent:b"]));
+      const second = await engine.listObjects({ type: "user", id: "alice" }, "discover", "agent");
+      // A cache hit here would silently return the pre-grant Set(["a"]).
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(second.ids).toEqual(new Set(["a", "b"]));
+    });
+
+    it("a stale listObjects result is not served after a revoke", async () => {
+      fetchMock.mockResolvedValueOnce(listObjectsResponse(["agent:a", "agent:b"]));
+      const engine = createOpenFgaEngine();
+      await engine.listObjects({ type: "user", id: "alice" }, "discover", "agent");
+
+      fetchMock.mockResolvedValueOnce(writeResponse());
+      await createOpenFgaAdmin().revoke({
+        resource: { type: "agent", id: "b" },
+        grantee: { type: "user", id: "alice" },
+        capability: "use",
+      });
+
+      fetchMock.mockResolvedValueOnce(listObjectsResponse(["agent:a"]));
+      const second = await engine.listObjects({ type: "user", id: "alice" }, "discover", "agent");
+      expect(second.ids).toEqual(new Set(["a"]));
+      expect(fetchMock).toHaveBeenCalledTimes(3);
     });
   });
 

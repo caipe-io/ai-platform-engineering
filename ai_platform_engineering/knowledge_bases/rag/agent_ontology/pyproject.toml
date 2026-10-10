@@ -12,7 +12,7 @@ dependencies = [
     "common",
     "langgraph==1.2.11",
     "python-dotenv==1.2.2",
-    "cnoe-agent-utils==0.4.2",
+    "cnoe-agent-utils==0.5.0",
     "fastapi[standard]==0.141.1",
     "apscheduler==3.11.3",
     "bm25s==0.3.11",
@@ -27,6 +27,8 @@ build-backend = "uv_build"
 
 [tool.uv]
 constraint-dependencies = ["click==8.5.0"]
+# cnoe-agent-utils 0.5.0 pins a vulnerable langchain-anthropic release.
+override-dependencies = ["langchain-anthropic==1.4.6"]
 
 [tool.uv.sources]
 common = { path = "../common" }

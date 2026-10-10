@@ -60,7 +60,7 @@ describe("buildIngestionSourceRelationshipTupleDiff", () => {
     expect(diff.writes).toEqual(
       expect.arrayContaining([
         { user: "team:platform#member", relation: "reader", object: SOURCE },
-        { user: "team:platform#admin", relation: "manager", object: SOURCE },
+        { user: "team:platform#member", relation: "manager", object: SOURCE },
         { user: "user:*", relation: "reader", object: SOURCE },
       ]),
     );

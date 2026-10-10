@@ -243,6 +243,34 @@ services:
       - all-agents
       - mcp-servers
 
+  # SharePoint MCP is opt-in because it requires an Entra application and a
+  # site-specific Graph grant. It is intentionally excluded from mcp-servers so
+  # the credential-free OSS first-install path remains runnable.
+  mcp-sharepoint:
+    image: ghcr.io/cnoe-io/mcp-sharepoint:${IMAGE_TAG:-0.5.16}
+    container_name: mcp-sharepoint
+    env_file: [.env]
+    ports: ["18014:8000"]
+    environment:
+      - MCP_MODE=http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8000
+      - MCP_AUTH_MODE=${SHAREPOINT_MCP_AUTH_MODE:-none}
+      - SHAREPOINT_TENANT_ID=${SHAREPOINT_TENANT_ID}
+      - SHAREPOINT_CLIENT_ID=${SHAREPOINT_CLIENT_ID}
+      - SHAREPOINT_CLIENT_SECRET=${SHAREPOINT_CLIENT_SECRET}
+      - SHAREPOINT_SITE_URL=${SHAREPOINT_SITE_URL}
+      - SHAREPOINT_REQUEST_TIMEOUT_SECONDS=${SHAREPOINT_REQUEST_TIMEOUT_SECONDS:-30}
+      - SHAREPOINT_MAX_DOWNLOAD_BYTES=${SHAREPOINT_MAX_DOWNLOAD_BYTES:-2000000}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(1); result=s.connect_ex(('localhost', 8000)); s.close(); exit(0 if result == 0 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    profiles:
+      - sharepoint
+
   ####################################################################################################
   #                             CAIPE UI & document database                                        #
   ####################################################################################################
@@ -565,6 +593,7 @@ services:
       - ${HOME}/.aws:/home/app/.aws:ro
     env_file: [.env]
     environment:
+      - REMOTE_A2A_ALLOWED_HTTP_ORIGINS=${REMOTE_A2A_ALLOWED_HTTP_ORIGINS:-[]}
       - AWS_CONFIG_FILE=/home/app/.aws/config
       - AWS_SHARED_CREDENTIALS_FILE=/home/app/.aws/credentials
       - AWS_BEDROCK_STREAMING=${AWS_BEDROCK_STREAMING:-false}
@@ -713,6 +742,7 @@ services:
       - RAG_SERVER_URL=http://rag-server:9446
       - WEBLOADER_MAX_INGESTION_TASKS=${WEBLOADER_MAX_INGESTION_TASKS:-5}
       - WEBLOADER_CHECK_INTERVAL=${WEBLOADER_CHECK_INTERVAL:-86400}
+      - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
     env_file: [.env]
     restart: unless-stopped
     depends_on: [rag-server, rag-redis]

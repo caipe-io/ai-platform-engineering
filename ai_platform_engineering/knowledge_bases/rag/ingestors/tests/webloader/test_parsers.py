@@ -309,23 +309,23 @@ class TestReadTheDocsHostnameValidation:
   def test_readthedocs_io_detected(self):
     from ingestors.webloader.loader.parsers.readthedocs import ReadTheDocsParser
     response = make_response(RTD_HTML, url="https://docs.readthedocs.io/en/stable/")
-    assert ReadTheDocsParser.is_applicable(response) is True
+    assert ReadTheDocsParser.can_parse(response) is True
 
   def test_readthedocs_org_detected(self):
     from ingestors.webloader.loader.parsers.readthedocs import ReadTheDocsParser
     response = make_response(RTD_HTML, url="https://myproject.readthedocs.org/en/latest/")
-    assert ReadTheDocsParser.is_applicable(response) is True
+    assert ReadTheDocsParser.can_parse(response) is True
 
   def test_non_readthedocs_domain_not_detected_by_url(self):
     from ingestors.webloader.loader.parsers.readthedocs import ReadTheDocsParser
     # Domain contains "readthedocs" only as a substring path — should not match via URL
     response = make_response("<html><body><p>plain</p></body></html>",
                              url="https://example.com/path/readthedocs.io/page")
-    assert ReadTheDocsParser.is_applicable(response) is False
+    assert ReadTheDocsParser.can_parse(response) is False
 
   def test_evil_lookalike_domain_rejected(self):
     from ingestors.webloader.loader.parsers.readthedocs import ReadTheDocsParser
     # evil-readthedocs.io should NOT match even though it contains the substring
     response = make_response("<html><body><p>plain</p></body></html>",
                              url="https://evil-readthedocs.io/page")
-    assert ReadTheDocsParser.is_applicable(response) is False
+    assert ReadTheDocsParser.can_parse(response) is False

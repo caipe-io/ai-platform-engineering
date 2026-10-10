@@ -51,12 +51,13 @@ jobs:
       (github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]') &&
       (
         startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+        (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
         github.event.action != 'closed'
       )
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 

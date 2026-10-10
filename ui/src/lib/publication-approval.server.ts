@@ -21,6 +21,8 @@ import type {
   PublicationActor,
   PublicationApprovalSettings,
   PublicationAuditAction,
+  PublicationDriftItem,
+  PublicationDriftValue,
   PublicationPolicyPlan,
   PendingConnectorPublicationRequestView,
   PublicationRequestDocument,
@@ -56,7 +58,9 @@ async function notifyPublicationRequestCreated(
       recipientTeamSlugs: request.approver_team_slugs,
       recipientOrganizationAdmins: true,
       title: "Approval needed",
-      message: `${actorDisplayName(request.requester)} submitted a publication request.`,
+      message: `${actorDisplayName(request.requester)} requested to publish "${request.resource.label}"${
+        request.risk_facts.reasons.length > 0 ? ` — ${request.risk_facts.reasons.join(", ")}` : ""
+      }.`,
       href: `/admin/security/approvals?request=${encodeURIComponent(request._id)}`,
       severity: "warning",
     });
@@ -159,6 +163,8 @@ interface RagCollectionPublicationPlanInput {
 export interface CreatePublicationRequestInput {
   resource: PublicationResourceRef;
   resourceRevision: string;
+  /** Plain projection `resourceRevision` hashes; stored so approval-time drift can be diffed field-by-field. */
+  revisionBasis?: Record<string, unknown>;
   requestedState: Record<string, unknown>;
   effectiveState: Record<string, unknown>;
   riskFacts: PublicationRequestDocument["risk_facts"];
@@ -703,6 +709,41 @@ export function publicationResourceRevision(value: unknown): string {
     .digest("hex");
 }
 
+// Array order is never meaningful for the audience/config fields adapters
+// snapshot (team slugs, user subjects, source ids, url patterns), so drift
+// comparisons treat arrays as sets. Sorting a canonicalized copy before
+// hashing keeps `["a","b"]` and `["b","a"]` from registering as drift.
+function basisFieldRevision(value: unknown): string {
+  if (Array.isArray(value)) {
+    return publicationResourceRevision(
+      value
+        .map((item) => canonicalize(item))
+        .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+    );
+  }
+  return publicationResourceRevision(value);
+}
+
+/** True when two adapter-snapshotted field values are equivalent (arrays compared as sets). */
+export function publicationDriftValuesEqual(a: unknown, b: unknown): boolean {
+  return basisFieldRevision(a) === basisFieldRevision(b);
+}
+
+/** Project an arbitrary snapshot field value into the display-safe drift shape. */
+export function publicationDriftDisplayValue(value: unknown): PublicationDriftValue {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return [...value]
+      .map((item) => (typeof item === "string" ? item : JSON.stringify(item)))
+      .sort();
+  }
+  return JSON.stringify(canonicalize(value));
+}
+
+
 export function publicationActorFromSession(session: PublicationSession): PublicationActor {
   const subject = typeof session.sub === "string" ? session.sub.trim() : "";
   if (!subject) {
@@ -872,6 +913,9 @@ export async function createPublicationRequest(
     resource: input.resource,
     authorization_policy_id: publicationAuthorizationPolicyId(input.resource, id),
     resource_revision: input.resourceRevision,
+    ...(input.revisionBasis
+      ? { revision_basis: canonicalize(input.revisionBasis) as Record<string, unknown> }
+      : {}),
     requested_state: canonicalize(input.requestedState) as Record<string, unknown>,
     effective_state: canonicalize(input.effectiveState) as Record<string, unknown>,
     risk_facts: input.riskFacts,
@@ -922,6 +966,9 @@ export async function recordAutoApprovedPublication(
     resource: input.resource,
     authorization_policy_id: publicationAuthorizationPolicyId(input.resource, id),
     resource_revision: input.resourceRevision,
+    ...(input.revisionBasis
+      ? { revision_basis: canonicalize(input.revisionBasis) as Record<string, unknown> }
+      : {}),
     requested_state: canonicalize(input.requestedState) as Record<string, unknown>,
     effective_state: canonicalize(input.requestedState) as Record<string, unknown>,
     risk_facts: input.riskFacts,
@@ -1493,12 +1540,20 @@ export async function completePublicationApproval(
   id: string,
   actor: PublicationActor,
   note?: string,
+  acknowledgedDrift?: PublicationDriftItem[],
 ): Promise<PublicationRequestDocument> {
   const collection = await getCollection<PublicationRequestDocument>(REQUEST_COLLECTION);
   const now = new Date().toISOString();
   const applying = await collection.findOne({ _id: id, status: "applying" } as never);
   if (!applying) throw new ApiError("Publication request is no longer applying", 409);
   await revokeRequestApplyCapability(applying, actor);
+  // The approver reviewed live drift (e.g. Slack membership grew) and chose
+  // to proceed anyway. Persist the value they actually saw so the next
+  // approval attempt on this resource diffs against it, not the stale
+  // request-creation-time snapshot.
+  const acknowledgedMemberCount = acknowledgedDrift?.find(
+    (item) => item.field === "member_count" && typeof item.after === "number",
+  )?.after;
   const updated = await collection.findOneAndUpdate(
     { _id: id, status: "applying" } as never,
     {
@@ -1508,6 +1563,9 @@ export async function completePublicationApproval(
         decided_at: now,
         decided_by: actor,
         ...(note ? { decision_note: note } : {}),
+        ...(typeof acknowledgedMemberCount === "number"
+          ? { "risk_facts.member_count": acknowledgedMemberCount }
+          : {}),
       },
       $unset: { last_error: "", apply_started_at: "" },
       $push: {
@@ -1515,6 +1573,7 @@ export async function completePublicationApproval(
           note,
           from_status: "applying",
           to_status: "approved",
+          ...(acknowledgedDrift && acknowledgedDrift.length > 0 ? { drift: acknowledgedDrift } : {}),
         }),
       },
     } as never,
@@ -1591,6 +1650,7 @@ export async function supersedeApplyingPublicationRequest(
   id: string,
   actor: PublicationActor,
   note: string,
+  drift?: PublicationDriftItem[],
 ): Promise<PublicationRequestDocument> {
   const collection = await getCollection<PublicationRequestDocument>(REQUEST_COLLECTION);
   const applying = await collection.findOne({ _id: id, status: "applying" } as never);
@@ -1613,6 +1673,7 @@ export async function supersedeApplyingPublicationRequest(
           note,
           from_status: "applying",
           to_status: "superseded",
+          ...(drift && drift.length > 0 ? { drift } : {}),
         }),
       },
     } as never,
@@ -1623,6 +1684,81 @@ export async function supersedeApplyingPublicationRequest(
     throw new ApiError("Publication request is no longer applying", 409);
   }
   await archivePublicationRequestNotification(updated._id);
+  return updated;
+}
+
+/**
+ * Release a request back to `pending` when the live resource has drift the
+ * approver has not yet confirmed past. Unlike `failPublicationApproval`,
+ * this is not an error condition — the request is fully retryable — so no
+ * `last_error` is set; the `drift_detected` history entry carries the diff
+ * the next approval attempt (or the UI showing it now) needs.
+ */
+export async function releasePublicationApprovalForDrift(
+  id: string,
+  actor: PublicationActor,
+  drift: PublicationDriftItem[],
+): Promise<PublicationRequestDocument> {
+  const collection = await getCollection<PublicationRequestDocument>(REQUEST_COLLECTION);
+  const applying = await collection.findOne({ _id: id, status: "applying" } as never);
+  if (!applying) throw new ApiError("Publication request is no longer applying", 409);
+  const now = new Date().toISOString();
+  try {
+    await revokeRequestApplyCapability(applying, actor);
+  } catch (cleanupError) {
+    // Fail closed, matching failPublicationApproval: keep the request locked
+    // in `applying` while the temporary OpenFGA capability may still exist.
+    // Stale-lease recovery retries revocation before making it approvable
+    // again.
+    const cleanupMessage = cleanupError instanceof Error
+      ? cleanupError.message
+      : String(cleanupError);
+    await collection.updateOne(
+      { _id: id, status: "applying" } as never,
+      {
+        $set: {
+          updated_at: now,
+          last_error: `Drift detected; apply-capability cleanup failed: ${cleanupMessage}`
+            .slice(0, 2000),
+        },
+        $push: {
+          history: auditEntry("drift_detected", actor, now, {
+            note: "Drift was detected and its temporary capability is still being cleaned up.",
+            from_status: "applying",
+            to_status: "applying",
+            drift,
+          }),
+        },
+      } as never,
+    );
+    console.error(
+      "[publication-approval] failed to revoke request-scoped apply grant",
+      cleanupError,
+    );
+    throw new ApiError(
+      "Drift was detected, but the request could not be released for another attempt yet.",
+      409,
+    );
+  }
+  const updated = await collection.findOneAndUpdate(
+    { _id: id, status: "applying" } as never,
+    {
+      $set: { status: "pending", updated_at: now },
+      $unset: { apply_started_at: "", last_error: "" },
+      $push: {
+        history: auditEntry("drift_detected", actor, now, {
+          from_status: "applying",
+          to_status: "pending",
+          drift,
+        }),
+      },
+    } as never,
+    { returnDocument: "after" },
+  );
+  if (!updated) {
+    await grantRequestApplyCapability(applying, actor).catch(() => {});
+    throw new ApiError("Publication request is no longer applying", 409);
+  }
   return updated;
 }
 

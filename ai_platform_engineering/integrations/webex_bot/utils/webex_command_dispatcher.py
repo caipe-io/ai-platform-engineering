@@ -38,10 +38,12 @@ from .text_commands import (
     CommandIntent,
     TextCommandResult,
     handle_help_command,
+    handle_effort_command,
     handle_list_command,
     handle_use_command,
     parse_command_text,
 )
+from .reasoning_effort import PendingEffortStore, get_default_pending_effort_store
 
 logger = logging.getLogger("caipe.webex_bot.command_dispatcher")
 
@@ -93,12 +95,14 @@ class WebexCommandDispatcher:
         dm_authz_client: DmAuthzClient | None = None,
         override_store: OverrideStore | None = None,
         rate_limiter: CommandRateLimiter | None = None,
+        pending_effort_store: PendingEffortStore | None = None,
     ) -> None:
         self._webex_api = webex_api
         self._accessible = accessible_agents_client or AccessibleAgentsClient()
         self._authz = dm_authz_client or DmAuthzClient()
         self._overrides = override_store or get_default_override_store()
         self._rate_limiter = rate_limiter or CommandRateLimiter()
+        self._pending_efforts = pending_effort_store or get_default_pending_effort_store()
 
     async def maybe_handle(
         self,
@@ -133,6 +137,19 @@ class WebexCommandDispatcher:
                 user_key=user_key,
                 bearer_token=bearer_token,
                 accessible_agents_client=self._accessible,
+                rate_limiter=self._rate_limiter,
+            )
+            await self._post_reply(parsed, result)
+            return _CommandHandled(result.code)
+
+        if cmd.intent == CommandIntent.EFFORT:
+            result = handle_effort_command(
+                user_key=user_key,
+                raw_text=cmd.argument,
+                is_dm=parsed.is_direct,
+                person_id=parsed.person_id,
+                space_id=parsed.space_id,
+                pending_store=self._pending_efforts,
                 rate_limiter=self._rate_limiter,
             )
             await self._post_reply(parsed, result)

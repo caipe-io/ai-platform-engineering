@@ -155,6 +155,14 @@ tolerations: []
 
 affinity: {}
 
+# PodDisruptionBudget: prevents simultaneous eviction of all replicas during voluntary disruptions.
+# Enable in production; leave disabled for local/single-node environments.
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+  # minAvailable: 1  # alternative: require at least N pods available (multi-replica only)
+  annotations: {}
+
 # Persistence configuration for Redis data
 persistence:
   # Enable persistent storage
