@@ -14,6 +14,7 @@ Authentication modes:
 # assisted-by claude code claude-sonnet-4-6
 
 import asyncio
+import base64
 import hashlib
 import logging
 import os
@@ -173,7 +174,7 @@ def validate_prerequisites(
     }
 
 
-async def resolve_oauth_base_url(token: str, timeout: int = 10) -> Optional[str]:
+async def resolve_oauth_base_url(token: str, timeout: int = 10, site_url: str = "") -> Optional[str]:
     """Resolve the Atlassian API gateway base URL for an OAuth (provider) token.
 
     Atlassian 3LO access tokens must be used against
@@ -182,14 +183,15 @@ async def resolve_oauth_base_url(token: str, timeout: int = 10) -> Optional[str]
     when set, otherwise resolved from the accessible-resources endpoint and
     cached per token.
 
-    Returns the gateway base URL, or ``None`` if it cannot be resolved (caller
-    then falls back to the configured URL).
+    Match the configured site rather than selecting an arbitrary accessible
+    site. Returns ``None`` when resolution is unavailable or ambiguous.
     """
     explicit_cloud_id = os.getenv("ATLASSIAN_OAUTH_CLOUD_ID")
     if explicit_cloud_id:
         return f"{ATLASSIAN_OAUTH_GATEWAY}/ex/confluence/{explicit_cloud_id}"
 
-    cache_key = hashlib.sha256(token.encode()).hexdigest()
+    site_host = urlparse(site_url).hostname
+    cache_key = hashlib.sha256(f"{token}:{site_host or ''}".encode()).hexdigest()
     cached = _CLOUD_ID_CACHE.get(cache_key)
     now = time.monotonic()
     if cached and cached[1] > now:
@@ -201,7 +203,7 @@ async def resolve_oauth_base_url(token: str, timeout: int = 10) -> Optional[str]
                 ATLASSIAN_ACCESSIBLE_RESOURCES_URL,
                 headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
             )
-    except Exception as exc:
+    except httpx.RequestError as exc:
         logger.error(f"confluence: failed to resolve Atlassian cloud id: {exc}")
         return None
 
@@ -218,162 +220,135 @@ async def resolve_oauth_base_url(token: str, timeout: int = 10) -> Optional[str]
         logger.error("confluence: accessible-resources response was not valid JSON")
         return None
 
-    if not resources:
+    if not isinstance(resources, list) or not resources:
         logger.error("confluence: OAuth token has no accessible Atlassian sites (empty accessible-resources)")
         return None
 
-    cloud_id = resources[0].get("id")
+    candidates = [r for r in resources if isinstance(r, dict) and r.get("id")]
+    if site_host:
+        candidates = [r for r in candidates if urlparse(str(r.get("url", ""))).hostname == site_host]
+    cloud_ids = {str(resource["id"]) for resource in candidates}
+    if len(cloud_ids) != 1:
+        logger.error("confluence: cannot unambiguously resolve the configured site")
+        return None
+    cloud_id = cloud_ids.pop()
     if not cloud_id:
         logger.error("confluence: accessible-resources entry missing an id")
         return None
 
     _CLOUD_ID_CACHE[cache_key] = (cloud_id, now + _CLOUD_ID_CACHE_TTL_S)
-    if len(resources) > 1:
-        logger.info(
-            "confluence: OAuth token has %d accessible sites; using the first (set ATLASSIAN_OAUTH_CLOUD_ID to pin)",
-            len(resources),
-        )
     return f"{ATLASSIAN_OAUTH_GATEWAY}/ex/confluence/{cloud_id}"
+
+
+def api_request_url(base_url: str, path: str) -> str:
+    """Normalize site/gateway prefixes without dropping the Confluence wiki route."""
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"https", "http"} or not parsed.netloc or parsed.query or parsed.fragment:
+        raise ValueError("Configure an absolute Confluence site or API base URL")
+    if urlparse(path).scheme or path.startswith("//") or ".." in path.split("/"):
+        raise ValueError("API path must be relative to the configured Confluence site")
+    root = base_url.rstrip("/")
+    # Preserve an explicitly configured Server/Data Center REST context.
+    context = "" if root.endswith("/rest/api") and not root.endswith("/wiki/rest/api") and not _is_atlassian_gateway_url(root) else "/wiki"
+    for suffix in ("/wiki/rest/api", "/wiki/api/v2", "/rest/api", "/api/v2", "/wiki"):
+        if root.endswith(suffix):
+            root = root[:-len(suffix)]
+            break
+    clean_path = path.lstrip("/")
+    if clean_path.startswith("wiki/"):
+        return f"{root}/{clean_path}"
+    if clean_path.startswith(("rest/api/", "api/v2/")):
+        return f"{root}{context}/{clean_path}"
+    return f"{root}{context}/rest/api/{clean_path}"
+
+
+def response_error(status: int) -> Dict[str, Any]:
+    """Classify provider errors without treating them as successful reads."""
+    codes = {401: "authentication_or_scope", 403: "permission_denied", 404: "not_found_or_restricted", 410: "retired_endpoint", 429: "rate_limited"}
+    actions = {
+        401: "Verify the API route and token grants, then reconnect Confluence if needed. A browser session does not authenticate this connector.",
+        403: "Verify the connected user's space/page permission and the app's granted scopes.",
+        404: "Verify the page ID and visibility for the connected user; absence cannot be distinguished from restriction.",
+        410: "Use the supported CQL search with body expansion for page reads.",
+    }
+    return {
+        "error": f"Confluence request failed (HTTP {status})",
+        "code": codes.get(status, "upstream_error"),
+        "status": status,
+        "retryable": status in {429, 502, 503, 504},
+        "action": actions.get(status, "Retry the read after the provider recovers."),
+    }
 
 
 async def make_api_request(
     path: str,
     method: str = "GET",
     token: Optional[str] = None,
-    params: Dict[str, Any] = {},
-    data: Dict[str, Any] = {},
+    params: Optional[Dict[str, Any]] = None,
+    data: Optional[Dict[str, Any]] = None,
     timeout: int = 30,
 ) -> Tuple[bool, Dict[str, Any]]:
-    """
-    Make a request to the Confluence API
-
-    Args:
-        path: API path to request (without base URL)
-        method: HTTP method (default: GET)
-        token: API token (overrides provider header and env; used for static/service-account calls)
-        params: Query parameters for the request (optional)
-        data: JSON data for POST/PATCH/PUT requests (optional)
-        timeout: Request timeout in seconds (default: 30)
-
-    Returns:
-        Tuple of (success, data) where data is either the response JSON or an error dict
-    """
-    logger.debug(f"Preparing {method} request to {path}")
-
+    """Request JSON using caller credentials; retry safe reads only."""
     ok, prerequisites = validate_prerequisites(token=token)
     if not ok:
         return False, prerequisites
-
     resolved_token = str(prerequisites["token"])
-    resolved_email = str(prerequisites["email"])
     url = str(prerequisites["url"])
     auth_scheme = str(prerequisites.get("auth_scheme") or "basic")
-
-    # OAuth provider tokens must target the Atlassian API gateway, not the site URL.
     if auth_scheme == "bearer" and not _is_atlassian_gateway_url(url):
-        oauth_base_url = await resolve_oauth_base_url(resolved_token, timeout=timeout)
-        if oauth_base_url:
-            logger.debug("confluence: routing OAuth request to Atlassian gateway base URL")
-            url = oauth_base_url
-        else:
-            logger.warning(
-                "confluence: could not resolve Atlassian gateway base URL for the OAuth token; "
-                "falling back to the configured site URL (this will likely fail with 401). "
-                "Set ATLASSIAN_OAUTH_CLOUD_ID or ensure the token has accessible resources."
-            )
-
+        gateway = await resolve_oauth_base_url(resolved_token, timeout=timeout, site_url=url)
+        if not gateway:
+            return False, {"error": "Cannot resolve the configured Confluence site for this OAuth connection", "code": "site_resolution", "retryable": False}
+        url = gateway
+    try:
+        request_url = api_request_url(url, path)
+    except ValueError as exc:
+        return False, {"error": str(exc), "code": "invalid_route", "retryable": False}
+    method = method.upper()
+    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+        return False, {"error": f"Unsupported method: {method}"}
     if auth_scheme == "bearer":
         authorization = f"Bearer {resolved_token}"
     else:
-        import base64
-
-        auth_str = f"{resolved_email}:{resolved_token}"
-        encoded_auth = base64.b64encode(auth_str.encode()).decode()
-        authorization = f"Basic {encoded_auth}"
-
-    headers = {
-        "Authorization": authorization,
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
-
-    logger.debug("Request headers prepared (Authorization header masked)")
-    logger.debug(f"Request parameters: {params}")
-    if data:
-        logger.debug(f"Request data: {data}")
-
-    max_retries = 2
-    retry_delay = 1
-
-    for attempt in range(max_retries + 1):
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                base_url = url.rstrip("/")
-                clean_path = path.lstrip("/")
-                request_url = f"{base_url}/{clean_path}"
-                logger.debug(f"Request: {method} {path}")
-
-                method_map = {
-                    "GET": client.get,
-                    "POST": client.post,
-                    "PUT": client.put,
-                    "PATCH": client.patch,
-                    "DELETE": client.delete,
-                }
-
-                if method not in method_map:
-                    logger.error(f"Unsupported HTTP method: {method}")
-                    return (False, {"error": f"Unsupported method: {method}"})
-
-                if method in ["POST", "PUT", "PATCH"]:
-                    response = await method_map[method](
-                        request_url, headers=headers, params=params, json=data
-                    )
-                else:
-                    response = await method_map[method](
-                        request_url, headers=headers, params=params
-                    )
-
-                logger.debug(f"Response status code: {response.status_code}")
-
-                if response.status_code in [200, 201, 202, 204]:
-                    if response.status_code == 204:
-                        return (True, {"status": "success"})
-                    content_type = response.headers.get("content-type", "").lower()
-                    if "application/json" in content_type:
-                        try:
-                            return (True, response.json())
-                        except ValueError:
-                            return (True, {"status": "success", "raw_response": response.text})
-                    else:
-                        if response.text.strip():
-                            return (True, {"status": "success", "raw_response": response.text})
-                        return (True, {"status": "success"})
-                else:
-                    error_message = f"API request failed: {response.status_code}"
+        credential = f"{prerequisites['email']}:{resolved_token}"
+        authorization = "Basic " + base64.b64encode(credential.encode()).decode()
+    headers = {"Authorization": authorization, "Accept": "application/json"}
+    retries = 2 if method == "GET" else 0
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for attempt in range(retries + 1):
+            try:
+                kwargs: Dict[str, Any] = {"headers": headers, "params": params}
+                if method in {"POST", "PUT", "PATCH"}:
+                    kwargs["json"] = data
+                response = await client.request(method, request_url, **kwargs)
+                if response.status_code in {429, 502, 503, 504} and attempt < retries:
                     try:
-                        error_data = response.json()
-                        logger.error(f"Error details: {error_data}")
-                        return (False, {"error": error_message, "details": error_data})
+                        delay = min(10.0, max(0.0, float(response.headers.get("Retry-After", attempt + 1))))
                     except ValueError:
-                        logger.error(f"Error response (not JSON): {response.text[:200]}")
-                        return (False, {"error": f"{error_message} - {response.text[:200]}"})
-
-        except (httpx.NetworkError, httpx.RemoteProtocolError, httpx.ReadTimeout) as e:
-            is_last_attempt = attempt == max_retries
-            if is_last_attempt:
-                logger.error(f"confluence: Network error after {max_retries} retries: {e}")
-                return (False, {"error": "Confluence is temporarily unavailable. Please try again in a moment."})
-            logger.warning(f"confluence: Network error (attempt {attempt + 1}/{max_retries + 1}): {e}. Retrying...")
-            await asyncio.sleep(retry_delay * (attempt + 1))
-
-        except httpx.RequestError as e:
-            logger.error(f"Request error: {str(e)}")
-            return (False, {"error": f"Request error: {str(e)}"})
-
-        except Exception as e:
-            logger.error(f"Unexpected error: {str(e)}")
-            return (False, {"error": f"Unexpected error: {str(e)}"})
-
-    logger.error("Confluence API request exhausted retry loop without returning a response.")
-    return (False, {"error": "Confluence API request failed without a response."})
+                        delay = float(attempt + 1)
+                    await asyncio.sleep(delay)
+                    continue
+                if response.status_code not in {200, 201, 202, 204}:
+                    logger.warning("confluence: %s %s returned HTTP %s", method, path, response.status_code)
+                    error = response_error(response.status_code)
+                    error["retryable"] = method == "GET" and error["retryable"]
+                    return False, error
+                if response.status_code == 204 and method != "GET":
+                    return True, {"status": "success"}
+                try:
+                    payload = response.json()
+                except ValueError:
+                    return False, {"error": "Confluence returned invalid JSON; no page content was read", "code": "invalid_response", "retryable": False}
+                if not isinstance(payload, dict):
+                    return False, {"error": "Confluence returned an unexpected response shape", "code": "invalid_response", "retryable": False}
+                return True, payload
+            except (httpx.NetworkError, httpx.RemoteProtocolError, httpx.TimeoutException) as exc:
+                logger.warning("confluence: %s %s failed (%s)", method, path, type(exc).__name__)
+                if attempt < retries:
+                    await asyncio.sleep(attempt + 1)
+                    continue
+                return False, {"error": "Confluence is temporarily unavailable", "code": "transport_error", "retryable": method == "GET"}
+            except httpx.RequestError as exc:
+                logger.warning("confluence: request failed (%s)", type(exc).__name__)
+                return False, {"error": "Confluence request could not be sent", "code": "request_error", "retryable": False}
+    return False, {"error": "Confluence retry budget exhausted", "retryable": True}
