@@ -65,6 +65,6 @@ ignore = ["F403"]
 "tests/webloader/test_ingestor.py" = ["E402"]
 
 [tool.uv]
-constraint-dependencies = ["click==8.5.0", "urllib3==2.7.0"]
+constraint-dependencies = ["click==8.5.0", "urllib3==2.8.0"]
 [tool.uv.sources]
 common = { path = "../common" }
