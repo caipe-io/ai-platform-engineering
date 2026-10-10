@@ -1,5 +1,5 @@
 name: "[CI] CAIPE UI Build and Push"
-description: "Build and push CAIPE UI Docker image"
+# description: "Build and push CAIPE UI Docker image"
 
 on:
   push:
@@ -11,6 +11,7 @@ on:
     paths:
       - 'ui/**'
       - 'build/Dockerfile.caipe-ui'
+      - 'scripts/npm/**'
   workflow_dispatch:
     inputs:
       tag_version:
@@ -58,6 +59,7 @@ jobs:
             ui:
               - 'ui/**'
               - 'build/Dockerfile.caipe-ui'
+              - 'scripts/npm/**'
 
       - name: Set Outputs
         id: set-outputs

@@ -13,6 +13,7 @@ WORKDIR /app
 
 # Install dependencies with cache and network resilience
 COPY ui/package.json ui/package-lock.json* ui/yarn.lock* ui/pnpm-lock.yaml* ./
+COPY scripts/npm /scripts/npm
 
 # Configure npm for better network resilience. The cache mount keeps downloaded
 # tarballs on the host between local Docker builds without baking them into the

@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - "docs/**"
+      - "scripts/npm/**"
 
 permissions:
   contents: read
@@ -41,6 +42,9 @@ jobs:
         run: |
           cd docs
           npm install
+      - name: Test npm security backports
+        working-directory: docs
+        run: node --test ../scripts/npm/security-backports.test.mjs
       - name: Build Docusaurus site
         env:
           NODE_OPTIONS: "--max-old-space-size=8192"
