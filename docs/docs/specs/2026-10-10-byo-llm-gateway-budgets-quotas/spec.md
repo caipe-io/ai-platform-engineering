@@ -146,7 +146,11 @@ flowchart LR
 - **Gateway unreachable**: fail closed with an error naming the gateway. Never fall back to a direct provider.
 - **Token service unavailable** (Keycloak or signer): fail closed. Cached tokens are used until they expire.
 - **Agent without an owning team** (legacy or system agents): charged to `LLM_GATEWAY_DEFAULT_TEAM` (`platform`). The UI backend provisions that team in CAIPE at startup. Before phase 3, operators prepare its gateway principal where required; phase 3 adapters automate gateway provisioning where supported (see [phase 1 tasks](./tasks.md#phase-1-identity-preparation-and-agent-data-plane)). The per-user limit still applies.
-- **Owning team changed**: the token cache key includes `owner_team_slug`, so the next call misses the cache and gets a token for the new team. Under [K2](./research.md#identity-option-legend) the scope is synced before the agent change is saved.
+- **Owning team changed**:
+  - MongoDB is the source of truth for agent ownership. Ownership changes and credential-binding updates MUST be recoverable after partial failure.
+  - CAIPE MUST prevent new gateway calls while an ownership transfer is unresolved, including calls using cached credentials. It MUST NOT use or cache credentials whose agent or team binding differs from committed ownership.
+  - Successful transfers MUST invalidate CAIPE's cached credentials for the previous owner. Calls already admitted may complete against the previous team's budget.
+  - These requirements apply to Keycloak scopes, CAIPE-issued JWTs and per-agent gateway keys as applicable. Gateway JWT validation remains local; no gateway lookup of MongoDB is required.
 - **User loses access to the agent**: the next turn's OpenFGA check denies, even if a token is cached.
 - **Switch off**: every migrated path uses its direct-provider configuration and bypasses the gateway, even when the gateway endpoint is configured and reachable. Valid direct-provider configuration and credentials must be available.
 - **Embeddings**: they move only if the gateway serves the *same* embedding model, so vector indexes stay valid.

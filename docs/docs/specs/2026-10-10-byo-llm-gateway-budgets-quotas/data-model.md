@@ -61,7 +61,7 @@ Direct-provider configuration and credentials must remain available for disabled
 | `team_id` | `team-example` | agent `owner_team_slug`, else `LLM_GATEWAY_DEFAULT_TEAM` |
 | `exp` | ≤ 5 min | signer |
 
-- Cache key: (`sub`, `agent_id`, `owner_team_slug`). An owner-team change misses the cache.
+- Cache key: (`sub`, `agent_id`, `owner_team_slug`). The key alone does not ensure ownership consistency: CAIPE must check credential bindings against committed ownership before use or caching, block new calls during unresolved transfers, and invalidate cached credentials for the previous owner on completion.
 - Caller kind (user, service account, autonomous) is an OTel label set by the runtime, not a claim.
 
 ## 4. Agent scope (Keycloak, [K2](./research.md#identity-option-legend) only)
@@ -71,7 +71,9 @@ Direct-provider configuration and credentials must remain available for disabled
 | name | `llm-agent-<agent_id>` |
 | mappers | hardcoded claims `agent_id`, `team_id` |
 | assigned to | dynamic-agents exchanger client (optional scope) |
-| lifecycle | created with the agent; `team_id` updated before an owner-team change is saved; deleted with the agent |
+| lifecycle | created with the agent; synchronized through a recoverable ownership-transfer operation; deleted with the agent |
+
+- MongoDB ownership is authoritative. Transfer coordination must prevent calls from using inconsistent ownership and credential bindings, and support recovery after interruption. The recovery mechanism is an implementation decision; updating Keycloak before saving MongoDB is not sufficient on its own.
 
 ### AI-assist system identity
 

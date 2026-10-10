@@ -159,6 +159,9 @@ sequenceDiagram
 | Risk | preview feature | **spike S1** | custom code | key management | per-gateway glue |
 
 - [K2](#identity-option-legend) and [C1](#identity-option-legend) trust dynamic agents equally to pick the agent. [K2](#identity-option-legend)'s gain is no new signing key and Keycloak's audit trail; `team_id` is fixed by the admin-synced scope.
+- Ownership synchronization can partially fail: a Keycloak scope update may succeed while the MongoDB ownership write fails. Reversing the write order only reverses the possible mismatch.
+- MongoDB ownership remains authoritative. Transfers must be recoverable; CAIPE blocks new calls, including cached-credential calls, while a transfer is unresolved and checks credential bindings before use. Completion invalidates cached credentials for the previous owner; already-admitted calls may finish under that owner.
+- JWT expiry bounds the lifetime of an issued token, not a persistent synchronization failure: an unrepaired scope can keep issuing tokens for the wrong team. Gateway JWT validation remains local. The same ownership consistency policy applies to C1 signing and per-agent gateway key bindings as applicable.
 - #2901 adds operator-owned per-agent Keycloak clients for agent badges. If it lands first, K2 reuses its per-agent binding instead of adding a second per-agent Keycloak object.
 
 **[K2](#identity-option-legend) flow**
