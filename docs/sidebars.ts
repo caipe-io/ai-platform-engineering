@@ -255,6 +255,7 @@ const sidebars: SidebarsConfig = {
         { type: 'doc', id: 'features/agent-builder', label: 'Agent Builder' },
         { type: 'doc', id: 'features/workflows', label: 'Workflows' },
         { type: 'doc', id: 'features/agentic-apps', label: 'External Apps' },
+        { type: 'doc', id: 'features/native-ui-extensions', label: 'Native UI Extensions' },
         {
           type: 'category',
           label: 'Rich Web UI',

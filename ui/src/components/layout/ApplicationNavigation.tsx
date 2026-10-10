@@ -45,11 +45,13 @@ import { useAdminTabGates } from "@/hooks/useAdminTabGates";
 import { KNOWLEDGE_NAV_ITEMS } from "@/components/rag/KnowledgeSidebar";
 import { PERSONAL_SETTINGS_ROUTES } from "@/components/settings/settings-routes";
 import { config,getLogoFilterClass } from "@/lib/config";
+import { installedNativeExtensionManifests } from "@/native-extensions/manifests.generated";
 import { cn } from "@/lib/utils";
 import { resolveChatNavigationPath,useChatStore } from "@/store/chat-store";
 import { motion,useReducedMotion } from "framer-motion";
 import {
   Bot,
+  BookOpen,
   CalendarClock,
   ChevronDown,
   Database,
@@ -85,6 +87,14 @@ interface ApplicationNavigationItem {
 function activeAreaForPath(pathname: string | null): string | null {
   if (pathname === "/") return "home";
   if (pathname?.startsWith("/chat")) return "chat";
+  const nativeExtension = pathname
+    ? installedNativeExtensionManifests.find((manifest) =>
+        manifest.hostPaths.some(
+          (path) => pathname === path || pathname.startsWith(`${path}/`),
+        ),
+      )
+    : undefined;
+  if (nativeExtension) return `native-${nativeExtension.id}`;
   if (pathname?.startsWith("/projects")) return "projects";
   if (pathname?.startsWith("/knowledge-bases")) return "knowledge";
   if (pathname?.startsWith("/credentials")) return "credentials";
@@ -193,6 +203,20 @@ function ApplicationNavigationContents({
     knowledgeGates.has_any_kb === false &&
     !knowledgeHasExplicitCapability;
   const activeArea = activeAreaForPath(pathname);
+  const nativeNavigationItems: ApplicationNavigationItem[] =
+    installedNativeExtensionManifests.filter((manifest) => manifest.navigation).map((manifest) => ({
+      key: `native-${manifest.id}`,
+      href: manifest.navigation!.href,
+      label: manifest.navigation!.label,
+      icon:
+        manifest.navigation!.icon === "book-open" ? BookOpen : LayoutGrid,
+    }));
+  const projectsClaimedByExtension = installedNativeExtensionManifests.some(
+    (manifest) =>
+      manifest.hostPaths.some(
+        (path) => path === "/projects" || path.startsWith("/projects/"),
+      ),
+  );
   const registeredContextualNavigation =
     applicationNavigation?.registration?.areaKey === activeArea
       ? applicationNavigation.registration.content
@@ -224,7 +248,8 @@ function ApplicationNavigationContents({
   const items = [
     { key: "home",href: "/",label: "Home",icon: Home },
     { key: "chat",href: chatHref,label: "Chat",icon: MessageCircle },
-    config.projectsEnabled && {
+    ...nativeNavigationItems,
+    config.projectsEnabled && !projectsClaimedByExtension && {
       key: "projects",
       href: "/projects",
       label: "Projects",

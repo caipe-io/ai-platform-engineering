@@ -1,0 +1,92 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+
+import { HeaderBreadcrumbPortal } from "@/components/layout/HeaderBreadcrumbSlot";
+import { WorkspaceBreadcrumbs } from "@/components/layout/WorkspacePageHeader";
+import { NativeExtensionAssistant } from "./NativeExtensionAssistant";
+import { installedNativeExtensions } from "./installed.generated";
+import { isSafeHostHref } from "./navigation";
+import type { NativeExtensionBreadcrumb } from "./types";
+
+export function NativeExtensionHost({
+  children,
+  extensionId,
+  slot = false,
+}: {
+  children?: React.ReactNode;
+  extensionId: string;
+  slot?: boolean;
+}): React.ReactElement {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const search = searchParams.toString();
+  const extension = useMemo(
+    () =>
+      installedNativeExtensions.find(
+        (candidate) => candidate.manifest.id === extensionId,
+      ),
+    [extensionId],
+  );
+  const [breadcrumbs, setBreadcrumbs] = useState<
+    NativeExtensionBreadcrumb[]
+  >(() =>
+    extension
+      ? [
+          { label: "Home", href: "/" },
+          {
+            label: extension.manifest.navigation?.label ?? extension.manifest.displayName,
+            href: extension.manifest.navigation?.href ?? extension.manifest.hostPaths[0],
+          },
+        ]
+      : [],
+  );
+  const navigate = useCallback(
+    (href: string) => {
+      if (isSafeHostHref(href)) router.push(href, { scroll: false });
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    if (typeof performance.mark === "function") {
+      performance.mark(`caipe-native-extension:${extensionId}:route-ready`);
+    }
+  }, [extensionId, pathname, search]);
+
+  if (!extension || extension.module.contractVersion !== extension.manifest.contractVersion) {
+    return (
+      <div className="p-6 text-sm text-destructive">
+        Native extension is not installed.
+      </div>
+    );
+  }
+
+  const Component = extension.module.Component;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto" data-native-extension={extensionId}>
+      {!slot && <HeaderBreadcrumbPortal>
+        <WorkspaceBreadcrumbs breadcrumbs={breadcrumbs} portal={false} />
+      </HeaderBreadcrumbPortal>}
+      <Component
+        apiBasePath={extension.manifest.api.basePath}
+        pathname={pathname}
+        search={search}
+        navigate={navigate}
+        Link={Link}
+        setBreadcrumbs={setBreadcrumbs}
+      />
+      {!slot && extension.manifest.assistant && (
+        <NativeExtensionAssistant
+          assistant={extension.manifest.assistant}
+          extensionId={extensionId}
+          pathname={pathname}
+        />
+      )}
+      {children}
+    </div>
+  );
+}

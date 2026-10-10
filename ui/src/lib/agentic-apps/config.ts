@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { load as loadYaml } from "js-yaml";
 
 import type {
+  AgenticAppAuthMode,
   AgenticAppInstallation,
   AgenticAppManifest,
   AgenticAppPolicyAction,
@@ -11,6 +12,10 @@ import { MAX_AGENTIC_APP_REQUEST_BODY_BYTES } from "@/types/agentic-app";
 
 const APP_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const HTTP_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]);
+const AUTH_MODES = new Set<AgenticAppAuthMode>([
+  "app-scoped-token",
+  "forward-user-access-token",
+]);
 
 type RawPackage = {
   package_id?: unknown;
@@ -198,6 +203,21 @@ function parseManifest(value: unknown, path: string): AgenticAppManifest {
     throw new Error(`${path}.runtime.chrome must be "iframe" when set`);
   }
 
+  const authRaw = raw.auth === undefined
+    ? undefined
+    : asRecord(raw.auth, `${path}.auth`);
+  if (authRaw) {
+    assertKnownKeys(authRaw, ["mode"], `${path}.auth`);
+  }
+  const authMode = authRaw?.mode === undefined
+    ? "app-scoped-token"
+    : requiredString(authRaw.mode, `${path}.auth.mode`);
+  if (!AUTH_MODES.has(authMode as AgenticAppAuthMode)) {
+    throw new Error(
+      `${path}.auth.mode must be "app-scoped-token" or "forward-user-access-token"`,
+    );
+  }
+
   const surfacesRaw = asRecord(raw.surfaces, `${path}.surfaces`);
   const accessRaw = asRecord(raw.access, `${path}.access`);
   assertKnownKeys(
@@ -249,6 +269,7 @@ function parseManifest(value: unknown, path: string): AgenticAppManifest {
     displayName: requiredString(raw.displayName, `${path}.displayName`),
     description: requiredString(raw.description, `${path}.description`),
     apiVersion: "1.0",
+    auth: { mode: authMode as AgenticAppAuthMode },
     runtime: {
       kind: "proxied-next-zone",
       mountPath: requiredMountPath(runtimeRaw.mountPath, `${path}.runtime.mountPath`),
