@@ -91,9 +91,11 @@ DYNAMIC_AGENTS_COLLECTION=dynamic_agents
 MCP_SERVERS_COLLECTION=mcp_servers
 
 # Authentication
-# In production, the Next.js gateway injects X-User-Context headers.
-# For local development, set DEBUG=true to bypass auth with a dev admin user.
-DEBUG=true
+# Use Keycloak for local development and production.
+KEYCLOAK_URL=http://localhost:7080
+KEYCLOAK_REALM=caipe
+# Set OIDC_ISSUER when the browser-facing issuer differs from KEYCLOAK_URL.
+DEBUG=false
 
 # LLM Provider (configure at least one)
 # For Anthropic:
@@ -148,7 +150,7 @@ The API documentation is available at:
 | `HOST` | Server bind address | `0.0.0.0` |
 | `PORT` | Server port | `8001` |
 | `METRICS_PORT` | Dedicated port for `/metrics` (0 = same as `PORT`) | `0` |
-| `DEBUG` | Enable debug mode / hot reload / dev auth bypass | `false` |
+| `DEBUG` | Enable debug mode / hot reload | `false` |
 | `MONGODB_URI` | MongoDB connection string | `mongodb://localhost:27017` |
 | `MONGODB_DATABASE` | Database name | `caipe` |
 | `DYNAMIC_AGENTS_COLLECTION` | Agents collection name | `dynamic_agents` |
@@ -364,7 +366,7 @@ docker build -t dynamic-agents .
 # Run
 docker run -p 8001:8001 \
   -e MONGODB_URI=mongodb://host.docker.internal:27017 \
-  -e DEBUG=true \
+  -e KEYCLOAK_URL=http://keycloak:7080 \
   -e ANTHROPIC_API_KEY=your-key \
   dynamic-agents
 ```
