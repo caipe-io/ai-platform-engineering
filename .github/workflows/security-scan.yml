@@ -96,7 +96,7 @@ jobs:
 
       - name: Upload SARIF to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
-        if: ${{ always() && steps.scan.outputs.sarif != '' && steps.fork-check.outputs.is_fork != 'true' }}
+        if: ${{ always() && steps.scan.outcome == 'success' && steps.scan.outputs.sarif != '' && steps.fork-check.outputs.is_fork != 'true' }}
         with:
           sarif_file: ${{ steps.scan.outputs.sarif }}
           # Keep this stable as "grype": GitHub Code Scanning correlates SARIF
@@ -116,8 +116,53 @@ jobs:
         run: |
           echo "::notice::This PR is from a fork, so results can't be uploaded to GitHub Code Scanning (that needs security-events: write, unavailable to fork-triggered pull_request runs). The Grype scan above still ran — see its output for findings. A maintainer can re-run this workflow after merge to get code-scanning annotations."
 
+  release-config:
+    name: Resolve release image list
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+    outputs:
+      images: ${{ steps.images.outputs.images }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+      - name: Read release components
+        id: images
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          config = json.loads(Path(".github/agents.json").read_text())
+          agents = config["mcp_agents"]
+          rag = config["rag_components"]
+          for components in (agents, rag):
+              if not isinstance(components, list) or not all(
+                  isinstance(name, str) and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name)
+                  for name in components
+              ):
+                  raise ValueError("Invalid release component list")
+          images = ["caipe-ui", "caipe-dynamic-agents", "caipe-slack-bot", "caipe-webex-bot"]
+          images += ["caipe-rag-" + name for name in rag]
+          # GitHub uses an externally published server rather than a local image.
+          images += ["mcp-" + name for name in agents if name != "github"]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("images=" + json.dumps(list(dict.fromkeys(images))) + "\n")
+          PYTHON
+
   scan-containers:
     name: Container scan (${{ matrix.image }})
+    needs: release-config
     runs-on: ubuntu-latest
     # Only runs on manual dispatch — tag-push triggers were removed because images
     # are not yet published when the tag event fires (race condition).
@@ -125,33 +170,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image:
-          # UI
-          - caipe-ui
-          # Dynamic agents runtime
-          - caipe-dynamic-agents
-          # Bots
-          - caipe-slack-bot
-          - caipe-webex-bot
-          # RAG components
-          - caipe-rag-agent-ontology
-          - caipe-rag-server
-          - caipe-rag-ingestors
-          # Per-tool MCP servers (canonical mcp_agents from .github/agents.json).
-          # github has no local image — uses external ghcr.io/github/github-mcp-server.
-          - mcp-argocd
-          - mcp-aws
-          - mcp-backstage
-          - mcp-confluence
-          - mcp-jira
-          - mcp-komodor
-          - mcp-litellm
-          - mcp-netutils
-          - mcp-pagerduty
-          - mcp-sharepoint
-          - mcp-splunk
-          - mcp-victorops
-          - mcp-webex
+        image: ${{ fromJSON(needs.release-config.outputs.images) }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
@@ -195,7 +214,7 @@ jobs:
 
       - name: Upload SARIF to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
-        if: ${{ always() && steps.scan.outputs.sarif != '' }}
+        if: ${{ always() && steps.scan.outcome == 'success' && steps.scan.outputs.sarif != '' }}
         with:
           sarif_file: ${{ steps.scan.outputs.sarif }}
           category: "grype-${{ matrix.image }}"
