@@ -73,6 +73,13 @@ Direct-provider configuration and credentials must remain available for disabled
 | assigned to | dynamic-agents exchanger client (optional scope) |
 | lifecycle | created with the agent; `team_id` updated before an owner-team change is saved; deleted with the agent |
 
+### AI-assist system identity
+
+- Provision a stable AI-assist system agent and its authorization relationships before enabling gateway routing for `/assistant/suggest`.
+- Grant its `can_use` permission to users authorized to use AI-assist through the existing authorization model; model access remains a separate CAS check.
+- Prepare its Keycloak scope (K2), signer mapping (C1), or per-agent gateway key according to the configured authentication mode, including any gateway principal required before first use.
+- Use the authenticated caller as `sub`, the system agent as `agent_id`, and its owning team as `team_id` (or `LLM_GATEWAY_DEFAULT_TEAM` when ownerless). The agent being drafted or edited supplies none of these identity bindings.
+
 ## 5. `llm_quota_requests` (new Mongo collection)
 
 | Field | Meaning |

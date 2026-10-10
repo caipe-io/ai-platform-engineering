@@ -142,6 +142,7 @@ flowchart LR
 
 ### Edge cases
 
+- **AI-assist without an executing agent**: `/assistant/suggest` uses a stable, provisioned system agent identity dedicated to AI-assist. The authenticated caller remains `sub`; `agent_id` identifies the AI-assist system agent; `team_id` is its owning team, defaulting to `LLM_GATEWAY_DEFAULT_TEAM`. User, system-agent and team limits apply according to the configured authentication mode (FR-004, FR-005). This identity does not depend on the agent being drafted or edited. Before calling the gateway, the runtime checks access to the system agent and selected model through CAS. AI-assist usage charges the system agent's owning team, regardless of the caller's team memberships.
 - **Gateway unreachable**: fail closed with an error naming the gateway. Never fall back to a direct provider.
 - **Token service unavailable** (Keycloak or signer): fail closed. Cached tokens are used until they expire.
 - **Agent without an owning team** (legacy or system agents): charged to `LLM_GATEWAY_DEFAULT_TEAM` (`platform`). The UI backend provisions that team in CAIPE at startup. Before phase 3, operators prepare its gateway principal where required; phase 3 adapters automate gateway provisioning where supported (see [phase 1 tasks](./tasks.md#phase-1-identity-preparation-and-agent-data-plane)). The per-user limit still applies.

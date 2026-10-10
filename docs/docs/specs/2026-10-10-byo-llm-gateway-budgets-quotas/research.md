@@ -40,6 +40,7 @@
 | 5 | RAG ontology agent | `knowledge_bases/rag/agent_ontology/src/agent_ontology/agent.py` | env |
 
 - Paths 1–3 all build models through `build_chat_model` in `ai_platform_engineering/llm_wrapper/src/llm_wrapper/build.py`. The switch, the provider override and the auth hook live there, so no caller can bypass them.
+- Path 3 generates text without executing an agent, including before a new agent is saved. It uses a dedicated, provisioned AI-assist system identity for agent attribution while preserving the authenticated user for user attribution. Its owning team pays; the draft or edited agent does not determine billing or authorization. See [AI-assist system identity](./data-model.md#ai-assist-system-identity).
 - Bots, autonomous agents, the scheduler and the UI have no LLM client of their own. They inherit through dynamic agents.
 
 ## Decision 3 — Rollout: phased build, one global switch
