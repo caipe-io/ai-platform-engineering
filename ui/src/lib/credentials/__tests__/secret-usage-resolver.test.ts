@@ -99,4 +99,15 @@ describe("createSecretUsageResolver", () => {
       createSecretUsageResolver()(secret("docs-site-token")),
     ).resolves.toEqual([]);
   });
+
+  it("reports a registered A2A agent that uses the saved secret", async () => {
+    collections.set("remote_agents", [{
+      _id: "remote-example", name: "Example Agent",
+      credential_source: { kind: "secret_ref", target: "header", name: "X-API-Key", secret_ref: "example-secret" },
+    }]);
+    await expect(createSecretUsageResolver()(secret("example-secret"))).resolves.toEqual([{
+      type: "remote_agent", id: "remote-example", name: "Example Agent",
+      location: "Agents > Advanced", detail: "header: X-API-Key",
+    }]);
+  });
 });

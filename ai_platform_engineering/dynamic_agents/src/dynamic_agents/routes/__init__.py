@@ -11,6 +11,7 @@ from dynamic_agents.routes import (
     mcp_servers,
     middleware,
     model_capabilities,
+    remote_agents,
 )
 
-__all__ = ["agents", "assistant", "builtin_tools", "chat", "conversations", "files", "health", "mcp_servers", "middleware", "model_capabilities"]
+__all__ = ["agents", "assistant", "builtin_tools", "chat", "conversations", "files", "health", "mcp_servers", "middleware", "model_capabilities", "remote_agents"]

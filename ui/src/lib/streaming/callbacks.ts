@@ -78,6 +78,9 @@ export interface StreamCallbacks {
     namespace?: string[],
   ): void;
 
+  /** A remote tool output snapshot arrived while execution is still running. */
+  onToolOutput?(toolCallId: string, result: string, namespace: string[]): void;
+
   /** A tool invocation completed (with optional error and accumulated args) */
   onToolEnd?(
     toolCallId: string,

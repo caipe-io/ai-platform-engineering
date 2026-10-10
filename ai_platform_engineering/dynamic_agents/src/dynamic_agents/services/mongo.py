@@ -158,6 +158,12 @@ class MongoDBService:
             raise RuntimeError("MongoDB not connected")
         return self._db[self.settings.mcp_servers_collection]
 
+    def _get_remote_agents_collection(self) -> Collection:
+        """Get the admin-managed remote A2A agent registry."""
+        if self._db is None:
+            raise RuntimeError("MongoDB not connected")
+        return self._db[self.settings.remote_agents_collection]
+
     # =========================================================================
     # Read-only agent access
     # =========================================================================
@@ -226,6 +232,17 @@ class MongoDBService:
             MCPServerConfig(**_strip_nulls(_inject_builtin_credential_sources(doc)))
             for doc in docs
         ]
+
+    def get_remote_agents_by_ids(self, remote_agent_ids: list[str]) -> list[dict]:
+        """Return enabled registry entries selected by a dynamic agent."""
+        if not remote_agent_ids:
+            return []
+        return list(
+            self._get_remote_agents_collection().find(
+                {"_id": {"$in": remote_agent_ids}, "enabled": {"$ne": False}},
+                {"_id": 1, "name": 1, "description": 1, "endpoint": 1, "timeout_seconds": 1, "streaming": 1, "credential_source": 1, "updated_at": 1},
+            )
+        )
 
     def get_agent_mcp_servers(self, agent: DynamicAgentConfig) -> list[MCPServerConfig]:
         """Get MCP servers for an agent AND all its subagents.

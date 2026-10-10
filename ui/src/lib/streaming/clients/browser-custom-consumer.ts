@@ -176,6 +176,12 @@ export class CustomStreamAdapter implements StreamAdapter {
           return false;
         }
 
+        case "tool_output": {
+          const parsed = JSON.parse(data);
+          callbacks.onToolOutput?.(parsed.tool_call_id, parsed.result, parsed.namespace ?? []);
+          return false;
+        }
+
         case "tool_end": {
           const parsed = JSON.parse(data);
           callbacks.onToolEnd?.(

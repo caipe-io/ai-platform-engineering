@@ -1089,6 +1089,10 @@ export function ChatPanel({
       }
     },
 
+    onToolOutput(toolCallId, result, namespace) {
+      const event = createStreamEvent("tool_output", { tool_call_id: toolCallId, result, namespace });
+      addStreamEvent(event, convId);
+    },
     onToolEnd(toolCallId, toolName, error, namespace, args, result) {
       const resolvedName = toolName ?? toolCallIdToName.get(toolCallId);
       // Parse accumulated args string (from AG-UI TOOL_CALL_ARGS deltas) into object.

@@ -38,6 +38,17 @@ interface McpServerSecretUsageDocument {
   }>;
 }
 
+interface RemoteAgentSecretUsageDocument {
+  _id: string;
+  name?: string;
+  credential_source?: {
+    kind?: string;
+    target?: string;
+    name?: string;
+    secret_ref?: string;
+  };
+}
+
 const LLM_PROVIDER_NAMES: Record<string, string> = {
   openai: "OpenAI",
   "anthropic-claude": "Anthropic Claude",
@@ -89,6 +100,7 @@ function llmProviderUsage(secret: SecretRefDocument): SecretUsageReference[] {
 
 export function createSecretUsageResolver() {
   let mcpServersPromise: Promise<McpServerSecretUsageDocument[]> | null = null;
+  let remoteAgentsPromise: Promise<RemoteAgentSecretUsageDocument[]> | null = null;
   let ingestionSourcesPromise: Promise<IngestionSourceSecretUsageDocument[]> | null = null;
 
   async function mcpServers(): Promise<McpServerSecretUsageDocument[]> {
@@ -99,6 +111,16 @@ export function createSecretUsageResolver() {
           .toArray(),
       );
     return mcpServersPromise;
+  }
+
+  async function remoteAgents(): Promise<RemoteAgentSecretUsageDocument[]> {
+    remoteAgentsPromise ??= getCollection<RemoteAgentSecretUsageDocument>("remote_agents")
+      .then((collection) =>
+        collection
+          .find({ "credential_source.kind": "secret_ref" } as never)
+          .toArray(),
+      );
+    return remoteAgentsPromise;
   }
 
   async function ingestionSources(): Promise<IngestionSourceSecretUsageDocument[]> {
@@ -125,6 +147,17 @@ export function createSecretUsageResolver() {
           detail: [source.target, source.name].filter(Boolean).join(": "),
         });
       }
+    }
+    for (const agent of await remoteAgents()) {
+      const source = agent.credential_source;
+      if (source?.kind !== "secret_ref" || source.secret_ref !== secret.id) continue;
+      usage.push({
+        type: "remote_agent",
+        id: String(agent._id),
+        name: agent.name || String(agent._id),
+        location: "Agents > Advanced",
+        detail: [source.target || "header", source.name].filter(Boolean).join(": "),
+      });
     }
     for (const source of await ingestionSources()) {
       for (const header of source.settings?.auth_headers ?? []) {

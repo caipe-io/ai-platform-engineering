@@ -675,6 +675,24 @@ describe("dynamic agents RBAC routes", () => {
     );
   });
 
+  it("validates remote timeouts against the normalized, deduplicated registry selection", async () => {
+    const insertOne = jest.fn();
+    const registryFind = jest.fn().mockReturnValue({ toArray: async () => [{ _id: "remote-example" }] });
+    mockGetCollection.mockImplementation(async (name: string) => name === "remote_agents"
+      ? { find: registryFind } : { findOne: async () => null, insertOne });
+    const { POST } = await import("../route");
+    const response = await POST(request("/api/dynamic-agents", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        name: "Example Agent", system_prompt: "Help with the task", model: { id: "example-model", provider: "openai" },
+        visibility: "global", allowed_remote_agents: [" remote-example ", "remote-example"],
+        remote_agent_timeouts: { "remote-example": 90 },
+      }) }));
+    expect(response.status).toBe(201);
+    expect(registryFind).toHaveBeenCalledWith(expect.objectContaining({ _id: { $in: ["remote-example"] } }), expect.anything());
+    expect(insertOne).toHaveBeenCalledWith(expect.objectContaining({ allowed_remote_agents: ["remote-example"],
+      remote_agent_timeouts: { "remote-example": 90 } }));
+  });
+
   it("creating a global agent resolves and grants the unlinked SA sub", async () => {
     const insertOne = jest.fn();
     mockGetCollection.mockResolvedValue({

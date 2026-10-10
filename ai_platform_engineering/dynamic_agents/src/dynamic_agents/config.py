@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -53,6 +54,12 @@ class Settings(BaseSettings):
     mcp_servers_collection: str = "mcp_servers"
     autonomous_tasks_collection: str = "autonomous_tasks"
     autonomous_runs_collection: str = "autonomous_runs"
+    remote_agents_collection: str = "remote_agents"
+
+    # Exact HTTP origins permitted for local/private A2A deployments. HTTPS is the default.
+    remote_a2a_allowed_http_origins: list[str] = []
+    remote_a2a_max_response_bytes: int = Field(default=8 * 1024 * 1024, gt=0)
+    remote_a2a_max_output_bytes: int = Field(default=1024 * 1024, gt=0)
 
     # CORS
     cors_origins: list[str] = ["*"]
@@ -90,7 +97,7 @@ class Settings(BaseSettings):
     # When set, MCP HTTP/SSE clients use this base URL (e.g. http://agentgateway:4000/mcp/{server_id})
     agent_gateway_url: str | None = None
 
-    # CAIPE credential service API used when USE_IMPERSONATION_TOKENS=true.
+    # Credential API for MCP impersonation and remote A2A secrets/connected accounts.
     credential_api_url: str | None = None
     credential_service_audience: str = "caipe-credential-service"
 
