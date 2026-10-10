@@ -17,7 +17,6 @@
     "init-credential-indexes": "ts-node --project tsconfig.json ../scripts/init-credential-mongo-indexes.ts",
     "test:e2e:all": "RUN_RBAC_E2E=1 RUN_RBAC_REGRESSION=1 WORKFLOWS_ENABLED=true playwright test --config=playwright.rbac.config.ts",
     "test:e2e:rbac": "playwright test --config=playwright.rbac.config.ts",
-    "test:e2e:rbac-regression": "WORKFLOWS_ENABLED=true playwright test e2e/rbac/chat-navigation-regression.spec.ts e2e/rbac/chat-workflow-run-card.spec.ts e2e/rbac/workflow-agent-access.spec.ts e2e/rbac/workflow-agent-service-auth.spec.ts e2e/rbac/workflow-agent-user-delegation.spec.ts e2e/rbac/workflows-rbac-regression.spec.ts e2e/rbac/workflow-run-detail.spec.ts e2e/rbac/webex-workflow-agent-routes.spec.ts e2e/rbac/rbac-admin-regression.spec.ts e2e/rbac/access-explorer.spec.ts e2e/rbac/rbac-self-check.spec.ts e2e/rbac/audit-service-writers.spec.ts e2e/rbac/audit-log.spec.ts e2e/rbac/mcp-openfga-tuples.spec.ts e2e/rbac/mcp-server-permission-gating.spec.ts e2e/rbac/mcp-test-modal-and-agentgateway.spec.ts e2e/rbac/mcp-credential-editor.spec.ts e2e/rbac/mcp-empty-credential-sources.spec.ts e2e/rbac/mcp-pinned-credentials.spec.ts e2e/rbac/mcp-caller-scoped-credentials.spec.ts e2e/rbac/credentials-workspace-regression.spec.ts e2e/rbac/credential-secrets-management.spec.ts e2e/rbac/provider-connection-display.spec.ts e2e/rbac/service-accounts.spec.ts e2e/rbac/admin-settings-regression.spec.ts e2e/rbac/settings-center.spec.ts e2e/rbac/webex-identity-link-self-service.spec.ts e2e/rbac/identity-sync-regression.spec.ts e2e/rbac/slack-run-as.spec.ts e2e/rbac/dynamic-agents-conversations-superadmin.spec.ts e2e/rbac/selection-controls.spec.ts --config=playwright.rbac.config.ts",
     "test:e2e:rbac-regression": "WORKFLOWS_ENABLED=true playwright test e2e/rbac/chat-navigation-regression.spec.ts e2e/rbac/chat-workflow-run-card.spec.ts e2e/rbac/workflow-agent-access.spec.ts e2e/rbac/workflow-agent-service-auth.spec.ts e2e/rbac/workflow-agent-user-delegation.spec.ts e2e/rbac/workflows-rbac-regression.spec.ts e2e/rbac/workflow-run-detail.spec.ts e2e/rbac/webex-workflow-agent-routes.spec.ts e2e/rbac/rbac-admin-regression.spec.ts e2e/rbac/access-explorer.spec.ts e2e/rbac/rbac-self-check.spec.ts e2e/rbac/audit-service-writers.spec.ts e2e/rbac/audit-log.spec.ts e2e/rbac/mcp-openfga-tuples.spec.ts e2e/rbac/mcp-server-permission-gating.spec.ts e2e/rbac/mcp-test-modal-and-agentgateway.spec.ts e2e/rbac/mcp-credential-editor.spec.ts e2e/rbac/mcp-empty-credential-sources.spec.ts e2e/rbac/mcp-pinned-credentials.spec.ts e2e/rbac/mcp-caller-scoped-credentials.spec.ts e2e/rbac/dynamic-agent-auth-interrupt.spec.ts e2e/rbac/credentials-workspace-regression.spec.ts e2e/rbac/credential-secrets-management.spec.ts e2e/rbac/provider-connection-display.spec.ts e2e/rbac/service-accounts.spec.ts e2e/rbac/admin-settings-regression.spec.ts e2e/rbac/settings-center.spec.ts e2e/rbac/webex-identity-link-self-service.spec.ts e2e/rbac/identity-sync-regression.spec.ts e2e/rbac/slack-run-as.spec.ts e2e/rbac/dynamic-agents-conversations-superadmin.spec.ts e2e/rbac/selection-controls.spec.ts --config=playwright.rbac.config.ts",
     "test:e2e:rbac-live-workflow-oauth": "RUN_RBAC_E2E=1 playwright test e2e/rbac/workflow-agent-oauth-live.spec.ts e2e/rbac/workflow-agent-user-delegation-live.spec.ts --config=playwright.rbac.config.ts",
     "test:e2e:rbac-live-mcp": "RUN_RBAC_E2E=1 playwright test e2e/rbac/mcp-server-create-live.spec.ts e2e/rbac/mcp-empty-credential-sources.spec.ts --config=playwright.rbac.config.ts",
@@ -125,13 +124,13 @@
   },
   "overrides": {
     "minimatch@3.1.5": {
-      "brace-expansion": "1.1.18"
+      "brace-expansion": "1.1.21"
     },
     "minimatch@9.0.9": {
-      "brace-expansion": "2.1.4"
+      "brace-expansion": "2.1.7"
     },
     "minimatch@10.2.5": {
-      "brace-expansion": "5.0.9"
+      "brace-expansion": "5.0.12"
     },
     "postcss": "8.5.26",
     "prismjs": "1.30.0",
@@ -141,10 +140,11 @@
       "js-yaml": "4.3.2"
     },
     "nanoid": "3.3.18",
-    "sharp": "0.35.4",
+    "sharp": "0.35.5",
     "form-data": "4.0.6",
     "@babel/core": "7.29.7",
     "eslint-plugin-react-hooks": "7.0.1",
-    "dompurify": "3.4.16"
+    "dompurify": "3.4.16",
+    "postcss-selector-parser": "7.1.6"
   }
 }
