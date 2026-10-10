@@ -44,7 +44,7 @@ jobs:
           npm install
       - name: Test npm security backports
         working-directory: docs
-        run: node --test ../scripts/npm/security-backports.test.mjs
+        run: node --test ../scripts/npm/*.test.mjs
       - name: Build Docusaurus site
         env:
           NODE_OPTIONS: "--max-old-space-size=8192"

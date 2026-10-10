@@ -54,7 +54,7 @@ jobs:
 
       - name: Test npm security backports
         working-directory: ui
-        run: node --test ../scripts/npm/security-backports.test.mjs
+        run: node --test ../scripts/npm/*.test.mjs
 
       - name: Test External App examples
         working-directory: ui

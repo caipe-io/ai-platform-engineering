@@ -1,6 +1,5 @@
 name: "[Prebuild] Manual PR Fanout"
-description: >-
-  Manually run prebuild publishing for a prebuild/* PR head from this repository.
+# Manually run prebuild publishing for a prebuild/* PR head from this repository.
 
 run-name: "Manual prebuild for PR #${{ inputs.pr_number }} (${{ inputs.target }})"
 
@@ -142,6 +141,7 @@ jobs:
               ],
               caipe_ui: [
                 'ui/**',
+                'scripts/npm/**',
                 'build/Dockerfile.caipe-ui',
               ],
               audit_service: [

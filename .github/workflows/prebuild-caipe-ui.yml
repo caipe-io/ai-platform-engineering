@@ -80,6 +80,7 @@ jobs:
               .github/actions/prebuild-status \
               .github/actions/publish-prebuild-manifest \
               ui \
+              scripts/npm \
               build/Dockerfile.caipe-ui | grep -q .; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           else

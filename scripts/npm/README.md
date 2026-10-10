@@ -20,7 +20,7 @@ Do not use `--ignore-scripts` for production installations.
 Run from `ui/` and `docs/` after `npm ci`:
 
 ```sh
-node --test ../scripts/npm/security-backports.test.mjs
+node --test ../scripts/npm/*.test.mjs
 ```
 
 Remove a backport and install a verified fixed version when upstream publishes
