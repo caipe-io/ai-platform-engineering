@@ -54,6 +54,20 @@ flowchart TD
 
 Details: [data plane](./contracts/openai-endpoint.md), [gateway conformance](./contracts/routing-backend-contract.md), [adapter](./contracts/gateway-adapter.md), [research.md](./research.md), [data-model.md](./data-model.md).
 
+### What CAIPE builds
+
+No new service, image or language. Each piece lands in an existing component (deployment and technology: [plan.md](./plan.md#technical-context)).
+
+| Piece | Component | Language | Phase |
+|---|---|---|---|
+| Switch, provider override, auth hook, budget-signal rules ④ | `llm_wrapper` (library) | Python | 1–2 |
+| Gateway token acquisition and cache, `llm_model#can_read` check, attribution ③, telemetry | `dynamic_agents` | Python | 1–2 |
+| Agent identity lifecycle (Keycloak scopes or keys), default team | UI backend (BFF) | TypeScript | 1 |
+| Adapter ⑤, model sync, limits and usage routes, admin UI | UI backend + UI | TypeScript | 3 |
+| Embeddings and ontology agent through `llm_wrapper` | RAG server, ontology agent | Python | 4 |
+| Remaining budget, quota requests, bot messages | UI, Slack and Webex bots | TypeScript, Python | 5 |
+| Helm values and `.env.example` entries | `charts/`, Compose | YAML | 1, 3, 4 |
+
 ## Clarifications
 
 ### Session 2026-10-05
@@ -78,6 +92,14 @@ Details: [data plane](./contracts/openai-endpoint.md), [gateway conformance](./c
 - Q: Which identity contract does the gateway token follow? → **CAIPE's canonical identity contract** (#2885): platform `iss`/`sub` is the effective principal; the acting service is named separately.
 - Q: How do autonomous runs prove the task owner? → **A trusted run binding** (#2891), not an owner ID or unsigned header. The exchange mechanism follows #2890; no new dependency on `requested_subject` impersonation.
 - Q: Optional gateway-side authorization? → **The BFF CAS adapter** (#2892, #2909), the same path AgentGateway uses for MCP, instead of the OpenFGA bridge.
+
+### Session 2026-10-14
+
+- Q: What exactly are we building? → **Integration code in existing CAIPE components, not a gateway or a new service.** See [What CAIPE builds](#what-caipe-builds).
+- Q: How is it deployed? → **Inside the existing images and charts.** The gateway is operator-run and reached by URL; CAIPE ships no gateway chart or Compose service. See [plan.md](./plan.md#deployment).
+- Q: Does the Helm chart need changes to inject the environment variables? → **Templates: no. Values: yes.** Subcharts already pass arbitrary `config`/`env` keys and an LLM secret into pods. Add one `global.llmGateway` block so the setting is declared once (FR-002, FR-020). See [plan.md](./plan.md#helm-and-compose).
+- Q: Which language, and why? → **Python for the data plane, TypeScript for the control plane.** Each lands where its choke point already lives: `llm_wrapper.build_chat_model` (FR-003) and the BFF that owns Keycloak admin, credentials and CAS. See [plan.md](./plan.md#technical-context).
+- Q: Metrics, logs and traces? → **All three, on top of existing telemetry** (FR-009, FR-021, FR-022). Unbounded user IDs go to traces and logs, never metric labels.
 
 ## User Journeys *(mandatory)*
 
@@ -160,6 +182,7 @@ flowchart LR
 ### Wire ①
 - **FR-001**: Agents MUST reach the gateway via the OpenAI chat-completions protocol (`openai-compatible` provider), including streaming and tool calls.
 - **FR-002**: The gateway endpoint MUST be one deployment-wide setting. Swapping gateways MUST NOT require agent changes.
+- **FR-020**: The gateway endpoint MUST use its own setting, `LLM_GATEWAY_BASE_URL`, separate from `OPENAI_COMPATIBLE_BASE_URL`, so a direct `openai-compatible` provider (for example a self-hosted model server) keeps working with the switch off (FR-018).
 - **FR-003**: With the switch on, every in-scope path MUST send `llm_models.model_id` to the gateway regardless of the stored or requested provider. This is enforced inside `llm_wrapper.build_chat_model`, not by each caller.
 
 ### Identity ②
@@ -170,7 +193,10 @@ flowchart LR
 
 ### Attribution ③
 - **FR-008**: Calls MUST set the OpenAI `user` field to `sub`, and send `x-caipe-conversation-id` and W3C `traceparent`.
-- **FR-009**: CAIPE MUST emit OTel GenAI metrics labelled with user, agent, team and caller kind.
+- **FR-009**: CAIPE MUST emit LLM call metrics (count, latency, tokens, budget rejections, gateway failures, token-cache hits) labelled with agent, team, model, caller kind and outcome. Metric labels MUST NOT include user IDs (unbounded cardinality); per-user usage comes from the gateway (`usage.read`), traces and logs. Metrics extend the existing dynamic-agents Prometheus metrics (`da_llm_*`) and use OTel GenAI semantic-convention names where they exist.
+
+- **FR-021**: Each gateway call, budget rejection, fail-closed error and token-mint failure MUST produce one structured log line with conversation ID, trace ID, agent, team, model, auth mode, status and latency. Logs MUST NOT contain gateway tokens, keys, prompts or completions; the user is logged only as `sub`.
+- **FR-022**: Traces MUST add a gateway-call span (OTel GenAI attributes, including `gen_ai.request.model` and token usage, plus `caipe.agent_id`, `caipe.team_id`, `caipe.auth_mode`) and a token-acquisition span (cache hit or miss) under the existing turn trace. The `traceparent` sent in FR-008 MUST be the gateway-call span's context, so gateway traces join CAIPE traces. Tracing stays best-effort and never blocks a call.
 
 ### Authorization
 - **FR-010**: Dynamic agents MUST check the OpenFGA relations `agent#can_use` and `llm_model#can_read` through the CAS access API (#2889; agent action `use`) once per turn per (user, agent, model), before the first LLM call. A gateway with ext_authz MAY also ask the BFF CAS adapter (#2909).

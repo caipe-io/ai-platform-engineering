@@ -27,7 +27,7 @@ flowchart LR
 | Setting | Default | Meaning |
 |---|---|---|
 | `LLM_GATEWAY_ENABLED` | `false` | Global routing switch. `false` uses direct-provider configuration and bypasses the gateway even when configured and reachable; `true` routes migrated paths through the gateway and fails closed on gateway failure. |
-| `OPENAI_COMPATIBLE_BASE_URL` | — | Gateway endpoint (from `llm_wrapper`). |
+| `LLM_GATEWAY_BASE_URL` | — | Gateway endpoint. Separate from `OPENAI_COMPATIBLE_BASE_URL`, which stays the direct-provider setting (FR-020). |
 | `LLM_GATEWAY_AUTH` | `jwt` | `jwt` (gateway token) · `key` (per-agent gateway key). A gateway property, independent of the adapter. |
 | `LLM_GATEWAY_AUDIENCE` | `llm-gateway` | `aud` of gateway tokens. The gateway must expect the same value. |
 | `LLM_GATEWAY_ADAPTER` | `none` | Gateway management integration: `litellm` · `agentgateway` · `kong` · `agentrouter` · `none`. `none` disables management integration, not gateway routing (see [adapter contract](./contracts/gateway-adapter.md)). |

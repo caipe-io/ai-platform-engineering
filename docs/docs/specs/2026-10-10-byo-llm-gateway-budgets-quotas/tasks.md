@@ -31,10 +31,13 @@ Depends on #1753 (JWT-only identity in dynamic agents) and S1. Complete identity
   - Calls admitted before the transfer may complete against the previous team's budget.
 
 - [ ] **T111** Verify the global switch on paths 1–3: with a configured, reachable gateway and routing disabled, direct-provider calls succeed and zero inference requests reach the gateway. With routing enabled, a gateway outage fails closed without direct-provider fallback.
+- [ ] **T112** Helm `global.llmGateway` block rendered into `dynamic-agents` and `caipe-ui`, with `helm template` tests; matching commented keys in `.env.example`. Add `LLM_GATEWAY_BASE_URL` (FR-020).
 
 ## Phase 2: errors and telemetry
 - [ ] **T201** `LLMQuotaExceeded` mapping (④) with declarative gateway-limit rules and operator configuration for adapter `none` (no default). Test confirmed gateway limits, forwarded provider quota errors containing "budget"/"quota", ambiguous 402/429 responses and missing rules; only confirmed gateway limits receive budget-specific classification and advice.
-- [ ] **T202** OTel GenAI metrics labelled with user, agent, team and caller kind.
+- [ ] **T202** Metrics (FR-009): extend `da_llm_*` with team, caller kind and outcome; add budget-rejection, gateway-failure and token-cache counters. No user label.
+- [ ] **T203** Structured logs (FR-021) for gateway calls, budget rejections, fail-closed and token-mint failures; test that no token, key or prompt is logged.
+- [ ] **T204** Traces (FR-022): gateway-call and token-acquisition spans; `traceparent` carries the gateway-call span. Measure the added hop for SC-006.
 
 ## Phase 3: control plane
 - [ ] **T301** `LlmGatewayAdapter` interface + `none` adapter.
@@ -48,7 +51,7 @@ Depends on #1753 (JWT-only identity in dynamic agents) and S1. Complete identity
   - Verify that cached responses cannot cross users, agents, teams, operations, reporting windows or gateway configurations, including identical IDs across principal types. Verify that a caller whose access has been revoked is denied even when the requested data is cached, and that cache entries expire.
 
 ## Phase 4: RAG
-- [ ] **T401** Embeddings through the gateway (same model id only).
+- [ ] **T401** Embeddings through the gateway (same model id only); render `global.llmGateway` into the RAG charts.
 - [ ] **T402** Ontology agent through `llm_wrapper` + the gateway.
 
 - [ ] **T403** Extend the global-switch tests to embeddings and the ontology agent: disabled mode succeeds through direct providers with zero gateway inference requests; enabled mode fails closed on gateway outage.
