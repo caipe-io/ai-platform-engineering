@@ -100,6 +100,43 @@ def test_ingests_batches_and_reads_filtered_events(tmp_path: Path) -> None:
         assert body["records"][0]["correlation_id"] == "corr-1"
 
 
+@pytest.mark.parametrize(
+    ("filters", "expected"),
+    [
+        ({"decision_id": "decision-1"}, 1),
+        ({"subject_ref": "user:test-user", "resource_ref": "tool:example/list"}, 1),
+        ({"decision_id": "decision-1", "subject_ref": "user:other-user"}, 0),
+    ],
+)
+def test_filters_cas_evidence_by_exact_reference(tmp_path: Path, filters: dict[str, str], expected: int) -> None:
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        events = [
+            {
+                "ts": "2026-10-13T12:00:00Z",
+                "type": "cas_decision",
+                "outcome": "deny",
+                "subject_ref": f"user:{subject}",
+                "resource_ref": "tool:example/list",
+                "decision_id": f"decision-{index}",
+                "failed_gate": "caller_tool",
+                "gateway_policy": "Caller must can_call the tool.",
+                "gateway_checks": [{"gate": "caller_tool", "subject_ref": f"user:{subject}", "relation": "can_call", "resource_ref": "tool:example/list", "decision": "DENY", "reason": "NO_CAPABILITY"}],
+            }
+            for index, subject in enumerate(("test-user", "other-user"), start=1)
+        ]
+        assert client.post("/v1/audit/events", json={"events": events}).status_code == 202
+        _wait_for_flushed(client, 2)
+        response = client.get("/v1/audit/events", params={
+            "since": "2026-10-13T11:00:00Z", "until": "2026-10-13T13:00:00Z", **filters,
+        })
+        assert response.status_code == 200
+        assert response.json()["total"] == expected
+        if expected:
+            assert response.json()["records"][0]["failed_gate"] == "caller_tool"
+            assert response.json()["records"][0]["gateway_checks"][0]["relation"] == "can_call"
+            assert response.json()["records"][0]["gateway_policy"] == "Caller must can_call the tool."
+
+
 def test_readyz_fails_fast_once_shutdown_begins(tmp_path: Path) -> None:
     app = create_app(_settings(tmp_path, flush_batch_size=10, flush_interval_seconds=10))
     with TestClient(app) as client:
@@ -332,9 +369,10 @@ def test_s3_store_writes_and_reads_parquet_objects(monkeypatch) -> None:
                 "component": "admin_ui",
                 "outcome": "allow",
                 "correlation_id": "corr-1",
-                "subject_hash": "sha256:alice",
-                "subject_ref": "user:alice",
-                "actor_ref": "user:alice",
+                "subject_hash": "sha256:test-user",
+                "subject_ref": "user:test-user",
+                "actor_ref": "user:test-user",
+                "decision_id": "test-decision",
             }
         ]
     )
@@ -351,13 +389,16 @@ def test_s3_store_writes_and_reads_parquet_objects(monkeypatch) -> None:
             until=datetime(2026, 6, 20, 2, 0, tzinfo=timezone.utc),
             limit=10,
             outcome="allow",
+            decision_id="test-decision",
+            subject_ref="user:test-user",
         )
     )
 
     assert result.total == 1
     assert result.records[0]["correlation_id"] == "corr-1"
-    assert result.records[0]["subject_ref"] == "user:alice"
-    assert result.records[0]["actor_ref"] == "user:alice"
+    assert result.records[0]["subject_ref"] == "user:test-user"
+    assert result.records[0]["actor_ref"] == "user:test-user"
+    assert result.records[0]["decision_id"] == "test-decision"
 
 
 def test_s3_query_scopes_listing_and_fetch_to_date_range(monkeypatch) -> None:
@@ -817,9 +858,10 @@ def test_get_storage_local(tmp_path: Path) -> None:
     # Use local_retention_days=90 so the pre-seeded file is not purged on startup
     app = create_app(_settings(tmp_path, local_retention_days=90))
     # Write a real file into the store directory so audit_bytes > 0
-    day_dir = tmp_path / "2026" / "06" / "20"
+    today = datetime.now(timezone.utc)
+    day_dir = tmp_path / today.strftime("%Y/%m/%d")
     day_dir.mkdir(parents=True)
-    (day_dir / "audit-20260620T000000Z-abc.ndjson").write_bytes(b"x" * 512)
+    (day_dir / f"audit-{today.strftime('%Y%m%dT%H%M%SZ')}-abc.ndjson").write_bytes(b"x" * 512)
     with TestClient(app) as client:
         response = client.get("/v1/audit/storage")
     assert response.status_code == 200

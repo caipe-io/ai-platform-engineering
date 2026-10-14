@@ -78,9 +78,14 @@ it("asks all four gates through real CAS and emits one aggregate decision", asyn
     { user: "user:test-user", relation: "can_call", object: "tool:example/get_status" },
   ]);
   expect(writeAudit).toHaveBeenCalledTimes(1);
+  expect(result.checks.map((check: { gate: string }) => check.gate)).toEqual(["context", "gateway", "agent", "agent_tool", "caller_tool"]);
+  expect(result.checks.slice(1).map((check: { subject_ref: string; relation: string; resource_ref: string }) => ({
+    user: check.subject_ref, relation: check.relation, object: check.resource_ref,
+  }))).toEqual(graphCalls);
   expect(writeAudit).toHaveBeenCalledWith(expect.objectContaining({
     subject_ref: "user:test-user", actor_ref: "workload:agentgateway", agent_ref: "agent:example-agent",
     resource_ref: "tool:example/get_status", decision_id: result.decision_id,
+    gateway_checks: result.checks, gateway_policy: result.policy_rule,
   }));
   expect(JSON.stringify(writeAudit.mock.calls)).not.toContain(secret);
   expect(response.headers.get("cache-control")).toBe("no-store");
@@ -96,8 +101,22 @@ it.each([
   graphAllows = (key) => !(key.object.startsWith(object) && (!subject || key.user === subject));
   const response = await POST(request());
   expect(response.status).toBe(403);
-  expect(await response.json()).toMatchObject({ decision: "DENY", failed_gate: gate, retriable: false });
+  const result = await response.json();
+  expect(result).toMatchObject({ decision: "DENY", failed_gate: gate, retriable: false });
+  expect(result.checks.at(-1)).toMatchObject({ gate, decision: "DENY", reason: "NO_CAPABILITY" });
   expect(writeAudit).toHaveBeenCalledTimes(1);
+});
+
+it("records a caller-tool stop without inventing later checks or a granting team", async () => {
+  graphAllows = (key) => key.user !== "user:test-user" || !key.object.startsWith("tool:");
+  const result = await (await POST(request())).json();
+  expect(result.checks.map((check: { gate: string; decision: string }) => [check.gate, check.decision])).toEqual([
+    ["context", "ALLOW"], ["gateway", "ALLOW"], ["agent", "ALLOW"], ["agent_tool", "ALLOW"],
+    ["caller_tool", "DENY"], ["caller_tool", "DENY"],
+  ]);
+  expect(result.checks.slice(-2).map((check: { resource_ref: string }) => check.resource_ref)).toEqual(["tool:example/get_status", "tool:example/*"]);
+  expect(result.policy_rule).toContain("AND");
+  expect(result.checks.some((check: Record<string, unknown>) => "grant" in check || "team" in check)).toBe(false);
 });
 
 it("requires configured server access independently of tool access", async () => {
@@ -110,7 +129,10 @@ it("requires configured server access independently of tool access", async () =>
 
 it("uses exact/wildcard tool grants for agent and caller independently", async () => {
   graphAllows = (key) => !key.object.endsWith("/get_status");
-  expect((await POST(request())).status).toBe(200);
+  const response = await POST(request());
+  expect(response.status).toBe(200);
+  const result = await response.json();
+  expect(result.checks.filter((check: { gate: string }) => check.gate === "agent_tool").map((check: { decision: string }) => check.decision)).toEqual(["DENY", "ALLOW"]);
   expect(graphCalls.filter((key) => key.object.endsWith("/*")).map((key) => key.user))
     .toEqual(["agent:example-agent", "user:test-user"]);
 });
@@ -121,6 +143,10 @@ it("never tries wildcard or another authority after a graph outage", async () =>
   expect(response.status).toBe(503);
   expect(await response.json()).toMatchObject({ reason: "AUTHZ_UNAVAILABLE", retriable: true });
   expect(global.fetch).toHaveBeenCalledTimes(1);
+  expect(writeAudit.mock.calls[0][0].gateway_checks).toEqual([
+    expect.objectContaining({ gate: "context", decision: "ALLOW" }),
+    expect.objectContaining({ gate: "gateway", decision: "DENY", reason: "AUTHZ_UNAVAILABLE" }),
+  ]);
 });
 
 it("does not reuse a prior ALLOW after revocation", async () => {
@@ -199,6 +225,8 @@ it("never interprets a malformed OpenFGA reply as permission", async () => {
 it("rejects a tampered signature", async () => {
   expect((await POST(request(undefined, { "x-caipe-agent-context-signature": "0".repeat(64) }))).status).toBe(403);
   expect(graphCalls).toHaveLength(0);
+  expect(writeAudit.mock.calls[0][0].gateway_checks).toEqual([expect.objectContaining({ gate: "context", decision: "DENY" })]);
+  expect(writeAudit.mock.calls[0][0].pdp).toBe("local");
 });
 
 it.each(["", "{", "null", "[]", '{}', JSON.stringify({ jsonrpc: "2.0", method: "tools/call", params: {} }),
@@ -255,4 +283,6 @@ it("removes individual decision receipts from aggregated allow audit rows", asyn
   flushAllowRollups();
   expect(writeAudit.mock.calls[0][0]).toMatchObject({ count: 1, agent_ref: "agent:example-agent" });
   expect(writeAudit.mock.calls[0][0]).not.toHaveProperty("decision_id");
+  expect(writeAudit.mock.calls[0][0]).not.toHaveProperty("gateway_checks");
+  expect(writeAudit.mock.calls[0][0]).not.toHaveProperty("gateway_policy");
 });

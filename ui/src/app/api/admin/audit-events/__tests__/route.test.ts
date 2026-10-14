@@ -338,6 +338,49 @@ beforeEach(() => {
 });
 
 describe("GET /api/admin/audit-events", () => {
+  it("preserves safe gateway evidence and forwards exact principal/resource/request filters", async () => {
+    global.fetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({ records: [{
+      ts: "2026-10-13T12:00:00Z", type: "cas_decision", outcome: "deny", tenant_id: "default",
+      subject_ref: "user:test-user", resource_ref: "tool:example/list", actor_ref: "workload:agentgateway",
+      correlation_id: "request-1", decision_id: "decision-1", failed_gate: "caller_tool",
+      gateway_operation: "tools/call", agent_ref: "agent:example", access_token: "must-not-be-returned",
+      gateway_policy: "Caller and agent must independently have access.",
+      gateway_checks: [{ gate: "caller_tool", subject_ref: "user:test-user", relation: "can_call", resource_ref: "tool:example/list", decision: "DENY", reason: "NO_CAPABILITY", access_token: "nested-token-must-not-be-returned" }],
+    }], total: 1 })));
+    const { GET } = await import("../route");
+    const response = await GET(request("/api/admin/audit-events?type=cas_decision&decision_id=decision-1&correlation_id=request-1&subject_ref=user%3Atest-user&resource_ref=tool%3Aexample%2Flist"));
+    const body = await response.json();
+    expect(body.records[0]).toMatchObject({ decision_id: "decision-1", failed_gate: "caller_tool", gateway_operation: "tools/call", agent_ref: "agent:example" });
+    expect(body.records[0]).not.toHaveProperty("access_token");
+    expect(body.records[0].gateway_checks).toEqual([{ gate: "caller_tool", subject_ref: "user:test-user", relation: "can_call", resource_ref: "tool:example/list", decision: "DENY", reason: "NO_CAPABILITY" }]);
+    expect(body.records[0].gateway_policy).toContain("independently");
+    const forwarded = new URL((global.fetch as jest.Mock).mock.calls[0][0]).searchParams;
+    expect(Object.fromEntries(forwarded)).toMatchObject({ decision_id: "decision-1", correlation_id: "request-1", subject_ref: "user:test-user", resource_ref: "tool:example/list" });
+    expect(mockRequireRbacPermission).toHaveBeenCalledWith(expect.anything(), "admin_ui", "audit.view");
+  });
+
+  it("does not query decision evidence when audit permission is denied", async () => {
+    mockRequireRbacPermission.mockRejectedValueOnce(new Error("Forbidden"));
+    const { GET } = await import("../route");
+    await expect(GET(request("/api/admin/audit-events?type=cas_decision"))).rejects.toThrow("Forbidden");
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([{ value: "invalid" }, { value: [null] }, { value: [{ gate: "unexpected", subject_ref: "user:test-user", decision: "ALLOW", reason: "OK" }] }])("does not render malformed chain evidence %j", async ({ value: gateway_checks }) => {
+    global.fetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({ records: [{ ts: "2026-10-14T12:00:00Z", type: "cas_decision", outcome: "deny", tenant_id: "default", correlation_id: "request-1", gateway_checks }], total: 1 })));
+    const { GET } = await import("../route");
+    const response = await GET(request("/api/admin/audit-events?type=cas_decision"));
+    expect(response.status).toBe(200);
+    expect((await response.json()).records[0]).not.toHaveProperty("gateway_checks");
+  });
+
+  it("does not query decision evidence without a session", async () => {
+    mockGetServerSession.mockResolvedValueOnce(null);
+    const { GET } = await import("../route");
+    await expect(GET(request("/api/admin/audit-events?type=cas_decision"))).rejects.toMatchObject({ status: 401 });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   it("returns all audit event rows by default", async () => {
     const { GET } = await import("../route");
 

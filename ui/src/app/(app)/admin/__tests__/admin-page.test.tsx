@@ -1061,6 +1061,7 @@ describe('Admin Dashboard Page', () => {
     });
 
     it.each([
+      ["auditTab=decisions", "Access decisions", "unified-audit-tab"],
       ["auditTab=rbac", "RBAC", "unified-audit-tab"],
       ["auditTab=chat", "Chat", "audit-logs-tab"],
       ["auditTab=self-check", "Self-check", "rbac-self-check-tab"],

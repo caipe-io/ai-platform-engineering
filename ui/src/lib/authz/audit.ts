@@ -27,7 +27,7 @@ import type {
   Subject,
   TrustedAuthorizeContext,
 } from "./contract";
-import type { GatewayRequest, GatewayResult } from "./gateway-contract";
+import type { GatewayCheck, GatewayRequest, GatewayResult } from "./gateway-contract";
 
 const SUBJECT_SALT = process.env.AUDIT_SUBJECT_SALT ?? "caipe-098-audit";
 
@@ -54,7 +54,7 @@ export interface CasDecisionEvent {
   resource_id: string;
   workflow_run_id?: string;
   decision_via?: string;
-  pdp: "openfga";
+  pdp: "openfga" | "local";
   source: "cas";
   trace_id?: string;
   span_id?: string;
@@ -63,6 +63,8 @@ export interface CasDecisionEvent {
   agent_ref?: string;
   failed_gate?: string;
   decision_id?: string;
+  gateway_checks?: GatewayCheck[];
+  gateway_policy?: string;
 }
 
 /**
@@ -219,6 +221,8 @@ export function flushAllowRollups(): void {
   for (const entry of pending) {
     const sample = { ...entry.sample };
     delete sample.decision_id; // A rollup is not one request's decision receipt.
+    delete sample.gateway_checks; // A sample chain cannot explain every aggregated check.
+    delete sample.gateway_policy;
     writeAuditEvent({
       ...sample,
       audit_event_id: randomUUID(),
@@ -270,8 +274,10 @@ export function emitGatewayDecisionAudit(req: GatewayRequest, result: GatewayRes
     { type: "mcp_server", id: req.serverId };
   const event: CasDecisionEvent = {
     ...buildDecisionEvent(req.caller, resource, "call", result, ctx),
+    pdp: result.checks.some((check) => check.relation) ? "openfga" : "local",
     actor_ref: "workload:agentgateway", gateway_operation: req.operation,
-    decision_id: result.decision_id, ...(result.failed_gate ? { failed_gate: result.failed_gate } : {}),
+    decision_id: result.decision_id, gateway_checks: result.checks, gateway_policy: result.policy_rule,
+    ...(result.failed_gate ? { failed_gate: result.failed_gate } : {}),
     ...(result.agent_id ? { agent_ref: `agent:${result.agent_id}` } : {}),
   };
   if (event.outcome === "allow" && !fullFidelityAllows()) recordAllow(event);

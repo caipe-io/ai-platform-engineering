@@ -82,7 +82,42 @@ public self-check API, where HTTP 200 can legitimately contain a DENY result.
   caller, verified agent and gateway workload separately, never tool arguments,
   tokens or signatures. Denials are individual events; routine ALLOWs are rolled
   up unless full-fidelity audit is enabled. Delivery remains best-effort; this is
-  not yet a complete forensic record or the planned Admin decision view.
+  not a complete forensic record.
+
+## Inspect recorded decisions
+
+Open **Admin → Security → Audit → Access decisions**, or follow **View recorded
+access decisions** from a user's Access section.
+
+- Search by canonical caller principal, resource reference, decision ID or correlation ID.
+  Filters are exact matches. Choose the time range containing the request.
+- Expand a record to see the recorded caller, checking workload, agent, operation,
+  failed check and reason. A negative check does not identify a particular missing team/grant.
+- New individual gateway records include the policy wording captured at decision time
+  and the executed check sequence: context, caller-to-gateway, optional server access,
+  caller-to-agent, agent-to-tool and caller-to-tool/Search. Each relationship check
+  records its actual subject, relation, resource and answer. Evaluation stops at the
+  failed gate; the UI never invents later checks or replays current permissions.
+- Exact and server-wide tool grants are alternatives. An exact check returning no
+  match is not a denied request if its wildcard fallback passes. Older records without
+  a sequence and rollups are explicitly incomplete; even a one-count rollup has no chain.
+- **Authorization unavailable** is a blocked evaluation, not proof of missing permission.
+  **Execution context rejected** does not distinguish missing, expired or incorrectly bound context.
+- Colours reinforce the labels: green for passed checks, red for stopping denials/rejections,
+  amber for unavailable evaluations, blue for summaries. An intermediate no-match stays neutral.
+- Within each check, purple marks the principal, cyan the target resource, and a neutral
+  chip the action/relation. These are field roles, separate from the permission outcome.
+- Policy wording is a snapshot maintained beside CAS's existing rules, not an executable
+  policy language or an OpenFGA proof of the particular team/inherited grant involved.
+- An allowed check does not prove that the downstream tool ran. Even a one-count
+  allow rollup is not an individual request receipt. Catalog lookups are not blocked attempts.
+- This is historical, best-effort producer evidence, not a current permission check.
+  Missing rows are inconclusive. Audit-read failures are shown explicitly.
+
+Upgrade the BFF/UI and audit-service together for principal and decision-ID filters;
+no stored-data migration is required. Authentication failures before CAS and downstream
+credential/tool failures are not fully covered by this first view. Cross-boundary correlation
+and trusted audit ingestion remain follow-up requirements in #2828 and #2816.
 
 Configuration/header details live in the
 [BFF authorization README](https://github.com/caipe-io/ai-platform-engineering/blob/prebuild/feat/cas-gateway-authz/ui/src/lib/authz/README.md#gateway-authorization-foundation).

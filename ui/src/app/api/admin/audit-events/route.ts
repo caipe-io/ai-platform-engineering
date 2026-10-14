@@ -1,5 +1,6 @@
 import { ApiError, requireRbacPermission, withErrorHandler } from "@/lib/api-middleware";
 import { authOptions } from "@/lib/auth-config";
+import type { GatewayCheck } from "@/lib/authz";
 import type {
   AuditEventType,
   UnifiedAuditEvent,
@@ -59,6 +60,12 @@ interface AuditEventDocument {
   resource_id?: string;
   workflow_run_id?: string;
   decision_via?: string;
+  decision_id?: string;
+  failed_gate?: string;
+  gateway_operation?: string;
+  agent_ref?: string;
+  gateway_checks?: unknown;
+  gateway_policy?: string;
   pdp?: string;
   source?: string;
   source_system?: string;
@@ -372,6 +379,24 @@ function toIsoOrUndefined(value: Date | string | undefined): string | undefined 
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
+function safeGatewayChecks(value: unknown): GatewayCheck[] | undefined {
+  if (!Array.isArray(value) || value.length > 32) return undefined;
+  const checks: GatewayCheck[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") return undefined;
+    const { gate, subject_ref, relation, resource_ref, decision, reason } = item;
+    if (!["context", "gateway", "server", "agent", "agent_tool", "caller_tool"].includes(gate) ||
+      typeof subject_ref !== "string" || !["ALLOW", "DENY"].includes(decision) ||
+      !["OK", "NO_CAPABILITY", "AUTHZ_UNAVAILABLE", "NOT_AUTHENTICATED", "INVALID_REQUEST"].includes(reason) ||
+      (relation !== undefined && !["can_call", "can_use", "can_invoke", "can_search"].includes(relation)) ||
+      (resource_ref !== undefined && typeof resource_ref !== "string")) return undefined;
+    // Nested audit payloads are allowlisted too; never return producer extras.
+    checks.push({ gate, subject_ref, decision, reason,
+      ...(relation ? { relation } : {}), ...(resource_ref ? { resource_ref } : {}) });
+  }
+  return checks;
+}
+
 function documentToEvent(doc: AuditEventDocument): UnifiedAuditEvent {
   const ts =
     doc.ts instanceof Date
@@ -400,6 +425,12 @@ function documentToEvent(doc: AuditEventDocument): UnifiedAuditEvent {
     resource_id: doc.resource_id,
     workflow_run_id: doc.workflow_run_id,
     decision_via: doc.decision_via,
+    decision_id: doc.decision_id,
+    failed_gate: doc.failed_gate,
+    gateway_operation: doc.gateway_operation,
+    agent_ref: doc.agent_ref,
+    gateway_checks: safeGatewayChecks(doc.gateway_checks),
+    gateway_policy: typeof doc.gateway_policy === "string" ? doc.gateway_policy : undefined,
     pdp: doc.pdp,
     source: normalizeAuditSource(doc.source, doc.source_system),
     actor_hash: doc.actor_hash,
@@ -504,6 +535,9 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
   const userEmail = url.searchParams.get("user_email")?.trim();
   const component = url.searchParams.get("component")?.trim();
   const correlationId = url.searchParams.get("correlation_id")?.trim();
+  const decisionId = url.searchParams.get("decision_id")?.trim();
+  const subjectRef = url.searchParams.get("subject_ref")?.trim();
+  const resourceRef = url.searchParams.get("resource_ref")?.trim();
 
   if (typeParam && !VALID_TYPES.includes(typeParam)) {
     throw new ApiError(
@@ -550,6 +584,9 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
   if (userEmail) serviceParams.set("user_email", userEmail);
   if (component) serviceParams.set("component", component);
   if (correlationId) serviceParams.set("correlation_id", correlationId);
+  if (decisionId) serviceParams.set("decision_id", decisionId);
+  if (subjectRef) serviceParams.set("subject_ref", subjectRef);
+  if (resourceRef) serviceParams.set("resource_ref", resourceRef);
 
   const { records: docs, total, warning } = await queryAuditService(serviceParams);
   const offset = (page - 1) * limit;

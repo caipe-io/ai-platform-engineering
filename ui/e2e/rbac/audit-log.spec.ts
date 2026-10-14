@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import JSZip from "jszip";
+import type { UnifiedAuditEvent } from "@/lib/rbac/types";
 
 import {
   fulfillJson,
@@ -17,6 +18,7 @@ type AuditRecord = {
   tenant_id: string;
   subject_hash: string;
   actor_hash?: string;
+  actor_ref?: string;
   actor_display?: string;
   subject_display?: string;
   user_email?: string;
@@ -34,6 +36,14 @@ type AuditRecord = {
   agent_name?: string;
   tool_name?: string;
   duration_ms?: number;
+  subject_ref?: string;
+  decision_id?: string;
+  failed_gate?: string;
+  agent_ref?: string;
+  gateway_operation?: string;
+  count?: number;
+  gateway_policy?: string;
+  gateway_checks?: UnifiedAuditEvent["gateway_checks"];
 };
 
 function baseAuditRecords(): AuditRecord[] {
@@ -116,6 +126,10 @@ function filterAuditRecords(records: AuditRecord[], url: URL): AuditRecord[] {
   if (outcome) filtered = filtered.filter((record) => record.outcome === outcome);
   if (userEmail) filtered = filtered.filter((record) => record.user_email === userEmail);
   if (agentName) filtered = filtered.filter((record) => record.agent_name === agentName);
+  for (const field of ["subject_ref", "decision_id", "correlation_id", "resource_ref"] as const) {
+    const expected = url.searchParams.get(field);
+    if (expected) filtered = filtered.filter((record) => record[field] === expected);
+  }
   return filtered;
 }
 
@@ -259,6 +273,69 @@ test.describe("audit log — mocked regression", () => {
     expect(initialQuery.searchParams.get("time_resolution")).toBe("minute");
     expect(initialQuery.searchParams.get("page")).toBe("1");
     expect(initialQuery.searchParams.get("limit")).toBe("30");
+  });
+
+  test("access decisions separate permission denial, unavailable checks and one-count rollups", async ({ page }, testInfo) => {
+    const queries: URL[] = [];
+    const base: AuditRecord = {
+      ts: new Date().toISOString(), type: "cas_decision", tenant_id: "default", subject_hash: "sha256:test-user",
+      subject_ref: "user:test-user", subject_display: "test-user@example.com", action: "call", outcome: "deny",
+      source: "cas", component: "cas", resource_ref: "tool:example/list", correlation_id: "request-1",
+      reason_code: "NO_CAPABILITY", decision_id: "decision-1", failed_gate: "caller_tool", agent_ref: "agent:example",
+      gateway_operation: "tools/call",
+      actor_ref: "workload:agentgateway",
+      gateway_policy: "Caller can use the agent AND agent can call the tool AND caller can call the tool.",
+      gateway_checks: [
+        { gate: "context", subject_ref: "user:test-user", decision: "ALLOW", reason: "OK" },
+        { gate: "gateway", subject_ref: "user:test-user", relation: "can_call", resource_ref: "mcp_gateway:list", decision: "ALLOW", reason: "OK" },
+        { gate: "agent", subject_ref: "user:test-user", relation: "can_use", resource_ref: "agent:example", decision: "ALLOW", reason: "OK" },
+        { gate: "agent_tool", subject_ref: "agent:example", relation: "can_call", resource_ref: "tool:example/list", decision: "ALLOW", reason: "OK" },
+        { gate: "caller_tool", subject_ref: "user:test-user", relation: "can_call", resource_ref: "tool:example/list", decision: "DENY", reason: "NO_CAPABILITY" },
+      ],
+    };
+    await installMockedRbacApp(page, { isAdmin: true, handlers: [makeAuditConfigHandler({ backend: "service", readsAvailable: true, storageBackend: "s3", storageLabel: "Storage: audit-service → S3" }), makeAuditEventsHandler([
+      base,
+      { ...base, correlation_id: "request-2", decision_id: "decision-2", reason_code: "AUTHZ_UNAVAILABLE", gateway_checks: base.gateway_checks!.map((check, index) => index === 4 ? { ...check, reason: "AUTHZ_UNAVAILABLE" } : check) },
+      { ...base, correlation_id: "rollup:example", decision_id: undefined, failed_gate: undefined, outcome: "allow", reason_code: "OK", count: 1 },
+    ], queries)] });
+    await page.goto("/admin/security/audit?auditTab=decisions&subject_ref=user%3Atest-user");
+    await expect(page.getByText("3 events found")).toBeVisible();
+    await expect(page.getByText("Authorization unavailable: call tool example/list")).toBeVisible();
+    await expect(page.getByText("Allowed (rollup): call tool example/list")).toBeVisible();
+    await expect(page.getByText("Authorization unavailable", { exact: true })).toHaveClass(/bg-amber-500\/10/);
+    await expect(page.getByText("Allowed (rollup)", { exact: true })).toHaveClass(/bg-sky-500\/10/);
+    await page.getByText("Denied: call tool example/list").click();
+    await expect(page.getByText("decision-1", { exact: true })).toBeVisible();
+    await expect(page.getByText(/does not identify a missing team or grant/)).toBeVisible();
+    await expect(page.getByText(/Starting principal:/).locator("..")).toHaveText(/user:test-user → agent:example → tool:example\/list/);
+    await expect(page.getByText(/Rule at the time:/).locator("..")).toContainText("AND");
+    await expect(page.getByText(/Stopped at Caller/)).toBeVisible();
+    const checks = page.getByRole("region", { name: "Recorded access chain" }).getByRole("listitem");
+    await expect(checks.first()).toHaveClass(/bg-green-500\/10/);
+    await expect(checks.last()).toHaveClass(/bg-red-500\/10/);
+    await expect(checks.last()).toContainText("Denied");
+    await expect(checks.last().getByLabel("Principal: user:test-user", { exact: true })).toHaveClass(/bg-violet-500\/15/);
+    await expect(checks.last().getByLabel("Resource: tool:example/list", { exact: true })).toHaveClass(/bg-cyan-500\/10/);
+    await expect(checks.last().getByLabel("Action / relation: can_call", { exact: true })).toHaveClass(/bg-muted\/50/);
+    await page.getByLabel("Decision ID", { exact: true }).fill("decision-1");
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await expect(page.getByText("1 event found")).toBeVisible();
+    expect(queries.at(-1)?.searchParams.get("decision_id")).toBe("decision-1");
+    expect(queries.at(-1)?.searchParams.get("subject_ref")).toBe("user:test-user");
+    await expect(page.getByText(/Authentication failures before CAS/)).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("access-decisions-preview.png"), fullPage: true });
+    await page.getByText(/does not identify a missing team or grant/).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath("access-decisions-detail.png") });
+    const chain = page.getByRole("region", { name: "Recorded access chain" });
+    await chain.screenshot({ path: testInfo.outputPath("access-decisions-chain-dark.png") });
+    const darkText = await checks.first().evaluate((element) => getComputedStyle(element).color);
+    await page.evaluate(() => localStorage.setItem("theme", "light"));
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await page.getByText("Denied: call tool example/list").click();
+    expect(await checks.first().evaluate((element) => getComputedStyle(element).color)).not.toBe(darkText);
+    await expect(checks.last()).toContainText("Denied");
+    await chain.screenshot({ path: testInfo.outputPath("access-decisions-chain-light.png") });
   });
 
   test("audit reader sends preset and custom time resolution filters to audit service", async ({
