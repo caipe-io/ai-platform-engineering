@@ -1,6 +1,6 @@
 # Contract ①③④: Agent ↔ Gateway (data plane)
 
-What every agent sends and what every gateway must honour. Agents reach the gateway through the `openai-compatible` provider in `ai_platform_engineering/llm_wrapper/` (`OPENAI_COMPATIBLE_BASE_URL`).
+What every agent sends and what every gateway must honour. Agents reach the gateway through the `openai-compatible` provider in `ai_platform_engineering/llm_wrapper/` pointed at `LLM_GATEWAY_BASE_URL` when the switch is on (FR-020).
 
 ```mermaid
 sequenceDiagram

@@ -12,12 +12,12 @@ How an admin will connect a gateway once the phases in [plan.md](./plan.md) ship
 
 ## 2. Point CAIPE at it
 
-Set these environment variables on dynamic agents and the UI backend. The Helm values keys are defined in phase 1.
+Set these once under `global.llmGateway` in Helm ([plan.md](./plan.md#helm-and-compose)), or in `.env` for Compose.
 
 | Variable | Example |
 |---|---|
 | `LLM_GATEWAY_ENABLED` | `true` |
-| `OPENAI_COMPATIBLE_BASE_URL` | `https://llm-gateway.example.com/v1` |
+| `LLM_GATEWAY_BASE_URL` | `https://llm-gateway.example.com/v1` |
 | `LLM_GATEWAY_AUTH` | `jwt` |
 | `LLM_GATEWAY_AUDIENCE` | `llm-gateway` |
 | `LLM_GATEWAY_ADAPTER` | `litellm` · `agentgateway` · `kong` · `agentrouter` · `none` |
@@ -42,4 +42,4 @@ Keep valid direct-provider configuration and credentials available for the disab
 
 ## 4. Swap gateways
 
-- Change `OPENAI_COMPATIBLE_BASE_URL` and `LLM_GATEWAY_ADAPTER`, then re-run step 3. No agent edits.
+- Change `LLM_GATEWAY_BASE_URL` and `LLM_GATEWAY_ADAPTER`, then re-run step 3. No agent edits.
