@@ -8,7 +8,7 @@
 | | LiteLLM | AgentGateway (`agentgateway.dev`) | Kong AI Gateway | AgentRouter (Envoy AI Gateway) |
 |---|---|---|---|---|
 | ① OpenAI wire | native | OpenAI-compatible LLM backends | `ai-proxy` (OpenAI format) | native; also `/v1/embeddings`, `/anthropic/v1/messages` |
-| ② JWT validation | `enable_jwt_auth`, `user_id_jwt_field`, `team_id_jwt_field` | listener `jwtAuth` (already used for MCP) | `openid-connect` → consumer groups | Envoy Gateway `SecurityPolicy` JWT (JWKS); claims copied to headers |
+| ② JWT validation | `enable_jwt_auth`, `user_id_jwt_field`, `team_id_jwt_field` (enterprise only in 1.92.0; no agent field, see S1) | listener `jwtAuth` (already used for MCP) | `openid-connect` → consumer groups | Envoy Gateway `SecurityPolicy` JWT (JWKS); claims copied to headers |
 | Budgets / quotas | `max_budget`, tpm/rpm per key, user and team | token and $ budget limits keyed on claims | `ai-rate-limiting-advanced` per consumer or group | token limits (not $) keyed on claim headers × model, CEL cost; `QuotaPolicy` per backend |
 | ⑤ Admin API | REST `/key`, `/team`, `/spend` | config / K8s policy | Admin API / decK | none; Kubernetes CRDs only |
 | Usage | `/spend`, Prometheus | OTel | Prometheus / OTel | OTel GenAI metrics, Prometheus |
@@ -143,7 +143,7 @@ sequenceDiagram
   GW-->>DA: completion, or 429/402 budget signal
 ```
 
-## Decision 7 — Who signs: **Keycloak per-agent scope ([K2](#identity-option-legend)), fallback [C1](#identity-option-legend)**
+## Decision 7 — Who signs: **Keycloak per-agent scope ([K2](#identity-option-legend)), fallback [C1](#identity-option-legend)** (confirmed by [S1](#s1-results))
 
 - The signer *attests*. CAIPE (OpenFGA + Mongo) *decides*.
 - The gateway cannot be the signer: it would be vouching to itself.
@@ -179,11 +179,62 @@ sequenceDiagram
   Note over DA,KC: autonomous: owner from a trusted run binding (#2891), exchange mechanism per #2890
 ```
 
-**Spike S1 (gates phase 1)**
-- [ ] Keycloak 26.3 exchange emits the mappers of the requested optional scope.
-- [ ] Autonomous runs get the scope through the mechanism #2890 selects (actor-preserving exchange, or a service token plus a trusted run binding), without depending on `requested_subject` impersonation.
-- [ ] Token issuance latency and admin performance with 1k, 5k and 10k client scopes.
+**Spike S1 (gates phase 1)** — #2938, run 2026-10-14. **Outcome: K2.** C1 stays the fallback.
+- [x] Keycloak 26.3 exchange emits the mappers of the requested optional scope.
+- [ ] Autonomous runs get the scope through the mechanism #2890 selects (actor-preserving exchange, or a service token plus a trusted run binding), without depending on `requested_subject` impersonation. **Blocked on #2890**; re-run when it decides.
+- [x] Token issuance latency and admin performance with 1k, 5k and 10k client scopes.
 - [ ] If any check fails → [C1](#identity-option-legend) (dynamic agents sign; key optionally in Vault or a cloud KMS).
+
+#### S1 results
+
+Setup: Keycloak 26.3.0 (`start-dev`, H2, single node, 4 vCPU), standard token exchange V2, with and without CAIPE's `token-exchange,admin-fine-grained-authz:v1` features. Gateway: AgentGateway v1.1.0 `jwtAuth` against the realm JWKS, mock upstream.
+
+```mermaid
+sequenceDiagram
+  participant DA as Exchanger (dynamic agents)
+  participant KC as Keycloak
+  participant GW as AgentGateway
+  DA->>KC: exchange(subject=user token, scope="llm-gateway llm-agent-X", audience=llm-gateway)
+  KC-->>DA: JWT {sub, act, agent_id, team_id, org, aud=llm-gateway}, 300 s
+  DA->>GW: Bearer JWT
+  GW-->>DA: 200, or 401 / 403
+```
+
+| Check | Result |
+|---|---|
+| Claims | `sub` (user), `agent_id`, `team_id`, `org`, `aud=llm-gateway`, `azp`, TTL 300 s ✓ |
+| `act` | Not emitted by Keycloak. A hardcoded JSON mapper on the shared `llm-gateway` scope adds `{"sub": "service-account-dynamic-agents"}` ✓ |
+| Unassigned agent scope | `400 invalid_scope` (fails closed) ✓ |
+| Two agent scopes in one request | `200` with one arbitrary `agent_id` ✗ |
+| Subject token without the exchanger in `aud` | `403 Client is not within the token audience` |
+| Legacy `token-exchange:v1` feature on | Same results; V2 applies to clients with `standard.token.exchange.enabled` ✓ |
+| Gateway: valid · none · foreign key · tampered claim · wrong `aud` · wrong issuer · no agent scope | 200 · 401 · 401 · 401 · 401 · 401 · 403 (CEL rule) ✓ |
+| Gateway: expired token | Accepted until `exp` + 60 s (validator leeway), then 401 |
+
+Scale (60 exchanges, 30 password logins per row; ms p50 / p95):
+
+| Agent scopes | Exchange | Password login | Create scope | Assign scope |
+|---|---|---|---|---|
+| 2 | 9 / 15 | 101 / 123 | — | — |
+| 1,000 | 11 / 17 | 58 / 97 | 32 / 86 | 40 / 90 |
+| 5,000 | 17 / 27 | 54 / 75 | 18 / 44 | 33 / 65 |
+| 10,000 (default realm cache) | **169 / 221** | **139 / 200** | 12 / 29 | 52 / 98 |
+| 10,000, `--cache-embedded-realms-max-count=50000` | 27 / 37 | 62 / 79 | — | — |
+
+- The 10k cliff is the realm cache's default 10,000-entry limit, not the scope count itself. It slows every login in the realm, not only exchanges. Raising the limit restores it.
+- Numbers are a single dev node on H2. Re-measure on the production database and cache topology before the phase 1 gate.
+
+#### What S1 changes
+
+| Finding | Consequence |
+|---|---|
+| No native `act` | Shared `llm-gateway` scope carries a hardcoded `act` mapper and the gateway audience; only the exchanger client holds it |
+| Multiple agent scopes accepted | The exchanger requests exactly one agent scope and verifies the returned `agent_id`/`team_id` before use or caching |
+| Exchanger must be in the subject token's `aud` | Dynamic agents has no Keycloak client today and user tokens carry `aud=caipe-platform`. Phase 1 adds an exchanger client and its audience to user tokens (or reuses `caipe-platform`) |
+| Realm cache limit | Keycloak values size `cache-embedded-realms-max-count` to the agent count with headroom (50,000 held 10,000 agents) |
+| Gateway clock leeway | A token is usable for TTL + gateway leeway (60 s on AgentGateway). Conformance tests expiry past the leeway |
+| LiteLLM 1.92.0 | JWT auth is enterprise-only and its JWT mapping has user, team and org fields but no agent field. LiteLLM OSS uses key auth (Decision 6) |
+| #2901 per-agent clients | Not reused: they are opt-in, operator-enrolled and use client credentials, so their tokens name the agent, not the user. K2 keeps its own scope per agent |
 
 ## Decision 8 — Data and state
 
