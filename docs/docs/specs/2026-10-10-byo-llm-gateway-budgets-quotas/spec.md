@@ -186,7 +186,7 @@ flowchart LR
 - **FR-003**: With the switch on, every in-scope path MUST send `llm_models.model_id` to the gateway regardless of the stored or requested provider. This is enforced inside `llm_wrapper.build_chat_model`, not by each caller.
 
 ### Identity ②
-- **FR-004**: With `LLM_GATEWAY_AUTH=jwt` (default), every gateway call MUST carry a short-lived JWT (TTL ≤ 5 min) with `sub` (effective principal), `act` (acting service), `agent_id`, `team_id` and `org`, verifiable by the gateway. Identity claims follow CAIPE's canonical identity contract (#2885).
+- **FR-004**: With `LLM_GATEWAY_AUTH=jwt` (default), every gateway call MUST carry a short-lived JWT (TTL ≤ 5 min) with `sub` (effective principal), `act` (acting service), `agent_id`, `team_id` and `org`, verifiable by the gateway. Identity claims follow CAIPE's canonical identity contract (#2885). Each token carries exactly one agent binding; the runtime verifies the returned `agent_id` and `team_id` before use or caching.
 - **FR-005**: With `LLM_GATEWAY_AUTH=key` (gateways that can't validate JWTs), calls MUST carry a per-agent gateway key from CAIPE's credentials store. Agent and team are verified; the user is attributed through the `user` field only, so per-user limits are best-effort.
 - **FR-006**: Agents MUST NOT hold provider keys or a shared admin key.
 - **FR-007**: Autonomous and scheduled runs MUST be attributed to the task owner, proven by a trusted run binding (#2891), not to a shared service account or an unsigned owner header.
@@ -240,7 +240,7 @@ flowchart LR
 ## Assumptions
 
 - "OpenAI" names the wire protocol, not the provider.
-- Keycloak 26.3 token exchange can emit per-agent scope claims (to be confirmed by spike S1, see [research.md](./research.md)).
+- Keycloak 26.3 standard token exchange emits per-agent scope claims; confirmed by spike S1 up to 10,000 agents with a sized realm cache ([S1 results](./research.md#s1-results)).
 - The gateway can reach the token issuer's JWKS.
 - Dynamic agents authenticate callers from the bearer token alone (#1753) before the gateway token is minted.
 - The delegation mechanism for autonomous runs is decided by #2890; spike S1 tests the gateway scope against that mechanism.
@@ -249,7 +249,7 @@ flowchart LR
 
 ## Open Decisions
 
-- **OD-1 Signer**: Keycloak per-agent scope ([K2](./research.md#identity-option-legend)) is the target. If spike S1 fails, dynamic agents sign ([C1](./research.md#identity-option-legend)). Claims and budget keys are identical either way; during a switch the gateway trusts both issuers.
+- ~~**OD-1 Signer**~~ Closed 2026-10-14 by spike S1 (#2938): **Keycloak per-agent scope ([K2](./research.md#identity-option-legend))**. [C1](./research.md#identity-option-legend) stays the fallback; claims and budget keys are identical either way. The autonomous-run check is still open on #2890. See [S1 results](./research.md#s1-results).
 
 ## Out of Scope
 

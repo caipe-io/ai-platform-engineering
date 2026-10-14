@@ -9,19 +9,19 @@ This PR is the spec/ADR only. Each item below becomes one issue under Epic #2537
 Task IDs use `T001` for phase 0 and `T101`, `T201`, etc. for phases 1–5. Separate blocks cover required validation (`T6xx`), optional work (`T7xx`) and housekeeping (`T8xx`).
 
 ## Phase 0
-- [ ] **T001 Spike S1**: Keycloak 26.3 per-agent client-scope token exchange (claims, autonomous delegation per #2890, scale). Outcome: [K2](./research.md#identity-option-legend) or [C1](./research.md#identity-option-legend).
+- [x] **T001 Spike S1** (#2938, done 2026-10-14; outcome K2, autonomous check open on #2890): Keycloak 26.3 per-agent client-scope token exchange (claims, autonomous delegation per #2890, scale). Outcome: [K2](./research.md#identity-option-legend) or [C1](./research.md#identity-option-legend).
 
 ## Phase 1: identity preparation and agent data plane
 
 Depends on #1753 (JWT-only identity in dynamic agents) and S1. Complete identity preparation before enabling routing.
 
-- [ ] **T101** Configure the Keycloak exchanger client, backfill scopes for existing agents, and sync scopes on agent create and delete ([K2](./research.md#identity-option-legend) only). Implement recoverable ownership transfers for K2, C1 and key auth as applicable: block new calls while unresolved, verify credential bindings against committed ownership before use or caching, and invalidate previous-owner cached credentials on completion.
+- [ ] **T101** Configure the Keycloak exchanger client, add it to user-token audiences, add the shared `llm-gateway` scope (audience and `act` mappers), size `cache-embedded-realms-max-count`, backfill scopes for existing agents, and sync scopes on agent create and delete ([K2](./research.md#identity-option-legend) only; see [S1 results](./research.md#s1-results)). Implement recoverable ownership transfers for K2, C1 and key auth as applicable: block new calls while unresolved, verify credential bindings against committed ownership before use or caching, and invalidate previous-owner cached credentials on completion.
 - [ ] **T102** Provision `LLM_GATEWAY_DEFAULT_TEAM` in CAIPE at startup and use it for agents without an owning team.
 - [ ] **T103** If S1 selects [C1](./research.md#identity-option-legend), configure signing key management and gateway trust; resolve agent and team claims from CAIPE data.
 - [ ] **T104** Document operator provisioning of required gateway principals and per-agent keys before phase 3, including preparation for existing agents and later agent or team changes. Gateways may instead create principals from verified JWTs.
 - [ ] **T105** Provision the [AI-assist system identity](./data-model.md#ai-assist-system-identity), permissions and gateway credentials before enabling `/assistant/suggest` routing. Verify that an authorized user can request a suggestion before saving any agent; attribution identifies the user, AI-assist system agent and its owning team (user attribution is unverified in key mode); denied system-agent or model access prevents the gateway call; missing identity preparation fails closed.
 - [ ] **T106** Switch, provider override and auth hook inside `build_chat_model`, so paths 1–3 (runtime, middleware, `/suggest`) cannot bypass them.
-- [ ] **T107** Gateway token acquisition and cache in dynamic agents, keyed by (user, agent, owner team); autonomous runs as the task owner.
+- [ ] **T107** Gateway token acquisition and cache in dynamic agents, keyed by (user, agent, owner team); request exactly one agent scope and verify the returned `agent_id`/`team_id`; autonomous runs as the task owner.
 - [ ] **T108** Key auth mode (`LLM_GATEWAY_AUTH=key`) reading per-agent keys from the credentials store.
 - [ ] **T109** `llm_model#can_read` check once per turn, through the CAS access API (#2889) with audit (agent action `use` already maps to OpenFGA relation `agent#can_use`).
 - [ ] **T110** Gate phase 1 on successful first calls for existing, new and ownerless agents, and fail-closed behavior when identity preparation is missing. Validate ownership transfers across applicable auth modes:

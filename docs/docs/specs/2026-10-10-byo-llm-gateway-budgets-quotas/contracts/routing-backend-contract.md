@@ -35,7 +35,7 @@ A gateway passes for its configured authentication mode when:
 
 - [ ] Every agent path in scope returns a correct completion, streaming and tool calls included.
 - [ ] Requests with no credential → 401.
-- [ ] JWT auth: expired tokens and tokens signed by a foreign key → 401; user, agent and team limits each trigger a budget rejection with the right scope.
+- [ ] JWT auth: tokens expired past the gateway's documented clock leeway, wrong-audience tokens and tokens signed by a foreign key → 401; user, agent and team limits each trigger a budget rejection with the right scope.
 - [ ] Key auth: invalid or revoked keys → 401; agent and team limits each trigger a budget rejection with the right scope. Document whether best-effort per-user limits are supported.
 - [ ] Key auth with adapter `none`: an operator-provisioned key stored in CAIPE works without key-issuance capability.
 - [ ] An induced upstream 429 or 5xx reaches the agent with its class unchanged, including provider quota errors containing "budget" or "quota".
