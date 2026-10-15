@@ -29,7 +29,7 @@ import type { MigrationApplyResult, MigrationPlanResult, MigrationSampleDiff } f
  *   - knowledge_bases → team#member reader knowledge_base:<id>
  *   - skills        → team#member user   skill:<id>
  *   - tasks         → team#member user   task:<id>   (workflows)
- *   - tool_wildcard → team#member caller  tool:*  (intent sentinel — lets the
+ *   - tool_wildcard → team#member caller  tool:__all_mcp_servers_intent__  (intent sentinel — lets the
  *                     MCP-server reconciler keep auto-granting future servers
  *                     once the boolean flag is gone)
  *
@@ -145,7 +145,7 @@ export function computeDropTeamResourcesRewrites(
     }
 
     // The `tool_wildcard` boolean has no per-resource id; preserve its intent as
-    // the `tool:*` sentinel so the MCP-server reconciler keeps auto-granting
+    // the `tool:__all_mcp_servers_intent__` sentinel so the MCP-server reconciler keeps auto-granting
     // future servers to this team.
     if (resources.tool_wildcard === true) {
       tuples.push(teamToolWildcardSentinelTuple(slug));

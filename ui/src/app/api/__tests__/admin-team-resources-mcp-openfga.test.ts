@@ -8,6 +8,7 @@
 
 import { NextRequest } from "next/server";
 import { ObjectId } from "mongodb";
+import { TEAM_TOOL_WILDCARD_SENTINEL_OBJECT } from "@/lib/rbac/team-tool-wildcard";
 
 const mockGetServerSession = jest.fn();
 jest.mock("next-auth", () => ({
@@ -297,12 +298,46 @@ describe("PUT /api/admin/teams/[id]/resources — MCP OpenFGA tuple integration"
         },
       ]),
     );
-    expect(tupleDiff.writes).not.toEqual(
-      expect.arrayContaining([
-        { user: "team:platform-engineering#member", relation: "caller", object: "tool:*" },
-        { user: "agent:agent-platform-helper", relation: "caller", object: "tool:*" },
-      ]),
+    expect(tupleDiff.writes).toContainEqual({
+      user: "team:platform-engineering#member",
+      relation: "caller",
+      object: TEAM_TOOL_WILDCARD_SENTINEL_OBJECT,
+    });
+    expect(tupleDiff.writes.some((tuple) => /^[^:]+:\*$/.test(tuple.object))).toBe(false);
+  });
+
+  it("round-trips wildcard intent with no servers and revokes only the marker", async () => {
+    const teamsCol = createMockCollection();
+    teamsCol.findOne.mockResolvedValue({ _id: TEAM_ID, slug: "primary" });
+    mockCollections.teams = teamsCol;
+    const { PUT, GET } = await import("@/app/api/admin/teams/[id]/resources/route");
+    const context = { params: Promise.resolve({ id: TEAM_ID.toString() }) };
+    const url = `/api/admin/teams/${TEAM_ID}/resources`;
+
+    const enabled = await PUT(makeRequest(url, {
+      method: "PUT",
+      body: JSON.stringify({ tool_wildcard: true }),
+    }), context);
+    expect(enabled.status).toBe(200);
+    expect(mockReconcileTupleDiff.mock.calls[0][0].writes).toEqual([
+      { user: "team:primary#member", relation: "caller", object: TEAM_TOOL_WILDCARD_SENTINEL_OBJECT },
+    ]);
+
+    mockListTeamResourceObjectIds.mockImplementation(async ({ type }: { type: string }) =>
+      type === "tool" ? [TEAM_TOOL_WILDCARD_SENTINEL_OBJECT.slice("tool:".length)] : [],
     );
+    const listed = await GET(makeRequest(url), context);
+    expect((await listed.json()).data.resources).toMatchObject({ tools: [], tool_wildcard: true });
+
+    const disabled = await PUT(makeRequest(url, {
+      method: "PUT",
+      body: JSON.stringify({ tool_wildcard: false }),
+    }), context);
+    expect(disabled.status).toBe(200);
+    expect(mockReconcileTupleDiff.mock.calls[1][0]).toEqual({
+      writes: [],
+      deletes: [{ user: "team:primary#member", relation: "caller", object: TEAM_TOOL_WILDCARD_SENTINEL_OBJECT }],
+    });
   });
 
   it("re-saves unchanged MCP selections to repair OpenFGA drift", async () => {
