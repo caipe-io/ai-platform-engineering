@@ -21,6 +21,7 @@ _PARQUET_INDEX_FIELDS = (
     "outcome",
     "component",
     "correlation_id",
+    "decision_id",
     "tenant_id",
     "source",
     "action",
@@ -141,6 +142,8 @@ def _record_matches(record: dict[str, Any], query: "AuditQuery") -> bool:
         "outcome",
         "component",
         "correlation_id",
+        "decision_id",
+        "subject_ref",
         "tenant_id",
         "source",
         "action",
@@ -172,6 +175,8 @@ class AuditQuery:
     outcome: str | None = None
     component: str | None = None
     correlation_id: str | None = None
+    decision_id: str | None = None
+    subject_ref: str | None = None
     tenant_id: str | None = None
     source: str | None = None
     action: str | None = None
@@ -233,7 +238,7 @@ class LocalAuditStore:
             "critical_percent": critical_percent,
         }
 
-    def write_batch(self, records: list[dict[str, Any]]) -> str | None:
+    def write_batch(self, records: list[dict[str, Any]], *, batch_id: str | None = None) -> str | None:
         if not records:
             return None
 
@@ -243,9 +248,9 @@ class LocalAuditStore:
         day_dir.mkdir(parents=True, exist_ok=True)
 
         suffix = ".ndjson.gz" if self.gzip_enabled else ".ndjson"
-        filename = f"audit-{partition_time.strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:12]}{suffix}"
+        filename = f"audit-{partition_time.strftime('%Y%m%dT%H%M%SZ')}-{batch_id or uuid4().hex[:12]}{suffix}"
         path = day_dir / filename
-        tmp_path = day_dir / f".{filename}.tmp"
+        tmp_path = day_dir / f".{filename}.{uuid4().hex}.tmp"
 
         opener = gzip.open if self.gzip_enabled else open
         with opener(tmp_path, "wt", encoding="utf-8") as handle:
@@ -455,8 +460,7 @@ class S3AuditStore:
         except Exception as exc:  # noqa: BLE001
             reason = getattr(exc, "response", {}).get("Error", {}).get("Message") or str(exc)
             raise S3RetentionError(
-                f"Failed to update S3 lifecycle rule (check S3 permissions, e.g. "
-                f"s3:PutLifecycleConfiguration on bucket {self.bucket}): {reason}"
+                f"Failed to update S3 lifecycle rule (check S3 permissions, e.g. s3:PutLifecycleConfiguration on bucket {self.bucket}): {reason}"
             ) from exc
 
     def storage_usage(self, *, max_objects: int = 10_000) -> dict[str, Any]:
@@ -496,13 +500,13 @@ class S3AuditStore:
             "capped": capped,
         }
 
-    def write_batch(self, records: list[dict[str, Any]]) -> str | None:
+    def write_batch(self, records: list[dict[str, Any]], *, batch_id: str | None = None) -> str | None:
         if not records:
             return None
 
         partition_time = _batch_partition_time(records)
         yyyy, mm, dd, hh, minute = _minute_parts(partition_time)
-        filename = f"audit-{partition_time.strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:12]}.parquet"
+        filename = f"audit-{partition_time.strftime('%Y%m%dT%H%M%SZ')}-{batch_id or uuid4().hex[:12]}.parquet"
         key = "/".join(part for part in (self.prefix, yyyy, mm, dd, hh, minute, filename) if part)
         body = self._to_parquet_bytes(records)
         self._client.put_object(
@@ -544,8 +548,7 @@ class S3AuditStore:
         workers = max(1, min(_S3_IO_MAX_WORKERS, len(prefixes)))
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = [
-                executor.submit(self._list_parquet_keys, prefix, delimiter=delimiter)
-                for prefix, delimiter in prefixes
+                executor.submit(self._list_parquet_keys, prefix, delimiter=delimiter) for prefix, delimiter in prefixes
             ]
             for future in futures:
                 for key in future.result():
@@ -617,11 +620,7 @@ class S3AuditStore:
         key_dt = _parse_key_datetime(key)
         if key_dt is None:
             return True
-        return (
-            query.since - _KEY_TIME_PRUNE_TOLERANCE
-            <= key_dt
-            <= query.until + _KEY_TIME_PRUNE_TOLERANCE
-        )
+        return query.since - _KEY_TIME_PRUNE_TOLERANCE <= key_dt <= query.until + _KEY_TIME_PRUNE_TOLERANCE
 
     def _read_object(self, key: str) -> list[dict[str, Any]]:
         try:
@@ -638,8 +637,7 @@ class S3AuditStore:
         rows = []
         for record in records:
             row = {
-                field: None if record.get(field) is None else str(record.get(field))
-                for field in _PARQUET_INDEX_FIELDS
+                field: None if record.get(field) is None else str(record.get(field)) for field in _PARQUET_INDEX_FIELDS
             }
             row["record_json"] = json.dumps(record, separators=(",", ":"), default=str)
             rows.append(row)
@@ -663,10 +661,6 @@ class S3AuditStore:
                 if isinstance(record, dict):
                     yield record
                     continue
-            record = {
-                key: value
-                for key, value in row.items()
-                if key != "record_json" and value is not None
-            }
+            record = {key: value for key, value in row.items() if key != "record_json" and value is not None}
             if record:
                 yield record

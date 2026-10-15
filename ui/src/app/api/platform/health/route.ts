@@ -1,6 +1,7 @@
 import net from "node:net";
 
 import { NextRequest, NextResponse } from "next/server";
+import { auditServiceUrl } from "@/lib/audit";
 
 import {
   getInternalA2AUrl,
@@ -43,9 +44,7 @@ interface AuditServiceStatusPayload {
   running?: unknown;
   backend?: unknown;
   storage?: unknown;
-  queue_size?: unknown;
-  queue_max_size?: unknown;
-  rejected_events?: unknown;
+  query?: unknown;
   failed_flushes?: unknown;
   last_error?: unknown;
   last_flush_at?: unknown;
@@ -101,10 +100,6 @@ function envPort(name: string, defaultPort: number): number {
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/$/, "");
-}
-
-function auditServiceUrl(): string {
-  return (process.env.AUDIT_SERVICE_URL ?? process.env.AUDIT_LOG_SERVICE_URL ?? "http://audit-service:8010").replace(/\/$/, "");
 }
 
 function isHealthyStatusPayload(payload: unknown): boolean {
@@ -776,23 +771,18 @@ function auditStorageDetail(payload: AuditServiceStatusPayload): string | null {
 
 function auditStatusDetail(payload: AuditServiceStatusPayload): string {
   const backend = stringField(payload.backend) ?? "unknown";
-  const queueSize = numberField(payload.queue_size);
-  const queueMaxSize = numberField(payload.queue_max_size);
+  const query = objectField(payload.query);
+  const pending = query ? numberField(query.pending_archive_count) : null;
   const failedFlushes = numberField(payload.failed_flushes) ?? 0;
-  const rejectedEvents = numberField(payload.rejected_events) ?? 0;
   const lastFlushAt = stringField(payload.last_flush_at) ?? "never";
-  const queueDetail =
-    queueSize !== null && queueMaxSize !== null
-      ? `queue ${queueSize}/${queueMaxSize}`
-      : "queue unknown";
   const storageDetail = auditStorageDetail(payload);
 
   return [
-    `backend=${backend}`,
-    queueDetail,
+    `archive=${backend}`,
+    `queries=${query ? stringField(query.query_backend) ?? "unknown" : "unknown"}`,
+    `pending_archive=${pending ?? "unknown"}`,
     ...(storageDetail ? [storageDetail] : []),
     `failed_flushes=${failedFlushes}`,
-    `rejected_events=${rejectedEvents}`,
     `last_flush=${lastFlushAt}`,
   ].join("; ");
 }
@@ -853,30 +843,20 @@ async function probeAuditServiceCapability(auditBackend: string): Promise<Capabi
 
     const payload = (await response.json().catch(() => ({}))) as AuditServiceStatusPayload;
     const issues: string[] = [];
-    const queueSize = numberField(payload.queue_size);
-    const queueMaxSize = numberField(payload.queue_max_size);
     const lastError = stringField(payload.last_error);
     const failedFlushes = numberField(payload.failed_flushes) ?? 0;
-    const rejectedEvents = numberField(payload.rejected_events) ?? 0;
+    const query = objectField(payload.query);
     const storage = objectField(payload.storage);
     const storageStatus = storage ? stringField(storage.status)?.toLowerCase() : null;
     const storageDetail = storage ? stringField(storage.detail) : null;
 
-    if (payload.running !== true) issues.push("queue worker is not running");
+    if (payload.running !== true) issues.push("archive worker is not running");
+    if (!query || query.query_backend !== "mongodb") issues.push("MongoDB query store unavailable");
     if (lastError) issues.push(`last error: ${lastError}`);
     if (storageStatus && !["healthy", "ok"].includes(storageStatus)) {
       issues.push(`storage ${storageStatus}: ${storageDetail ?? "storage health check failed"}`);
     }
-    if (
-      queueSize !== null &&
-      queueMaxSize !== null &&
-      queueMaxSize > 0 &&
-      queueSize / queueMaxSize >= 0.8
-    ) {
-      issues.push(`queue pressure ${queueSize}/${queueMaxSize}`);
-    }
     if (failedFlushes > 0) issues.push(`${failedFlushes} failed flushes`);
-    if (rejectedEvents > 0) issues.push(`${rejectedEvents} rejected events`);
 
     return {
       id: "audit-service",

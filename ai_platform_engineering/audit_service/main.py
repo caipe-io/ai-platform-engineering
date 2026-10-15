@@ -9,10 +9,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
+from pydantic import ValidationError
+from pymongo.errors import PyMongoError
 
+from ai_platform_engineering.audit_service.archive_worker import ArchiveWorker
 from ai_platform_engineering.audit_service.config import Settings
 from ai_platform_engineering.audit_service.models import AuditEvent, IngestResponse, QueryResponse
-from ai_platform_engineering.audit_service.queue_service import AuditQueueService
+from ai_platform_engineering.audit_service.query_store import CursorError, EventConflict, MongoAuditStore, query_scope
 from ai_platform_engineering.audit_service.storage import (
     AuditQuery,
     LocalAuditStore,
@@ -34,9 +37,9 @@ _WINDOWS: dict[str, timedelta] = {
     "6h": timedelta(hours=6),
     "12h": timedelta(hours=12),
     "24h": timedelta(hours=24),
+    "48h": timedelta(hours=48),
     "7d": timedelta(days=7),
 }
-_VALID_TIME_RESOLUTIONS = {"auto", "minute", "hour", "day"}
 _LOCAL_RETENTION_CLEANUP_INTERVAL_SECONDS = 60 * 60
 _logger = logging.getLogger(__name__)
 
@@ -110,18 +113,9 @@ def _parse_window(value: str | None) -> timedelta | None:
     if window is None:
         raise HTTPException(
             status_code=400,
-            detail="invalid window; expected one of 5m, 15m, 30m, 1h, 6h, 12h, 24h, 7d",
+            detail=f"invalid window; expected one of {', '.join(_WINDOWS)}",
         )
     return window
-
-
-def _normalize_time_resolution(value: str | None) -> str:
-    if value is None:
-        return "auto"
-    normalized = value.strip().lower()
-    if normalized not in _VALID_TIME_RESOLUTIONS:
-        raise HTTPException(status_code=400, detail="invalid time_resolution; expected auto, minute, hour, or day")
-    return normalized
 
 
 def _normalize_payload(payload: Any) -> list[dict[str, Any]]:
@@ -138,11 +132,14 @@ def _normalize_payload(payload: Any) -> list[dict[str, Any]]:
     for raw in raw_events:
         if not isinstance(raw, dict):
             raise HTTPException(status_code=400, detail="each audit event must be a JSON object")
-        events.append(AuditEvent.model_validate(raw).to_record())
+        try:
+            events.append(AuditEvent.model_validate(raw).to_record())
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail="invalid audit event") from exc
     return events
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, query_store: MongoAuditStore | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     if settings.backend == "local":
         store = LocalAuditStore(settings.local_path, gzip_enabled=settings.local_gzip)
@@ -155,18 +152,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
     else:
         raise RuntimeError(f"Unsupported AUDIT_SERVICE_BACKEND={settings.backend!r}; expected 'local' or 's3'")
-    queue_service = AuditQueueService(
+    query_store = query_store or MongoAuditStore(
+        settings.mongodb_uri, settings.mongodb_database, retention_days=settings.query_retention_days
+    )
+    queue_service = ArchiveWorker(
+        query_store,
         store,
-        queue_max_size=settings.queue_max_size,
-        flush_batch_size=settings.flush_batch_size,
-        flush_interval_seconds=settings.flush_interval_seconds,
+        batch_size=settings.flush_batch_size,
+        interval=settings.flush_interval_seconds,
+        retention_days=settings.query_retention_days,
     )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.audit_store = store
+        app.state.audit_query_store = query_store
         app.state.audit_queue = queue_service
         app.state.audit_settings = settings
+        await asyncio.to_thread(query_store.initialize)
         cleanup_task: asyncio.Task[None] | None = None
         if isinstance(store, LocalAuditStore):
             await _purge_local_retention(store, settings.local_retention_days)
@@ -193,14 +196,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/readyz")
     async def readyz(request: Request) -> dict[str, Any]:
-        service: AuditQueueService = request.app.state.audit_queue
+        service: ArchiveWorker = request.app.state.audit_queue
         if service.is_stopping:
-            # Fail readiness the instant shutdown starts, not only once the
-            # drain finishes — Service endpoint removal is what actually stops
-            # new traffic, and that only happens once the probe fails.
+            # Remove this replica from service before stopping the worker.
+            # Accepted events survive in MongoDB for its replacement to archive.
             raise HTTPException(status_code=503, detail="audit-service is shutting down")
         try:
-            service.store.readiness_check()
+            await asyncio.to_thread(query_store.readiness_check)
         except Exception:  # noqa: BLE001
             _logger.exception("audit storage readiness check failed")
             raise HTTPException(status_code=503, detail="storage unavailable")
@@ -211,11 +213,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/v1/audit/status")
     async def audit_status(request: Request) -> dict[str, Any]:
-        service: AuditQueueService = request.app.state.audit_queue
+        service: ArchiveWorker = request.app.state.audit_queue
         current_settings: Settings = request.app.state.audit_settings
         return {
             **service.status(),
-            "storage": _storage_health(service.store, current_settings),
+            "storage": await asyncio.to_thread(_storage_health, store, current_settings),
+            "query": await asyncio.to_thread(query_store.storage_usage),
             "local_path": current_settings.local_path if current_settings.backend == "local" else None,
             "local_gzip": current_settings.local_gzip if current_settings.backend == "local" else None,
             "local_retention_days": current_settings.local_retention_days
@@ -227,15 +230,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/audit/events", response_model=IngestResponse, status_code=202)
     async def ingest_events(request: Request, payload: Any = Body(...)) -> IngestResponse:
-        service: AuditQueueService = request.app.state.audit_queue
+        service: ArchiveWorker = request.app.state.audit_queue
         current_settings: Settings = request.app.state.audit_settings
+        if service.is_stopping:
+            raise HTTPException(status_code=503, detail="audit-service is shutting down; retry this batch")
         events = _normalize_payload(payload)
         events = filter_records(events, current_settings.verbosity)
         if not events:
-            return IngestResponse(accepted=0, queued=service.queue.qsize())
-        if not service.enqueue_many(events):
-            raise HTTPException(status_code=503, detail="audit queue full")
-        return IngestResponse(accepted=len(events), queued=service.queue.qsize())
+            return IngestResponse(accepted=0)
+        if len(events) > current_settings.ingest_max_batch_size:
+            raise HTTPException(status_code=413, detail="audit batch exceeds configured maximum")
+        try:
+            await asyncio.to_thread(query_store.insert, events)
+        except EventConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(status_code=400, detail="invalid audit event identity or timestamp") from exc
+        except PyMongoError as exc:
+            _logger.exception("audit ingestion unavailable")
+            raise HTTPException(
+                status_code=503, detail="audit storage unavailable; retry this batch with the same event IDs"
+            ) from exc
+        return IngestResponse(accepted=len(events))
 
     @app.get("/v1/audit/events", response_model=QueryResponse)
     async def read_events(
@@ -245,12 +261,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         until: str | None = Query(default=None),
         to: str | None = Query(default=None),
         window: str | None = Query(default=None),
-        time_resolution: str | None = Query(default=None),
+        cursor: str | None = Query(default=None),
         limit: int | None = Query(default=None, ge=1),
         type: str | None = Query(default=None),  # noqa: A002
         outcome: str | None = Query(default=None),
         component: str | None = Query(default=None),
         correlation_id: str | None = Query(default=None),
+        decision_id: str | None = Query(default=None),
+        subject_ref: str | None = Query(default=None),
         tenant_id: str | None = Query(default=None),
         source: str | None = Query(default=None),
         action: str | None = Query(default=None),
@@ -262,7 +280,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tool_name: str | None = Query(default=None),
         user_email: str | None = Query(default=None),
     ) -> QueryResponse:
-        store: LocalAuditStore | S3AuditStore = request.app.state.audit_store
+        query_store: MongoAuditStore = request.app.state.audit_query_store
         current_settings: Settings = request.app.state.audit_settings
         now = datetime.now(timezone.utc)
         query_until = _parse_datetime(until or to, default=now)
@@ -277,16 +295,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=f"query range exceeds {current_settings.read_max_days} days")
 
         query_limit = min(limit or current_settings.read_default_limit, current_settings.read_max_limit)
-        query_time_resolution = _normalize_time_resolution(time_resolution)
+        unsupported = set(request.query_params) - {
+            "since",
+            "from",
+            "until",
+            "to",
+            "window",
+            "limit",
+            "cursor",
+            "type",
+            "outcome",
+            "component",
+            "correlation_id",
+            "decision_id",
+            "subject_ref",
+            "tenant_id",
+            "source",
+            "action",
+            "capability",
+            "resource_ref",
+            "subject_hash",
+            "reason_code",
+            "agent_name",
+            "tool_name",
+            "user_email",
+        }
+        if unsupported or any(len(request.query_params.getlist(key)) != 1 for key in request.query_params):
+            raise HTTPException(status_code=400, detail="unsupported or repeated audit query parameter")
         audit_query = AuditQuery(
             since=query_since,
             until=query_until,
             limit=query_limit,
-            time_resolution=query_time_resolution,
             type=type,
             outcome=outcome,
             component=component,
             correlation_id=correlation_id,
+            decision_id=decision_id,
+            subject_ref=subject_ref,
             tenant_id=tenant_id,
             source=source,
             action=action,
@@ -298,8 +343,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             tool_name=tool_name,
             user_email=user_email,
         )
-        result = await asyncio.to_thread(store.query, audit_query)
-        return QueryResponse(records=result.records, total=result.total, limit=query_limit, truncated=result.truncated)
+        scope = query_scope(
+            {key: value for key, value in request.query_params.items() if key not in {"cursor", "limit"}}
+        )
+        try:
+            result = await asyncio.to_thread(
+                query_store.page,
+                audit_query,
+                cursor=cursor,
+                scope=scope,
+                max_days=current_settings.read_max_days,
+            )
+        except CursorError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except PyMongoError as exc:
+            _logger.exception("audit query unavailable")
+            raise HTTPException(status_code=503, detail="audit query storage unavailable") from exc
+        return QueryResponse(**result)
 
     @app.get("/v1/audit/verbosity")
     async def get_verbosity(request: Request) -> dict[str, Any]:
@@ -328,10 +388,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def get_storage_usage(request: Request) -> dict[str, Any]:
         store = request.app.state.audit_store
         current_settings: Settings = request.app.state.audit_settings
+        query_usage = await asyncio.to_thread(query_store.storage_usage)
         if isinstance(store, LocalAuditStore):
             audit_bytes = await asyncio.to_thread(store.audit_dir_bytes)
             return {
                 "backend": "local",
+                **query_usage,
                 "audit_bytes": audit_bytes,
                 "audit_bytes_human": _format_bytes_local(audit_bytes),
                 "local_path": current_settings.local_path,
@@ -341,6 +403,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             usage = await asyncio.to_thread(store.storage_usage)
             return {
                 "backend": "s3",
+                **query_usage,
                 **usage,
                 "bucket": current_settings.s3_bucket,
                 "prefix": current_settings.s3_prefix,
@@ -376,8 +439,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not isinstance(store, S3AuditStore):
             raise HTTPException(
                 status_code=400,
-                detail="Retention can only be updated at runtime for the S3 backend. "
-                "For local disk, set AUDIT_SERVICE_LOCAL_RETENTION_DAYS and restart.",
+                detail="Retention can only be updated at runtime for the S3 backend. For local disk, set AUDIT_SERVICE_LOCAL_RETENTION_DAYS and restart.",
             )
         if not isinstance(body, dict) or "days" not in body:
             raise HTTPException(status_code=400, detail='body must be {"days": N}')

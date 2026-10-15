@@ -1,5 +1,10 @@
 # Audit Log Backend Performance
 
+> Historical measurements below describe the earlier local/S3 query path. The
+> current service persists and queries events in MongoDB, with background
+> archival to local disk or S3. See [Audit Queries and Migration](audit-query-store.md).
+> These results are not performance measurements of the new query store.
+
 **Audience:** Platform operators and contributors evaluating audit log storage options or RBAC performance.
 
 Related UI-wide benchmark results are tracked in [UI Performance Benchmark Results](../../evaluations/ui-performance-benchmark-results.md).

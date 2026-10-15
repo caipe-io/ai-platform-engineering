@@ -1,14 +1,9 @@
 // assisted-by claude code claude-sonnet-4-6
 import { ApiError, requireRbacPermission, withErrorHandler } from "@/lib/api-middleware";
 import { authOptions } from "@/lib/auth-config";
+import { auditServiceUrl } from "@/lib/audit";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
-
-const auditServiceUrl = (): string =>
-  (process.env.AUDIT_SERVICE_URL ?? process.env.AUDIT_LOG_SERVICE_URL ?? "http://audit-service:8010").replace(
-    /\/$/,
-    "",
-  );
 
 async function proxyGet<T>(path: string): Promise<{ data: T | null; error?: string }> {
   const controller = new AbortController();

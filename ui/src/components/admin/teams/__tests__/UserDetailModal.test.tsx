@@ -168,6 +168,7 @@ describe("UserDetailModal", () => {
     expect(within(sections[1]).getByText(/Active membership sources/)).toBeInTheDocument();
     fireEvent.click(screen.getByText("Access"));
     expect(sections[2].open).toBe(true);
+    expect(screen.getByRole("link", { name: "View recorded access decisions" })).toHaveAttribute("href", "/admin/security/audit?auditTab=decisions&subject_ref=user%3Auser-1");
     expect(screen.queryByText("Identity diagnostics")).not.toBeInTheDocument();
     expect(screen.queryByText("Identity & account")).not.toBeInTheDocument();
   });

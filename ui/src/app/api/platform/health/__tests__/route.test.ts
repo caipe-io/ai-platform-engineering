@@ -7,9 +7,7 @@ describe("/api/platform/health", () => {
   const healthyAuditServiceStatus = {
     running: true,
     backend: "local",
-    queue_size: 0,
-    queue_max_size: 10000,
-    rejected_events: 0,
+    query: { query_backend: "mongodb", record_count: 100, pending_archive_count: 0 },
     failed_flushes: 0,
     last_flush_at: "2026-06-25T12:00:00Z",
     last_error: null,
@@ -203,14 +201,14 @@ describe("/api/platform/health", () => {
     });
   });
 
-  it("degrades when audit-service reports queue worker problems", async () => {
+  it("degrades when audit-service reports archive worker problems", async () => {
     (global.fetch as jest.Mock) = jest.fn(async (url: string) => {
       if (url === "http://dynamic-agents:8001/healthz") return jsonResponse({ status: "healthy" });
       if (url.includes("/v1/audit/status")) {
         return jsonResponse({
           ...healthyAuditServiceStatus,
           running: false,
-          queue_size: 9000,
+          query: { query_backend: "mongodb", pending_archive_count: 9000 },
           failed_flushes: 2,
           last_error: "S3 write failed",
         });
@@ -227,7 +225,7 @@ describe("/api/platform/health", () => {
     expect(body.capabilities.find((capability: { id: string }) => capability.id === "audit-service")).toMatchObject({
       status: "degraded",
       group: "observability",
-      detail: expect.stringContaining("queue worker is not running"),
+      detail: expect.stringContaining("archive worker is not running"),
     });
   });
 

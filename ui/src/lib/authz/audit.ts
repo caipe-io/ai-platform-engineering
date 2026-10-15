@@ -16,7 +16,7 @@
 
 import { createHash, randomUUID } from "crypto";
 
-import { getAuditBackend } from "@/lib/audit";
+import { getAuditClient } from "@/lib/audit";
 
 import type {
   Action,
@@ -27,7 +27,7 @@ import type {
   Subject,
   TrustedAuthorizeContext,
 } from "./contract";
-import type { GatewayRequest, GatewayResult } from "./gateway-contract";
+import type { GatewayCheck, GatewayRequest, GatewayResult } from "./gateway-contract";
 
 const SUBJECT_SALT = process.env.AUDIT_SUBJECT_SALT ?? "caipe-098-audit";
 
@@ -54,7 +54,7 @@ export interface CasDecisionEvent {
   resource_id: string;
   workflow_run_id?: string;
   decision_via?: string;
-  pdp: "openfga";
+  pdp: "openfga" | "local";
   source: "cas";
   trace_id?: string;
   span_id?: string;
@@ -63,6 +63,8 @@ export interface CasDecisionEvent {
   agent_ref?: string;
   failed_gate?: string;
   decision_id?: string;
+  gateway_checks?: GatewayCheck[];
+  gateway_policy?: string;
 }
 
 /**
@@ -125,9 +127,18 @@ function hashSubject(id: string): string {
   return "sha256:" + createHash("sha256").update(`${SUBJECT_SALT}:${id}`).digest("hex");
 }
 
-function writeAuditEvent(event: Record<string, unknown>): void {
+/** CAS owns these event shapes; transport preserves them without reinterpretation. */
+export type CasAuditEvent = CasDecisionEvent | CasBatchDecisionEvent | CasListObjectsEvent | CasGrantEvent | CasReconcileEvent | CasAllowRollupEvent;
+
+type CasAllowRollupEvent = Omit<CasDecisionEvent, "decision_id" | "gateway_checks" | "gateway_policy"> & {
+  count: number;
+  window_start: Date;
+  window_end: Date;
+};
+
+function writeAuditEvent(event: CasAuditEvent): void {
   try {
-    getAuditBackend().write(event);
+    getAuditClient().append(event);
   } catch (err) {
     console.warn("[cas/audit] Failed to enqueue audit event:", err);
   }
@@ -219,6 +230,8 @@ export function flushAllowRollups(): void {
   for (const entry of pending) {
     const sample = { ...entry.sample };
     delete sample.decision_id; // A rollup is not one request's decision receipt.
+    delete sample.gateway_checks; // A sample chain cannot explain every aggregated check.
+    delete sample.gateway_policy;
     writeAuditEvent({
       ...sample,
       audit_event_id: randomUUID(),
@@ -229,7 +242,7 @@ export function flushAllowRollups(): void {
       count: entry.count,
       window_start: entry.windowStart,
       window_end: entry.windowEnd,
-    } as unknown as Record<string, unknown>);
+    });
   }
 }
 
@@ -261,7 +274,7 @@ export function emitDecisionAudit(
     recordAllow(event);
     return;
   }
-  writeAuditEvent(event as unknown as Record<string, unknown>);
+  writeAuditEvent(event);
 }
 
 /** One completed gateway decision, not one row per internal graph check. */
@@ -270,12 +283,14 @@ export function emitGatewayDecisionAudit(req: GatewayRequest, result: GatewayRes
     { type: "mcp_server", id: req.serverId };
   const event: CasDecisionEvent = {
     ...buildDecisionEvent(req.caller, resource, "call", result, ctx),
+    pdp: result.checks.some((check) => check.relation) ? "openfga" : "local",
     actor_ref: "workload:agentgateway", gateway_operation: req.operation,
-    decision_id: result.decision_id, ...(result.failed_gate ? { failed_gate: result.failed_gate } : {}),
+    decision_id: result.decision_id, gateway_checks: result.checks, gateway_policy: result.policy_rule,
+    ...(result.failed_gate ? { failed_gate: result.failed_gate } : {}),
     ...(result.agent_id ? { agent_ref: `agent:${result.agent_id}` } : {}),
   };
   if (event.outcome === "allow" && !fullFidelityAllows()) recordAllow(event);
-  else writeAuditEvent(event as unknown as Record<string, unknown>);
+  else writeAuditEvent(event);
 }
 
 export function buildBatchDecisionEvent(
@@ -338,7 +353,7 @@ export function emitBatchDecisionAudit(
 ): void {
   if (results.size === 0) return;
   const event = buildBatchDecisionEvent(subject, action, resourceType, results, ctx);
-  writeAuditEvent(event as unknown as Record<string, unknown>);
+  writeAuditEvent(event);
 }
 
 /**
@@ -441,7 +456,7 @@ export function emitListObjectsDecisionAudit(
 ): void {
   if (candidateIds.length === 0) return;
   const event = buildListObjectsDecisionEvent(subject, action, resourceType, candidateIds, accessibleIds, reason, ctx);
-  writeAuditEvent(event as unknown as Record<string, unknown>);
+  writeAuditEvent(event);
 }
 
 export type GrantOperation = "grant" | "revoke";
@@ -635,7 +650,7 @@ export function emitReconcileAudit(
     ...(ctx.spanId ? { span_id: ctx.spanId } : {}),
   };
 
-  writeAuditEvent(event as unknown as Record<string, unknown>);
+  writeAuditEvent(event);
 }
 
 /** One audit event per grant/revoke attempt through audit-service. */
@@ -648,5 +663,5 @@ export async function emitGrantAudit(
   if (!ctx.caller) return;
 
   const event = buildGrantEvent(operation, intent, ctx, options);
-  writeAuditEvent(event as unknown as Record<string, unknown>);
+  writeAuditEvent(event);
 }

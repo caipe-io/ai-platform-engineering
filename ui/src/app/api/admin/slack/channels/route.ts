@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 
 import { ApiError,getAuthFromBearerOrSession,successResponse,withErrorHandler } from "@/lib/api-middleware";
-import { getAuditReader } from "@/lib/audit/reader";
+import { getAuditClient } from "@/lib/audit";
 import { getCollection } from "@/lib/mongodb";
 import { parseAdminSimulation } from "@/lib/rbac/admin-simulator";
 import { checkOpenFgaTuple,writeOpenFgaTuples } from "@/lib/rbac/openfga";
@@ -89,13 +89,16 @@ async function loadSlackListHealth(rows: ChannelListRow[]): Promise<Map<string, 
     })
   );
 
-  const events = await getAuditReader().query({
+  const { records: events } = await getAuditClient().queryPage({
     since,
     until,
     component: "slack_bot",
     outcome: "error",
     limit: SLACK_LIST_HEALTH_AUDIT_LIMIT,
-    timeoutMs: SLACK_LIST_HEALTH_AUDIT_TIMEOUT_MS,
+  }, { timeoutMs: SLACK_LIST_HEALTH_AUDIT_TIMEOUT_MS }).catch((error) => {
+    console.warn("[SlackChannels] Audit history unavailable; channel health is incomplete", error);
+    for (const health of healthByKey.values()) health.warnings_count += 1;
+    return { records: [] };
   });
 
   for (const event of events) {

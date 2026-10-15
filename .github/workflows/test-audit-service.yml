@@ -1,0 +1,42 @@
+name: "[CI] Audit query and migration tests"
+
+on:
+  pull_request:
+    paths:
+      - 'ai_platform_engineering/audit_service/**'
+      - 'build/Dockerfile.audit-service'
+      - '.github/workflows/test-audit-service.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit-service:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      AUDIT_TEST_MONGODB_URI: mongodb://127.0.0.1:27017
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v6.7.1
+      - name: Lint
+        run: uv run --no-project --python 3.14 --with ruff==0.16.4 ruff check ai_platform_engineering/audit_service
+      - name: Test with MongoDB
+        run: >-
+          uv run --no-project --python 3.14
+          --with fastapi==0.141.1 --with httpx==0.28.1
+          --with pymongo==4.16.0 --with mongomock==4.3.0
+          --with pyarrow==25.0.1 --with boto3==1.43.80 --with pytest==9.1.1
+          pytest -q ai_platform_engineering/audit_service

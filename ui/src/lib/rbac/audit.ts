@@ -1,5 +1,5 @@
 import { createHash,randomUUID } from "crypto";
-import { getAuditBackend } from "@/lib/audit";
+import { getAuditClient } from "@/lib/audit";
 import {
 createAuthzTraceContext,
 emitAuthzSpan,
@@ -84,7 +84,7 @@ export function logAuthzDecision(params: LogAuthzDecisionParams): AuditEvent {
   }
   const auditType: AuditEventType = params.auditType ?? "auth";
   const auditSource: AuditEventSource = params.source ?? WEBUI_BACKEND_SOURCE;
-  getAuditBackend().write({
+  getAuditClient().append({
     ts: event.ts,
     type: auditType,
     tenant_id: event.tenant_id,

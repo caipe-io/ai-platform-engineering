@@ -73,6 +73,30 @@ spec:
               containerPort: {{ .Values.service.port }}
               protocol: TCP
           env:
+            - name: AUDIT_SERVICE_MONGODB_DATABASE
+              value: {{ .Values.mongodb.database | quote }}
+            - name: AUDIT_SERVICE_QUERY_RETENTION_DAYS
+              value: {{ .Values.query.retentionDays | quote }}
+            {{- if .Values.mongodb.uriSecret.name }}
+            - name: AUDIT_SERVICE_MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mongodb.uriSecret.name | quote }}
+                  key: {{ .Values.mongodb.uriSecret.key | quote }}
+            {{- else if not .Values.existingSecret }}
+            - name: AUDIT_SERVICE_MONGODB_HOST
+              value: {{ .Values.mongodb.host | default (printf "%s-mongodb:27017" .Release.Name) | quote }}
+            - name: AUDIT_SERVICE_MONGODB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mongodb.credentialsSecret.name | default (printf "%s-mongodb-secret" .Release.Name) | quote }}
+                  key: {{ .Values.mongodb.credentialsSecret.usernameKey | quote }}
+            - name: AUDIT_SERVICE_MONGODB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mongodb.credentialsSecret.name | default (printf "%s-mongodb-secret" .Release.Name) | quote }}
+                  key: {{ .Values.mongodb.credentialsSecret.passwordKey | quote }}
+            {{- end }}
             - name: AUDIT_SERVICE_BACKEND
               value: {{ $backend | quote }}
             - name: AUDIT_SERVICE_LOCAL_PATH
@@ -95,12 +119,12 @@ spec:
               value: {{ .Values.storage.s3.retentionDays | default 0 | quote }}
             - name: AUDIT_LOG_VERBOSITY
               value: {{ .Values.verbosity | default "minimal" | quote }}
-            - name: AUDIT_SERVICE_QUEUE_MAX_SIZE
-              value: {{ .Values.queue.maxSize | quote }}
+            - name: AUDIT_SERVICE_INGEST_MAX_BATCH_SIZE
+              value: {{ .Values.ingest.maxBatchSize | quote }}
             - name: AUDIT_SERVICE_FLUSH_BATCH_SIZE
-              value: {{ .Values.queue.flushBatchSize | quote }}
+              value: {{ .Values.archive.flushBatchSize | quote }}
             - name: AUDIT_SERVICE_FLUSH_INTERVAL_SECONDS
-              value: {{ .Values.queue.flushIntervalSeconds | quote }}
+              value: {{ .Values.archive.flushIntervalSeconds | quote }}
             - name: AUDIT_SERVICE_READ_DEFAULT_LIMIT
               value: {{ .Values.read.defaultLimit | quote }}
             - name: AUDIT_SERVICE_READ_MAX_LIMIT

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 def utc_now_iso() -> str:
@@ -47,11 +47,13 @@ class AuditEvent(BaseModel):
 
 class IngestResponse(BaseModel):
     accepted: int
-    queued: int
 
 
 class QueryResponse(BaseModel):
     records: list[dict[str, Any]]
-    total: int
     limit: int
-    truncated: bool = Field(description="True when matching rows exceeded limit.")
+    cursor: str
+    next_cursor: str | None = None
+    since: str
+    until: str
+    as_of: str

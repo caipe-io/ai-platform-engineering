@@ -1342,32 +1342,6 @@ routes:
       frank_service_account:
         status: 403
         reason: DENY_NO_CAPABILITY
-  - id: ui-bff-get-api-admin-rbac-audit
-    surface: ui_bff
-    method: GET
-    path: /api/admin/rbac-audit
-    resource: admin_ui
-    scope: audit.view
-    migration_status: migrated
-    notes: Already migrated
-    expectations:
-      alice_admin:
-        status: 200
-      bob_chat_user:
-        status: 403
-        reason: DENY_NO_CAPABILITY
-      carol_kb_ingestor:
-        status: 403
-        reason: DENY_NO_CAPABILITY
-      dave_no_role:
-        status: 403
-        reason: DENY_NO_CAPABILITY
-      eve_dynamic_agent_user:
-        status: 403
-        reason: DENY_NO_CAPABILITY
-      frank_service_account:
-        status: 403
-        reason: DENY_NO_CAPABILITY
   - id: ui-bff-get-api-admin-audit-events
     surface: ui_bff
     method: GET

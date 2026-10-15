@@ -17,8 +17,8 @@ jest.mock("@/lib/feature-flags/credentials", () => ({
   getCredentialFeatureConfig: jest.fn(() => ({ enabled: true })),
 }));
 
-jest.mock("@/lib/audit/reader", () => ({
-  getAuditReader: () => ({ query: mockQuery }),
+jest.mock("@/lib/audit", () => ({
+  getAuditClient: () => ({ queryPage: async (...args: unknown[]) => ({ records: await mockQuery(...args) }) }),
 }));
 
 describe("/api/credentials/audit", () => {
@@ -45,5 +45,14 @@ describe("/api/credentials/audit", () => {
       data: [{ action: "secret.create", details: { value: "***REDACTED***" } }],
     });
     expect(mockQuery).toHaveBeenCalledWith({ type: "credential_action", limit: 500 });
+  });
+
+  it("returns unavailable rather than an empty history on a query failure", async () => {
+    const { AuditServiceError } = jest.requireActual("@/lib/audit/client");
+    mockQuery.mockRejectedValueOnce(new AuditServiceError());
+    const { GET } = await import("../route");
+    const response = await GET({ headers: new Headers(), url: "http://localhost/api/credentials/audit" } as never);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ success: false });
   });
 });

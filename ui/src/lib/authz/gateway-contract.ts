@@ -11,7 +11,20 @@ export interface GatewayRequest {
 
 export type GatewayGate = "context" | "gateway" | "server" | "agent" | "agent_tool" | "caller_tool";
 
+/** One executed check; no tokens, signatures, arguments or inferred grant path. */
+export interface GatewayCheck {
+  gate: GatewayGate;
+  subject_ref: string;
+  relation?: "can_call" | "can_use" | "can_invoke" | "can_search";
+  resource_ref?: string;
+  decision: AuthorizeResult["decision"];
+  reason: AuthorizeResult["reason"];
+}
+
 export interface GatewayResult extends AuthorizeResult {
+  checks: GatewayCheck[];
+  /** Snapshot of the applied CAS rule, not a reconstructed current policy. */
+  policy_rule: string;
   failed_gate?: GatewayGate;
   message: string;
   decision_id: string;

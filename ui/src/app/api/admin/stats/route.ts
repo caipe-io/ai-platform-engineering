@@ -5,6 +5,7 @@ getAuthFromBearerOrSession,
 successResponse,
 withErrorHandler,
 } from '@/lib/api-middleware';
+import { getAuditClient } from '@/lib/audit';
 import { getCollection,isMongoDBConfigured } from '@/lib/mongodb';
 import {
 resolveAuthorizedAdminSimulationScope,
@@ -175,10 +176,7 @@ function generateBucketKeys(now: Date, count: number, unit: BucketUnit): string[
 // OK_LOCAL_AGENT_CONTEXT events (one per MCP tools/call from a local-agent-context
 // client such as Claude Code/Codex — NOT CAIPE's own Dynamic Agents, and NOT a
 // direct API caller, neither of which go through AgentGateway). Reuses the same
-// base-URL resolution as /api/admin/audit-events.
-function auditServiceBaseUrl(): string {
-  return (process.env.AUDIT_SERVICE_URL ?? process.env.AUDIT_LOG_SERVICE_URL ?? 'http://audit-service:8010').replace(/\/$/, '');
-}
+// event client as /api/admin/audit-events.
 
 // The audit-service caps a query's since→until span (`read_max_days`, default
 // 31) and rejects a wider range with an HTTP 400. Mirror that cap here so a
@@ -195,25 +193,13 @@ async function fetchMcpActivityStats(rangeStart: Date, rangeEnd: Date): Promise<
   const zeroDaily = dayKeys.map((date) => ({ date, events: 0, unique_users: 0 }));
 
   try {
-    const params = new URLSearchParams({
-      since: cappedSince.toISOString(),
-      until: rangeEnd.toISOString(),
+    const body = await getAuditClient().queryPage<{ ts?: string; subject_ref?: string; count?: number }>({
+      since: cappedSince,
+      until: rangeEnd,
       reason_code: 'OK_LOCAL_AGENT_CONTEXT',
-      limit: '10000',
-    });
-    const response = await fetch(`${auditServiceBaseUrl()}/v1/audit/events?${params.toString()}`, {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(AUDIT_MCP_ACTIVITY_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      console.warn(`Direct MCP Activity: audit-service returned HTTP ${response.status}`);
-      return { total_events: 0, unique_users: 0, daily: zeroDaily, unavailable: true, range_capped: rangeCapped };
-    }
-    const body = (await response.json()) as {
-      records?: Array<{ ts?: string; subject_ref?: string; count?: number }>;
-      total?: number;
-    };
-    const records = body.records ?? [];
+      limit: 10_000,
+    }, { timeoutMs: AUDIT_MCP_ACTIVITY_TIMEOUT_MS });
+    const records = body.records;
 
     // A record with no `subject_ref` (predates the bridge's identity fix, or
     // simply has none) contributes to the event count but never to the
@@ -253,7 +239,7 @@ async function fetchMcpActivityStats(rangeStart: Date, rangeEnd: Date): Promise<
       total_events: records.reduce((sum, record) => sum + (typeof record.count === 'number' ? record.count : 1), 0),
       unique_users: uniqueSubjects.size,
       daily,
-      range_capped: rangeCapped,
+      range_capped: rangeCapped || Boolean(body.next_cursor),
     };
   } catch (err) {
     console.warn('Direct MCP Activity: audit-service unavailable', err);

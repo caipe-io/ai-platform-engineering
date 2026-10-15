@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir \
       pydantic==2.13.4 \
       boto3==1.43.80 \
       pyarrow==25.0.1 \
+      pymongo==4.16.0 \
     && groupadd -r appuser \
     && useradd -r -g appuser -u 1001 -m appuser
 

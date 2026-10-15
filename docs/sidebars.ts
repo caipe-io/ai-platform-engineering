@@ -327,6 +327,7 @@ const sidebars: SidebarsConfig = {
                 { type: 'doc', id: 'security/rbac/helm-install-upgrade', label: 'Helm Install and Upgrade' },
                 { type: 'doc', id: 'security/rbac/caipe-rbac-migration', label: 'CAIPE RBAC Migration' },
                 { type: 'doc', id: 'security/rbac/audit-log-performance', label: 'Audit Log Performance' },
+                { type: 'doc', id: 'security/rbac/audit-query-store', label: 'Audit Queries and Migration' },
                 { type: 'doc', id: 'security/rbac/secrets-bootstrap', label: 'Secrets Bootstrap' },
                 { type: 'doc', id: 'security/rbac/agent-context-hmac', label: 'Agent Context HMAC' },
                 { type: 'doc', id: 'security/rbac/file-map', label: 'File Map' },

@@ -34,16 +34,26 @@ import {
   X,
 } from "lucide-react";
 import React,{ useCallback,useEffect,useMemo,useRef,useState } from "react";
+import { ACCESS_DECISION_COLOURS, ACCESS_GATE_LABELS, describeAccessDecision } from "./access-decision-description";
+import { AccessDecisionChain } from "./AccessDecisionChain";
+import { AuditReference, type AuditReferenceKind } from "./AuditReference";
 
 interface UnifiedAuditTabProps {
   isAdmin: boolean;
+  view?: "audit" | "decisions";
+  initialSubjectRef?: string;
 }
 
 interface PaginatedResult {
   records: UnifiedAuditEvent[];
-  total: number;
-  page: number;
+  cursor: string;
+  next_cursor: string | null;
+  since: string;
+  until: string;
+  as_of: string;
   limit: number;
+  warning?: string;
+  auditUnavailable?: boolean;
 }
 
 interface FilterOption {
@@ -62,6 +72,9 @@ interface AuditStorageConfig {
 
 interface AuditStorageInfo {
   storage: {
+    query_backend?: string;
+    record_count?: number;
+    pending_archive_count?: number;
     backend?: string;
     audit_bytes?: number;
     audit_bytes_human?: string;
@@ -99,14 +112,10 @@ const TIME_WINDOW_OPTIONS = [
   { value: "6h", label: "Last 6 hr", resolution: "hour" },
   { value: "12h", label: "Last 12 hr", resolution: "hour" },
   { value: "24h", label: "Last 24 hr", resolution: "hour" },
+  { value: "48h", label: "Last 48 hr", resolution: "hour" },
   { value: "7d", label: "Last 7 days", resolution: "day" },
 ] as const;
 type TimeWindow = (typeof TIME_WINDOW_OPTIONS)[number]["value"] | "custom";
-
-function timeResolutionForWindow(window: TimeWindow): string {
-  if (window === "custom") return "auto";
-  return TIME_WINDOW_OPTIONS.find((option) => option.value === window)?.resolution ?? "auto";
-}
 
 const TYPE_FILTER_GROUPS: {
   label?: string;
@@ -621,20 +630,31 @@ async function downloadAuditZip({
   downloadBlobFile(filename, blob);
 }
 
-export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
+export function UnifiedAuditTab({ isAdmin, view = "audit", initialSubjectRef = "" }: UnifiedAuditTabProps) {
+  const [typeFilter, setTypeFilter] = useState(view === "decisions" ? "cas_decision" : "");
+  const decisionsView = typeFilter === "cas_decision";
+  const outcomeOptions = OUTCOME_OPTIONS.map((option) =>
+    option.value === "deny" ? { ...option, label: "Blocked", description: "Includes permission denial, rejected context/request, and authorization unavailability. Expand the record for the reason." } : option,
+  );
   const [result, setResult] = useState<PaginatedResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-
-  const [typeFilter, setTypeFilter] = useState("");
+  const pageCursors = useRef<string[]>([]);
   const [outcomeFilter, setOutcomeFilter] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [agentName, setAgentName] = useState("");
+  const [subjectRef, setSubjectRef] = useState(initialSubjectRef);
+  const [resourceRef, setResourceRef] = useState("");
+  const [decisionId, setDecisionId] = useState("");
+  const [correlationId, setCorrelationId] = useState("");
+  const [referenceFilters, setReferenceFilters] = useState({
+    subject_ref: initialSubjectRef, resource_ref: "", decision_id: "", correlation_id: "",
+  });
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [timeWindow, setTimeWindow] = useState<TimeWindow>("5m");
+  const [timeWindow, setTimeWindow] = useState<TimeWindow>(decisionsView ? "1h" : "5m");
 
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -646,31 +666,33 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
   const [retentionSaveMsg, setRetentionSaveMsg] = useState<string | null>(null);
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const auditConfigRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestQuery = useRef(0);
 
-  const buildAuditParams = useCallback((p: number, limit: number) => {
+  const buildAuditParams = useCallback((cursor: string | undefined, limit: number) => {
     const params = new URLSearchParams();
-    params.set("page", String(p));
+    if (cursor) params.set("cursor", cursor);
     params.set("limit", String(limit));
-    if (timeWindow === "custom") {
-      params.set("time_resolution", "auto");
-    } else {
+    if (timeWindow !== "custom") {
       params.set("window", timeWindow);
-      params.set("time_resolution", timeResolutionForWindow(timeWindow));
     }
     if (typeFilter) params.set("type", typeFilter);
     if (outcomeFilter) params.set("outcome", outcomeFilter);
     if (userEmail.trim()) params.set("user_email", userEmail.trim());
     if (agentName.trim()) params.set("agent_name", agentName.trim());
+    for (const [key, value] of Object.entries(referenceFilters)) {
+      if (value) params.set(key, value);
+    }
     if (timeWindow === "custom" && dateFrom) params.set("from", new Date(dateFrom).toISOString());
     if (timeWindow === "custom" && dateTo) params.set("to", new Date(dateTo).toISOString());
     return params;
-  }, [timeWindow, typeFilter, outcomeFilter, userEmail, agentName, dateFrom, dateTo]);
+  }, [timeWindow, typeFilter, outcomeFilter, userEmail, agentName, referenceFilters, dateFrom, dateTo]);
 
-  const fetchEvents = useCallback(async (p = 1) => {
+  const fetchEvents = useCallback(async (p = 1, cursor?: string) => {
+    const queryId = ++latestQuery.current;
     setLoading(true);
     setError(null);
     try {
-      const params = buildAuditParams(p, 30);
+      const params = buildAuditParams(cursor, 30);
 
       const res = await fetch(`/api/admin/audit-events?${params.toString()}`);
       if (!res.ok) {
@@ -678,12 +700,16 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
         throw new Error(body.error || body.message || `HTTP ${res.status}`);
       }
       const data: PaginatedResult = await res.json();
+      if (queryId !== latestQuery.current) return;
       setResult(data);
       setPage(p);
+      if (!cursor) pageCursors.current = [];
+      pageCursors.current[p - 1] = data.cursor;
+      setExpandedRow(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load audit events");
+      if (queryId === latestQuery.current) setError(err instanceof Error ? err.message : "Failed to load audit events");
     } finally {
-      setLoading(false);
+      if (queryId === latestQuery.current) setLoading(false);
     }
   }, [buildAuditParams]);
 
@@ -754,11 +780,12 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
     setError(null);
     try {
       const records: UnifiedAuditEvent[] = [];
-      let exportPage = 1;
-      let total = 0;
+      let cursor: string | undefined;
+      let bounds: Pick<PaginatedResult, "since" | "until" | "as_of"> | undefined;
+      const seenCursors = new Set<string>();
 
       while (true) {
-        const params = buildAuditParams(exportPage, 200);
+        const params = buildAuditParams(cursor, 200);
         const res = await fetch(`/api/admin/audit-events?${params.toString()}`);
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -766,11 +793,14 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
         }
 
         const data: PaginatedResult = await res.json();
-        total = data.total;
+        if (data.auditUnavailable) throw new Error("Cannot export decision evidence while audit reads are unavailable");
+        bounds ??= { since: data.since, until: data.until, as_of: data.as_of };
         records.push(...data.records);
-
-        if (records.length >= data.total || data.records.length === 0) break;
-        exportPage += 1;
+        if (records.length > 100_000) throw new Error("Export exceeds 100,000 events. Narrow the time range or filters.");
+        if (!data.next_cursor) break;
+        if (seenCursors.has(data.next_cursor)) throw new Error("Audit export cursor did not advance. Please retry.");
+        seenCursors.add(data.next_cursor);
+        cursor = data.next_cursor;
       }
 
       const filters: Record<string, string> = {};
@@ -778,6 +808,9 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
       if (outcomeFilter) filters.outcome = outcomeFilter;
       if (userEmail.trim()) filters.user_email = userEmail.trim();
       if (agentName.trim()) filters.agent_name = agentName.trim();
+      for (const [key, value] of Object.entries(referenceFilters)) {
+        if (value) filters[key] = value;
+      }
       if (timeWindow === "custom") {
         if (dateFrom) filters.from = new Date(dateFrom).toISOString();
         if (dateTo) filters.to = new Date(dateTo).toISOString();
@@ -787,14 +820,14 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
 
       const exportedAt = new Date().toISOString();
       await downloadAuditZip({
-        filename: `rbac-audit-log-${formatDownloadTimestamp(exportedAt)}.zip`,
+        filename: `security-audit-log-${formatDownloadTimestamp(exportedAt)}.zip`,
         records,
         manifest: {
           exported_at: exportedAt,
           format: "raw-json-zip",
           files: ["audit-events.json", "manifest.json"],
           filters,
-          total,
+          ...bounds,
           record_count: records.length,
         },
       });
@@ -803,34 +836,34 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
     } finally {
       setExporting(false);
     }
-  }, [buildAuditParams, timeWindow, typeFilter, outcomeFilter, userEmail, agentName, dateFrom, dateTo]);
+  }, [buildAuditParams, timeWindow, typeFilter, outcomeFilter, userEmail, agentName, referenceFilters, dateFrom, dateTo]);
 
   useEffect(() => {
+    if (!isAdmin) return;
+    setResult(null);
     fetchEvents(1);
-  }, [fetchEvents]);
+    return () => { latestQuery.current += 1; };
+  }, [isAdmin, fetchEvents]);
 
   useEffect(() => {
     if (!isAdmin) return;
     fetchAuditConfig().catch(() => undefined);
-    fetchStorageInfo().catch(() => undefined);
     return () => {
       if (auditConfigRetryRef.current) clearTimeout(auditConfigRetryRef.current);
     };
-  }, [isAdmin, fetchAuditConfig, fetchStorageInfo]);
+  }, [isAdmin, fetchAuditConfig]);
 
   useEffect(() => {
     if (autoRefresh) {
       autoRefreshRef.current = setInterval(() => {
-        fetchEvents(page);
+        fetchEvents(1);
         fetchAuditConfig().catch(() => undefined);
       }, 30_000);
     }
     return () => {
       if (autoRefreshRef.current) clearInterval(autoRefreshRef.current);
     };
-  }, [autoRefresh, page, fetchEvents, fetchAuditConfig]);
-
-  const totalPages = result ? Math.ceil(result.total / result.limit) : 0;
+  }, [autoRefresh, fetchEvents, fetchAuditConfig]);
 
   const selectedTypeHelp = useMemo(
     () =>
@@ -842,14 +875,22 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
   const auditStorageWarning = auditConfig?.readsAvailable === false ? auditConfig.readsWarning : undefined;
 
   const handleReset = () => {
-    setTypeFilter("");
+    setTypeFilter(view === "decisions" ? "cas_decision" : "");
     setOutcomeFilter("");
     setUserEmail("");
     setAgentName("");
+    setSubjectRef("");
+    setResourceRef("");
+    setDecisionId("");
+    setCorrelationId("");
+    setReferenceFilters({ subject_ref: "", resource_ref: "", decision_id: "", correlation_id: "" });
     setDateFrom("");
     setDateTo("");
-    setTimeWindow("5m");
+    setTimeWindow(view === "decisions" ? "1h" : "5m");
     setPage(1);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("subject_ref");
+    window.history.replaceState(null, "", url);
   };
 
   if (!isAdmin) {
@@ -870,9 +911,9 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle className="text-lg">RBAC Audit Log</CardTitle>
+            <CardTitle role="heading" aria-level={3} className="text-lg">Security audit</CardTitle>
             <CardDescription>
-              Policy changes, access decisions, ReBAC checks, tool use, and delegations in one timeline
+              {decisionsView ? "Recorded CAS checks: who attempted what, and which check blocked access." : "Policy changes, access decisions, ReBAC checks, tool use, and delegations in one timeline"}
             </CardDescription>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Badge
@@ -919,7 +960,7 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
               variant="outline"
               size="sm"
               onClick={() => {
-                fetchEvents(page);
+                fetchEvents(1);
                 fetchAuditConfig().catch(() => undefined);
               }}
               className="gap-1.5"
@@ -954,8 +995,11 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
               <div className="mb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Storage Usage</div>
               {storageInfo?.storage ? (
                 <div className="text-sm space-y-0.5">
+                  <div><span className="text-muted-foreground">Queries: </span>{storageInfo.storage.query_backend ?? "—"}</div>
+                  <div><span className="text-muted-foreground">Query records (approx.): </span>{storageInfo.storage.record_count?.toLocaleString() ?? "—"}</div>
+                  <div><span className="text-muted-foreground">Pending archive: </span>{storageInfo.storage.pending_archive_count?.toLocaleString() ?? "—"}</div>
                   <div>
-                    <span className="text-muted-foreground">Backend: </span>
+                    <span className="text-muted-foreground">Archive: </span>
                     <span className="font-medium">{storageInfo.storage.backend ?? "—"}</span>
                   </div>
                   {storageInfo.storage.backend === "local" && (
@@ -1070,6 +1114,18 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
       )}
 
       <CardContent>
+        {decisionsView && (
+          <p className="mb-4 rounded-md border p-3 text-sm text-muted-foreground">
+            Historical evidence, not current permissions. Allows may be rollups; catalog lookups are not blocked requests.
+            Authentication failures before CAS and downstream credential/tool failures may not be recorded here.
+            Audit delivery is best-effort; no matching record is not proof that no check occurred.
+          </p>
+        )}
+        {result?.auditUnavailable && (
+          <p role="alert" className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+            {result.warning} No conclusion can be drawn from an empty result while audit reads are unavailable.
+          </p>
+        )}
         {/* Filters */}
         <div className="flex flex-wrap gap-3 mb-4">
           <div className="flex items-center gap-0.5">
@@ -1101,7 +1157,7 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
                 </span>
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-xs">
-                Short windows read minute-resolution audit partitions; broader windows read coarser partitions.
+                Filters and time ranges are queried in MongoDB. Each request reads one bounded page; S3 is the archive.
               </TooltipContent>
             </Tooltip>
           </div>
@@ -1144,7 +1200,7 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
               onChange={(e) => setOutcomeFilter(e.target.value)}
               className="h-9 rounded-md border border-input bg-background px-3 text-sm"
             >
-              {OUTCOME_OPTIONS.map((o) => (
+              {outcomeOptions.map((o) => (
                 <option key={o.value} value={o.value} title={o.description}>
                   {o.label}
                 </option>
@@ -1153,21 +1209,15 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
             <FilterDefinitionsHelp
               ariaLabel="Outcome filter definitions"
               title="Outcomes"
-              flatOptions={OUTCOME_OPTIONS}
+              flatOptions={outcomeOptions}
             />
           </div>
-          <Input
-            placeholder="User email..."
-            value={userEmail}
-            onChange={(e) => setUserEmail(e.target.value)}
-            className="h-9 w-48"
-          />
-          <Input
-            placeholder="Agent name..."
-            value={agentName}
-            onChange={(e) => setAgentName(e.target.value)}
-            className="h-9 w-40"
-          />
+          <Input aria-label="Caller principal" placeholder="user:ID or service_account:ID" value={subjectRef} onChange={(e) => setSubjectRef(e.target.value)} className="h-9 w-64" />
+          <Input aria-label="Resource reference" placeholder="tool:server/tool or agent:ID" value={resourceRef} onChange={(e) => setResourceRef(e.target.value)} className="h-9 w-64" />
+          <Input aria-label="Decision ID" placeholder="Decision ID" value={decisionId} onChange={(e) => setDecisionId(e.target.value)} className="h-9 w-64" />
+          <Input aria-label="Correlation ID" placeholder="Correlation ID" value={correlationId} onChange={(e) => setCorrelationId(e.target.value)} className="h-9 w-64" />
+          <Input placeholder="User email..." value={userEmail} onChange={(e) => setUserEmail(e.target.value)} className="h-9 w-48" />
+          <Input placeholder="Agent name..." value={agentName} onChange={(e) => setAgentName(e.target.value)} className="h-9 w-40" />
           <Input
             type="datetime-local"
             value={dateFrom}
@@ -1194,7 +1244,9 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
             <X className="h-3.5 w-3.5" />
             Clear
           </Button>
-          <Button variant="default" size="sm" onClick={() => fetchEvents(1)} className="gap-1 h-9">
+          <Button variant="default" size="sm" onClick={() => {
+            setReferenceFilters({ subject_ref: subjectRef.trim(), resource_ref: resourceRef.trim(), decision_id: decisionId.trim(), correlation_id: correlationId.trim() });
+          }} className="gap-1 h-9">
             <Search className="h-3.5 w-3.5" />
             Search
           </Button>
@@ -1217,40 +1269,41 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
         {result && (
           <>
             <div className="text-xs text-muted-foreground mb-2">
-              {result.total} event{result.total !== 1 ? "s" : ""} found
+              {result.auditUnavailable ? "Audit results unavailable" : `${result.records.length} event${result.records.length !== 1 ? "s" : ""} on this page`}
               {loading && <Loader2 className="inline h-3 w-3 ml-1 animate-spin" />}
             </div>
-            <div className="border rounded-md overflow-hidden">
+            <div className="border rounded-md overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-muted/50 text-left">
 	                    <th className="px-3 py-2 font-medium w-8" />
 	                    <th className="px-3 py-2 font-medium">Time</th>
-	                    <th className="px-3 py-2 font-medium">Event</th>
-	                    <th className="px-3 py-2 font-medium">Actor</th>
+	                    {!decisionsView && <th className="px-3 py-2 font-medium">Event</th>}
+	                    <th className="px-3 py-2 font-medium">{decisionsView ? "Caller" : "Actor"}</th>
 	                    <th className="px-3 py-2 font-medium">Request</th>
-	                    <th className="px-3 py-2 font-medium">Path</th>
+	                    <th className="px-3 py-2 font-medium">{decisionsView ? "Failed check" : "Path"}</th>
 	                    <th className="px-3 py-2 font-medium">Outcome</th>
-	                    <th className="px-3 py-2 font-medium">Source</th>
-	                    <th className="px-3 py-2 font-medium">Duration</th>
+	                    {!decisionsView && <th className="px-3 py-2 font-medium">Source</th>}
+	                    {!decisionsView && <th className="px-3 py-2 font-medium">Duration</th>}
 	                  </tr>
                 </thead>
                 <tbody>
                   {result.records.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">
-                        No audit events found for the selected filters.
+                      <td colSpan={decisionsView ? 6 : 9} className="px-3 py-8 text-center text-muted-foreground">
+                        {result.auditUnavailable ? "Audit results unavailable." : "No audit events found for the selected filters."}
                       </td>
                     </tr>
                   )}
 	                  {result.records.map((evt) => {
-	                    const rowKey = `${evt.correlation_id}-${evt.ts}`;
+	                    const rowKey = evt.audit_event_id ?? `${evt.correlation_id}-${evt.ts}`;
 	                    const isExpanded = expandedRow === rowKey;
 	                    const resource = getResourceParts(evt);
-	                    const story = requestStory(evt);
+	                    const description = evt.type === "cas_decision" ? describeAccessDecision(evt) : undefined;
+	                    const story = decisionsView ? `${description?.label ?? evt.outcome}: ${humanizeToken(evt.action)} ${resource.label}` : requestStory(evt);
 	                    const actor = actorLabel(evt);
 	                    const subject = subjectLabel(evt);
-	                    const path = decisionPathLabel(evt);
+	                    const path = decisionsView ? (evt.failed_gate ? ACCESS_GATE_LABELS[evt.failed_gate] || evt.failed_gate : "—") : decisionPathLabel(evt);
 	                    return (
 	                      <React.Fragment key={rowKey}>
                         <tr
@@ -1267,33 +1320,41 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
                           <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
                             {formatTimestamp(evt.ts)}
                           </td>
-	                          <td className="px-3 py-2">
+	                          {!decisionsView && <td className="px-3 py-2">
 	                            <TypeBadge type={evt.type} />
-	                          </td>
-	                          <td className="px-3 py-2 text-xs max-w-[220px] truncate" title={actor}>
-	                            {actor}
+	                          </td>}
+	                          <td className={`px-3 py-2 text-xs max-w-[220px] ${decisionsView ? "whitespace-normal" : "truncate"}`} title={decisionsView ? subject : actor}>
+	                            {decisionsView ? <>
+	                              {evt.subject_ref ? <AuditReference kind="principal" value={evt.subject_ref} /> : <span className="text-muted-foreground">Principal not recorded</span>}
+	                              {subject !== "unknown" && subject !== evt.subject_ref && <div className="mt-1 text-muted-foreground">{subject}</div>}
+	                            </> : actor}
 	                          </td>
 	                          <td className="px-3 py-2 min-w-[260px]" title={`${evt.action} ${evt.resource_ref || ""}`.trim()}>
 	                            <div className="font-medium text-sm">{story}</div>
 	                            <div className="text-[11px] text-muted-foreground mt-0.5">
-	                              {evt.type === "cas_reconcile"
-	                                ? reconcileRequestSummary(evt)
-	                                : evt.workflow_run_id
-	                                  ? `Workflow run ${evt.workflow_run_id}`
-	                                  : `Resource ${resource.label}`}
-	                              {evt.type !== "cas_reconcile" && evt.action ? ` · Action ${evt.action}` : ""}
+	                              {decisionsView ? <div className="mt-1 flex flex-wrap items-center gap-1">
+	                                <AuditReference kind="resource" value={evt.resource_ref || resource.label} />
+	                                <AuditReference kind="action" value={evt.action} />
+	                              </div> : <>
+	                                {evt.type === "cas_reconcile"
+	                                  ? reconcileRequestSummary(evt)
+	                                  : evt.workflow_run_id
+	                                    ? `Workflow run ${evt.workflow_run_id}`
+	                                    : `Resource ${resource.label}`}
+	                                {evt.type !== "cas_reconcile" && evt.action ? ` · Action ${evt.action}` : ""}
+	                              </>}
 	                            </div>
 	                          </td>
 	                          <td className="px-3 py-2 text-xs max-w-[180px] truncate" title={path}>
 	                            {path}
 	                          </td>
 	                          <td className="px-3 py-2">
-	                            <OutcomeBadge outcome={evt.outcome} />
+	                            {decisionsView ? <Badge variant="outline" className={ACCESS_DECISION_COLOURS[description?.tone ?? "neutral"]}>{description?.label ?? evt.outcome}</Badge> : <OutcomeBadge outcome={evt.outcome} />}
 	                          </td>
-	                          <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground max-w-[150px] truncate" title={displaySource(evt.source)}>
+	                          {!decisionsView && <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground max-w-[150px] truncate" title={displaySource(evt.source)}>
 	                            {displaySource(evt.source)}
-	                          </td>
-	                          <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
+	                          </td>}
+	                          {!decisionsView && <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
                             {evt.duration_ms != null && (
                               <span className="flex items-center gap-1">
                                 <Clock className="h-3 w-3" />
@@ -1301,21 +1362,23 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
                               </span>
                             )}
                             {evt.duration_ms == null && "—"}
-                          </td>
+                          </td>}
                         </tr>
                         {isExpanded && (
 	                          <tr className="border-t bg-muted/20">
-	                            <td colSpan={9} className="px-6 py-4">
-	                              <div className="mb-4 rounded-md border border-border/60 bg-background/60 p-3">
+	                            <td colSpan={decisionsView ? 6 : 9} className="px-6 py-4">
+	                              <div className={`mb-4 rounded-md border border-l-4 p-3 ${decisionsView && description ? ACCESS_DECISION_COLOURS[description.tone] : "border-border/60 bg-background/60"}`}>
 	                                <div className="text-xs text-muted-foreground mb-1">What happened:</div>
 	                                <div className="text-sm font-medium">{story}</div>
-	                                <div className="text-xs text-muted-foreground mt-1">{reasonPhrase(evt)}</div>
+	                                <div className="text-xs text-muted-foreground mt-1">{description?.explanation ?? reasonPhrase(evt)}</div>
 	                              </div>
+	                              {evt.type === "cas_decision" && <AccessDecisionChain event={evt} />}
 	                              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-	                                <DetailField label="Actor" value={actor} />
+	                                <DetailField label={decisionsView ? "Checking workload / actor" : "Actor"} value={decisionsView ? evt.actor_ref || evt.actor_display || "Not recorded" : actor} referenceKind={decisionsView ? "workload" : undefined} />
 	                                <DetailField
-	                                  label={evt.type === "cas_reconcile" ? "Target" : "Subject"}
-	                                  value={subject}
+	                                  label={decisionsView ? "Effective principal" : evt.type === "cas_reconcile" ? "Target" : "Subject"}
+	                                  value={decisionsView ? evt.subject_ref || "Not recorded" : subject}
+	                                  referenceKind={decisionsView && evt.subject_ref ? "principal" : undefined}
 	                                />
 	                                <DetailField
 	                                  label="Request"
@@ -1325,7 +1388,7 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
 	                                      : `${humanizeToken(evt.action)} ${resource.label}`
 	                                  }
 	                                />
-	                                <DetailField label="Decision Path" value={path} />
+	                                <DetailField label="Decision Path" value={decisionPathLabel(evt)} />
 	                                <DetailField label="Correlation ID" value={evt.correlation_id} />
 	                                <DetailField label="Context ID" value={evt.context_id} />
 	                                <DetailField label="Component" value={evt.component} />
@@ -1334,7 +1397,15 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
                                 <DetailField label="PDP" value={evt.pdp} />
                                 <DetailField label="Trace ID" value={evt.trace_id} mono />
                                 <DetailField label="Reason Code" value={evt.reason_code} />
-                                <DetailField label="Resource Ref" value={evt.resource_ref} />
+                                <DetailField label="Failed check" value={evt.failed_gate ? ACCESS_GATE_LABELS[evt.failed_gate] || evt.failed_gate : undefined} />
+                                <DetailField label="Decision ID" value={evt.decision_id} mono />
+                                <DetailField label="Gateway operation" value={evt.gateway_operation} />
+                                <DetailField label="Agent" value={evt.agent_ref || (evt.gateway_operation ? "Not recorded" : undefined)} />
+                                <DetailField label="Checks summarized" value={evt.count?.toString()} />
+                                <DetailField label="Rollup start" value={evt.window_start} />
+                                <DetailField label="Rollup end" value={evt.window_end} />
+                                <DetailField label="Resource Ref" value={evt.resource_ref} referenceKind={decisionsView ? "resource" : undefined} />
+                                {decisionsView && <DetailField label="Action" value={evt.action} referenceKind="action" />}
 	                                <DetailField label="Resource Type" value={evt.resource_type} />
 	                                <DetailField label="Resource ID" value={evt.resource_id} />
 	                                <DetailField label="Workflow Run ID" value={evt.workflow_run_id} />
@@ -1362,25 +1433,27 @@ export function UnifiedAuditTab({ isAdmin }: UnifiedAuditTabProps) {
             </div>
 
             {/* Pagination */}
-            {totalPages > 1 && (
+            {(page > 1 || result.next_cursor) && (
               <div className="flex items-center justify-between mt-4">
                 <span className="text-xs text-muted-foreground">
-                  Page {page} of {totalPages}
+                  Page {page}
                 </span>
                 <div className="flex gap-1">
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={page <= 1}
-                    onClick={() => fetchEvents(page - 1)}
+                    aria-label="Previous audit page"
+                    disabled={loading || page <= 1}
+                    onClick={() => fetchEvents(page - 1, pageCursors.current[page - 2])}
                   >
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={page >= totalPages}
-                    onClick={() => fetchEvents(page + 1)}
+                    aria-label="Next audit page"
+                    disabled={loading || !result.next_cursor}
+                    onClick={() => fetchEvents(page + 1, result.next_cursor ?? undefined)}
                   >
                     <ChevronRight className="h-4 w-4" />
                   </Button>
@@ -1399,16 +1472,18 @@ function DetailField({
   label,
   value,
   mono,
+  referenceKind,
 }: {
   label: string;
   value?: string | null;
   mono?: boolean;
+  referenceKind?: AuditReferenceKind;
 }) {
   if (!value) return null;
   return (
     <div>
       <span className="text-muted-foreground">{label}:</span>{" "}
-      <span className={mono ? "font-mono break-all" : ""}>{value}</span>
+      {referenceKind ? <AuditReference kind={referenceKind} value={value} /> : <span className={mono ? "font-mono break-all" : ""}>{value}</span>}
     </div>
   );
 }

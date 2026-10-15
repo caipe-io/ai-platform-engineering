@@ -18,8 +18,8 @@ jest.mock("@/lib/feature-flags/credentials", () => ({
   getCredentialFeatureConfig: jest.fn(() => ({ enabled: true })),
 }));
 
-jest.mock("@/lib/audit/reader", () => ({
-  getAuditReader: () => ({ query: mockQuery }),
+jest.mock("@/lib/audit", () => ({
+  getAuditClient: () => ({ queryPage: async (...args: unknown[]) => ({ records: await mockQuery(...args) }) }),
 }));
 
 jest.mock("@/lib/rbac/require-openfga", () => ({
@@ -57,5 +57,14 @@ describe("/api/admin/credentials/audit", () => {
       "credentials",
     );
     expect(mockQuery).toHaveBeenCalledWith({ type: "credential_action", limit: 100 });
+  });
+
+  it("does not turn an unavailable service into an empty successful history", async () => {
+    const { AuditServiceError } = jest.requireActual("@/lib/audit/client");
+    mockQuery.mockRejectedValueOnce(new AuditServiceError());
+    const { GET } = await import("../route");
+    const response = await GET({ headers: new Headers(), url: "http://localhost/api/admin/credentials/audit" } as never);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ success: false });
   });
 });

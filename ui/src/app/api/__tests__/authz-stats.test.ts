@@ -7,7 +7,8 @@ const mockGetAuth = jest.fn();
 const mockRequireManage = jest.fn();
 const mockGetEngineStats = jest.fn();
 const mockAuditQuery = jest.fn();
-let mockAuditBackend = "service";
+let mockAuditEnabled = true;
+let mockNextCursor: string | null = null;
 
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
@@ -36,10 +37,10 @@ jest.mock("@/lib/rbac/require-openfga", () => ({
   requireAdminSurfaceManage: (...a: unknown[]) => mockRequireManage(...a),
 }));
 jest.mock("@/lib/authz", () => ({ getEngineStats: (...a: unknown[]) => mockGetEngineStats(...a) }));
-jest.mock("@/lib/audit/reader", () => ({
-  getAuditReader: () => ({
-    backendName: mockAuditBackend,
-    query: (...a: unknown[]) => mockAuditQuery(...a),
+jest.mock("@/lib/audit", () => ({
+  getAuditClient: () => ({
+    enabled: mockAuditEnabled,
+    queryPage: async (...a: unknown[]) => ({ records: await mockAuditQuery(...a), next_cursor: mockNextCursor }),
   }),
 }));
 
@@ -53,8 +54,9 @@ const ENGINE = { circuitState: "closed", cacheSize: 3, cacheHits: 7, cacheMisses
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockAuditBackend = "service";
-  mockGetAuth.mockResolvedValue({ session: { org: "acme" } });
+  mockAuditEnabled = true;
+  mockNextCursor = null;
+  mockGetAuth.mockResolvedValue({ session: { org: "primary" } });
   mockRequireManage.mockResolvedValue(undefined);
   mockGetEngineStats.mockReturnValue(ENGINE);
   mockAuditQuery.mockResolvedValue([]);
@@ -85,7 +87,7 @@ it("aggregates decision stats from audit-service and includes the live engine sn
     byReason: [{ reason: "OK", count: 8 }, { reason: "NO_CAPABILITY", count: 2 }],
     topDenied: [{ resource: "agent:pe", count: 2 }],
   });
-  expect(mockAuditQuery).toHaveBeenCalledWith(expect.objectContaining({ type: "cas_decision", tenantId: "acme" }));
+  expect(mockAuditQuery).toHaveBeenCalledWith(expect.objectContaining({ type: "cas_decision", tenant_id: "primary" }), { timeoutMs: 15_000 });
 });
 
 it("sums aggregated allow counts so the deny rate is not inflated", async () => {
@@ -222,6 +224,20 @@ it("returns zero decision stats when audit-service has no rows", async () => {
   });
 });
 
+it("uses the cursor to mark incomplete decision statistics", async () => {
+  mockNextCursor = "next-page";
+  const response = await GET(req("?window=1h"));
+  expect((await response.json()).decisions.truncated).toBe(true);
+});
+
+it("does not report zero decisions when the audit query fails", async () => {
+  const { AuditServiceError } = jest.requireActual("@/lib/audit/client");
+  mockAuditQuery.mockRejectedValueOnce(new AuditServiceError());
+  const response = await GET(req("?window=1h"));
+  expect(response.status).toBe(503);
+  expect(await response.json()).not.toHaveProperty("decisions");
+});
+
 it("accepts the shared custom date range", async () => {
   const res = await GET(req("?from=1780272000&to=1780444800"));
 
@@ -229,7 +245,7 @@ it("accepts the shared custom date range", async () => {
   expect(mockAuditQuery).toHaveBeenCalledWith(expect.objectContaining({
     since: new Date("2026-06-01T00:00:00.000Z"),
     until: new Date("2026-06-03T00:00:00.000Z"),
-  }));
+  }), { timeoutMs: 15_000 });
 });
 
 it("accepts rolling ranges used by the shared preset filter", async () => {
@@ -241,7 +257,7 @@ it("accepts rolling ranges used by the shared preset filter", async () => {
     expect(mockAuditQuery).toHaveBeenCalledWith(expect.objectContaining({
       since: new Date("2026-06-02T12:00:00.000Z"),
       until: new Date("2026-06-03T00:00:00.000Z"),
-    }));
+    }), { timeoutMs: 15_000 });
   } finally {
     jest.useRealTimers();
   }
@@ -267,7 +283,7 @@ it("separates policy denials from authorization unavailability", async () => {
 });
 
 it("reports unavailable history when durable audit storage is off", async () => {
-  mockAuditBackend = "off";
+  mockAuditEnabled = false;
 
   const res = await GET(req("?window=24h"));
   const body = await res.json();

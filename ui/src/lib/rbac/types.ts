@@ -7,6 +7,8 @@
 
 // assisted-by Codex Codex-sonnet-4-6
 
+import type { GatewayCheck } from "@/lib/authz";
+
 /** Protected components from the 098 permission matrix (FR-008, FR-014) */
 export type RbacResource =
   | "ai_assist"
@@ -171,6 +173,14 @@ export interface UnifiedAuditEvent {
   resource_id?: string;
   workflow_run_id?: string;
   decision_via?: string;
+  /** Gateway decision receipt; absent on aggregated allow records. */
+  decision_id?: string;
+  failed_gate?: string;
+  gateway_operation?: string;
+  agent_ref?: string;
+  /** Ordered executed checks, never a representative allow-rollup chain. */
+  gateway_checks?: GatewayCheck[];
+  gateway_policy?: string;
   pdp?: string;
   source: AuditEventSource;
   trace_id?: string;

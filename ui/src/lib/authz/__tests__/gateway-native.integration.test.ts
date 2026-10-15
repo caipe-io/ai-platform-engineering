@@ -11,7 +11,7 @@ import { checkGatewayAccess } from "../gateway-http";
 import { signGatewayContext } from "../gateway-context";
 import { __resetAdapterStateForTests } from "../engines/openfga";
 
-jest.mock("@/lib/audit", () => ({ getAuditBackend: () => ({ write: () => {} }) }));
+jest.mock("@/lib/audit", () => ({ getAuditClient: () => ({ append: () => {} }) }));
 
 const binary = process.env.CAIPE_GATEWAY_TEST_BINARY;
 const fgaUrl = process.env.OPENFGA_GATEWAY_TEST_URL;

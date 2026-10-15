@@ -51,7 +51,7 @@ jest.mock('@/lib/rbac/keycloak-authz', () => ({
 
 const mockAuditWrite = jest.fn();
 jest.mock('@/lib/audit', () => ({
-  getAuditBackend: () => ({ write: mockAuditWrite }),
+  getAuditClient: () => ({ append: mockAuditWrite }),
 }));
 
 const mockGetServerSession = jest.requireMock('next-auth').getServerSession;

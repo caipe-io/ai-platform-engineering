@@ -3,10 +3,10 @@
  */
 
 const mockWrite = jest.fn();
-const mockGetAuditBackend = jest.fn(() => ({ write: mockWrite }));
+const mockGetAuditClient = jest.fn(() => ({ append: mockWrite }));
 
 jest.mock("@/lib/audit", () => ({
-  getAuditBackend: () => mockGetAuditBackend(),
+  getAuditClient: () => mockGetAuditClient(),
 }));
 
 import {
@@ -33,7 +33,7 @@ beforeEach(() => {
   // pending counts never leak into the next assertion.
   flushAllowRollups();
   jest.clearAllMocks();
-  mockGetAuditBackend.mockReturnValue({ write: mockWrite });
+  mockGetAuditClient.mockReturnValue({ append: mockWrite });
   delete process.env.AUDIT_FULL_FIDELITY_ALLOWS;
 });
 
@@ -101,7 +101,7 @@ describe("emitDecisionAudit", () => {
   });
 
   it("swallows backend lookup failures (never throws into the decision path)", () => {
-    mockGetAuditBackend.mockImplementationOnce(() => {
+    mockGetAuditClient.mockImplementationOnce(() => {
       throw new Error("audit-service down");
     });
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
@@ -258,7 +258,7 @@ describe("emitGrantAudit", () => {
   });
 
   it("swallows backend lookup failures (never throws into the grant path)", async () => {
-    mockGetAuditBackend.mockImplementationOnce(() => {
+    mockGetAuditClient.mockImplementationOnce(() => {
       throw new Error("audit-service down");
     });
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});

@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { ApiError, getAuthFromBearerOrSession, withErrorHandler } from "@/lib/api-middleware";
-import { getAuditReader } from "@/lib/audit/reader";
+import { getAuditClient } from "@/lib/audit";
 import { getEngineStats } from "@/lib/authz";
 import { requireAdminSurfaceManage } from "@/lib/rbac/require-openfga";
 
@@ -140,22 +140,21 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
 
   const engine = getEngineStats();
   const org = (session as { org?: string } | null)?.org;
-  const auditReader = getAuditReader();
-  if (auditReader.backendName !== "service") {
+  const auditClient = getAuditClient();
+  if (!auditClient.enabled) {
     return NextResponse.json(
       { engine, window: windowLabel, persistence: false, decisions: null },
       { headers: { "Cache-Control": "no-store" } },
     );
   }
 
-  const rows = await auditReader.query({
+  const { records: rows, next_cursor } = await auditClient.queryPage({
     since,
     until,
     type: "cas_decision",
-    tenantId: org,
+    tenant_id: org,
     limit: QUERY_LIMIT,
-    timeoutMs: 15_000,
-  });
+  }, { timeoutMs: 15_000 });
 
   let allow = 0;
   let deny = 0;
@@ -221,7 +220,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
         policyDenyRate: total > 0 ? policyDeny / total : 0,
         unavailable,
         unavailableRate: total > 0 ? unavailable / total : 0,
-        truncated: rows.length >= QUERY_LIMIT,
+        truncated: next_cursor !== null,
         byReason: topCounts(byReason, "reason"),
         topDenied: topCounts(topDenied, "resource"),
       },
