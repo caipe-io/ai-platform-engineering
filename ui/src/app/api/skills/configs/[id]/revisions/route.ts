@@ -20,7 +20,7 @@ import { listRevisions } from "@/lib/skill-revisions";
  * for diff/restore.
  *
  * Auth: anyone who can see the skill can see its history. We don't
- * gate on `userCanModifyAgentSkill` because read access to history is
+ * restrict history to writers because read access to history is
  * a strictly weaker privilege than read access to the live skill —
  * if a user can already see the current SKILL.md they can already
  * see all previous content the helper would surface.

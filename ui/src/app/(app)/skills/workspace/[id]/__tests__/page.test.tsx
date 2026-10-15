@@ -102,6 +102,18 @@ describe("SkillWorkspacePage catalog fallback", () => {
     await waitFor(() => expect(mockLoadSkills).toHaveBeenCalled());
   });
 
+  it.each([true, false])("uses config-driven ownership for Mongo catalog read-only mode: %s", async (managed) => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ skills: [{
+        id: "example-skill", name: "Example Skill", source: "agent_skills", owner_id: "system",
+        content: "Example instructions", metadata: { is_system: true, config_driven: managed },
+      }] }),
+    }) as jest.Mock;
+    render(<SkillWorkspacePage params={fulfilledParams("example-skill")} />);
+    expect(await screen.findByTestId("skill-workspace")).toHaveAttribute("data-read-only", String(managed));
+  });
+
   it("keeps default catalog skills read-only", async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,

@@ -63,7 +63,6 @@ const mockGetSkillVisible = jest.fn();
 jest.mock("@/lib/agent-skill-visibility", () => ({
   getAgentSkillVisibleToUser: (...args: unknown[]) =>
     mockGetSkillVisible(...args),
-  userCanModifyAgentSkill: () => true,
 }));
 
 const mockScan = jest.fn();

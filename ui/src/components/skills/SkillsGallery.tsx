@@ -371,12 +371,6 @@ export function SkillsGallery({
   const router = useRouter();
   const { createConversation, setPendingMessage } = useChatStore();
   const workflowRunnerEnabled = getConfig('workflowRunnerEnabled');
-  // Built-in mutation lock — when false (default) the gallery
-  // disables Edit / Delete on `is_system: true` rows and surfaces
-  // a "Clone" action instead. The server enforces the same policy
-  // independently via `lib/builtin-skill-policy.ts` so a stale
-  // config can't make the UI offer an action the API will reject.
-  const allowBuiltinSkillMutation = getConfig('allowBuiltinSkillMutation');
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
@@ -482,37 +476,19 @@ export function SkillsGallery({
   const [activeFormConfig, setActiveFormConfig] = useState<AgentSkill | null>(null);
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
 
-  /**
-   * A built-in (`is_system: true`) Mongo-backed skill that the lock
-   * policy currently treats as read-only. We split this out so the
-   * Edit/Delete buttons can render a *disabled* affordance with a
-   * tooltip explaining why, rather than vanishing silently — admins
-   * need the discoverability ("ah, I need to clone this") more than
-   * they need a clean grid.
-   */
-  const isLockedBuiltin = (config: AgentSkill): boolean => {
-    return Boolean(config.is_system) && !allowBuiltinSkillMutation && !isCatalogOnlySkill(config);
-  };
-
   const canEditConfig = (config: AgentSkill) => {
     if (isCatalogOnlySkill(config)) return false;
-    if (isLockedBuiltin(config)) return false;
+    if (config.config_driven) return false;
     return true;
   };
 
   const canDeleteConfig = (config: AgentSkill) => {
     if (isCatalogOnlySkill(config)) return false;
-    if (isLockedBuiltin(config)) return false;
+    if (config.config_driven) return false;
     return true;
   };
 
-  /**
-   * Clone is the escape hatch for the built-in lock + a general
-   * convenience for any visible skill (custom, hub, built-in). We
-   * surface it on every Mongo-or-cloneable row; catalog-only skills
-   * (default templates not yet seeded into Mongo) still aren't
-   * cloneable from the UI today — they have no source row to copy.
-   */
+  /** Clone visible database records into a separate editable copy. */
   const canCloneConfig = (config: AgentSkill): boolean => {
     if (isCatalogOnlySkill(config)) return false;
     return true;
@@ -790,23 +766,12 @@ export function SkillsGallery({
         </>
       );
     }
-    const locked = isLockedBuiltin(config);
     return (
       <>
         <div className="h-4 w-px bg-border/50" />
-        {locked ? (
-          // Render the Edit button as a *visible disabled* control
-          // rather than hiding it — discoverability matters here.
-          // Admins arriving with the legacy mental model ("I just
-          // edit built-ins") need the tooltip to learn about the
-          // Clone path.
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-muted-foreground/40 cursor-not-allowed"
-            disabled
-            title="Built-in skill is read-only. Use Clone to edit a copy, or set ALLOW_BUILTIN_SKILL_MUTATION=true."
-          >
+        {config.config_driven ? (
+          <Button variant="ghost" size="icon" className="h-7 w-7" disabled
+            title="Managed by app-config.yaml. Edit this skill in configuration.">
             <Edit className="h-3.5 w-3.5" />
           </Button>
         ) : canEditConfig(config) ? (
@@ -832,7 +797,7 @@ export function SkillsGallery({
               e.stopPropagation();
               setViewerTarget(config);
             }}
-            title={locked ? "Browse files (read-only)" : "Browse files"}
+            title="Browse files"
           >
             <FolderOpen className="h-3.5 w-3.5" />
           </Button>
@@ -844,11 +809,7 @@ export function SkillsGallery({
             className="h-7 w-7"
             onClick={(e) => handleClone(config, e)}
             disabled={cloningId === config.id}
-            title={
-              locked
-                ? "Clone to an editable copy (built-in is read-only)"
-                : "Clone to a new editable copy"
-            }
+            title="Clone to a new editable copy"
           >
             {cloningId === config.id ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -857,14 +818,9 @@ export function SkillsGallery({
             )}
           </Button>
         )}
-        {locked ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-muted-foreground/40 cursor-not-allowed"
-            disabled
-            title="Built-in skill cannot be deleted. Set ALLOW_BUILTIN_SKILL_MUTATION=true to allow."
-          >
+        {config.config_driven ? (
+          <Button variant="ghost" size="icon" className="h-7 w-7" disabled
+            title="Managed by app-config.yaml. Remove this skill from configuration.">
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         ) : canDeleteConfig(config) ? (
@@ -1684,7 +1640,7 @@ export function SkillsGallery({
                   Remove built-in template{" "}
                   <span className="font-medium text-foreground">&ldquo;{deleteTarget?.name}&rdquo;</span>{" "}
                   from this environment? You can restore it later via{" "}
-                  <span className="font-medium text-foreground">Import templates</span> or workspace seed.
+                  <span className="font-medium text-foreground">Import templates</span>.
                 </>
               ) : (
                 <>

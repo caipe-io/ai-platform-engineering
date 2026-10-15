@@ -8,7 +8,9 @@ export interface AgentSkillCatalogDoc {
   owner_id?: unknown;
   visibility?: unknown;
   is_system?: unknown;
+  config_driven?: unknown;
   category?: unknown;
+  thumbnail?: unknown;
   metadata?: unknown;
   ancillary_files?: unknown;
   scan_status?: unknown;
@@ -76,6 +78,8 @@ export function projectAgentSkillCatalogDoc(
       category: doc.category,
       visibility: doc.visibility,
       is_system: doc.is_system,
+      config_driven: doc.config_driven === true,
+      icon: metadata.icon ?? doc.thumbnail,
     },
     ancillary_files:
       includeContent && ancillaryFiles ? ancillaryFiles : undefined,

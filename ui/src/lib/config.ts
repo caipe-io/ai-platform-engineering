@@ -118,23 +118,6 @@ export interface Config {
    */
   feedbackEnabled: boolean;
   /**
-   * Whether built-in (`is_system: true`) skill rows can be edited /
-   * deleted by users via the gallery & API.
-   *
-   * **Default: `false`** (locked). Built-ins are seeded by the
-   * platform and treated as read-only — admins can clone them via
-   * the gallery's "Clone" action to produce an editable copy.
-   * Set ``ALLOW_BUILTIN_SKILL_MUTATION=true`` to restore the legacy
-   * behaviour where any authenticated user could mutate a built-in
-   * row.
-   *
-   * Server-side enforcement lives in
-   * ``lib/builtin-skill-policy.ts`` + ``userCanModifyAgentSkill``;
-   * this client-visible flag exists so the UI can disable the
-   * Edit / Delete buttons without a roundtrip.
-   */
-  allowBuiltinSkillMutation: boolean;
-  /**
    * Whether the admin audit logs feature is enabled.
    * When false (default), the Chat Audit tab is hidden and API routes return 403.
    * Set AUDIT_LOGS_ENABLED=true to enable.
@@ -268,7 +251,6 @@ const DEFAULT_CONFIG: Config = {
   projectsEnabled: false,
   dynamicAgentsEnabled: false,
   feedbackEnabled: true,
-  allowBuiltinSkillMutation: false,
   auditLogsEnabled: false,
   actionAuditEnabled: true,
   auditLogBackend: 'service',
@@ -380,10 +362,6 @@ export function getServerConfig(): Config {
   const projectsEnabled = env('PROJECTS_ENABLED') === 'true';
   const dynamicAgentsEnabled = env('DYNAMIC_AGENTS_ENABLED') === 'true';
   const feedbackEnabled = env('FEEDBACK_ENABLED') !== 'false';
-  // Default `false` (locked). Must mirror the server-side check in
-  // `lib/builtin-skill-policy.ts` so the UI never offers an action
-  // the API will reject.
-  const allowBuiltinSkillMutation = env('ALLOW_BUILTIN_SKILL_MUTATION') === 'true';
   const auditLogsEnabled = env('AUDIT_LOGS_ENABLED') === 'true';
   const actionAuditEnabled = env('ACTION_AUDIT_ENABLED') !== 'false';
   const auditLogBackend = env('AUDIT_LOG_BACKEND') || 'service';
@@ -470,7 +448,6 @@ export function getServerConfig(): Config {
     projectsEnabled,
     dynamicAgentsEnabled,
     feedbackEnabled,
-    allowBuiltinSkillMutation,
     auditLogsEnabled,
     actionAuditEnabled,
     auditLogBackend,

@@ -17,9 +17,8 @@ import type { AgentSkill } from "@/types/agent-skill";
 /**
  * POST /api/skills/configs/[id]/clone
  *
- * Escape hatch for the built-in mutation lock. Produces an editable
- * user-owned copy of any visible skill (built-in, custom, or hub
- * cached) without granting write access to the original.
+ * Produces an editable user-owned copy of a readable skill without
+ * granting write access to the original.
  *
  * The clone:
  *   * Gets a brand-new id (``skill-<slug>-<random>``).
@@ -31,10 +30,8 @@ import type { AgentSkill } from "@/types/agent-skill";
  *     scan_status (the source row's status doesn't transfer — the
  *     copy is logically a new artifact and policy must re-evaluate).
  *
- * Permissions: any user who can read the source (per
- * ``getAgentSkillVisibleToUser``) can clone it. The built-in lock
- * deliberately does **not** apply here — the whole point of clone
- * is to produce an unlocked copy.
+ * Requires resource read permission on the source. Config-driven
+ * sources remain read-only; their clones are independent user records.
  */
 export const POST = withErrorHandler(
   async (
@@ -90,6 +87,7 @@ export const POST = withErrorHandler(
         tasks: source.tasks ?? [],
         owner_id: user.email,
         is_system: false,
+        config_driven: false,
         created_at: now,
         updated_at: now,
         metadata: {

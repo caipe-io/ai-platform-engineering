@@ -196,8 +196,10 @@ export interface AgentSkill {
   tasks: AgentSkillTask[];
   /** Owner's email address (for user-created skills) */
   owner_id: string;
-  /** Whether this is a system/built-in skill row in MongoDB (may be edited or removed; restore via import/seed) */
+  /** Whether this skill belongs to the shared system catalog. */
   is_system: boolean;
+  /** Managed by app-config.yaml; changes and removal come from configuration. */
+  config_driven?: boolean;
   /** Creation timestamp */
   created_at: Date;
   /** Last update timestamp */

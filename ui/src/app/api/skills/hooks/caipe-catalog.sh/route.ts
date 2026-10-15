@@ -108,6 +108,9 @@ function resolveHookSource(): { source: string; origin: string } {
     "skills",
     "caipe-catalog.sh",
   );
+  const packagedPath = path.resolve(process.cwd(), "data", "skills", "caipe-catalog.sh");
+  const packaged = safeReadFile(packagedPath);
+  if (packaged) return { source: packaged, origin: `file:${packagedPath}` };
   const fromChart = safeReadFile(chartPath);
   if (fromChart) return { source: fromChart, origin: `file:${chartPath}` };
 

@@ -72,6 +72,10 @@ import {
   ZIP_IMPORT_OWNER_BACKFILL_MIGRATION_ID,
 } from "./zip-import-owner-backfill";
 import { schemaAreasNeedingVersionBootstrap } from "./schema-bootstrap";
+import {
+  SKILLS_DATABASE_CATALOG_MIGRATION_ID,
+  SKILLS_DATABASE_CATALOG_CONFIRMATION,
+} from "./skills-database-catalog";
 export {
   getUnclassifiedSchemaAreas,
   SCHEMA_AREA_CLASSIFICATIONS,
@@ -102,10 +106,11 @@ export const RELEASE_058 = "0.5.8";
 // `legacy_runtime_cleanup_v1` migration keeps only checkpoint collections and
 // message metadata used by the current Dynamic Agents runtime.
 export const RELEASE_060 = "0.6.0";
+export const RELEASE_130 = "1.3.0";
 // All release manifests the runtime surfaces. The newest is the reported
 // `migration_release`; the runs query spans every entry so completed-state is
 // tracked across releases. Keep newest-last so `latestRelease()` is the tail.
-export const ACTIVE_RELEASES = [RELEASE_051, RELEASE_058, RELEASE_060] as const;
+export const ACTIVE_RELEASES = [RELEASE_051, RELEASE_058, RELEASE_060, RELEASE_130] as const;
 
 function latestRelease(): string {
   return ACTIVE_RELEASES[ACTIVE_RELEASES.length - 1];
@@ -259,6 +264,21 @@ const ACTION_TO_BASE_RELATION: Record<string, string> = {
 };
 
 export const MIGRATION_DEFINITIONS: MigrationDefinition[] = [
+  {
+    id: SKILLS_DATABASE_CATALOG_MIGRATION_ID,
+    release: RELEASE_130,
+    schema_area: "agent_skills",
+    from_version: 3,
+    to_version: 4,
+    kind: "explicit",
+    title: "Move packaged skill catalog into MongoDB",
+    description: "Insert missing ordinary packaged catalog skills once, preserving existing edits and visibility. Skills declared in app-config.yaml follow its config-driven lifecycle. Code-owned gateway instructions initialize separately in system_skills.",
+    confirmation: SKILLS_DATABASE_CATALOG_CONFIRMATION,
+    required: true,
+    blocking: false,
+    implemented: true,
+    dependencies: [ZIP_IMPORT_OWNER_BACKFILL_MIGRATION_ID],
+  },
   {
     id: CONVERSATION_OWNER_IDENTITY_MIGRATION_ID,
     release: RELEASE_051,
@@ -3026,6 +3046,10 @@ export async function planMigration(migrationId: string, now = new Date().toISOS
   if (!definition) {
     throw new Error(`Unknown migration: ${migrationId}`);
   }
+  if (migrationId === SKILLS_DATABASE_CATALOG_MIGRATION_ID) {
+    const { planSkillsDatabaseCatalogMigration } = await import("./skills-database-catalog");
+    return planSkillsDatabaseCatalogMigration();
+  }
   if (!definition.implemented) {
     return {
       migration_id: definition.id,
@@ -3408,6 +3432,13 @@ export async function applyMigration(input: {
   }
 
   const now = input.now ?? new Date().toISOString();
+
+  if (input.migrationId === SKILLS_DATABASE_CATALOG_MIGRATION_ID) {
+    const { applySkillsDatabaseCatalogMigration } = await import("./skills-database-catalog");
+    const result = await applySkillsDatabaseCatalogMigration({ actor: input.actor, now });
+    await recordCompletedMigration({ definition, result, now, actor: input.actor });
+    return result;
+  }
 
   if (input.migrationId === KEYCLOAK_RBAC_RECONCILIATION_MIGRATION_ID) {
     return applyKeycloakRbacReconciliationMigration({ actor: input.actor, now });

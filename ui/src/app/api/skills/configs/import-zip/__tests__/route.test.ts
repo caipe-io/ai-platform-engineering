@@ -370,7 +370,7 @@ describe("runZipImport — import phase", () => {
     expect(recordRevisionMock).not.toHaveBeenCalled();
   });
 
-  it("rejects overwrite of a built-in skill with a 403", async () => {
+  it("rejects overwrite of a seeded skill when resource permission is denied", async () => {
     const buffer = await makeZipBuffer({
       "SKILL.md": FRONTMATTER("system-skill"),
     });
@@ -396,6 +396,9 @@ describe("runZipImport — import phase", () => {
         user: baseUser,
         loadVisibleSkills: async () => existing,
         persistSkill: jest.fn(),
+        canOverwriteSkill: async () => {
+          throw Object.assign(new Error("Permission denied"), { statusCode: 403 });
+        },
       }),
     ).rejects.toMatchObject({ statusCode: 403 });
   });

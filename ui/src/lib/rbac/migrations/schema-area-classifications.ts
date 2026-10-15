@@ -6,6 +6,14 @@ export interface SchemaAreaClassificationEntry {
 }
 
 export const SCHEMA_AREA_CLASSIFICATIONS: Record<string, SchemaAreaClassificationEntry> = {
+  system_skills: {
+    classification: "baseline_v1",
+    description: "Code-owned gateway instructions. Startup applies packaged release content; user skill APIs and app-config do not write this collection.",
+  },
+  startup_seeds: {
+    classification: "metadata",
+    description: "Startup seed leases and completion records.",
+  },
   admin_surfaces: {
     classification: "migration",
     description:

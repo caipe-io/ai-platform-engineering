@@ -1,4 +1,3 @@
-import { canMutateBuiltinSkill } from "@/lib/builtin-skill-policy";
 import { getCollection } from "@/lib/mongodb";
 import { readSkillSharedTeamSlugsFromOpenFga } from "@/lib/rbac/skill-team-grants";
 import type { AgentSkill } from "@/types/agent-skill";
@@ -36,30 +35,4 @@ export async function hydrateAgentSkillTeamSharesList(
   skills: AgentSkill[],
 ): Promise<AgentSkill[]> {
   return Promise.all(skills.map((skill) => hydrateAgentSkillTeamShares(skill)));
-}
-
-/**
- * Authorisation for skill mutation (PUT / PATCH / DELETE / file-write).
- *
- * Layered policy:
- *
- *   1. Built-in lock (``ALLOW_BUILTIN_SKILL_MUTATION``, default off):
- *      ``is_system: true`` rows are read-only for all users unless
- *      the operator has explicitly opted in via the env flag. Admins
- *      escape via the ``POST /api/skills/configs/[id]/clone`` route
- *      that produces an editable user-owned copy.
- *
- *   2. Concrete resource authorization is enforced by callers through OpenFGA
- *      (`skill#write`, `skill#manage`, etc.). Non-built-in rows reach this
- *      helper only after that check has allowed the operation.
- *
- * No role auto-bypasses this lock; the environment flag is the only escape.
- */
-export function userCanModifyAgentSkill(
-  existing: AgentSkill,
-): boolean {
-  if (existing.is_system) {
-    return canMutateBuiltinSkill(existing);
-  }
-  return true;
 }

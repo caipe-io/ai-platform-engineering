@@ -34,6 +34,7 @@ export function mapCatalogSkillToAgentSkill(skill: CatalogSkillForUi): AgentSkil
     tasks: [],
     owner_id: isMongoBacked ? String(skill.owner_id ?? "") : "",
     is_system: isBuiltin,
+    config_driven: skill.metadata?.config_driven === true,
     is_quick_start: isBuiltin,
     visibility:
       (skill.visibility as AgentSkill["visibility"]) ??

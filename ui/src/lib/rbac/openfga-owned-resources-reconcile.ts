@@ -282,6 +282,13 @@ async function deleteAllRelationshipTuplesForObject(
   return reconcileTupleDiff(diff, { ...ctx, source: ctx?.source ?? source });
 }
 
+export async function deleteAllSkillRelationshipTuples(
+  skillId: string,
+  ctx?: TupleReconcileContext,
+): Promise<OpenFgaReconcileResult> {
+  return deleteAllRelationshipTuplesForObject(`skill:${skillId}`, "skill_delete", ctx);
+}
+
 /** Remove every management tuple for an ingestion-source config row. */
 export async function deleteAllIngestionSourceRelationshipTuples(
   sourceId: string,

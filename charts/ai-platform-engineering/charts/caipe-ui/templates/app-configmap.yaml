@@ -3,7 +3,8 @@
 {{- $hasAgents := and .Values.appConfig.agents (gt (len .Values.appConfig.agents) 0) }}
 {{- $hasWorkflowConfigs := and .Values.appConfig.workflow_configs (gt (len .Values.appConfig.workflow_configs) 0) }}
 {{- $hasRagSources := and .Values.appConfig.rag_sources (gt (len .Values.appConfig.rag_sources) 0) }}
-{{- if or $hasModels $hasMcpServers $hasAgents $hasWorkflowConfigs $hasRagSources }}
+{{- $hasSkills := hasKey .Values.appConfig "skills" }}
+{{- if or $hasModels $hasMcpServers $hasAgents $hasWorkflowConfigs $hasRagSources $hasSkills }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -48,5 +49,9 @@ data:
       {{- toYaml .Values.appConfig.rag_sources | nindent 6 }}
     {{- else }}
     rag_sources: []
+    {{- end }}
+    {{- if $hasSkills }}
+    skills:
+      {{- toYaml .Values.appConfig.skills | nindent 6 }}
     {{- end }}
 {{- end }}

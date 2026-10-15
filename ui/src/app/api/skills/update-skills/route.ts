@@ -12,11 +12,8 @@
  * shape match `/api/skills/live-skills` byte-for-byte; only the
  * template file and defaults differ.
  *
- * Canonical template resolution (highest priority first):
- *   1. SKILLS_UPDATE_SKILLS_TEMPLATE env var (raw markdown)
- *   2. File at SKILLS_UPDATE_SKILLS_FILE env var
- *   3. <repo>/charts/ai-platform-engineering/data/skills/update-skills.md
- *   4. Built-in fallback string below
+ * MongoDB serves the code-owned system_skills record by route id.
+ * Database-free development uses the packaged file or the fallback below.
  */
 
 import { makeTemplateRouteHandler } from "../_lib/template-route";
@@ -48,10 +45,6 @@ Slash command: /{{COMMAND_NAME}}
 
 export const GET = makeTemplateRouteHandler({
   routeId: "update-skills",
-  envInlineKey: "SKILLS_UPDATE_SKILLS_TEMPLATE",
-  envFileKey: "SKILLS_UPDATE_SKILLS_FILE",
-  chartTemplatePath:
-    "charts/ai-platform-engineering/data/skills/update-skills.md",
   fallbackTemplate: FALLBACK_TEMPLATE,
   defaultCommandName: DEFAULT_UPDATE_SKILLS_COMMAND,
   defaultDescription: "Refresh locally-installed CAIPE skills from the live catalog",

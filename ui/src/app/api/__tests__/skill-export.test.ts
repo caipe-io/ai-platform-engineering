@@ -44,7 +44,6 @@ jest.mock("@/lib/agent-skill-visibility", () => ({
   getAgentSkillVisibleToUser: (...args: unknown[]) => mockGetVisible(...args),
   // Not used by the export route, but the visibility module also exports
   // this and downstream code may import it indirectly.
-  userCanModifyAgentSkill: jest.fn().mockReturnValue(true),
 }));
 
 // 098-enterprise-rbac introduced an OpenFGA PDP gate on the export route via

@@ -378,23 +378,6 @@ metrics:
 # -- Extra Kubernetes resources keyed by a stable, deployment-defined name. Use this form when Helm --set/--set-file must target individual resources.
 extraDeployMap: {}
 
-# ---------------------------------------------------------------------------
-# Live-skills command template (rendered as the `/skills` slash command
-# in the "Skills Gateway" UI page). Customizable per-deployment.
-#
-# Resolution order (mirrors promptConfig):
-#   1. .Values.skillsLiveSkills          - inline multi-line string (highest)
-#   2. .Values.skillsLiveSkillsName      - selects data/skills/live-skills.<name>.md
-#   3. data/skills/live-skills.md         - packaged default
-#
-# The template supports the following placeholders, substituted by the UI:
-#   {{COMMAND_NAME}} - slash command name (default: "skills")
-#   {{DESCRIPTION}}  - short description shown in the slash-command picker
-#   {{BASE_URL}}     - gateway base URL (auto-detected from window.location)
-# ---------------------------------------------------------------------------
-skillsLiveSkillsName: ""       # Variant name (looks up data/skills/live-skills.<name>.md)
-skillsLiveSkills: ""           # Inline custom live-skills skill (overrides everything)
-
 ######### MCP server configurations #########
 # Each mcp-* block configures one MCP server (alias from Chart.yaml).
 
@@ -782,53 +765,24 @@ caipe-ui:
           - path: /
             pathType: Prefix
     tls: []
-  volumes:
-    - name: skill-templates
-      configMap:
-        name: skill-templates
-    - name: skills-live-skills
-      configMap:
-        name: skills-live-skills
-        optional: true
-  volumeMounts:
-    - name: skill-templates
-      mountPath: /app/data/skills
-      readOnly: true
-    - name: skills-live-skills
-      mountPath: /app/data/skills-live-skills
-      readOnly: true
+  volumes: []
+  volumeMounts: []
   # ConfigMap for non-sensitive configuration
   config:
     # Bootstrap default agent for new chats. Overridden at runtime by Admin → Settings UI.
     # Set to a dynamic agent ID to pre-configure the default without manual admin action.
     # When empty, the UI resolves the first available dynamic agent as the default.
     DEFAULT_AGENT_ID: ""
-    # Skills template directory (mounted from ConfigMap)
+    # Packaged templates for initial database seeding and explicit imports.
     SKILLS_DIR: "/app/data/skills"
-    # Live-skills skill template (mounted from ConfigMap "skills-live-skills").
-    # Override per-deployment via .Values.skillsLiveSkills (inline string) or
-    # .Values.skillsLiveSkillsName (selects data/skills/live-skills.<name>.md).
-    SKILLS_LIVE_SKILLS_FILE: "/app/data/skills-live-skills/live-skills.md"
-    # Python helper served at /api/skills/helpers/caipe-skills.py (mounted from same ConfigMap).
-    SKILLS_HELPER_FILE: "/app/data/skills-live-skills/caipe-skills.py"
-    # Update-skills slash-command template (companion to live-skills.md);
-    # served at /api/skills/update-skills. Override paths follow the same
-    # pattern as SKILLS_LIVE_SKILLS_FILE.
-    SKILLS_UPDATE_SKILLS_FILE: "/app/data/skills-live-skills/update-skills.md"
-    # Claude Code SessionStart hook script served at
-    # /api/skills/hooks/caipe-catalog.sh (mounted from same ConfigMap).
-    # install.sh installs this on the user's machine and registers it as
-    # a SessionStart hook so the catalog is always discoverable in chat.
-    SKILLS_HOOK_FILE: "/app/data/skills-live-skills/caipe-catalog.sh"
+    # Coding-agent helper scripts ship in the UI image.
+    SKILLS_HELPER_FILE: "/app/data/skills/caipe-skills.py"
+    SKILLS_HOOK_FILE: "/app/data/skills/caipe-catalog.sh"
     # Feature flags
     ENABLE_SUBAGENT_CARDS: "true"
     SSO_ENABLED: "false"
     # Okta background sync is configured via the structured `oktaSync:` block
     # below (sibling of `config:`), modeled after the Backstage Okta provider.
-    # Built-in skill IDs to seed (comma-separated whitelist).
-    # When set, only listed templates are seeded; unlisted ones are removed on deploy.
-    # When unset or empty, all built-in templates are seeded automatically.
-    # BUILTIN_SKILL_IDS: "qs-deploy-status,qs-pr-review"
     # Dynamic Agents: set to "true" to enable custom agent creation and management
     # Requires admin role and MongoDB storage mode
     DYNAMIC_AGENTS_ENABLED: "false"

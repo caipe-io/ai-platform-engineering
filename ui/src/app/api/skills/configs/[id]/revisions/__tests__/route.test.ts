@@ -31,7 +31,6 @@ const mockGetVisible = jest.fn();
 jest.mock("@/lib/agent-skill-visibility", () => ({
   getAgentSkillVisibleToUser: (...args: unknown[]) =>
     mockGetVisible(...args),
-  userCanModifyAgentSkill: jest.fn().mockReturnValue(true),
 }));
 
 const mockListRevisions = jest.fn();
@@ -289,7 +288,7 @@ describe("POST .../revisions/[revisionId]/restore", () => {
     expect(res.status).toBe(200);
     // Live row updated with the snapshotted content + fresh scan.
     expect(updateOne).toHaveBeenCalledWith(
-      { id: "skill-x" },
+      { id: "skill-x", config_driven: { $ne: true } },
       expect.objectContaining({
         $set: expect.objectContaining({
           skill_content: "# old",
@@ -314,5 +313,18 @@ describe("POST .../revisions/[revisionId]/restore", () => {
         restoredFrom: "rev-7",
       }),
     );
+  });
+
+  it("rejects a restore when app-config adopts the skill during scanning", async () => {
+    mockGetVisible.mockResolvedValue({ id: "example-skill", name: "Example Skill", config_driven: false });
+    mockGetRevision.mockResolvedValue({ name: "Example Skill", skill_content: "Previous content" });
+    updateOne.mockResolvedValue({ matchedCount: 0, modifiedCount: 0 });
+    const { POST } = await import("../[revisionId]/restore/route");
+    const response = await POST(makeRequest("/api/skills/configs/example-skill/revisions/example-revision/restore", {
+      method: "POST",
+    }), { params: Promise.resolve({ id: "example-skill", revisionId: "example-revision" }) });
+    expect(response.status).toBe(409);
+    expect(updateOne).toHaveBeenCalledWith({ id: "example-skill", config_driven: { $ne: true } }, expect.anything());
+    expect(mockRecordRevision).not.toHaveBeenCalled();
   });
 });
