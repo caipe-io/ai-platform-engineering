@@ -1,6 +1,11 @@
 {{- /*
-Render additional Kubernetes resources from the stable-key extraDeployMap.
+Render additional Kubernetes resources from the legacy extraDeploy list and
+the stable-key extraDeployMap.
 */ -}}
+{{- range $resource := .Values.extraDeploy }}
+---
+{{- toYaml $resource }}
+{{- end }}
 {{- range $_, $resource := .Values.extraDeployMap }}
 ---
 {{- toYaml $resource }}
