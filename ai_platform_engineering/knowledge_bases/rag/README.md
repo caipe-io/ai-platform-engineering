@@ -93,6 +93,24 @@ DEFAULT port configurations between components:
 
 ---
 
+## Notifications
+
+`JobManager.upsert_job` (in `common/`) publishes `ingestion.started`, `ingestion.completed`, and `ingestion.failed` to the UI server on status transitions. Terminal states: `completed`, `completed_with_errors` (both `ingestion.completed`), `failed`, `terminated` (both `ingestion.failed`).
+
+- Recipients: the datasource creator and owner, plus every user who created or edited a job for it (recorded as `triggered_by_*` on the job and in a per-datasource set in Redis), plus org admins.
+- Scheduled and reload jobs without a user still notify the creator and org admins.
+- Publishing is best-effort, fire-and-forget, and never changes job state.
+
+| Variable | Default | Description |
+|---|---|---|
+| `NOTIFICATIONS_INTERNAL_URL` | `http://caipe-ui:3000` | UI server base URL. |
+| `NOTIFICATIONS_INTERNAL_TOKEN` | unset | Shared bearer secret. Unset disables publishing. |
+| `NOTIFICATION_EVENTS_ENABLED` | `true` | `false` is a kill switch. |
+
+Set these on the rag-server and on every ingestor (they call `upsert_job` directly).
+
+---
+
 ## Local Development
 
 Start dependent services only:

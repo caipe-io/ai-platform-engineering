@@ -364,6 +364,9 @@ async function createIndexes(db: Db) {
     safeCreateIndex(db, 'in_app_notifications', { recipient_organization_admins: 1, created_at: -1 }),
     safeCreateIndex(db, 'in_app_notifications', { recipient_platform_users: 1, created_at: -1 }),
     safeCreateIndex(db, 'in_app_notifications', { archived_at: 1, created_at: -1 }),
+    // Event notifications carry expires_at and are deleted by MongoDB's TTL
+    // monitor. Entries without the field, such as platform incidents, never expire.
+    safeCreateIndex(db, 'in_app_notifications', { expires_at: 1 }, { expireAfterSeconds: 0 }),
     safeCreateIndex(db, 'platform_health_notification_states', { active_incident_id: 1 }),
     safeCreateIndex(db, 'platform_health_notification_states', { current_status: 1, updated_at: -1 }),
   ]);

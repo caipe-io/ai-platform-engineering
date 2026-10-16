@@ -36,4 +36,9 @@ export async function register() {
   // replica-safe (per-minute fires are claimed atomically in Mongo).
   const { startIdpSyncScheduler } = await import("./lib/rbac/idp-sync-scheduler");
   startIdpSyncScheduler();
+
+  // Durable JetStream consumer for notification events. No-op unless
+  // NOTIFICATIONS_TRANSPORT=jetstream.
+  const { startNotificationConsumer } = await import("./lib/notifications/consumer.server");
+  startNotificationConsumer();
 }

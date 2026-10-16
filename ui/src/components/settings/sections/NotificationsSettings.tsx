@@ -1,6 +1,7 @@
 "use client";
 
 import { ReleaseNotesPreview } from "@/components/settings/ReleaseNotesPreview";
+import { EventNotificationSettings } from "@/components/settings/sections/EventNotificationSettings";
 import { AutoSaveStatus } from "@/components/settings/shared/AutoSaveStatus";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
 import { SettingsSwitch } from "@/components/settings/shared/SettingsSwitch";
@@ -307,6 +308,8 @@ export function NotificationsSettings(): React.ReactElement {
           <ChevronsDownUp className="mr-2 h-4 w-4" />Collapse all
         </Button>
       </div>
+
+      <EventNotificationSettings />
 
       <SettingsCard
         collapsibleLabel="Agent completions"

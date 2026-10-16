@@ -12,6 +12,7 @@
 
 import { getCollection } from "@/lib/mongodb";
 import { readEvents } from "@/lib/server/event-store";
+import { notifyWorkflowEvent } from "@/lib/server/workflow-notifications";
 import { consumeAgentStream,type ConsumeResult } from "@/lib/streaming/clients/server-agui-consumer";
 import { isToolStartData } from "@/lib/streaming/types";
 import type { WorkflowConfig,WorkflowStep } from "@/types/workflow-config";
@@ -164,6 +165,9 @@ export async function startWorkflowRun(
   const col = await getCollection<WorkflowRunDocument>(RUNS_COLLECTION);
   await col.insertOne(runDoc as unknown as Parameters<typeof col.insertOne>[0]);
 
+  // Not awaited: starting a run must never wait on notification delivery.
+  void notifyWorkflowEvent({ kind: "started", runId, workflowName: config.name, owner: runOwner }).catch(() => {});
+
   // Fire-and-forget
   const flatWorkflowSteps = flatSteps.map(({ step }) => step);
   executeSteps(runId, config._id, config.name, config.description, flatWorkflowSteps, userContext, authHeaders, 0, runOwner).catch((err) => {
@@ -249,6 +253,12 @@ export async function detectStaleRun(run: WorkflowRunDocument): Promise<boolean>
       },
     },
   );
+  await notifyWorkflowEvent({
+    kind: "failed",
+    runId: run._id,
+    owner: run.owner_subject,
+    summary: "A workflow run exceeded its maximum duration. Open the run for details.",
+  });
   return true;
 }
 
@@ -311,7 +321,7 @@ async function executeSteps(
       );
       if (decision.decision !== "ALLOW") {
         await markStepFailed(col, runId, i, `Not authorized to use agent "${step.agent_id}" (${decision.reason})`);
-        await markRunFailed(col, runId);
+        await failRun(col, runId, workflowName, ownerSubject);
         return;
       }
     }
@@ -336,7 +346,7 @@ async function executeSteps(
     } catch (err) {
       await markStepFailed(col, runId, i, `Template error: ${(err as Error).message}`);
       if (step.on_error !== "skip") {
-        await markRunFailed(col, runId);
+        await failRun(col, runId, workflowName, ownerSubject);
         return;
       }
       completedSteps.push({
@@ -456,7 +466,7 @@ async function executeSteps(
 
     if (!result) {
       await markStepFailed(col, runId, i, "No result from stream consumer");
-      await markRunFailed(col, runId);
+      await failRun(col, runId, workflowName, ownerSubject);
       return;
     }
 
@@ -479,6 +489,7 @@ async function executeSteps(
           },
         },
       );
+      await notifyWorkflowEvent({ kind: "requires_input", runId, workflowName, owner: ownerSubject, stepIndex: i });
       return; // Execution pauses until resume
     }
 
@@ -514,7 +525,7 @@ async function executeSteps(
       }
 
       // "abort" and "retry" (after exhaustion) both terminate the workflow
-      await markRunFailed(col, runId);
+      await failRun(col, runId, workflowName, ownerSubject);
       return;
     }
 
@@ -547,6 +558,10 @@ async function executeSteps(
     { _id: runId },
     { $set: { status: "completed", completed_at: new Date() } },
   );
+
+  // Notification problems are logged inside the publisher, so a completed run
+  // is never reported as failed because of a notification.
+  await notifyWorkflowEvent({ kind: "completed", runId, workflowName, owner: ownerSubject });
 }
 
 async function resumeAndContinue(
@@ -626,6 +641,7 @@ async function resumeAndContinue(
         },
       },
     );
+    await notifyWorkflowEvent({ kind: "requires_input", runId, workflowName, owner: ownerSubject, stepIndex });
     return;
   }
 
@@ -639,7 +655,7 @@ async function resumeAndContinue(
     if (step.on_error === "skip") {
       // Continue to remaining steps
     } else {
-      await markRunFailed(col, runId);
+      await failRun(col, runId, workflowName, ownerSubject);
       return;
     }
   } else {
@@ -655,7 +671,7 @@ async function resumeAndContinue(
       if (step.on_error === "skip") {
         // Continue to remaining steps
       } else {
-        await markRunFailed(col, runId);
+        await failRun(col, runId, workflowName, ownerSubject);
         return;
       }
     } else {
@@ -963,4 +979,14 @@ async function markRunFailed(
     { _id: runId },
     { $set: { status: "failed", completed_at: new Date() } },
   );
+}
+
+async function failRun(
+  col: Awaited<ReturnType<typeof getCollection<WorkflowRunDocument>>>,
+  runId: string,
+  workflowName: string,
+  owner: Subject | null,
+): Promise<void> {
+  await markRunFailed(col, runId);
+  await notifyWorkflowEvent({ kind: "failed", runId, workflowName, owner });
 }

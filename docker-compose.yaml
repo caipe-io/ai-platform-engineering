@@ -296,6 +296,24 @@ services:
     profiles:
       - caipe-mongodb
 
+  # Optional JetStream broker for notification events. Only used when
+  # NOTIFICATIONS_TRANSPORT=jetstream. Not part of the default first-install path.
+  nats:
+    image: nats:2.10-alpine
+    container_name: caipe-nats
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222"
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - nats
+
   # MIT-licensed, PostgreSQL-backed MongoDB-compatible alternative.
   # Opt in with the caipe-documentdb profile and point MONGODB_URI at
   # caipe-documentdb:10260. MongoDB remains the default provider.
@@ -548,6 +566,10 @@ services:
       - ${HOME}/.aws:/home/app/.aws:ro
     ports: ["9446:9446"]
     environment:
+      # Notification events (see ui/env.example). Empty token disables publishing.
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - AWS_CONFIG_FILE=/home/app/.aws/config
       - AWS_SHARED_CREDENTIALS_FILE=/home/app/.aws/credentials
       - LOG_LEVEL=DEBUG
@@ -593,6 +615,11 @@ services:
       - ${HOME}/.aws:/home/app/.aws:ro
     env_file: [.env]
     environment:
+      # Notification events (see ui/env.example). Empty token disables publishing.
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
+      - NOTIFICATION_CHAT_MIN_SECONDS=${NOTIFICATION_CHAT_MIN_SECONDS:-30}
       - REMOTE_A2A_ALLOWED_HTTP_ORIGINS=${REMOTE_A2A_ALLOWED_HTTP_ORIGINS:-[]}
       - AWS_CONFIG_FILE=/home/app/.aws/config
       - AWS_SHARED_CREDENTIALS_FILE=/home/app/.aws/credentials
@@ -601,6 +628,14 @@ services:
       - AWS_BEDROCK_BASE_MODEL_ID=${AWS_BEDROCK_BASE_MODEL_ID:-}
       # MongoDB (same as CAIPE UI)
       - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      # Notification event transport. "direct" (default) needs no broker.
+      # "jetstream" requires the nats profile or an external NATS server.
+      - NOTIFICATIONS_TRANSPORT=${NOTIFICATIONS_TRANSPORT:-direct}
+      - NATS_URL=${NATS_URL:-nats://nats:4222}
+      # Must match the token set on the services that publish events (rag-server,
+      # dynamic-agents, autonomous-agents, ingestors). Empty disables the endpoint.
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_RETENTION_DAYS=${NOTIFICATION_RETENTION_DAYS:-90}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       # Authentication (same OIDC config as CAIPE UI)
       - AUTH_ENABLED=${AUTH_ENABLED:-false}
@@ -665,6 +700,10 @@ services:
     ports: ["127.0.0.1:8002:8002"]
     env_file: [.env]
     environment:
+      # Notification events (see ui/env.example). Empty token disables publishing.
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       # Dynamic-agents runtime endpoint -- every autonomous task runs against a
       # dynamic agent (its tools / system prompt / middleware) selected by the
       # task's dynamic_agent_id. Tasks surface a clear ack failure if this URL
@@ -736,6 +775,10 @@ services:
     image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: web-ingestor
     environment:
+      # Notification events (see ui/env.example). Empty token disables publishing.
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - INGESTOR_TYPE=webloader
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REDIS_URL=redis://rag-redis:6379/0
@@ -754,6 +797,10 @@ services:
     image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: jira-ingestor
     environment:
+      # Notification events (see ui/env.example). Empty token disables publishing.
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - INGESTOR_TYPE=jira
       - JIRA_URL=${JIRA_URL}
       - JIRA_EMAIL=${JIRA_EMAIL}
@@ -773,6 +820,10 @@ services:
     image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: confluence-ingestor
     environment:
+      # Notification events (see ui/env.example). Empty token disables publishing.
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - INGESTOR_TYPE=confluence
       - CONFLUENCE_URL=${CONFLUENCE_URL}
       - CONFLUENCE_USERNAME=${CONFLUENCE_USERNAME}
@@ -794,6 +845,10 @@ services:
     image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: slack-ingestor
     environment:
+      # Notification events (see ui/env.example). Empty token disables publishing.
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - INGESTOR_TYPE=slack
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
       - SLACK_BOT_NAME=${SLACK_BOT_NAME}
@@ -816,6 +871,10 @@ services:
     image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: webex-ingestor
     environment:
+      # Notification events (see ui/env.example). Empty token disables publishing.
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - INGESTOR_TYPE=webex
       - WEBEX_ACCESS_TOKEN=${WEBEX_ACCESS_TOKEN}
       - WEBEX_BOT_NAME=${WEBEX_BOT_NAME}
@@ -1651,6 +1710,8 @@ volumes:
   mongodb_data:
     driver: local
   mongodb_config:
+    driver: local
+  nats_data:
     driver: local
   documentdb_data:
     driver: local

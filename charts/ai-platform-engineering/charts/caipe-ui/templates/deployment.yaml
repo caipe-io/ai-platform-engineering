@@ -123,6 +123,24 @@ spec:
             - name: SCHEDULER_URL
               value: {{ index .Values.config "SCHEDULER_URL" | default "http://caipe-scheduler:8080" | quote }}
             {{- end }}
+            {{- /* Notification secrets. Non-secret settings (NOTIFICATIONS_TRANSPORT,
+                   NATS_URL, NOTIFICATION_RETENTION_DAYS) go through .Values.config.
+                   Secrets are referenced from existing Kubernetes Secrets and are
+                   skipped entirely when no secretName is set. */ -}}
+            {{- if .Values.notifications.internalToken.secretName }}
+            - name: NOTIFICATIONS_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.notifications.internalToken.secretName | quote }}
+                  key: {{ .Values.notifications.internalToken.secretKey | default "token" | quote }}
+            {{- end }}
+            {{- if .Values.notifications.natsToken.secretName }}
+            - name: NATS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.notifications.natsToken.secretName | quote }}
+                  key: {{ .Values.notifications.natsToken.secretKey | default "token" | quote }}
+            {{- end }}
             {{- /* Service URL defaults: env: takes precedence over envFrom (ConfigMap),
                    so these entries provide release-name-derived defaults while still
                    allowing operators to override via .Values.config. */}}

@@ -187,6 +187,23 @@ podDisruptionBudget:
 # Non-sensitive application configuration.
 # Each key-value pair is injected as a flat environment variable via ConfigMap (envFrom).
 # For sensitive values (OIDC secrets, MongoDB URI, etc.) use existingSecret or externalSecrets below.
+# Event notifications. Optional. By default events are written in-process and
+# no broker is needed. Set these through `config:` below (not secrets):
+#   NOTIFICATIONS_TRANSPORT: "jetstream"        # "direct" is the default
+#   NATS_URL: "nats://nats.example.svc:4222"    # any NATS server with JetStream enabled
+#   NOTIFICATION_RETENTION_DAYS: "90"           # 0 keeps notifications forever
+# Secrets come from existing Kubernetes Secrets. Leave secretName empty to skip.
+notifications:
+  # Shared with the services that publish events. Without it the internal
+  # publish endpoint answers 503 and those services send nothing.
+  internalToken:
+    secretName: ""
+    secretKey: token
+  # Only needed if the NATS server requires a token.
+  natsToken:
+    secretName: ""
+    secretKey: token
+
 config:
   # Feature flags
   ENABLE_SUBAGENT_CARDS: "true"

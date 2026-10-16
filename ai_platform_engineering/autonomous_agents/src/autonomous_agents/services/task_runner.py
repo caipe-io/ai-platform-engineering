@@ -40,6 +40,7 @@ from autonomous_agents.services.dynamic_agents_client import (
     invoke_dynamic_agent_streaming,
 )
 from autonomous_agents.services.mongo import RunStore
+from autonomous_agents.services.notifications_client import build_event, schedule_publish
 from autonomous_agents.services.webex_threads import (
     WebexThreadEntry,
     WebexThreadMap,
@@ -130,6 +131,46 @@ def set_webex_thread_map(thread_map: WebexThreadMap | None) -> None:
     """Inject the active :class:`WebexThreadMap` -- called from the FastAPI lifespan."""
     global _webex_thread_map
     _webex_thread_map = thread_map
+
+
+def _notify_run_finished(
+    task: TaskDefinition,
+    run: TaskRun,
+    owner_email: str | None,
+    owner_sub: str | None,
+) -> None:
+    """Emit agent.completed / agent.failed to the task owner (fire-and-forget, never raises)."""
+    try:
+        if run.status not in (TaskStatus.SUCCESS, TaskStatus.FAILED):
+            return
+        recipient: dict[str, str] = {}
+        if owner_sub:
+            recipient["subject"] = owner_sub
+        if task.owner_id and "@" in task.owner_id:
+            recipient["email"] = task.owner_id
+        if not recipient:
+            logger.debug("[%s] No task owner identity; skipping notification for run %s", task.id, run.run_id)
+            return
+        succeeded = run.status == TaskStatus.SUCCESS
+        # Summary is deliberately generic: no prompt, response, or error text.
+        event = build_event(
+            event_type="agent.completed" if succeeded else "agent.failed",
+            resource_type="autonomous_task",
+            resource_id=task.id,
+            attempt_id=run.run_id,
+            status="success" if succeeded else "failed",
+            title=f"Task {'completed' if succeeded else 'failed'}: {task.name}",
+            summary=(
+                f"Autonomous task run {run.run_id} finished successfully."
+                if succeeded
+                else f"Autonomous task run {run.run_id} failed. Open the task to see the error."
+            ),
+            recipients=[recipient],
+            href="/autonomous",
+        )
+        schedule_publish(event)
+    except Exception:
+        logger.warning("[%s] Failed to emit notification for run %s", task.id, run.run_id, exc_info=True)
 
 
 async def _record_safely(store: RunStore, run: TaskRun) -> None:
@@ -471,6 +512,7 @@ async def execute_task(
         # appending a duplicate. Again wrapped to keep store outages
         # from masking the real task outcome.
         await _record_safely(store, run)
+        _notify_run_finished(task, run, _owner_email, _owner_sub)
         # IMP-13: surface the run in the UI chat sidebar. Done after
         # the RunStore write so a slow/flaky chat database can never
         # delay the authoritative run-history record. The publisher

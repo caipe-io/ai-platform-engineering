@@ -1,8 +1,13 @@
 """Chat endpoint for Dynamic Agents with SSE streaming."""
 
+import asyncio
 import logging
+import os
+import time
+import uuid
 from contextlib import AsyncExitStack, aclosing
-from typing import Any, AsyncGenerator, Literal
+from typing import Any, AsyncGenerator, Awaitable, Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -19,6 +24,7 @@ from dynamic_agents.models import ChatRequest, ClientContext, DynamicAgentConfig
 from dynamic_agents.services.llm_clients import LLMConfigError
 from dynamic_agents.services.model_capabilities import supports_reasoning_effort
 from dynamic_agents.services.mongo import MongoDBService, get_mongo_service
+from dynamic_agents.services.notifications_client import build_event, events_enabled, schedule_publish
 from dynamic_agents.services.runtime_cache import (
     RuntimeCapacityError,
     RuntimeInitError,
@@ -218,6 +224,14 @@ def _with_reasoning_effort(
     )
 
 
+def _suppress_chat_notifications(request: Any) -> bool:
+    """Unattended runs (autonomous tasks, scheduler) notify from their own service, not from chat."""
+    if getattr(request, "autonomous", False):
+        return True
+    client_context = getattr(request, "client_context", None)
+    return bool(client_context and client_context.model_dump().get("source") == "scheduler")
+
+
 def _is_scheduler_invoke(request: ChatRequest) -> bool:
     """Return whether a non-streaming invocation came from the cron runner."""
     if not request.client_context:
@@ -274,6 +288,111 @@ async def _collect_invoke_response(
     }
 
 
+DEFAULT_NOTIFICATION_CHAT_MIN_SECONDS = 30.0
+
+# Strong references so fire-and-forget notification tasks are not garbage collected.
+_notification_tasks: "set[asyncio.Task[None]]" = set()
+
+
+def _chat_min_seconds() -> float:
+    """Minimum run length before agent.completed is emitted (NOTIFICATION_CHAT_MIN_SECONDS, default 30)."""
+    raw = os.getenv("NOTIFICATION_CHAT_MIN_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_NOTIFICATION_CHAT_MIN_SECONDS
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        logger.warning("Invalid NOTIFICATION_CHAT_MIN_SECONDS=%r; using default %s", raw, DEFAULT_NOTIFICATION_CHAT_MIN_SECONDS)
+        return DEFAULT_NOTIFICATION_CHAT_MIN_SECONDS
+
+
+def _spawn_notification(coro: Awaitable[None]) -> None:
+    """Run a notification coroutine in the background; it must never delay or break the stream."""
+    try:
+        task = asyncio.get_running_loop().create_task(coro)  # type: ignore[arg-type]
+    except RuntimeError:
+        logger.warning("No running event loop; dropping chat notification")
+        close = getattr(coro, "close", None)
+        if close:
+            close()
+        return
+    _notification_tasks.add(task)
+    task.add_done_callback(_notification_tasks.discard)
+
+
+async def _publish_chat_event(
+    *,
+    runtime: Any,
+    agent_config: DynamicAgentConfig,
+    user: UserContext,
+    session_id: str,
+    attempt_id: str,
+    failed: bool,
+    duration_seconds: float,
+) -> None:
+    """Build and publish the agent.* event for one chat turn. Never raises."""
+    try:
+        if not failed:
+            if duration_seconds < _chat_min_seconds():
+                return
+            # Skip user-cancelled runs and runs that paused for human input.
+            if runtime is not None:
+                if getattr(runtime, "_cancelled", False) or await runtime.has_pending_interrupt(session_id):
+                    return
+        recipient = {k: v for k, v in (("subject", getattr(user, "sub", None)), ("email", user.email)) if v}
+        if not recipient:
+            return
+        # Generic summary only: never prompts, responses, tool output, or error text.
+        event = build_event(
+            event_type="agent.failed" if failed else "agent.completed",
+            resource_type="conversation",
+            resource_id=session_id,
+            attempt_id=attempt_id,
+            status="failed" if failed else "success",
+            title=f"Agent {'failed' if failed else 'finished'}: {agent_config.name}",
+            summary=(
+                "Your conversation hit an error and could not finish."
+                if failed
+                else f"Your conversation finished after {int(duration_seconds)} seconds."
+            ),
+            recipients=[recipient],
+            href=f"/chat/{quote(session_id, safe='')}",
+        )
+        schedule_publish(event)
+    except Exception:
+        logger.warning("Failed to emit chat notification conversation=%s attempt=%s", session_id, attempt_id, exc_info=True)
+
+
+def _notify_chat_outcome(
+    *,
+    runtime: Any,
+    agent_config: DynamicAgentConfig,
+    user: UserContext,
+    session_id: str,
+    turn_id: str | None,
+    started_at: float,
+    failed: bool,
+    suppress: bool = False,
+) -> None:
+    """Fire-and-forget notification for a finished chat turn (completed or failed)."""
+    if suppress or not events_enabled():
+        return
+    try:
+        _spawn_notification(
+            _publish_chat_event(
+                runtime=runtime,
+                agent_config=agent_config,
+                user=user,
+                session_id=session_id,
+                attempt_id=f"{session_id}:{turn_id or uuid.uuid4()}",
+                failed=failed,
+                duration_seconds=time.monotonic() - started_at,
+            )
+        )
+    except Exception:
+        logger.warning("Failed to schedule chat notification conversation=%s", session_id, exc_info=True)
+
+
 async def _generate_sse_events(
     agent_config: DynamicAgentConfig,
     mcp_servers: list,
@@ -286,6 +405,7 @@ async def _generate_sse_events(
     client_context: ClientContext | None = None,
     files: list[InputFile] | None = None,
     turn_id: str | None = None,
+    suppress_notifications: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Generate SSE events from agent streaming.
 
@@ -296,6 +416,20 @@ async def _generate_sse_events(
     conversation_id_var.set(session_id)
 
     cache = get_runtime_cache()
+    started_at = time.monotonic()
+    runtime = None
+
+    def notify(failed: bool) -> None:
+        _notify_chat_outcome(
+            runtime=runtime,
+            agent_config=agent_config,
+            user=user,
+            session_id=session_id,
+            turn_id=turn_id,
+            started_at=started_at,
+            failed=failed,
+            suppress=suppress_notifications,
+        )
 
     # Set MongoDB service for subagent resolution
     if mongo:
@@ -325,12 +459,15 @@ async def _generate_sse_events(
         ) as frames:
             async for frame in frames:
                 yield frame
+        notify(failed=False)
 
     except RuntimeCapacityError as e:
         logger.warning(f"Agent runtime at capacity: {e}")
+        notify(failed=True)
         for frame in encoder.on_run_error("This agent is at capacity right now. Please try again in a moment."):
             yield frame
     except RuntimeInitError as e:
+        notify(failed=True)
         # If init failed because of a config problem (no LLM provider/model,
         # invalid provider, missing API key, etc.) we own the message — emit
         # the actionable LLMConfigError text instead of GENERIC_AGENT_ERROR
@@ -351,6 +488,7 @@ async def _generate_sse_events(
                 yield frame
     except Exception:
         logger.exception(f"Error streaming from agent '{agent_config.name}'")
+        notify(failed=True)
         for frame in encoder.on_run_error(GENERIC_AGENT_ERROR):
             yield frame
 
@@ -428,6 +566,7 @@ async def chat_start_stream(
             client_context=request.client_context,
             files=request.files,
             turn_id=request.turn_id,
+            suppress_notifications=_suppress_chat_notifications(request),
         ),
         media_type="text/event-stream",
         headers={
@@ -447,6 +586,7 @@ async def _generate_resume_sse_events(
     encoder: StreamEncoder,
     trace_id: str | None = None,
     mongo: MongoDBService | None = None,
+    suppress_notifications: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Generate SSE events from agent resume streaming.
 
@@ -456,6 +596,20 @@ async def _generate_resume_sse_events(
     conversation_id_var.set(session_id)
 
     cache = get_runtime_cache()
+    started_at = time.monotonic()
+    runtime = None
+
+    def notify(failed: bool) -> None:
+        _notify_chat_outcome(
+            runtime=runtime,
+            agent_config=agent_config,
+            user=user,
+            session_id=session_id,
+            turn_id=None,
+            started_at=started_at,
+            failed=failed,
+            suppress=suppress_notifications,
+        )
 
     # Set MongoDB service for subagent resolution
     if mongo:
@@ -474,13 +628,16 @@ async def _generate_resume_sse_events(
         async with aclosing(runtime.resume(session_id, user.email, resume_data, trace_id, encoder)) as frames:
             async for frame in frames:
                 yield frame
+        notify(failed=False)
 
     except RuntimeCapacityError as e:
         logger.warning(f"Agent runtime at capacity: {e}")
+        notify(failed=True)
         for frame in encoder.on_run_error("This agent is at capacity right now. Please try again in a moment."):
             yield frame
     except Exception:
         logger.exception(f"Error resuming stream for agent '{agent_config.name}'")
+        notify(failed=True)
         for frame in encoder.on_run_error(GENERIC_AGENT_ERROR):
             yield frame
 
@@ -546,6 +703,7 @@ async def chat_resume_stream(
             encoder=encoder,
             trace_id=request.trace_id,
             mongo=mongo,
+            suppress_notifications=_suppress_chat_notifications(request),
         ),
         media_type="text/event-stream",
         headers={

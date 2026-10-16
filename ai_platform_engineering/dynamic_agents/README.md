@@ -125,7 +125,15 @@ AGENT_RUNTIME_TTL_SECONDS=3600  # Cache TTL for agent runtimes
 
 # CORS
 CORS_ORIGINS=["*"]
+
+# Notifications (optional). Empty token disables publishing.
+# NOTIFICATIONS_INTERNAL_URL=http://caipe-ui:3000
+# NOTIFICATIONS_INTERNAL_TOKEN=
+# NOTIFICATION_EVENTS_ENABLED=true   # "false" is a kill switch
+# NOTIFICATION_CHAT_MIN_SECONDS=30   # agent.completed only for runs at least this long
 ```
+
+Chat notifications: interactive `/stream/start` and `/stream/resume` runs notify the signed-in user with `agent.completed` (only when the run lasted at least `NOTIFICATION_CHAT_MIN_SECONDS`) or `agent.failed` (always). Publishing is fire-and-forget and never delays or changes the stream. Autonomous/scheduler runs are skipped here; the autonomous-agents service notifies for those. `/invoke` does not notify.
 
 ### Running the Server
 

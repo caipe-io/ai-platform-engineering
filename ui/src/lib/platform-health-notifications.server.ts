@@ -173,6 +173,7 @@ async function openIncident(
     category: "platform_health",
     sourceLabel: PLATFORM_SOURCE_LABEL,
     correlationKey: `platform-health:${capability.id}`,
+    eventType: "service.degraded",
     lifecycleStatus: "active",
   });
   if (state?.active_event_key && state.active_event_key !== eventKey) {
@@ -227,6 +228,9 @@ async function closeIncident(input: {
     category: "platform_health",
     sourceLabel: PLATFORM_SOURCE_LABEL,
     correlationKey: `platform-health:${input.state.component_id}`,
+    // Only a genuine automatic recovery counts as "recovered". A human
+    // resolution or a disabled capability is not a recovery.
+    ...(automatic && !monitoringDisabled ? { eventType: "service.recovered" } : {}),
     lifecycleStatus: "resolved",
   });
 

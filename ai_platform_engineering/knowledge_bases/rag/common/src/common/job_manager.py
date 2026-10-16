@@ -1,6 +1,8 @@
+import json
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 import redis.asyncio as redis
+from common.notifications_client import build_event, schedule_publish
 from common.utils import get_logger
 import time
 from pydantic import BaseModel, Field
@@ -8,6 +10,8 @@ from common.constants import (
   REDIS_JOB_PREFIX,
   REDIS_JOB_DATASOURCE_INDEX_PREFIX,
   REDIS_JOB_ERRORS_SUFFIX,
+  REDIS_JOB_DATASOURCE_TOUCHED_PREFIX,
+  REDIS_DATASOURCE_PREFIX,
 )
 
 logger = get_logger(__name__)
@@ -20,6 +24,17 @@ class JobStatus(str, Enum):
   COMPLETED_WITH_ERRORS = "completed_with_errors"
   TERMINATED = "terminated"
   FAILED = "failed"
+
+
+TERMINAL_STATUSES = frozenset({JobStatus.COMPLETED, JobStatus.COMPLETED_WITH_ERRORS, JobStatus.FAILED, JobStatus.TERMINATED})
+MAX_NOTIFICATION_RECIPIENTS = 50
+
+
+def _text(value: Any) -> Optional[str]:
+  """Decode a Redis value (bytes or str) to a non-empty string, else None."""
+  if isinstance(value, bytes):
+    value = value.decode()
+  return value if isinstance(value, str) and value else None
 
 
 class JobInfo(BaseModel):
@@ -35,6 +50,8 @@ class JobInfo(BaseModel):
   datasource_id: Optional[str] = Field(description="Associated datasource ID", default=None)
   document_count: Optional[int] = Field(description="Number of documents ingested", default=0)
   chunk_count: Optional[int] = Field(description="Number of chunks created", default=0)
+  triggered_by_subject: Optional[str] = Field(description="Keycloak subject of the user who created the job (None for scheduled/reload/service jobs)", default=None)
+  triggered_by_email: Optional[str] = Field(description="Email of the user who created the job (None for scheduled/reload/service jobs)", default=None)
 
 
 # Ingestors dequeue their Redis list within ~1s (blpop timeout=1), so a job
@@ -129,18 +146,26 @@ class JobManager:
     message: Optional[str] = None,
     total: Optional[int] = None,
     datasource_id: Optional[str] = None,
+    triggered_by_subject: Optional[str] = None,
+    triggered_by_email: Optional[str] = None,
   ) -> bool:
     """
     Creates a new job or updates an existing job in Redis.
+
+    Emits a notification event (fire-and-forget, never raises) on the transition
+    into IN_PROGRESS or into a terminal state; other upserts emit nothing.
 
     :param job_id: The ID of the job to create or update.
     :param status: The status of the job (defaults to PENDING for new jobs).
     :param message: The message for the job.
     :param total: The total number of items to process.
     :param datasource_id: The datasource ID associated with this job.
+    :param triggered_by_subject: Subject of the human who created/edited the job (recorded as having "touched" the datasource).
+    :param triggered_by_email: Email of that human.
     :return: True if the operation was successful, False if job is terminated and cannot be updated.
     """
     job_key = self._get_job_key(job_id)
+    previous_status: Optional[str] = None
 
     # Check if job exists
     exists = await self.redis_client.exists(job_key)
@@ -163,6 +188,10 @@ class JobManager:
         hash_data["total"] = str(total)
       if datasource_id is not None:
         hash_data["datasource_id"] = datasource_id
+      if triggered_by_subject:
+        hash_data["triggered_by_subject"] = triggered_by_subject
+      if triggered_by_email:
+        hash_data["triggered_by_email"] = triggered_by_email
 
       # Save as hash (no TTL - jobs are managed via max_jobs_per_datasource limit)
       await self.redis_client.hset(job_key, mapping=hash_data)  # type: ignore
@@ -176,6 +205,7 @@ class JobManager:
         await self._cleanup_old_jobs_for_datasource(datasource_id)
 
       logger.debug(f"Successfully created job {job_id}")
+      await self._after_write(job_id, datasource_id, None, status or JobStatus.PENDING, triggered_by_subject, triggered_by_email)
       return True
     else:
       # Job exists, check if it's terminated
@@ -183,6 +213,7 @@ class JobManager:
       if job_status == JobStatus.TERMINATED.value and status != JobStatus.TERMINATED:
         logger.warning(f"Cannot update job {job_id} - job is terminated")
         return False
+      previous_status = _text(job_status)
 
       # Prepare updates
       updates = {}
@@ -207,15 +238,123 @@ class JobManager:
       if status is not None and status in [JobStatus.COMPLETED, JobStatus.COMPLETED_WITH_ERRORS, JobStatus.FAILED, JobStatus.TERMINATED]:
         updates["completed_at"] = str(int(time.time()))
 
+      if triggered_by_subject and not _text(await self.redis_client.hget(job_key, "triggered_by_subject")):  # type: ignore
+        updates["triggered_by_subject"] = triggered_by_subject
+        if triggered_by_email:
+          updates["triggered_by_email"] = triggered_by_email
+
       if not updates:
         logger.debug(f"upsert_job called for job {job_id} with no fields to update")
+        await self._after_write(job_id, datasource_id, previous_status, None, triggered_by_subject, triggered_by_email)
         return True
 
       # Apply updates to hash
       await self.redis_client.hset(job_key, mapping=updates)  # type: ignore
 
       logger.debug(f"Successfully updated job {job_id} with: {updates}")
+      await self._after_write(job_id, datasource_id, previous_status, status, triggered_by_subject, triggered_by_email)
       return True
+
+  async def _after_write(
+    self,
+    job_id: str,
+    datasource_id: Optional[str],
+    previous_status: Optional[str],
+    new_status: Optional[JobStatus],
+    actor_subject: Optional[str],
+    actor_email: Optional[str],
+  ) -> None:
+    """Record who touched the datasource and emit notifications on status transitions. Never raises."""
+    try:
+      if datasource_id is None:
+        datasource_id = _text(await self.redis_client.hget(self._get_job_key(job_id), "datasource_id"))  # type: ignore
+      if datasource_id and (actor_subject or actor_email):
+        touch = {k: v for k, v in (("subject", actor_subject), ("email", actor_email)) if v}
+        await self.redis_client.sadd(f"{REDIS_JOB_DATASOURCE_TOUCHED_PREFIX}{datasource_id}", json.dumps(touch, sort_keys=True))  # type: ignore
+      if new_status is None or new_status.value == previous_status:
+        return
+      previous_terminal = previous_status in {s.value for s in TERMINAL_STATUSES}
+      if new_status in TERMINAL_STATUSES and not previous_terminal:
+        await self._emit_job_event(job_id, datasource_id, new_status)
+      elif new_status == JobStatus.IN_PROGRESS and previous_status != JobStatus.IN_PROGRESS.value and not previous_terminal:
+        await self._emit_job_event(job_id, datasource_id, new_status)
+    except Exception as error:  # noqa: BLE001 - notifications must never affect job state
+      logger.warning(f"Notification bookkeeping failed for job {job_id} datasource {datasource_id}: {error}")
+
+  async def _notification_recipients(self, job_id: str, datasource_id: Optional[str], datasource_record: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Users who "touched" the datasource: its creator/owner, the job's trigger user, and anyone who created or edited a job for it."""
+    candidates: List[Dict[str, str]] = []
+    for field in ("creator_subject", "owner_subject"):
+      subject = datasource_record.get(field)
+      if isinstance(subject, str) and subject:
+        candidates.append({"subject": subject})
+    job_fields = await self.redis_client.hmget(self._get_job_key(job_id), ["triggered_by_subject", "triggered_by_email"])  # type: ignore
+    triggered = {k: v for k, v in (("subject", _text(job_fields[0])), ("email", _text(job_fields[1]))) if v}
+    if triggered:
+      candidates.append(triggered)
+    if datasource_id:
+      for raw in await self.redis_client.smembers(f"{REDIS_JOB_DATASOURCE_TOUCHED_PREFIX}{datasource_id}"):  # type: ignore
+        try:
+          entry = json.loads(_text(raw) or "{}")
+        except json.JSONDecodeError:
+          logger.warning(f"Ignoring malformed touched-user entry for datasource {datasource_id}")
+          continue
+        if isinstance(entry, dict) and (entry.get("subject") or entry.get("email")):
+          candidates.append({k: entry[k] for k in ("subject", "email") if isinstance(entry.get(k), str) and entry[k]})
+    # Merge entries that share a subject or email so one person is one recipient.
+    merged: List[Dict[str, str]] = []
+    for candidate in candidates:
+      match = next(
+        (m for m in merged if (candidate.get("subject") and candidate.get("subject") == m.get("subject")) or (candidate.get("email") and candidate["email"].lower() == m.get("email", "").lower())),
+        None,
+      )
+      if match is None:
+        merged.append(dict(candidate))
+      else:
+        for key, value in candidate.items():
+          match.setdefault(key, value)
+    return merged[:MAX_NOTIFICATION_RECIPIENTS]
+
+  async def _emit_job_event(self, job_id: str, datasource_id: Optional[str], new_status: JobStatus) -> None:
+    """Build and schedule the ingestion.* event for a status transition."""
+    datasource_record: Dict[str, Any] = {}
+    if datasource_id:
+      raw = _text(await self.redis_client.get(f"{REDIS_DATASOURCE_PREFIX}{datasource_id}"))  # type: ignore
+      if raw:
+        try:
+          parsed = json.loads(raw)
+          if isinstance(parsed, dict):
+            datasource_record = parsed
+        except json.JSONDecodeError:
+          logger.warning(f"Datasource record for {datasource_id} is not valid JSON; notifying with id only")
+    name = _text(datasource_record.get("name")) or datasource_id or job_id
+    counters = await self.redis_client.hmget(self._get_job_key(job_id), ["document_count", "chunk_count", "failed_counter"])  # type: ignore
+    documents, chunks, failed = (int(_text(v) or 0) for v in counters)
+    if new_status == JobStatus.IN_PROGRESS:
+      event_type, title, summary = "ingestion.started", f"Ingestion started: {name}", "Ingestion has started."
+    elif new_status == JobStatus.FAILED:
+      event_type, title, summary = "ingestion.failed", f"Ingestion failed: {name}", f"Ingestion failed after {documents} documents and {chunks} chunks."
+    elif new_status == JobStatus.TERMINATED:
+      event_type, title, summary = "ingestion.failed", f"Ingestion stopped: {name}", f"Ingestion was terminated after {documents} documents and {chunks} chunks."
+    else:
+      suffix = f" with {failed} failed items" if new_status == JobStatus.COMPLETED_WITH_ERRORS else ""
+      event_type, title, summary = "ingestion.completed", f"Ingestion completed: {name}", f"Ingested {documents} documents and {chunks} chunks{suffix}."
+    # Summary carries counts only: never job messages or error text, which may include document content or secrets.
+    recipients = await self._notification_recipients(job_id, datasource_id, datasource_record)
+    event = build_event(
+      event_type=event_type,
+      resource_type="datasource",
+      resource_id=datasource_id or job_id,
+      attempt_id=job_id,
+      correlation_id=datasource_id,
+      status=new_status.value,
+      title=title,
+      summary=summary,
+      recipients=recipients,
+      href="/knowledge-bases/ingest",
+      include_org_admins=True,
+    )
+    schedule_publish(event)
 
   async def increment_progress(self, job_id: str, increment: int = 1) -> int:
     """
@@ -419,6 +558,8 @@ class JobManager:
       "document_count": int(hash_data.get(b"document_count", b"0").decode() if isinstance(hash_data.get(b"document_count"), bytes) else hash_data.get("document_count", "0")),
       "chunk_count": int(hash_data.get(b"chunk_count", b"0").decode() if isinstance(hash_data.get(b"chunk_count"), bytes) else hash_data.get("chunk_count", "0")),
       "error_msgs": error_msgs if error_msgs else [],
+      "triggered_by_subject": _text(hash_data.get(b"triggered_by_subject", hash_data.get("triggered_by_subject"))),
+      "triggered_by_email": _text(hash_data.get(b"triggered_by_email", hash_data.get("triggered_by_email"))),
     }
 
     job_info = JobInfo(**job_dict)
