@@ -275,6 +275,31 @@ services:
   #                             CAIPE UI & document database                                        #
   ####################################################################################################
   # MongoDB for CAIPE UI chat history and user settings
+  ####################################################################################################
+  #                              LiteLLM Central Routing Proxy (opt-in)                              #
+  ####################################################################################################
+  # Default-off. Add `llm-routing` to COMPOSE_PROFILES to route every agent's LLM traffic through one
+  # OpenAI-compatible endpoint that translates to your chosen upstream provider. Stateless: no database.
+  # To use: enable the profile, set LITELLM_MASTER_KEY, point OPENAI_ENDPOINT=http://litellm:4000/v1 and
+  # OPENAI_API_KEY=${LITELLM_MASTER_KEY} in .env, and configure deploy/litellm/config.yaml. See .env.example.
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.92.0
+    container_name: litellm
+    command: ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
+    ports:
+      - "4000:4000"
+    env_file: [.env]
+    volumes:
+      - ./deploy/litellm/config.yaml:/etc/litellm/config.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/readiness')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    profiles:
+      - llm-routing
+
   caipe-mongodb:
     image: mongo:7.0
     container_name: caipe-mongodb
