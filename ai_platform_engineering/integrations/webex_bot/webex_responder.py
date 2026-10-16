@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from datetime import datetime
 from typing import Any, Protocol
@@ -24,6 +25,7 @@ from .utils.chat_envelope import augment_webex_client_context
 from .utils.reasoning_effort import get_default_pending_effort_store
 from .utils.thread_ownership import ThreadOwnerCache, get_default_thread_owner_cache
 from .utils.user_messages import FRIENDLY_REASON_MESSAGES, GENERIC_REQUEST_DENIED_MESSAGE
+from .utils.webex_bot_catalog import configured_webex_bot
 from .utils.webex_runtime_policy import should_post_denial_notice
 
 logger = logging.getLogger("caipe.webex_bot.webex_responder")
@@ -353,6 +355,7 @@ class WebexThreadedStreamDispatcher:
         parent_id = thread_parent_id or message_id
         space_id = str(payload.get("space_id") or "")
         agent_id = str(payload.get("agent_id") or "")
+        bot_name = _reply_bot_name(str(payload.get("bot_id") or ""))
         text = str(payload.get("text") or "")
         person_id = str(payload.get("person_id") or "")
         obo_token = str(payload.get("obo_token") or "")
@@ -398,9 +401,8 @@ class WebexThreadedStreamDispatcher:
             # changes later — mirrors Slack's thread-owner pinning. Only
             # replies (never the root message) look up an existing owner;
             # thread_parent_id is populated exclusively on true replies.
-            # Resolved before the placeholder message is created so the
-            # first thing users see already shows the pinned/owner agent,
-            # instead of flashing the reconfigured route and self-correcting.
+            # Resolve ownership before dispatching the request so follow-ups
+            # continue with the agent that owns the thread.
             conv_metadata = conversation.get("metadata") or {}
             pending_effort_store = get_default_pending_effort_store()
             staged_effort = (
@@ -442,7 +444,7 @@ class WebexThreadedStreamDispatcher:
             reply_id = self._webex_api.create_message(
                 room_id=room_id,
                 parent_id=parent_id,
-                markdown=_agent_reply_markdown(agent_id, "Working on it..."),
+                markdown=_agent_reply_markdown(bot_name, "Working on it..."),
             )
 
             self._thread_owner_cache.set(thread_key, agent_id)
@@ -491,7 +493,7 @@ class WebexThreadedStreamDispatcher:
                         self._webex_api.update_message(
                             message_id=reply_id,
                             room_id=room_id,
-                            markdown=_agent_reply_markdown(agent_id, accumulated),
+                            markdown=_agent_reply_markdown(bot_name, accumulated),
                         )
                         last_sent_len = len(accumulated)
                 elif event.type == SSEEventType.RUN_ERROR:
@@ -499,7 +501,7 @@ class WebexThreadedStreamDispatcher:
                     self._webex_api.update_message(
                         message_id=reply_id,
                         room_id=room_id,
-                        markdown=_agent_reply_markdown(agent_id, message),
+                        markdown=_agent_reply_markdown(bot_name, message),
                     )
                     return
         except AgentAccessDeniedError as exc:
@@ -513,7 +515,7 @@ class WebexThreadedStreamDispatcher:
                 room_id=room_id,
                 parent_id=parent_id,
                 markdown=_agent_reply_markdown(
-                    agent_id,
+                    bot_name,
                     (
                         f"You don't have permission to use agent `{exc.agent_id}`. "
                         f"Ask an admin to grant you access in {_app_name()}."
@@ -528,7 +530,7 @@ class WebexThreadedStreamDispatcher:
                 room_id=room_id,
                 parent_id=parent_id,
                 markdown=_agent_reply_markdown(
-                    agent_id,
+                    bot_name,
                     "I could not complete the request. Please try again.",
                 ),
             )
@@ -538,7 +540,7 @@ class WebexThreadedStreamDispatcher:
         self._webex_api.update_message(
             message_id=reply_id,
             room_id=room_id,
-            markdown=_agent_reply_markdown(agent_id, final_markdown),
+            markdown=_agent_reply_markdown(bot_name, final_markdown),
         )
 
         # Persist per-turn message rows for stats/linking — only reached on a
@@ -743,12 +745,20 @@ def _app_name() -> str:
 _BOT_REPLY_MARKER = "​<!-- caipe-agent-reply -->"
 
 
-def _agent_reply_markdown(agent_id: str, body: str) -> str:
+def _reply_bot_name(bot_id: str) -> str:
+    bot = configured_webex_bot(bot_id) if bot_id else None
+    if bot is None:
+        return _app_name()
+    # Catalog labels may include an email for administrators; the footer uses
+    # only the display name users mention in Webex.
+    return re.sub(r"\s+\([^()\s@]+@[^()\s]+\)$", "", bot.name).strip() or _app_name()
+
+
+def _agent_reply_markdown(bot_name: str, body: str) -> str:
     content = body.strip() or "Done."
-    app_name = _app_name()
     return (
         f"{content}\n\n"
-        f"_Agent: {agent_id}_ • **Mention @{app_name} to continue**"
+        f"{bot_name} • **Mention @{bot_name} to continue**"
         f"{_BOT_REPLY_MARKER}"
     )
 

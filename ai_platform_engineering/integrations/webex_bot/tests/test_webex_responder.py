@@ -489,7 +489,7 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
             "parent_id": "message-public-id",
             "markdown": (
                 "Working on it...\n\n"
-                "_Agent: incident-agent_ • **Mention @CAIPE to continue**"
+                "CAIPE • **Mention @CAIPE to continue**"
                 f"{_BOT_REPLY_MARKER}"
             ),
         }
@@ -499,7 +499,7 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
         "room_id": "room-public-id",
         "markdown": (
             "hello world\n\n"
-            "_Agent: incident-agent_ • **Mention @CAIPE to continue**"
+            "CAIPE • **Mention @CAIPE to continue**"
             f"{_BOT_REPLY_MARKER}"
         ),
     }
@@ -674,7 +674,7 @@ def test_threaded_stream_dispatcher_reuses_root_parent_for_thread_replies() -> N
         "parent_id": "root-message-public-id",
         "markdown": (
             "Working on it...\n\n"
-            "_Agent: incident-agent_ • **Mention @CAIPE to continue**"
+            "CAIPE • **Mention @CAIPE to continue**"
             f"{_BOT_REPLY_MARKER}"
         ),
     }
@@ -804,13 +804,12 @@ def test_threaded_stream_dispatcher_overrides_reconfigured_space_route_for_exist
     )
 
     assert sse.calls[0]["agent_id"] == "original-agent"
-    # Placeholder reply was created with the owner's agent from the start —
-    # never shows the requested/reconfigured agent, so nothing needs correcting.
+    # The bot identity stays visible while routing uses the pinned agent.
     assert len(api.created) == 1
     assert api.created[0]["markdown"].startswith(
-        "Working on it...\n\n_Agent: original-agent_"
+        "Working on it...\n\nCAIPE • **Mention @CAIPE to continue**"
     )
-    assert api.updated[-1]["markdown"].startswith("Done.\n\n_Agent: original-agent_")
+    assert api.updated[-1]["markdown"].startswith("Done.\n\nCAIPE • **Mention @CAIPE to continue**")
     # Ownership was already persisted — no redundant metadata write.
     assert sse.metadata_updates == []
 
@@ -1119,7 +1118,7 @@ def test_bot_reply_recognized_after_app_name_changes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("APP_NAME", "OldName")
-    reply_markdown = _agent_reply_markdown("incident-agent", "prior bot answer")
+    reply_markdown = _agent_reply_markdown("Example", "prior bot answer")
 
     monkeypatch.setenv("APP_NAME", "NewName")
 
