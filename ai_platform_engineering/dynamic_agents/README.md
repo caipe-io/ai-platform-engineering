@@ -155,6 +155,7 @@ The API documentation is available at:
 | `MONGODB_DATABASE` | Database name | `caipe` |
 | `DYNAMIC_AGENTS_COLLECTION` | Agents collection name | `dynamic_agents` |
 | `MCP_SERVERS_COLLECTION` | MCP servers collection name | `mcp_servers` |
+| `MCP_SSE_READ_TIMEOUT_OVERRIDES` | JSON object mapping MCP server IDs to streamable HTTP response read limits in seconds. Use for tools whose response can exceed the transport's five-minute default. Values must be integers from 1 to 3600. | Unset |
 | `AUTONOMOUS_TASKS_COLLECTION` | Shared Autonomous task collection, used to authorize manual follow-up chats | `autonomous_tasks` |
 | `AUTONOMOUS_RUNS_COLLECTION` | Shared Autonomous run collection, used to select the completed run context | `autonomous_runs` |
 | `AGENT_RUNTIME_TTL_SECONDS` | Cache TTL for agent runtimes | `3600` |
