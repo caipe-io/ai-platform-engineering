@@ -103,6 +103,11 @@ jest.mock('@/hooks/use-kb-tab-gates', () => ({
 }))
 
 // Mock chat store
+// Header assertions must not initialize the chat editor or its transport stack.
+jest.mock('@/components/chat/DynamicAgentChatPanel', () => ({
+  DynamicAgentChatPanel: () => <div data-testid="chat-panel" />,
+}))
+
 let mockStreamingConversations = new Map<string, unknown>()
 let mockUnviewedConversations = new Set<string>()
 let mockInputRequiredConversations = new Set<string>()
