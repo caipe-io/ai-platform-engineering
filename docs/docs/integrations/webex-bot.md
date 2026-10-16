@@ -111,7 +111,7 @@ for group spaces and direct messages. The token itself must be supplied through
 Bot identity is always selected explicitly; there is no deployment default bot.
 
 Reply footers use the receiving bot's display name:
-`Example • Mention @Example to continue`. A trailing email label, such as
+`Agent: Example • Mention @Example to continue`. A trailing email label, such as
 `Example (example-bot@example.com)`, is omitted from the footer. Internal agent
 IDs remain in routing metadata. When no bot catalog entry is available, the
 footer uses `APP_NAME`.

@@ -758,7 +758,7 @@ def _agent_reply_markdown(bot_name: str, body: str) -> str:
     content = body.strip() or "Done."
     return (
         f"{content}\n\n"
-        f"{bot_name} • **Mention @{bot_name} to continue**"
+        f"Agent: {bot_name} • **Mention @{bot_name} to continue**"
         f"{_BOT_REPLY_MARKER}"
     )
 

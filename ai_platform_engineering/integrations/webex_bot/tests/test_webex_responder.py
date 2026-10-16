@@ -489,7 +489,7 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
             "parent_id": "message-public-id",
             "markdown": (
                 "Working on it...\n\n"
-                "CAIPE • **Mention @CAIPE to continue**"
+                "Agent: CAIPE • **Mention @CAIPE to continue**"
                 f"{_BOT_REPLY_MARKER}"
             ),
         }
@@ -499,7 +499,7 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
         "room_id": "room-public-id",
         "markdown": (
             "hello world\n\n"
-            "CAIPE • **Mention @CAIPE to continue**"
+            "Agent: CAIPE • **Mention @CAIPE to continue**"
             f"{_BOT_REPLY_MARKER}"
         ),
     }
@@ -674,7 +674,7 @@ def test_threaded_stream_dispatcher_reuses_root_parent_for_thread_replies() -> N
         "parent_id": "root-message-public-id",
         "markdown": (
             "Working on it...\n\n"
-            "CAIPE • **Mention @CAIPE to continue**"
+            "Agent: CAIPE • **Mention @CAIPE to continue**"
             f"{_BOT_REPLY_MARKER}"
         ),
     }
@@ -807,9 +807,9 @@ def test_threaded_stream_dispatcher_overrides_reconfigured_space_route_for_exist
     # The bot identity stays visible while routing uses the pinned agent.
     assert len(api.created) == 1
     assert api.created[0]["markdown"].startswith(
-        "Working on it...\n\nCAIPE • **Mention @CAIPE to continue**"
+        "Working on it...\n\nAgent: CAIPE • **Mention @CAIPE to continue**"
     )
-    assert api.updated[-1]["markdown"].startswith("Done.\n\nCAIPE • **Mention @CAIPE to continue**")
+    assert api.updated[-1]["markdown"].startswith("Done.\n\nAgent: CAIPE • **Mention @CAIPE to continue**")
     # Ownership was already persisted — no redundant metadata write.
     assert sse.metadata_updates == []
 
