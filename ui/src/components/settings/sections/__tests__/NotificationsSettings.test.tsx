@@ -214,7 +214,7 @@ describe("PlatformAnnouncementsSettings",() => {
     jest.clearAllMocks();
   });
 
-  it("auto-saves only the platform release announcement flag",async () => {
+  it("auto-saves the platform release announcement flag with its compare config",async () => {
     const fetchMock = jest.fn(async (_input: RequestInfo | URL,init?: RequestInit) => {
       if (init?.method === "PATCH") return jsonResponse({ success: true,data: {} });
       return jsonResponse({
@@ -234,7 +234,54 @@ describe("PlatformAnnouncementsSettings",() => {
         "/api/admin/platform-config",
         expect.objectContaining({
           method: "PATCH",
-          body: JSON.stringify({ release_notes: { enabled: false } }),
+          body: JSON.stringify({
+            release_notes: {
+              enabled: false,
+              repository_url: null,
+              previous_commit: null,
+              latest_commit: null,
+            },
+          }),
+        }),
+      );
+    });
+  });
+
+  it("saves the optional GitHub commit range",async () => {
+    const fetchMock = jest.fn(async (_input: RequestInfo | URL,init?: RequestInit) => {
+      if (init?.method === "PATCH") return jsonResponse({ success: true,data: {} });
+      return jsonResponse({
+        success: true,
+        data: { release_notes: { enabled: true } },
+      });
+    });
+    global.fetch = fetchMock;
+    render(<PlatformAnnouncementsSettings />);
+
+    fireEvent.change(await screen.findByLabelText("Repository URL"), {
+      target: { value: "https://github.com/example/repository" },
+    });
+    fireEvent.change(screen.getByLabelText("Previous upgraded commit"), {
+      target: { value: "1111111" },
+    });
+    fireEvent.change(screen.getByLabelText("Latest commit"), {
+      target: { value: "2222222" },
+    });
+    fireEvent.click(screen.getByRole("button",{ name: "Save release notes configuration" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/admin/platform-config",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({
+            release_notes: {
+              enabled: true,
+              repository_url: "https://github.com/example/repository",
+              previous_commit: "1111111",
+              latest_commit: "2222222",
+            },
+          }),
         }),
       );
     });
