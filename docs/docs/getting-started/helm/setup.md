@@ -132,8 +132,9 @@ helm upgrade --install ai-platform-engineering "${CAIPE_CHART}" \
   --set-string dynamic-agents.llmSecret=llm-secret
 ```
 
-MongoDB remains the default. For the opt-in DocumentDB values and required
-shared `MONGODB_URI` Secret, see [Persistence](../../installation/persistence.md).
+DocumentDB is the default for new installs. To opt into MongoDB, set
+`mongodb.provider: mongodb` and provide the shared `MONGODB_URI` Secret. See
+[Persistence](../../installation/persistence.md).
 
 With GitHub, ArgoCD, and RAG:
 

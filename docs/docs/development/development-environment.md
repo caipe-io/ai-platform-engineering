@@ -6,7 +6,7 @@ directly when iterating on one component.
 ## Common Stack
 
 ```bash
-COMPOSE_PROFILES=caipe-ui,dynamic-agents,caipe-mongodb,mcp-netutils docker compose -f docker-compose.dev.yaml up
+COMPOSE_PROFILES=caipe-ui,dynamic-agents,caipe-documentdb,mcp-netutils docker compose -f docker-compose.dev.yaml up
 ```
 
 Open:
@@ -27,7 +27,7 @@ Set:
 
 ```bash
 DYNAMIC_AGENTS_URL=http://localhost:8100
-MONGODB_URI=mongodb://admin:changeme@localhost:27017/caipe?authSource=admin
+MONGODB_URI=mongodb://admin:changeme@localhost:10260/caipe?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true
 ```
 
 ## Dynamic Agents
