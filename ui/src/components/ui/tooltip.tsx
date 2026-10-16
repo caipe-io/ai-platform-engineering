@@ -259,8 +259,12 @@ export function TooltipContent({
 
       const rect = trigger.getBoundingClientRect();
       const viewportH = window.innerHeight;
+      const viewportW = window.innerWidth;
       const contentEl = contentRef.current;
-      const contentH = contentEl?.offsetHeight ?? 0;
+      // Measure the visual box so fractional sizes and scaling are included.
+      const contentRect = contentEl?.getBoundingClientRect();
+      const contentH = contentRect?.height ?? 0;
+      const contentW = contentRect?.width ?? 0;
 
       let top = 0;
       let left = 0;
@@ -321,6 +325,28 @@ export function TooltipContent({
         }
       }
 
+      // Account for each side's X translation when clamping the visible box.
+      if (contentW > 0) {
+        const effectiveW = Math.min(contentW, viewportW - 2 * VIEWPORT_MARGIN);
+        if (side === "top" || side === "bottom") {
+          const half = effectiveW / 2;
+          left = Math.min(
+            Math.max(left, VIEWPORT_MARGIN + half),
+            viewportW - VIEWPORT_MARGIN - half,
+          );
+        } else if (side === "left") {
+          left = Math.min(
+            Math.max(left, VIEWPORT_MARGIN + effectiveW),
+            viewportW - VIEWPORT_MARGIN,
+          );
+        } else {
+          left = Math.min(
+            Math.max(left, VIEWPORT_MARGIN),
+            viewportW - VIEWPORT_MARGIN - effectiveW,
+          );
+        }
+      }
+
       setPosition({ top, left });
     };
 
@@ -375,7 +401,7 @@ export function TooltipContent({
         // default) so the cursor can land on the tooltip and read
         // / scroll the body — keeping the tooltip open via the
         // hover-hold counter above.
-        "fixed z-[9999] px-2 py-1 text-xs font-medium text-popover-foreground bg-popover border border-border rounded-md shadow-lg whitespace-nowrap",
+        "fixed z-[9999] max-w-[calc(100vw-1rem)] overflow-x-auto whitespace-nowrap px-2 py-1 text-xs font-medium text-popover-foreground bg-popover border border-border rounded-md shadow-lg",
         // Cap the tooltip height to ~60% of the viewport (with a
         // hard upper bound) and scroll internally when the body
         // overflows. Short tooltips are well under this cap, so
