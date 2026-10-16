@@ -66,6 +66,12 @@ TS_CALL_RE = re.compile(
 # (`agent:<agent_id>`), so validation tracks route coverage rather than realm
 # resource inventory.
 TS_OPENFGA_AGENT_USE_RE = re.compile(r"requireAgentUsePermission\s*\(", re.MULTILINE)
+TS_FUNCTION_RE = re.compile(
+    r"(?:(?P<export>export)\s+)?(?:async\s+)?function\s+(?P<function>[A-Za-z_$][\w$]*)\s*\("
+    r"|(?P<const_export>export)\s+const\s+(?P<const>[A-Za-z_$][\w$]*)\s*=",
+)
+TS_IMPORT_RE = re.compile(r"import\s*\{([^}]+)\}\s*from\s*[\"']([^\"']+)[\"']", re.MULTILINE)
+HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
 # require_rbac_permission(token, "resource", "scope")
 PY_CALL_RE = re.compile(
     r"require_rbac_permission\s*\(\s*[^,]+?,\s*[\"']([a-z0-9_]+(?::[A-Za-z0-9_-]+)?)[\"']\s*,\s*[\"']([a-z_]+)[\"']",
@@ -158,18 +164,75 @@ def route_path_from_ui_file(path: Path) -> str:
     return "/" + "/".join(without_route.parts)
 
 
-def find_openfga_agent_use_route_sites() -> dict[str, list[str]]:
-    """Return {route_path: [file:line, ...]} for BFF OpenFGA agent-use gates."""
-    sites: dict[str, list[str]] = {}
+def _ui_import_path(source: Path, module: str) -> Path | None:
+    if module.startswith("."):
+        candidate = source.parent / module
+    elif module.startswith("@/"):
+        candidate = REPO_ROOT / "ui" / "src" / module[2:]
+    else:
+        return None
+    for path in (candidate, candidate.with_suffix(".ts"), candidate.with_suffix(".tsx"), candidate / "index.ts"):
+        path = path.resolve()
+        if path.is_relative_to(REPO_ROOT) and path.is_file():
+            return path
+    return None
+
+
+def _function_body(content: str, name: str) -> tuple[int, str] | None:
+    declarations = list(TS_FUNCTION_RE.finditer(content))
+    for index, match in enumerate(declarations):
+        if (match.group("function") or match.group("const")) == name:
+            end = declarations[index + 1].start() if index + 1 < len(declarations) else len(content)
+            return match.start(), content[match.start():end]
+    return None
+
+
+def _agent_use_function_site(path: Path, name: str) -> str | None:
+    """Find a handler's gate directly or in its called, imported shared helper.
+
+    One level covers the run-read authorization helper. This inventory does
+    not attempt to infer arbitrary TypeScript control flow or authorization.
+    """
+    content = path.read_text()
+    span = _function_body(content, name)
+    if span is None:
+        return None
+    start, body = span
+    gate = TS_OPENFGA_AGENT_USE_RE.search(body)
+    if gate is not None:
+        line_no = content[:start + gate.start()].count("\n") + 1
+        return f"{path.relative_to(REPO_ROOT)}:{line_no}"
+    for imported in TS_IMPORT_RE.finditer(content):
+        target = _ui_import_path(path, imported.group(2))
+        if target is None:
+            continue
+        for binding in imported.group(1).split(","):
+            parts = binding.strip().split()
+            if not parts or parts[0] == "type" or not re.search(rf"\b{re.escape(parts[-1])}\s*\(", body):
+                continue
+            helper_content = target.read_text()
+            helper = _function_body(helper_content, parts[0])
+            if helper is not None and (gate := TS_OPENFGA_AGENT_USE_RE.search(helper[1])) is not None:
+                line_no = helper_content[:helper[0] + gate.start()].count("\n") + 1
+                return f"{target.relative_to(REPO_ROOT)}:{line_no}"
+    return None
+
+
+def find_openfga_agent_use_route_sites() -> dict[tuple[str, str], list[str]]:
+    """Return {(HTTP method, route_path): [gate file:line, ...]} for agent use."""
+    sites: dict[tuple[str, str], list[str]] = {}
     for path in REPO_ROOT.glob(UI_ROUTES_GLOB):
         try:
             content = path.read_text()
         except (UnicodeDecodeError, PermissionError):
             continue
-        for match in TS_OPENFGA_AGENT_USE_RE.finditer(content):
-            line_no = content[: match.start()].count("\n") + 1
-            where = f"{path.relative_to(REPO_ROOT)}:{line_no}"
-            sites.setdefault(route_path_from_ui_file(path), []).append(where)
+        for match in TS_FUNCTION_RE.finditer(content):
+            method = match.group("function") or match.group("const")
+            if method not in HTTP_METHODS or not (match.group("export") or match.group("const_export")):
+                continue
+            site = _agent_use_function_site(path, method)
+            if site is not None:
+                sites.setdefault((method, route_path_from_ui_file(path)), []).append(site)
     return sites
 
 
@@ -213,10 +276,13 @@ def validate_schema_shape(matrix: dict) -> list[Violation]:
                 )
             )
         if authz == "openfga":
-            if entry.get("relation") != "can_use":
-                violations.append(Violation("schema", rid, "OpenFGA agent-use entries must set relation: can_use"))
-            if entry.get("object_type") != "agent":
-                violations.append(Violation("schema", rid, "OpenFGA agent-use entries must set object_type: agent"))
+            gate = (entry.get("resource"), entry.get("scope"), entry.get("object_type"), entry.get("relation"))
+            if gate not in {
+                ("agent", "use", "agent", "can_use"),
+                ("conversation", "read", "conversation", "can_read"),
+                ("conversation", "write", "conversation", "can_write"),
+            }:
+                violations.append(Violation("schema", rid, "Unsupported OpenFGA resource/scope/object_type/relation gate"))
         expectations = entry.get("expectations") or {}
         missing = REQUIRED_PERSONAS - set(expectations.keys())
         if missing:
@@ -246,7 +312,7 @@ def main() -> int:
     declared_openfga_routes: set[tuple[str, str]] = {
         (e["method"], e["path"])
         for e in matrix.get("routes", [])
-        if e.get("authorization_system") == "openfga"
+        if e.get("authorization_system") == "openfga" and e.get("object_type") == "agent" and e.get("scope") == "use"
     }
 
     print("[validate-rbac-matrix] scanning TS call sites…")
@@ -264,8 +330,8 @@ def main() -> int:
     if args.print:
         for (res, scope), wheres in sorted({**ts_sites, **py_sites}.items()):
             print(f"  - ({res}, {scope}): {wheres[0]}{' (+%d more)' % (len(wheres)-1) if len(wheres) > 1 else ''}")
-        for route_path, wheres in sorted(openfga_sites.items()):
-            print(f"  - (openfga, POST {route_path}, agent#use): {wheres[0]}{' (+%d more)' % (len(wheres)-1) if len(wheres) > 1 else ''}")
+        for (method, route_path), wheres in sorted(openfga_sites.items()):
+            print(f"  - (openfga, {method} {route_path}, agent#use): {wheres[0]}{' (+%d more)' % (len(wheres)-1) if len(wheres) > 1 else ''}")
 
     matrix_violations: list[Violation] = []
     for pair, wheres in {**ts_sites, **py_sites}.items():
@@ -277,13 +343,13 @@ def main() -> int:
                     f"call site uses ({pair[0]!r}, {pair[1]!r}) but no entry in tests/rbac/rbac-matrix.yaml",
                 )
             )
-    for route_path, wheres in openfga_sites.items():
-        if ("POST", route_path) not in declared_openfga_routes:
+    for (method, route_path), wheres in openfga_sites.items():
+        if (method, route_path) not in declared_openfga_routes:
             matrix_violations.append(
                 Violation(
                     "missing_in_matrix",
                     wheres[0],
-                    f"OpenFGA agent-use gate on POST {route_path} has no authorization_system=openfga entry",
+                    f"OpenFGA agent-use gate on {method} {route_path} has no authorization_system=openfga entry",
                 )
             )
 

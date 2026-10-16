@@ -46,6 +46,7 @@ from dynamic_agents.routes import (
     model_capabilities,
     remote_agents,
 )
+from dynamic_agents.services.agent_execution import get_native_run_coordinator
 from dynamic_agents.services.autonomous_follow_up_cleanup import run_copy_cleanup
 from dynamic_agents.services.mongo import get_mongo_service, reset_mongo_service
 from dynamic_agents.services.runtime_cache import RuntimeCapacityError, RuntimeInitError, get_runtime_cache
@@ -100,6 +101,14 @@ async def lifespan(app: FastAPI):
         # All retries exhausted - crash the service
         fatal_exit(f"Failed to connect to MongoDB after {max_retries} attempts. Service cannot start without MongoDB.")
 
+    # Prepare the canonical journal before admitting detached streaming turns.
+    coordinator = get_native_run_coordinator(mongo)
+    try:
+        await coordinator.repository.initialize()
+    except Exception:
+        mongo.disconnect()
+        raise
+
     # Start runtime cache background sweep
     cache = get_runtime_cache()
     cache.set_mongo_service(mongo)
@@ -128,9 +137,14 @@ async def lifespan(app: FastAPI):
                 logger.exception("Follow-up recovery worker failed before shutdown")
         finally:
             try:
-                await cache.stop()
+                # Detached turns own borrowed runtimes and Mongo leases. Drain
+                # their cleanup before closing either underlying dependency.
+                await coordinator.shutdown()
             finally:
-                mongo.disconnect()
+                try:
+                    await cache.stop()
+                finally:
+                    mongo.disconnect()
 
 
 def create_app() -> FastAPI:

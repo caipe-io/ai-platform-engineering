@@ -21,6 +21,8 @@ import { takePendingFirstMessage } from "@/lib/pending-first-message";
 import { getStorageMode } from "@/lib/storage-config";
 import { createSubagentResumeSeedEvents } from "@/lib/resume-subagent-context";
 import { createStreamAdapter,StreamError,type StreamCallbacks } from "@/lib/streaming";
+import { getLatestNativeRun, type NativeRunStatus } from "@/lib/streaming/native-runs";
+import { assistantMessageIdForTurn, needsNativeRunReplay, recoveredAssistantMessage } from "@/lib/streaming/recovered-turn";
 import { createStreamEvent,FILE_TOOL_NAMES,TODO_TOOL_NAME,type StreamEvent } from "@/lib/streaming/types";
 import { cn,deduplicateByKey,generateId } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
@@ -697,7 +699,17 @@ export function ChatPanel({
     return () => cancelAnimationFrame(raf);
   }, [activeConversationId, scrollToBottom]);
 
-  const recoveringMessageId = null;
+  const [recoveringMessageId, setRecoveringMessageId] = useState<string | null>(null);
+  const [runDisplayStatus, setRunDisplayStatus] = useState<NativeRunStatus | "reconnecting" | "disconnected" | "cancelling" | null>(null);
+  const [runRecoveryError, setRunRecoveryError] = useState<string | null>(null);
+  const [recoveryAttempt, setRecoveryAttempt] = useState(0);
+  const recoveredConversationsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    setRunDisplayStatus(null);
+    setRunRecoveryError(null);
+    setRecoveringMessageId(null);
+  }, [conversationId]);
 
   // ═══════════════════════════════════════════════════════════════
   // CHECK HITL INTERRUPT STATE from checkpointer (messages loaded by ChatContainer)
@@ -1058,6 +1070,17 @@ export function ChatPanel({
     };
 
     return {
+    onConnectionState(state) {
+      if (useChatStore.getState().activeConversationId === convId) {
+        setRunDisplayStatus(state === "connected" ? "running" : state);
+        setRunRecoveryError(null);
+      }
+    },
+    onRunStatus(status) {
+      loopState.hitlFormRequested = status === "awaiting_input";
+      if (status === "awaiting_input") interruptCheckedRef.current.delete(convId);
+      if (useChatStore.getState().activeConversationId === convId) setRunDisplayStatus(status);
+    },
     onContent(text, namespace) {
       loopState.accumulatedText += text;
       loopState.rawStreamContent += text;
@@ -1129,6 +1152,7 @@ export function ChatPanel({
 
     onInputRequired(interruptId, prompt, fields, agent) {
       loopState.hitlFormRequested = true;
+      setRunDisplayStatus("awaiting_input");
 
       const streamEvent = createStreamEvent("input_required", {
         interrupt_id: interruptId,
@@ -1171,6 +1195,7 @@ export function ChatPanel({
 
     onToolApprovalRequired(interruptId, toolName, toolArgs, allowedDecisions, agent, toolApprovals) {
       loopState.hitlFormRequested = true;
+      setRunDisplayStatus("awaiting_input");
 
       const streamEvent = createStreamEvent("input_required", {
         type: "tool_approval",
@@ -1222,13 +1247,17 @@ export function ChatPanel({
     },
 
     onDone() {
+      setRunDisplayStatus("completed");
       // Finalization handled after adapter.streamMessage resolves
     },
 
     onError(message) {
       console.error("[DynamicAgent] Stream error event:", message);
       loopState.hasError = true;
-      loopState.errorMessage = message;
+      // Keep the actionable native error if a subsequent lifecycle marker
+      // reports only a generic failure or interrupted-worker outcome.
+      loopState.errorMessage ??= message;
+      setRunDisplayStatus("failed");
     },
   }; }, [agentId, addStreamEvent, updateMessage, setPendingUserInput, setFilesFetchKey, setTimelineTasks, setContextUsage]);
 
@@ -1288,6 +1317,106 @@ export function ChatPanel({
     setConversationStreaming(conversationId, null);
     // Store's setConversationStreaming(null) hook auto-saves after 500ms.
   }, [updateMessage, setConversationStreaming, agentName]);
+
+  // Rebuild the admitted turn after reload/navigation. Replaying from zero
+  // replaces that turn's local buffer, so partial persisted text is never
+  // appended twice and no new prompt is required to discover the run.
+  useEffect(() => {
+    if (!conversationId || !agentId || isLoadingMessages || isAutonomousHistory) return;
+    const key = `${conversationId}:${agentId}:${recoveryAttempt}`;
+    if (recoveredConversationsRef.current.has(key)) return;
+    if (useChatStore.getState().isConversationStreaming(conversationId)) return;
+    const controller = new AbortController();
+    let cancelled = false;
+
+    const recover = async () => {
+      try {
+        const run = await getLatestNativeRun({ conversationId, agentId }, { accessToken, signal: controller.signal });
+        if (cancelled) return;
+        recoveredConversationsRef.current.add(key);
+        if (!run || useChatStore.getState().isConversationStreaming(conversationId)) return;
+        const current = useChatStore.getState().conversations.find((item) => item.id === conversationId);
+        // Clear/rewind deliberately removes turns. An older retained journal
+        // cannot recreate a transcript the user has already removed.
+        if (!current?.messages.some((message) => message.role === "user" && message.turnId === run.turn_id)) return;
+        setRunDisplayStatus(run.status);
+        const existing = recoveredAssistantMessage(run, current?.messages ?? []);
+        if (!needsNativeRunReplay(run, existing)) return;
+
+        const messageId = existing?.id ?? addMessage(
+          conversationId,
+          { role: "assistant", content: "" },
+          run.turn_id,
+          assistantMessageIdForTurn(run.turn_id),
+        );
+        setRecoveringMessageId(messageId);
+        setRunRecoveryError(null);
+        setPendingUserInput(null);
+        setPendingToolApproval(null);
+        clearStreamEvents(conversationId);
+        // Resume does not repeat its parent task start. Retain its explicitly
+        // saved context seed while rebuilding all actual run events from zero.
+        for (const seed of existing?.streamEvents?.filter((event) => event.isResumeSeed) ?? []) {
+          addStreamEvent(seed, conversationId);
+        }
+        updateMessage(conversationId, messageId, {
+          content: "",
+          rawStreamContent: "",
+          streamEvents: undefined,
+          isFinal: false,
+          isInterrupted: false,
+          turnStatus: undefined,
+          error: undefined,
+        });
+        const adapter = createStreamAdapter({ protocol: run.protocol, accessToken });
+        const state: StreamLoopState = {
+          accumulatedText: "",
+          rawStreamContent: "",
+          hitlFormRequested: false,
+          hasError: false,
+        };
+        setConversationStreaming(conversationId, {
+          conversationId,
+          messageId,
+          client: { abort: () => adapter.abort() },
+          streamAdapter: adapter,
+          readOnly: Boolean(panelReadOnly),
+        });
+        try {
+          await adapter.reattachStream(
+            { conversationId, agentId, runId: run.run_id },
+            buildStreamCallbacks(conversationId, messageId, state, new Map()),
+          );
+          finalizeStreamLoop(conversationId, messageId, state);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Could not reconnect to this run";
+          updateMessage(conversationId, messageId, { error: message, turnStatus: "interrupted" });
+          setConversationStreaming(conversationId, null);
+          setRunDisplayStatus("disconnected");
+          setRunRecoveryError(message);
+        } finally {
+          setRecoveringMessageId(null);
+        }
+      } catch (error) {
+        if (cancelled || (error as Error).name === "AbortError") return;
+        const message = error instanceof Error ? error.message : "Could not check run status";
+        setRunRecoveryError(message);
+        setRunDisplayStatus("disconnected");
+        if (error instanceof StreamError && error.isAuthError()) {
+          showAuthErrorToast(error);
+        }
+      }
+    };
+    void recover();
+    return () => {
+      cancelled = true;
+      // Once admitted, the adapter is held by the conversation store and can
+      // keep following a background chat. Only cancel the initial lookup here.
+      controller.abort();
+    };
+  }, [conversationId, agentId, isLoadingMessages, isAutonomousHistory, accessToken, recoveryAttempt,
+      panelReadOnly, addMessage, addStreamEvent, clearStreamEvents, updateMessage, setConversationStreaming,
+      buildStreamCallbacks, finalizeStreamLoop, showAuthErrorToast]);
 
   // A queued batch renders as separate user bubbles but is sent as one prompt,
   // producing one coherent assistant response for the whole batch.
@@ -1363,7 +1492,7 @@ export function ChatPanel({
     });
 
     // Add assistant message placeholder with same turnId
-    const assistantMsgId = addMessage(convId, { role: "assistant", content: "" }, turnId);
+    const assistantMsgId = addMessage(convId, { role: "assistant", content: "" }, turnId, assistantMessageIdForTurn(turnId));
 
     // Create protocol-agnostic adapter
     const adapter = createStreamAdapter({
@@ -1389,6 +1518,9 @@ export function ChatPanel({
     });
 
     try {
+      // Save the user turn and stable placeholder before execution detaches.
+      // A reload can then recover the same turn even before the first token.
+      await saveMessagesToServer(convId, { throwOnError: true });
       const callbacks = buildStreamCallbacks(convId, assistantMsgId, loopState, toolCallIdToName);
 
       await adapter.streamMessage(
@@ -1435,9 +1567,11 @@ export function ChatPanel({
         turnStatus: "interrupted" as TurnStatus,
         ...(authInterruptedReason ? { error: authInterruptedReason } : {}),
       });
+      setRunDisplayStatus("disconnected");
+      setRunRecoveryError((error as Error).message || "Could not follow the existing run");
       setConversationStreaming(convId, null);
     }
-  }, [isAutonomousHistory, isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, requestReasoningEffort, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
+  }, [isAutonomousHistory, isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, saveMessagesToServer, buildStreamCallbacks, finalizeStreamLoop, requestReasoningEffort, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
 
   const submitMessage = useCallback(
     (messageToSend: string, filesToSend: InputFile[] = []) => submitMessageBatch([{
@@ -1720,10 +1854,18 @@ export function ChatPanel({
     await createConversation(agentId);
   }, [createConversation, agentId]);
 
-  const handleStop = useCallback(() => {
+  const handleStop = useCallback(async (): Promise<boolean> => {
     if (activeConversationId) {
-      cancelConversationRequest(activeConversationId);
+      setRunDisplayStatus("cancelling");
+      setRunRecoveryError(null);
+      const accepted = await cancelConversationRequest(activeConversationId);
+      if (!accepted && useChatStore.getState().isConversationStreaming(activeConversationId)) {
+        setRunDisplayStatus("running");
+        setRunRecoveryError("Cancellation could not be confirmed. The run may still be working.");
+      }
+      return accepted;
     }
+    return false;
   }, [activeConversationId, cancelConversationRequest]);
 
   // Unified slash command executor
@@ -1853,11 +1995,13 @@ export function ChatPanel({
 
     // If streaming and force sending, stop current task first
     if (isThisConversationStreaming && forceSend) {
-      handleStop();
-      // Clear queued messages when force sending
-      setQueuedMessages([]);
-      // Wait a bit for cancellation to process
-      await new Promise(resolve => setTimeout(resolve, 100));
+      if (!await handleStop()) return;
+      // The next turn waits for the actual terminal marker, avoiding a race
+      // with cancellation cleanup or an admission still in progress.
+      setQueuedMessages([{ id: generateId(), text: input.trim(), files: encodedFiles }]);
+      setInput("");
+      setAttachments([]);
+      return;
     }
 
     const message = input.trim();
@@ -1890,15 +2034,21 @@ export function ChatPanel({
   }, [activeConversationId, updateMessageFeedback]);
 
   // Handle user input form submission via SSE/Dynamic Agents resume
-  const handleUserInputSubmitSSE = useCallback(async (formData: Record<string, string>) => {
-    if (!pendingUserInput || !activeConversationId || !pendingUserInput.agentId) return;
+  const handleUserInputSubmitSSE = useCallback(async (
+    formData: Record<string, string>,
+    options?: { dismissed: true },
+  ) => {
+    if (panelReadOnly || !pendingUserInput || !activeConversationId || !pendingUserInput.agentId) return;
 
     const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const selectionSummary = Object.entries(formData)
       .map(([key, value]) => `${key}: ${value}`)
       .join("\n");
-    addMessage(activeConversationId, { role: "user", content: selectionSummary || "Form submitted." }, turnId);
-    const assistantMsgId = addMessage(activeConversationId, { role: "assistant", content: "" }, turnId);
+    addMessage(activeConversationId, {
+      role: "user",
+      content: options?.dismissed ? "Form dismissed." : selectionSummary || "Form submitted.",
+    }, turnId);
+    const assistantMsgId = addMessage(activeConversationId, { role: "assistant", content: "" }, turnId, assistantMessageIdForTurn(turnId));
 
     dismissedInputForMessageRef.current.add(pendingUserInput.messageId);
     const resumeAgentId = pendingUserInput.agentId;
@@ -1930,7 +2080,9 @@ export function ChatPanel({
     };
 
     // Send form data as discriminated resume payload
-    const formDataJson = JSON.stringify({ type: "form_input", values: formData });
+    const formDataJson = JSON.stringify(options?.dismissed
+      ? { type: "form_input", dismissed: true }
+      : { type: "form_input", values: formData });
 
     setConversationStreaming(activeConversationId, {
       conversationId: activeConversationId,
@@ -1949,10 +2101,11 @@ export function ChatPanel({
     const toolCallIdToName = new Map<string, string>();
 
     try {
+      await saveMessagesToServer(activeConversationId, { throwOnError: true });
       const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName);
 
       await adapter.resumeStream(
-        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData: formDataJson, reasoningEffort: requestReasoningEffort, clientContext },
+        { conversationId: activeConversationId, agentId: resumeAgentId, turnId, resumeData: formDataJson, reasoningEffort: requestReasoningEffort, clientContext },
         callbacks,
       );
 
@@ -1964,10 +2117,13 @@ export function ChatPanel({
       appendToMessage(activeConversationId, assistantMsgId,
         `\n\n**Error:** ${(error as Error).message || "Failed to resume"}`);
       updateMessage(activeConversationId, assistantMsgId, { turnStatus: "interrupted" as TurnStatus });
+      setRunDisplayStatus("disconnected");
+      setRunRecoveryError((error as Error).message || "Could not follow the resumed run");
       setConversationStreaming(activeConversationId, null);
     }
-  }, [pendingUserInput, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
+  }, [panelReadOnly, pendingUserInput, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
       appendToMessage, addStreamEvent, setConversationStreaming,
+      saveMessagesToServer,
       clearStreamEvents, getActiveConversation, buildStreamCallbacks, finalizeStreamLoop,
       suppliedClientContext, requestReasoningEffort]);
 
@@ -1977,7 +2133,7 @@ export function ChatPanel({
     decision: "approve" | "reject" | "edit",
     editedArgs?: Record<string, unknown>,
   ) => {
-    if (!pendingToolApproval || !activeConversationId) return;
+    if (panelReadOnly || !pendingToolApproval || !activeConversationId) return;
 
     const { tools, currentIndex, decisions } = pendingToolApproval;
     const currentTool = tools[currentIndex];
@@ -2008,7 +2164,7 @@ export function ChatPanel({
       role: "user",
       content: summaryParts.join("\n"),
     }, turnId);
-    const assistantMsgId = addMessage(activeConversationId, { role: "assistant", content: "" }, turnId);
+    const assistantMsgId = addMessage(activeConversationId, { role: "assistant", content: "" }, turnId, assistantMessageIdForTurn(turnId));
 
     const resumeAgentId = pendingToolApproval.agentId;
     setPendingToolApproval(null);
@@ -2072,9 +2228,10 @@ export function ChatPanel({
     const toolCallIdToName = new Map<string, string>();
 
     try {
+      await saveMessagesToServer(activeConversationId, { throwOnError: true });
       const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName);
       await adapter.resumeStream(
-        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData, reasoningEffort: requestReasoningEffort, clientContext },
+        { conversationId: activeConversationId, agentId: resumeAgentId, turnId, resumeData, reasoningEffort: requestReasoningEffort, clientContext },
         callbacks,
       );
       finalizeStreamLoop(activeConversationId, assistantMsgId, loopState);
@@ -2084,10 +2241,12 @@ export function ChatPanel({
         error: (error as Error).message || "Failed to resume",
         turnStatus: "interrupted" as TurnStatus,
       });
+      setRunDisplayStatus("disconnected");
+      setRunRecoveryError((error as Error).message || "Could not follow the resumed run");
       setConversationStreaming(activeConversationId, null);
     }
-  }, [pendingToolApproval, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
-      addStreamEvent, setConversationStreaming, clearStreamEvents, getActiveConversation,
+  }, [panelReadOnly, pendingToolApproval, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
+      addStreamEvent, setConversationStreaming, saveMessagesToServer, clearStreamEvents, getActiveConversation,
       buildStreamCallbacks, finalizeStreamLoop, suppliedClientContext, requestReasoningEffort]);
 
   // Handle slash command detection in input
@@ -2417,32 +2576,9 @@ export function ChatPanel({
                 inputFields={pendingUserInput.metadata.input_fields}
                 onSubmit={handleUserInputSubmitSSE}
                 onCancel={() => {
-                  if (pendingUserInput) {
-                    dismissedInputForMessageRef.current.add(pendingUserInput.messageId);
-                    // For SSE, send dismissal message to resume the agent
-                    if (pendingUserInput.isSSE && pendingUserInput.agentId && activeConversationId) {
-                      const dismissAdapter = createStreamAdapter({
-                        protocol: agentProtocol as "custom" | "agui",
-                        accessToken,
-                      });
-                      // Fire-and-forget: resume with rejection message
-                      const dismissalPayload = JSON.stringify({ type: "form_input", dismissed: true });
-                      dismissAdapter.resumeStream(
-                        {
-                          conversationId: activeConversationId,
-                          agentId: pendingUserInput.agentId,
-                          resumeData: dismissalPayload,
-                          reasoningEffort: requestReasoningEffort,
-                        },
-                        {}, // No callbacks — we don't render the response
-                      ).catch((err) => {
-                        console.error("[ChatPanel] Error sending SSE form dismissal:", err);
-                      });
-                    }
-                  }
-                  setPendingUserInput(null);
+                  void handleUserInputSubmitSSE({}, { dismissed: true });
                 }}
-                disabled={isThisConversationStreaming}
+                disabled={isThisConversationStreaming || Boolean(panelReadOnly)}
               />
             )}
 
@@ -2459,7 +2595,7 @@ export function ChatPanel({
                   onApprove={() => handleToolApprovalDecision("approve")}
                   onReject={() => handleToolApprovalDecision("reject")}
                   onEdit={(editedArgs) => handleToolApprovalDecision("edit", editedArgs)}
-                  disabled={isThisConversationStreaming}
+                  disabled={isThisConversationStreaming || Boolean(panelReadOnly)}
                   totalCount={total}
                 />
               );
@@ -2501,6 +2637,33 @@ export function ChatPanel({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {runDisplayStatus && (
+        <div role="status" aria-live="polite" className="shrink-0 border-t border-border px-6 py-2 text-xs text-muted-foreground">
+          <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
+            <span>
+              {runDisplayStatus === "queued" && "Run queued."}
+              {runDisplayStatus === "running" && (runRecoveryError || "Agent is working.")}
+              {runDisplayStatus === "cancelling" && "Cancellation requested. Waiting for confirmation."}
+              {runDisplayStatus === "reconnecting" && "Reconnecting to the existing run. Execution continues."}
+              {runDisplayStatus === "awaiting_input" && "Waiting for input or approval."}
+              {runDisplayStatus === "completed" && "Run completed."}
+              {runDisplayStatus === "failed" && "Run failed. Saved progress is retained."}
+              {runDisplayStatus === "cancelled" && "Run cancelled."}
+              {runDisplayStatus === "interrupted" && "Run interrupted. Saved progress is retained."}
+              {runDisplayStatus === "disconnected" && (runRecoveryError || "Connection lost. The existing run may still be working.")}
+            </span>
+            {runRecoveryError && !isThisConversationStreaming && (
+              <Button size="sm" variant="outline" onClick={() => {
+                setRunRecoveryError(null);
+                setRecoveryAttempt((attempt) => attempt + 1);
+              }}>
+                Reconnect
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
 
       {apiConversation && (
         <div

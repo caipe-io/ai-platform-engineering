@@ -26,11 +26,14 @@ export function createSubagentResumeSeedEvents(events: StreamEvent[]): StreamEve
   }
 
   return [...activeTasks.entries()].map(([toolCallId, task]) =>
-    createStreamEvent("tool_start", {
-      tool_name: "task",
-      tool_call_id: toolCallId,
-      args: task.args,
-      namespace: [],
+    ({
+      ...createStreamEvent("tool_start", {
+        tool_name: "task",
+        tool_call_id: toolCallId,
+        args: task.args,
+        namespace: [],
+      }),
+      isResumeSeed: true,
     }),
   );
 }

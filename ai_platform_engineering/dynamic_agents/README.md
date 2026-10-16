@@ -48,6 +48,81 @@ Dynamic Agents provide a flexible way to create purpose-built AI assistants with
 - Exactly one terminal outcome per turn: `success`, `error`, `interrupted`, or `cancelled`
 - Time to first user-visible response and end-to-end turn latency histograms
 
+### Native ACP execution
+
+Default and custom agent turns execute through one in-service Agent Client
+Protocol (ACP) path while keeping their existing DeepAgents/LangGraph runtime.
+The native ACP client and logical agent exchange JSON-RPC messages using the
+pinned Python SDK 0.12.1, schema 1.19 and wire protocol 1.
+
+- Existing chat endpoints, AG-UI/custom SSE, workflow/invoke behavior, native
+  tools, logical files, subagent delegation and human input remain available.
+- Capability negotiation uses `caipe.io/native-acp` metadata and acknowledged
+  `_caipe/event` requests for validated native stream events. Standard ACP
+  session loading, client filesystem and terminal capabilities are not
+  advertised. This integration does not expose a public ACP server.
+- `native_acp_sessions` stores effective agent configuration admissions and
+  session bindings using `MONGODB_URI` and `MONGODB_DATABASE`, alongside existing
+  CAIPE records and native checkpoints. Tokens and MCP credentials are excluded.
+- `native_acp_runs` coordinates concurrent replicas using an owned 120-second
+  turn lease with one-second heartbeat/cancellation polling. Expiry permits
+  later checkpoint-based continuation; it does not restart crashed runs or
+  guarantee exactly-once tool effects. Worker clocks must be synchronized.
+- New turns refresh the effective configuration while preserving the first
+  admitted backend/checkpoint/filesystem binding; human-input resume restores
+  the last admitted snapshot after runtime-cache eviction, narrowed by the
+  current validated tool scope.
+- Conversation and execution-context IDs keep their original LangGraph thread
+  IDs. Interactive transcripts still use the existing browser/BFF writer.
+- Cached runtimes refresh their current caller, bearer and client context before
+  execution. Include ACP bindings, coordination and native state in canonical
+  database backups; restored leases do not trigger automatic execution.
+- Ordinary `/invoke` retains its ephemeral checkpoint/history behavior unless
+  `INVOKE_PERSIST_HISTORY` is enabled; transient turn coordination still uses
+  MongoDB. Scheduler invocations retain their existing persistent execution.
+
+The shared execution service owns admission, MCP resolution, runtime lifetime,
+ACP dispatch and conversation-state operations. HTTP routes retain
+authorization and request/response handling. LangGraph chunks become typed
+events once; ACP publishes them directly and the client renders AG-UI or custom
+SSE. Streaming, human-input resume and invoke all use this path; the native
+runtime remains the execution implementation behind the logical ACP agent.
+Runtime construction, saved bindings and state deletion share one storage
+resolver. Deployment rollback uses the previous image pin and release values
+through the normal deployment process.
+
+This is the native-runtime stage of the
+[metaharness proposal](https://github.com/orgs/caipe-io/discussions/2877), related
+to the gateway and session foundation in the
+[Harness Engine discussion](https://github.com/orgs/caipe-io/discussions/2405).
+Streaming execution now belongs to the service, with canonical MongoDB run and
+event records, cursor reconnect and browser reload recovery. Stable turn IDs
+prevent duplicate execution on transport retries. Worker loss is explicitly
+interrupted rather than automatically retried. Remote transports, discovery and
+sandbox runtimes remain later integrations. See the [architecture guide](../../docs/docs/architecture/native-acp-metaharness.md)
+for session ownership and filesystem/network boundaries.
+
+The initial prebuild supports DeepAgents; it does not yet expose Claude SDK,
+Bedrock AgentCore or Codex runtime choices. Later SDK integrations must preserve
+CAIPE's simulated filesystem and approved native tools. ACP does not turn an SDK
+working directory into a logical store or grant agent access to host files.
+
+The Dynamic Agents CI job runs real-MongoDB checkpoint migration, worker
+reconstruction, pending form/batch-approval resume and storage-management tests.
+Run the same suite locally against an isolated test MongoDB:
+
+```bash
+PYTHONPATH=../.. \
+NATIVE_ACP_TEST_MONGODB_URI=mongodb://127.0.0.1:27017 \
+FOLLOW_UP_TEST_MONGODB_URI=mongodb://127.0.0.1:27017 \
+uv run --extra dev pytest -q -rs
+```
+
+These tests create and remove random test databases. Use a test server rather
+than a deployed application database. Model calls are deterministic fixtures;
+ACP serialization, native checkpoint persistence and session admission remain
+real.
+
 ## Running Locally
 
 ### Prerequisites
@@ -235,6 +310,9 @@ For a private deployment alias, configure both sides of discovery:
 |----------|--------|------|-------------|
 | `/api/v1/chat/stream` | POST | User | Stream chat response (SSE) |
 | `/api/v1/chat/invoke` | POST | User | Non-streaming chat (simple integrations) |
+| `/api/v1/chat/runs` | GET | User | Read latest authorized run for an agent/conversation |
+| `/api/v1/chat/runs/{run_id}` | GET | User | Read an authorized run outcome |
+| `/api/v1/chat/runs/{run_id}/stream` | GET | User | Replay persisted frames after a sequence cursor |
 | `/api/v1/chat/restart-runtime` | POST | User | Restart agent runtime (reconnect MCP servers) |
 
 ### Autonomous Manual Follow-ups

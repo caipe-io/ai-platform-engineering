@@ -84,6 +84,7 @@ jest.mock('uuid', () => ({
 function createMockCollection() {
   return {
     find: jest.fn().mockReturnValue({
+      toArray: jest.fn().mockResolvedValue([]),
       sort: jest.fn().mockReturnValue({
         skip: jest.fn().mockReturnValue({
           limit: jest.fn().mockReturnValue({
@@ -207,6 +208,16 @@ describe('Archive API', () => {
       // Should have called deleteMany (via shared helper) for both conversations and messages
       expect(convCollection.deleteMany).toHaveBeenCalledWith({ _id: { $in: ['550e8400-e29b-41d4-a716-446655440000'] } });
       expect(msgCollection.deleteMany).toHaveBeenCalledWith({ conversation_id: { $in: ['550e8400-e29b-41d4-a716-446655440000'] } });
+      const deletedSessions = mockCollections['native_acp_deleted_sessions'] as ReturnType<typeof createMockCollection>;
+      expect(deletedSessions.updateOne).toHaveBeenCalledWith(
+        { _id: '550e8400-e29b-41d4-a716-446655440000' },
+        { $setOnInsert: { deleted_at: expect.any(Date) } },
+        { upsert: true },
+      );
+      const executionEvents = mockCollections['native_acp_execution_events'] as ReturnType<typeof createMockCollection>;
+      expect(executionEvents.deleteMany).toHaveBeenCalledWith({
+        $or: [{ session_id: { $in: ['550e8400-e29b-41d4-a716-446655440000'] } }],
+      });
     });
 
     it('returns 404 for non-existent conversation', async () => {

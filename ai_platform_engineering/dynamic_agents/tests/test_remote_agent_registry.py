@@ -47,6 +47,8 @@ def test_remote_auth_change_invalidates_cached_parent_or_subagent_runtime(latest
     config = SimpleNamespace(updated_at=now, model="example")
     runtime = object.__new__(AgentRuntime)
     runtime.config = config
+    runtime.mcp_servers = []
+    runtime._user = runtime._client_context = runtime._auth_bearer = None
     runtime._config_updated_at = now
     runtime._mcp_servers_updated_at = datetime.min.replace(tzinfo=timezone.utc)
     runtime._remote_agent_versions = {"remote-example": "2026-01-01T00:00:00Z"}
@@ -75,12 +77,15 @@ async def test_cache_validation_is_offloaded_and_single_flight() -> None:
     threads: list[int] = []
     started = threading.Event()
     release = threading.Event()
-    def stale(config: object, servers: list) -> bool:
+    def stale(config: object, servers: list, **context: object) -> bool:
         threads.append(threading.get_ident())
         started.set()
         assert release.wait(timeout=5)
         return False
-    runtime = SimpleNamespace(is_stale=stale, idle_seconds=0, touch=Mock(), cleanup=AsyncMock())
+    runtime = SimpleNamespace(
+        is_stale=stale, idle_seconds=0, touch=Mock(), cleanup=AsyncMock(),
+        _is_streaming=False, _client_context=None,
+    )
     config = SimpleNamespace(id="test-agent")
     cache = AgentRuntimeCache(max_size=2)
     cache._cache["test-agent:test-session"] = runtime

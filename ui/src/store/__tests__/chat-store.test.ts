@@ -110,6 +110,61 @@ describe('chat-store', () => {
     resetStore();
   });
 
+  describe('durable native run admission and observation', () => {
+    it('fails admission persistence explicitly instead of starting a turn whose prompt can be lost', async () => {
+      const conversation = makeConversation({
+        id: 'durable-admission',
+        messages: [
+          makeMessage({ id: 'user-1', turnId: 'turn-1' }),
+          makeMessage({ id: 'assistant-turn-1', role: 'assistant', turnId: 'turn-1', content: '', isFinal: false }),
+        ],
+      });
+      useChatStore.setState({ conversations: [conversation] });
+      mockApiClient.addMessage.mockRejectedValueOnce(new Error('History unavailable'));
+
+      await expect(useChatStore.getState().saveMessagesToServer('durable-admission', { throwOnError: true }))
+        .rejects.toThrow('History unavailable');
+    });
+
+    it('keeps read-only replay local during periodic updates and completion', async () => {
+      const conversation = makeConversation({
+        id: 'observed-run',
+        messages: [makeMessage({ id: 'assistant-turn-1', role: 'assistant', turnId: 'turn-1', isFinal: false })],
+      });
+      useChatStore.setState({ conversations: [conversation] });
+      const store = useChatStore.getState();
+      store.setConversationStreaming('observed-run', {
+        conversationId: 'observed-run', messageId: 'assistant-turn-1', client: { abort: jest.fn() }, readOnly: true,
+      });
+      for (let index = 0; index < 25; index += 1) {
+        store.addStreamEvent(createStreamEvent('content', { text: 'part' }), 'observed-run');
+      }
+      store.setConversationStreaming('observed-run', null);
+      await jest.runAllTimersAsync();
+
+      expect(mockApiClient.addMessage).not.toHaveBeenCalled();
+      expect(useChatStore.getState().conversations[0].streamEvents).toHaveLength(25);
+    });
+
+    it('persists resume task context before the detached run begins', async () => {
+      const seed = {
+        ...createStreamEvent('tool_start', { tool_name: 'task', tool_call_id: 'parent-task', namespace: [] }),
+        isResumeSeed: true,
+      };
+      useChatStore.setState({ conversations: [makeConversation({
+        id: 'resume-placeholder', streamEvents: [seed], messages: [
+          makeMessage({ id: 'user-1', turnId: 'turn-1' }),
+          makeMessage({ id: 'assistant-turn-1', role: 'assistant', turnId: 'turn-1', isFinal: false }),
+        ],
+      })] });
+      await useChatStore.getState().saveMessagesToServer('resume-placeholder', { throwOnError: true });
+      expect(mockApiClient.addMessage).toHaveBeenLastCalledWith('resume-placeholder', expect.objectContaining({
+        message_id: 'assistant-turn-1',
+        stream_events: [expect.objectContaining({ isResumeSeed: true, toolData: expect.objectContaining({ tool_call_id: 'parent-task' }) })],
+      }));
+    });
+  });
+
   describe('truncateConversationFromMessage', () => {
     it('removes the selected message and every later message', () => {
       const conversation = makeConversation({
@@ -1706,6 +1761,26 @@ describe('chat-store', () => {
   // --------------------------------------------------------------------------
 
   describe('cancelConversationRequest', () => {
+    it('does not claim a native run stopped when scoped cancellation is unconfirmed', async () => {
+      const conversation = makeConversation({
+        id: 'native-cancel',
+        participants: [{ type: 'agent', id: 'agent-1' }],
+        messages: [makeMessage({ id: 'assistant-1', role: 'assistant', turnId: 'turn-1', isFinal: false })],
+      });
+      const cancelStream = jest.fn().mockResolvedValue(false);
+      const abort = jest.fn();
+      useChatStore.setState({ conversations: [conversation] });
+      useChatStore.getState().setConversationStreaming('native-cancel', {
+        conversationId: 'native-cancel', messageId: 'assistant-1', client: { abort },
+        streamAdapter: { cancelStream } as never,
+      });
+      await expect(useChatStore.getState().cancelConversationRequest('native-cancel')).resolves.toBe(false);
+      expect(cancelStream).toHaveBeenCalledWith('native-cancel', 'agent-1', 'turn-1');
+      expect(abort).not.toHaveBeenCalled();
+      expect(useChatStore.getState().isConversationStreaming('native-cancel')).toBe(true);
+      expect(useChatStore.getState().conversations[0].messages[0].isFinal).toBe(false);
+    });
+
     it('does not save to MongoDB after cancelling (server-side persistence handles it)', async () => {
       const conv = makeConversation({ id: 'cancel-save-test' });
       const msg = makeMessage({

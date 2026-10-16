@@ -151,6 +151,16 @@ jobs:
 
   run-dynamic-agents-tests:
     runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:8
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping: 1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -163,10 +173,14 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Run dynamic-agents tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          NATIVE_ACP_TEST_MONGODB_URI: mongodb://127.0.0.1:27017
+          FOLLOW_UP_TEST_MONGODB_URI: mongodb://127.0.0.1:27017
         run: |
           cd ai_platform_engineering/dynamic_agents
           /home/runner/.local/bin/uv venv
-          /home/runner/.local/bin/uv sync --extra dev
+          /home/runner/.local/bin/uv sync --extra dev --locked
           /home/runner/.local/bin/uv run pytest -v
 
   run-autonomous-agents-tests:

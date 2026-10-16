@@ -203,6 +203,7 @@ jobs:
           target: runner
           labels: |
             ${{ steps.meta.outputs.labels }}
+            org.opencontainers.image.revision=${{ inputs.head_sha || github.event.pull_request.head.sha }}
             io.cnoe.prebuild.branch=${{ env.BRANCH_BARE }}
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=ghcr.io/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
@@ -212,7 +213,7 @@ jobs:
             CAIPE_URL=http://caipe-supervisor:8000
             BUILDKIT_INLINE_CACHE=1
             IMAGE_TAG=${{ env.PREBUILD_TAG }}
-            GIT_COMMIT=${{ inputs.head_sha || github.sha }}
+            GIT_COMMIT=${{ inputs.head_sha || github.event.pull_request.head.sha }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
           provenance: false
           sbom: false

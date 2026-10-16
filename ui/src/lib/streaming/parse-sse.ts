@@ -16,6 +16,8 @@
 export interface RawSSEEvent {
   event: string;
   data: string;
+  /** Durable event cursor when supplied by the server. */
+  id?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -47,8 +49,8 @@ export async function* parseSSEStream(
 
       buffer += decoder.decode(value, { stream: true });
 
-      // Split on double newlines (SSE event separator)
-      const events = buffer.split("\n\n");
+      // Both LF and CRLF delimiters are valid SSE, including across chunks.
+      const events = buffer.split(/\r?\n\r?\n/);
       // Keep the last incomplete chunk in the buffer
       buffer = events.pop() || "";
 
@@ -56,25 +58,35 @@ export async function* parseSSEStream(
         if (!eventStr.trim()) continue;
 
         let eventType = "message";
+        let id: string | undefined;
         const dataLines: string[] = [];
 
-        for (const line of eventStr.split("\n")) {
-          if (line.startsWith("event: ")) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith("data: ")) {
-            dataLines.push(line.slice(6));
-          } else if (line.startsWith("data:")) {
-            // Handle "data:" without space (valid per SSE spec)
-            dataLines.push(line.slice(5));
+        for (const line of eventStr.split(/\r?\n/)) {
+          const separator = line.indexOf(":");
+          if (separator < 0) continue;
+          const field = line.slice(0, separator);
+          let value = line.slice(separator + 1);
+          if (value.startsWith(" ")) value = value.slice(1);
+          if (field === "event") {
+            eventType = value;
+          } else if (field === "data") {
+            dataLines.push(value);
+          } else if (field === "id" && !value.includes("\0")) {
+            id = value;
           }
         }
 
+        // Heartbeats/comments carry no event and must not advance a cursor.
+        if (dataLines.length === 0) continue;
         // Join multiple data lines with newlines (SSE spec)
         const eventData = dataLines.join("\n");
-        yield { event: eventType, data: eventData };
+        yield { event: eventType, data: eventData, ...(id !== undefined && { id }) };
       }
     }
   } finally {
+    // Returning at a terminal frame closes only this subscription. Detached
+    // execution belongs to the service and is cancelled through its API.
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }

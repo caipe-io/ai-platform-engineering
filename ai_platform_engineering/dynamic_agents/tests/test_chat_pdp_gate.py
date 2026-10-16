@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 from fastapi import HTTPException
 
@@ -32,11 +34,11 @@ class _FakeMongo:
         raise AssertionError("MCP lookup should not happen before authorization")
 
 
-class _FakeRuntimeCache:
+class _FakeExecution:
     def __init__(self) -> None:
         self.cancel_calls: list[tuple[str, str]] = []
 
-    def cancel_stream(self, agent_id: str, conversation_id: str) -> bool:
+    async def cancel(self, agent_id: str, conversation_id: str) -> bool:
         self.cancel_calls.append((agent_id, conversation_id))
         return True
 
@@ -114,6 +116,8 @@ def _user() -> UserContext:
 async def test_protected_routes_stop_before_runtime_work(monkeypatch, handler, chat_request):
     monkeypatch.setattr(chat, "require_agent_use_permission", _deny, raising=False)
     mongo = _FakeMongo()
+    factory = MagicMock(side_effect=AssertionError("execution before authorization"))
+    monkeypatch.setattr(chat, "AgentExecutionService", factory)
 
     with pytest.raises(HTTPException) as exc:
         await handler(chat_request, _user(), mongo)
@@ -121,6 +125,7 @@ async def test_protected_routes_stop_before_runtime_work(monkeypatch, handler, c
     assert exc.value.status_code == 403
     assert exc.value.detail["reason"] == "pdp_denied"
     assert mongo.get_agent_calls == 0
+    factory.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -154,9 +159,9 @@ async def test_cancel_stream_remains_openfga_ungated(monkeypatch):
     async def fail_if_called(agent_id: str, delegated_user_sub: str | None = None) -> None:
         raise AssertionError("cancel must not be OpenFGA gated")
 
-    cache = _FakeRuntimeCache()
+    service = _FakeExecution()
     monkeypatch.setattr(chat, "require_agent_use_permission", fail_if_called, raising=False)
-    monkeypatch.setattr(chat, "get_runtime_cache", lambda: cache)
+    monkeypatch.setattr(chat, "AgentExecutionService", lambda _mongo: service)
     mongo = _FakeMongo()
 
     result = await chat.cancel_stream(
@@ -167,4 +172,4 @@ async def test_cancel_stream_remains_openfga_ungated(monkeypatch):
 
     assert result["success"] is True
     assert result["cancelled"] is True
-    assert cache.cancel_calls == [("agent-1", "conv-1")]
+    assert service.cancel_calls == [("agent-1", "conv-1")]

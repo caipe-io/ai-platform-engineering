@@ -181,3 +181,23 @@ When you need to change something in the auth path, this table tells you which f
 Autonomous dynamic-agent scheduling is a user entitlement inherited from membership in any team with `organization#automation_eligible`; organization admins inherit it through `organization#can_automate`. An entitled user may create tasks for any agent they already `can_use`, including global and shared agents, regardless of the team that granted the entitlement. Dynamic Agents re-checks both `organization#can_automate` and `agent#can_use` as the task owner on every unattended run. Revocation fails the next run and auto-pauses the task; restoring access never resumes it automatically. Platform admins manage team entitlement centrally under Admin → Autonomous with individual, selected-team, and all-team controls.
 
 Primary files: `deploy/openfga/model.fga`, `charts/ai-platform-engineering/charts/openfga/authorization-model.json`, `ui/src/app/api/admin/autonomous/team-access/route.ts`, `ui/src/components/admin/autonomous/AutonomousTeamAccessPanel.tsx`, `ui/src/app/api/autonomous/agents/route.ts`, `ui/src/lib/api-middleware.ts`, `ai_platform_engineering/dynamic_agents/src/dynamic_agents/auth/authz.py`, `ai_platform_engineering/dynamic_agents/tests/test_authz_schedule.py`, and `ui/src/lib/rbac/__tests__/rebac/autonomous-enablement-contract.test.ts`.
+
+
+## Native ACP streaming and replay
+
+Execution remains behind the existing caller, agent and conversation boundaries.
+ACP negotiation does not grant access. Disconnecting a subscriber leaves its
+already admitted task running; a new status/replay request checks access again.
+
+| Operation | Enforcement and owning files |
+|---|---|
+| Read native run status or replay output | The BFF requires agent use and conversation read, verifies the stored agent participant and resolves the server-owned runtime ID. The backend restricts lookup to that agent/session and checks the original validated principal or CAS conversation-read permission. `ui/src/app/api/v1/chat/runs/`, `ui/src/app/api/v1/chat/_conversation-authz.ts`, `ai_platform_engineering/dynamic_agents/src/dynamic_agents/auth/authz.py`, `ai_platform_engineering/dynamic_agents/src/dynamic_agents/services/agent_execution.py` |
+| Read pending native input | Use the same agent-use and bound-conversation-read gate before forwarding interrupt inspection. Keep service-account principals intact. `ui/src/app/api/dynamic-agents/conversations/[id]/interrupt-state/route.ts` |
+| Stop a submitted turn | Conversation write remains required. Agent-use revocation does not prevent stopping a previously admitted run. An optional stable turn ID scopes delayed cancellation so it cannot stop a successor. `ui/src/app/api/v1/chat/stream/cancel/route.ts`, `ai_platform_engineering/dynamic_agents/src/dynamic_agents/routes/chat.py`, `ai_platform_engineering/dynamic_agents/src/dynamic_agents/services/native_run_coordinator.py` |
+| Persist progress and credentials | Run/event output uses canonical MongoDB. Caller JWTs and credential context remain in the admitted task's memory, outside the journal. The existing authenticated proxy forwards run headers and streamed bytes for POST and replay GET requests. `ui/src/lib/da-proxy.ts`, `ai_platform_engineering/dynamic_agents/src/dynamic_agents/services/native_run_repository.py` |
+| Permanently delete a conversation | After the existing conversation-delete check, scope cleanup to the authorized conversation IDs and their bound runtime IDs. A minimal deleted-session guard prevents a racing admission from recreating output; erase run records before event records. Soft deletion retains archive/restore behavior. `ui/src/app/api/chat/conversations/delete-permanently.ts`, `ai_platform_engineering/dynamic_agents/src/dynamic_agents/services/native_run_repository.py` |
+
+Authorization denial, unavailable policy service and missing replay data remain
+explicit failures. No app receives unrestricted database access or a permission
+grant from a run ID. See the [native ACP architecture guide](../../architecture/native-acp-metaharness.md)
+for execution, checkpoint and transcript ownership.

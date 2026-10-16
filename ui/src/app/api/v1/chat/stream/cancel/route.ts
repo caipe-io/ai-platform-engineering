@@ -1,11 +1,10 @@
 /**
  * POST /api/v1/chat/stream/cancel — transparent proxy to Dynamic Agents.
  *
- * Body: { conversation_id, agent_id }
+ * Body: { conversation_id, agent_id, turn_id? }
  * Response: JSON { success, cancelled, agent_id, conversation_id }
  */
 
-import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
 import { NextRequest,NextResponse } from "next/server";
 import {
 authorizeConversationWriteAccess,
@@ -44,16 +43,8 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
-  const authzResponse = await requireAgentUsePermission({
-    subject: authResult.subject,
-    agentId: body.agent_id,
-    email: authResult.email,
-    tenantId: authResult.tenantId,
-    traceparent: authResult.traceparent,
-    isServiceAccount: authResult.isServiceAccount,
-  });
-  if (authzResponse) return authzResponse;
-
+  // Stop is a conversation mutation, not another agent invocation. A caller
+  // whose agent-use grant was revoked must still be able to stop their run.
   const conversationAuthz = await authorizeConversationWriteAccess(
     authResult,
     String(body.conversation_id),

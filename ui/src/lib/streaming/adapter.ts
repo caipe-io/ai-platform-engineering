@@ -15,6 +15,7 @@
 import type { StreamCallbacks,StreamParams } from "./callbacks";
 import { AGUIStreamAdapter } from "./clients/browser-agui-consumer";
 import { CustomStreamAdapter } from "./clients/browser-custom-consumer";
+import type { RunStreamParams } from "./native-runs";
 
 // ═══════════════════════════════════════════════════════════════
 // Adapter interface
@@ -27,8 +28,11 @@ export interface StreamAdapter {
   /** Resume streaming after HITL form submission */
   resumeStream(params: StreamParams, callbacks: StreamCallbacks): Promise<void>;
 
+  /** Replay and follow an admitted run without starting or resuming execution. */
+  reattachStream(params: RunStreamParams, callbacks: StreamCallbacks): Promise<void>;
+
   /** Cancel the stream on the backend */
-  cancelStream(conversationId: string, agentId: string): Promise<boolean>;
+  cancelStream(conversationId: string, agentId: string, turnId?: string): Promise<boolean>;
 
   /** Abort the client-side HTTP connection */
   abort(): void;

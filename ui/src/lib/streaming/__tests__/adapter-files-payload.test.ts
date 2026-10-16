@@ -15,16 +15,9 @@ import { CustomStreamAdapter } from "../clients/browser-custom-consumer";
 
 const mockFetch = jest.fn();
 
-/** A 200 response with an immediately-closed body so _stream resolves fast. */
+/** Explicit terminal frames for both adapters; EOF is never a success signal. */
 function emptySSEResponse(): Response {
-  return new Response(
-    new ReadableStream<Uint8Array>({
-      pull(controller) {
-        controller.close();
-      },
-    }),
-    { status: 200 },
-  );
+  return new Response('event: RUN_FINISHED\ndata: {}\n\nevent: done\ndata: {}\n\n', { status: 200 });
 }
 
 function noopCallbacks(): StreamCallbacks {

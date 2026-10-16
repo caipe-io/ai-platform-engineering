@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { authenticateRequest, buildBackendHeaders, type AuthResult } from "../da-proxy";
+import { authenticateRequest, buildBackendHeaders, proxySSEStream, type AuthResult } from "../da-proxy";
 
 const mockGetAuthFromBearerOrSession = jest.fn();
 const mockRequireRbacPermission = jest.fn();
@@ -132,5 +132,31 @@ describe("authenticateRequest auth result", () => {
       role: "admin",
       bearerToken: undefined,
     });
+  });
+});
+
+describe("durable run streaming proxy", () => {
+  it("preserves only admitted run metadata and uses GET for replay", async () => {
+    const originalFetch = global.fetch;
+    const mockFetch = jest.fn().mockResolvedValue(new Response("event: done\ndata: {}\n\n", {
+      headers: {
+        "X-CAIPE-Run-Id": "run-1",
+        "X-CAIPE-Turn-Id": "turn-1",
+        "X-CAIPE-Protocol": "agui",
+        "Set-Cookie": "upstream=private",
+      },
+    }));
+    global.fetch = mockFetch;
+    try {
+      const response = await proxySSEStream("http://example.test/runs/run-1/stream", undefined, {}, "[test]", "GET");
+      expect(mockFetch).toHaveBeenCalledWith("http://example.test/runs/run-1/stream", expect.objectContaining({ method: "GET" }));
+      expect(mockFetch.mock.calls[0][1]).not.toHaveProperty("body");
+      expect(response.headers.get("X-CAIPE-Run-Id")).toBe("run-1");
+      expect(response.headers.get("X-CAIPE-Turn-Id")).toBe("turn-1");
+      expect(response.headers.get("X-CAIPE-Protocol")).toBe("agui");
+      expect(response.headers.get("Set-Cookie")).toBeNull();
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 });

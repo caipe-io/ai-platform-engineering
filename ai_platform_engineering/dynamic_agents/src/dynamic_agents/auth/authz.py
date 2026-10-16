@@ -250,6 +250,18 @@ async def require_agent_use_permission(
     await _require_action("agent", agent_id, "use", "agent#use", delegated_user_sub)
 
 
+async def require_conversation_read_permission(conversation_id: str) -> None:
+    """Authorize shared run replay through the existing CAS resource boundary."""
+    await _require_action("conversation", conversation_id, "read", "conversation#read")
+
+
+def current_subject_reference() -> str | None:
+    """Resolve the already-validated bearer principal for durable run ownership."""
+    token = current_user_token.get()
+    decoded = _subject_from_token(token) if token else None
+    return f"{decoded[0]}:{decoded[1]}" if decoded and _is_valid_id(decoded[1]) else None
+
+
 async def require_autonomous_permission(delegated_user_sub: str | None = None) -> None:
     """Require membership in any autonomous-enabled team (or org admin).
 

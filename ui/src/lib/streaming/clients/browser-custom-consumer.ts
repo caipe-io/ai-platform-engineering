@@ -14,65 +14,30 @@
 import { parseContextUsageData,type InputFieldDefinition } from "@/lib/streaming/types";
 import type { StreamAdapter } from "../adapter";
 import type { RawStreamEvent,StreamCallbacks,StreamParams } from "../callbacks";
-import { parseSSEStream,type RawSSEEvent } from "../parse-sse";
-import { buildStreamErrorFromResponse } from "../stream-error";
-
-/** Flat API route prefix for chat streaming. */
-const STREAM_BASE = "/api/v1/chat/stream";
-const CANCEL_URL = `${STREAM_BASE}/cancel`;
+import type { RawSSEEvent } from "../parse-sse";
+import type { RunStreamParams } from "../native-runs";
+import { BrowserStreamTransport } from "./browser-stream-transport";
 
 // ═══════════════════════════════════════════════════════════════
 // CustomStreamAdapter
 // ═══════════════════════════════════════════════════════════════
 
 export class CustomStreamAdapter implements StreamAdapter {
-  private accessToken?: string;
-  private abortController: AbortController | null = null;
+  private transport: BrowserStreamTransport;
 
   constructor(accessToken?: string) {
-    this.accessToken = accessToken;
+    this.transport = new BrowserStreamTransport(accessToken);
   }
 
   abort(): void {
-    if (this.abortController) {
-      this.abortController.abort();
-      this.abortController = null;
-    }
+    this.transport.abort();
   }
 
-  async cancelStream(conversationId: string, agentId: string): Promise<boolean> {
-    this.abort();
-
-    try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (this.accessToken) {
-        headers["Authorization"] = `Bearer ${this.accessToken}`;
-      }
-
-      const response = await fetch(CANCEL_URL, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          conversation_id: conversationId,
-          agent_id: agentId,
-        }),
-      });
-
-      if (!response.ok) {
-        console.error(`[CustomAdapter] Cancel failed: ${response.status}`);
-        return false;
-      }
-
-      const result = await response.json();
-      return result.cancelled ?? false;
-    } catch (error) {
-      console.error("[CustomAdapter] Cancel error:", error);
-      return false;
-    }
+  async cancelStream(conversationId: string, agentId: string, turnId?: string): Promise<boolean> {
+    return this.transport.cancelStream(conversationId, agentId, turnId);
   }
 
   async streamMessage(params: StreamParams, callbacks: StreamCallbacks): Promise<void> {
-    const url = `${STREAM_BASE}/start`;
     const body = JSON.stringify({
       message: params.message,
       conversation_id: params.conversationId,
@@ -84,68 +49,30 @@ export class CustomStreamAdapter implements StreamAdapter {
       ...(params.files?.length && { files: params.files }),
     });
 
-    await this._stream(url, body, callbacks);
+    await this.transport.stream("start", body, params, callbacks, (raw) => this._consumeEvent(raw, callbacks));
   }
 
   async resumeStream(params: StreamParams, callbacks: StreamCallbacks): Promise<void> {
-    const url = `${STREAM_BASE}/resume`;
     const body = JSON.stringify({
       conversation_id: params.conversationId,
       agent_id: params.agentId,
       ...(params.reasoningEffort && { reasoning_effort: params.reasoningEffort }),
+      ...(params.turnId && { turn_id: params.turnId }),
       resume_data: params.resumeData,
       protocol: "custom",
       ...(params.clientContext && { client_context: params.clientContext }),
     });
 
-    await this._stream(url, body, callbacks);
+    await this.transport.stream("resume", body, params, callbacks, (raw) => this._consumeEvent(raw, callbacks));
   }
 
-  // ── Private: shared stream loop ────────────────────────────
+  async reattachStream(params: RunStreamParams, callbacks: StreamCallbacks): Promise<void> {
+    await this.transport.reattach(params, callbacks, (raw) => this._consumeEvent(raw, callbacks));
+  }
 
-  private async _stream(url: string, body: string, callbacks: StreamCallbacks): Promise<void> {
-    if (this.abortController) {
-      this.abortController.abort();
-    }
-    this.abortController = new AbortController();
-
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      "Accept": "text/event-stream",
-    };
-    if (this.accessToken) {
-      headers["Authorization"] = `Bearer ${this.accessToken}`;
-    }
-
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body,
-        signal: this.abortController.signal,
-      });
-
-      if (!response.ok) {
-        // Build a structured StreamError so the chat panel can distinguish
-        // auth failures (toast + sign-in CTA) from generic backend errors
-        // (inline error in the assistant turn). See lib/streaming/stream-error.ts.
-        throw await buildStreamErrorFromResponse(response);
-      }
-
-      for await (const raw of parseSSEStream(response)) {
-        this._emitRawEvent(raw, callbacks);
-        const terminal = this._dispatchEvent(raw, callbacks);
-        if (terminal) break;
-      }
-    } catch (error) {
-      if ((error as Error).name === "AbortError") {
-        // Client-side abort — not an error
-        return;
-      }
-      throw error;
-    } finally {
-      this.abortController = null;
-    }
+  private _consumeEvent(raw: RawSSEEvent, callbacks: StreamCallbacks): boolean {
+    this._emitRawEvent(raw, callbacks);
+    return this._dispatchEvent(raw, callbacks);
   }
 
   // ── Private: event dispatch ────────────────────────────────

@@ -73,6 +73,8 @@ interface StreamingState {
   client: { abort: () => void };
   // For Dynamic Agents: adapter reference for backend cancellation
   streamAdapter?: StreamAdapter;
+  /** Authorized observers replay locally and never persist another caller's turn. */
+  readOnly?: boolean;
 }
 
 interface MessageHistoryState {
@@ -110,7 +112,7 @@ interface ChatState {
   setStreaming: (streaming: boolean) => void;
   setConversationStreaming: (conversationId: string, state: StreamingState | null) => void;
   isConversationStreaming: (conversationId: string) => boolean;
-  cancelConversationRequest: (conversationId: string) => void;
+  cancelConversationRequest: (conversationId: string) => Promise<boolean>;
   // Stream events (for Dynamic Agents)
   addStreamEvent: (event: StreamEvent, conversationId?: string) => void;
   setContextUsage: (conversationId: string,usage: ContextUsageEventData) => void;
@@ -125,7 +127,7 @@ interface ChatState {
   setPendingMessage: (message: string | null) => void;
   consumePendingMessage: () => string | null;
   loadConversationsFromServer: (options?: { filter?: ConversationListFilter; append?: boolean }) => Promise<void>; // Load conversations from server (MongoDB mode only)
-  saveMessagesToServer: (conversationId: string, options?: { skipNonFinal?: boolean }) => Promise<void>; // Save messages to MongoDB after streaming
+  saveMessagesToServer: (conversationId: string, options?: { skipNonFinal?: boolean; throwOnError?: boolean }) => Promise<void>; // Save messages to MongoDB after streaming
   loadMessagesFromServer: (conversationId: string, options?: { force?: boolean }) => Promise<void>; // Load messages from MongoDB when opening conversation
   loadOlderMessagesFromServer: (conversationId: string) => Promise<void>;
   evictOldMessageContent: (conversationId: string, messageIdsToEvict: string[]) => void; // Evict content from old messages to free memory
@@ -201,6 +203,7 @@ function serializeStreamEvent(event: StreamEvent): StoredStreamEvent {
     type: event.type,
     taskId: event.taskId,
     isFinal: event.isFinal,
+    isResumeSeed: event.isResumeSeed,
     namespace: event.namespace,
     // Structured event data
     toolData: event.toolData,
@@ -477,6 +480,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       },
 
       setConversationStreaming: (conversationId: string, state: StreamingState | null) => {
+        const wasReadOnly = get().streamingConversations.get(conversationId)?.readOnly === true;
         set((prev: ChatState) => {
           const newMap = new Map(prev.streamingConversations);
           if (state) {
@@ -502,7 +506,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         });
 
         // When streaming completes, save messages to MongoDB and mark unviewed
-        if (!state) {
+        if (!state && !wasReadOnly) {
           // Mark as unviewed if the user is looking at a different conversation
           const current = get();
           if (current.activeConversationId !== conversationId) {
@@ -537,28 +541,31 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         return get().streamingConversations.has(conversationId);
       },
 
-      cancelConversationRequest: (conversationId: string) => {
+      cancelConversationRequest: async (conversationId: string) => {
         const state = get();
         const streamingState = state.streamingConversations.get(conversationId);
         if (streamingState) {
           // Get conversation to check if it's a Dynamic Agent
           const conv = state.conversations.find((c: Conversation) => c.id === conversationId);
+          if (streamingState.readOnly) return false;
           
           // For Dynamic Agents, send backend cancel request before aborting client
           if (streamingState.streamAdapter) {
             const agentId = conv ? getAgentId(conv) : undefined;
             if (agentId) {
               console.log(`[ChatStore] Cancelling Dynamic Agent stream: conv=${conversationId.substring(0, 8)}, agent=${agentId}`);
-              // Fire-and-forget backend cancel - the abort below will close the client connection
-              streamingState.streamAdapter.cancelStream(conversationId, agentId)
-                .then((cancelled) => {
-                  console.log(`[ChatStore] Backend cancel result: cancelled=${cancelled}`);
-                })
-                .catch((error) => {
-                  console.error('[ChatStore] Backend cancel failed:', error);
-                });
+              const turnId = conv?.messages.find((message) => message.id === streamingState.messageId)?.turnId;
+              try {
+                // Keep following the admitted run until its durable terminal
+                // event confirms cancellation. Closing HTTP is not Stop.
+                return await streamingState.streamAdapter.cancelStream(conversationId, agentId, turnId);
+              } catch (error) {
+                console.error('[ChatStore] Backend cancel failed:', error);
+                return false;
+              }
             } else {
               console.warn(`[ChatStore] Cannot cancel backend stream: no agent participant found for conv=${conversationId.substring(0, 8)}`);
+              return false;
             }
           }
 
@@ -601,7 +608,9 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
                 console.error('[ChatStore] Save after cancel failed:', error);
               });
           }, 500);
+          return true;
         }
+        return false;
       },
 
       // ═══════════════════════════════════════════════════════════════
@@ -638,7 +647,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         // events to avoid data loss during long streaming sessions.
         const count = (eventCountSinceLastSave.get(convId) || 0) + 1;
         eventCountSinceLastSave.set(convId, count);
-        if (count >= PERIODIC_SAVE_EVENT_THRESHOLD) {
+        if (count >= PERIODIC_SAVE_EVENT_THRESHOLD && !get().streamingConversations.get(convId)?.readOnly) {
           eventCountSinceLastSave.set(convId, 0);
           console.log(`[ChatStore] Periodic save triggered after ${PERIODIC_SAVE_EVENT_THRESHOLD} events for: ${convId}`);
           get().saveMessagesToServer(convId, { skipNonFinal: true }).catch((error) => {
@@ -1067,7 +1076,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       //     isFinal=true. Used by periodic saves during streaming to avoid writing
       //     stale intermediate content to MongoDB. The final save (after streaming
       //     ends) omits this flag so the correct final content is written.
-      saveMessagesToServer: async (conversationId: string, options?: { skipNonFinal?: boolean }) => {
+      saveMessagesToServer: async (conversationId: string, options?: { skipNonFinal?: boolean; throwOnError?: boolean }) => {
         const storageMode = getStorageMode();
         if (storageMode !== 'mongodb') return;
 
@@ -1189,6 +1198,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             savedCount++;
           } catch (error) {
             console.error(`[ChatStore] Failed to save message ${msg.id}:`, getErrorMessage(error, ""));
+            if (options?.throwOnError) throw error;
           }
         }
 

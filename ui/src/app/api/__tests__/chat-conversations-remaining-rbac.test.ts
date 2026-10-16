@@ -228,7 +228,7 @@ describe("remaining conversation routes use OpenFGA instead of legacy owner/team
     const conversations = collectionWithItems([deleted]);
     mockGetCollection.mockImplementation(async (name: string) => {
       if (name === "conversations") return conversations;
-      return { deleteMany: jest.fn() };
+      return { deleteMany: jest.fn(), updateOne: jest.fn(), find: jest.fn(() => ({ toArray: async () => [] })) };
     });
     const { GET } = await import("../chat/conversations/trash/route");
 

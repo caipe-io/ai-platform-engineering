@@ -257,9 +257,10 @@ const SSE_RESPONSE_HEADERS = {
  */
 export async function proxySSEStream(
   backendUrl: string,
-  body: string,
+  body: string | undefined,
   authResult: AuthResult,
   logPrefix: string,
+  method: "POST" | "GET" = "POST",
 ): Promise<Response> {
   const backendHeaders = buildBackendHeaders("application/json", authResult);
   backendHeaders["Accept"] = "text/event-stream";
@@ -270,9 +271,9 @@ export async function proxySSEStream(
 
   try {
     const backendResponse = await fetch(backendUrl, {
-      method: "POST",
+      method,
       headers: backendHeaders,
-      body,
+      ...(body !== undefined && { body }),
     });
 
     if (!backendResponse.ok) {
@@ -297,9 +298,14 @@ export async function proxySSEStream(
       );
     }
 
+    const responseHeaders: Record<string, string> = { ...SSE_RESPONSE_HEADERS };
+    for (const header of ["X-CAIPE-Run-Id", "X-CAIPE-Turn-Id", "X-CAIPE-Protocol"]) {
+      const value = backendResponse.headers.get(header);
+      if (value) responseHeaders[header] = value;
+    }
     return new Response(backendResponse.body, {
       status: 200,
-      headers: SSE_RESPONSE_HEADERS,
+      headers: responseHeaders,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";

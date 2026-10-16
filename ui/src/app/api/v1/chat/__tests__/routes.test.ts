@@ -715,19 +715,19 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
     expect(mockProxyJSONRequest).not.toHaveBeenCalled();
   });
 
-  it("checks conversation and agent permission before proxying cancel", async () => {
+  it("allows a conversation writer to stop the same turn after agent-use revocation", async () => {
+    mockRequireAgentUsePermission.mockResolvedValue(NextResponse.json({ error: "Agent use revoked" }, { status: 403 }));
     const response = await cancelPost(
       jsonRequest("/api/v1/chat/stream/cancel", {
         conversation_id: "conv-1",
         agent_id: "agent-1",
+        turn_id: "turn-1",
       }),
     );
 
     expect(response.status).toBe(200);
     expect(mockAuthenticateRequest).toHaveBeenCalledTimes(1);
-    expect(mockRequireAgentUsePermission).toHaveBeenCalledWith(
-      expect.objectContaining({ subject: "alice-sub", agentId: "agent-1" }),
-    );
+    expect(mockRequireAgentUsePermission).not.toHaveBeenCalled();
     expect(mockRequireConversationResourcePermission).toHaveBeenCalledWith(
       expect.objectContaining({ sub: "alice-sub", user: { email: "alice@example.com" } }),
       "alice@example.com",
@@ -735,6 +735,7 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
       "write",
     );
     expect(mockProxyJSONRequest).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(mockProxyJSONRequest.mock.calls[0][1])).toMatchObject({ turn_id: "turn-1" });
   });
 
   it("returns conversation denial before proxying", async () => {

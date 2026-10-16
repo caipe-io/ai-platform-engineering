@@ -39,6 +39,7 @@ describe("createSubagentResumeSeedEvents", () => {
     expect(seeds).toHaveLength(1);
     expect(seeds[0]).toMatchObject({
       type: "tool_start",
+      isResumeSeed: true,
       namespace: [],
       toolData: {
         tool_name: "task",

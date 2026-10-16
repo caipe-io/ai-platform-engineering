@@ -212,6 +212,9 @@ export interface StreamEvent {
   /** Whether this is the final event */
   isFinal?: boolean;
 
+  /** Parent task context carried into a HITL resume, rather than a replayed event. */
+  isResumeSeed?: boolean;
+
   /**
    * LangGraph namespace indicating which agent generated this event.
    * - [] (empty) = parent/root agent

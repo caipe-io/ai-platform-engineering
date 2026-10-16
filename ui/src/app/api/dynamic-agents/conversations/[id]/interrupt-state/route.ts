@@ -14,6 +14,11 @@ getDynamicAgentsConfig,
 proxyRequest,
 } from "@/lib/da-proxy";
 import { NextRequest,NextResponse } from "next/server";
+import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
+import {
+  authorizeConversationReadAccess,
+  resolveConversationRuntimeId,
+} from "@/app/api/v1/chat/_conversation-authz";
 
 /**
  * GET /api/dynamic-agents/conversations/[id]/interrupt-state
@@ -43,11 +48,20 @@ export async function GET(
   }
 
   // Authenticate
-  const authResult = await authenticateRequest(request, {
-    resource: "dynamic_agent",
-    scope: "invoke",
-  });
+  const authResult = await authenticateRequest(request);
   if (authResult instanceof NextResponse) return authResult;
+
+  const agentDenial = await requireAgentUsePermission({
+    subject: authResult.subject,
+    agentId,
+    email: authResult.email,
+    tenantId: authResult.tenantId,
+    isServiceAccount: authResult.isServiceAccount,
+  });
+  if (agentDenial) return agentDenial;
+  const authorized = await authorizeConversationReadAccess(authResult, conversationId, agentId);
+  if (authorized.denial) return authorized.denial;
+  const runtimeId = await resolveConversationRuntimeId(authorized.conversation);
 
   // Check DA config
   const daConfig = getDynamicAgentsConfig();
@@ -55,7 +69,7 @@ export async function GET(
 
   // Build backend URL
   const backendUrl = new URL(
-    `/api/v1/conversations/${conversationId}/interrupt-state`,
+    `/api/v1/conversations/${encodeURIComponent(runtimeId)}/interrupt-state`,
     daConfig.dynamicAgentsUrl,
   );
   backendUrl.searchParams.set("agent_id", agentId);

@@ -61,4 +61,17 @@ describe("parseSSEStream", () => {
       "Response body is not readable",
     );
   });
+
+  it("preserves durable cursors with CRLF frames and ignores heartbeat comments", async () => {
+    const response = responseFromChunks([
+      ": heartbeat\r\n\r\n",
+      'id: 12\r\nevent:content\r\ndata: {"text":"hello"}\r',
+      '\n\r\nid: 13\r\nevent: done\r\ndata:{}\r\n\r\n',
+    ]);
+
+    await expect(collect(response)).resolves.toEqual([
+      { id: "12", event: "content", data: '{"text":"hello"}' },
+      { id: "13", event: "done", data: "{}" },
+    ]);
+  });
 });

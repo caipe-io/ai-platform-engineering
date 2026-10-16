@@ -12,14 +12,44 @@ interface AutonomousRunContext {
   started_at?: Date | string;
 }
 
-export type ConversationWriteAuthorization =
+export type ConversationAuthorization =
   | { conversation: Conversation; denial: null }
   | { conversation: Conversation | null; denial: NextResponse };
+
+export async function authorizeConversationReadAccess(
+  authResult: AuthResult,
+  conversationId: string,
+  agentId: string,
+): Promise<ConversationAuthorization> {
+  const result = await authorizeConversationAccess(authResult, conversationId, "read");
+  if (result.denial) return result;
+  const storedAgentId = result.conversation.participants?.find(
+    (participant) => participant.type === "agent",
+  )?.id;
+  if (storedAgentId !== agentId) {
+    return {
+      conversation: result.conversation,
+      denial: NextResponse.json(
+        { success: false, error: "Agent does not match this conversation" },
+        { status: 403 },
+      ),
+    };
+  }
+  return result;
+}
 
 export async function authorizeConversationWriteAccess(
   authResult: AuthResult,
   conversationId: string,
-): Promise<ConversationWriteAuthorization> {
+): Promise<ConversationAuthorization> {
+  return authorizeConversationAccess(authResult, conversationId, "write");
+}
+
+async function authorizeConversationAccess(
+  authResult: AuthResult,
+  conversationId: string,
+  permission: "read" | "write",
+): Promise<ConversationAuthorization> {
   const conversations = await getCollection<Conversation>("conversations");
   const conversation = await conversations.findOne({ _id: conversationId });
   if (!conversation) {
@@ -29,7 +59,7 @@ export async function authorizeConversationWriteAccess(
         {
           success: false,
           error: "Conversation not found",
-          code: "conversation#write",
+          code: `conversation#${permission}`,
         },
         { status: 404 },
       ),
@@ -52,7 +82,7 @@ export async function authorizeConversationWriteAccess(
   //     which this does not touch — thread history stays ReBAC-protected.
   //   - Metadata mutation is separately gated (owner-only), so routing keys
   //     cannot be injected via this path.
-  if (conversation.client_type === "slack") {
+  if (permission === "write" && conversation.client_type === "slack") {
     return { conversation, denial: null };
   }
 
@@ -65,9 +95,9 @@ export async function authorizeConversationWriteAccess(
       { sub: authResult.subject, user: { email: authResult.email }, isServiceAccount: authResult.isServiceAccount },
       authResult.email ?? "",
       conversation,
-      "write",
+      permission,
     );
-    if (conversation.source === "autonomous") {
+    if (permission === "write" && conversation.source === "autonomous") {
       return {
         conversation,
         denial: NextResponse.json({
@@ -102,7 +132,9 @@ export async function authorizeConversationWriteAccess(
  * the latest run context only for the Dynamic Agents request.
  */
 export async function resolveConversationRuntimeId(
-  conversation: Conversation,
+  conversation: Pick<Conversation, "_id"> & Partial<Pick<Conversation,
+    "source" | "execution_context_id" | "task_id" | "metadata"
+  >>,
 ): Promise<string> {
   if (conversation.source !== "autonomous") return conversation._id;
 

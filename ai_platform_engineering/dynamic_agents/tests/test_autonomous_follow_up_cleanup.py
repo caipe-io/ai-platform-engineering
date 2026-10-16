@@ -58,7 +58,7 @@ def test_publication_race_retains_journal_for_retry(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure_location", ["worker", "body", "cache"])
+@pytest.mark.parametrize("failure_location", ["worker", "body", "coordinator", "cache"])
 async def test_lifespan_always_closes_cache_and_database(
     monkeypatch: pytest.MonkeyPatch, failure_location: str,
 ) -> None:
@@ -69,9 +69,11 @@ async def test_lifespan_always_closes_cache_and_database(
 
     mongo = MagicMock(_client=object(), _db=None)
     cache = MagicMock(stop=AsyncMock())
+    coordinator = SimpleNamespace(repository=SimpleNamespace(initialize=AsyncMock()), shutdown=AsyncMock())
     monkeypatch.setattr(main, "get_settings", lambda: Settings.model_construct())
     monkeypatch.setattr(main, "get_mongo_service", lambda: mongo)
     monkeypatch.setattr(main, "get_runtime_cache", lambda: cache)
+    monkeypatch.setattr(main, "get_native_run_coordinator", lambda _mongo: coordinator)
     monkeypatch.setattr(mcp_client, "warn_if_agent_gateway_missing_hmac", lambda: None)
     monkeypatch.setattr(skill_scrubber, "install_skill_content_scrubber", lambda: None)
     monkeypatch.setattr(tracing, "TracingManager", lambda: None)
@@ -86,6 +88,8 @@ async def test_lifespan_always_closes_cache_and_database(
     monkeypatch.setattr(main, "run_copy_cleanup", worker)
     if failure_location == "cache":
         cache.stop.side_effect = RuntimeError("cache stop failed")
+    if failure_location == "coordinator":
+        coordinator.shutdown.side_effect = RuntimeError("coordinator stop failed")
 
     async def run() -> None:
         async with main.lifespan(FastAPI()):
@@ -99,4 +103,5 @@ async def test_lifespan_always_closes_cache_and_database(
         with pytest.raises(RuntimeError):
             await run()
     cache.stop.assert_awaited_once()
+    coordinator.shutdown.assert_awaited_once()
     mongo.disconnect.assert_called_once()

@@ -221,6 +221,94 @@ routes:
         status: 403
         reason: pdp_denied
 
+  # Durable run reads share agent use and conversation read authorization.
+  # These fixtures grant both permissions to alice_admin and
+  # eve_dynamic_agent_user; the remaining personas lack the selected-agent grant.
+  - id: ui-bff-get-api-v1-chat-runs-openfga-agent-use
+    surface: ui_bff
+    method: GET
+    path: /api/v1/chat/runs
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: Shared run-read authorization checks agent use and conversation read before resolving the native execution context and discovering its latest run.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+  - id: ui-bff-get-api-v1-chat-runs-run-id-openfga-agent-use
+    surface: ui_bff
+    method: GET
+    path: /api/v1/chat/runs/[runId]
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: Shared agent-use and conversation-read gate before scoped durable run status.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+  - id: ui-bff-get-api-v1-chat-runs-run-id-stream-openfga-agent-use
+    surface: ui_bff
+    method: GET
+    path: /api/v1/chat/runs/[runId]/stream
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: Shared agent-use and conversation-read gate before cursor validation and replay; reading never starts or resumes execution.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+
   # Spec 2026-05-11 identity-group ReBAC foundation entries. These routes are
   # added as pending until the corresponding user-story endpoints land.
   - id: ui-bff-get-api-admin-identity-group-sync-directory-sync-status
@@ -1733,25 +1821,30 @@ routes:
     surface: ui_bff
     method: GET
     path: /api/dynamic-agents/conversations/[id]/interrupt-state
-    resource: dynamic_agent
-    scope: invoke
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
     migration_status: migrated
-    notes: dual-auth dynamic_agent#invoke PDP gate for interrupt-state proxy
+    notes: Agent use plus implicit-owner-or-explicit conversation read before interrupt-state proxy; fixtures grant the selected agent and conversation to alice_admin and eve_dynamic_agent_user.
     expectations:
       alice_admin:
         status: 200
       bob_chat_user:
-        status: 200
+        status: 403
+        reason: pdp_denied
       carol_kb_ingestor:
-        status: 200
+        status: 403
+        reason: pdp_denied
       dave_no_role:
         status: 403
-        reason: DENY_NO_CAPABILITY
+        reason: pdp_denied
       eve_dynamic_agent_user:
         status: 200
       frank_service_account:
         status: 403
-        reason: DENY_NO_CAPABILITY
+        reason: pdp_denied
   - id: ui-bff-get-api-dynamic-agents-conversations-id-files-list
     surface: ui_bff
     method: GET
@@ -2481,17 +2574,17 @@ routes:
       frank_service_account:
         status: 403
         reason: DENY_NO_CAPABILITY
-  - id: ui-bff-post-api-v1-chat-stream-cancel-openfga-agent-use
+  - id: ui-bff-post-api-v1-chat-stream-cancel-openfga-conversation-write
     surface: ui_bff
     method: POST
     path: /api/v1/chat/stream/cancel
     authorization_system: openfga
-    resource: agent
-    scope: use
-    relation: can_use
-    object_type: agent
+    resource: conversation
+    scope: write
+    relation: can_write
+    object_type: conversation
     migration_status: migrated
-    notes: OpenFGA user:<sub> can_use agent:<agent_id> plus implicit-owner-or-explicit conversation write gate before Dynamic Agents cancel proxy.
+    notes: Implicit-owner-or-explicit conversation write before scoped Stop; no agent-use check, so revoking agent use does not prevent cancellation. Fixtures make alice_admin the conversation owner and eve_dynamic_agent_user an explicit writer; other personas have neither grant.
     expectations:
       alice_admin:
         status: 200

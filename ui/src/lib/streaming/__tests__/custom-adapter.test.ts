@@ -32,6 +32,8 @@ function sseResponse(frames: string[]): Response {
 
 function callbacks(): Required<StreamCallbacks> {
   return {
+    onConnectionState: jest.fn(),
+    onRunStatus: jest.fn(),
     onContent: jest.fn(),
     onToolStart: jest.fn(),
     onToolOutput: jest.fn(),

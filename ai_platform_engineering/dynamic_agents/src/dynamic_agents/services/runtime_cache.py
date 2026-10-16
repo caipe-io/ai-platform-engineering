@@ -13,7 +13,9 @@ import logging
 import os
 import resource
 import sys
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pymongo import MongoClient
@@ -28,6 +30,8 @@ from dynamic_agents.models import (
 )
 from dynamic_agents.services.agent_runtime import AgentRuntime
 from dynamic_agents.services.llm_clients import close_all as close_llm_clients
+from dynamic_agents.services.runtime_storage import resolve_runtime_storage
+from dynamic_agents.services.session_runs import await_session_operation
 
 if TYPE_CHECKING:
     from dynamic_agents.services.mongo import MongoDBService
@@ -45,11 +49,20 @@ class RuntimeInitError(Exception):
 
 
 class RuntimeCapacityError(Exception):
-    """Raised when the cache is at capacity and all runtimes are actively streaming."""
+    """Raised when admission cannot reuse or evict a reserved runtime."""
 
     def __init__(self, max_size: int):
         self.max_size = max_size
-        super().__init__(f"Agent runtime cache at capacity ({max_size} active streams). Please try again shortly.")
+        super().__init__(f"Agent runtime cache is busy (capacity {max_size}). Please try again shortly.")
+
+
+@dataclass
+class _CacheGuard:
+    """Coordination retained only while a session has admitted operations."""
+
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    drained: asyncio.Event = field(default_factory=asyncio.Event)
+    references: int = 0
 
 
 class AgentRuntimeCache:
@@ -60,7 +73,8 @@ class AgentRuntimeCache:
 
     When the cache reaches max capacity and a new runtime is needed,
     the least-recently-used idle runtime is evicted. If all runtimes
-    are actively streaming, a ``RuntimeCapacityError`` is raised.
+    are reserved or streaming, a ``RuntimeCapacityError`` is raised. Pending
+    initializations reserve capacity, and a borrow protects the entire dispatch.
     """
 
     def __init__(
@@ -77,10 +91,17 @@ class AgentRuntimeCache:
         # Shared MongoClient for all runtimes (checkpointer).
         # Created lazily on first get_or_create.
         self._shared_mongo_client: MongoClient | None = None
-        # Single-flight: futures for in-progress initializations.
-        # Prevents duplicate init when concurrent requests hit the same key.
-        # Self-cleaning: removed in finally block after init completes/fails.
-        self._pending: dict[str, asyncio.Future["AgentRuntime"]] = {}
+        # The pool owns initialization tasks. Cancelling one caller must not
+        # cancel another caller's shared initialization.
+        self._pending: dict[str, asyncio.Task["AgentRuntime"]] = {}
+        # Initialization reserves a slot before any provider/network awaits.
+        self._admission_lock = asyncio.Lock()
+        self._borrowers: dict[str, set[object]] = {}
+        self._key_guards: dict[str, _CacheGuard] = {}
+        self._clear_lock = asyncio.Lock()
+        self._clearing = False
+        self._clear_finished = asyncio.Event()
+        self._clear_finished.set()
 
         # Flat cap on concurrent cached runtimes
         if max_size is not None:
@@ -154,61 +175,152 @@ class AgentRuntimeCache:
         user: UserContext | None = None,
         client_context: ClientContext | None = None,
     ) -> "AgentRuntime":
+        """Look up a runtime; executing callers should hold ``borrow`` instead."""
+        return await self._get_or_create(agent_config, mcp_servers, session_id, user, client_context)
+
+    @asynccontextmanager
+    async def borrow(
+        self,
+        agent_config: DynamicAgentConfig,
+        mcp_servers: list[MCPServerConfig],
+        session_id: str,
+        *,
+        user: UserContext | None = None,
+        client_context: ClientContext | None = None,
+        read_only: bool = False,
+    ) -> AsyncGenerator[AgentRuntime, None]:
+        """Reserve a cached runtime through dispatch, including pre-prompt awaits.
+
+        Authorized state readers may reuse an active runtime without refreshing
+        its tools or credentials, provided their persistence coordinates match.
+        Such a borrow must never be used to execute another turn.
+        """
+        key, reservation = self._make_key(agent_config.id, session_id), object()
+        self._borrowers.setdefault(key, set()).add(reservation)
+        try:
+            runtime = await self._get_or_create(
+                agent_config, mcp_servers, session_id, user, client_context,
+                reservation=reservation, read_only=read_only,
+            )
+            yield runtime
+        finally:
+            reservations = self._borrowers.get(key)
+            if reservations is not None:
+                reservations.discard(reservation)
+                if not reservations:
+                    del self._borrowers[key]
+
+    def _in_use(self, key: str, runtime: "AgentRuntime", *, excluding: object | None = None) -> bool:
+        return runtime._is_streaming or any(owner is not excluding for owner in self._borrowers.get(key, ()))
+
+    @asynccontextmanager
+    async def _key_guard(self, key: str) -> AsyncGenerator[None, None]:
+        """Serialize one session without retaining locks for inactive keys.
+
+        Clear gates new operations before waiting for existing guards, then
+        takes the capacity lock. Other paths never wait for a key guard while
+        holding the capacity lock, so validation and shutdown cannot deadlock.
+        """
+        while self._clearing:
+            await self._clear_finished.wait()
+        guard = self._key_guards.setdefault(key, _CacheGuard())
+        guard.references += 1
+        try:
+            async with guard.lock:
+                yield
+        finally:
+            guard.references -= 1
+            if not guard.references:
+                del self._key_guards[key]
+                guard.drained.set()
+
+    async def _get_or_create(
+        self,
+        agent_config: DynamicAgentConfig,
+        mcp_servers: list[MCPServerConfig],
+        session_id: str,
+        user: UserContext | None = None,
+        client_context: ClientContext | None = None,
+        *,
+        reservation: object | None = None,
+        read_only: bool = False,
+    ) -> "AgentRuntime":
         """Get an existing runtime or create a new one.
 
         Uses a single-flight pattern: if multiple concurrent requests arrive
         for the same key, only the first performs initialization. Others await
-        the same future, receiving the same runtime (or the same exception).
+        the same task, then revalidate their own configuration and caller.
 
         Raises:
-            RuntimeCapacityError: If the cache is full and all runtimes are streaming.
+            RuntimeCapacityError: If admission conflicts with reserved capacity.
             RuntimeInitError: If the new runtime fails to initialize.
         """
         key = self._make_key(agent_config.id, session_id)
 
-        # Someone else is already initializing this key — wait for their result
-        if key in self._pending:
-            return await asyncio.shield(self._pending[key])
+        # A slow registry read coordinates only this session. The guard also
+        # keeps expiry, invalidation and LRU eviction from replacing its runtime.
+        async with self._key_guard(key):
+            pending = self._pending.get(key)
+            if pending is None:
+                runtime = self._cache.get(key)
+                if runtime is not None:
+                    in_use = self._in_use(key, runtime, excluding=reservation)
+                    if in_use and reservation is not None:
+                        if not read_only:
+                            raise RuntimeCapacityError(self._max_size)
+                        settings = runtime.settings
+                        if resolve_runtime_storage(agent_config, session_id, settings) != resolve_runtime_storage(runtime.config, session_id, settings):
+                            raise RuntimeCapacityError(self._max_size)
+                        runtime.touch()
+                        return runtime
+                    if client_context is None:
+                        client_context = runtime._client_context
+                    stale = await await_session_operation(
+                        runtime.is_stale, agent_config, mcp_servers,
+                        user=user, client_context=client_context,
+                    )
+                    in_use = self._in_use(key, runtime, excluding=reservation)
+                    if stale or (runtime.idle_seconds >= self._ttl and not in_use):
+                        if in_use:
+                            raise RuntimeCapacityError(self._max_size)
+                        del self._cache[key]
+                        await runtime.cleanup()
+                        prom_metrics.runtime_cache_evictions_total.labels(reason="config_change" if stale else "expired").inc()
+                        self._update_metrics()
+                    else:
+                        runtime.touch()
+                        return runtime
+                # Only reserving capacity and selecting an idle eviction need
+                # global coordination. No registry validation runs under it.
+                async with self._admission_lock:
+                    while len(self._cache) + len(self._pending) >= self._max_size:
+                        await self._evict_lru()
+                    pending = asyncio.create_task(self._initialize_cached_runtime(
+                        key, agent_config, mcp_servers, session_id, user, client_context,
+                    ))
+                    self._pending[key] = pending
+                    pending.add_done_callback(lambda result: None if result.cancelled() else result.exception())
+                    self._update_metrics()
+                created = True
+            else:
+                created = False
+        runtime = await asyncio.shield(pending)
+        if created:
+            return runtime
+        # Shared initialization never grants the waiter's caller/tool context.
+        return await self._get_or_create(
+            agent_config, mcp_servers, session_id, user=user, client_context=client_context,
+            reservation=reservation, read_only=read_only,
+        )
 
-        # We're the first — create a future and perform initialization
-        loop = asyncio.get_event_loop()
-        fut: asyncio.Future["AgentRuntime"] = loop.create_future()
-        self._pending[key] = fut
-        self._update_metrics()
-
+    async def _initialize_cached_runtime(
+        self, key: str, agent_config: DynamicAgentConfig, mcp_servers: list[MCPServerConfig],
+        session_id: str, user: UserContext | None, client_context: ClientContext | None,
+    ) -> "AgentRuntime":
         try:
-            # Fast path: cached and valid
-            if key in self._cache:
-                runtime = self._cache[key]
-                if await asyncio.to_thread(runtime.is_stale, agent_config, mcp_servers):
-                    logger.info(
-                        "Runtime cache invalidated due to config change for agent %s",
-                        agent_config.id,
-                    )
-                    await runtime.cleanup()
-                    del self._cache[key]
-                    prom_metrics.runtime_cache_evictions_total.labels(reason="config_change").inc()
-                    self._update_metrics()
-                elif runtime.idle_seconds >= self._ttl:
-                    logger.info(
-                        "Runtime cache expired due to inactivity (%.0fs idle) for agent %s",
-                        runtime.idle_seconds,
-                        agent_config.id,
-                    )
-                    await runtime.cleanup()
-                    del self._cache[key]
-                    prom_metrics.runtime_cache_evictions_total.labels(reason="expired").inc()
-                    self._update_metrics()
-                else:
-                    runtime.touch()
-                    logger.debug("Runtime cache hit for agent %s session %s", agent_config.id, session_id)
-                    fut.set_result(runtime)
-                    return runtime
-
             runtime = await self._create_runtime(key, agent_config, mcp_servers, session_id, user, client_context)
             self._cache[key] = runtime
             self._update_metrics()
-            fut.set_result(runtime)
             logger.info(
                 "Created new cached runtime for agent %s session %s (cache %d/%d)",
                 agent_config.id,
@@ -217,13 +329,6 @@ class AgentRuntimeCache:
                 self._max_size,
             )
             return runtime
-        except asyncio.CancelledError:
-            fut.cancel()
-            raise
-        except Exception as e:
-            fut.set_exception(e)
-            fut.exception()  # Consume it when no other request awaited the single-flight future.
-            raise
         finally:
             self._pending.pop(key, None)
             self._update_metrics()
@@ -251,11 +356,7 @@ class AgentRuntimeCache:
             session_id=session_id,
             ephemeral=True,
         )
-        try:
-            await runtime.initialize()
-        except Exception as e:
-            logger.exception("Ephemeral runtime initialization failed for agent '%s'", agent_config.id)
-            raise RuntimeInitError(agent_config.id, e) from e
+        await self._initialize_runtime(runtime)
 
         logger.info("Created ephemeral runtime for agent %s (in-memory, not cached)", agent_config.id)
         try:
@@ -288,14 +389,7 @@ class AgentRuntimeCache:
             client_context=client_context,
             session_id=session_id,
         )
-        try:
-            await runtime.initialize()
-        except Exception as e:
-            logger.exception(
-                "Persistent runtime initialization failed for agent '%s'",
-                agent_config.id,
-            )
-            raise RuntimeInitError(agent_config.id, e) from e
+        await self._initialize_runtime(runtime)
 
         logger.info("Created persistent one-shot runtime for agent %s", agent_config.id)
         try:
@@ -318,10 +412,6 @@ class AgentRuntimeCache:
     ) -> "AgentRuntime":
         """Create and initialize a new runtime. Called under single-flight guard."""
 
-        # Evict if at capacity
-        if len(self._cache) >= self._max_size:
-            await self._evict_lru()
-
         # Lazily create the shared MongoClient
         if self._shared_mongo_client is None:
             settings = get_settings()
@@ -338,13 +428,21 @@ class AgentRuntimeCache:
             session_id=session_id,
             mongo_client=self._shared_mongo_client,
         )
-        try:
-            await runtime.initialize()
-        except Exception as e:
-            logger.exception("Runtime initialization failed for agent '%s'", agent_config.id)
-            raise RuntimeInitError(agent_config.id, e) from e
+        await self._initialize_runtime(runtime)
 
         return runtime
+
+    async def _initialize_runtime(self, runtime: "AgentRuntime") -> None:
+        """Every pool mode releases partially initialized resources on failure."""
+        try:
+            await runtime.initialize()
+        except asyncio.CancelledError:
+            await runtime.cleanup()
+            raise
+        except Exception as exc:
+            await runtime.cleanup()
+            logger.exception("Runtime initialization failed for agent '%s'", runtime.config.id)
+            raise RuntimeInitError(runtime.config.id, exc) from exc
 
     async def _evict_lru(self) -> None:
         """Evict the least-recently-used idle runtime.
@@ -356,7 +454,7 @@ class AgentRuntimeCache:
         candidate_idle: float = -1
 
         for key, runtime in self._cache.items():
-            if key in self._pending or runtime._is_streaming:
+            if key in self._key_guards or self._in_use(key, runtime):
                 continue
             if runtime.idle_seconds > candidate_idle:
                 candidate_idle = runtime.idle_seconds
@@ -382,23 +480,49 @@ class AgentRuntimeCache:
         gc.collect()
 
     async def _cleanup_expired(self) -> None:
-        """Remove expired runtimes from cache."""
-        expired_keys = [key for key, runtime in self._cache.items() if key not in self._pending and runtime.idle_seconds >= self._ttl]
+        """Remove expired runtimes without waiting for a validating session."""
+        if self._clearing:
+            return
+        expired_keys = [
+            key for key, runtime in self._cache.items()
+            if key not in self._key_guards and runtime.idle_seconds >= self._ttl and not self._in_use(key, runtime)
+        ]
+        removed = 0
         for key in expired_keys:
-            runtime = self._cache.pop(key, None)
-            if runtime:
-                await runtime.cleanup()
-        if expired_keys:
-            prom_metrics.runtime_cache_evictions_total.labels(reason="expired").inc(len(expired_keys))
+            runtime = self._cache.get(key)
+            # Earlier cleanup awaits can let another candidate become admitted.
+            # The check and removal are atomic until cleanup yields control.
+            if self._clearing or runtime is None or key in self._key_guards or self._in_use(key, runtime) or runtime.idle_seconds < self._ttl:
+                continue
+            del self._cache[key]
+            removed += 1
+            await runtime.cleanup()
+        if removed:
+            prom_metrics.runtime_cache_evictions_total.labels(reason="expired").inc(removed)
             self._update_metrics()
             gc.collect()
 
     async def clear(self) -> None:
-        """Clear all cached runtimes."""
-        for runtime in self._cache.values():
-            await runtime.cleanup()
-        self._cache.clear()
-        self._update_metrics()
+        """Gate new admissions, drain per-session operations, then clear the pool."""
+        async with self._clear_lock:
+            self._clearing = True
+            self._clear_finished.clear()
+            try:
+                guards = list(self._key_guards.values())
+                await asyncio.gather(*(guard.drained.wait() for guard in guards))
+                async with self._admission_lock:
+                    pending = list(self._pending.values())
+                    for initialization in pending:
+                        initialization.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
+                    runtimes = list(self._cache.values())
+                    self._cache.clear()
+                    self._update_metrics()
+                    for runtime in runtimes:
+                        await runtime.cleanup()
+            finally:
+                self._clearing = False
+                self._clear_finished.set()
         gc.collect()
 
     async def invalidate(self, agent_id: str, session_id: str) -> bool:
@@ -408,12 +532,18 @@ class AgentRuntimeCache:
             True if a runtime was invalidated, False if not found.
         """
         key = self._make_key(agent_id, session_id)
-        if key in self._pending:
-            await asyncio.shield(self._pending[key])
-        runtime = self._cache.pop(key, None)
-        if runtime:
-            await runtime.cleanup()
+        async with self._key_guard(key):
+            if self._borrowers.get(key):
+                raise RuntimeCapacityError(self._max_size)
+            pending = self._pending.get(key)
+            if pending is not None:
+                pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+            runtime = self._cache.pop(key, None)
+            if runtime is not None:
+                await runtime.cleanup()
             self._update_metrics()
+        if runtime is not None or pending is not None:
             logger.info(f"Runtime cache invalidated for agent={agent_id}")
             return True
         return False
