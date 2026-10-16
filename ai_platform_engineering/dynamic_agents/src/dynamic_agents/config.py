@@ -98,6 +98,13 @@ class Settings(BaseSettings):
     # When set, MCP HTTP/SSE clients use this base URL (e.g. http://agentgateway:4000/mcp/{server_id})
     agent_gateway_url: str | None = None
 
+    # Trusted sandbox control plane. Agent definitions select its admitted
+    # profile IDs, never an endpoint, image, executable or credentials.
+    sandbox_service_url: str = ""
+    harness_tools_public_url: str = ""
+    harness_tools_allow_http: bool = False
+    sandbox_provision_timeout_seconds: int = Field(default=600, ge=10, le=1800)
+
     # Credential API for MCP impersonation and remote A2A secrets/connected accounts.
     credential_api_url: str | None = None
     credential_service_audience: str = "caipe-credential-service"

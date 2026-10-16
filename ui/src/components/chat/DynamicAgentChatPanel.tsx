@@ -14,7 +14,7 @@ import { authErrorToastTitle,type AuthError } from "@/lib/auth-error";
 import { getDeterministicAgentThemeId } from "@/lib/agent-theme";
 import { interruptedAuthReason,interruptedTurnFallbackText } from "@/lib/chat-interrupt";
 import { getConfig } from "@/lib/config";
-import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
+import { ephemeralFileBlob, fetchEphemeralFileContent } from "@/lib/ephemeral-files";
 import { ACCEPT_ATTRIBUTE,fileToInputFile,type InputFile,validateFiles } from "@/lib/file-attachments";
 import { getGradientColors } from "@/lib/gradient-themes";
 import { takePendingFirstMessage } from "@/lib/pending-first-message";
@@ -28,6 +28,7 @@ import { cn,deduplicateByKey,generateId } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import { buildParticipants,ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
+import type { PendingConversationEdit } from "@/types/mongodb";
 import type { DynamicAgentConfig,ReasoningEffort } from "@/types/dynamic-agent";
 import { AnimatePresence,motion,useReducedMotion } from "framer-motion";
 import { Activity,AlertTriangle,ArrowDown,ArrowLeft,Check,Copy,Loader2,Paperclip,Pencil,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
@@ -200,6 +201,10 @@ export function ChatPanel({
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [pendingEdit, setPendingEdit] = useState<PendingConversationEdit | null>(null);
+  const [isRecoveringEdit, setIsRecoveringEdit] = useState(false);
+  const [editRecoveryError, setEditRecoveryError] = useState<string | null>(null);
+  const editRecoveryGeneration = useRef(0);
   const [isRewindConfirmationOpen, setIsRewindConfirmationOpen] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   // Files staged in the composer for the next turn (multimodal input).
@@ -233,6 +238,7 @@ export function ChatPanel({
     // SSE/Dynamic Agent specific fields
     isSSE?: boolean;
     agentId?: string;
+    interruptId?: string;
   } | null>(null);
 
   // Tool approval state (HITL for gated tools)
@@ -355,7 +361,10 @@ export function ChatPanel({
   }, [conversationId, chosenAgentId, onAgentRelinked, toast]);
 
   // Slash command registry
-  const slashCommands = useSlashCommands(agentSkills, agent?.allowed_tools, agent?.subagents);
+  const sandboxProfileId = agent?.execution?.kind === "sandbox" ? agent.execution.profile_id : undefined;
+  const isSandboxRuntime = sandboxProfileId !== undefined;
+  const availableSlashCommands = useSlashCommands(agentSkills, agent?.allowed_tools, agent?.subagents);
+  const slashCommands = useMemo(() => isSandboxRuntime ? availableSlashCommands.filter((command) => command.id !== "effort") : availableSlashCommands, [availableSlashCommands, isSandboxRuntime]);
 
   // Get access token from session (if SSO is enabled and user is authenticated)
   const ssoEnabled = getConfig('ssoEnabled');
@@ -363,12 +372,35 @@ export function ChatPanel({
 
   const conversation = getActiveConversation();
   const isAutonomousHistory = conversation?.source === "autonomous";
+  const recoveryConversationId = conversationId ?? activeConversationId;
+  const refreshPendingEdit = useCallback(async () => {
+    const generation = ++editRecoveryGeneration.current;
+    if (!recoveryConversationId || panelReadOnly || isAutonomousHistory || getStorageMode() !== "mongodb") {
+      setPendingEdit(null);
+      return;
+    }
+    try {
+      const details = await apiClient.getConversation(recoveryConversationId);
+      if (generation === editRecoveryGeneration.current) setPendingEdit(details.pending_edit ?? null);
+    } catch {
+      // A failed read cannot dismiss a previously known recovery operation.
+      // A subsequent edit retry or page reload repeats normal authorization.
+    }
+  }, [recoveryConversationId, panelReadOnly, isAutonomousHistory]);
+
+  useEffect(() => {
+    setPendingEdit(null);
+    setEditRecoveryError(null);
+    void refreshPendingEdit();
+    return () => { editRecoveryGeneration.current += 1; };
+  }, [refreshPendingEdit]);
+
   const autonomousFollowUps = useAutonomousFollowUps(
     isAutonomousHistory && !panelReadOnly ? conversation?.task_id : undefined,
   );
 
   const configuredReasoningEffort = agent?.model?.reasoning_effort ?? "medium";
-  const requestReasoningEffort = supportedReasoningEfforts?.includes(reasoningEffort)
+  const requestReasoningEffort = !isSandboxRuntime && supportedReasoningEfforts?.includes(reasoningEffort)
     ? reasoningEffort
     : undefined;
 
@@ -381,7 +413,7 @@ export function ChatPanel({
   }, [conversation?.id, conversation?.metadata?.reasoning_effort, configuredReasoningEffort]);
 
   useEffect(() => {
-    if (!agent?.model?.id || !agent.model.provider) {
+    if (isSandboxRuntime || !agent?.model?.id || !agent.model.provider) {
       setSupportedReasoningEfforts([]);
       return;
     }
@@ -402,17 +434,17 @@ export function ChatPanel({
     return () => {
       cancelled = true;
     };
-  }, [agent?.model]);
+  }, [agent?.model, isSandboxRuntime]);
 
   const persistReasoningEffort = useCallback(async (
     effort: ReasoningEffort,
     source: "selector" | "command" = "selector",
     conversationIdOverride?: string,
   ): Promise<"changed" | "unsupported" | "error"> => {
-    if (!supportedReasoningEfforts?.includes(effort)) {
+    if (isSandboxRuntime || !supportedReasoningEfforts?.includes(effort)) {
       if (source === "selector") {
         toast(
-          `The selected model does not support changing reasoning effort. It will keep the provider default.`,
+          isSandboxRuntime ? "Reasoning is managed by the sandbox runtime profile." : "The selected model does not support changing reasoning effort. It will keep the provider default.",
           "warning",
           6000,
         );
@@ -444,7 +476,7 @@ export function ChatPanel({
       }
       return "error";
     }
-  }, [activeConversationId, agentId, createConversation, supportedReasoningEfforts, toast]);
+  }, [activeConversationId, agentId, createConversation, supportedReasoningEfforts, toast, isSandboxRuntime]);
 
   const showEffortStatus = useCallback((
     text: string,
@@ -792,6 +824,7 @@ export function ChatPanel({
 
                 setPendingUserInput({
                   messageId: lastMsg.id,
+                  interruptId: idata.interrupt_id,
                   metadata: {
                     user_input: true,
                     input_title: `Input Required`,
@@ -877,10 +910,8 @@ export function ChatPanel({
 
         if (response.ok) {
           const data = await response.json();
-          const content = data.content || "";
-
           // Create blob and download
-          const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+          const blob = ephemeralFileBlob(data);
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
@@ -1003,6 +1034,7 @@ export function ChatPanel({
 
        setPendingUserInput({
           messageId: lastMsg.id,
+          interruptId: inputEvent.inputRequiredData.interrupt_id,
           metadata: {
             user_input: true,
             input_title: `Input Required`,
@@ -1080,6 +1112,9 @@ export function ChatPanel({
       loopState.hitlFormRequested = status === "awaiting_input";
       if (status === "awaiting_input") interruptCheckedRef.current.delete(convId);
       if (useChatStore.getState().activeConversationId === convId) setRunDisplayStatus(status);
+    },
+    onReasoning(text, namespace) {
+      addStreamEvent(createStreamEvent("reasoning", { text, namespace }), convId);
     },
     onContent(text, namespace) {
       loopState.accumulatedText += text;
@@ -1176,6 +1211,7 @@ export function ChatPanel({
 
       setPendingUserInput({
         messageId: assistantMsgId,
+        interruptId,
         metadata: {
           user_input: true,
           input_title: "Input Required",
@@ -1384,7 +1420,7 @@ export function ChatPanel({
         });
         try {
           await adapter.reattachStream(
-            { conversationId, agentId, runId: run.run_id },
+            { conversationId, agentId, runId: run.run_id, firstSequence: run.first_sequence },
             buildStreamCallbacks(conversationId, messageId, state, new Map()),
           );
           finalizeStreamLoop(conversationId, messageId, state);
@@ -1422,6 +1458,10 @@ export function ChatPanel({
   // producing one coherent assistant response for the whole batch.
   const submitMessageBatch = useCallback(async (messagesToSend: QueuedMessage[]) => {
     if (isAutonomousHistory) return;
+    if (pendingEdit) {
+      toast("Finish the pending conversation edit before sending another message.", "error", 6000);
+      return;
+    }
     const validMessages = messagesToSend.filter(
       (message) => message.text.trim() || message.files.length > 0,
     );
@@ -1571,7 +1611,7 @@ export function ChatPanel({
       setRunRecoveryError((error as Error).message || "Could not follow the existing run");
       setConversationStreaming(convId, null);
     }
-  }, [isAutonomousHistory, isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, saveMessagesToServer, buildStreamCallbacks, finalizeStreamLoop, requestReasoningEffort, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
+  }, [isAutonomousHistory, pendingEdit, isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, saveMessagesToServer, buildStreamCallbacks, finalizeStreamLoop, requestReasoningEffort, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
 
   const submitMessage = useCallback(
     (messageToSend: string, filesToSend: InputFile[] = []) => submitMessageBatch([{
@@ -1672,6 +1712,7 @@ export function ChatPanel({
       setEditDraft("");
       await submitMessage(editDraft, files);
     } catch (error) {
+      void refreshPendingEdit();
       toast(
         `Could not edit message: ${error instanceof Error ? error.message : String(error)}`,
         "error",
@@ -1693,7 +1734,33 @@ export function ChatPanel({
     submitMessage,
     toast,
     truncateConversationFromMessage,
+    refreshPendingEdit,
   ]);
+
+  const finishPendingEdit = useCallback(async () => {
+    if (!recoveryConversationId || !pendingEdit || isRecoveringEdit || panelReadOnly) return;
+    setIsRecoveringEdit(true);
+    setEditRecoveryError(null);
+    try {
+      await apiClient.rewindConversation(recoveryConversationId, {
+        agent_id: pendingEdit.agent_id, message_id: pendingEdit.message_id,
+      });
+      await useChatStore.getState().loadMessagesFromServer(recoveryConversationId, { force: true });
+      setPendingEdit(null);
+      setQueuedMessages([]);
+      setPendingUserInput(null);
+      setPendingToolApproval(null);
+      clearConversationInputRequired(recoveryConversationId);
+      if (editDraft.trim()) setInput(editDraft);
+      setEditingMessageId(null);
+      setEditDraft("");
+      setIsRewindConfirmationOpen(false);
+    } catch (error) {
+      setEditRecoveryError(error instanceof Error ? error.message : "The conversation edit could not finish. Retry again.");
+    } finally {
+      setIsRecoveringEdit(false);
+    }
+  }, [recoveryConversationId, pendingEdit, isRecoveringEdit, panelReadOnly, clearConversationInputRequired, editDraft]);
 
   // The Home page hero composer creates a conversation and navigates here
   // before a message can be sent (this panel only mounts once a conversation
@@ -1785,6 +1852,10 @@ export function ChatPanel({
   }, [agentSkills, showCommandPanel]);
 
   const handleEffortCommand = useCallback(async (argument: string) => {
+    if (isSandboxRuntime) {
+      showEffortStatus("Reasoning is managed by the sandbox runtime profile.", "warning");
+      return;
+    }
     const normalized = argument.trim().toLowerCase();
     if (!["low", "medium", "high", "max"].includes(normalized)) {
       showEffortStatus(
@@ -1815,7 +1886,7 @@ export function ChatPanel({
         : "Could not save the reasoning effort. Try again.",
       result === "unsupported" ? "warning" : "error",
     );
-  }, [activeConversationId, agentId, createConversation, persistReasoningEffort, reasoningEffort, showEffortStatus]);
+  }, [activeConversationId, agentId, createConversation, persistReasoningEffort, reasoningEffort, showEffortStatus, isSandboxRuntime]);
 
   // Handle /help locally so its reference list does not become model context.
   const handleHelpCommand = useCallback(() => {
@@ -1838,7 +1909,7 @@ export function ChatPanel({
         {
           items: [
             { label: "/skills", description: "List available skills", insertText: "/skills" },
-            { label: "/effort <low|medium|high|max>", description: "Set reasoning effort for this chat", insertText: "/effort " },
+            ...(!isSandboxRuntime ? [{ label: "/effort <low|medium|high|max>", description: "Set reasoning effort for this chat", insertText: "/effort " }] : []),
             { label: "/help", description: "Show this help panel", insertText: "/help" },
             { label: "/clear", description: "Start a new conversation and reset context", insertText: "/clear" },
           ],
@@ -1847,7 +1918,7 @@ export function ChatPanel({
         ...(subagentItems.length ? [{ title: "Subagents", items: subagentItems }] : []),
       ],
     });
-  }, [agent, showCommandPanel]);
+  }, [agent, showCommandPanel, isSandboxRuntime]);
 
   // Handle /clear command
   const handleClearCommand = useCallback(async () => {
@@ -1951,6 +2022,7 @@ export function ChatPanel({
 
   // Wrapper for form submission that uses input state
   const handleSubmit = useCallback(async (forceSend = false) => {
+    if (pendingEdit) return;
     // Allow a turn with text OR attachments (a file-only send is valid).
     if (!input.trim() && attachments.length === 0) return;
 
@@ -2016,7 +2088,7 @@ export function ChatPanel({
     setAttachments([]);
 
     await submitMessage(message, encodedFiles);
-  }, [input, attachments, submitMessage, isThisConversationStreaming, pendingUserInput, slashCommands, executeSlashCommand, handleEffortCommand, handleStop]);
+  }, [input, attachments, submitMessage, isThisConversationStreaming, pendingUserInput, pendingEdit, slashCommands, executeSlashCommand, handleEffortCommand, handleStop]);
 
   // Auto-submit pending message from use case selection
   useEffect(() => {
@@ -2081,8 +2153,8 @@ export function ChatPanel({
 
     // Send form data as discriminated resume payload
     const formDataJson = JSON.stringify(options?.dismissed
-      ? { type: "form_input", dismissed: true }
-      : { type: "form_input", values: formData });
+      ? { type: "form_input", interrupt_id: pendingUserInput.interruptId, dismissed: true }
+      : { type: "form_input", interrupt_id: pendingUserInput.interruptId, values: formData });
 
     setConversationStreaming(activeConversationId, {
       conversationId: activeConversationId,
@@ -2209,7 +2281,7 @@ export function ChatPanel({
         }),
       };
     }
-    const resumeData = JSON.stringify(resumePayload);
+    const resumeData = JSON.stringify({ ...resumePayload, interrupt_id: pendingToolApproval.interruptId });
 
     setConversationStreaming(activeConversationId, {
       conversationId: activeConversationId,
@@ -2471,6 +2543,7 @@ export function ChatPanel({
                       const isLocalCommand = msg.content.trim() === "/skills" ||
                         msg.content.trim() === "/help";
                       const canEditMessage = msg.role === "user" &&
+                        !pendingEdit &&
                         isOwnMessage &&
                         isConversationOwner &&
                         !isLocalCommand &&
@@ -2677,6 +2750,18 @@ export function ChatPanel({
               Messages sent here update the same conversation used by the API. Continuing here may interfere with that API chat, especially if both clients send at the same time.
             </p>
           </div>
+        </div>
+      )}
+
+      {pendingEdit && !panelReadOnly && !isAutonomousHistory && (
+        <div role="status" className="border-t border-amber-500/30 bg-amber-500/10 px-6 py-3 text-sm">
+          <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
+            <span>An earlier conversation edit needs to finish before you send another message.</span>
+            <Button variant="outline" onClick={finishPendingEdit} disabled={isRecoveringEdit}>
+              {isRecoveringEdit ? "Finishing edit..." : "Finish conversation edit"}
+            </Button>
+          </div>
+          {editRecoveryError && <p role="alert" className="max-w-7xl mx-auto mt-2 text-destructive">{editRecoveryError}</p>}
         </div>
       )}
 
@@ -3026,6 +3111,7 @@ export function ChatPanel({
                 <TextareaAutosize
                   ref={inputRef}
                   aria-label="Message"
+                  disabled={Boolean(pendingEdit)}
                   value={input}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
@@ -3042,9 +3128,10 @@ export function ChatPanel({
                 <div className="relative flex shrink-0 items-center gap-2 pt-5">
                   <span
                     className="absolute right-0 top-0 flex max-w-56 items-center gap-1 whitespace-nowrap text-[10px] font-medium text-muted-foreground max-sm:max-w-40"
-                    title={`${agent?.model?.id || "Model"} · ${reasoningEffort}`}
+                    title={isSandboxRuntime ? `Sandbox · ${sandboxProfileId}` : `${agent?.model?.id || "Model"} · ${reasoningEffort}`}
                     data-testid="composer-model-effort"
                   >
+                    {isSandboxRuntime ? <span className="truncate">Sandbox · {sandboxProfileId}</span> : <>
                     <span className="truncate">{agent?.model?.id || "Model"}</span>
                     <span aria-hidden="true">·</span>
                     <span
@@ -3061,6 +3148,7 @@ export function ChatPanel({
                     >
                       {reasoningEffort}
                     </span>
+                    </>}
                   </span>
 
                   {/* Attach files */}
@@ -3091,7 +3179,7 @@ export function ChatPanel({
                       <Button
                         size="icon"
                         onClick={() => handleSubmit(false)}
-                        disabled={!input.trim() && attachments.length === 0}
+                        disabled={Boolean(pendingEdit) || (!input.trim() && attachments.length === 0)}
                         variant="default"
                         title="Send message"
                       >

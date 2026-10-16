@@ -1,3 +1,4 @@
+import { conversationForViewer } from "@/lib/conversation-view";
 // GET /api/chat/conversations/[id] - Get conversation details
 // PUT /api/chat/conversations/[id] - Update conversation
 // DELETE /api/chat/conversations/[id] - Delete conversation
@@ -49,7 +50,8 @@ export const GET = withErrorHandler(async (
     );
     await requireConversationResourcePermission(session, user.email, conversation, 'read');
 
-    return successResponse({ ...conversation, access_level });
+    return successResponse({ ...conversationForViewer(conversation, { owner: access_level === "owner",
+      email: user.email, subject: session.sub || user.email }), access_level });
   });
 });
 
@@ -108,7 +110,7 @@ export const PUT = withErrorHandler(async (
 
     const updated = await conversations.findOne({ _id: conversationId });
 
-    return successResponse(updated);
+    return successResponse(conversationForViewer(updated));
   });
 });
 
@@ -151,7 +153,7 @@ export const DELETE = withErrorHandler(async (
     await requireConversationResourcePermission(session, user.email, conversation, 'delete');
 
     if (permanent) {
-      await deleteConversationsPermanently([conversation]);
+      await deleteConversationsPermanently([conversation], req);
       return successResponse({ deleted: true, permanent: true });
     } else {
       // Soft delete: move to archive by setting deleted_at timestamp

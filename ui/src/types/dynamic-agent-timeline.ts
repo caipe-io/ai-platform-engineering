@@ -57,6 +57,8 @@ export interface ContentSegment {
   type: "content";
   id: string;
   text: string;
+  /** Explicit reasoning stays in the thinking timeline even after the final tool. */
+  reasoning?: boolean;
 }
 
 /** A tool call segment */

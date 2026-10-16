@@ -53,6 +53,7 @@ export interface ConsumeResult {
     agent?: string;
     toolName?: string;
     toolArgs?: Record<string, unknown>;
+    allowedDecisions?: string[];
     toolApprovals?: Array<{
       tool_name: string;
       tool_args: Record<string, unknown>;
@@ -96,6 +97,9 @@ export async function consumeAgentStream(options: ConsumeOptions): Promise<Consu
       pendingEvents.push(
         createStreamEvent("content", { text, namespace }),
       );
+    },
+    onReasoning(text, namespace) {
+      pendingEvents.push(createStreamEvent("reasoning", { text, namespace }));
     },
     onToolStart(toolCallId, toolName, args, namespace) {
       pendingEvents.push(
@@ -147,9 +151,9 @@ export async function consumeAgentStream(options: ConsumeOptions): Promise<Consu
         }),
       );
     },
-    onToolApprovalRequired(interruptId, toolName, toolArgs, _allowedDecisions, agent, toolApprovals) {
+    onToolApprovalRequired(interruptId, toolName, toolArgs, allowedDecisions, agent, toolApprovals) {
       interrupted = true;
-      interrupt = { type: "tool_approval", interruptId, toolName, toolArgs, agent, toolApprovals };
+      interrupt = { type: "tool_approval", interruptId, toolName, toolArgs, allowedDecisions, agent, toolApprovals };
       // Store as input_required event type (UI treats both as interrupts)
       pendingEvents.push(
         createStreamEvent("input_required", {

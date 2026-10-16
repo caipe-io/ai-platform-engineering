@@ -12,6 +12,7 @@ Endpoints:
 """
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -20,6 +21,7 @@ from pymongo.database import Database
 from dynamic_agents.auth.auth import UserContext, get_user_context
 from dynamic_agents.config import get_settings
 from dynamic_agents.models import ApiResponse
+from dynamic_agents.services.file_content import MAX_BINARY_FILE_BYTES, decode_file_content, file_data_from_bytes
 from dynamic_agents.services.gridfs_store import MongoDBGridFSStore
 from dynamic_agents.services.mongo import MongoDBService, get_mongo_service
 
@@ -67,6 +69,7 @@ class FileContentResponse(BaseModel):
     fs_namespace: list[str]
     path: str
     content: str
+    encoding: Literal["utf-8", "base64"] = "utf-8"
 
 
 class FilePutRequest(BaseModel):
@@ -75,6 +78,7 @@ class FilePutRequest(BaseModel):
     fs_namespace: list[str]
     path: str
     content: str
+    encoding: Literal["utf-8", "base64"] = "utf-8"
 
 
 # --- Endpoints ---
@@ -123,10 +127,18 @@ async def get_file_content(
     value = item.value
     raw_content = value.get("content", "")
     content = "\n".join(raw_content) if isinstance(raw_content, list) else str(raw_content)
+    encoding = value.get("encoding", "utf-8")
+    if encoding == "base64":
+        try:
+            decode_file_content(value, maximum=MAX_BINARY_FILE_BYTES)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+    elif encoding != "utf-8":
+        raise HTTPException(status_code=409, detail="The file encoding is not supported")
 
     logger.debug(f"Retrieved file {path} for namespace={namespace}")
 
-    return FileContentResponse(fs_namespace=list(namespace), path=path, content=content)
+    return FileContentResponse(fs_namespace=list(namespace), path=path, content=content, encoding=encoding)
 
 
 @router.put("/content", response_model=ApiResponse)
@@ -143,7 +155,14 @@ async def put_file_content(
     db = _get_db(mongo)
 
     store = _get_gridfs_store(db)
-    store.put(namespace, body.path, {"content": body.content})
+    value = {"content": body.content}
+    if body.encoding == "base64":
+        try:
+            data = decode_file_content(body.model_dump(), maximum=MAX_BINARY_FILE_BYTES)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        value = file_data_from_bytes(data)
+    store.put(namespace, body.path, value)
 
     logger.info(f"Put file {body.path} in namespace={namespace}")
 

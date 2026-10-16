@@ -201,3 +201,28 @@ Authorization denial, unavailable policy service and missing replay data remain
 explicit failures. No app receives unrestricted database access or a permission
 grant from a run ID. See the [native ACP architecture guide](../../architecture/native-acp-metaharness.md)
 for execution, checkpoint and transcript ownership.
+
+
+## Sandbox ACP placement and platform tools
+
+Sandbox selection does not grant platform permissions. The canonical execution
+service rechecks agent use before provisioning. An operator-fixed provider
+independently verifies the caller and binds the environment to that subject,
+conversation reference, profile revision and allocation generation.
+
+| Boundary | Enforcement and owning files |
+|---|---|
+| Discover execution profiles | Authenticated catalog; only operator-qualified MCP profiles with a configured broker are admitted. Agent definitions cannot provide service URLs, commands, environment variables or credentials. `dynamic_agents/routes/runtime_profiles.py`, `dynamic_agents/services/sandbox_client.py`, `ui/src/lib/dynamic-agents/runtime-profiles.ts` |
+| Call CAIPE tools from a harness | The exact POST broker route uses a random run-scoped capability, its stored hash, current execution/lease and request identity. A browser cookie or arbitrary bearer is never a fallback. The owning producer executes through the existing server-side tool resources and current CAS checks. General user/provider credentials are not put in the sandbox. `dynamic_agents/routes/harness_tools.py`, `dynamic_agents/services/harness_tools.py`, `ui/src/app/api/v1/harness-tools/[runId]/mcp/route.ts` |
+| Resume an approval | Persist the exact pending request before display; validate its original principal, interrupt ID and offered choices/schema. Another replica delivers the decision to the same waiting execution; a model cannot invent a user approval. `dynamic_agents/services/harness_inputs.py`, `dynamic_agents/services/harness_acp.py` |
+| Delegate to a native child | Recheck current child use, enabled/native configuration and actual inline definitions under the child's execution lease. Keep its native checkpoints and apply the parent conversation's cleanup lifecycle. `dynamic_agents/services/agent_execution.py`, `dynamic_agents/services/harness_admission.py` |
+| Exchange workflow files | Revalidate the canonical active workflow owner and exact current step before sharing its namespace. A client-supplied namespace cannot authorize access or alias another conversation. `dynamic_agents/services/harness_admission.py`, `dynamic_agents/services/harness_workspace.py` |
+| Delete remote session state | Canonical conversation-delete permission authorizes the cleanup endpoint. Runtime targets come from stored conversation/binding metadata. The provider also checks the original caller; remote identity/version checks precede local binding/history removal. Failure retains recoverable state. `dynamic_agents/routes/conversations.py`, `dynamic_agents/services/sandbox_lifecycle.py`, `ui/src/app/api/chat/conversations/delete-permanently.ts` |
+
+The capability-only route is a narrow authentication boundary, not a global JWT
+bypass. It cannot choose another caller, agent or session. Pending decisions,
+run output, tool requests and bindings share the canonical database retention
+and backup policy. Harness-native files live in the referenced persistent
+workspace and require coordinated recovery. See the
+[execution architecture](../../architecture/native-acp-metaharness.md) for
+qualified capabilities and the remaining deployment checks.

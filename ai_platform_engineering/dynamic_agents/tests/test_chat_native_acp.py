@@ -34,10 +34,11 @@ async def test_stream_routes_preserve_turn_envelope(monkeypatch, resume, protoco
         yield "data: preserved\n\n"
 
     async def start_run(turn, selected_protocol, *, producer):
-        return SimpleNamespace(run_id="run", turn_id=turn.turn_id, protocol=selected_protocol,
+        return SimpleNamespace(run_id="run", turn_id=turn.turn_id, current_turn_id=None, first_sequence=0, protocol=selected_protocol,
                                producer=lambda: producer(turn, get_encoder(selected_protocol)))
 
-    async def run_events(run):
+    async def run_events(run, after=0):
+        assert after == 0
         async for frame in run.producer():
             yield frame
 

@@ -35,6 +35,8 @@ import { cn } from "@/lib/utils";
 import { useUnsavedChangesStore } from "@/store/unsaved-changes-store";
 import type {
   AgentUIConfig,
+  AgentExecution,
+  AgentRuntimeProfile,
   BuiltinToolsConfig,
   CustomThemeConfig,
   DynamicAgentConfig,
@@ -302,6 +304,8 @@ function AdvancedStep({
   availableModels,
   setMiddlewareError,
   loading,
+  nativeMiddleware,
+  platformToolsAvailable,
   visibility,
 }: {
   agent: DynamicAgentConfig | null;
@@ -321,6 +325,8 @@ function AdvancedStep({
   availableModels: { model_id: string; name: string; provider: string }[];
   setMiddlewareError: (v: boolean) => void;
   loading: boolean;
+  nativeMiddleware: boolean;
+  platformToolsAvailable: boolean;
   visibility: VisibilityType;
 }) {
   const interruptRuleCount = Object.values(interruptOn).reduce(
@@ -347,7 +353,7 @@ function AdvancedStep({
           agentId={agent?._id || null}
           value={subagents}
           onChange={setSubagents}
-          disabled={loading}
+          disabled={loading || !platformToolsAvailable}
           parentVisibility={visibility}
         />
       </CollapsibleSection>
@@ -370,7 +376,7 @@ function AdvancedStep({
           onTimeoutChange={(id, seconds) =>
             setRemoteAgentTimeouts((current) => ({ ...current, [id]: seconds }))
           }
-          disabled={loading}
+          disabled={loading || !platformToolsAvailable}
         />
       </CollapsibleSection>
 
@@ -385,7 +391,7 @@ function AdvancedStep({
           onChange={setInterruptOn}
           allowedTools={allowedTools}
           builtinTools={builtinTools}
-          disabled={loading}
+          disabled={loading || !platformToolsAvailable}
         />
       </CollapsibleSection>
 
@@ -396,10 +402,11 @@ function AdvancedStep({
         <MiddlewarePicker
           value={features}
           onChange={setFeatures}
-          disabled={loading}
+          disabled={loading || !nativeMiddleware}
           availableModels={availableModels}
           onError={setMiddlewareError}
         />
+        {!nativeMiddleware && <p className="mt-2 text-xs text-muted-foreground">The sandbox harness owns its execution loop and middleware. These native settings are retained; the server applies the configured model-call limit to supported harness turn limits.</p>}
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -416,7 +423,7 @@ function AdvancedStep({
               workflows: ids.length > 0 ? ids : undefined,
             } as BuiltinToolsConfig);
           }}
-          disabled={loading}
+          disabled={loading || !platformToolsAvailable}
         />
       </CollapsibleSection>
     </div>
@@ -439,6 +446,36 @@ export function DynamicAgentEditor({
 
   // Source for initial values: editing agent > cloning source > empty defaults
   const source = agent || cloneFrom;
+
+  const [execution, setExecution] = React.useState<AgentExecution>(source?.execution ?? { kind: "native" });
+  const [runtimeProfiles, setRuntimeProfiles] = React.useState<AgentRuntimeProfile[]>([]);
+  const [runtimeProfilesLoading, setRuntimeProfilesLoading] = React.useState(true);
+  const [runtimeProfilesError, setRuntimeProfilesError] = React.useState(false);
+  const [runtimeProfilesRetry, setRuntimeProfilesRetry] = React.useState(0);
+  const sandbox = execution.kind === "sandbox";
+  const selectedRuntimeProfile = execution.kind === "sandbox"
+    ? runtimeProfiles.find((profile) => profile.id === execution.profile_id)
+    : undefined;
+  const mcpAvailable = !sandbox || selectedRuntimeProfile?.capabilities.mcp === true;
+  const skillsAvailable = !sandbox || selectedRuntimeProfile?.capabilities.skills === true;
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setRuntimeProfilesLoading(true);
+    setRuntimeProfilesError(false);
+    fetch("/api/dynamic-agents/runtime-profiles")
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok || !data.success || !Array.isArray(data.data?.profiles)) throw new Error("RuntimeProfileCatalogError");
+        if (!cancelled) setRuntimeProfiles(data.data.profiles);
+      })
+      .catch((error: unknown) => {
+        console.warn("Runtime profile catalog unavailable", { errorType: error instanceof Error ? error.name : "Unknown" });
+        if (!cancelled) setRuntimeProfilesError(true);
+      })
+      .finally(() => { if (!cancelled) setRuntimeProfilesLoading(false); });
+    return () => { cancelled = true; };
+  }, [runtimeProfilesRetry]);
 
   // Form state - when cloning, append " (New)" to name
   const [name, setName] = React.useState(
@@ -730,7 +767,7 @@ export function DynamicAgentEditor({
   }, [isEditing]);
 
   React.useEffect(() => {
-    if (!modelId || !modelProvider) {
+    if (sandbox || !modelId || !modelProvider) {
       setSupportedReasoningEfforts([]);
       return;
     }
@@ -753,7 +790,7 @@ export function DynamicAgentEditor({
     return () => {
       cancelled = true;
     };
-  }, [modelId, modelProvider]);
+  }, [modelId, modelProvider, sandbox]);
 
   // Fetch available models on mount
   React.useEffect(() => {
@@ -765,13 +802,14 @@ export function DynamicAgentEditor({
         if (data.success && Array.isArray(data.data)) {
           setAvailableModels(data.data);
 
-          if (source?.model?.id) {
+          const sourceModel = source?.model;
+          if (sourceModel?.id) {
             // Editing or cloning existing agent - verify model exists using both model AND provider
             // (same model can exist for different providers, e.g., gpt-4o for openai and azure-openai)
             const existingModel = data.data.find(
               (m: { model_id: string; provider: string }) =>
-                m.model_id === source.model.id &&
-                m.provider === source.model.provider,
+                m.model_id === sourceModel.id &&
+                m.provider === sourceModel.provider,
             );
             if (existingModel) {
               // Model exists - ensure provider is in sync with config
@@ -779,7 +817,7 @@ export function DynamicAgentEditor({
             } else {
               // Model no longer available - reset to first available
               console.warn(
-                `Agent model "${source.model.id}" no longer available, resetting to default`,
+                `Agent model "${sourceModel.id}" no longer available, resetting to default`,
               );
               if (data.data.length > 0) {
                 setModelId(data.data[0].model_id);
@@ -887,6 +925,7 @@ export function DynamicAgentEditor({
       name,
       description,
       systemPrompt,
+      execution,
       visibility,
       sharedWithTeams,
       ownerTeamSlug,
@@ -908,6 +947,7 @@ export function DynamicAgentEditor({
       name,
       description,
       systemPrompt,
+      execution,
       visibility,
       sharedWithTeams,
       ownerTeamSlug,
@@ -1006,7 +1046,8 @@ export function DynamicAgentEditor({
                   }))
                 : undefined,
           },
-          model: { id: modelId, provider: modelProvider, reasoning_effort: reasoningEffort },
+          execution,
+          ...(!sandbox ? { model: { id: modelId, provider: modelProvider, reasoning_effort: reasoningEffort } } : {}),
           ...(instruction ? { instruction } : {}),
           ...(field === "system_prompt" ? { prompt_style: promptStyle } : {}),
         }),
@@ -1127,6 +1168,12 @@ export function DynamicAgentEditor({
     opts?: { forceConfirmNotMember?: boolean },
   ) => {
     e?.preventDefault();
+    if (loading) return;
+    if (blockers.length > 0) {
+      selectStep(blockers[0].step);
+      if (blockers[0].field === "systemPrompt") setPromptTab("edit");
+      return;
+    }
     setLoading(true);
     setError(null);
     setTransferNeedsServerConfirm(false);
@@ -1163,7 +1210,7 @@ export function DynamicAgentEditor({
     }
 
     // Validate required fields
-    if (!modelId || !modelProvider) {
+    if (!sandbox && (!modelId || !modelProvider)) {
       setError("Model selection is required");
       setLoading(false);
       return;
@@ -1235,7 +1282,8 @@ export function DynamicAgentEditor({
           subagents: subagents.length > 0 ? subagents : undefined,
           skills,
           ...knowledgeFields,
-          model: { id: modelId, provider: modelProvider, reasoning_effort: reasoningEffort },
+          execution,
+          ...(!sandbox ? { model: { id: modelId, provider: modelProvider, reasoning_effort: reasoningEffort } } : {}),
           ui: uiConfig,
           features: features,
           interrupt_on: interruptOn,
@@ -1287,7 +1335,8 @@ export function DynamicAgentEditor({
           subagents: subagents.length > 0 ? subagents : undefined,
           skills,
           ...knowledgeFields,
-          model: { id: modelId, provider: modelProvider, reasoning_effort: reasoningEffort },
+          execution,
+          ...(!sandbox ? { model: { id: modelId, provider: modelProvider, reasoning_effort: reasoningEffort } } : {}),
           ui: uiConfig,
           features: features,
           interrupt_on: interruptOn,
@@ -1334,14 +1383,7 @@ export function DynamicAgentEditor({
     }
   };
 
-  // Each entry describes one reason the Create Agent / Save Changes button is
-  // disabled. We render `blockers[0]` next to the button so the user always
-  // sees WHY they can't submit and on which step to fix it — previously the
-  // button just went `disabled` with no explanation, which the user reported
-  // as confusing (especially the Owner Team case, where the picker sits on
-  // the first wizard step but the button lives below step 5's content).
-  //
-  // assisted-by Cursor claude-opus-4-7
+  // One validation list drives the button, submit guard and required-field guidance.
   const ownerTeamMissing = !isEditing && !ownerTeamSlug;
 
   const blockers: { field: string; label: string; step: StepId }[] =
@@ -1350,7 +1392,7 @@ export function DynamicAgentEditor({
       if (!name.trim()) {
         list.push({ field: "name", label: "Agent name", step: "basic" });
       }
-      if (availableModels.length === 0) {
+      if (!sandbox && availableModels.length === 0) {
         // Distinct from "model not picked" — the user can't pick anything
         // because nothing is configured. Surfacing this separately tells the
         // operator the problem is upstream (no providers configured).
@@ -1359,8 +1401,14 @@ export function DynamicAgentEditor({
           label: "At least one model provider must be configured",
           step: "basic",
         });
-      } else if (!modelId) {
+      } else if (!sandbox && !modelId) {
         list.push({ field: "model", label: "Model", step: "basic" });
+      }
+      if (sandbox && selectedRuntimeProfile && !skillsAvailable && skills.length > 0) {
+        list.push({ field: "runtimeSkills", label: "Runtime support for selected skills", step: "basic" });
+      }
+      if (sandbox && !selectedRuntimeProfile) {
+        list.push({ field: "runtimeProfile", label: runtimeProfilesLoading ? "Runtime profiles are loading" : "Select an available runtime profile", step: "basic" });
       }
       if (ownerTeamMissing) {
         list.push({ field: "ownerTeam", label: "Owner Team", step: "basic" });
@@ -1381,6 +1429,7 @@ export function DynamicAgentEditor({
       // already had an explicit scope may still be intentionally cleared
       // to opt out - only gate the "just enabled, nothing picked" case.
       if (
+        mcpAvailable &&
         restrictKnowledge &&
         !hadExplicitKnowledgeScope &&
         datasourceIds.length === 0 &&
@@ -1396,16 +1445,24 @@ export function DynamicAgentEditor({
     }, [
       name,
       systemPrompt,
+      sandbox,
+      selectedRuntimeProfile,
+      runtimeProfilesLoading,
+      skillsAvailable,
+      skills,
       modelId,
       availableModels.length,
       ownerTeamMissing,
       restrictKnowledge,
+      mcpAvailable,
       hadExplicitKnowledgeScope,
       datasourceIds,
       ragCollectionIds,
     ]);
 
   const isValid = blockers.length === 0;
+  const systemPromptMissing = blockers.some((blocker) => blocker.field === "systemPrompt");
+  const systemPromptRequirementId = React.useId();
   const firstBlocker = blockers[0];
   const blockerStepLabel = firstBlocker
     ? (STEPS.find((s) => s.id === firstBlocker.step)?.label ??
@@ -1539,6 +1596,36 @@ export function DynamicAgentEditor({
                   ) : null}
                 </div>
 
+                <div className="space-y-2">
+                  <Label htmlFor="agent-runtime">Agent runtime</Label>
+                  <Select
+                    id="agent-runtime"
+                    value={execution.kind === "native" ? "native" : `sandbox:${execution.profile_id}`}
+                    disabled={loading || !!readOnly}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setExecution(value === "native" ? { kind: "native" } : { kind: "sandbox", profile_id: value.slice(8) });
+                    }}
+                  >
+                    <option value="native">DeepAgents (shared runtime)</option>
+                    {sandbox && !selectedRuntimeProfile && <option value={`sandbox:${execution.profile_id}`} disabled>Unavailable profile: {execution.profile_id}</option>}
+                    {runtimeProfiles.map((profile) => <option key={profile.id} value={`sandbox:${profile.id}`}>{profile.name} (Claude Code)</option>)}
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {sandbox ? "Runs over ACP in the selected sandbox. Its profile manages the model, credentials and isolation. Runtime changes apply to new conversations; existing sessions keep their binding." : "Runs in the shared DeepAgents runtime with a logical filesystem. Choose a sandbox profile for isolated ACP execution."}
+                  </p>
+                  {sandbox && !skillsAvailable && skills.length > 0 && <div role="status" className="text-sm text-muted-foreground">
+                    This profile does not support the selected skills. Choose a qualified profile or clear the selection before saving.
+                    <Button type="button" variant="link" size="sm" disabled={loading || !!readOnly} onClick={() => setSkills([])}>Clear selected skills</Button>
+                  </div>}
+                  {runtimeProfilesLoading && <p className="text-xs text-muted-foreground">Loading sandbox profiles…</p>}
+                  {runtimeProfilesError && <p className="text-xs text-muted-foreground">Sandbox profiles could not be loaded. DeepAgents remains available. <button type="button" className="underline" onClick={() => setRuntimeProfilesRetry((value) => value + 1)}>Retry profiles</button></p>}
+                  {!runtimeProfilesLoading && !runtimeProfilesError && runtimeProfiles.length === 0 && <p className="text-xs text-muted-foreground">No sandbox profiles are admitted in this environment.</p>}
+                  {selectedRuntimeProfile && <p className="text-xs text-muted-foreground">Profile revision: {selectedRuntimeProfile.revision}. MCP {selectedRuntimeProfile.capabilities.mcp ? "available" : "not yet qualified"}; skills {selectedRuntimeProfile.capabilities.skills ? "available" : "not yet qualified"}; attachments {selectedRuntimeProfile.capabilities.attachments ? "available" : "not yet qualified"}.</p>}
+                </div>
+
+                {/* Native model settings are retained when another runtime is selected. */}
+                {!sandbox && <>
                 {/* LLM Model - right after name so AI Suggest buttons can use it */}
                 <div className="space-y-2">
                   <Label htmlFor="modelId">
@@ -1603,6 +1690,8 @@ export function DynamicAgentEditor({
                     </p>
                   ) : null}
                 </div>
+
+                </>}
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between relative">
@@ -2383,8 +2472,9 @@ export function DynamicAgentEditor({
                 <BuiltinToolsPicker
                   value={builtinTools}
                   onChange={setBuiltinTools}
-                  disabled={loading || !!readOnly}
+                  disabled={loading || !!readOnly || !mcpAvailable}
                 />
+                {sandbox && <p className="text-sm text-muted-foreground">{mcpAvailable ? "Platform tools use the CAIPE broker with the calling user's permissions." : "This profile has not qualified platform tool access. Saved tool selections are retained."}</p>}
 
                 {/* MCP Tools */}
                 <div className="space-y-4">
@@ -2400,8 +2490,9 @@ export function DynamicAgentEditor({
                   <AllowedToolsPicker
                     value={allowedTools}
                     onChange={setAllowedTools}
-                    disabled={loading || !!readOnly}
+                    disabled={loading || !!readOnly || !mcpAvailable}
                   />
+                  {!mcpAvailable && <p className="text-sm text-muted-foreground">This profile has not qualified MCP access. Saved MCP selections are retained for compatible runtimes.</p>}
                 </div>
               </div>
             )}
@@ -2409,7 +2500,7 @@ export function DynamicAgentEditor({
             {/* Knowledge Step */}
             {activeStep === "knowledge" && (
               <div className="space-y-4 pt-2">
-                {!hasRagToolAccess(allowedTools) && (
+                {(!mcpAvailable || !hasRagToolAccess(allowedTools)) && (
                   <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
                     <p className="text-sm text-amber-800 dark:text-amber-200">
                       To enable access to knowledge bases, enable the Knowledge
@@ -2429,7 +2520,7 @@ export function DynamicAgentEditor({
                 <div
                   className={cn(
                     "transition-opacity",
-                    !hasRagToolAccess(allowedTools) && "opacity-50",
+                    (!mcpAvailable || !hasRagToolAccess(allowedTools)) && "opacity-50",
                   )}
                 >
                   <div className="mb-4 flex items-center justify-between gap-4 rounded-lg border p-3">
@@ -2447,7 +2538,7 @@ export function DynamicAgentEditor({
                       id="restrict-knowledge"
                       checked={restrictKnowledge}
                       disabled={
-                        loading || !!readOnly || !hasRagToolAccess(allowedTools)
+                        loading || !!readOnly || (!mcpAvailable || !hasRagToolAccess(allowedTools))
                       }
                       onCheckedChange={setRestrictKnowledge}
                     />
@@ -2460,7 +2551,7 @@ export function DynamicAgentEditor({
                       collectionValue={ragCollectionIds}
                       onCollectionChange={setRagCollectionIds}
                       disabled={
-                        loading || !!readOnly || !hasRagToolAccess(allowedTools)
+                        loading || !!readOnly || (!mcpAvailable || !hasRagToolAccess(allowedTools))
                       }
                     />
                   )}
@@ -2483,13 +2574,16 @@ export function DynamicAgentEditor({
                 <SkillsSelector
                   value={skills}
                   onChange={setSkills}
-                  disabled={loading || !!readOnly}
+                  disabled={loading || !!readOnly || !skillsAvailable}
                 />
+                {!skillsAvailable && <p className="text-sm text-muted-foreground">This profile has not qualified CAIPE skills. Saved selections are retained.</p>}
               </div>
             )}
 
             {/* Advanced Step */}
             {activeStep === "advanced" && (
+              <div>
+              {sandbox && <p className="mb-4 text-sm text-muted-foreground">{mcpAvailable ? "Delegation, approvals and workflows use CAIPE's canonical services through the platform tool broker." : "Delegation, approvals and workflows are retained until this profile qualifies platform tool access."} The sandbox harness manages its own execution loop and filesystem.</p>}
               <AdvancedStep
                 agent={agent}
                 subagents={subagents}
@@ -2508,8 +2602,11 @@ export function DynamicAgentEditor({
                 availableModels={availableModels}
                 setMiddlewareError={setMiddlewareError}
                 loading={loading || !!readOnly}
+                nativeMiddleware={!sandbox}
+                platformToolsAvailable={mcpAvailable}
                 visibility={visibility}
               />
+              </div>
             )}
 
             {/* Error */}
@@ -2566,7 +2663,18 @@ export function DynamicAgentEditor({
       </CardContent>
 
       {/* Action Buttons - Outside the card content */}
-      <div className="flex items-center gap-2 px-6 py-4 border-t bg-muted/30">
+      <div className="px-6 py-4 border-t bg-muted/30">
+        {!readOnly && systemPromptMissing && (
+          <div id={systemPromptRequirementId} role="status" aria-live="polite"
+            className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+            <span>Add a system prompt before {isEditing ? "saving" : "creating"} this agent.</span>
+            <Button type="button" variant="link" size="sm" className="h-auto p-0" disabled={loading}
+              onClick={() => { setPromptTab("edit"); selectStep("instructions"); }}>
+              Add instructions
+            </Button>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
         <div className="text-xs text-muted-foreground mr-auto hidden sm:block">
           {readOnly ? (
             "This agent is config-driven and cannot be modified"
@@ -2590,9 +2698,8 @@ export function DynamicAgentEditor({
           <Button
             onClick={handleSubmit}
             disabled={loading || !isValid}
-            // Native-tooltip mirror of the inline hint above. Helps users who
-            // hover the button looking for an explanation when they miss the
-            // inline text (e.g. on narrow screens where the hint wraps).
+            aria-describedby={systemPromptMissing ? systemPromptRequirementId : undefined}
+            // Keep the first remaining requirement available on hover too.
             title={
               !loading && firstBlocker
                 ? `${firstBlocker.label} is required${blockerStepLabel ? ` (on ${blockerStepLabel} step)` : ""}`
@@ -2611,6 +2718,7 @@ export function DynamicAgentEditor({
             )}
           </Button>
         )}
+        </div>
       </div>
 
       <UnsavedChangesDialog

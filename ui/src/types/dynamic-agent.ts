@@ -409,7 +409,7 @@ export type InterruptPayload = FormInputInterrupt | ToolApprovalInterrupt;
 /**
  * Resume data sent to POST /chat/stream/resume — discriminated union by `type`.
  */
-export type ResumeData =
+export type ResumeData = { interrupt_id?: string } & (
   | { type: "form_input"; values: Record<string, unknown> }
   | { type: "form_input"; dismissed: true }
   | { type: "tool_approval"; decision: "approve" }
@@ -426,7 +426,20 @@ export type ResumeData =
         tool_name?: string;
         edited_args?: Record<string, unknown>;
       }>;
-    };
+    });
+
+export type AgentExecution =
+  | { kind: "native" }
+  | { kind: "sandbox"; profile_id: string };
+
+/** Public, server-admitted execution choices. Deployment details stay server-side. */
+export interface AgentRuntimeProfile {
+  id: string;
+  name: string;
+  harness: "claude-code";
+  revision: string;
+  capabilities: { mcp: boolean; skills: boolean; attachments: boolean };
+}
 
 export interface DynamicAgentConfig {
   _id: string;
@@ -437,7 +450,8 @@ export interface DynamicAgentConfig {
   allowed_remote_agents?: string[];
   remote_agent_timeouts?: Record<string, number>;
   builtin_tools?: BuiltinToolsConfig; // Built-in tools configuration
-  model: ModelConfig; // Required: LLM model configuration
+  execution?: AgentExecution; // Omitted on existing definitions means native DeepAgents.
+  model?: ModelConfig; // Required for native execution; sandbox profiles own their model.
   visibility: VisibilityType;
   shared_with_teams?: string[];
   subagents: SubAgentRef[]; // Other dynamic agents that can be delegated to
@@ -513,7 +527,8 @@ export interface DynamicAgentConfigCreate {
   allowed_remote_agents?: string[];
   remote_agent_timeouts?: Record<string, number>;
   builtin_tools?: BuiltinToolsConfig;
-  model: ModelConfig; // Required: LLM model configuration
+  execution?: AgentExecution;
+  model?: ModelConfig;
   /** Accepts legacy `'private'` for back-compat; the BFF coerces it to `'team'`. */
   visibility?: LegacyVisibilityType;
   shared_with_teams?: string[];
@@ -541,6 +556,7 @@ export interface DynamicAgentConfigUpdate {
   allowed_remote_agents?: string[];
   remote_agent_timeouts?: Record<string, number>;
   builtin_tools?: BuiltinToolsConfig;
+  execution?: AgentExecution;
   model?: ModelConfig;
   /** Accepts legacy `'private'` for back-compat; the BFF coerces it to `'team'`. */
   visibility?: LegacyVisibilityType;

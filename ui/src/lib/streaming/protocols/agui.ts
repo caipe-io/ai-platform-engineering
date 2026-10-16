@@ -252,6 +252,9 @@ function handleCustom(
   const value = parsed.value as Record<string, unknown> | undefined;
 
   switch (name) {
+    case "REASONING_DELTA":
+      if (typeof value?.text === "string") callbacks.onReasoning?.(value.text, (value.namespace as string[]) || state.currentNamespace);
+      return false;
     case "TOOL_OUTPUT":
       if (typeof value?.tool_call_id === "string" && typeof value.result === "string") {
         callbacks.onToolOutput?.(value.tool_call_id, value.result, (value.namespace as string[]) || state.currentNamespace);

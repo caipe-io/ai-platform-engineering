@@ -69,6 +69,9 @@ export function useAgentTimeline(
       const namespace = event.namespace || [];
 
       switch (event.type) {
+        case "reasoning":
+          if (event.content) manager.pushReasoning(event.content, namespace);
+          break;
         case "content":
           if (event.content) {
             manager.pushContent(event.content, namespace);

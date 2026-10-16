@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
 import { Card,CardContent } from "@/components/ui/card";
 import { toYaml } from "@/lib/yaml-serializer";
+import { exportAgentConfiguration } from "@/lib/dynamic-agents/config-export";
 import { useChatStore } from "@/store/chat-store";
 import type { DynamicAgentConfigWithPermissions } from "@/types/dynamic-agent";
 import {
@@ -282,25 +283,7 @@ export function DynamicAgentsTab({
    * Export agent configuration as YAML file.
    */
   const handleExportYaml = (agent: DynamicAgentConfigWithPermissions) => {
-    // Build a complete config object for export (excluding only internal metadata)
-    const agentRecord = agent as unknown as Record<string, unknown>;
-    const exportConfig = {
-      id: agent._id,
-      name: agent.name,
-      description: agent.description || undefined,
-      system_prompt: agent.system_prompt,
-      model: agent.model,
-      visibility: agent.visibility,
-      shared_with_teams: agent.shared_with_teams?.length ? agent.shared_with_teams : undefined,
-      allowed_tools: Object.keys(agent.allowed_tools || {}).length ? agent.allowed_tools : undefined,
-      builtin_tools: agent.builtin_tools,
-      subagents: agent.subagents?.length ? agent.subagents : undefined,
-      skills: agent.skills?.length ? agent.skills : undefined,
-      features: agent.features,
-      interrupt_on: agentRecord.interrupt_on || undefined,
-      ui: agent.ui?.gradient_theme ? agent.ui : undefined,
-      enabled: agent.enabled,
-    };
+    const exportConfig = exportAgentConfiguration(agent);
 
     const yamlContent = toYaml(exportConfig);
 

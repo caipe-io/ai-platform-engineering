@@ -25,6 +25,8 @@ def environment(monkeypatch):
             "type": "form_input", "interrupt_id": "example-interrupt", "prompt": "Choose", "fields": [],
         }),
         rewind=AsyncMock(return_value="example-checkpoint"),
+        requires_rewind_confirmation=AsyncMock(return_value=False),
+        confirm_rewind=AsyncMock(),
         clear=AsyncMock(return_value=ClearResult(3, 4, 2)),
     )
     authorized = MagicMock(return_value=True)
@@ -58,17 +60,24 @@ async def test_missing_conversation_does_not_enter_execution_service(environment
     env.factory.assert_not_called()
 
 
-@pytest.mark.parametrize("operation", ["interrupt", "rewind"])
+@pytest.mark.parametrize("operation", ["interrupt", "rewind", "confirm"])
 async def test_unauthorized_conversation_cannot_enter_execution_service(environment, operation):
     env = environment
     env.authorized.return_value = False
     with pytest.raises(HTTPException) as error:
         if operation == "interrupt":
             await conversations.get_interrupt_state("example-session", env.agent.id, env.user, env.mongo)
-        else:
+        elif operation == "rewind":
             await conversations.rewind_conversation(
                 "example-session", conversations.RewindConversationRequest(
                     agent_id=env.agent.id, turn_id="example-turn", message_content="Hello", content_occurrence=1,
+                ), env.user, env.mongo,
+            )
+        else:
+            await conversations.confirm_conversation_rewind(
+                "example-session", conversations.ConfirmRewindRequest(
+                    agent_id=env.agent.id, turn_id="example-turn", message_content="Hello", content_occurrence=1,
+                    checkpoint_id="example-checkpoint",
                 ), env.user, env.mongo,
             )
     assert error.value.status_code == 403
@@ -83,9 +92,22 @@ async def test_rewind_preserves_selected_turn_and_checkpoint_response(environmen
         ), env.user, env.mongo,
     )
     assert response.data["checkpoint_id"] == "example-checkpoint"
+    assert response.data["confirmation_required"] is False
     env.service.rewind.assert_awaited_once_with(
         env.agent, "example-session", env.user, turn_id="example-turn", message_content="Hello", content_occurrence=1,
     )
+
+
+async def test_confirmation_delegates_exact_owner_authorized_edit_receipt(environment):
+    env = environment
+    response = await conversations.confirm_conversation_rewind(
+        "example-session", conversations.ConfirmRewindRequest(agent_id=env.agent.id,
+            turn_id="example-turn", message_content="Hello", content_occurrence=1, checkpoint_id="example-checkpoint"),
+        env.user, env.mongo,
+    )
+    assert response.success
+    env.service.confirm_rewind.assert_awaited_once_with(env.agent.id, "example-session", env.user,
+        checkpoint_id="example-checkpoint", turn_id="example-turn", message_content="Hello", content_occurrence=1)
 
 
 @pytest.mark.parametrize("operation", ["rewind", "clear"])

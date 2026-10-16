@@ -547,12 +547,27 @@ class InterruptConfig(BaseModel):
     )
 
 
+class AgentExecutionConfig(BaseModel):
+    """A saved execution choice; connection details are operator-owned."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["native", "sandbox"] = "native"
+    profile_id: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
+
+    @model_validator(mode="after")
+    def validate_profile(self) -> "AgentExecutionConfig":
+        if (self.kind == "sandbox") != (self.profile_id is not None):
+            raise ValueError("Choose an approved execution profile for a sandbox agent")
+        return self
+
+
 class DynamicAgentConfigBase(BaseModel):
     """Base fields for dynamic agent configuration."""
 
     name: str = Field(..., description="Display name")
     description: str | None = Field(None, description="Optional description")
     system_prompt: str = Field(..., description="Main system prompt / instructions")
+    execution: AgentExecutionConfig = Field(default_factory=AgentExecutionConfig)
     allowed_tools: dict[str, list[str] | bool] = Field(
         default_factory=dict,
         description=(
@@ -569,7 +584,7 @@ class DynamicAgentConfigBase(BaseModel):
         default_factory=dict,
         description="Per-agent timeout overrides in seconds for selected A2A agents",
     )
-    model: ModelConfig = Field(..., description="LLM model configuration (id + provider)")
+    model: ModelConfig | None = Field(None, description="Native LLM configuration; sandbox profiles own their model")
     visibility: VisibilityType = Field(VisibilityType.PRIVATE, description="Visibility scope")
     shared_with_teams: list[str] | None = Field(None, description="Team IDs when visibility=team")
     subagents: list[SubAgentRef] = Field(
@@ -624,6 +639,12 @@ class DynamicAgentConfigBase(BaseModel):
         None,
         description="Backend configuration (storage type, TTL). None = use server defaults.",
     )
+
+    @model_validator(mode="after")
+    def validate_execution(self) -> "DynamicAgentConfigBase":
+        if self.execution.kind == "native" and self.model is None:
+            raise ValueError("Choose a model for a native agent")
+        return self
 
     @model_validator(mode="before")
     @classmethod

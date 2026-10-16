@@ -82,6 +82,17 @@ class _LeaseCollection:
                 return SimpleNamespace(deleted_count=1)
             return SimpleNamespace(deleted_count=0)
 
+    def update_one(self, query: dict, update: dict) -> SimpleNamespace:
+        key = (query["agent_id"], query["session_id"])
+        with self.lock:
+            row = self.rows.get(key)
+            if row is None or not _matches(row, query):
+                return SimpleNamespace(matched_count=0)
+            row.update(deepcopy(update.get("$set", {})))
+            for field in update.get("$unset", {}):
+                row.pop(field, None)
+            return SimpleNamespace(matched_count=1)
+
 
 def _mongo(collection: _LeaseCollection | MagicMock) -> MongoDBService:
     mongo = MongoDBService(Settings(mongodb_database="example"))

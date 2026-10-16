@@ -32,6 +32,7 @@ from typing import Any
 from dynamic_agents.services.context_usage import CONTEXT_USAGE_EVENT
 from dynamic_agents.services.stream_encoders.events import (
     ContextUsage,
+    ReasoningDelta,
     StreamEvent,
     TextDelta,
     ToolCompleted,
@@ -102,6 +103,8 @@ class LangGraphStreamHelper:
         # _last_tool_start_pos marks where the last tool_start boundary is in the array.
         self._content_chunks: list[str] = []
         self._last_tool_start_pos: int = 0
+        self._observed_chunks: list[tuple[str, bool]] = []
+        self._last_tool_observed_pos = 0
 
     # ── Stateful methods ──────────────────────────────────
 
@@ -123,6 +126,8 @@ class LangGraphStreamHelper:
         """Maintain answer/thinking accumulation at either delivery boundary."""
         if isinstance(event, TextDelta):
             self.accumulate_content(event.text)
+        elif isinstance(event, ReasoningDelta):
+            self._observed_chunks.append((event.text, True))
         elif isinstance(event, ToolStarted):
             self.reset_accumulated_content()
 
@@ -276,10 +281,12 @@ class LangGraphStreamHelper:
     def accumulate_content(self, content: str) -> None:
         """Append a content chunk to the buffer."""
         self._content_chunks.append(content)
+        self._observed_chunks.append((content, False))
 
     def reset_accumulated_content(self) -> None:
         """Mark the current position as a tool boundary."""
         self._last_tool_start_pos = len(self._content_chunks)
+        self._last_tool_observed_pos = len(self._observed_chunks)
 
     def get_accumulated_content(self) -> str:
         """Return content after the last tool call (the final answer)."""
@@ -287,9 +294,8 @@ class LangGraphStreamHelper:
 
     def get_thinking_content(self) -> str:
         """Return content before the last tool call (intermediate reasoning)."""
-        if self._last_tool_start_pos == 0:
-            return ""
-        return "".join(self._content_chunks[: self._last_tool_start_pos])
+        return "".join(text for index, (text, reasoning) in enumerate(self._observed_chunks)
+                       if reasoning or index < self._last_tool_observed_pos)
 
     # ── Static/stateless methods ──────────────────────────
 

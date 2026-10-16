@@ -10,10 +10,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from contextlib import aclosing, suppress
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import aclosing, contextmanager, suppress
 from contextvars import ContextVar
 
+from dynamic_agents.services.harness_inputs import HarnessInputs
 from dynamic_agents.services.native_run_repository import (
     TERMINAL_STATUSES,
     NativeExecutionRun,
@@ -32,6 +33,21 @@ _admitted_callback: ContextVar[Callable[[str], Awaitable[None]] | None] = Contex
 _released_callback: ContextVar[Callable[[], Awaitable[None]] | None] = ContextVar(
     "native_run_released_callback", default=None,
 )
+
+current_native_execution_run: ContextVar[NativeExecutionRun | None] = ContextVar("current_native_execution_run", default=None)
+
+@contextmanager
+def native_child_execution() -> Iterator[None]:
+    """A nested agent owns its own lease, never its parent's run admission."""
+    admitted = _admitted_callback.set(None)
+    released = _released_callback.set(None)
+    run = current_native_execution_run.set(None)
+    try:
+        yield
+    finally:
+        _admitted_callback.reset(admitted)
+        _released_callback.reset(released)
+        current_native_execution_run.reset(run)
 
 
 async def mark_native_run_admitted(lease_id: str) -> None:
@@ -63,6 +79,7 @@ class NativeRunCoordinator:
     async def start(
         self, *, owner_subject: str, agent_id: str, session_id: str, turn_id: str, fingerprint: str, protocol: str,
         producer: Callable[[], AsyncIterator[str]], outcome: Callable[[], str | None],
+        result: Callable[[], dict] | None = None,
     ) -> NativeExecutionRun:
         if self._closed:
             raise NativeRunStorageError("Native execution is shutting down")
@@ -72,7 +89,7 @@ class NativeRunCoordinator:
         starter = asyncio.create_task(self._admit_and_start(
             owner_subject=owner_subject, agent_id=agent_id, session_id=session_id,
             turn_id=turn_id, fingerprint=fingerprint, protocol=protocol,
-            producer=producer, outcome=outcome,
+            producer=producer, outcome=outcome, result=result,
         ), name=f"native-acp-admission:{turn_id}")
         self._starters.add(starter)
         self._starter_scopes[starter] = (agent_id, session_id, turn_id)
@@ -99,6 +116,7 @@ class NativeRunCoordinator:
     async def _admit_and_start(
         self, *, owner_subject: str, agent_id: str, session_id: str, turn_id: str, fingerprint: str, protocol: str,
         producer: Callable[[], AsyncIterator[str]], outcome: Callable[[], str | None],
+        result: Callable[[], dict] | None = None,
     ) -> NativeExecutionRun:
         run, created = await self.repository.create(
             owner_subject=owner_subject, agent_id=agent_id, session_id=session_id,
@@ -112,7 +130,7 @@ class NativeRunCoordinator:
             return await self.repository.finish(run.run_id, "interrupted", "worker_interrupted")
         # create_task copies the authorized request context. Credentials remain
         # only in that task's memory and are never serialized into run records.
-        task = asyncio.create_task(self._pump(run, producer, outcome), name=f"native-acp-run:{run.run_id}")
+        task = asyncio.create_task(self._pump(run, producer, outcome, result), name=f"native-acp-run:{run.run_id}")
         self._tasks[run.run_id] = task
         self._scopes[run.run_id] = (agent_id, session_id, turn_id)
 
@@ -144,12 +162,14 @@ class NativeRunCoordinator:
 
     async def _pump(
         self, run: NativeExecutionRun, producer: Callable[[], AsyncIterator[str]], outcome: Callable[[], str | None],
+        result: Callable[[], dict] | None = None,
     ) -> None:
         owner = asyncio.current_task()
         if owner is None:
             raise RuntimeError("Detached native execution requires an owning task")
         token = _admitted_callback.set(lambda lease_id: self.repository.bind_lease(run.run_id, lease_id))
         released_token = _released_callback.set(lambda: self.repository.prepare_finish(run.run_id))
+        run_token = current_native_execution_run.set(run)
         watcher = asyncio.create_task(self._watch_cancel(run, owner))
         status: RunStatus = "failed"
         error_code: str | None = None
@@ -157,6 +177,8 @@ class NativeRunCoordinator:
             async with aclosing(producer()) as frames:
                 async for frame in frames:
                     await self.repository.append_frame(run.run_id, frame)
+                    if outcome() == "awaiting_input":
+                        await HarnessInputs(self.repository).publish_waiting(run.run_id)
             final_outcome = outcome()
             status = (
                 "awaiting_input" if final_outcome in {"interrupt", "awaiting_input"} else
@@ -165,19 +187,26 @@ class NativeRunCoordinator:
             )
             if status == "interrupted":
                 error_code = "missing_terminal_event"
+            if status == "completed" and result is not None:
+                await self.repository.store_result(run.run_id, result())
         except asyncio.CancelledError:
             current = await self.repository.get(run.run_id, owner_subject=run.owner_subject, reconcile=False)
             status = "cancelled" if current is not None and current.cancel_requested else "interrupted"
             error_code = None if status == "cancelled" else "worker_interrupted"
         except Exception as exc:
-            logger.exception("Native detached execution failed for run %s", run.run_id)
-            error_code = "stream_storage_limit" if isinstance(exc, NativeRunLimitError) else "execution_failed"
+            current = await self.repository.get(run.run_id, owner_subject=run.owner_subject, reconcile=False)
+            if current is not None and current.cancel_requested:
+                status, error_code = "cancelled", None
+            else:
+                logger.exception("Native detached execution failed for run %s", run.run_id)
+                error_code = "stream_storage_limit" if isinstance(exc, NativeRunLimitError) else "execution_failed"
         finally:
             watcher.cancel()
             with suppress(asyncio.CancelledError):
                 await watcher
             _admitted_callback.reset(token)
             _released_callback.reset(released_token)
+            current_native_execution_run.reset(run_token)
             # Runtime/ACP cleanup has completed before exposing a terminal run.
             await self.repository.finish(run.run_id, status, error_code)
 
@@ -229,6 +258,13 @@ class NativeRunCoordinator:
             (run_id, task) for run_id, task in self._tasks.items()
             if matches(self._scopes.get(run_id)) and not task.done()
         ]
+        if turn_id is not None:
+            retained = []
+            for run_id, task in targets:
+                record = await self.repository.get(run_id, owner_subject=None)
+                if record is not None and (record.current_turn_id or record.turn_id) == turn_id:
+                    retained.append((run_id, task))
+            targets = retained
         for _, task in targets:
             task.cancel()
         if targets:

@@ -1,12 +1,9 @@
 /**
  * Tests for how DynamicAgentEditor enforces required fields on submit.
  *
- * Enforcement is intentionally quiet: the Create Agent button is `disabled`
- * while any required field is missing (Owner Team, name, model, system
- * prompt), with a hover-only native `title=` explaining what's left. The
- * owner picker carries a silent `aria-invalid` for screen readers. We
- * deliberately do NOT render loud red badges, inline error boxes, or a
- * footer "Required: …" banner — the asterisk + disabled button are enough.
+ * Required fields disable submission. Missing instructions also have visible,
+ * neutral guidance with a link back to the editor from every wizard step.
+ * The owner picker retains aria-invalid without a red error banner.
  */
 
 import React from "react";
@@ -48,17 +45,19 @@ jest.mock("@/lib/codemirror/markdown-highlight", () => ({
 }));
 
 jest.mock("@/components/dynamic-agents/AllowedToolsPicker", () => ({
-  AllowedToolsPicker: () => <div data-testid="allowed-tools-picker" />,
+  AllowedToolsPicker: ({ disabled }: { disabled?: boolean }) => <button data-testid="allowed-tools-picker" disabled={disabled} type="button">MCP selection</button>,
 }));
 jest.mock("@/components/dynamic-agents/BuiltinToolsPicker", () => ({
-  BuiltinToolsPicker: () => <div data-testid="builtin-tools-picker" />,
+  BuiltinToolsPicker: ({ disabled }: { disabled?: boolean }) => <button data-testid="builtin-tools-picker" disabled={disabled} type="button">Builtin selection</button>,
 }));
 jest.mock("@/components/dynamic-agents/MiddlewarePicker", () => ({
-  MiddlewarePicker: () => <div data-testid="middleware-picker" />,
+  MiddlewarePicker: ({ disabled }: { disabled?: boolean }) => <button data-testid="middleware-picker" disabled={disabled} type="button">Middleware selection</button>,
 }));
 jest.mock("@/components/dynamic-agents/SubagentPicker", () => ({
-  SubagentPicker: () => <div data-testid="subagent-picker" />,
+  SubagentPicker: ({ disabled }: { disabled?: boolean }) => <button data-testid="subagent-picker" disabled={disabled} type="button">Subagent selection</button>,
 }));
+jest.mock("@/components/dynamic-agents/RemoteAgentsPicker", () => ({ RemoteAgentsPicker: ({ disabled }: { disabled?: boolean }) => <button data-testid="remote-agents-picker" disabled={disabled} type="button">Remote selection</button> }));
+jest.mock("@/components/dynamic-agents/WorkflowToolsPicker", () => ({ WorkflowToolsPicker: ({ disabled }: { disabled?: boolean }) => <button data-testid="workflow-picker" disabled={disabled} type="button">Workflow selection</button> }));
 jest.mock("@/components/dynamic-agents/SkillsSelector", () => ({
   SkillsSelector: () => <div data-testid="skills-selector" />,
 }));
@@ -138,10 +137,12 @@ function jsonResponse(body: unknown) {
  * "missing" to "filled" and edit-mode transfers can switch teams without
  * rerendering).
  */
-function mockApi() {
+function mockApi(options: { profiles?: unknown[]; noModels?: boolean } = {}) {
   const fetchMock = jest.fn(
     async (url: RequestInfo | URL, init?: RequestInit) => {
       const u = typeof url === "string" ? url : url.toString();
+      if (u.includes("/api/dynamic-agents/runtime-profiles")) return jsonResponse({ success: true, data: { profiles: options.profiles ?? [] } });
+      if (u.includes("/api/dynamic-agents/models") && options.noModels) return jsonResponse({ success: true, data: [] });
       if (u.includes("/api/dynamic-agents/models")) {
         return jsonResponse({
           success: true,
@@ -286,7 +287,7 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
     ).toBeInTheDocument();
   });
 
-  it("enables Create Agent once Owner Team and the remaining fields are filled", async () => {
+  it("clears the Owner Team blocker once a team is selected", async () => {
     render(<DynamicAgentEditor onCancel={jest.fn()} onSave={jest.fn()} />);
     await flushAsync();
 
@@ -314,6 +315,96 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
         expect.stringContaining("Owner Team is required") as unknown as string,
       );
     });
+  });
+
+  it("explains missing instructions on another step and enables creation only after a nonblank prompt", async () => {
+    const onSave = jest.fn();
+    render(<DynamicAgentEditor onCancel={jest.fn()} onSave={onSave} />);
+    await flushAsync();
+    fireEvent.change(screen.getByPlaceholderText(/Code Review Agent/i), { target: { value: "Example agent" } });
+    await pickTeam(/Owner Team/i, "platform");
+    fireEvent.click(screen.getByRole("button", { name: /Advanced/i }));
+    expect(screen.getByRole("heading", { name: "Step 6: Advanced" })).toBeInTheDocument();
+
+    const notice = screen.getByText("Add a system prompt before creating this agent.");
+    expect(notice).toBeVisible();
+    const create = screen.getByRole("button", { name: "Create Agent" });
+    expect(create).toBeDisabled();
+    expect(create).toHaveAttribute("aria-describedby", notice.parentElement?.id);
+    fireEvent.click(screen.getByRole("button", { name: "Add instructions" }));
+    expect(screen.getByRole("heading", { name: "Step 2: Instructions" })).toBeInTheDocument();
+    const editor = await screen.findByTestId("codemirror-mock");
+    fireEvent.change(editor, { target: { value: " \n " } });
+    expect(create).toBeDisabled();
+    fireEvent.submit(editor.closest("form")!);
+    expect((global.fetch as jest.Mock).mock.calls.some(([url, init]) => url === "/api/dynamic-agents" && init?.method === "POST")).toBe(false);
+
+    fireEvent.change(editor, { target: { value: "Answer questions using the permitted tools." } });
+    expect(screen.queryByText("Add a system prompt before creating this agent.")).not.toBeInTheDocument();
+    expect(create).not.toHaveAttribute("aria-describedby");
+    expect(create).toBeEnabled();
+    fireEvent.click(create);
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    const submission = (global.fetch as jest.Mock).mock.calls.find(([url, init]) => url === "/api/dynamic-agents" && init?.method === "POST");
+    const payload = JSON.parse(String(submission?.[1]?.body));
+    expect(payload.system_prompt).toBe("Answer questions using the permitted tools.");
+  });
+
+  it("creates a sandbox agent without a native model", async () => {
+    const fetchMock = mockApi({ noModels: true, profiles: [{ id: "primary", name: "Primary sandbox", harness: "claude-code", revision: "v1", capabilities: { mcp: false, skills: false, attachments: true } }] });
+    const onSave = jest.fn();
+    render(<DynamicAgentEditor onCancel={jest.fn()} onSave={onSave} />);
+    await flushAsync();
+    fireEvent.change(screen.getByPlaceholderText(/Code Review Agent/i), { target: { value: "Example sandbox" } });
+    await pickTeam(/Owner Team/i, "platform");
+    fireEvent.change(screen.getByLabelText("Agent runtime"), { target: { value: "sandbox:primary" } });
+    expect(screen.queryByLabelText(/LLM Model/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add instructions" }));
+    fireEvent.change(await screen.findByTestId("codemirror-mock"), { target: { value: "Use the permitted tools." } });
+    const create = screen.getByRole("button", { name: "Create Agent" });
+    expect(create).toBeEnabled();
+    fireEvent.click(create);
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    const submission = fetchMock.mock.calls.find(([url, init]) => url === "/api/dynamic-agents" && init?.method === "POST");
+    const payload = JSON.parse(String(submission?.[1]?.body));
+    expect(payload.execution).toEqual({ kind: "sandbox", profile_id: "primary" });
+    expect(payload.model).toBeUndefined();
+  });
+
+  it("preserves broker-qualified features while retaining harness-owned middleware configuration", async () => {
+    const fetchMock = mockApi({ profiles: [{ id: "primary", name: "Primary sandbox", harness: "claude-code", revision: "v1", capabilities: { mcp: true, skills: true, attachments: true } }] });
+    const source = { _id: "agent-primary", name: "Example", system_prompt: "Use permitted tools", visibility: "team", owner_team_slug: "platform", allowed_tools: { primary: true }, allowed_remote_agents: ["remote-primary"], builtin_tools: { workflows: ["workflow-primary"] }, subagents: [{ agent_id: "agent-child", name: "child", description: "Specialist" }], skills: ["skill-primary"], features: { model_call_limit: { enabled: true, run_limit: 20 } }, enabled: true, owner_id: "owner@example.test", is_system: false, created_at: "", updated_at: "" } as import("@/types/dynamic-agent").DynamicAgentConfig;
+    const onSave = jest.fn();
+    render(<DynamicAgentEditor cloneFrom={source} onCancel={jest.fn()} onSave={onSave} />);
+    await flushAsync();
+    fireEvent.change(screen.getByLabelText("Agent runtime"), { target: { value: "sandbox:primary" } });
+    fireEvent.click(screen.getByRole("button", { name: /Tools/ }));
+    expect(screen.getByTestId("builtin-tools-picker")).toBeEnabled();
+    expect(screen.getByTestId("allowed-tools-picker")).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /Advanced/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Subagents/ }));
+    expect(screen.getByTestId("subagent-picker")).toBeEnabled();
+    expect(screen.getByTestId("remote-agents-picker")).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /^Workflows/ }));
+    expect(screen.getByTestId("workflow-picker")).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /^Middleware/ }));
+    expect(screen.getByTestId("middleware-picker")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    const submission = fetchMock.mock.calls.find(([url, init]) => url === "/api/dynamic-agents" && init?.method === "POST");
+    const payload = JSON.parse(String(submission?.[1]?.body));
+    expect(payload).toMatchObject({ allowed_tools: source.allowed_tools, allowed_remote_agents: source.allowed_remote_agents, subagents: source.subagents, skills: source.skills, features: source.features, builtin_tools: { workflows: ["workflow-primary"] } });
+  });
+
+  it("keeps an unavailable saved profile visible and blocks saving instead of falling back to native", async () => {
+    const source = { _id: "agent-primary", name: "Example", system_prompt: "Instructions", execution: { kind: "sandbox", profile_id: "retired" }, visibility: "team", owner_team_slug: "platform", allowed_tools: {}, subagents: [], skills: [], enabled: true, owner_id: "owner@example.test", is_system: false, created_at: "", updated_at: "" } as import("@/types/dynamic-agent").DynamicAgentConfig;
+    render(<DynamicAgentEditor agent={source} onCancel={jest.fn()} onSave={jest.fn()} />);
+    await flushAsync();
+    expect(screen.getByLabelText("Agent runtime")).toHaveValue("sandbox:retired");
+    expect(screen.getByRole("option", { name: "Unavailable profile: retired" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save Changes" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Agent runtime"), { target: { value: "native" } });
+    expect(screen.getByRole("button", { name: "Save Changes" })).toBeEnabled();
   });
 
   it("lets edit-mode owner team changes save as ownership transfers", async () => {
@@ -431,4 +522,17 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
     fireEvent.click(screen.getByRole("button", { name: /Pick a datasource/i }));
     expect(saveButton).not.toBeDisabled();
   });
+  it("explains unsupported retained skills and requires an explicit clear or qualified profile", async () => {
+    mockApi({ profiles: [{ id: "primary", name: "Primary sandbox", harness: "claude-code", revision: "v1", capabilities: { mcp: true, skills: false, attachments: true } }] });
+    const source = { _id: "agent-primary", name: "Example", system_prompt: "Use permitted tools", visibility: "team", owner_team_slug: "platform", allowed_tools: {}, subagents: [], skills: ["skill-primary"], enabled: true, owner_id: "owner@example.test", is_system: false, created_at: "", updated_at: "" } as import("@/types/dynamic-agent").DynamicAgentConfig;
+    render(<DynamicAgentEditor cloneFrom={source} onCancel={jest.fn()} onSave={jest.fn()} />);
+    await flushAsync();
+    fireEvent.change(screen.getByLabelText("Agent runtime"), { target: { value: "sandbox:primary" } });
+    expect(screen.getByText(/This profile does not support the selected skills/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create Agent" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Clear selected skills" }));
+    expect(screen.queryByText(/This profile does not support the selected skills/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create Agent" })).toBeEnabled();
+  });
+
 });

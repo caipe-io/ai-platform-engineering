@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -54,6 +55,7 @@ DA_REQUIRE_BEARER = os.environ.get("DA_REQUIRE_BEARER", "").strip().lower() in (
 # Probe / observability endpoints must stay reachable without auth so Docker
 # healthchecks and Prometheus scrapes do not flap when bearer enforcement is on.
 PUBLIC_PATHS = frozenset({"/health", "/healthz", "/readyz", "/metrics"})
+_HARNESS_MCP_PATH = re.compile(r"^/api/v1/harness-tools/[a-f0-9-]{36}/mcp$")
 
 
 def _validate_bearer_or_none(token: str) -> dict | None:
@@ -84,6 +86,11 @@ class JwtAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         request.state.verified_bearer_claims = None
         if request.method == "OPTIONS" or request.url.path in PUBLIC_PATHS:
+            return await call_next(request)
+        if request.method == "POST" and _HARNESS_MCP_PATH.fullmatch(request.url.path):
+            # This one route authenticates a short-lived run capability, not a
+            # human identity. Its handler also verifies the live execution lease.
+            # Never accept its header as authority on another API operation.
             return await call_next(request)
 
         authorization = request.headers.get("authorization", "")

@@ -71,7 +71,16 @@ export interface Participant {
   id: string; // agent config ID (for agents) or user email (for users)
 }
 
+/** Owner-only action reference; internal native edit state never crosses the API. */
+export interface PendingConversationEdit {
+  agent_id: string;
+  message_id: string;
+  phase: "pending_history" | "history_applied";
+}
+
 export interface Conversation {
+  /** Response-only recovery action for this conversation owner. */
+  pending_edit?: PendingConversationEdit;
   _id: string; // UUID for shareable links (server-generated)
   title: string;
   client_type: ClientType; // Top-level: 'webui' | 'slack' (promoted from metadata)

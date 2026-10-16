@@ -127,6 +127,7 @@ def environment(monkeypatch):
     # cross-worker replay are exercised in test_native_run_continuity_mongodb.
     async def start(**kwargs):
         return SimpleNamespace(run_id="example-run", turn_id=kwargs["turn_id"], protocol=kwargs["protocol"],
+                               first_sequence=0, current_turn_id=None,
                                producer=kwargs["producer"])
 
     async def subscribe(run, after=0):
@@ -201,7 +202,9 @@ async def test_invoke_keeps_native_runtime_lifetime_through_acp(environment, sch
     else:
         env.cache.ephemeral.assert_called_once()
         env.cache.get_or_create.assert_not_awaited()
-        env.saved.assert_not_called()
+        # Placement must still honor a previously admitted sandbox session;
+        # this lookup does not enable native history for ephemeral invocations.
+        env.saved.assert_called_once()
     assert env.admit.called is (scheduler or persist_history)
     assert len(env.state.acp_calls) == 1
     env.runtime.stream.assert_not_called()
@@ -242,6 +245,7 @@ async def test_cache_restart_preserves_real_admitted_storage_and_resume_snapshot
     mongo = MongoDBService(settings)
     mongo._db = {
         SESSION_BINDINGS_COLLECTION: collection, "workflow_checkpoints": checkpoints, "workflow_checkpoints_writes": writes,
+        "conversations": MagicMock(update_one=MagicMock()),
     }
     mongo._native_run_coordinator = env.mongo._native_run_coordinator
     mongo.get_agent_mcp_servers = MagicMock(return_value=[])

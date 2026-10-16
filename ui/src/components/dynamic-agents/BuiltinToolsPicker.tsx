@@ -23,6 +23,8 @@ interface BuiltinToolsPickerProps {
   value: BuiltinToolsConfig | undefined;
   onChange: (value: BuiltinToolsConfig) => void;
   disabled?: boolean;
+  /** Runtime-specific exclusions; saved settings can be disabled but never enabled. */
+  disabledToolIds?: string[];
 }
 
 /**
@@ -90,14 +92,16 @@ function ToolConfig({
   config,
   onChange,
   disabled,
+  unavailable,
 }: {
   definition: BuiltinToolDefinition;
   config: GenericToolConfig | undefined;
   onChange: (config: GenericToolConfig) => void;
   disabled?: boolean;
+  unavailable?: boolean;
 }) {
   const [expanded, setExpanded] = React.useState(false);
-  const isEnabled = config?.enabled ?? definition.enabled_by_default;
+  const isEnabled = config?.enabled ?? (!unavailable && definition.enabled_by_default);
   const hasConfigFields = definition.config_fields.length > 0;
 
   const handleEnabledChange = (enabled: boolean) => {
@@ -139,7 +143,7 @@ function ToolConfig({
           <button
             type="button"
             onClick={() => handleEnabledChange(!isEnabled)}
-            disabled={disabled}
+            disabled={disabled || (unavailable && !isEnabled)}
             className={cn(
               "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none",
               isEnabled ? "bg-green-500" : "bg-muted-foreground/30",
@@ -193,7 +197,7 @@ function ToolConfig({
               field={field}
               value={config?.[field.name] ?? getFieldDefault(field)}
               onChange={(value) => handleFieldChange(field.name, value)}
-              disabled={disabled}
+              disabled={disabled || unavailable}
             />
           ))}
         </div>
@@ -335,7 +339,7 @@ function ConfigField({
   return null;
 }
 
-export function BuiltinToolsPicker({ value, onChange, disabled }: BuiltinToolsPickerProps) {
+export function BuiltinToolsPicker({ value, onChange, disabled, disabledToolIds = [] }: BuiltinToolsPickerProps) {
   const { definitions, loading, error } = useBuiltinToolDefinitions();
 
   // Track whether we've initialized defaults for the current definitions.
@@ -358,6 +362,7 @@ export function BuiltinToolsPicker({ value, onChange, disabled }: BuiltinToolsPi
     const missingDefaults: Record<string, GenericToolConfig> = {};
 
     for (const definition of definitions) {
+      if (disabledToolIds.includes(definition.id)) continue;
       // Cast to access config by dynamic key
       const toolConfig = (value as Record<string, GenericToolConfig | undefined>)?.[definition.id];
       if (definition.enabled_by_default && !toolConfig) {
@@ -383,12 +388,13 @@ export function BuiltinToolsPicker({ value, onChange, disabled }: BuiltinToolsPi
         ...missingDefaults,
       } as BuiltinToolsConfig);
     }
-  }, [definitions, value, onChange]);
+  }, [definitions, value, onChange, disabledToolIds]);
 
   const handleToolChange = (
     toolId: string,
     config: GenericToolConfig
   ) => {
+    if (disabledToolIds.includes(toolId) && config.enabled) return;
     onChange({
       ...value,
       [toolId]: config,
@@ -451,6 +457,7 @@ export function BuiltinToolsPicker({ value, onChange, disabled }: BuiltinToolsPi
             key={definition.id}
             definition={definition}
             config={(value as Record<string, GenericToolConfig | undefined>)?.[definition.id]}
+            unavailable={disabledToolIds.includes(definition.id)}
             onChange={(config) => handleToolChange(definition.id, config)}
             disabled={disabled}
           />

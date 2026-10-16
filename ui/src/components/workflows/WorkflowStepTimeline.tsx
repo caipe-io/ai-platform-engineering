@@ -250,9 +250,9 @@ function WorkflowInterrupt({
   const handleFormSubmit = useCallback(
     (formData: Record<string, string>) => {
       setIsResuming(true);
-      onResume(JSON.stringify({ type: "form_input", values: formData }));
+      onResume(JSON.stringify({ type: "form_input", interrupt_id: interrupt.interruptId, values: formData }));
     },
-    [onResume]
+    [onResume, interrupt.interruptId]
   );
 
   // Build the tools list for tool_approval interrupts
@@ -268,13 +268,14 @@ function WorkflowInterrupt({
     return [{
       toolName: interrupt.toolName || "",
       toolArgs: (interrupt.toolArgs as Record<string, unknown>) || {},
-      allowedDecisions: ["approve", "reject", "edit"],
+      allowedDecisions: interrupt.allowedDecisions ?? ["approve", "reject", "edit"],
     }];
   }, [interrupt]);
 
   const handleToolDecision = useCallback(
     (decision: "approve" | "reject" | "edit", editedArgs?: Record<string, unknown>) => {
       const currentTool = tools[currentToolIndex];
+      if (!currentTool?.allowedDecisions.includes(decision)) return;
       const newDecision = {
         decision,
         tool_name: currentTool.toolName,
@@ -295,16 +296,16 @@ function WorkflowInterrupt({
         // Single tool — legacy format
         const d = newDecisions[0];
         if (d.decision === "edit" && d.edited_args) {
-          onResume(JSON.stringify({ type: "tool_approval", decision: "edit", edited_args: d.edited_args }));
+          onResume(JSON.stringify({ type: "tool_approval", interrupt_id: interrupt.interruptId, decision: "edit", edited_args: d.edited_args }));
         } else {
-          onResume(JSON.stringify({ type: "tool_approval", decision: d.decision }));
+          onResume(JSON.stringify({ type: "tool_approval", interrupt_id: interrupt.interruptId, decision: d.decision }));
         }
       } else {
         // Multi-tool — batched format
-        onResume(JSON.stringify({ type: "tool_approval", decisions: newDecisions }));
+        onResume(JSON.stringify({ type: "tool_approval", interrupt_id: interrupt.interruptId, decisions: newDecisions }));
       }
     },
-    [tools, currentToolIndex, accumulatedDecisions, onResume]
+    [tools, currentToolIndex, accumulatedDecisions, onResume, interrupt.interruptId]
   );
 
   if (interrupt.type === "tool_approval" && tools.length > 0) {
@@ -361,7 +362,7 @@ function WorkflowInterrupt({
         ]}
         onSubmit={(data) => {
           setIsResuming(true);
-          onResume(JSON.stringify({ type: "form_input", values: data }));
+          onResume(JSON.stringify({ type: "form_input", interrupt_id: interrupt.interruptId, values: data }));
         }}
         disabled={isResuming}
       />

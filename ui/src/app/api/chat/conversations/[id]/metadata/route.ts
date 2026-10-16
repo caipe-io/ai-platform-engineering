@@ -1,3 +1,4 @@
+import { conversationForViewer } from "@/lib/conversation-view";
 /**
  * PATCH /api/chat/conversations/[id]/metadata
  *
@@ -67,5 +68,5 @@ export const PATCH = withErrorHandler(async (
   );
 
   const updated = await conversations.findOne({ _id: conversationId });
-  return successResponse(updated);
+  return successResponse(conversationForViewer(updated));
 });

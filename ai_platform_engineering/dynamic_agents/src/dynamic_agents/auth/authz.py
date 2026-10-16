@@ -255,6 +255,11 @@ async def require_conversation_read_permission(conversation_id: str) -> None:
     await _require_action("conversation", conversation_id, "read", "conversation#read")
 
 
+async def require_conversation_delete_permission(conversation_id: str) -> None:
+    """Authorize destructive session cleanup using the canonical resource PDP."""
+    await _require_action("conversation", conversation_id, "delete", "conversation#delete")
+
+
 def current_subject_reference() -> str | None:
     """Resolve the already-validated bearer principal for durable run ownership."""
     token = current_user_token.get()

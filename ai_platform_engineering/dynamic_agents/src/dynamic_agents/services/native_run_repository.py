@@ -9,6 +9,7 @@ requiring MongoDB transactions or replaying a tool operation.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Literal
@@ -68,6 +69,10 @@ class NativeExecutionRun(BaseModel):
     turn_id: str
     fingerprint: str = Field(repr=False)
     protocol: str
+    active: bool = True
+    current_turn_id: str | None = None
+    first_sequence: int = 0
+    result: dict | None = Field(default=None, repr=False)
     status: RunStatus = "queued"
     last_sequence: int = 0
     total_bytes: int = 0
@@ -83,9 +88,13 @@ class NativeExecutionRun(BaseModel):
 
     def public(self) -> dict[str, object]:
         """Return lifecycle metadata, excluding execution authority and ownership."""
-        return self.model_dump(mode="json", exclude={
+        result = self.model_dump(mode="json", exclude={
             "owner_subject", "fingerprint", "lease_id", "total_bytes", "frame_count", "cancel_requested", "finishing", "retired",
+            "active", "current_turn_id",
+            "result",
         })
+        result["turn_id"] = self.current_turn_id or self.turn_id
+        return result
 
 
 class NativeRunEvent(BaseModel):
@@ -96,6 +105,7 @@ class NativeRunEvent(BaseModel):
     frame: str | None = None
     status: RunStatus | None = None
     failure_code: str | None = None
+    continue_execution: bool = False
     created_at: datetime
 
 
@@ -195,7 +205,7 @@ class NativeRunRepository:
         update: dict[str, object] = {"last_sequence": tail["sequence"]}
         terminal = next((event for event in reversed(pending) if event.get("status") in TERMINAL_STATUSES), None)
         if terminal is not None:
-            update.update(status=terminal["status"], active=False, failure_code=terminal.get("failure_code"))
+            update.update(status=terminal["status"], active=terminal.get("continue_execution", False), failure_code=terminal.get("failure_code"))
         result = self.runs.update_one(
             {"run_id": doc["run_id"], "last_sequence": previous},
             {"$set": update, "$max": {"updated_at": tail["created_at"]}, "$inc": {
@@ -229,9 +239,9 @@ class NativeRunRepository:
                 seconds=STARTUP_TIMEOUT_SECONDS,
             ) <= now
             lease = self.mongo.get_session_runs_collection().find_one({
-                "agent_id": doc["agent_id"], "session_id": doc["session_id"],
-            }) if doc["status"] == "running" else None
-            if lease is None and doc["status"] == "running":
+                "agent_id": doc["agent_id"], "session_id": doc["session_id"], "lease_id": {"$exists": True},
+            }) if doc["status"] in {"running", "awaiting_input"} else None
+            if lease is None and doc["status"] in {"running", "awaiting_input"}:
                 # prepare_finish is acknowledged before native lease deletion.
                 # Read that newer marker after observing a missing lease, not
                 # from a snapshot obtained while runtime cleanup was beginning.
@@ -239,7 +249,7 @@ class NativeRunRepository:
                 if refreshed is None or self._is_deleted(doc["session_id"]):
                     return None
                 doc = self._repair_tail(refreshed)
-            lease_lost = doc["status"] == "running" and (
+            lease_lost = doc["status"] in {"running", "awaiting_input"} and (
                 (lease is not None and (
                     lease.get("lease_id") != doc["lease_id"] or _aware(lease["lease_expires_at"]) <= now
                 )) or (lease is None and (
@@ -351,13 +361,14 @@ class NativeRunRepository:
         from a vanished worker without claiming a terminal outcome early.
         """
         await _repository_operation(
-            self.runs.update_one, {"run_id": run_id, "active": True, "status": "running"},
+            self.runs.update_one, {"run_id": run_id, "active": True, "status": {"$in": ["running", "awaiting_input"]}},
             {"$set": {"finishing": True, "updated_at": _now()}},
         )
 
-    def _append(self, run_id: str, frame: str | None, status: RunStatus | None, failure_code: str | None) -> NativeRunEvent:
+    def _append(self, run_id: str, frame: str | None, status: RunStatus | None, failure_code: str | None,
+                continue_execution: bool = False) -> NativeRunEvent:
         run = self._get({"run_id": run_id}, reconcile=False)
-        if run is None or run.status in TERMINAL_STATUSES:
+        if run is None or not run.active:
             raise NativeRunStorageError("The run is no longer active")
         size = len(frame.encode("utf-8")) if frame is not None else 0
         if frame is not None and (
@@ -367,6 +378,7 @@ class NativeRunRepository:
         event = NativeRunEvent(
             run_id=run_id, sequence=run.last_sequence + 1, frame=frame, status=status,
             failure_code=failure_code, created_at=_now(),
+            continue_execution=continue_execution,
         )
         # A single admitted producer owns sequencing. Insert first so publication
         # never advertises bytes that failed to reach canonical storage.
@@ -379,7 +391,7 @@ class NativeRunRepository:
             raise NativeRunStorageError("The native execution context was permanently deleted")
         update: dict[str, object] = {"last_sequence": event.sequence, "updated_at": event.created_at}
         if status is not None:
-            update.update(status=status, active=False, failure_code=failure_code)
+            update.update(status=status, active=continue_execution, failure_code=failure_code)
         result = self.runs.update_one(
             {"run_id": run_id, "active": True, "last_sequence": run.last_sequence},
             {"$set": update, "$inc": {"total_bytes": size, "frame_count": int(frame is not None)}},
@@ -407,6 +419,16 @@ class NativeRunRepository:
     async def append_frame(self, run_id: str, frame: str) -> NativeRunEvent:
         return await _repository_operation(self._append, run_id, frame, None, None)
 
+    async def store_result(self, run_id: str, result: dict) -> None:
+        """Retain a bounded invoke result before publishing its terminal state."""
+        if len(json.dumps(result, ensure_ascii=False).encode()) > MAX_FRAME_BYTES:
+            raise NativeRunLimitError("Native invocation result exceeds its storage limit")
+        updated = await _repository_operation(self.runs.update_one, {"run_id": run_id, "active": True}, {
+            "$set": {"result": result},
+        })
+        if not updated.matched_count:
+            raise NativeRunStorageError("The invocation lost its execution admission")
+
     def _finish(self, run_id: str, status: RunStatus, error_code: str | None = None) -> NativeExecutionRun:
         if status not in TERMINAL_STATUSES:
             raise ValueError("Only terminal or awaiting-input statuses may finish a run")
@@ -415,7 +437,7 @@ class NativeRunRepository:
             raise NativeRunStorageError("The run is no longer available")
         if run.retired:
             return run
-        if run.status not in TERMINAL_STATUSES:
+        if run.active:
             for attempt in range(3):
                 try:
                     self._append(run_id, None, status, error_code)
@@ -427,7 +449,7 @@ class NativeRunRepository:
                     run = self._get({"run_id": run_id}, reconcile=False, include_retired=True)
                     if run is None:
                         raise NativeRunStorageError("The run is no longer available") from None
-                    if run.status in TERMINAL_STATUSES:
+                    if not run.active:
                         break
                     if attempt == 2:
                         raise NativeRunStorageError("Native run finalization conflicted") from None
@@ -449,7 +471,7 @@ class NativeRunRepository:
         def retire() -> int:
             scope = {"agent_id": agent_id, "session_id": session_id}
             active = self._get({**scope, "active": True})
-            if active is not None and active.status not in TERMINAL_STATUSES:
+            if active is not None and active.active:
                 raise NativeRunBusyError("This agent session already has an active request")
             result = self.runs.update_many(
                 {**scope, "active": False, "retired": {"$ne": True}},
@@ -462,7 +484,7 @@ class NativeRunRepository:
     async def request_cancel(self, agent_id: str, session_id: str, *, turn_id: str | None = None) -> bool:
         query = {"agent_id": agent_id, "session_id": session_id, "active": True}
         if turn_id is not None:
-            query["turn_id"] = turn_id
+            query["$or"] = [{"current_turn_id": turn_id}, {"current_turn_id": None, "turn_id": turn_id}]
         result = await _repository_operation(
             self.runs.update_one, query,
             {"$set": {"cancel_requested": True}},

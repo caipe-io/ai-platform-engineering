@@ -1,3 +1,4 @@
+import { conversationForViewer } from "@/lib/conversation-view";
 // GET /api/chat/shared - Get conversations shared with current user
 //
 // SECURITY INVARIANT (issue #1979): this route must NEVER query all non-owner
@@ -67,7 +68,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     );
 
     return paginatedResponse(
-      visibleItems,
+      visibleItems.map((conversation) => conversationForViewer(conversation)),
       visibleItems.length < items.length ? visibleItems.length : total,
       page,
       pageSize

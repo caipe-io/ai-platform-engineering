@@ -14,11 +14,13 @@ from pydantic import BaseModel, Field
 
 from dynamic_agents.auth.access import can_access_conversation
 from dynamic_agents.auth.auth import UserContext, get_user_context
-from dynamic_agents.models import ApiResponse
+from dynamic_agents.auth.authz import require_conversation_delete_permission
+from dynamic_agents.models import ApiResponse, DynamicAgentConfig
 from dynamic_agents.services.agent_execution import AgentExecutionService
 from dynamic_agents.services.mongo import MongoDBService, get_mongo_service
 from dynamic_agents.services.native_run_repository import NativeRunStorageError
 from dynamic_agents.services.runtime_cache import RuntimeCapacityError
+from dynamic_agents.services.sandbox_client import SandboxError
 from dynamic_agents.services.session_runs import SessionRunBusyError
 
 logger = logging.getLogger(__name__)
@@ -58,6 +60,10 @@ class RewindConversationRequest(BaseModel):
     turn_id: str
     message_content: str
     content_occurrence: int = Field(ge=1)
+
+
+class ConfirmRewindRequest(RewindConversationRequest):
+    checkpoint_id: str = Field(min_length=1)
 
 
 @router.get("/{conversation_id}/interrupt-state", response_model=InterruptStateResponse)
@@ -196,15 +202,11 @@ async def ensure_conversation_metadata(
     }
 
 
-@router.post("/{conversation_id}/rewind", response_model=ApiResponse)
-async def rewind_conversation(
-    conversation_id: str,
-    request: RewindConversationRequest,
-    user: UserContext = Depends(get_user_context),
-    mongo: MongoDBService = Depends(get_mongo_service),
-) -> ApiResponse:
-    """Fork LangGraph state from immediately before the selected user turn."""
-    agent = mongo.get_agent(request.agent_id)
+def _authorize_rewind(
+    conversation_id: str, agent_id: str, user: UserContext, mongo: MongoDBService,
+) -> DynamicAgentConfig:
+    """Keep native state mutation and its UI-history acknowledgement identical."""
+    agent = mongo.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     if mongo._client is None or mongo._db is None:
@@ -226,11 +228,24 @@ async def rewind_conversation(
             ),
             None,
         )
-    if configured_agent_id and configured_agent_id != request.agent_id:
+    if configured_agent_id and configured_agent_id != agent_id:
         raise HTTPException(status_code=400, detail="Agent does not match conversation")
+    return agent
+
+
+@router.post("/{conversation_id}/rewind", response_model=ApiResponse)
+async def rewind_conversation(
+    conversation_id: str,
+    request: RewindConversationRequest,
+    user: UserContext = Depends(get_user_context),
+    mongo: MongoDBService = Depends(get_mongo_service),
+) -> ApiResponse:
+    """Restore native state from immediately before the selected user turn."""
+    agent = _authorize_rewind(conversation_id, request.agent_id, user, mongo)
+    service = AgentExecutionService(mongo)
 
     try:
-        checkpoint_id = await AgentExecutionService(mongo).rewind(
+        checkpoint_id = await service.rewind(
             agent, conversation_id, user,
             turn_id=request.turn_id, message_content=request.message_content,
             content_occurrence=request.content_occurrence,
@@ -248,13 +263,79 @@ async def rewind_conversation(
             "conversation_id": conversation_id,
             "turn_id": request.turn_id,
             "checkpoint_id": checkpoint_id,
+            "confirmation_required": await service.requires_rewind_confirmation(request.agent_id, conversation_id),
         },
     )
+
+
+@router.post("/{conversation_id}/rewind/confirm", response_model=ApiResponse)
+async def confirm_conversation_rewind(
+    conversation_id: str,
+    request: ConfirmRewindRequest,
+    user: UserContext = Depends(get_user_context),
+    mongo: MongoDBService = Depends(get_mongo_service),
+) -> ApiResponse:
+    """Acknowledge canonical history truncation before sandbox prompts resume."""
+    _authorize_rewind(conversation_id, request.agent_id, user, mongo)
+    try:
+        await AgentExecutionService(mongo).confirm_rewind(
+            request.agent_id, conversation_id, user, checkpoint_id=request.checkpoint_id,
+            turn_id=request.turn_id, message_content=request.message_content, content_occurrence=request.content_occurrence,
+        )
+    except NativeRunStorageError as exc:
+        raise HTTPException(status_code=503, detail="Durable agent state is unavailable. Please retry later.") from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ApiResponse(success=True, data={"conversation_id": conversation_id, "checkpoint_id": request.checkpoint_id})
 
 
 # =============================================================================
 # Admin Endpoints
 # =============================================================================
+
+
+@router.post("/{conversation_id}/cleanup", response_model=ApiResponse)
+async def cleanup_conversation_runtime(
+    conversation_id: str,
+    user: UserContext = Depends(get_user_context),
+    mongo: MongoDBService = Depends(get_mongo_service),
+) -> ApiResponse:
+    """Delete external execution state before the BFF purges an authorized chat.
+
+    Runtime targets come only from canonical conversation metadata, never from
+    caller-provided namespace or agent identifiers. Ordinary clear stays admin-only.
+    """
+    if mongo._client is None or mongo._db is None:
+        raise HTTPException(status_code=503, detail="Database not connected")
+    conversation = mongo._db["conversations"].find_one({"_id": conversation_id})
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    await require_conversation_delete_permission(conversation_id)
+    agent_id = next((item.get("id") for item in conversation.get("participants", [])
+                     if item.get("type") == "agent" and item.get("id")), conversation.get("agent_id", ""))
+    if not agent_id:
+        raise HTTPException(status_code=409, detail="Conversation has no bound agent")
+    session_ids = {conversation_id}
+    if conversation.get("source") == "autonomous":
+        context_id = conversation.get("execution_context_id")
+        if not isinstance(context_id, str) or not context_id.strip():
+            task_id = conversation.get("task_id") or conversation.get("metadata", {}).get("task_id")
+            run = mongo._db[mongo.settings.autonomous_runs_collection].find_one(
+                {"task_id": task_id, "execution_context_id": {"$ne": None}}, sort=[("started_at", -1)],
+            ) if task_id else None
+            context_id = run.get("execution_context_id") if run else None
+        if isinstance(context_id, str) and context_id.strip():
+            session_ids.add(context_id)
+    try:
+        for session_id in sorted(session_ids):
+            await AgentExecutionService(mongo).clear(agent_id, session_id, permanent=True)
+    except SessionRunBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except NativeRunStorageError as exc:
+        raise HTTPException(status_code=503, detail="Durable agent state is unavailable. Please retry later.") from exc
+    except SandboxError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ApiResponse(success=True, data={"conversation_id": conversation_id, "session_ids": sorted(session_ids)})
 
 
 @router.post("/{conversation_id}/clear", response_model=ApiResponse)
@@ -300,6 +381,8 @@ async def clear_conversation_checkpoints(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except NativeRunStorageError as exc:
         raise HTTPException(status_code=503, detail="Durable agent state is unavailable. Please retry later.") from exc
+    except SandboxError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     # Log the action for audit
     logger.info(

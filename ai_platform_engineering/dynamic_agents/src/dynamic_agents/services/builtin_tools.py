@@ -18,6 +18,7 @@ from urllib.parse import quote, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
+from deepagents.backends.utils import create_file_data, file_data_to_string
 from langchain_core.tools import tool
 from langgraph.store.base import GetOp, PutOp
 
@@ -573,7 +574,7 @@ def create_user_info_tool(user: UserContext, client_context: dict | None = None)
     """
 
     # Snapshot once — UserContext is immutable for the lifetime of a request.
-    _user_data = user.model_dump(exclude={"raw_claims"})
+    _user_data = user.model_dump(exclude={"raw_claims", "access_token", "obo_jwt"})
     if client_context:
         _user_data["client_context"] = client_context
 
@@ -839,9 +840,10 @@ def create_format_file_tool(store, namespace_factory):
         if item is None:
             return f"Error: file not found at {file_path}"
 
-        content_lines = item.value.get("content", [])
-        if not content_lines:
+        raw_content = file_data_to_string(item.value)
+        if not raw_content:
             return f"Error: file at {file_path} has no content"
+        content_lines = raw_content.split("\n")
 
         if len(content_lines) > 1:
             return f"File already has {len(content_lines)} lines — no reformatting needed."
@@ -873,12 +875,7 @@ def create_format_file_tool(store, namespace_factory):
             output_path = f"{file_path}_formatted"
 
         # Write the formatted file
-        now = datetime.now(timezone.utc).isoformat()
-        value = {
-            "content": formatted_lines,
-            "created_at": now,
-            "modified_at": now,
-        }
+        value = create_file_data("\n".join(formatted_lines))
         store.batch([PutOp(namespace=namespace, key=output_path, value=value)])
 
         return f"Created formatted file at {output_path} ({len(formatted_lines)} lines). Use grep or read_file on this path instead."

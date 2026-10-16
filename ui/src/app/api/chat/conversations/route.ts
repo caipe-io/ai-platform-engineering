@@ -1,3 +1,4 @@
+import { conversationForViewer } from "@/lib/conversation-view";
 // GET /api/chat/conversations - List user's conversations
 // POST /api/chat/conversations - Create new conversation (or return existing via upsert)
 
@@ -306,7 +307,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const visibleItemsWithAccessLevel = await Promise.all(
     visibleItemsWithViewerFlags.map(async (conversation) => {
       const access_level = await resolveListConversationAccessLevel(conversation, user.email, session);
-      return { ...conversation, access_level };
+      return { ...conversationForViewer(conversation), access_level };
     }),
   );
 
@@ -478,7 +479,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
           console.warn('[conversations/route] idempotency-hit SA writer grant failed (best-effort):', err);
         }
       }
-      return successResponse({ conversation: existing, created: false }, 200);
+      return successResponse({ conversation: conversationForViewer(existing), created: false }, 200);
     }
   }
 

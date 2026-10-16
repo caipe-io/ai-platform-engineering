@@ -28,6 +28,7 @@ from uuid import uuid4
 from dynamic_agents.services.stream_encoders import StreamEncoder
 from dynamic_agents.services.stream_encoders.events import (
     ContextUsage,
+    ReasoningDelta,
     StreamEvent,
     TextDelta,
     ToolCompleted,
@@ -243,6 +244,9 @@ class AGUIStreamEncoder(StreamEncoder[str]):
     # ── Semantic event formatting ─────────────────────────
 
     def _format_event(self, event: StreamEvent) -> list[str]:
+        if isinstance(event, ReasoningDelta):
+            return [_sse_frame("CUSTOM", {"type": "CUSTOM", "name": "REASONING_DELTA",
+                "value": {"text": event.text, "namespace": list(event.namespace)}, "timestamp": _ts()})]
         if isinstance(event, TextDelta):
             return self._format_text(event)
         if isinstance(event, UpdatesBoundary):

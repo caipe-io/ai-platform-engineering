@@ -48,7 +48,7 @@ it("limits autonomous deletion to its explicit execution binding rather than eve
     source: "autonomous", task_id: "target-task", execution_context_id: "latest-context",
   }]);
   expect(calls.find((call) => call.collection === "autonomous_runs")).toBeUndefined();
-  expect(calls.find((call) => call.collection === "native_acp_execution_runs")?.query).toEqual({
+  expect(calls).toContainEqual({ collection: "native_acp_execution_runs", query: {
     session_id: { $in: ["task-conversation", "latest-context"] },
-  });
+  } });
 });

@@ -11,6 +11,7 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager, suppress
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -26,6 +27,10 @@ logger = logging.getLogger(__name__)
 SESSION_RUNS_COLLECTION = "native_acp_runs"
 LEASE_SECONDS = 120
 HEARTBEAT_SECONDS = 1
+
+# A checkpoint writer must use the exact admission held by this task, never a
+# lease discovered from another worker's database record.
+current_native_session_lease: ContextVar[str | None] = ContextVar("current_native_session_lease", default=None)
 
 
 class SessionRunBusyError(RuntimeError):
@@ -128,9 +133,20 @@ async def _watch_owner(
 
 async def _release_owned_lease(mongo: MongoDBService, agent_id: str, session_id: str, lease_id: str) -> None:
     try:
+        key = {"agent_id": agent_id, "session_id": session_id, "lease_id": lease_id}
+        # Checkpoint authority shares this document with the execution fence.
+        # Releasing execution must not discard its committed snapshot or reset
+        # the generation that rejects a delayed writer.
+        retained = await await_session_operation(
+            mongo.get_session_runs_collection().update_one,
+            {**key, "checkpoint_generation": {"$exists": True}},
+            {"$unset": {"lease_id": "", "lease_expires_at": "", "heartbeat_at": "", "cancel_requested": ""}},
+        )
+        if retained.matched_count:
+            return
         await await_session_operation(
             mongo.get_session_runs_collection().delete_one,
-            {"agent_id": agent_id, "session_id": session_id, "lease_id": lease_id},
+            {**key, "checkpoint_generation": {"$exists": False}},
         )
     except (PyMongoError, RuntimeError):
         # An unavailable database leaves the bounded lease to expire. Never
@@ -155,9 +171,11 @@ async def native_session_run(
         await _release_owned_lease(mongo, agent_id, session_id, lease_id)
         raise
     watcher = asyncio.create_task(_watch_owner(mongo, agent_id, session_id, lease_id, owner))
+    token = current_native_session_lease.set(lease_id)
     try:
         yield lease_id
     finally:
+        current_native_session_lease.reset(token)
         watcher.cancel()
         with suppress(asyncio.CancelledError):
             # Drain in-flight heartbeats before deleting the lease they can update.

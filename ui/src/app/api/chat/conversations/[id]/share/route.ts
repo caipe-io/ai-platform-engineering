@@ -1,3 +1,4 @@
+import { conversationForViewer } from "@/lib/conversation-view";
 // GET /api/chat/conversations/[id]/share - Get sharing info
 // POST /api/chat/conversations/[id]/share - Share conversation with users
 // DELETE /api/chat/conversations/[id]/share/[userId] handled in separate file
@@ -374,7 +375,7 @@ export const POST = withErrorHandler(async (
 
     const updated = await conversations.findOne({ _id: conversationId });
 
-    return successResponse(updated);
+    return successResponse(conversationForViewer(updated));
   });
 });
 
@@ -431,6 +432,6 @@ export const PATCH = withErrorHandler(async (
     }
 
     const updated = await conversations.findOne({ _id: conversationId });
-    return successResponse(updated);
+    return successResponse(conversationForViewer(updated));
   });
 });

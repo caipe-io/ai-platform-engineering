@@ -31,6 +31,7 @@ from dynamic_agents.services.runtime_cache import (
     RuntimeCapacityError,
     RuntimeInitError,
 )
+from dynamic_agents.services.sandbox_client import SandboxError
 from dynamic_agents.services.session_runs import SessionRunBusyError
 from dynamic_agents.services.stream_encoders import StreamEncoder
 from dynamic_agents.services.stream_encoders.events import RunError
@@ -51,6 +52,7 @@ async def _enforce_chat_authz(*, agent_id: str, user_sub: str | None, autonomous
 
 # Fields that CANNOT be overridden via config_override
 _REJECTED_OVERRIDE_FIELDS: set[str] = {
+    "execution",
     "ui",
     "name",
     "description",
@@ -191,6 +193,8 @@ def _with_reasoning_effort(
     """Apply a validated conversation override without mutating stored config."""
     if requested is None:
         return agent
+    if agent.execution.kind == "sandbox" or agent.model is None:
+        raise HTTPException(status_code=400, detail="The selected harness profile controls its model reasoning settings")
     if not supports_reasoning_effort(agent.model.id, requested):
         raise HTTPException(
             status_code=400,
@@ -311,9 +315,10 @@ async def _durable_stream_response(
     except (NativeRunBusyError, NativeRunConflictError, NativeRunStorageError) as exc:
         raise _run_http_error(exc) from exc
     return StreamingResponse(
-        service.run_events(run), media_type="text/event-stream", headers={
+        service.run_events(run, run.first_sequence), media_type="text/event-stream", headers={
             "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no",
-            "X-CAIPE-Run-Id": run.run_id, "X-CAIPE-Turn-Id": quote(run.turn_id, safe="-._~"),
+            "X-CAIPE-Run-Id": run.run_id, "X-CAIPE-Turn-Id": quote(run.current_turn_id or run.turn_id, safe="-._~"),
+            "X-CAIPE-First-Sequence": str(run.first_sequence),
             "X-CAIPE-Protocol": run.protocol,
         },
     )
@@ -367,7 +372,7 @@ async def chat_start_stream(
     logger.info(
         f"[chat] Starting chat request: "
         f"agent='{agent.name}', user={user.email}, "
-        f"provider={agent.model.provider}, model={agent.model.id}, "
+        f"execution={agent.execution.kind}, "
         f"protocol={request.protocol}, "
         f"config_override={request.config_override}, "
         f"trace_id={request.trace_id or 'auto'}"
@@ -492,7 +497,8 @@ async def replay_chat_run(
     return StreamingResponse(
         service.run_events(run, after), media_type="text/event-stream", headers={
             "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no",
-            "X-CAIPE-Run-Id": run.run_id, "X-CAIPE-Turn-Id": quote(run.turn_id, safe="-._~"),
+            "X-CAIPE-Run-Id": run.run_id, "X-CAIPE-Turn-Id": quote(run.current_turn_id or run.turn_id, safe="-._~"),
+            "X-CAIPE-First-Sequence": str(after),
             "X-CAIPE-Protocol": run.protocol,
         },
     )
@@ -586,7 +592,7 @@ async def restart_runtime(
 
     try:
         invalidated = await AgentExecutionService(mongo).restart(request.agent_id, request.conversation_id)
-    except (SessionRunBusyError, RuntimeCapacityError) as exc:
+    except (SessionRunBusyError, RuntimeCapacityError, SandboxError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     logger.info(f"Runtime restart requested: agent={agent.name}, user={user.email}, invalidated={invalidated}")

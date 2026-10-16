@@ -23,6 +23,7 @@ from dynamic_agents.services.context_usage import CONTEXT_USAGE_EVENT
 from dynamic_agents.services.stream_encoders import StreamEncoder
 from dynamic_agents.services.stream_encoders.events import (
     ContextUsage,
+    ReasoningDelta,
     StreamEvent,
     TextDelta,
     ToolCompleted,
@@ -113,6 +114,8 @@ class CustomStreamEncoder(StreamEncoder[str]):
     # ── Semantic event formatting ─────────────────────────
 
     def _format_event(self, event: StreamEvent) -> list[str]:
+        if isinstance(event, ReasoningDelta):
+            return [_sse_frame("reasoning", {"text": event.text, "namespace": list(event.namespace)})]
         if isinstance(event, TextDelta):
             return [_sse_frame("content", {"text": event.text, "namespace": list(event.namespace)})]
         if isinstance(event, ToolStarted):

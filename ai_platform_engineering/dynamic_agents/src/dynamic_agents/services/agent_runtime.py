@@ -68,6 +68,7 @@ from dynamic_agents.services.builtin_tools import (
 )
 from dynamic_agents.services.credential_exchange import CredentialExchangeClient
 from dynamic_agents.services.gridfs_store import MongoDBGridFSStore
+from dynamic_agents.services.harness_admission import require_inline_harness_admission
 from dynamic_agents.services.llm_clients import get_llm
 from dynamic_agents.services.mcp_client import (
     McpCredentialUnavailableError,
@@ -91,6 +92,7 @@ from dynamic_agents.services.model_capabilities import (
 )
 from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.runtime_storage import resolve_runtime_storage
+from dynamic_agents.services.sandbox_client import SandboxError
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
 from dynamic_agents.services.tracing import TracingManager
 
@@ -99,6 +101,19 @@ if TYPE_CHECKING:
     from dynamic_agents.services.stream_encoders import StreamEncoder
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class AgentPlatformResources:
+    """Admitted platform integrations shared by native and sandbox runtimes."""
+
+    tools: list[Any]
+    system_prompt: str
+    skills: list[dict[str, Any]]
+    skills_files: dict[str, Any]
+    skills_sources: list[str]
+    builtin_tool_names: set[str]
+    skills_middleware: Any | None
 
 
 @dataclass
@@ -203,7 +218,7 @@ def _render_system_prompt(
             attempts unsafe attribute access, or otherwise fails to render.
     """
     ctx = client_context.model_dump() if client_context else {}
-    user_ctx = user.model_dump(exclude={"raw_claims"}) if user else {}
+    user_ctx = user.model_dump(exclude={"raw_claims", "access_token", "obo_jwt"}) if user else {}
     try:
         template = _jinja_env.from_string(template_str)
         return template.render(client_context=ctx, user=user_ctx)
@@ -664,6 +679,7 @@ class AgentRuntime:
                 ttl_seconds=storage.fs_ttl_seconds,
             )
         self._initialized = False
+        self._platform_resources: AgentPlatformResources | None = None
         self._active_stream_count = 0
         self._is_streaming = False  # guards LRU eviction — never evict mid-stream
         self._cancelled = False
@@ -823,12 +839,14 @@ class AgentRuntime:
             else detail
         )
 
-    async def initialize(self) -> None:
-        """Build the DeepAgent graph with tools and instructions."""
-        if self._initialized:
-            return
+    async def prepare_platform_resources(self) -> "AgentPlatformResources":
+        """Resolve current platform tools, prompt and skills without an LLM/graph.
 
-        t_start = time.monotonic()
+        Native graphs and external harness brokers use this same preparation.
+        Credentials stay in the resulting server-side tool closures.
+        """
+        if self._platform_resources is not None:
+            return self._platform_resources
 
         # ─────────────────────────────────────────────────────────────────
         # Tools
@@ -953,32 +971,11 @@ class AgentRuntime:
             logger.error(f"Agent '{self.config.name}' failed to initialize: {exc}")
             raise RuntimeError(f"Agent '{self.config.name}' failed to initialize: {exc}") from exc
 
-        # 5. Instantiate LLM
-        logger.info(
-            f"[llm] Instantiating LLM for agent '{self.config.name}': "
-            f"provider={self.config.model.provider}, model={self.config.model.id}"
-        )
-        llm = get_llm(
-            self.config.model.provider,
-            self.config.model.id,
-            self.config.model.reasoning_effort,
-        )
-        logger.info(f"[llm] LLM instantiated for agent '{self.config.name}': type={type(llm).__name__}")
-
-        # ─────────────────────────────────────────────────────────────────
-        # Extensions
-        # ─────────────────────────────────────────────────────────────────
-
-        # 6. Subagents
-        subagents = await self._resolve_subagents(self.config.subagents)
-        if subagents:
-            logger.info(
-                f"Agent '{self.config.name}': resolved {len(subagents)} subagents: {[s['name'] for s in subagents]}"
-            )
-
         # 7. Skills
         self._skills_files: dict[str, Any] = {}
         skills_middleware = None
+        skills_data: list[dict[str, Any]] = []
+        skills_sources: list[str] = []
 
         # Always clear stale skill files from the shared filesystem when using
         # StoreBackend.  This is critical for workflows where multiple agents
@@ -1112,7 +1109,7 @@ class AgentRuntime:
                     "agent_name": self.config.name,
                     "agent_id": self.config.id,
                     "conv_id": self._session_id,
-                    "user_context": self._user.model_dump(exclude={"raw_claims"}) if self._user else None,
+                    "user_context": self._user.model_dump(exclude={"raw_claims", "access_token", "obo_jwt"}) if self._user else None,
                     "client_context": self._client_context.model_dump() if self._client_context else None,
                 },
                 workflow_labels=getattr(self, "_workflow_labels", None),
@@ -1122,23 +1119,6 @@ class AgentRuntime:
                 f"Agent '{self.config.name}': added {len(wf_tools)} workflow tools "
                 f"for workflows: {self._valid_workflow_configs}"
             )
-
-        # 9. Build middleware stack
-        middleware_stack = build_middleware(
-            self.config.features,
-            self._session_id,
-            agent_name=self.config.name,
-            model_id=self.config.model.id,
-            model_provider=self.config.model.provider,
-            attachment_store=self._get_attachment_store(),
-            enable_prompt_cache=self._prompt_cache_enabled(),
-        )
-        # Prepend skills middleware so it runs before other middleware
-        if skills_middleware:
-            middleware_stack = [skills_middleware] + middleware_stack
-
-        # 10. Interrupt config
-        interrupt_config = self._build_interrupt_config(tools, builtin_tool_names)
 
         # 10b. Append workflow details to system prompt (after section 8 validates workflows)
         if self._workflow_prompt_addendum:
@@ -1165,6 +1145,62 @@ class AgentRuntime:
                 "The following resources were configured but failed to load. Do not attempt to use them.\n\n"
             )
             system_prompt += "\n".join(warning_lines)
+
+        self._platform_resources = AgentPlatformResources(
+            tools=tools, system_prompt=system_prompt, skills=skills_data,
+            skills_files=self._skills_files, skills_sources=skills_sources,
+            builtin_tool_names=builtin_tool_names, skills_middleware=skills_middleware,
+        )
+        return self._platform_resources
+
+    async def initialize(self) -> None:
+        """Build the native DeepAgent graph from shared platform resources."""
+        if self._initialized:
+            return
+        if self.config.model is None:
+            raise RuntimeError("Native agent execution requires a model")
+        t_start = time.monotonic()
+        resources = await self.prepare_platform_resources()
+        tools = list(resources.tools)
+        system_prompt = resources.system_prompt
+        builtin_tool_names = resources.builtin_tool_names
+        skills_middleware = resources.skills_middleware
+
+        # 5. Instantiate LLM
+        logger.info(
+            f"[llm] Instantiating LLM for agent '{self.config.name}': "
+            f"provider={self.config.model.provider}, model={self.config.model.id}"
+        )
+        llm = get_llm(
+            self.config.model.provider,
+            self.config.model.id,
+            self.config.model.reasoning_effort,
+        )
+        logger.info(f"[llm] LLM instantiated for agent '{self.config.name}': type={type(llm).__name__}")
+
+        # 6. Subagents
+        subagents = await self._resolve_subagents(self.config.subagents)
+        if subagents:
+            logger.info(
+                f"Agent '{self.config.name}': resolved {len(subagents)} subagents: {[s['name'] for s in subagents]}"
+            )
+
+        # 9. Build middleware stack
+        middleware_stack = build_middleware(
+            self.config.features,
+            self._session_id,
+            agent_name=self.config.name,
+            model_id=self.config.model.id,
+            model_provider=self.config.model.provider,
+            attachment_store=self._get_attachment_store(),
+            enable_prompt_cache=self._prompt_cache_enabled(),
+        )
+        # Prepend skills middleware so it runs before other middleware
+        if skills_middleware:
+            middleware_stack = [skills_middleware] + middleware_stack
+
+        # 10. Interrupt config
+        interrupt_config = self._build_interrupt_config(tools, builtin_tool_names)
 
         # 11. Create agent graph
         # Sanitize agent name for use as OpenAI message `name` field.
@@ -1347,8 +1383,8 @@ class AgentRuntime:
                     agent_id=config.id,
                     name=config.name,
                     description=config.description,
-                    model_id=config.model.id,
-                    model_provider=config.model.provider,
+                    model_id=config.model.id if config.model else config.execution.profile_id or "sandbox",
+                    model_provider=config.model.provider if config.model else "runtime-profile",
                     gradient_theme=gradient_theme,
                 )
             )
@@ -1452,6 +1488,7 @@ class AgentRuntime:
 
             # Load subagent config from MongoDB
             subagent_config = self._mongo_service.get_agent(ref.agent_id)
+            await require_inline_harness_admission(subagent_config, ref.agent_id)
             if not subagent_config:
                 logger.warning(f"Agent '{self.config.name}': Subagent '{ref.name}' not found (agent_id={ref.agent_id})")
                 continue
@@ -1459,6 +1496,12 @@ class AgentRuntime:
             if not subagent_config.enabled:
                 logger.warning(f"Agent '{self.config.name}': Subagent '{ref.name}' is disabled, skipping")
                 continue
+
+            if subagent_config.execution.kind != "native":
+                raise SandboxError(
+                    "A native coordinator cannot inline a sandbox subagent. "
+                    "Run the sandbox agent directly until cross-runtime child routing is qualified."
+                )
 
             # Build MCP tools for subagent
             subagent_tools, builtin_tool_names = await self._build_subagent_tools(subagent_config)
@@ -1611,6 +1654,7 @@ class AgentRuntime:
 
         # 3. Graph — release compiled LangGraph to free tool references
         self._graph = None
+        self._platform_resources = None
 
         self._initialized = False
         self._active_stream_count = 0

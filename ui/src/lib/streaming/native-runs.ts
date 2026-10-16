@@ -17,6 +17,8 @@ export interface NativeRun {
   protocol: "custom" | "agui";
   status: NativeRunStatus;
   last_sequence: number;
+  /** Cursor immediately before the current start/resume segment. */
+  first_sequence?: number;
   started_at?: string | null;
   failure_code?: string | null;
 }
@@ -25,6 +27,7 @@ export interface RunStreamParams {
   conversationId: string;
   agentId: string;
   runId: string;
+  firstSequence?: number;
 }
 
 export function nativeRunQuery(params: { conversationId: string; agentId: string }): URLSearchParams {

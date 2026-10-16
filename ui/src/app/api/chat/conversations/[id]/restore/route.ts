@@ -1,3 +1,4 @@
+import { conversationForViewer } from "@/lib/conversation-view";
 // POST /api/chat/conversations/[id]/restore - Restore a soft-deleted conversation from archive
 
 import {
@@ -54,6 +55,6 @@ export const POST = withErrorHandler(async (
 
     const updated = await conversations.findOne({ _id: conversationId });
 
-    return successResponse(updated);
+    return successResponse(conversationForViewer(updated));
   });
 });

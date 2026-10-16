@@ -150,6 +150,7 @@ jest.mock("@/lib/da-proxy", () => ({
   getDynamicAgentsConfig: (...args: unknown[]) =>
     mockGetDynamicAgentsConfig(...args),
   proxyRequest: (...args: unknown[]) => mockProxyRequest(...args),
+  buildBackendHeaders: () => ({ Authorization: "Bearer test-token" }),
 }));
 
 function request(path: string, init?: RequestInit): NextRequest {
@@ -1678,6 +1679,25 @@ describe("dynamic agents RBAC routes", () => {
     expect(insertOne).toHaveBeenCalled();
   });
 
+  it.each([
+    { execution: { kind: "sandbox", profile_id: "primary" }, status: 201 },
+    { execution: { kind: "sandbox", profile_id: "retired" }, status: 400 },
+    { execution: { kind: "native" }, status: 400 },
+  ])("admits runtime execution and makes model requirements conditional: $execution.kind/$status", async ({ execution, status }) => {
+    const insertOne = jest.fn();
+    global.fetch = jest.fn().mockResolvedValue(Response.json({ profiles: [{ id: "primary", name: "Primary", harness: "claude-code", revision: "v1", capabilities: { mcp: false, skills: false, attachments: false } }] }));
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "teams") return { findOne: jest.fn().mockResolvedValue({ _id: "team-id", slug: "primary" }) };
+      if (name === "dynamic_agents") return { findOne: jest.fn().mockResolvedValue(null), insertOne };
+      throw new Error(`unexpected collection ${name}`);
+    });
+    const { POST } = await import("../route");
+    const response = await POST(request("/api/dynamic-agents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Example runtime", system_prompt: "Use permitted tools", owner_team_slug: "primary", execution }) }));
+    expect(response.status).toBe(status);
+    if (status === 201) expect(insertOne).toHaveBeenCalledWith(expect.objectContaining({ execution, model: undefined }));
+    else expect(insertOne).not.toHaveBeenCalled();
+  });
+
   it("requires a stable subject before writing dynamic agent owner tuples", async () => {
     mockGetAuthFromBearerOrSession.mockResolvedValue({
       user,
@@ -2225,6 +2245,18 @@ describe("dynamic agents RBAC routes", () => {
   // seeds is what produced "Failed to load tools: Failed to fetch: 403"
   // for admins on the agent builder screen. Pin the new contract here:
   // authenticate the caller, do NOT call OpenFGA, and proxy through.
+  it("rejects whitespace-only instructions before creating an agent", async () => {
+    const insertOne = jest.fn();
+    mockGetCollection.mockResolvedValue({ insertOne });
+    const { POST } = await import("../route");
+    const response = await POST(request("/api/dynamic-agents", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Example agent", system_prompt: " \n ", model: { id: "example-model", provider: "example-provider" } }),
+    }));
+    expect(response.status).toBe(400);
+    expect(insertOne).not.toHaveBeenCalled();
+  });
+
   it("proxies built-in tool metadata for any authenticated caller without an OpenFGA gate", async () => {
     const { GET } = await import("../builtin-tools/route");
 

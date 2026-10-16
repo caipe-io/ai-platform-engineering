@@ -8,7 +8,7 @@ import { FileTree } from "@/components/dynamic-agents/FileTree";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
+import { ephemeralFileBlob, fetchEphemeralFileContent } from "@/lib/ephemeral-files";
 import type { ContextUsageEventData } from "@/lib/streaming/types";
 import { useChatStore } from "@/store/chat-store";
 import { useFeatureFlagStore } from "@/store/feature-flag-store";
@@ -153,7 +153,7 @@ export function DynamicAgentContext({
       const res = await fetch(`/api/files/content?fs_namespace=${encodeURIComponent(fsNamespace)}&path=${encodeURIComponent(path)}`);
       if (res.ok) {
         const data = await res.json();
-        const blob = new Blob([data.content || ""], { type: "text/plain;charset=utf-8" });
+        const blob = ephemeralFileBlob(data);
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;

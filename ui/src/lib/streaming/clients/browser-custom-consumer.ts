@@ -86,6 +86,11 @@ export class CustomStreamAdapter implements StreamAdapter {
 
     try {
       switch (event) {
+        case "reasoning": {
+          const parsed = JSON.parse(data);
+          if (typeof parsed.text === "string") callbacks.onReasoning?.(parsed.text, parsed.namespace ?? []);
+          return false;
+        }
         case "content": {
           const parsed = JSON.parse(data);
           callbacks.onContent?.(parsed.text ?? "", parsed.namespace ?? []);

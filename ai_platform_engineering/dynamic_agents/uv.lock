@@ -429,6 +429,7 @@ dependencies = [
     { name = "pymongo" },
     { name = "requests" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -476,6 +477,7 @@ requires-dist = [
     { name = "requests", specifier = "==2.34.2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.16.4" },
     { name = "uvicorn", extras = ["standard"], specifier = "==0.52.4" },
+    { name = "websockets", specifier = "==15.0.1" },
 ]
 provides-extras = ["dev"]
 

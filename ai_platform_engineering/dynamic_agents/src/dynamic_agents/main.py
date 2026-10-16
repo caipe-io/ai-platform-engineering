@@ -40,14 +40,17 @@ from dynamic_agents.routes import (
     chat,
     conversations,
     files,
+    harness_tools,
     health,
     mcp_servers,
     middleware,
     model_capabilities,
     remote_agents,
+    runtime_profiles,
 )
 from dynamic_agents.services.agent_execution import get_native_run_coordinator
 from dynamic_agents.services.autonomous_follow_up_cleanup import run_copy_cleanup
+from dynamic_agents.services.harness_checkpoints import checkpoint_orphan_sweeper
 from dynamic_agents.services.mongo import get_mongo_service, reset_mongo_service
 from dynamic_agents.services.runtime_cache import RuntimeCapacityError, RuntimeInitError, get_runtime_cache
 
@@ -122,19 +125,24 @@ async def lifespan(app: FastAPI):
         store.ensure_ttl_index()
         logger.info("GridFS TTL index ensured (per-document expireAt)")
 
-    copy_cleanup = asyncio.create_task(run_copy_cleanup(mongo))
+    maintenance = [
+        asyncio.create_task(run_copy_cleanup(mongo), name="follow-up-copy-cleanup"),
+        asyncio.create_task(checkpoint_orphan_sweeper(mongo), name="native-checkpoint-cleanup"),
+    ]
     try:
         yield
     finally:
         logger.info("Shutting down Dynamic Agents service...")
         try:
-            copy_cleanup.cancel()
-            try:
-                _ = await copy_cleanup
-            except asyncio.CancelledError:
-                pass
-            except Exception:  # noqa: BLE001 — an already-failed worker must not skip shutdown
-                logger.exception("Follow-up recovery worker failed before shutdown")
+            for task in maintenance:
+                task.cancel()
+            for task in maintenance:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:  # noqa: BLE001 — an already-failed worker must not skip shutdown
+                    logger.exception("Maintenance worker %s failed before shutdown", task.get_name())
         finally:
             try:
                 # Detached turns own borrowed runtimes and Mongo leases. Drain
@@ -201,6 +209,8 @@ def create_app() -> FastAPI:
     # Agent reachability probe used by the autonomous-agents service
     # to verify ``dynamic_agent_id`` targets exist before scheduling.
     app.include_router(agents.router, prefix="/api/v1")
+    app.include_router(runtime_profiles.router, prefix="/api/v1")
+    app.include_router(harness_tools.router, prefix="/api/v1")
 
     @app.exception_handler(RuntimeInitError)
     async def runtime_init_error_handler(request: Request, exc: RuntimeInitError):

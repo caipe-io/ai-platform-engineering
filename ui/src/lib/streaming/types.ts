@@ -184,6 +184,7 @@ export interface HITLMetadata {
  */
 export type StreamEventType =
   | "content" // LLM token streaming
+  | "reasoning" // Provider-published reasoning, never part of the final answer
   | "tool_start" // Tool invocation started (task tool = subagent invocation)
   | "tool_output" // Progressive remote tool output snapshot
   | "tool_end" // Tool invocation completed
@@ -323,6 +324,7 @@ export function createStreamEvent(
   };
 
   switch (eventType) {
+    case "reasoning":
     case "content":
       // Content events have { text: string, namespace: string[] }
       return {

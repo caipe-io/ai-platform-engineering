@@ -14,6 +14,7 @@
  */
 
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
+import { normalizeAgentExecution } from "@/lib/dynamic-agents/execution-config";
 import { BUILTIN_MCP_CREDENTIAL_SOURCES } from "@/lib/rbac/agentgateway-mcp-discovery";
 import { computeIngestionSourceId } from "@/lib/ingestion-source-id";
 import {
@@ -307,19 +308,22 @@ export async function seedAgents(
       ? normalizeStringArray(agentData.rag_collection_ids)
       : existing?.rag_collection_ids;
 
+    const execution = normalizeAgentExecution(agentData.execution);
+    const configuredModel = agentData.model ?? (
+      agentData.model_id !== undefined || agentData.model_provider !== undefined || execution.kind === "native"
+        ? { id: (agentData.model_id as string) ?? "", provider: (agentData.model_provider as string) ?? "" }
+        : undefined
+    );
     const doc = {
       _id: agentId,
       name: (agentData.name as string) ?? agentId,
       description: (agentData.description as string) ?? "",
       system_prompt: (agentData.system_prompt as string) ?? "",
       allowed_tools: allowedTools,
-      // Support both legacy (model_id/model_provider) and new (model.id/model.provider) formats
-      model: agentData.model
-        ? (agentData.model as { id: string; provider: string })
-        : {
-            id: (agentData.model_id as string) ?? "",
-            provider: (agentData.model_provider as string) ?? "",
-          },
+      execution,
+      // Native empty model IDs retain the established backend-default behavior.
+      // A sandbox without an explicit model uses only its operator-owned profile.
+      model: configuredModel as DynamicAgentConfig["model"],
       visibility: ((agentData.visibility as string) ??
         "global") as VisibilityType,
       shared_with_teams:

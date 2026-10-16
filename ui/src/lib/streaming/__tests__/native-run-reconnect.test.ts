@@ -168,3 +168,51 @@ it("retries scoped Stop while admission is pending and waits for the actual canc
     expect(JSON.parse(init.body)).toEqual({ conversation_id: params.conversationId, agent_id: params.agentId, turn_id: params.turnId });
   }
 });
+
+it("starts a resumed segment at the admitted cursor and never resets it on reconnect", async () => {
+  const first = stream([[8, "content", { text: "resumed " }]]);
+  first.headers.set("X-CAIPE-First-Sequence", "7");
+  const second = stream([[8, "content", { text: "duplicate" }], [9, "content", { text: "answer" }], [10, "CAIPE_RUN_STATUS", { run_id: runId, status: "completed" }]]);
+  second.headers.set("X-CAIPE-First-Sequence", "99");
+  mockFetch.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+  const callbacks = { onContent: jest.fn(), onDone: jest.fn() };
+  const result = createStreamAdapter({ protocol: "custom" }).resumeStream({ ...params, resumeData: JSON.stringify({ type: "tool_approval", interrupt_id: "approval-1", decision: "reject" }) }, callbacks);
+  await jest.runAllTimersAsync();
+  await result;
+  expect(callbacks.onContent.mock.calls.map(([text]) => text).join("")).toBe("resumed answer");
+  expect(mockFetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
+  expect(mockFetch.mock.calls[1][0]).toContain("after=8");
+});
+
+it("reattaches only the current resume segment after reload", async () => {
+  mockFetch.mockResolvedValueOnce(stream([[5, "content", { text: "current segment" }], [6, "CAIPE_RUN_STATUS", { run_id: runId, status: "completed" }]]));
+  const callbacks = { onContent: jest.fn() };
+  await createStreamAdapter({ protocol: "custom" }).reattachStream({ ...params, runId, firstSequence: 4 }, callbacks);
+  expect(mockFetch.mock.calls[0][0]).toContain("after=4");
+  expect(callbacks.onContent).toHaveBeenCalledWith("current segment", []);
+});
+
+it("discovers the current segment after a lost resume admission response", async () => {
+  mockFetch.mockRejectedValueOnce(new TypeError("lost response"));
+  mockFetch.mockResolvedValueOnce(Response.json({ run: { run_id: runId, turn_id: params.turnId, first_sequence: 4 } }));
+  const replay = stream([[5, "content", { text: "recovered resume" }], [6, "CAIPE_RUN_STATUS", { run_id: runId, status: "completed" }]]);
+  replay.headers.set("X-CAIPE-First-Sequence", "4");
+  mockFetch.mockResolvedValueOnce(replay);
+  const callbacks = { onContent: jest.fn() };
+  const result = createStreamAdapter({ protocol: "custom" }).resumeStream({ ...params, resumeData: '{"type":"form_input","interrupt_id":"input-1","values":{}}' }, callbacks);
+  await jest.runAllTimersAsync();
+  await result;
+  expect(mockFetch.mock.calls[2][0]).toContain("after=4");
+  expect(callbacks.onContent).toHaveBeenCalledWith("recovered resume", []);
+  expect(mockFetch.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
+});
+
+it.each(["-1", "1.5", "9007199254740992", ""])("rejects an invalid segment cursor header %p", async (value) => {
+  const response = stream([[1, "content", { text: "untrusted" }]]);
+  response.headers.set("X-CAIPE-First-Sequence", value);
+  mockFetch.mockResolvedValueOnce(response);
+  const callbacks = { onContent: jest.fn() };
+  await expect(createStreamAdapter({ protocol: "custom" }).streamMessage(params, callbacks)).rejects.toMatchObject({ status: 502 });
+  expect(callbacks.onContent).not.toHaveBeenCalled();
+  expect(mockFetch).toHaveBeenCalledTimes(1);
+});

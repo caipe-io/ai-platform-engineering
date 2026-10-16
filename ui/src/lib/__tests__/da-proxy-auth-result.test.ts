@@ -143,6 +143,7 @@ describe("durable run streaming proxy", () => {
         "X-CAIPE-Run-Id": "run-1",
         "X-CAIPE-Turn-Id": "turn-1",
         "X-CAIPE-Protocol": "agui",
+          "X-CAIPE-First-Sequence": "7",
         "Set-Cookie": "upstream=private",
       },
     }));
@@ -154,6 +155,7 @@ describe("durable run streaming proxy", () => {
       expect(response.headers.get("X-CAIPE-Run-Id")).toBe("run-1");
       expect(response.headers.get("X-CAIPE-Turn-Id")).toBe("turn-1");
       expect(response.headers.get("X-CAIPE-Protocol")).toBe("agui");
+    expect(response.headers.get("X-CAIPE-First-Sequence")).toBe("7");
       expect(response.headers.get("Set-Cookie")).toBeNull();
     } finally {
       global.fetch = originalFetch;

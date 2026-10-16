@@ -1,3 +1,4 @@
+import { conversationForViewer } from "@/lib/conversation-view";
 // POST /api/chat/conversations/[id]/pin - Toggle pin status
 
 import {
@@ -49,6 +50,6 @@ export const POST = withErrorHandler(async (
 
     const updated = await conversations.findOne({ _id: conversationId });
 
-    return successResponse(updated);
+    return successResponse(conversationForViewer(updated));
   });
 });

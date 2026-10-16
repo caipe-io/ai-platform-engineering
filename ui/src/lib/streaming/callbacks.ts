@@ -76,6 +76,8 @@ export interface StreamCallbacks {
 
   /** Streaming text content arrived */
   onContent?(text: string, namespace: string[]): void;
+  /** Provider-published reasoning, displayed in the timeline separately from the answer. */
+  onReasoning?(text: string, namespace: string[]): void;
 
   /** A tool invocation started */
   onToolStart?(

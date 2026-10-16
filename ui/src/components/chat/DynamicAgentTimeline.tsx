@@ -278,8 +278,9 @@ export function AgentTimeline({
   // - If streaming with NO tools yet: show content as streaming text (like normal message)
   // - If streaming WITH tools: show final answer as "thinking" in timeline
   // - After streaming: show final answer as completed message
-  const showStreamingContent = isStreaming && !hasTools && finalAnswer;
-  const showFinalAnswerInTimeline = isStreaming && hasTools && finalAnswer;
+  const hasReasoning = segments.some((segment) => segment.type === "content" && segment.reasoning);
+  const showStreamingContent = isStreaming && !hasTools && !hasReasoning && finalAnswer;
+  const showFinalAnswerInTimeline = isStreaming && (hasTools || hasReasoning) && finalAnswer;
   const showFinalAnswerOutside = !isStreaming && finalAnswer;
 
   // If there's nothing to show at all, render nothing

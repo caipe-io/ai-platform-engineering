@@ -59,3 +59,17 @@ describe("useAgentTimeline",() => {
     expect(renderCount).toBe(150);
   });
 });
+
+it("retains explicit reasoning in the thinking timeline without adding it to the answer", () => {
+  const events: StreamEvent[] = [
+    { ...contentEvent(1, "Checking evidence "), type: "reasoning" },
+    { ...contentEvent(2, "and comparing results."), type: "reasoning" },
+    contentEvent(3, "The final answer."),
+  ];
+  const { result, rerender } = renderHook(({ streaming }) => useAgentTimeline(events, streaming), { initialProps: { streaming: true } });
+  expect(result.current.data.finalAnswer).toBe("The final answer.");
+  expect(result.current.data.segments).toEqual([expect.objectContaining({ type: "content", reasoning: true, text: "Checking evidence and comparing results." })]);
+  rerender({ streaming: false });
+  expect(result.current.data.finalAnswer).toBe("The final answer.");
+  expect(result.current.data.segments).toContainEqual(expect.objectContaining({ reasoning: true }));
+});

@@ -171,6 +171,25 @@ export class TimelineManager {
     }
   }
 
+  /** Keep explicit reasoning out of final-answer detection in every namespace. */
+  pushReasoning(text: string, namespace: string[]): void {
+    if (!text) return;
+    this.eventIndex++;
+    let segments: TimelineSegment[];
+    if (namespace.length === 0) {
+      this.flushRootContent();
+      segments = this.rootSegments;
+    } else {
+      const subagentId = namespace[0];
+      const subagent = this.ensureSubagent(subagentId);
+      this.flushSubagentContent(subagentId);
+      segments = subagent.segments;
+    }
+    const previous = segments[segments.length - 1];
+    if (previous?.type === "content" && previous.reasoning) previous.text += text;
+    else segments.push({ type: "content", id: `reasoning-${this.eventIndex}`, text, reasoning: true });
+  }
+
   /**
    * Push a tool start event.
    */
@@ -472,7 +491,7 @@ export class TimelineManager {
     for (let i = 0; i < this.rootSegments.length; i++) {
       const seg = this.rootSegments[i];
       
-      if (seg.type === "content" && hasTools && i > lastToolSegmentIndex) {
+      if (seg.type === "content" && !seg.reasoning && hasTools && i > lastToolSegmentIndex) {
         // This content is after the last tool - it's part of final answer
         finalAnswerParts.push(seg.text);
       } else {
@@ -512,13 +531,13 @@ export class TimelineManager {
     // If no tools at all, all content segments become final answer
     // (plus any unflushed buffer content already added above)
     if (!hasTools) {
-      const contentSegments = segments.filter(s => s.type === "content") as ContentSegment[];
+      const contentSegments = segments.filter(s => s.type === "content" && !s.reasoning) as ContentSegment[];
       if (contentSegments.length > 0) {
         // Prepend flushed content segments before the buffer
         finalAnswerParts = [...contentSegments.map(s => s.text), ...finalAnswerParts];
       }
       // Remove content segments from segments (they go to finalAnswer)
-      const nonContentSegments = segments.filter(s => s.type !== "content");
+      const nonContentSegments = segments.filter(s => s.type !== "content" || s.reasoning);
       segments.length = 0;
       segments.push(...nonContentSegments);
     }

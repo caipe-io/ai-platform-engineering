@@ -299,7 +299,7 @@ export async function proxySSEStream(
     }
 
     const responseHeaders: Record<string, string> = { ...SSE_RESPONSE_HEADERS };
-    for (const header of ["X-CAIPE-Run-Id", "X-CAIPE-Turn-Id", "X-CAIPE-Protocol"]) {
+    for (const header of ["X-CAIPE-Run-Id", "X-CAIPE-Turn-Id", "X-CAIPE-Protocol", "X-CAIPE-First-Sequence"]) {
       const value = backendResponse.headers.get(header);
       if (value) responseHeaders[header] = value;
     }

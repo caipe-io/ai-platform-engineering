@@ -98,7 +98,7 @@ export class BrowserStreamTransport {
           try {
             const run = await getLatestNativeRun(params, { accessToken: this.accessToken, signal });
             if (run?.turn_id === params.turnId) {
-              return this.replayResponse({ ...params, runId: run.run_id }, 0, signal);
+              return this.replayResponse({ ...params, runId: run.run_id }, run.first_sequence ?? 0, signal);
             }
           } catch (lookupError) {
             if (!retryable(lookupError)) throw lookupError;
@@ -114,7 +114,7 @@ export class BrowserStreamTransport {
     callbacks: StreamCallbacks,
     dispatch: (raw: RawSSEEvent) => boolean,
   ): Promise<void> {
-    await this.consume(params, callbacks, dispatch, (signal) => this.replayResponse(params, 0, signal), params.runId);
+    await this.consume(params, callbacks, dispatch, (signal) => this.replayResponse(params, params.firstSequence ?? 0, signal), params.runId, params.firstSequence);
   }
 
   private headers(stream = false): Record<string, string> {
@@ -141,17 +141,25 @@ export class BrowserStreamTransport {
     dispatch: (raw: RawSSEEvent) => boolean,
     initialResponse: (signal: AbortSignal) => Promise<Response>,
     initialRunId?: string,
+    initialSequence = 0,
   ): Promise<void> {
     this.abort();
     const controller = new AbortController();
     this.abortController = controller;
     let runId = initialRunId;
-    let cursor = 0;
+    if (!Number.isSafeInteger(initialSequence) || initialSequence < 0) throw new StreamError("Invalid durable segment cursor", 502);
+    let cursor = initialSequence;
     let attempts = 0;
     let semanticTerminalDelivered = false;
     let nativeErrorDelivered = false;
     try {
       let response = await initialResponse(controller.signal);
+      const firstSequence = response.headers.get("X-CAIPE-First-Sequence");
+      if (firstSequence !== null) {
+        const value = Number(firstSequence);
+        if (!/^\d+$/.test(firstSequence) || !Number.isSafeInteger(value)) throw new StreamError("Invalid durable segment cursor", 502);
+        cursor = Math.max(cursor, value);
+      }
       while (true) {
         if (!response.ok) throw await buildStreamErrorFromResponse(response);
         runId = response.headers.get("X-CAIPE-Run-Id") ?? runId;

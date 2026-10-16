@@ -66,6 +66,7 @@ export interface WfStepRun {
     agent?: string;
     toolName?: string;
     toolArgs?: Record<string, unknown>;
+    allowedDecisions?: string[];
     toolApprovals?: Array<{
       tool_name: string;
       tool_args: Record<string, unknown>;

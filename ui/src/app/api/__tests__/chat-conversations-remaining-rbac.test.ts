@@ -129,7 +129,7 @@ describe("remaining conversation routes use OpenFGA instead of legacy owner/team
   });
 
   it("shared conversations prefilter sharing candidates before OpenFGA authorization", async () => {
-    const candidate = conversation();
+    const candidate = conversation({ native_rewind: { message_content: "deleted-private-text", removed_ids: ["private-id"] }, native_rewind_epoch: 2 });
     const conversations = collectionWithItems([candidate]);
     mockGetCollection.mockResolvedValue(conversations);
     const { GET } = await import("../chat/shared/route");
@@ -137,6 +137,9 @@ describe("remaining conversation routes use OpenFGA instead of legacy owner/team
     const response = await GET(request("/api/chat/shared"));
 
     expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(JSON.stringify(payload)).not.toContain("deleted-private-text");
+    expect(JSON.stringify(payload)).not.toContain("private-id");
     expect(mockGetUserTeamIds).not.toHaveBeenCalled();
     expect(conversations.find).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -21,6 +21,14 @@ class TextDelta(_Event):
     namespace: tuple[str, ...] = ()
 
 
+class ReasoningDelta(_Event):
+    """Provider-published reasoning summary, separate from the final answer."""
+
+    kind: Literal["reasoning_delta"] = "reasoning_delta"
+    text: str
+    namespace: tuple[str, ...] = ()
+
+
 class UpdatesBoundary(_Event):
     """A graph update closes the preceding text segment in this namespace."""
 
@@ -95,7 +103,7 @@ class InputRequired(_Event):
 
 
 StreamEvent = Annotated[
-    RunStarted | TextDelta | UpdatesBoundary | ToolStarted | ToolCompleted | ToolOutput | ContextUsage
+    RunStarted | TextDelta | ReasoningDelta | UpdatesBoundary | ToolStarted | ToolCompleted | ToolOutput | ContextUsage
     | StreamEnded | RunFinished | RunError | WarningEvent | InputRequired,
     Field(discriminator="kind"),
 ]

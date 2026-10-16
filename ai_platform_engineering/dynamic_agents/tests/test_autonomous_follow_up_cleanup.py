@@ -58,7 +58,7 @@ def test_publication_race_retains_journal_for_retry(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure_location", ["worker", "body", "coordinator", "cache"])
+@pytest.mark.parametrize("failure_location", ["worker", "checkpoint-worker", "body", "coordinator", "cache"])
 async def test_lifespan_always_closes_cache_and_database(
     monkeypatch: pytest.MonkeyPatch, failure_location: str,
 ) -> None:
@@ -78,6 +78,8 @@ async def test_lifespan_always_closes_cache_and_database(
     monkeypatch.setattr(skill_scrubber, "install_skill_content_scrubber", lambda: None)
     monkeypatch.setattr(tracing, "TracingManager", lambda: None)
     started = asyncio.Event()
+    checkpoint_started = asyncio.Event()
+    checkpoint_stopped = asyncio.Event()
 
     async def worker(_mongo: object) -> None:
         started.set()
@@ -86,6 +88,17 @@ async def test_lifespan_always_closes_cache_and_database(
         await asyncio.Future()
 
     monkeypatch.setattr(main, "run_copy_cleanup", worker)
+
+    async def checkpoint_worker(_mongo: object) -> None:
+        checkpoint_started.set()
+        try:
+            if failure_location == "checkpoint-worker":
+                raise RuntimeError("unexpected checkpoint cleanup failure")
+            await asyncio.Future()
+        finally:
+            checkpoint_stopped.set()
+
+    monkeypatch.setattr(main, "checkpoint_orphan_sweeper", checkpoint_worker)
     if failure_location == "cache":
         cache.stop.side_effect = RuntimeError("cache stop failed")
     if failure_location == "coordinator":
@@ -94,10 +107,11 @@ async def test_lifespan_always_closes_cache_and_database(
     async def run() -> None:
         async with main.lifespan(FastAPI()):
             await started.wait()
+            await checkpoint_started.wait()
             if failure_location == "body":
                 raise RuntimeError("application failure")
 
-    if failure_location == "worker":
+    if failure_location in {"worker", "checkpoint-worker"}:
         await run()
     else:
         with pytest.raises(RuntimeError):
@@ -105,3 +119,4 @@ async def test_lifespan_always_closes_cache_and_database(
     cache.stop.assert_awaited_once()
     coordinator.shutdown.assert_awaited_once()
     mongo.disconnect.assert_called_once()
+    assert checkpoint_stopped.is_set()
