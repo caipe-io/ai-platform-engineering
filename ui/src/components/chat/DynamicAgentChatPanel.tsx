@@ -5,7 +5,10 @@ import { ContextUsageIndicator } from "@/components/chat/ContextUsageIndicator";
 import type { TaskItem } from "@/components/shared/timeline";
 import { MarkdownRenderer } from "@/components/shared/timeline";
 import { Button } from "@/components/ui/button";
+import type { ModelPickerOption } from "@/components/ui/model-picker";
+import { Popover,PopoverContent,PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/components/ui/tooltip";
 import { useAgentTimeline } from "@/hooks/useDynamicAgentTimeline";
@@ -28,13 +31,13 @@ import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import { buildParticipants,ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
 import type { DynamicAgentConfig,ReasoningEffort } from "@/types/dynamic-agent";
 import { AnimatePresence,motion,useReducedMotion } from "framer-motion";
-import { Activity,AlertTriangle,ArrowDown,ArrowLeft,Check,Copy,Loader2,Paperclip,Pencil,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
+import { Activity,AlertTriangle,ArrowDown,ArrowLeft,Check,Copy,Info,Loader2,Paperclip,Pencil,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
 import { AgentPicker } from "@/components/ui/agent-picker";
 import { signIn,useSession } from "next-auth/react";
 import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
 import Image from "next/image";
-import React,{ useCallback,useEffect,useMemo,useRef,useState } from "react";
+import React,{ useCallback,useEffect,useId,useMemo,useRef,useState } from "react";
 import TextareaAutosize from "react-textarea-autosize";
 import { AgentTimeline,type SubagentLookupInfo } from "./DynamicAgentTimeline";
 import { Feedback,FeedbackButton } from "./FeedbackButton";
@@ -216,6 +219,9 @@ export function ChatPanel({
     agent?.model?.reasoning_effort ?? "medium",
   );
   const [supportedReasoningEfforts, setSupportedReasoningEfforts] = useState<ReasoningEffort[] | null>(null);
+  const [isSavingEffort, setIsSavingEffort] = useState(false);
+  const [modelDisplay, setModelDisplay] = useState<{ id: string; provider: string; name: string } | null>(null);
+  const reasoningHelpId = useId();
   const effortStatusSequenceRef = useRef(0);
   const commandPanelSequenceRef = useRef(0);
   const commandPanelRef = useRef<HTMLDivElement>(null);
@@ -401,6 +407,39 @@ export function ChatPanel({
       cancelled = true;
     };
   }, [agent?.model]);
+
+  useEffect(() => {
+    const id = agent?.model?.id;
+    const provider = agent?.model?.provider;
+    if (!id || !provider) return;
+    let cancelled = false;
+    fetch("/api/dynamic-agents/models")
+      .then((response) => {
+        if (!response.ok) throw new Error("Model catalog request failed");
+        return response.json();
+      })
+      .then((data) => {
+        const match = data.success && Array.isArray(data.data)
+          ? data.data.find((model: ModelPickerOption) => model.model_id === id && model.provider === provider)
+          : undefined;
+        if (!cancelled && typeof match?.name === "string" && match.name.trim()) {
+          setModelDisplay({ id, provider, name: match.name.trim() });
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) console.warn("[chat] Could not load model display name", error);
+      });
+    return () => { cancelled = true; };
+  }, [agent?.model?.id, agent?.model?.provider]);
+
+  const modelDisplayName = modelDisplay && modelDisplay.id === agent?.model?.id
+    && modelDisplay.provider === agent?.model?.provider
+    ? modelDisplay.name
+    : "Agent model";
+  const canConfigureEffort = Boolean(supportedReasoningEfforts?.length);
+  const effortSelectValue = supportedReasoningEfforts?.includes(reasoningEffort)
+    ? reasoningEffort
+    : "provider_default";
 
   const persistReasoningEffort = useCallback(async (
     effort: ReasoningEffort,
@@ -2602,7 +2641,7 @@ export function ChatPanel({
         </div>
       ) : !isAutonomousHistory && (
       <div className="border-t border-border bg-background shrink-0">
-        <div className="max-w-7xl mx-auto px-6 py-3 space-y-2">
+        <div className="max-w-7xl mx-auto px-3 py-3 space-y-2 sm:px-4">
           {/* Queued Messages Display */}
           {queuedMessages.length > 0 && (
             <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
@@ -2836,7 +2875,8 @@ export function ChatPanel({
               {/* Staged attachment previews (above the input row). */}
               <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
 
-              <div className="relative z-20 flex items-end gap-3">
+              {/* The chat pane can narrow independently of the viewport; keep metadata in flow. */}
+              <div className="relative z-20 flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-1 px-1">
                 <AnimatePresence initial={false} mode="wait">
                   {effortStatus && (
                     <motion.span
@@ -2844,7 +2884,7 @@ export function ChatPanel({
                       role="status"
                       aria-live="polite"
                       className={cn(
-                        "absolute left-3 right-64 top-0 truncate text-[11px] font-medium max-sm:right-44",
+                        "min-w-0 flex-1 basis-48 text-[11px] font-medium leading-snug",
                         effortStatus.tone === "error"
                           ? "text-destructive"
                           : effortStatus.tone === "warning"
@@ -2860,6 +2900,77 @@ export function ChatPanel({
                     </motion.span>
                   )}
                 </AnimatePresence>
+                <div
+                  className="flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-2"
+                  data-testid="composer-model-effort"
+                >
+                  <Popover className="min-w-0 max-w-full">
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label="Model details"
+                        className="flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-border/60 px-2 py-1.5 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <span className="shrink-0 text-muted-foreground">Model</span>
+                        <span className="min-w-0 truncate font-medium">{modelDisplayName}</span>
+                        <Info className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent side="top" align="end" className="w-72 max-w-[calc(100vw-2rem)] space-y-2 text-xs">
+                      <p className="font-medium">{modelDisplayName}</p>
+                      <dl className="space-y-1 text-muted-foreground">
+                        <dt>Model ID</dt>
+                        <dd className="break-all font-mono text-foreground">{agent?.model?.id || "Not available"}</dd>
+                        <dt>Provider</dt>
+                        <dd className="break-all text-foreground">{agent?.model?.provider || "Not available"}</dd>
+                      </dl>
+                      <p className="text-muted-foreground">The agent chooses the model. Reasoning effort applies to this conversation.</p>
+                    </PopoverContent>
+                  </Popover>
+                  <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    {isSavingEffort
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                      : <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />}
+                    <span>Reasoning</span>
+                    <Select
+                      aria-label="Reasoning effort"
+                      aria-describedby={reasoningHelpId}
+                      aria-busy={isSavingEffort}
+                      value={effortSelectValue}
+                      disabled={!canConfigureEffort || isSavingEffort || isThisConversationStreaming}
+                      className="h-8 w-24 px-2 py-1 text-xs text-foreground"
+                      onChange={async (event) => {
+                        const effort = event.target.value as ReasoningEffort;
+                        setIsSavingEffort(true);
+                        try {
+                          const result = await persistReasoningEffort(effort);
+                          if (result === "changed" && effort === "max") {
+                            setMaxEffortAnimationKey((current) => current + 1);
+                          }
+                        } finally {
+                          setIsSavingEffort(false);
+                        }
+                      }}
+                    >
+                      {effortSelectValue === "provider_default" && (
+                        <option value="provider_default" disabled>{supportedReasoningEfforts === null ? "Loading…" : "Default"}</option>
+                      )}
+                      {supportedReasoningEfforts?.map((effort) => (
+                        <option key={effort} value={effort}>{effort[0].toUpperCase() + effort.slice(1)}</option>
+                      ))}
+                    </Select>
+                  </label>
+                  <span id={reasoningHelpId} className="sr-only">
+                    {supportedReasoningEfforts === null
+                      ? "Checking which reasoning settings this model supports."
+                      : canConfigureEffort
+                        ? "Higher reasoning effort can take longer. Changes apply to this conversation. Unavailable while a response is generating."
+                        : "This model uses its provider's default reasoning."}
+                  </span>
+                </div>
+              </div>
+
+              <div className="relative z-20 flex min-w-0 items-end gap-2">
                 <TextareaAutosize
                   ref={inputRef}
                   aria-label="Message"
@@ -2870,36 +2981,13 @@ export function ChatPanel({
                   placeholder={
                     isThisConversationStreaming
                       ? `Type to queue another message${queuedMessages.length > 0 ? ` (${queuedMessages.length} queued)` : ""}, or Cmd+Enter to send now...`
-                      : `Ask anything, or type / to see commands, skills, and agents...`
+                      : "Ask anything, or / for commands..."
                   }
-                  className="flex-1 bg-transparent resize-none outline-none px-3 py-2.5 text-sm"
+                  className="min-w-0 flex-1 bg-transparent resize-none outline-none px-1 py-2.5 text-sm"
                   minRows={1}
                   maxRows={10}
                 />
-                <div className="relative flex shrink-0 items-center gap-2 pt-5">
-                  <span
-                    className="absolute right-0 top-0 flex max-w-56 items-center gap-1 whitespace-nowrap text-[10px] font-medium text-muted-foreground max-sm:max-w-40"
-                    title={`${agent?.model?.id || "Model"} · ${reasoningEffort}`}
-                    data-testid="composer-model-effort"
-                  >
-                    <span className="truncate">{agent?.model?.id || "Model"}</span>
-                    <span aria-hidden="true">·</span>
-                    <span
-                      className={cn("text-foreground/80", reasoningEffort === "max" && "font-bold")}
-                      style={reasoningEffort === "max"
-                        ? {
-                            background: `linear-gradient(90deg, ${maxEffortTheme.from}, ${maxEffortTheme.to})`,
-                            backgroundClip: "text",
-                            color: "transparent",
-                            WebkitBackgroundClip: "text",
-                            WebkitTextFillColor: "transparent",
-                          }
-                        : undefined}
-                    >
-                      {reasoningEffort}
-                    </span>
-                  </span>
-
+                <div className="flex shrink-0 items-center gap-2">
                   {/* Attach files */}
                   <div className="shrink-0">
                     <Button
@@ -2941,13 +3029,33 @@ export function ChatPanel({
             </div>
           </div>
 
-          <div className="relative flex min-h-6 items-center justify-center">
-            <p className="px-28 text-center text-xs text-muted-foreground max-sm:px-0 max-sm:pr-24">
-              {getConfig('appName')} can make mistakes. Verify important info.
-              {getConfig('auditLogsEnabled') && ' · Conversations are logged for audit.'}
-            </p>
+          <div className="flex min-h-6 flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Accuracy and audit information"
+                  className="inline-flex items-center gap-1 rounded-md py-1 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <Info className="h-3 w-3" aria-hidden="true" />
+                  <span>Verify important answers</span>
+                </button>
+              </PopoverTrigger>
+              <PopoverContent side="top" className="w-72 max-w-[calc(100vw-2rem)] space-y-2 text-xs">
+                <p>{getConfig('appName')} can make mistakes. Verify important information before acting on an answer.</p>
+                {getConfig('auditLogsEnabled') && (
+                  <p className="text-muted-foreground">Conversations are logged for audit.</p>
+                )}
+              </PopoverContent>
+            </Popover>
+            {getConfig('auditLogsEnabled') && (
+              <span className="inline-flex items-center gap-1">
+                <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+                Logged for audit
+              </span>
+            )}
             {showContextUsage && contextUsage && (
-              <div className="absolute right-0">
+              <div className="shrink-0">
                 <ContextUsageIndicator usage={contextUsage} />
               </div>
             )}
