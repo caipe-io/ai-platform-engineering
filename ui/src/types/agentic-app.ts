@@ -80,4 +80,26 @@ export interface PublicAgenticApp {
   capabilities: string[];
   uiMode?: "native-package" | "iframe";
   hostPaths?: string[];
+  assistantEnabled?: boolean;
+  assistantAgentId?: string;
+  assistantLabel?: string;
+  assistantAgentName?: string;
+}
+
+export interface AgenticAppAssistantContextRecord {
+  contextId: string;
+  appId: string;
+  sessionId: string;
+  schemaVersion: string;
+  route: string;
+  payloadSizeBytes: number;
+  validationStatus: "accepted" | "ignored" | "rejected";
+  createdAt: string;
+  expiresAt: string;
+  title?: string;
+  summary?: string;
+  selection?: string;
+  resourceRefs?: Array<Record<string, string>>;
+  suggestedPrompts?: string[];
+  reasonCode?: string;
 }

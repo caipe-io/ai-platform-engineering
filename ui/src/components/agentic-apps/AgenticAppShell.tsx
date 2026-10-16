@@ -3,11 +3,20 @@
 import { ArrowLeft, LoaderCircle } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { AgenticAppAssistantOverlay } from "@/components/agentic-apps/AgenticAppAssistantOverlay";
+import { validateAssistantContextMessage } from "@/lib/agentic-apps/assistant-context";
 import { buildAgenticAppPublicPath } from "@/lib/agentic-apps/runtime";
 import { nativeAgenticAppDestination } from "@/lib/agentic-apps/public-app";
-import type { PublicAgenticApp } from "@/types/agentic-app";
+import {
+  resolveUsableChatAgent,
+  type ResolvedChatAgent,
+} from "@/lib/chat-agent-selection";
+import type {
+  AgenticAppAssistantContextRecord,
+  PublicAgenticApp,
+} from "@/types/agentic-app";
 
 type ShellState =
   | { status: "loading" }
@@ -26,6 +35,21 @@ export function AgenticAppShell({
   const [state, setState] = useState<ShellState>({ status: "loading" });
   const aliasPath = JSON.stringify(path);
   const search = searchParams.toString();
+  const [assistantContext, setAssistantContext] =
+    useState<AgenticAppAssistantContextRecord | null>(null);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantBinding, setAssistantBinding] = useState<{
+    bindingKey: string;
+    agent: ResolvedChatAgent;
+  } | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  const requestedAgentId = state.status === "ready" ? state.app.assistantAgentId : undefined;
+  const assistantBindingKey = `${appId}:${requestedAgentId ?? "default"}`;
+  const assistantAgent =
+    assistantBinding?.bindingKey === assistantBindingKey ? assistantBinding.agent : null;
+  const assistantConfigured =
+    state.status === "ready" && state.app.assistantEnabled === true;
 
   useEffect(() => {
     let cancelled = false;
@@ -81,6 +105,56 @@ export function AgenticAppShell({
     };
   }, [aliasPath, appId, router, search]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!assistantConfigured) return () => undefined;
+
+    resolveUsableChatAgent({
+      requestedAgentId,
+      requireAvailableAgent: true,
+    })
+      .then((agent) => {
+        if (!cancelled) setAssistantBinding({ bindingKey: assistantBindingKey, agent });
+      })
+      .catch((error: unknown) => {
+        console.warn(
+          `[AgenticAppShell] Contextual assistant unavailable for ${appId}:`,
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [appId, assistantBindingKey, assistantConfigured, requestedAgentId]);
+
+  useEffect(() => {
+    if (!assistantConfigured) return;
+
+    function onMessage(event: MessageEvent): void {
+      const expectedSource = iframeRef.current?.contentWindow ?? null;
+      if (event.origin !== window.location.origin || event.source !== expectedSource) return;
+
+      if (isAssistantOpenMessage(event.data, appId)) {
+        setAssistantOpen(true);
+        return;
+      }
+
+      const result = validateAssistantContextMessage({
+        message: event.data,
+        appId,
+        origin: event.origin,
+        expectedOrigin: window.location.origin,
+        source: event.source,
+        expectedSource,
+      });
+      if (result.ok) setAssistantContext(result.record);
+    }
+
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [appId, assistantConfigured, state]);
+
   if (state.status === "loading") {
     return (
       <div className="flex flex-1 items-center justify-center">
@@ -128,11 +202,38 @@ export function AgenticAppShell({
         </span>
       </div>
       <iframe
+        ref={iframeRef}
         className="min-h-0 flex-1 border-0 bg-background"
         src={runtimePath}
         title={state.app.displayName}
         allow="clipboard-read; clipboard-write"
       />
+      {assistantConfigured && assistantAgent ? (
+        <AgenticAppAssistantOverlay
+          appId={state.app.appId}
+          appName={state.app.displayName}
+          assistantLabel={state.app.assistantLabel}
+          assistantAgentName={state.app.assistantAgentName}
+          activeContext={assistantContext}
+          onClearContext={() => setAssistantContext(null)}
+          assistantAgentId={assistantAgent.id}
+          open={assistantOpen}
+          onOpenChange={setAssistantOpen}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function isAssistantOpenMessage(message: unknown, appId: string): boolean {
+  return (
+    typeof message === "object" &&
+    message !== null &&
+    "type" in message &&
+    "version" in message &&
+    "appId" in message &&
+    message.type === "caipe.agenticApp.assistant.open.v1" &&
+    message.version === "1.0" &&
+    message.appId === appId
   );
 }

@@ -10,6 +10,12 @@ export function buildPublicAgenticApp(
 ): PublicAgenticApp {
   return {
     appId: app.installation.appId,
+    assistantEnabled: Boolean(app.manifest.ui.assistant),
+    ...(app.manifest.ui.assistant ? {
+      assistantAgentId: app.manifest.ui.assistant.agentId,
+      assistantLabel: app.manifest.ui.assistant.label,
+      assistantAgentName: app.manifest.ui.assistant.name,
+    } : {}),
     displayName: app.manifest.displayName,
     description: app.manifest.description,
     href: agenticAppEntryHref(app),
