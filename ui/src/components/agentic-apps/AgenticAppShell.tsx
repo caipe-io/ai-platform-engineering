@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { WorkspaceBreadcrumbs } from "@/components/layout/WorkspacePageHeader";
 import { buildAgenticAppPublicPath } from "@/lib/agentic-apps/runtime";
 import { nativeAgenticAppDestination } from "@/lib/agentic-apps/public-app";
 import type { PublicAgenticApp } from "@/types/agentic-app";
@@ -113,20 +114,13 @@ export function AgenticAppShell({
   const runtimePath = `${buildAgenticAppPublicPath(appId, path)}${query ? `?${query}` : ""}`;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-3 border-b bg-background px-4 py-2">
-        <Link
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-          href="/apps"
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden /> Apps
-        </Link>
-        <span className="text-muted-foreground" aria-hidden>
-          /
-        </span>
-        <span className="truncate text-sm font-medium">
-          {state.app.displayName}
-        </span>
-      </div>
+      <WorkspaceBreadcrumbs
+        breadcrumbs={[
+          { label: "Home", href: "/" },
+          { label: "Apps", href: "/apps" },
+          { label: state.app.displayName },
+        ]}
+      />
       <iframe
         className="min-h-0 flex-1 border-0 bg-background"
         src={runtimePath}
