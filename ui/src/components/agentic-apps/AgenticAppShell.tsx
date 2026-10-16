@@ -4,6 +4,7 @@ import { ArrowLeft, LoaderCircle } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { HostedAgenticAppFrame } from "./HostedAgenticAppFrame";
 
 import { buildAgenticAppPublicPath } from "@/lib/agentic-apps/runtime";
 import { nativeAgenticAppDestination } from "@/lib/agentic-apps/public-app";
@@ -127,7 +128,8 @@ export function AgenticAppShell({
           {state.app.displayName}
         </span>
       </div>
-      <iframe
+      <HostedAgenticAppFrame
+        appId={appId}
         className="min-h-0 flex-1 border-0 bg-background"
         src={runtimePath}
         title={state.app.displayName}
