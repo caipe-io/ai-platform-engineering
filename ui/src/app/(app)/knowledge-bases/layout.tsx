@@ -1,6 +1,7 @@
 "use client";
 
 import { AuthGuard } from "@/components/auth-guard";
+import { AreaNotificationToggle } from "@/components/notifications/AreaNotificationToggle";
 import { WorkspacePageHeader } from "@/components/layout/WorkspacePageHeader";
 import { WorkspaceShell } from "@/components/layout/WorkspaceShell";
 import {
@@ -26,6 +27,7 @@ function KnowledgeBasesHeader({
 }): React.ReactElement {
   return (
     <WorkspacePageHeader
+      actions={href.includes("/ingest") ? <AreaNotificationToggle area="ingestion" /> : undefined}
       breadcrumbs={[
         { label: "Home",href: "/" },
         { label: "Knowledge Bases",href: "/knowledge-bases/search" },

@@ -22,6 +22,8 @@ export interface InAppNotificationDocument {
   category?: InAppNotificationCategory;
   source_label?: string;
   correlation_key?: string;
+  /** Catalog event type, such as "service.degraded". Lets per-event preferences filter shared entries. */
+  event_type?: string;
   lifecycle_status?: InAppNotificationLifecycleStatus;
   resolved_at?: string;
   resolved_by_subject?: string;
@@ -31,6 +33,8 @@ export interface InAppNotificationDocument {
   updated_at: string;
   read_by_subjects: string[];
   archived_at?: string;
+  /** When MongoDB may delete this entry. Only event notifications set it. */
+  expires_at?: Date;
 }
 
 export interface InAppNotificationView {

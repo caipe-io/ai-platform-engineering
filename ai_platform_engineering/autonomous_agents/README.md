@@ -223,6 +223,11 @@ tasks:
 | `CHAT_HISTORY_DATABASE` | `None` | Optional override of the chat database name when the UI's chat data lives in a different database than `MONGODB_DATABASE`. |
 | `CHAT_HISTORY_CONVERSATIONS_COLLECTION` | `conversations` | Collection that the UI sidebar reads. |
 | `CHAT_HISTORY_MESSAGES_COLLECTION` | `messages` | Collection that the UI message panel reads. |
+| `NOTIFICATIONS_INTERNAL_URL` | `http://caipe-ui:3000` | UI server base URL for `POST /api/internal/notifications/events`. |
+| `NOTIFICATIONS_INTERNAL_TOKEN` | unset | Shared bearer secret. Unset disables notification publishing. |
+| `NOTIFICATION_EVENTS_ENABLED` | `true` | Set to `false` to stop publishing `agent.completed` / `agent.failed` for task runs. |
+
+Notification publishing is best-effort: the task owner gets `agent.completed` or `agent.failed` when a run finishes. The client uses a 3s timeout, retries once on 503 or a connection error, and never changes the run outcome. Payloads carry no prompt, response, or error text.
 
 ---
 

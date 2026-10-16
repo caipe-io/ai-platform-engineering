@@ -11,6 +11,10 @@ jest.mock("@/hooks/use-admin-role",() => ({
   useAdminRole: () => ({ isAdmin: true }),
 }));
 
+jest.mock("@/components/settings/sections/EventNotificationSettings",() => ({
+  EventNotificationSettings: () => null,
+}));
+
 jest.mock("@/components/settings/ReleaseNotesPreview",() => ({
   ReleaseNotesPreview: () => <button type="button">Show current release notes</button>,
 }));

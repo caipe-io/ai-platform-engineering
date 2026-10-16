@@ -684,7 +684,19 @@ async def request_ingestor_preview(
   return data
 
 
-async def create_reload_job(datasource_id: str, resource_label: str) -> str:
+def job_actor(user: Optional[UserContext]) -> Dict[str, Optional[str]]:
+  """Identity to record on a job as having "touched" its datasource.
+
+  Only real human users count: service accounts (including the trusted
+  ingestor transport identity) are skipped so a shared credential never
+  becomes a notification recipient.
+  """
+  if user is None or user.subject_type != "user" or not user.is_authenticated:
+    return {}
+  return {"triggered_by_subject": user.subject, "triggered_by_email": user.email or None}
+
+
+async def create_reload_job(datasource_id: str, resource_label: str, user: Optional[UserContext] = None) -> str:
   """Create the exact PENDING job a single-datasource reload will execute."""
   if not jobmanager:
     raise HTTPException(status_code=500, detail="Server not initialized")
@@ -696,6 +708,7 @@ async def create_reload_job(datasource_id: str, resource_label: str) -> str:
     message="Waiting for ingestor to process reload...",
     total=0,
     datasource_id=datasource_id,
+    **job_actor(user),
   )
   if not created:
     raise HTTPException(status_code=500, detail="Failed to create reload job")
@@ -719,7 +732,7 @@ async def queue_datasource_reload(
     raise HTTPException(status_code=404, detail="Datasource not found")
   await check_datasource_management_access(user, datasource_id)
   ingestor_id = await resolve_datasource_ingestor(datasource, ingestor_type)
-  job_id = await create_reload_job(datasource_id, resource_label)
+  job_id = await create_reload_job(datasource_id, resource_label, user)
   await enqueue_ingestor_request(
     ingestor_type=ingestor_type,
     ingestor_id=ingestor_id,
@@ -1941,7 +1954,7 @@ async def create_job(request: Request, datasource_id: str, job_status: Optional[
   job_id = str(uuid.uuid4())
 
   # Create job with datasource_id
-  success = await jobmanager.upsert_job(job_id, status=job_status or JobStatus.PENDING, message=message or "Job created", total=total, datasource_id=datasource_id)
+  success = await jobmanager.upsert_job(job_id, status=job_status or JobStatus.PENDING, message=message or "Job created", total=total, datasource_id=datasource_id, **job_actor(user))
 
   if not success:
     raise HTTPException(status_code=400, detail="Failed to create job")
@@ -1964,7 +1977,7 @@ async def update_job(request: Request, job_id: str, job_status: Optional[JobStat
   await authorize_ingestor_job_transport(request, user, existing_job.datasource_id)
 
   # Update job
-  success = await jobmanager.upsert_job(job_id, status=job_status, message=message, total=total, datasource_id=existing_job.datasource_id)
+  success = await jobmanager.upsert_job(job_id, status=job_status, message=message, total=total, datasource_id=existing_job.datasource_id, **job_actor(user))
 
   if not success:
     raise HTTPException(status_code=400, detail="Failed to update job (job may be terminated)")
@@ -2344,6 +2357,7 @@ async def _ingest_local_file_uploads(
       message=success_message,
       total=len(uploads),
       datasource_id=datasource_id,
+      **job_actor(user),
     )
   except Exception as exc:
     await jobmanager.increment_failure(job_id, message=str(exc))
@@ -2352,6 +2366,7 @@ async def _ingest_local_file_uploads(
       status=JobStatus.FAILED,
       message=failure_message,
       datasource_id=datasource_id,
+      **job_actor(user),
     )
     raise
 
@@ -2431,6 +2446,7 @@ async def ingest_local_file(
     message="Ingesting uploaded file..." if len(uploads) == 1 else f"Ingesting {len(uploads)} uploaded files...",
     total=len(uploads),
     datasource_id=datasource_id,
+    **job_actor(user),
   )
   if not success:
     raise HTTPException(status_code=500, detail="Failed to create job")
@@ -2562,6 +2578,7 @@ async def reupload_local_file(
     message="Re-uploading file..." if len(uploads) == 1 else f"Re-uploading {len(uploads)} files...",
     total=len(uploads),
     datasource_id=datasource_id,
+    **job_actor(user),
   )
   if not success:
     raise HTTPException(status_code=500, detail="Failed to create job")
@@ -2829,6 +2846,7 @@ async def ingest_url(
     message="Waiting for ingestor to process...",
     total=0,  # Unknown until sitemap is checked
     datasource_id=datasource_id,
+    **job_actor(user),
   )
 
   if not success:
@@ -3081,6 +3099,7 @@ async def ingest_confluence_page(
     message="Waiting for ingestor to process...",
     total=1,  # Single page ingestion
     datasource_id=datasource_id,
+    **job_actor(user),
   )
 
   if not success:
@@ -3174,6 +3193,7 @@ async def ingest_slack_channel(
     message="Waiting for ingestor to process...",
     total=0,
     datasource_id=datasource_id,
+    **job_actor(user),
   )
   if not success:
     raise HTTPException(status_code=500, detail="Failed to create job")
@@ -3297,6 +3317,7 @@ async def ingest_jira_project(
     message="Waiting for ingestor to process...",
     total=0,
     datasource_id=datasource_id,
+    **job_actor(user),
   )
   if not success:
     raise HTTPException(status_code=500, detail="Failed to create job")
@@ -3422,6 +3443,7 @@ async def ingest_webex_space(
     message="Waiting for ingestor to process...",
     total=0,
     datasource_id=datasource_id,
+    **job_actor(user),
   )
   if not success:
     raise HTTPException(status_code=500, detail="Failed to create job")

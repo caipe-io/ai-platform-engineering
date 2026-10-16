@@ -9,7 +9,7 @@ import {
 import { getRequestOrigin } from "@/app/api/skills/_lib/request-origin";
 import { findNotificationProducer } from "@/lib/agentic-apps/notification-producer";
 import { createInAppNotification, listInAppNotifications } from "@/lib/in-app-notifications.server";
-import { platformHealthNotificationsEnabled } from "@/lib/notification-preferences.server";
+import { inboxViewOptions } from "@/lib/notification-preferences.server";
 import { runPlatformHealthNotificationAudit } from "@/lib/platform-health-notifications.server";
 
 function positiveInteger(value: string | null, fallback: number): number {
@@ -22,11 +22,11 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const subject = typeof session.sub === "string" ? session.sub.trim() : "";
   if (!subject) throw new ApiError("Your session has expired. Please sign in again.", 401);
   const params = request.nextUrl.searchParams;
-  const includePlatformNotifications = await platformHealthNotificationsEnabled(user.email);
+  const viewOptions = await inboxViewOptions(user.email);
   const page = await listInAppNotifications(subject, {
     page: positiveInteger(params.get("page"), 1),
     pageSize: positiveInteger(params.get("page_size"), 10),
-    includePlatformNotifications,
+    ...viewOptions,
   });
   after(() => runPlatformHealthNotificationAudit(getRequestOrigin(request)));
   return successResponse(page);
