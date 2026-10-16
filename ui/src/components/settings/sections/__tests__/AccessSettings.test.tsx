@@ -86,7 +86,7 @@ describe("AccessSettings", () => {
     const fetchMock = installFetchMock({ webex_link_available: true, webex_linked: true });
     render(<AccessSettings />);
 
-    expect(await screen.findByText("Your Webex account has been linked.")).toBeInTheDocument();
+    expect(await screen.findByText("Linking complete. You can now use your Webex bot.")).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 
