@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -537,6 +538,70 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
         "channel_id": "6f91b070-531a-11f1-926d-6fd3c20dfdc4",
         "surface_kind": "channel",
     }
+
+
+@pytest.mark.parametrize("is_direct", [False, True])
+def test_dispatcher_uses_distinct_agent_and_catalog_bot_names(
+    monkeypatch: pytest.MonkeyPatch, is_direct: bool
+) -> None:
+    monkeypatch.setenv("APP_NAME", "Fallback App")
+    monkeypatch.setenv(
+        "WEBEX_INTEGRATION_BOTS_JSON",
+        json.dumps(
+            [
+                {
+                    "id": "secondary",
+                    "name": "Example Bot (example-bot@example.com)",
+                    "tokenEnv": "SECONDARY_TOKEN",
+                    "spaces": {"accessMode": "allowlist"},
+                    "directMessages": {"accessMode": "allowlist"},
+                }
+            ]
+        ),
+    )
+    api = FakeWebexApi()
+    sse = FakeSseClient(
+        events=[
+            SSEEvent(SSEEventType.TEXT_MESSAGE_CONTENT, delta="hello "),
+            SSEEvent(SSEEventType.TEXT_MESSAGE_CONTENT, delta="world"),
+            SSEEvent(SSEEventType.RUN_FINISHED),
+        ]
+    )
+    dispatcher = WebexThreadedStreamDispatcher(
+        webex_api=api, sse_client=sse, update_every_chars=1
+    )
+
+    asyncio.run(
+        dispatcher(
+            {
+                "bot_id": "secondary",
+                "person_id": "example-person-id",
+                "space_id": "example-space-id",
+                "webex_room_id": "example-room-id",
+                "message_id": "example-message-id",
+                "text": "hello",
+                "agent_id": "example-agent",
+                "obo_token": "example-access-token",
+                "is_direct": is_direct,
+            }
+        )
+    )
+
+    footer = "Agent: Example Agent"
+    if not is_direct:
+        footer += " • **Mention @Example Bot to continue**"
+    footer += _BOT_REPLY_MARKER
+    assert api.created[0]["markdown"] == f"Working on it...\n\n{footer}"
+    assert api.updated[-1]["markdown"] == f"hello world\n\n{footer}"
+    for reply in [*api.created, *api.updated]:
+        assert reply["markdown"].endswith(footer)
+        assert "example-bot@example.com" not in reply["markdown"]
+        assert "Fallback App" not in reply["markdown"]
+        assert "example-agent" not in reply["markdown"]
+        if is_direct:
+            assert "Mention @" not in reply["markdown"]
+    assert sse.conversations[0]["agent_id"] == "example-agent"
+    assert sse.calls[0]["agent_id"] == "example-agent"
 
 
 def test_threaded_stream_dispatcher_tags_message_turns_with_webex_source() -> None:
