@@ -1,4 +1,6 @@
 import type { ConfiguredAgenticApp } from "@/types/agentic-app";
+import { normalizeLegacyAgenticAppManifest } from "../../../../app-sdk/agentic-app-manifest.mjs";
+import { organizationObjectId } from "@/lib/rbac/organization";
 
 import { buildConfiguredAgenticAppCasTupleDiff } from "../cas-reconcile";
 
@@ -8,7 +10,7 @@ function configuredApp(
   authorization = true,
 ): ConfiguredAgenticApp {
   return {
-    manifest: {
+    manifest: normalizeLegacyAgenticAppManifest({
       id,
       displayName: id,
       description: "Example",
@@ -26,7 +28,7 @@ function configuredApp(
         tokenScopes: ["example:read"],
         policyActions: [{ action: "proxy:GET", defaultEffect: "allow" }],
       },
-    },
+    }),
     installation: {
       appId: id,
       packageId: id,
@@ -43,6 +45,9 @@ describe("configured External App CAS reconciliation", () => {
       configuredApp("visible-app", true),
       configuredApp("hidden-app", false),
       configuredApp("local-only-app", true, false),
+    ], [
+      { user: organizationObjectId(), relation: "catalog_managed", object: "agentic_app:hidden-app" },
+      { user: "user:*", relation: "user", object: "agentic_app:hidden-app" },
     ]);
 
     expect(diff.writes).toEqual(
@@ -68,5 +73,13 @@ describe("configured External App CAS reconciliation", () => {
         expect.objectContaining({ object: "agentic_app:local-only-app" }),
       ]),
     );
+  });
+  it("cleans removed managed apps without touching independent grants", () => {
+    const owned = { user: organizationObjectId(), relation: "catalog_managed", object: "agentic_app:removed" };
+    const managedGrant = { user: "user:*", relation: "user", object: owned.object };
+    const independentGrant = { ...managedGrant, object: "agentic_app:independent" };
+    const explicitGrant = { ...managedGrant, user: "user:example" };
+    const diff = buildConfiguredAgenticAppCasTupleDiff([], [owned, managedGrant, independentGrant, explicitGrant]);
+    expect(diff.deletes).toEqual([owned, managedGrant]);
   });
 });

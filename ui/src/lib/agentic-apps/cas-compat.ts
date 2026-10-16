@@ -1,6 +1,7 @@
 import { authorize } from "@/lib/authz";
 import type { AuthorizeRequest, AuthorizeResult, DecisionContext } from "@/lib/authz";
 import type { AgenticAppCasAction } from "@/types/agentic-app";
+import { reconcileConfiguredAgenticAppCasAccess } from "./cas-reconcile";
 
 export type AgenticAppCasMode = "off" | "shadow" | "enforce";
 
@@ -36,6 +37,7 @@ export async function evaluateAgenticAppCasCompatibility(input: {
 
   let result: AuthorizeResult;
   try {
+    if (!input.authorizer) await reconcileConfiguredAgenticAppCasAccess();
     result = await (input.authorizer ?? authorize)(
       {
         subject: { type: "user", id: input.subjectId },

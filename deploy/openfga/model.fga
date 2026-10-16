@@ -208,6 +208,7 @@ type mcp_server
 
 type agentic_app
   relations
+    define catalog_managed: [organization]
     define owner: [user, service_account]
     define reader: [user, service_account, team#member, team#admin, external_group#member, organization#member]
     define user: [user, user:*, service_account, team#member, team#admin, external_group#member, organization#member]

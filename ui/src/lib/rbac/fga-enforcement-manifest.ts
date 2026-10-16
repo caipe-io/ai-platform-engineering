@@ -120,6 +120,9 @@ export const FGA_ENFORCEMENT_MANIFEST: Record<
     status: "rebac_enforced",
     surfaces: [
       "ui/src/lib/agentic-apps/cas-compat.ts",
+      "ui/src/app/api/agentic-apps/route.ts",
+      "ui/src/app/api/agentic-apps/[appId]/route.ts",
+      "ui/src/native-extensions/access.ts",
       "ui/src/app/api/agentic-apps/runtime/[appId]/[[...path]]/route.ts",
     ],
     notes:

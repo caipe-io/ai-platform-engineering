@@ -37,7 +37,7 @@ agentic_apps:
               path: /api/preferences
               defaultEffect: allow
               requiredScopes: [weather:write]
-              casAction: write
+              casAction: use
         health:
           endpoint: /healthz
           timeoutMs: 1500

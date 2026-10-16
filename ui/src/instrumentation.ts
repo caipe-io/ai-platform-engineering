@@ -32,10 +32,10 @@ export async function register() {
   startConfigDrivenRagSourceReconciler();
 
   try {
-    const { reconcileConfiguredAgenticAppCasAccess } = await import(
+    const { startConfiguredAgenticAppCasReconciler } = await import(
       "./lib/agentic-apps/cas-reconcile"
     );
-    await reconcileConfiguredAgenticAppCasAccess();
+    startConfiguredAgenticAppCasReconciler();
   } catch (error) {
     console.error("[instrumentation] External App CAS reconcile failed closed:", error);
   }

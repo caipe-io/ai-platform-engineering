@@ -386,7 +386,10 @@ export function getConfiguredAgenticApp(
 function parseManifest(value: unknown, path: string): AgenticAppManifest {
   const raw = asRecord(value, path);
   if (raw.apiVersion === "2.0") return validateAgenticAppManifest(raw);
-  return normalizeLegacyAgenticAppManifest(parseLegacyManifest(value, path));
+  const legacy = parseLegacyManifest(value, path);
+  if (!legacy.authorization && legacy.access.policyActions.some((policy) => policy.casAction))
+    throw new Error(`${path}: casAction requires application authorization`);
+  return normalizeLegacyAgenticAppManifest(legacy);
 }
 
 function parseLegacyManifest(

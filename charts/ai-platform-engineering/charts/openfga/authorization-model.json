@@ -2034,6 +2034,9 @@
               }
             ]
           }
+        },
+        "catalog_managed": {
+          "this": {}
         }
       },
       "metadata": {
@@ -2189,6 +2192,13 @@
           },
           "can_audit": {
             "directly_related_user_types": []
+          },
+          "catalog_managed": {
+            "directly_related_user_types": [
+              {
+                "type": "organization"
+              }
+            ]
           }
         }
       }
