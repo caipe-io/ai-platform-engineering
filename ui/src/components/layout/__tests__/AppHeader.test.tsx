@@ -15,6 +15,7 @@ import {
   render as testingRender,
   screen,
   fireEvent,
+  waitFor,
   within,
   type RenderOptions,
   type RenderResult,
@@ -330,6 +331,7 @@ jest.mock('@/lib/utils', () => ({
 // ============================================================================
 
 import { AppHeader } from '../AppHeader'
+import { AgenticAppShell } from '@/components/agentic-apps/AgenticAppShell'
 import { ApplicationNavigationRail } from '../ApplicationNavigation'
 import { HeaderBreadcrumbSlotProvider } from '../HeaderBreadcrumbSlot'
 import { WorkspaceHierarchicalNavigationList } from '../WorkspaceNavigation'
@@ -539,6 +541,35 @@ describe('AppHeader — application chrome', () => {
   })
 
   describe('header breadcrumbs', () => {
+    it('renders one complete app trail in the header, using the configured name', async () => {
+      mockPathname = '/apps/example'
+      const previousFetch = global.fetch
+      global.fetch = jest.fn((input, init) =>
+        input === '/api/agentic-apps/example'
+          ? Promise.resolve({
+            ok: true,
+            json: async () => ({ item: {
+              appId: 'example', displayName: 'Example workspace', canLaunch: true,
+              uiMode: 'iframe',
+            } }),
+          } as Response)
+          : previousFetch(input, init),
+      )
+      render(
+        <HeaderBreadcrumbSlotProvider>
+          <AppHeader />
+          <AgenticAppShell appId="example" path={[]} />
+        </HeaderBreadcrumbSlotProvider>,
+      )
+      const slot = screen.getByTestId('app-header-breadcrumb-slot')
+      await waitFor(() => expect(within(slot).getByText('Example workspace')).toHaveAttribute('aria-current', 'page'))
+      expect(screen.getAllByRole('navigation', { name: 'Breadcrumb' })).toHaveLength(1)
+      expect(within(slot).getByText('Home')).toHaveAttribute('href', '/')
+      expect(within(slot).getByText('Apps')).toHaveAttribute('href', '/apps')
+      expect(screen.getByTitle('Example workspace')).toHaveAttribute('src', '/apps/example')
+      global.fetch = previousFetch
+    })
+
     it('provides a section breadcrumb for routes without a page-specific trail', () => {
       mockPathname = '/skills/workspace/new'
 

@@ -13,6 +13,7 @@ import { HostedAgenticAppFrame } from "./HostedAgenticAppFrame";
 import { AgenticAppAssistantOverlay } from "@/components/agentic-apps/AgenticAppAssistantOverlay";
 import { parseAssistantDraft, type AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { validateAssistantContextMessage } from "@/lib/agentic-apps/assistant-context";
+import { WorkspaceBreadcrumbs } from "@/components/layout/WorkspacePageHeader";
 import { buildAgenticAppPublicPath } from "@/lib/agentic-apps/runtime";
 import { connectFrameQueryNavigation } from "@/lib/agentic-apps/frame-query-navigation";
 import { nativeAgenticAppDestination } from "@/lib/agentic-apps/public-app";
@@ -329,20 +330,13 @@ export function AgenticAppShell({
   const requestedRuntimePath = `${buildAgenticAppPublicPath(appId, path)}${query ? `?${query}` : ""}${hash}`;
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      <div className="flex shrink-0 items-center gap-3 border-b bg-background px-4 py-2">
-        <Link
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-          href="/apps"
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden /> Apps
-        </Link>
-        <span className="text-muted-foreground" aria-hidden>
-          /
-        </span>
-        <span className="truncate text-sm font-medium">
-          {state.app.displayName}
-        </span>
-      </div>
+      <WorkspaceBreadcrumbs
+        breadcrumbs={[
+          { label: "Home", href: "/" },
+          { label: "Apps", href: "/apps" },
+          { label: state.app.displayName },
+        ]}
+      />
       {assistantConfigured && assistantError ? <p role="alert" className="p-3 text-sm text-destructive">
         {assistantError} <button type="button" onClick={() => setAssistantRetry(n => n + 1)} className="underline">Retry assistant</button>
       </p> : null}
