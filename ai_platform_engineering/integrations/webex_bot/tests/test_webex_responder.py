@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -92,6 +93,9 @@ class FakeSseClient:
     conversation_metadata: dict[str, Any] = field(default_factory=dict)
     metadata_updates: list[dict[str, Any]] = field(default_factory=list)
     messages: list[dict[str, Any]] = field(default_factory=list)
+
+    def get_agent_name(self, *, agent_id: str, bearer_token: str | None = None) -> str:
+        return "Original Agent" if agent_id == "original-agent" else "Example Agent"
 
     def create_conversation(self, **kwargs: Any) -> dict[str, Any]:
         self.conversations.append(kwargs)
@@ -486,7 +490,7 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
             "parent_id": "message-public-id",
             "markdown": (
                 "Working on it...\n\n"
-                "_Agent: incident-agent_ • **Mention @CAIPE to continue**"
+                "Agent: Example Agent • **Mention @CAIPE to continue**"
                 f"{_BOT_REPLY_MARKER}"
             ),
         }
@@ -496,7 +500,7 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
         "room_id": "room-public-id",
         "markdown": (
             "hello world\n\n"
-            "_Agent: incident-agent_ • **Mention @CAIPE to continue**"
+            "Agent: Example Agent • **Mention @CAIPE to continue**"
             f"{_BOT_REPLY_MARKER}"
         ),
     }
@@ -528,6 +532,70 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
         "channel_id": "6f91b070-531a-11f1-926d-6fd3c20dfdc4",
         "surface_kind": "channel",
     }
+
+
+@pytest.mark.parametrize("is_direct", [False, True])
+def test_dispatcher_uses_distinct_agent_and_catalog_bot_names(
+    monkeypatch: pytest.MonkeyPatch, is_direct: bool
+) -> None:
+    monkeypatch.setenv("APP_NAME", "Fallback App")
+    monkeypatch.setenv(
+        "WEBEX_INTEGRATION_BOTS_JSON",
+        json.dumps(
+            [
+                {
+                    "id": "secondary",
+                    "name": "Example Bot (example-bot@example.com)",
+                    "tokenEnv": "SECONDARY_TOKEN",
+                    "spaces": {"accessMode": "allowlist"},
+                    "directMessages": {"accessMode": "allowlist"},
+                }
+            ]
+        ),
+    )
+    api = FakeWebexApi()
+    sse = FakeSseClient(
+        events=[
+            SSEEvent(SSEEventType.TEXT_MESSAGE_CONTENT, delta="hello "),
+            SSEEvent(SSEEventType.TEXT_MESSAGE_CONTENT, delta="world"),
+            SSEEvent(SSEEventType.RUN_FINISHED),
+        ]
+    )
+    dispatcher = WebexThreadedStreamDispatcher(
+        webex_api=api, sse_client=sse, update_every_chars=1
+    )
+
+    asyncio.run(
+        dispatcher(
+            {
+                "bot_id": "secondary",
+                "person_id": "example-person-id",
+                "space_id": "example-space-id",
+                "webex_room_id": "example-room-id",
+                "message_id": "example-message-id",
+                "text": "hello",
+                "agent_id": "example-agent",
+                "obo_token": "example-access-token",
+                "is_direct": is_direct,
+            }
+        )
+    )
+
+    footer = "Agent: Example Agent"
+    if not is_direct:
+        footer += " • **Mention @Example Bot to continue**"
+    footer += _BOT_REPLY_MARKER
+    assert api.created[0]["markdown"] == f"Working on it...\n\n{footer}"
+    assert api.updated[-1]["markdown"] == f"hello world\n\n{footer}"
+    for reply in [*api.created, *api.updated]:
+        assert reply["markdown"].endswith(footer)
+        assert "example-bot@example.com" not in reply["markdown"]
+        assert "Fallback App" not in reply["markdown"]
+        assert "example-agent" not in reply["markdown"]
+        if is_direct:
+            assert "Mention @" not in reply["markdown"]
+    assert sse.conversations[0]["agent_id"] == "example-agent"
+    assert sse.calls[0]["agent_id"] == "example-agent"
 
 
 def test_threaded_stream_dispatcher_tags_message_turns_with_webex_source() -> None:
@@ -668,7 +736,7 @@ def test_threaded_stream_dispatcher_reuses_root_parent_for_thread_replies() -> N
         "parent_id": "root-message-public-id",
         "markdown": (
             "Working on it...\n\n"
-            "_Agent: incident-agent_ • **Mention @CAIPE to continue**"
+            "Agent: Example Agent • **Mention @CAIPE to continue**"
             f"{_BOT_REPLY_MARKER}"
         ),
     }
@@ -796,13 +864,12 @@ def test_threaded_stream_dispatcher_overrides_reconfigured_space_route_for_exist
     )
 
     assert sse.calls[0]["agent_id"] == "original-agent"
-    # Placeholder reply was created with the owner's agent from the start —
-    # never shows the requested/reconfigured agent, so nothing needs correcting.
+    # The bot identity stays visible while routing uses the pinned agent.
     assert len(api.created) == 1
     assert api.created[0]["markdown"].startswith(
-        "Working on it...\n\n_Agent: original-agent_"
+        "Working on it...\n\nAgent: Original Agent • **Mention @CAIPE to continue**"
     )
-    assert api.updated[-1]["markdown"].startswith("Done.\n\n_Agent: original-agent_")
+    assert api.updated[-1]["markdown"].startswith("Done.\n\nAgent: Original Agent • **Mention @CAIPE to continue**")
     # Ownership was already persisted — no redundant metadata write.
     assert sse.metadata_updates == []
 
@@ -1019,7 +1086,7 @@ def test_bot_reply_recognized_after_app_name_changes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("APP_NAME", "OldName")
-    reply_markdown = _agent_reply_markdown("incident-agent", "prior bot answer")
+    reply_markdown = _agent_reply_markdown("Example Agent", "prior bot answer", bot_name="Example Bot")
 
     monkeypatch.setenv("APP_NAME", "NewName")
 

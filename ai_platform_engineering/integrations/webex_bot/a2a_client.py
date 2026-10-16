@@ -10,6 +10,7 @@ import re
 import uuid
 from contextvars import ContextVar
 from typing import Any, Dict, Iterator, Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -217,6 +218,41 @@ class WebexSSEClient:
 
         url = f"{self.base_url}/api/v1/chat/stream/start"
         yield from self._stream_sse(url, payload, bearer_token=bearer_token)
+
+    def get_agent_name(
+        self,
+        *,
+        agent_id: str,
+        bearer_token: Optional[str] = None,
+    ) -> Optional[str]:
+        """Read the agent display name through the caller-authorized BFF API."""
+
+        client = self._http_client
+        owns_client = client is None
+        if owns_client:
+            client = httpx.Client(timeout=5)
+        assert client is not None
+        try:
+            headers = self._get_headers(bearer_token=bearer_token)
+            headers["Accept"] = "application/json"
+            response = client.get(
+                f"{self.base_url}/api/dynamic-agents/agents/{quote(agent_id, safe='')}",
+                headers=headers,
+                timeout=5,
+            )
+            if response.status_code != 200:
+                logger.debug("Agent display-name lookup returned status=%s", response.status_code)
+                return None
+            payload = response.json()
+            data = payload.get("data", payload) if isinstance(payload, dict) else None
+            name = data.get("name") if isinstance(data, dict) else None
+            return name.strip() if isinstance(name, str) and name.strip() else None
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("Agent display-name lookup failed (type=%s)", type(exc).__name__)
+            return None
+        finally:
+            if owns_client:
+                client.close()
 
     def create_conversation(
         self,
