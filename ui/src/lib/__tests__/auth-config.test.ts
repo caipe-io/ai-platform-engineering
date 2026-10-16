@@ -647,7 +647,7 @@ describe('auth-config', () => {
       expect(fetchSpy).not.toHaveBeenCalled()
     })
 
-    it('should return RefreshTokenExpired when token exchange returns non-JSON', async () => {
+    it('should treat a non-JSON token response as transient while the access token is valid', async () => {
       fetchSpy.mockRestore()
       fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(
         makeRefreshFetchMock({ nonJsonResponse: true }),
@@ -659,11 +659,89 @@ describe('auth-config', () => {
         token: {
           accessToken: 'at',
           refreshToken: 'rt',
+          expiresAt: now + 120,
+        },
+      })
+
+      expect(result.error).toBeUndefined()
+      expect(result.accessToken).toBe('at')
+      expect(result.refreshSuppressedUntil).toBe(now + 60)
+    })
+
+    it('should use the internal token endpoint without trusting public discovery metadata', async () => {
+      process.env.OIDC_DISCOVERY_URL = 'http://keycloak.caipe-prod.svc:8080/realms/caipe'
+      const now = Math.floor(Date.now() / 1000)
+
+      await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+        token: {
+          accessToken: 'at',
+          refreshToken: 'rt',
           expiresAt: now + 60,
         },
       })
 
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://keycloak.caipe-prod.svc:8080/realms/caipe/protocol/openid-connect/token',
+        expect.objectContaining({ method: 'POST' }),
+      )
+    })
+
+    it('should prefer an explicit server-side token endpoint override', async () => {
+      process.env.OIDC_DISCOVERY_URL = 'http://keycloak:8080/realms/caipe'
+      process.env.OIDC_TOKEN_ENDPOINT = 'http://keycloak-token:8080/custom/token'
+      const now = Math.floor(Date.now() / 1000)
+
+      await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+        token: {
+          accessToken: 'at',
+          refreshToken: 'rt',
+          expiresAt: now + 60,
+        },
+      })
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://keycloak-token:8080/custom/token',
+        expect.objectContaining({ method: 'POST' }),
+      )
+    })
+
+    it('should not force-refresh a session that already has a terminal error', async () => {
+      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+        token: {
+          accessToken: 'at',
+          refreshToken: 'rt',
+          expiresAt: Math.floor(Date.now() / 1000) + 60,
+          error: 'RefreshTokenExpired',
+        },
+        trigger: 'update',
+        session: { forceRefresh: true },
+      })
+
       expect(result.error).toBe('RefreshTokenExpired')
+      expect(fetchSpy).not.toHaveBeenCalled()
+    })
+
+    it('should clear terminal refresh state on a fresh sign-in', async () => {
+      const now = Math.floor(Date.now() / 1000)
+      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+        token: {
+          error: 'RefreshTokenExpired',
+          refreshTerminal: true,
+          refreshSuppressedUntil: now + 60,
+        },
+        account: {
+          access_token: 'new-at',
+          refresh_token: 'new-rt',
+          expires_at: now + 3600,
+        },
+      })
+
+      expect(result.error).toBeUndefined()
+      expect(result.refreshTerminal).toBeUndefined()
+      expect(result.refreshSuppressedUntil).toBeUndefined()
+      expect(result.refreshToken).toBe('new-rt')
     })
 
     it('should return RefreshTokenExpired when token exchange fails', async () => {
@@ -685,6 +763,24 @@ describe('auth-config', () => {
       })
 
       expect(result.error).toBe('RefreshTokenExpired')
+    })
+
+    it('should return RefreshTokenError for a transient token failure after access expiry', async () => {
+      fetchSpy.mockRestore()
+      fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(
+        makeRefreshFetchMock({ nonJsonResponse: true }),
+      )
+      const now = Math.floor(Date.now() / 1000)
+
+      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+        token: {
+          accessToken: 'at',
+          refreshToken: 'rt',
+          expiresAt: now - 10,
+        },
+      })
+
+      expect(result.error).toBe('RefreshTokenError')
     })
 
     it('should fall back to Keycloak-style token endpoint when OIDC discovery fails', async () => {
@@ -913,6 +1009,23 @@ describe('auth-config', () => {
 
       expect(result.accessToken).toBeUndefined()
       expect(result.error).toBe('RefreshTokenExpired')
+    })
+
+    it('should not advertise a rejected refresh token to the client', async () => {
+      const result = await (authOptions.callbacks!.session! as (...args: unknown[]) => Promise<unknown>)({
+        session: { user: { name: 'Test', email: 'test@example.com' } },
+        token: {
+          accessToken: 'at',
+          refreshToken: 'rejected-rt',
+          refreshTerminal: true,
+          isAuthorized: true,
+          role: 'user',
+          expiresAt: 9999999999,
+        },
+      })
+
+      expect(result.accessToken).toBe('at')
+      expect(result.hasRefreshToken).toBe(false)
     })
 
     it('should mark SSO sessions invalid when the server-side access token cache is missing', async () => {
@@ -1368,8 +1481,17 @@ describe('auth-config', () => {
       // Should NOT be logged out — access token is still valid
       expect(result.error).toBeUndefined()
       expect(result.accessToken).toBe('still-valid-at')
-      // Should suppress further refresh attempts until token expires
+      expect(result.refreshTerminal).toBe(true)
       expect(result.refreshSuppressedUntil).toBe(now + 200)
+
+      fetchSpy.mockClear()
+      const repeated = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+        token: result,
+        trigger: 'update',
+        session: { forceRefresh: true },
+      })
+      expect(repeated.refreshTerminal).toBe(true)
+      expect(fetchSpy).not.toHaveBeenCalled()
     })
 
     it('Safety net 3: suppressed refresh prevents further refresh attempts', async () => {
