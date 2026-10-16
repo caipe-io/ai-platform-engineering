@@ -331,6 +331,46 @@ describe("reconcileMcpServerRelationships", () => {
     );
   });
 
+  it("removes stale direct owners when a user-owned server becomes config-driven", async () => {
+    mockReadOpenFgaTuples.mockImplementation(
+      async (options: { tuple?: { object?: string } }) => {
+        const object = options?.tuple?.object;
+        if (object === "mcp_server:mcp-config-sync") {
+          return tuplePage([
+            { user: "user:alice", relation: "owner", object },
+            { user: "user:alice", relation: "creator", object },
+          ]);
+        }
+        return tuplePage([]);
+      },
+    );
+
+    await reconcileConfigDrivenMcpServerRelationships({
+      serverId: "mcp-config-sync",
+      organizationId: "caipe",
+    });
+
+    const diff = mockReconcileTupleDiff.mock.calls[0][0];
+    expect(diff.deletes).toEqual(
+      expect.arrayContaining([
+        {
+          user: "user:alice",
+          relation: "owner",
+          object: "mcp_server:mcp-config-sync",
+        },
+      ]),
+    );
+    expect(diff.deletes).not.toEqual(
+      expect.arrayContaining([
+        {
+          user: "user:alice",
+          relation: "creator",
+          object: "mcp_server:mcp-config-sync",
+        },
+      ]),
+    );
+  });
+
   it("writes owner tuples with service_account namespace and audit caller", async () => {
     await reconcileMcpServerRelationships(
       {
