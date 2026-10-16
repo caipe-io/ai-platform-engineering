@@ -10,7 +10,6 @@ import {
 import { getCollection } from "@/lib/mongodb";
 import {
   isNotificationEnabled,
-  mergeNotificationPreferences,
   parseNotificationPreferencePatch,
   type NotificationPreferences,
 } from "@/lib/notifications/preferences";
@@ -19,6 +18,7 @@ import {
   NOTIFICATION_EVENT_CATALOG,
   NOTIFICATION_EVENT_TYPES,
 } from "@/lib/notifications/taxonomy";
+import { updateNotificationPreferences } from "@/lib/notifications/preferences.server";
 import type { UserSettings } from "@/types/mongodb";
 import { NextRequest } from "next/server";
 
@@ -62,27 +62,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       throw new ApiError(parsed.error, 400, "INVALID_PREFERENCES");
     }
 
-    const settings = await getCollection<UserSettings>("user_settings");
-    const current = await settings.findOne(
-      { user_id: user.email },
-      { projection: { notification_preferences: 1 } },
-    );
-
-    // Merge in code, not with dotted $set paths: event names contain dots and
-    // Mongo would nest them. Writing the whole object also keeps repeated
-    // identical PATCH requests idempotent.
-    const merged = mergeNotificationPreferences(
-      current?.notification_preferences ?? null,
-      parsed.patch,
-    );
-
-    await settings.updateOne(
-      { user_id: user.email },
-      {
-        $set: { notification_preferences: merged, updated_at: new Date() },
-      },
-      { upsert: true },
-    );
+    const merged = await updateNotificationPreferences(user.email, parsed.patch);
 
     return successResponse(effectiveView(merged));
   });

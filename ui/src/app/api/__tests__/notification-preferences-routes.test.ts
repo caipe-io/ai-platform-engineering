@@ -4,25 +4,15 @@ import { NextRequest } from "next/server";
 
 import { GET, PATCH } from "@/app/api/settings/notification-preferences/route";
 import { POST as sendTest } from "@/app/api/settings/notification-preferences/test/route";
+import { createFakeUserSettings } from "@/lib/notifications/testing/fake-user-settings";
 
-type Doc = { user_id: string; notification_preferences?: unknown };
-
-const store = new Map<string, Doc>();
+const fake = createFakeUserSettings();
+const store = fake.docs;
 const mockPublish = jest.fn();
 let currentUser: { email: string; sub: string } | null = null;
 
 jest.mock("@/lib/mongodb", () => ({
-  getCollection: async () => ({
-    findOne: async (filter: { user_id: string }) => store.get(filter.user_id) ?? null,
-    updateOne: async (
-      filter: { user_id: string },
-      update: { $set: Record<string, unknown> },
-    ) => {
-      const existing = store.get(filter.user_id) ?? { user_id: filter.user_id };
-      store.set(filter.user_id, { ...existing, ...update.$set } as Doc);
-      return { acknowledged: true };
-    },
-  }),
+  getCollection: async () => fake.collection,
 }));
 
 jest.mock("@/lib/notifications/consumer.server", () => ({

@@ -297,6 +297,8 @@ export interface UserSettings {
   };
   /** Per-category and per-event overrides for event notifications. Missing keys use catalog defaults. */
   notification_preferences?: NotificationPreferences;
+  /** Increments on every write. Guards concurrent preference edits. */
+  notification_preferences_rev?: number;
   defaults: {
     default_model: string;
     default_agent_mode: string;

@@ -14,8 +14,10 @@ export interface ResolvedRecipient {
 
 export interface ResolvedAudience {
   recipients: ResolvedRecipient[];
-  /** Recipients dropped because no subject/email pair could be resolved. */
+  /** Recipients dropped because no user record matched them. */
   skipped: number;
+  /** Recipients rejected because the supplied subject and email name different users. */
+  rejected: number;
 }
 
 type UserLookup = Pick<User, "email" | "keycloak_sub"> & {
@@ -26,11 +28,17 @@ function subjectOf(user: UserLookup): string | undefined {
   return user.keycloak_sub ?? user.metadata?.keycloak_sub;
 }
 
+function sameUser(a: UserLookup, b: UserLookup): boolean {
+  return subjectOf(a) === subjectOf(b) && a.email.toLowerCase() === b.email.toLowerCase();
+}
+
 /**
  * Turns producer-supplied references into complete {subject, email} pairs.
- * The inbox is keyed by subject and preferences by email, so both are needed.
- * Identifiers come from the trusted `users` collection, never from the request
- * alone, and anyone who cannot be resolved is skipped.
+ * The inbox is keyed by subject and preferences by email, so both must name
+ * the same person. Every recipient must match a record in the trusted `users`
+ * collection, and both identifiers are taken from that record, never from the
+ * request. If a request supplies both identifiers and they do not resolve to
+ * the same user, the recipient is rejected.
  */
 export async function resolveRecipients(
   refs: RecipientRef[],
@@ -70,12 +78,29 @@ export async function resolveRecipients(
 
   const resolved = new Map<string, ResolvedRecipient>();
   let skipped = 0;
+  let rejected = 0;
   for (const ref of wanted) {
-    const user =
-      (ref.subject ? bySubject.get(ref.subject) : undefined) ??
-      (ref.email ? byEmail.get(ref.email.toLowerCase()) : undefined);
-    const subject = ref.subject ?? (user ? subjectOf(user) : undefined);
-    const email = ref.email ?? user?.email;
+    const bySubjectMatch = ref.subject ? bySubject.get(ref.subject) : undefined;
+    const byEmailMatch = ref.email ? byEmail.get(ref.email.toLowerCase()) : undefined;
+
+    if (ref.subject && ref.email) {
+      // A complete pair is only trusted when both halves find the same user.
+      if (bySubjectMatch && byEmailMatch && !sameUser(bySubjectMatch, byEmailMatch)) {
+        console.warn("[notifications] rejected recipient: subject and email belong to different users");
+        rejected += 1;
+        continue;
+      }
+      if (!bySubjectMatch || !byEmailMatch) {
+        // One half matches a user and the other does not (or neither does).
+        if (bySubjectMatch || byEmailMatch) rejected += 1;
+        else skipped += 1;
+        continue;
+      }
+    }
+
+    const user = bySubjectMatch ?? byEmailMatch;
+    const subject = user ? subjectOf(user) : undefined;
+    const email = user?.email;
     if (!subject || !email) {
       skipped += 1;
       continue;
@@ -84,7 +109,7 @@ export async function resolveRecipients(
     if (resolved.size >= MAX_RESOLVED_RECIPIENTS) break;
   }
 
-  return { recipients: [...resolved.values()], skipped };
+  return { recipients: [...resolved.values()], skipped, rejected };
 }
 
 /**

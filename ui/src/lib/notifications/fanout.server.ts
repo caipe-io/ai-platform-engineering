@@ -8,8 +8,10 @@ import type { NotificationEventRequest } from "@/lib/notifications/request";
 export interface FanOutResult {
   /** Resolved recipients the event was offered to. */
   recipients: number;
-  /** Recipients dropped because no subject and email could be resolved. */
+  /** Recipients dropped because no user record matched them. */
   skipped: number;
+  /** Recipients rejected because the supplied subject and email named different users. */
+  rejected: number;
   results: Record<NotificationPublishOutcome, number>;
 }
 
@@ -38,7 +40,7 @@ export async function publishNotificationRequest(
   } catch (error) {
     console.error("[notifications] could not resolve recipients", error);
     results.failed += 1;
-    return { recipients: 0, skipped: 0, results };
+    return { recipients: 0, skipped: 0, rejected: 0, results };
   }
 
   const outcomes = await Promise.all(
@@ -52,5 +54,10 @@ export async function publishNotificationRequest(
   );
   for (const outcome of outcomes) results[outcome] += 1;
 
-  return { recipients: audience.recipients.length, skipped: audience.skipped, results };
+  return {
+    recipients: audience.recipients.length,
+    skipped: audience.skipped,
+    rejected: audience.rejected,
+    results,
+  };
 }

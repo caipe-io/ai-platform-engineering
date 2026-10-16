@@ -88,7 +88,7 @@ curl -N -X POST http://localhost:3000/api/v1/chat/stream/start \
 | `GET` | `/api/settings/notification-preferences` | Effective event preferences for the current user |
 | `PATCH` | `/api/settings/notification-preferences` | Set or clear category and event overrides |
 
-`PATCH` accepts `{ "categories": {...}, "events": {...} }`. Each value is `true`, `false`, or `null`. `null` removes the override, so the event returns to its default. Unknown keys are rejected with `400`.
+`PATCH` accepts `{ "categories": {...}, "events": {...} }`. Each value is `true`, `false`, or `null`. `null` removes the override, so the event returns to its default. Unknown keys are rejected with `400`. Concurrent edits are merged safely. If the settings keep changing under the request, it returns `409`.
 
 ## Internal Service Routes
 
@@ -102,7 +102,7 @@ Responses:
 
 | Status | Meaning |
 |---|---|
-| `202` | Accepted: stored, queued, or skipped by the recipient's preferences. Body: `{ "outcome": "delivered" \| "queued" \| "disabled" }` |
+| `202` | Accepted. Body: `{ recipients, skipped, rejected, results: { delivered, queued, disabled, invalid, failed } }`. `skipped` counts recipients with no matching user. `rejected` counts recipients whose subject and email name different users. |
 | `400` | Envelope invalid. Nothing was published. |
 | `401` | Missing or wrong token |
 | `503` | Token not configured, or delivery failed. Safe to retry. |

@@ -113,6 +113,70 @@ describe("recipient resolution", () => {
     expect(audience.skipped).toBe(0);
   });
 
+  it("rejects a pair whose subject and email belong to different users", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const audience = await resolveRecipients([{ subject: "sub-alice", email: "bob@example.com" }], {
+      includeOrgAdmins: false,
+    });
+    expect(audience.recipients).toEqual([]);
+    expect(audience.rejected).toBe(1);
+    warn.mockRestore();
+  });
+
+  it("never lets a mismatched pair reach the opted-out user's inbox or preferences", async () => {
+    // Bob opted out. A request names Bob's subject with Alice's email, hoping
+    // the inbox goes to Bob while preferences are read from Alice.
+    const audience = await resolveRecipients([{ subject: "sub-bob", email: "alice@example.com" }], {
+      includeOrgAdmins: false,
+    });
+    expect(audience.recipients).toEqual([]);
+    expect(audience.rejected).toBe(1);
+  });
+
+  it("skips a complete pair that matches no user record", async () => {
+    mockFind.mockResolvedValue([]);
+    const audience = await resolveRecipients([{ subject: "sub-ghost", email: "ghost@example.com" }], {
+      includeOrgAdmins: false,
+    });
+    expect(audience.recipients).toEqual([]);
+    expect(audience.skipped).toBe(1);
+    expect(audience.rejected).toBe(0);
+  });
+
+  it("rejects a pair where only one half matches a user", async () => {
+    const audience = await resolveRecipients([{ subject: "sub-alice", email: "ghost@example.com" }], {
+      includeOrgAdmins: false,
+    });
+    expect(audience.recipients).toEqual([]);
+    expect(audience.rejected).toBe(1);
+  });
+
+  it("takes both identifiers from the user record, not from the request casing", async () => {
+    const audience = await resolveRecipients([{ subject: "sub-alice", email: "ALICE@example.com" }], {
+      includeOrgAdmins: false,
+    });
+    expect(audience.recipients).toEqual([{ subject: "sub-alice", email: "alice@example.com" }]);
+  });
+
+  it("accepts a consistent complete pair", async () => {
+    const audience = await resolveRecipients([{ subject: "sub-alice", email: "alice@example.com" }], {
+      includeOrgAdmins: false,
+    });
+    expect(audience.recipients).toEqual([{ subject: "sub-alice", email: "alice@example.com" }]);
+    expect(audience.rejected).toBe(0);
+  });
+
+  it("keeps good recipients when one entry in the request is rejected", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const audience = await resolveRecipients(
+      [{ subject: "sub-alice", email: "bob@example.com" }, { email: "bob@example.com" }],
+      { includeOrgAdmins: false },
+    );
+    expect(audience.recipients).toEqual([{ subject: "sub-bob", email: "bob@example.com" }]);
+    expect(audience.rejected).toBe(1);
+    warn.mockRestore();
+  });
+
   it("skips people who cannot be resolved to both identifiers", async () => {
     mockFind.mockResolvedValue([]);
     const audience = await resolveRecipients([{ email: "stranger@example.com" }], {
@@ -204,6 +268,19 @@ describe("fan-out", () => {
     const result = await publishNotificationRequest(request);
     expect(result.results.failed).toBe(1);
     expect(result.results.delivered).toBe(1);
+  });
+
+  it("reports rejected recipients and publishes nothing for them", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await publishNotificationRequest({
+      base: baseEvent as Record<string, unknown>,
+      recipients: [{ subject: "sub-alice", email: "bob@example.com" }],
+      includeOrgAdmins: false,
+    });
+    expect(result.rejected).toBe(1);
+    expect(result.recipients).toBe(0);
+    expect(mockPublishEvent).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it("reports one failure and publishes nothing when recipients cannot be resolved", async () => {

@@ -7,6 +7,7 @@
 
 import { getCollection } from "@/lib/mongodb";
 import { publishNotificationEvent } from "@/lib/notifications/consumer.server";
+import { updateNotificationPreferences } from "@/lib/notifications/preferences.server";
 import type { InAppNotificationDocument } from "@/types/in-app-notification";
 import type { UserSettings } from "@/types/mongodb";
 
@@ -95,5 +96,47 @@ describeIfMongo("notification persistence against MongoDB", () => {
       { $set: { notification_preferences: { categories: { workflow: false }, events: { "workflow.completed": true } } } },
     );
     expect(await publishNotificationEvent(envelope("a4"))).toBe("delivered");
+  });
+
+  describe("concurrent preference edits", () => {
+    const RACE_EMAIL = "test-verify-race@example.com";
+    const EVENT_TYPES = ["workflow.failed", "workflow.completed", "agent.failed", "ingestion.failed", "agent.completed", "ingestion.completed"] as const;
+
+    beforeEach(async () => {
+      const settings = await getCollection<UserSettings>("user_settings");
+      // The app creates this index at startup. The creation race depends on it.
+      await settings.createIndex({ user_id: 1 }, { unique: true });
+      await settings.deleteMany({ user_id: RACE_EMAIL });
+    });
+    afterAll(async () => {
+      const settings = await getCollection<UserSettings>("user_settings");
+      await settings.deleteMany({ user_id: RACE_EMAIL });
+    });
+
+    it("keeps every change when several writers race to create the document", async () => {
+      await Promise.all(EVENT_TYPES.map((type) => updateNotificationPreferences(RACE_EMAIL, { events: { [type]: false } })));
+
+      const settings = await getCollection<UserSettings>("user_settings");
+      const doc = await settings.findOne({ user_id: RACE_EMAIL });
+      expect(Object.keys(doc?.notification_preferences?.events ?? {}).sort()).toEqual([...EVENT_TYPES].sort());
+      expect(doc?.notification_preferences_rev).toBe(EVENT_TYPES.length);
+    });
+
+    it("keeps every change when several writers edit an existing document", async () => {
+      await updateNotificationPreferences(RACE_EMAIL, { categories: { platform: false } });
+      await Promise.all(EVENT_TYPES.map((type) => updateNotificationPreferences(RACE_EMAIL, { events: { [type]: true } })));
+
+      const settings = await getCollection<UserSettings>("user_settings");
+      const doc = await settings.findOne({ user_id: RACE_EMAIL });
+      expect(Object.keys(doc?.notification_preferences?.events ?? {}).sort()).toEqual([...EVENT_TYPES].sort());
+      expect(doc?.notification_preferences?.categories).toEqual({ platform: false });
+    });
+
+    it("stores event names with dots as literal keys", async () => {
+      await updateNotificationPreferences(RACE_EMAIL, { events: { "workflow.failed": false } });
+      const settings = await getCollection<UserSettings>("user_settings");
+      const raw = await settings.findOne({ user_id: RACE_EMAIL });
+      expect(Object.keys(raw?.notification_preferences?.events ?? {})).toEqual(["workflow.failed"]);
+    });
   });
 });

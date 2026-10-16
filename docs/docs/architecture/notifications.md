@@ -78,6 +78,7 @@ The catalog is in `ui/src/lib/notifications/taxonomy.ts`.
 - `null` in an update removes an override, so the event returns to its default.
 - Turning off an event stops new notifications. It never changes the job, ingestion, or workflow.
 - Preferences are enforced on the server when the event is written. The UI does not filter.
+- Preference edits are guarded by a revision number. Two tabs or replicas editing at once both keep their changes. If the document keeps changing, the API answers `409` and the client should reload and retry.
 - Service events are stored once for all admins, so they are filtered when the inbox is read.
 
 Manage them in **Settings → Notifications**, or from the toggle on the workflows, ingestion, and agent pages. Both write the same stored preference.
@@ -118,7 +119,8 @@ Known limit: a process that stops between finishing a job and sending its event 
 ## Security
 
 - The internal endpoint needs `NOTIFICATIONS_INTERNAL_TOKEN` as a bearer token and answers `503` without one. Tokens are compared in constant time.
-- Recipients are resolved from the UI server's own user records, not trusted from the caller.
+- Recipients are resolved from the UI server's own user records. Both the subject and the email are taken from that one record, never from the request.
+- A request that names a subject and an email belonging to different users is rejected for that recipient. A complete pair with no matching user record is skipped. The response counts both as `rejected` and `skipped`.
 - Notification text is generic. Prompts, step errors, documents, and tool output are never included.
 - Links must be relative paths. External URLs are rejected.
 - "Send test" only ever notifies the caller, and is limited to 10 per minute.
