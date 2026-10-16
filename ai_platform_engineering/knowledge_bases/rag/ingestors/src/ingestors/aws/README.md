@@ -36,6 +36,7 @@ Ingests AWS resources as graph entities into the RAG system. Discovers and fetch
 - `INIT_DELAY_SECONDS` - Delay before first sync in seconds (default: `0`)
 - `LOG_LEVEL` - Logging level (default: `INFO`)
 - `AWS_ACCOUNT_LIST` - Comma-separated list of `name:account_id` pairs for multi-account ingestion (default: empty, single-account mode)
+- `AWS_CREDENTIAL_SOURCE` - Optional cross-account bootstrap source: `Environment`, `EcsContainer`, or `Ec2InstanceMetadata` (used when no complete IRSA configuration is present)
 - `CROSS_ACCOUNT_ROLE_NAME` - IAM role name to assume in each target account (default: `caipe-read-only`)
 
 ## AWS Permissions Required
@@ -107,7 +108,19 @@ docker compose --profile aws up --build aws_ingestor
 
 The ingestor supports ingesting resources from multiple AWS accounts in a single process. Each account becomes a separate datasource (`aws-account-{account_id}`).
 
-This uses the same `AWS_ACCOUNT_LIST` and `CROSS_ACCOUNT_ROLE_NAME` env vars as the AWS agent. The ingestor generates `~/.aws/config` profiles at startup and uses `boto3.Session(profile_name=...)` for transparent cross-account STS AssumeRole.
+This uses the same `AWS_ACCOUNT_LIST` and `CROSS_ACCOUNT_ROLE_NAME` env vars as the AWS agent. The ingestor generates a temporary AWS config file at startup, selects it with `AWS_CONFIG_FILE`, and uses `boto3.Session(profile_name=...)` for cross-account STS AssumeRole.
+
+Profiles that need role assumption select their bootstrap credentials in this order:
+
+1. When both `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE` are set, use an IRSA web-identity source profile.
+2. Otherwise, honor an explicit `AWS_CREDENTIAL_SOURCE`.
+3. Otherwise, use `EcsContainer` when the AWS container credential URI is present (including EKS Pod Identity).
+4. Otherwise, retain the `Environment` credential source for existing local deployments.
+
+Profiles with direct credentials in the mounted credentials file are unchanged. Workload
+identity avoids storing access keys in generated config; the workload role still needs
+permission to assume the configured target roles, and each target role must trust it.
+This does not create IAM roles or policies.
 
 When `AWS_ACCOUNT_LIST` is not set, the ingestor falls back to single-account mode using default credentials (fully backward compatible).
 
