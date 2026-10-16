@@ -280,6 +280,25 @@ publisher trust boundary.
 
 ## Current authorization scope
 
+### Hosted presentation context
+
+The iframe host sends `caipe.microfrontend.initialize.v1` messages on document
+load and live theme changes. The envelope has `version: "1.0"`, `appId`, and a
+`context` containing the host pathname, resolved light/dark theme, locale,
+timezone, `surface: "hosted"`, and an empty preferences object. This existing
+presentation-message version is independent of manifest API 2.0.
+
+A child can request initialization after hydration with
+`{ type: "caipe.microfrontend.ready.v1", version: "1.0", appId }`. Both sides
+must validate the exact origin, window source, app ID, and message version.
+The host replies at most once per document load to avoid acknowledgement
+loops. Children that do not implement this protocol keep their own styling.
+
+This channel carries no JWT, session cookie, credential, user identity, or
+permission grant. Authentication and authorization stay in the server-side
+gateway. Theme synchronization does not sandbox a same-origin iframe or make
+its code less privileged.
+
 New declarations use [AgenticAppManifest 2.0](./agentic-app-manifest.md), shared
 with native UI packages. Existing hosted v1.0 manifests are normalized through
 a compatibility adapter. Installation visibility controls catalog/navigation;

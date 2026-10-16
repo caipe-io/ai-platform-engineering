@@ -8,6 +8,7 @@ import { useSession } from "next-auth/react";
 import { ASSISTANT_EXTENSIONS, validateAssistantConfiguration, type AssistantConfiguration } from "../../../app-sdk/assistant-options.mjs";
 import { readAssistantDeepLink } from "@/lib/agentic-apps/assistant-links";
 import { ownsAppPath } from "@/lib/agentic-apps/host-routes";
+import { HostedAgenticAppFrame } from "./HostedAgenticAppFrame";
 
 import { AgenticAppAssistantOverlay } from "@/components/agentic-apps/AgenticAppAssistantOverlay";
 import { parseAssistantDraft, type AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
@@ -346,7 +347,7 @@ export function AgenticAppShell({
         {assistantError} <button type="button" onClick={() => setAssistantRetry(n => n + 1)} className="underline">Retry assistant</button>
       </p> : null}
       {bridgeError ? <p role="alert" className="p-3 text-sm text-destructive">{bridgeError}</p> : null}
-      <iframe key={identity}
+      <HostedAgenticAppFrame key={identity} appId={appId}
         onLoad={notifyFrame}
         ref={iframeRef}
         className="block h-full min-h-0 w-full flex-1 border-0 bg-background"
