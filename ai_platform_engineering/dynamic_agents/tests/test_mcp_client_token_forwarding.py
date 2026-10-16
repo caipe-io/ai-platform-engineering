@@ -225,7 +225,8 @@ def test_gateway_routing_routes_all_network_servers_when_gateway_is_configured(m
 
 
 def test_gateway_routes_manual_network_mcp_servers(monkeypatch):
-    """Manual network MCP rows route through AgentGateway too."""
+    """Manual network MCP rows route through AgentGateway too, once AgentGateway
+    has confirmed the route (agentgateway_discovered=True)."""
     servers = [
         MCPServerConfig(
             id="knowledge-base",
@@ -235,6 +236,7 @@ def test_gateway_routes_manual_network_mcp_servers(monkeypatch):
             enabled=True,
             source="agentgateway",
             agentgateway_target_endpoint="http://rag-server:9446/mcp",
+            agentgateway_discovered=True,
         ),
         MCPServerConfig(
             id="manual-tool",
@@ -253,6 +255,31 @@ def test_gateway_routes_manual_network_mcp_servers(monkeypatch):
 
     assert connections["knowledge-base"]["url"] == "http://agentgateway:4000/mcp/knowledge-base"
     assert connections["manual-tool"]["url"] == "http://agentgateway:4000/mcp/manual-tool"
+
+
+def test_gateway_skips_undiscovered_target_endpoint_servers(monkeypatch):
+    """A server declaring agentgateway_target_endpoint but not yet confirmed
+    live (agentgateway_discovered=False, the state right after a seed/restart)
+    must not be handed to the agent — calling it would just 404 against
+    AgentGateway's not-yet-programmed route."""
+    servers = [
+        MCPServerConfig(
+            id="confluence-admin",
+            name="Confluence",
+            transport=TransportType.HTTP,
+            endpoint="http://agentgateway:4000/mcp/confluence-admin",
+            enabled=True,
+            agentgateway_target_endpoint="http://mcp-confluence-admin:8000/mcp",
+        ),
+    ]
+
+    connections = build_mcp_connections(
+        servers,
+        ["confluence-admin"],
+        agent_gateway_url="http://agentgateway:4000",
+    )
+
+    assert "confluence-admin" not in connections
 
 
 def test_warn_if_agent_gateway_missing_hmac_logs_when_gateway_set_without_secret(
