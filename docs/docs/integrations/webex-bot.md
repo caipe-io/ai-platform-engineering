@@ -110,11 +110,16 @@ for group spaces and direct messages. The token itself must be supplied through
 `existingSecret` or `externalSecrets`; it must not be placed in Helm values.
 Bot identity is always selected explicitly; there is no deployment default bot.
 
-Reply footers use the receiving bot's display name:
-`Agent: Example • Mention @Example to continue`. A trailing email label, such as
-`Example (example-bot@example.com)`, is omitted from the footer. Internal agent
-IDs remain in routing metadata. When no bot catalog entry is available, the
-footer uses `APP_NAME`.
+Reply footers distinguish the routed agent from the receiving bot:
+`Agent: Example Agent • Mention @Example Bot to continue`.
+
+- The agent label uses the selected agent's display name from the caller-authorized
+  agent API, after thread ownership is resolved. If the name cannot be read, it
+  displays `Assistant`; chat dispatch continues.
+- The mention prompt uses the receiving bot's catalog name. A trailing email
+  label, such as `Example Bot (example-bot@example.com)`, is omitted. When no bot
+  catalog entry is available, the mention prompt uses `APP_NAME`.
+- Internal agent IDs remain in routing metadata.
 
 ```yaml
 tags:

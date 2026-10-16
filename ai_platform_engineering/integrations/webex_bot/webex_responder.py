@@ -368,6 +368,7 @@ class WebexThreadedStreamDispatcher:
         reply_id: str | None = None
         accumulated = ""
         last_sent_len = 0
+        agent_name = "Assistant"
 
         try:
             agent_message = _message_with_thread_context(
@@ -441,10 +442,14 @@ class WebexThreadedStreamDispatcher:
                     )
                     agent_id = owner_id
 
+            agent_name = self._sse_client.get_agent_name(
+                agent_id=agent_id, bearer_token=obo_token
+            ) or "Assistant"
+
             reply_id = self._webex_api.create_message(
                 room_id=room_id,
                 parent_id=parent_id,
-                markdown=_agent_reply_markdown(bot_name, "Working on it..."),
+                markdown=_agent_reply_markdown(agent_name, "Working on it...", bot_name=bot_name),
             )
 
             self._thread_owner_cache.set(thread_key, agent_id)
@@ -493,7 +498,7 @@ class WebexThreadedStreamDispatcher:
                         self._webex_api.update_message(
                             message_id=reply_id,
                             room_id=room_id,
-                            markdown=_agent_reply_markdown(bot_name, accumulated),
+                            markdown=_agent_reply_markdown(agent_name, accumulated, bot_name=bot_name),
                         )
                         last_sent_len = len(accumulated)
                 elif event.type == SSEEventType.RUN_ERROR:
@@ -501,7 +506,7 @@ class WebexThreadedStreamDispatcher:
                     self._webex_api.update_message(
                         message_id=reply_id,
                         room_id=room_id,
-                        markdown=_agent_reply_markdown(bot_name, message),
+                        markdown=_agent_reply_markdown(agent_name, message, bot_name=bot_name),
                     )
                     return
         except AgentAccessDeniedError as exc:
@@ -515,11 +520,12 @@ class WebexThreadedStreamDispatcher:
                 room_id=room_id,
                 parent_id=parent_id,
                 markdown=_agent_reply_markdown(
-                    bot_name,
+                    agent_name,
                     (
                         f"You don't have permission to use agent `{exc.agent_id}`. "
                         f"Ask an admin to grant you access in {_app_name()}."
                     ),
+                    bot_name=bot_name,
                 ),
             )
             return
@@ -530,8 +536,9 @@ class WebexThreadedStreamDispatcher:
                 room_id=room_id,
                 parent_id=parent_id,
                 markdown=_agent_reply_markdown(
-                    bot_name,
+                    agent_name,
                     "I could not complete the request. Please try again.",
+                    bot_name=bot_name,
                 ),
             )
             return
@@ -540,7 +547,7 @@ class WebexThreadedStreamDispatcher:
         self._webex_api.update_message(
             message_id=reply_id,
             room_id=room_id,
-            markdown=_agent_reply_markdown(bot_name, final_markdown),
+            markdown=_agent_reply_markdown(agent_name, final_markdown, bot_name=bot_name),
         )
 
         # Persist per-turn message rows for stats/linking — only reached on a
@@ -754,11 +761,11 @@ def _reply_bot_name(bot_id: str) -> str:
     return re.sub(r"\s+\([^()\s@]+@[^()\s]+\)$", "", bot.name).strip() or _app_name()
 
 
-def _agent_reply_markdown(bot_name: str, body: str) -> str:
+def _agent_reply_markdown(agent_name: str, body: str, *, bot_name: str) -> str:
     content = body.strip() or "Done."
     return (
         f"{content}\n\n"
-        f"Agent: {bot_name} • **Mention @{bot_name} to continue**"
+        f"Agent: {agent_name} • **Mention @{bot_name} to continue**"
         f"{_BOT_REPLY_MARKER}"
     )
 
