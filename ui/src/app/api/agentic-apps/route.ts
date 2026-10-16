@@ -54,6 +54,7 @@ export async function GET(request: NextRequest): Promise<Response> {
         && (navigationOnly || app.manifest.surfaces.showInHub),
     );
   const correlationId = request.headers.get("x-correlation-id") ?? randomUUID();
+  let authorizationUnavailable = false;
   const authorizedApps = (
     await Promise.all(
       configuredApps.map(async (app) => {
@@ -77,6 +78,8 @@ export async function GET(request: NextRequest): Promise<Response> {
             action: app.manifest.authorization.launchAction,
           }),
         ]);
+        if ([readDecision, launchDecision].some((decision) => decision.casReason === "AUTHZ_UNAVAILABLE" && decision.effectiveEffect === "deny"))
+          authorizationUnavailable = true;
         if (readDecision.effectiveEffect !== "allow") return null;
         return buildPublicAgenticApp(
           app,
@@ -86,6 +89,9 @@ export async function GET(request: NextRequest): Promise<Response> {
     )
   ).filter((app): app is NonNullable<typeof app> => app !== null);
 
+  if (authorizationUnavailable) return Response.json(
+    { error: "authorization_unavailable" }, { status: 503, headers: { "cache-control": "no-store" } },
+  );
   const items = authorizedApps
     .filter(app => !navigationOnly || (app.canLaunch && Boolean(app.navigation)))
     .sort((a, b) => (a.navigation?.order ?? Number.MAX_SAFE_INTEGER) - (b.navigation?.order ?? Number.MAX_SAFE_INTEGER));

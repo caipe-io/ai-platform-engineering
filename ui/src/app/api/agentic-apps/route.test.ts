@@ -25,10 +25,14 @@ it("hides apps denied discovery", async () => {
   mockDecision.mockImplementation(async ({ action }) => ({ effectiveEffect: action === "read" ? "deny" : "allow" }));
   expect(await (await GET(new NextRequest("https://example.test/api/agentic-apps"))).json()).toEqual({ items: [] });
 });
-it.each(["NO_CAPABILITY", "AUTHZ_UNAVAILABLE"])("retains discovery but blocks launch for %s", async (reason) => {
+it.each(["NO_CAPABILITY"])("retains discovery but blocks launch for %s", async (reason) => {
   mockDecision.mockImplementation(async ({ action }) => ({ effectiveEffect: action === "read" ? "allow" : "deny", casReason: reason }));
   const response = await GET(new NextRequest("https://example.test/api/agentic-apps"));
   expect((await response.json()).items[0].canLaunch).toBe(false);
+});
+it("reports unavailable authorization instead of an empty or usable catalog", async () => {
+  mockDecision.mockResolvedValue({ effectiveEffect: "deny", casReason: "AUTHZ_UNAVAILABLE" });
+  expect((await GET(new NextRequest("https://example.test/api/agentic-apps"))).status).toBe(503);
 });
 it("preserves local-only apps without CAS evaluation", async () => {
   mockApps.mockReturnValue([makeApp(false)]);
