@@ -22,7 +22,7 @@ services.
 
 | Method | Route | Purpose |
 |---|---|---|
-| `POST` | `/api/v1/chat/stream/start` | Start a Dynamic Agents SSE stream |
+| `POST` | `/api/v1/chat/stream/start` | Start an agent SSE stream; Webex can route to an installed app assistant with a declared AG-UI stream path |
 | `POST` | `/api/v1/chat/stream/resume` | Resume a HITL/interrupted stream |
 | `POST` | `/api/v1/chat/stream/cancel` | Cancel an active stream |
 | `POST` | `/api/v1/chat/invoke` | Non-streaming Dynamic Agents invocation |

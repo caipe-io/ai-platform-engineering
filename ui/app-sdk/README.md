@@ -75,6 +75,15 @@ through its RBAC-protected API and sends bounded route context with turns. The
 app must seed the agent and its MCP server separately; the native package does
 not receive credentials or create agents at runtime.
 
+An installed app may also declare `ui.assistant.streamPath` as a safe `/api/`
+path on its runtime. For Webex conversations assigned to that assistant, the
+host forwards the existing `/api/v1/chat/stream/start` JSON body to this path.
+The runtime must return AG-UI events as `text/event-stream`. The host checks
+the linked user's agent-use and conversation-write permissions, then applies
+the app's launch and HTTP policy through the normal runtime proxy. Declare a
+POST policy for the stream path. Without `streamPath`, Webex continues to use
+Dynamic Agents. This claim only selects a stream; it grants no user access.
+
 The `2.0` release retains the existing component props and trust model; the
 aligned numbering is not a new rendering engine, sandbox, or permission grant.
 New packages must declare `2.0` in both their native profile and module export.
