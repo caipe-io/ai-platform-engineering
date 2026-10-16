@@ -61,24 +61,25 @@ describe("AccessSettings", () => {
     await screen.findByText("Identity and role");
     expect(screen.queryByText(/Webex account:/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Link Webex account|Relink/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Link Webex account|Relink/ })).not.toBeInTheDocument();
     expect(screen.queryByText("Technical access details")).not.toBeInTheDocument();
   });
 
-  it("shows a Link Webex account button when available and unlinked", async () => {
+  it("uses document navigation to start Webex account linking", async () => {
     installFetchMock({ webex_link_available: true, webex_linked: false });
     render(<AccessSettings />);
 
     expect(await screen.findByText("Webex account: Not linked")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Link Webex account" }));
-    expect(mockPush).toHaveBeenCalledWith("/api/auth/webex-link/start");
+    expect(screen.getByRole("link", { name: "Link Webex account" })).toHaveAttribute("href", "/api/auth/webex-link/start");
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
-  it("shows a Relink button and Linked status when already linked", async () => {
+  it("uses the same document-navigation route to relink an account", async () => {
     installFetchMock({ webex_link_available: true, webex_linked: true });
     render(<AccessSettings />);
 
     expect(await screen.findByText("Webex account: Linked")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Relink" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Relink" })).toHaveAttribute("href", "/api/auth/webex-link/start");
   });
 
   it("shows a success banner and refreshes posture after a successful grant", async () => {
@@ -160,13 +161,13 @@ describe("AccessSettings", () => {
     render(<AccessSettings />);
 
     const unlinkButton = await screen.findByRole("button", { name: "Unlink" });
-    const relinkButton = screen.getByRole("button", { name: "Relink" });
-    expect(relinkButton).not.toBeDisabled();
+    expect(screen.getByRole("link", { name: "Relink" })).toBeInTheDocument();
 
     fireEvent.click(unlinkButton);
-    await waitFor(() => expect(relinkButton).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Relink" })).toBeDisabled());
+    expect(screen.queryByRole("link", { name: "Relink" })).not.toBeInTheDocument();
 
     resolveUnlink?.();
-    await waitFor(() => expect(relinkButton).not.toBeDisabled());
+    expect(await screen.findByRole("link", { name: "Relink" })).toHaveAttribute("href", "/api/auth/webex-link/start");
   });
 });
