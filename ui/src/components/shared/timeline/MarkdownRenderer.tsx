@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { normalizeMarkdownCodeLanguage } from "@/lib/markdown-code-languages";
 import DOMPurify from "dompurify";
 import { Marked } from "marked";
 import markedShiki from "marked-shiki";
@@ -62,7 +63,7 @@ md.use(
   markedShiki({
     async highlight(code, lang) {
       const hl = await getHighlighter();
-      let language = lang || "text";
+      let language = normalizeMarkdownCodeLanguage(lang || "text");
       if (!(language in bundledLanguages)) {
         language = "text";
       }
