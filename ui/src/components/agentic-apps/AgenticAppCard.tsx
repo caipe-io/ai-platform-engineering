@@ -9,7 +9,12 @@ const icons = { "layout-grid": LayoutGrid, "cloud-sun": CloudSun, "dollar-sign":
 
 /** Presentation consumes browser-safe catalog metadata, never runtime origins. */
 export function AgenticAppCard({ app }: { app: PublicAgenticApp }): React.ReactElement {
-  const Icon = icons[app.icon as keyof typeof icons] ?? LayoutGrid;
+  const Icon = app.icon && Object.hasOwn(icons, app.icon)
+    ? icons[app.icon as keyof typeof icons]
+    : LayoutGrid;
+  // Hosted URLs distinguish the host document from child-runtime traffic at
+  // the gateway. Only native routes support ordinary Next.js client navigation.
+  const LaunchLink = app.uiMode === "native-package" ? NavigationProgressLink : "a";
   return (
     <article className="group relative flex min-h-64 flex-col overflow-hidden rounded-2xl border border-border bg-card p-5 shadow-sm transition-colors hover:border-primary/40">
       <div aria-hidden className="pointer-events-none absolute -right-16 -top-24 h-48 w-48 rounded-full bg-primary/10 blur-3xl" />
@@ -33,9 +38,9 @@ export function AgenticAppCard({ app }: { app: PublicAgenticApp }): React.ReactE
       {app.categories[0] && <span className="mt-4 w-fit rounded-full bg-primary/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary">{app.categories[0]}</span>}
       <h2 className="mt-3 text-lg font-semibold">
         {app.canLaunch ? (
-          <NavigationProgressLink href={app.href} className="after:absolute after:inset-0 after:rounded-2xl focus-visible:outline-none after:focus-visible:ring-2 after:focus-visible:ring-ring">
+          <LaunchLink href={app.href} className="after:absolute after:inset-0 after:rounded-2xl focus-visible:outline-none after:focus-visible:ring-2 after:focus-visible:ring-ring">
             {app.displayName}<ArrowUpRight className="ml-2 inline h-4 w-4" aria-hidden />
-          </NavigationProgressLink>
+          </LaunchLink>
         ) : app.displayName}
       </h2>
       <p className="mt-2 line-clamp-3 flex-1 text-sm leading-6 text-muted-foreground">{app.description}</p>
