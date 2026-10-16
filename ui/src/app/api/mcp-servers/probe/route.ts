@@ -34,13 +34,6 @@ interface DirectToolsResult {
   sessionId?: string;
 }
 
-interface ToolSmokeTest {
-  toolName: string;
-  success: boolean;
-  skipped?: boolean;
-  error?: string;
-}
-
 function isHttpMcpServer(server: MCPServerConfig): server is MCPServerConfig & { endpoint: string } {
   return server.transport === "http" && typeof server.endpoint === "string" && server.endpoint.trim().length > 0;
 }
@@ -184,53 +177,6 @@ async function listToolsDirect(server: MCPServerConfig & { endpoint: string }): 
   return tools ? { tools, sessionId: initialized.sessionId } : null;
 }
 
-function hasRequiredArguments(tool: DirectMcpToolInfo): boolean {
-  const schema = tool.inputSchema;
-  if (!schema || typeof schema !== "object") return false;
-  const required = (schema as { required?: unknown }).required;
-  return Array.isArray(required) && required.length > 0;
-}
-
-function pickSafeNoArgumentTool(tools: DirectMcpToolInfo[]): DirectMcpToolInfo | null {
-  const noArgTools = tools.filter((tool) => !hasRequiredArguments(tool));
-  const preferred = noArgTools.find((tool) => /(version|health|ping|status|about|info)/i.test(tool.name));
-  return preferred ?? null;
-}
-
-async function smokeTestNoArgumentTool(
-  server: MCPServerConfig & { endpoint: string },
-  tools: DirectMcpToolInfo[],
-  sessionId?: string,
-): Promise<ToolSmokeTest | undefined> {
-  const tool = pickSafeNoArgumentTool(tools);
-  if (!tool) return undefined;
-  const response = await mcpJsonRpc(
-    server.endpoint,
-    {
-      jsonrpc: "2.0",
-      id: `tools-call-${Date.now()}`,
-      method: "tools/call",
-      params: {
-        name: tool.name,
-        arguments: {},
-      },
-    },
-    sessionId,
-  );
-  if (!response.ok) {
-    return { toolName: tool.name, success: false, error: "Tool call failed" };
-  }
-  const payload = response.payload as { error?: { message?: unknown } } | null;
-  if (payload?.error) {
-    return {
-      toolName: tool.name,
-      success: false,
-      error: typeof payload.error.message === "string" ? payload.error.message : "Tool call failed",
-    };
-  }
-  return { toolName: tool.name, success: true };
-}
-
 /**
  * POST /api/mcp-servers/probe?id=<server_id>
  * Probe an MCP server to discover available tools.
@@ -283,7 +229,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
             server,
             serverId: id,
           });
-          const toolTest = await smokeTestNoArgumentTool(server, listed.tools, listed.sessionId);
           try {
             await cacheMcpToolCatalog({
               serverId: id,
@@ -298,13 +243,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
             success: true,
             tools: listed.tools,
             source: "agentgateway",
-            ...(toolTest ? { tool_test: toolTest } : {}),
           });
         }
 
         const directResult = await listToolsDirect(server);
         if (directResult) {
-          const toolTest = await smokeTestNoArgumentTool(server, directResult.tools, directResult.sessionId);
           try {
             await cacheMcpToolCatalog({
               serverId: id,
@@ -322,7 +265,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
             success: true,
             tools: directResult.tools,
             source: "direct",
-            ...(toolTest ? { tool_test: toolTest } : {}),
           });
         }
       }
