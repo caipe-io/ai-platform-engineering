@@ -17,6 +17,7 @@ export function buildPublicAgenticApp(
     blockedReasons: canLaunch ? [] : ["unauthorized"],
     categories: app.manifest.catalog?.categories ?? [],
     capabilities: app.manifest.catalog?.capabilities ?? [],
+    ...(app.manifest.catalog?.icon ? { icon: app.manifest.catalog.icon } : {}),
     uiMode: app.manifest.ui.profiles.find(
       (profile) => profile.id === app.installation.selectedUiProfile,
     )?.mode,

@@ -78,6 +78,7 @@ export interface PublicAgenticApp {
   blockedReasons: string[];
   categories: string[];
   capabilities: string[];
+  icon?: string;
   uiMode?: "native-package" | "iframe";
   hostPaths?: string[];
 }

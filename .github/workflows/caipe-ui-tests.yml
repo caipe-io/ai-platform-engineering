@@ -378,6 +378,11 @@ jobs:
           CAIPE_UNSAFE_RBAC_BYPASS: 'true'
           CAIPE_CREDENTIALS_ENABLED: 'true'
           CAIPE_USER_CONNECTIONS_ENABLED: 'true'
+          # Empty operator catalog: browser specs supply their own public DTOs.
+          # No app runtimes, authorization grants, or production keys are loaded.
+          AGENTIC_APPS_INSTALL_ENABLED: 'true'
+          AGENTIC_APPS_CONFIG_PATH: 'e2e/fixtures/agentic-apps-empty.yaml'
+          AGENTIC_APP_TOKEN_SECRET: 'ci-agentic-app-secret-for-playwright-regression-only'
         run: |
           # Run the production server, not `next dev`: React StrictMode
           # double-invokes effects only in dev, which breaks exact
