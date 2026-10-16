@@ -110,8 +110,11 @@ for group spaces and direct messages. The token itself must be supplied through
 `existingSecret` or `externalSecrets`; it must not be placed in Helm values.
 Bot identity is always selected explicitly; there is no deployment default bot.
 
-Reply footers distinguish the routed agent from the receiving bot:
+Group-space reply footers distinguish the routed agent from the receiving bot:
 `Agent: Example Agent • Mention @Example Bot to continue`.
+
+Direct-message footers show only `Agent: Example Agent`; 1:1 replies omit the
+mention prompt, including placeholders, streamed replies, and errors.
 
 - The agent label uses the selected agent's display name from the caller-authorized
   agent API, after thread ownership is resolved. If the name cannot be read, it
