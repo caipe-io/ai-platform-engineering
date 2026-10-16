@@ -100,6 +100,7 @@ async def files(client: SharePointGraphClient) -> list[dict[str, Any]]:
 def choose_samples(rows: list[dict[str, Any]], include_largest: bool) -> list[tuple[str, dict[str, Any]]]:
     decks = sorted((row for row in rows if row["name"].lower().endswith(".pptx")), key=lambda row: row.get("size", 0))
     pdfs = sorted((row for row in rows if row["name"].lower().endswith(".pdf")), key=lambda row: row.get("size", 0))
+    words = sorted((row for row in rows if row["name"].lower().endswith(".docx")), key=lambda row: row.get("size", 0))
     selected: list[tuple[str, dict[str, Any]]] = []
     if decks:
         for label, target in [("small-pptx", 1_000_000), ("over-10mb-pptx", 12_000_000), ("larger-pptx", 50_000_000)]:
@@ -109,6 +110,9 @@ def choose_samples(rows: list[dict[str, Any]], include_largest: bool) -> list[tu
     if pdfs:
         selected.append(("small-pdf", min(pdfs, key=lambda row: abs(row.get("size", 0) - 1_000_000))))
         selected.append(("larger-pdf", min(pdfs, key=lambda row: abs(row.get("size", 0) - 5_000_000))))
+    if words:
+        selected.append(("small-docx", words[0]))
+        selected.append(("larger-docx", words[-1]))
     return selected
 
 

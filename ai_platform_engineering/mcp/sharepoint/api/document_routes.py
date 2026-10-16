@@ -15,6 +15,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from api.client import SharePointGraphError
 from api.documents import SharePointDocuments
+from api.pages import SITE_PAGES_LIBRARY_ID, SITE_PAGES_ROOT_ID
 from models import DriveItemInput, ListDriveItemsInput, PageInput, SearchDriveItemsInput
 
 
@@ -36,7 +37,24 @@ def register_document_routes(server: FastMCP, documents: SharePointDocuments) ->
                 args = PageInput.model_validate(params)
                 page = await documents.client.list_drives(args.limit, args.cursor)
                 items = [{key: row.get(key) for key in ("id", "name", "webUrl")} for row in page["items"]]
+                if args.cursor is None:
+                    items.insert(0, {"id": SITE_PAGES_LIBRARY_ID, "name": "Site pages"})
             else:
+                if params.get("drive_id") == SITE_PAGES_LIBRARY_ID:
+                    args = (
+                        SearchDriveItemsInput.model_validate(params) if params.get("query") else ListDriveItemsInput.model_validate(params)
+                    )
+                    if not params.get("query") and not params.get("folder_item_id"):
+                        return JSONResponse({
+                            "items": [{"id": SITE_PAGES_ROOT_ID, "name": "Site pages", "folder": True}],
+                            "has_more": False, "next_cursor": None,
+                        }, headers=headers)
+                    if params.get("folder_item_id") not in {None, SITE_PAGES_ROOT_ID}:
+                        return JSONResponse({"error": "Choose the Site pages collection."}, status_code=404, headers=headers)
+                    page = await documents.pages.list(args.limit, args.cursor, params.get("query", ""))
+                    return JSONResponse(
+                        {"items": page["items"], "has_more": page["has_more"], "next_cursor": page["next_cursor"]}, headers=headers,
+                    )
                 if params.get("query"):
                     args = SearchDriveItemsInput.model_validate(params)
                     await documents._assert_drive(args.drive_id)
@@ -51,7 +69,8 @@ def register_document_routes(server: FastMCP, documents: SharePointDocuments) ->
                         continue
                     name = str(row.get("name") or "")
                     folder = "folder" in row
-                    if not folder and not name.lower().endswith((".pdf", ".pptx")):
+                    document_format = documents.format_for_item(row)
+                    if not folder and document_format is None:
                         continue
                     items.append(
                         {
@@ -62,7 +81,7 @@ def register_document_routes(server: FastMCP, documents: SharePointDocuments) ->
                             "folder": folder,
                             "supported": not folder
                             and isinstance(row.get("file"), dict)
-                            and int(row.get("size") or 0) <= documents.client.config.max_document_bytes,
+                            and int(row.get("size") or 0) <= documents.byte_limit(document_format),
                         }
                     )
             return JSONResponse({"items": items, "has_more": page["has_more"], "next_cursor": page["next_cursor"]}, headers=headers)
@@ -112,6 +131,10 @@ def register_document_routes(server: FastMCP, documents: SharePointDocuments) ->
 
             if stream.content_length is not None:
                 headers["Content-Length"] = str(stream.content_length)
+            # Original HTML is evidence for the preparation worker, never a
+            # script-capable page hosted on the MCP service's own origin.
+            headers["Content-Disposition"] = "attachment"
+            headers["Content-Security-Policy"] = "sandbox; default-src 'none'"
             return StreamingResponse(body(), media_type=stream.content_type, headers=headers, background=BackgroundTask(close))
         except ValidationError:
             return JSONResponse({"error": "Invalid document identifier."}, status_code=400)

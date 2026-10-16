@@ -1,8 +1,11 @@
 {
   "_comment": "Central configuration for agent lists used by CI/CD workflows",
   "_assisted_by": "assisted-by Codex Codex-sonnet-4-6",
-  "_mcp_build_args_comment": "Per-agent opt-in build args for build/agents/Dockerfile.mcp. Valid keys: INSTALL_NETUTILS, INSTALL_AWS_CLI, INSTALL_KUBECTL. Add an entry only when the MCP agent genuinely invokes the tool at runtime.",
+  "_mcp_build_args_comment": "Per-agent opt-in build args for build/agents/Dockerfile.mcp. Valid keys: PYTHON_VERSION, INSTALL_NETUTILS, INSTALL_AWS_CLI, INSTALL_KUBECTL. Set Python to match the agent's project requirements; enable CLI tools only when invoked at runtime.",
   "mcp_build_args": {
+    "sharepoint": {
+      "PYTHON_VERSION": "3.14"
+    },
     "aws": {
       "INSTALL_AWS_CLI": "true",
       "INSTALL_KUBECTL": "true"

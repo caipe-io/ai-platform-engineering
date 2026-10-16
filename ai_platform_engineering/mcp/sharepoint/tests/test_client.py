@@ -102,6 +102,21 @@ async def test_text_file_read_is_bounded() -> None:
     assert result["returned_characters"] == 5
 
 
+@pytest.mark.parametrize("name,mime", [("Example.jsonl", "application/octet-stream"), ("Example.html", "text/html")])
+async def test_existing_text_reader_accepts_html_and_jsonl(name: str, mime: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/token"):
+            return httpx.Response(200, json={"access_token": "test-token"})
+        if request.url.path.endswith("/content"):
+            return httpx.Response(200, content=b'{"example":true}\n')
+        return httpx.Response(200, json={"id": "item-1", "name": name, "size": 17, "file": {"mimeType": mime}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        result = await SharePointGraphClient(_config(), http).read_text_file("drive-1", "item-1", 1000)
+    assert result["content"] == '{"example":true}\n'
+    assert result["truncated"] is False
+
+
 @pytest.mark.asyncio
 async def test_text_file_download_stops_at_byte_limit() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:

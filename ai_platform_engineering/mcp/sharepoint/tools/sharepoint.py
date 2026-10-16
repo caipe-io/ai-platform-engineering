@@ -71,7 +71,7 @@ def register_tools(server: FastMCP, client: SharePointGraphClient, *, documents:
     @server.tool(name="sharepoint_get_document_manifest", annotations=READ_ONLY_ANNOTATIONS)
     @_tool_errors
     async def get_document_manifest(args: DriveItemInput) -> dict[str, Any]:
-        """Get PPTX/PDF metadata and relative authenticated download routes, never file bytes or signed URLs.
+        """Get PPTX/DOCX/PDF metadata and relative authenticated download routes, never file bytes or signed URLs.
 
         An application must stage/convert the document before model ingestion.
         These HTTP routes share this server's authentication and are not MCP tool calls.

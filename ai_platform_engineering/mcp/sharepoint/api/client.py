@@ -19,7 +19,7 @@ from models import SharePointConfig
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 TOKEN_EXPIRY_SKEW_SECONDS = 60
-TEXT_EXTENSIONS = frozenset({".csv", ".json", ".log", ".md", ".txt", ".xml", ".yaml", ".yml"})
+TEXT_EXTENSIONS = frozenset({".csv", ".htm", ".html", ".json", ".jsonl", ".log", ".md", ".markdown", ".txt", ".xml", ".yaml", ".yml"})
 TEXT_CONTENT_TYPES = frozenset(
     {
         "application/csv",
@@ -31,6 +31,17 @@ TEXT_CONTENT_TYPES = frozenset(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def text_file_format(name: str, mime_type: str) -> str | None:
+    """One text allowlist for the MCP reader and TOME's catalog/streams."""
+    extension = PurePosixPath(name).suffix.lower()
+    mime_type = mime_type.split(";", 1)[0].strip().lower()
+    if extension in {".htm", ".html"} or mime_type == "text/html":
+        return "html"
+    if extension in TEXT_EXTENSIONS:
+        return "md" if extension == ".markdown" else extension.lstrip(".")
+    return "txt" if mime_type.startswith("text/") or mime_type in TEXT_CONTENT_TYPES else None
 
 
 class SharePointGraphError(RuntimeError):
@@ -158,7 +169,9 @@ class SharePointGraphClient:
             raise SharePointGraphError(502, "invalid_graph_response", "Microsoft Graph returned an unexpected response shape.")
         return payload
 
-    async def _download_bounded(self, path: str) -> tuple[bytes, str | None]:
+    async def _download_bounded(
+        self, path: str, *, params: dict[str, Any] | None = None, follow_redirects: bool = True,
+    ) -> tuple[bytes, str | None]:
         """Stream a download and stop before it can exceed the configured limit."""
         if not path.startswith("/") or path.startswith("//"):
             raise ValueError("Graph request paths must be relative to the configured v1.0 endpoint")
@@ -174,7 +187,8 @@ class SharePointGraphClient:
                 async with client.stream(
                     "GET",
                     f"{GRAPH_BASE_URL}{path}",
-                    follow_redirects=True,
+                    params=params,
+                    follow_redirects=follow_redirects,
                     headers={
                         "Authorization": f"Bearer {token}",
                         "Accept": "*/*",
@@ -324,12 +338,11 @@ class SharePointGraphClient:
 
         name = str(metadata.get("name") or "")
         graph_mime_type = str((metadata.get("file") or {}).get("mimeType") or "").lower()
-        extension = PurePosixPath(name).suffix.lower()
-        if not (graph_mime_type.startswith("text/") or graph_mime_type in TEXT_CONTENT_TYPES or extension in TEXT_EXTENSIONS):
+        if text_file_format(name, graph_mime_type) is None:
             raise SharePointGraphError(
                 415,
                 "unsupported_file_type",
-                "Only text, Markdown, CSV, JSON, XML, YAML, and log files can be returned as text.",
+                "Only text, Markdown, HTML, CSV, JSON/JSONL, XML, YAML, and log files can be returned as text.",
             )
 
         content, response_content_type = await self._download_bounded(f"/drives/{self._id(drive_id)}/items/{self._id(item_id)}/content")
