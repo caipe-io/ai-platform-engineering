@@ -25,6 +25,7 @@ from dynamic_agents.services.runtime_cache import (
     get_runtime_cache,
 )
 from dynamic_agents.services.stream_encoders import StreamEncoder, get_encoder
+from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryError
 
 logger = logging.getLogger(__name__)
 
@@ -349,6 +350,10 @@ async def _generate_sse_events(
             )
             for frame in encoder.on_run_error(GENERIC_AGENT_ERROR):
                 yield frame
+    except ToolCallRecoveryError as exc:
+        logger.warning("Model output recovery exhausted for agent %s", agent_config.id)
+        for frame in encoder.on_run_error(str(exc)):
+            yield frame
     except Exception:
         logger.exception(f"Error streaming from agent '{agent_config.name}'")
         for frame in encoder.on_run_error(GENERIC_AGENT_ERROR):
@@ -478,6 +483,10 @@ async def _generate_resume_sse_events(
     except RuntimeCapacityError as e:
         logger.warning(f"Agent runtime at capacity: {e}")
         for frame in encoder.on_run_error("This agent is at capacity right now. Please try again in a moment."):
+            yield frame
+    except ToolCallRecoveryError as exc:
+        logger.warning("Model output recovery exhausted for agent %s", agent_config.id)
+        for frame in encoder.on_run_error(str(exc)):
             yield frame
     except Exception:
         logger.exception(f"Error resuming stream for agent '{agent_config.name}'")
@@ -650,6 +659,18 @@ async def chat_invoke(
             content={
                 "success": False,
                 "error": "This agent is at capacity right now. Please try again in a moment.",
+                "agent_id": agent.id,
+                "conversation_id": request.conversation_id,
+                "trace_id": request.trace_id,
+            },
+        )
+    except ToolCallRecoveryError as exc:
+        logger.warning("Model output recovery exhausted for agent %s", agent.id)
+        return JSONResponse(
+            status_code=422,
+            content={
+                "success": False,
+                "error": str(exc),
                 "agent_id": agent.id,
                 "conversation_id": request.conversation_id,
                 "trace_id": request.trace_id,
