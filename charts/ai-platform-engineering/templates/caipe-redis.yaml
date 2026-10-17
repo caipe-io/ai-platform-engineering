@@ -1,0 +1,148 @@
+{{- $cache := index .Values "caipe-redis" -}}
+{{- if $cache.enabled -}}
+{{- $name := printf "%s-caipe-redis" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- $secret := required "caipe-redis.auth.existingSecret.name is required" $cache.auth.existingSecret.name -}}
+{{- $passwordKey := required "caipe-redis.auth.existingSecret.key is required" $cache.auth.existingSecret.key -}}
+{{- if ne $cache.redis.maxmemoryPolicy "allkeys-lru" }}
+{{- fail "caipe-redis is an evictable cache and requires redis.maxmemoryPolicy=allkeys-lru" }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: caipe-redis
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: caipe-redis
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      {{- with $cache.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        app.kubernetes.io/name: caipe-redis
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: "{{ $cache.image.repository }}:{{ $cache.image.tag }}"
+          imagePullPolicy: {{ $cache.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          command: [redis-server]
+          args:
+            - --appendonly
+            - {{ $cache.redis.appendonly | quote }}
+            - --save
+            - {{ $cache.redis.save | quote }}
+            - --maxmemory
+            - {{ $cache.redis.maxmemory | quote }}
+            - --maxmemory-policy
+            - {{ $cache.redis.maxmemoryPolicy | quote }}
+            - --requirepass
+            - $(REDISCLI_AUTH)
+          env:
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret | quote }}
+                  key: {{ $passwordKey | quote }}
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: [redis-cli, -e, ping]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: [redis-cli, -e, ping]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            {{- toYaml $cache.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          {{- if $cache.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $cache.persistence.existingClaim | default $name | quote }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if and $cache.persistence.enabled (not $cache.persistence.existingClaim) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  {{- if $cache.persistence.retain }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- end }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $cache.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $cache.persistence.size | quote }}
+{{- end }}
+{{- if $cache.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: caipe-redis
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: caipe-ui
+              app.kubernetes.io/instance: {{ .Release.Name }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: slack-bot
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: 6379
+{{- end }}
+{{- end }}

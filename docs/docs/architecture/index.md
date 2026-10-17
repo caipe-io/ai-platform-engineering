@@ -28,4 +28,6 @@ Users reach CAIPE through Slack, Webex, the UI, or CLI. Keycloak authenticates e
 
 ## CAIPE Supporting Services
 
+See [application caching](caching.md) for scoped read policies and platform Redis deployment.
+
 ![](images/supporting-services.svg)

@@ -1741,3 +1741,36 @@ rag-stack:
 
   milvus:
     enabled: true
+
+# Optional evictable platform cache; use a new volume, separate from RAG state.
+caipe-redis:
+  enabled: false
+  image:
+    repository: redis
+    tag: "7.2-alpine"
+    pullPolicy: IfNotPresent
+  auth:
+    existingSecret:
+      name: ""
+      key: password
+  podAnnotations: {}
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+    existingClaim: ""
+    retain: true
+  redis:
+    appendonly: "yes"
+    save: "60 1"
+    maxmemory: 512mb
+    maxmemoryPolicy: allkeys-lru
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  networkPolicy:
+    enabled: true

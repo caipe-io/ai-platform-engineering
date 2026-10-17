@@ -139,5 +139,5 @@ Do not add Slack/Webex bots to that default path.
 - TypeScript (Next.js, React) + Zustand (state management), Next.js App Router (093-fix-audit-chat-active-preserve)
 - MongoDB (server-side via API), Zustand store (client-side) (093-fix-audit-chat-active-preserve)
 - Python + Slack Bolt, Slack SDK, httpx (SSE streaming), Pydantic (config models), requests, loguru, PyYAML — no new dependencies (100-slack-agui-migration)
-- MongoDB (LangGraph checkpointer on dynamic agents side; Slack bot is stateless beyond in-memory TTL caches) (100-slack-agui-migration)
+- MongoDB (LangGraph checkpointer on dynamic agents side; Slack bot persists complete directory snapshots through the optional platform Redis cache) (100-slack-agui-migration)
 - Service accounts: dynamic Keycloak confidential clients + OpenFGA `service_account` tuples + Mongo `service_accounts` collection; BFF (Next.js) orchestrates create/rotate/revoke/scope; caller-keyed tool authz added to the OpenFGA ext_authz bridge (2026-06-05-service-accounts)

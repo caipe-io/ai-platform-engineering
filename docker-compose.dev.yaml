@@ -549,6 +549,7 @@ services:
     env_file:
       - .env
     environment:
+      - CAIPE_CACHE_REDIS_URL=${CAIPE_CACHE_REDIS_URL:-}
       - NODE_ENV=development
       # Safe release metadata shown by System Health. A specific
       # PLATFORM_COMPONENT_VERSION_* value may override this shared tag.
@@ -831,6 +832,7 @@ services:
     env_file:
       - .env
     environment:
+      - CAIPE_CACHE_REDIS_URL=${CAIPE_CACHE_REDIS_URL:-}
       - NODE_ENV=production
       # Safe release metadata shown by System Health. A specific
       # PLATFORM_COMPONENT_VERSION_* value may override this shared tag.
@@ -1791,17 +1793,22 @@ services:
 
 
   caipe-redis:
-    image: redis
+    image: redis:7.2-alpine
     container_name: caipe-redis
-    command:
-      - /bin/sh
-      - -c
-      - redis-server
+    command: [redis-server, --save, "60 1", --appendonly, "yes", --maxmemory, 512mb, --maxmemory-policy, allkeys-lru]
+    volumes:
+      - caipe_cache_data:/data
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
     profiles:
       - deps
+      - caipe-cache
 
   milvus-standalone:
     image: milvusdb/milvus:v2.6.0
@@ -2063,6 +2070,7 @@ services:
     env_file: [.env]
     ports: ["8030:3000"]  # Only used in HTTP mode (SLACK_INTEGRATION_BOT_MODE=http)
     environment:
+      - CAIPE_CACHE_REDIS_URL=${CAIPE_CACHE_REDIS_URL:-}
       # Force unbuffered stdio so loguru/print output reaches `docker logs`
       # in real time. Without this, Python block-buffers stderr when the fd
       # is a pipe (docker captures aren't a TTY), which means INFO lines
@@ -2720,6 +2728,8 @@ volumes:
   langfuse_minio_data:
     driver: local
   langfuse_redis_data:
+    driver: local
+  caipe_cache_data:
     driver: local
   milvus_etcd:
     driver: local

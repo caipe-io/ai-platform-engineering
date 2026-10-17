@@ -16,9 +16,12 @@ from typing import Any, Callable
 import requests
 from pymongo.errors import PyMongoError
 
+from .cache import CacheLeaseLostError, CachePolicy, ServerCache
+
 logger = logging.getLogger(__name__)
 DIRECTORY_SCOPE = "slack:directory:read"
 DIRECTORY_TTL_SECONDS = 24 * 60 * 60
+DIRECTORY_HARD_TTL_SECONDS = 7 * 24 * 60 * 60
 CHANNEL_WAIT_SECONDS = 2.0
 STANDARD_EMOJI = """eyes eye eye_speech_bubble white_check_mark x warning rotating_light fire rocket wave
 raised_hands pray thumbsup +1 thumbsdown -1 clap heart blue_heart green_heart yellow_heart purple_heart
@@ -144,7 +147,13 @@ def _normalize_user(user: dict[str, Any]) -> dict[str, Any] | None:
 class SlackDirectoryService:
   """Share complete snapshots across handler threads; refresh independently of HTTP requests."""
 
-  def __init__(self, *, request_get: Callable[..., Any] = requests.get, collection_factory: Callable[..., Any] | None = None) -> None:
+  def __init__(
+    self,
+    *,
+    request_get: Callable[..., Any] = requests.get,
+    collection_factory: Callable[..., Any] | None = None,
+    cache: ServerCache | None = None,
+  ) -> None:
     self._request_get = request_get
     self._collection_factory = collection_factory
     self._lock = threading.RLock()
@@ -153,6 +162,16 @@ class SlackDirectoryService:
     self._entries: dict[tuple[str, str], DirectorySnapshot] = {}
     self._cooldowns: dict[tuple[str, str], float] = {}
     self._ttl_memo: tuple[float, float] | None = None
+    self._cache = cache or ServerCache()
+
+  @staticmethod
+  def _cache_policy(kind: str, *, force_refresh: bool = False) -> CachePolicy:
+    return CachePolicy(
+      namespace=f"slack:{kind}",
+      fresh_seconds=DIRECTORY_TTL_SECONDS,
+      stale_seconds=DIRECTORY_HARD_TTL_SECONDS,
+      force_refresh=force_refresh,
+    )
 
   def _token(self) -> str:
     token = (os.environ.get("SLACK_INTEGRATION_BOT_TOKEN") or os.environ.get("SLACK_BOT_TOKEN") or "").strip()
@@ -169,6 +188,7 @@ class SlackDirectoryService:
     for attempt in range(4):
       with self._lock:
         remaining = self._cooldowns.get(key, 0) - time.time()
+      remaining = max(remaining, self._cache.cooldown_remaining_seconds("slack:cooldown", {"identity": key[0], "method": method}))
       if remaining > 0:
         time.sleep(remaining)
       try:
@@ -182,6 +202,7 @@ class SlackDirectoryService:
             delay = 1
           with self._lock:
             self._cooldowns[key] = time.time() + delay
+          self._cache.set_cooldown("slack:cooldown", {"identity": key[0], "method": method}, delay)
           if attempt < 3:
             continue
           raise SlackDirectoryError(f"Slack API rate limited {method}", 429)
@@ -236,7 +257,21 @@ class SlackDirectoryService:
     key = self._key(kind, token)
     with self._lock:
       entry = self._entries.setdefault(key, DirectorySnapshot())
+      if entry.fetched_at and _now_ms() - entry.fetched_at >= DIRECTORY_HARD_TTL_SECONDS * 1000:
+        entry.rows = []
+        entry.fetched_at = 0
       if entry.refreshing or (not force and entry.last_error and _now_ms() - entry.updated_at < 30_000) or (not force and entry.fetched_at and _now_ms() - entry.fetched_at < DIRECTORY_TTL_SECONDS * 1000):
+        return entry
+    cached = self._cache.get(self._cache_policy(kind), key[1])
+    if cached is not None and isinstance(cached.value, list) and all(isinstance(row, dict) for row in cached.value):
+      with self._lock:
+        entry.rows = cached.value
+        entry.fetched_at = entry.updated_at = cached.computed_at_ms
+        entry.last_error = None
+        if cached.state == "hit" and not force:
+          return entry
+    with self._lock:
+      if entry.refreshing:
         return entry
       entry.refreshing = True
       entry.started_at = entry.updated_at = _now_ms()
@@ -246,15 +281,22 @@ class SlackDirectoryService:
     def run() -> None:
       try:
         loader = self._load_users if kind == "users" else self._load_emoji
-        rows = loader(token, progress)
+        result = self._cache.get_or_load(
+          self._cache_policy(kind, force_refresh=True),
+          key[1],
+          lambda: loader(token, progress),
+        )
+        rows = result.value
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+          raise SlackDirectoryError("Cached Slack directory snapshot was invalid")
         with self._lock:
           entry.rows = rows
-          entry.fetched_at = entry.updated_at = _now_ms()
+          entry.fetched_at = entry.updated_at = result.computed_at_ms
           entry.last_error = None
           entry.pages_scanned = progress.pages_scanned
           entry.members_seen = progress.members_seen
           entry.active_seen = len(rows)
-      except (SlackDirectoryError, requests.RequestException) as exc:
+      except (CacheLeaseLostError, SlackDirectoryError, requests.RequestException, TimeoutError) as exc:
         logger.warning("Slack directory refresh failed: kind=%s error=%s", kind, exc)
         with self._lock:
           entry.last_error = str(exc)
@@ -292,6 +334,8 @@ class SlackDirectoryService:
       error = entry.last_error
       refreshing = entry.refreshing
     if not fetched_at:
+      if error == "Cache refresh is still in progress":
+        raise SlackDirectoryError("Slack directory cache is refreshing", 503, retry_after=1)
       return {kind: [], "total_matches": 0, "total_visible": 0, "cached": False, "warming": True, "fetched_at": 0, "error": error, "query": query}
     if kind == "users" and bot_kind == "bots":
       rows = [row for row in rows if row.get("is_bot") or row.get("is_workflow")]

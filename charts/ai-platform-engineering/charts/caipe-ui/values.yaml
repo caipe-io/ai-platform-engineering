@@ -639,3 +639,10 @@ appConfig:
   #       agent_id: "example-agent"
   #       prompt: "Do something"
   #       on_error: "abort"
+
+# The Secret contains the complete Redis URL, including authentication.
+cacheRedis:
+  enabled: false
+  existingSecret:
+    name: ""
+    key: CAIPE_CACHE_REDIS_URL

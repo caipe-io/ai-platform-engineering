@@ -43,6 +43,13 @@ spec:
           {{- $hasOauth2Secret := and .Values.oauth2 .Values.oauth2.clientSecretFromSecret .Values.oauth2.clientSecretFromSecret.name }}
           {{- $hasKcBotSecret := and .Values.keycloakBot .Values.keycloakBot.clientSecretFromSecret .Values.keycloakBot.clientSecretFromSecret.name }}
           env:
+            {{- if .Values.cacheRedis.enabled }}
+            - name: CAIPE_CACHE_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "cacheRedis.existingSecret.name is required" .Values.cacheRedis.existingSecret.name | quote }}
+                  key: {{ required "cacheRedis.existingSecret.key is required" .Values.cacheRedis.existingSecret.key | quote }}
+            {{- end }}
             - name: CAIPE_API_URL
               value: {{ index .Values.config "CAIPE_API_URL" | default (printf "http://%s-caipe-ui:3000" .Release.Name) | quote }}
             - name: KEYCLOAK_URL

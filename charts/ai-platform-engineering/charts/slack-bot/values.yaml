@@ -235,3 +235,9 @@ vpa:
     cpu: 50m
     memory: 128Mi
   maxAllowed: {}
+
+cacheRedis:
+  enabled: false
+  existingSecret:
+    name: ""
+    key: CAIPE_CACHE_REDIS_URL
