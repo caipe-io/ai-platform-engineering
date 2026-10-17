@@ -62,6 +62,14 @@ global:
     apiVersion: "v1beta1"  # API version for ExternalSecret resources. Options: "v1" or "v1beta1". Defaults to "v1beta1" if not specified.
   # RAG Stack configuration
   rag:
+    writesPaused: false
+    mongodb:
+      # Reuse the application database URI Secret; never place credentials here.
+      existingSecret: ""
+      uriKey: "MONGODB_URI"
+      database: "caipe"
+      caConfigMap: ""
+      caKey: "global-bundle.pem"
     enableGraphRag: true
     openfga:
       httpUrl: ""
@@ -1722,6 +1730,7 @@ rag-stack:
     enabled: true
 
   rag-redis:
+    # Keep until the MongoDB cutover and retained-volume backup are verified.
     enabled: true
     image:
       repository: "redis"

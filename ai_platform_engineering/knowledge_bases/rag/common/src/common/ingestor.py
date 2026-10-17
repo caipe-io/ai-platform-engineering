@@ -11,6 +11,7 @@ import tenacity
 from common.models.rag import DataSourceInfo, DocumentMetadata, StructuredEntity
 from common.models.server import AuthHeader, DocumentIngestRequest, IngestorPingRequest, ExploreDataEntityRequest
 from common.job_manager import JobStatus, JobInfo
+from common.mongo_storage import CURRENT_CLAIM
 from common.constants import (
   DATASOURCE_SCHEDULE_CHECK_INTERVAL,
   MIN_RELOAD_INTERVAL,
@@ -400,6 +401,10 @@ class Client:
         Dictionary of HTTP headers
     """
     headers = {"Content-Type": "application/json"}
+    claim = CURRENT_CLAIM.get()
+    if claim:
+      headers["X-RAG-Claim-Token"] = claim["token"]
+      headers["X-RAG-Datasource-ID"] = claim["_id"]
 
     # Add ingestor identification headers
     headers["X-Ingestor-Type"] = self.ingestor_type

@@ -551,7 +551,8 @@ services:
       - AWS_CONFIG_FILE=/home/app/.aws/config
       - AWS_SHARED_CREDENTIALS_FILE=/home/app/.aws/credentials
       - LOG_LEVEL=DEBUG
-      - REDIS_URL=redis://rag-redis:6379/0
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       - NEO4J_ADDR=neo4j://neo4j:7687
       - NEO4J_ONTOLOGY_ADDR=neo4j://neo4j-ontology:7688
       - NEO4J_USERNAME=neo4j
@@ -567,7 +568,13 @@ services:
       - AUDIT_SERVICE_URL=${AUDIT_SERVICE_URL:-http://audit-service:8010}
     restart: unless-stopped
     env_file: [.env]
-    depends_on: [rag-redis]
+    depends_on:
+      caipe-mongodb:
+        condition: service_healthy
+        required: false
+      caipe-documentdb:
+        condition: service_healthy
+        required: false
     profiles:
       - rag
       - graph_rag
@@ -719,7 +726,8 @@ services:
     ports: ["8098:8098"]
     environment:
       - LOG_LEVEL=DEBUG
-      - REDIS_URL=redis://rag-redis:6379/0
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       - NEO4J_ADDR=neo4j://neo4j:7687
       - NEO4J_ONTOLOGY_ADDR=neo4j://neo4j-ontology:7688
       - NEO4J_USERNAME=neo4j
@@ -727,7 +735,19 @@ services:
       - SYNC_INTERVAL=86400
     env_file: [.env]
     restart: unless-stopped
-    depends_on: [rag-server, neo4j, neo4j-ontology, rag-redis]
+    depends_on:
+      rag-server:
+        condition: service_started
+      neo4j:
+        condition: service_started
+      neo4j-ontology:
+        condition: service_started
+      caipe-mongodb:
+        condition: service_healthy
+        required: false
+      caipe-documentdb:
+        condition: service_healthy
+        required: false
     profiles:
       - graph_rag
 
@@ -738,14 +758,23 @@ services:
     environment:
       - INGESTOR_TYPE=webloader
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - REDIS_URL=redis://rag-redis:6379/0
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       - RAG_SERVER_URL=http://rag-server:9446
       - WEBLOADER_MAX_INGESTION_TASKS=${WEBLOADER_MAX_INGESTION_TASKS:-5}
       - WEBLOADER_CHECK_INTERVAL=${WEBLOADER_CHECK_INTERVAL:-86400}
       - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
     env_file: [.env]
     restart: unless-stopped
-    depends_on: [rag-server, rag-redis]
+    depends_on:
+      rag-server:
+        condition: service_started
+      caipe-mongodb:
+        condition: service_healthy
+        required: false
+      caipe-documentdb:
+        condition: service_healthy
+        required: false
     profiles:
       - web-ingestor
       - web_ingestor
@@ -760,12 +789,21 @@ services:
       - ATLASSIAN_TOKEN=${ATLASSIAN_TOKEN}
       - JIRA_PAGE_SIZE=${JIRA_PAGE_SIZE:-100}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - REDIS_URL=redis://rag-redis:6379/0
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       - RAG_SERVER_URL=http://rag-server:9446
       - SYNC_INTERVAL=${SYNC_INTERVAL:-86400}
     env_file: [.env]
     restart: unless-stopped
-    depends_on: [rag-server, rag-redis]
+    depends_on:
+      rag-server:
+        condition: service_started
+      caipe-mongodb:
+        condition: service_healthy
+        required: false
+      caipe-documentdb:
+        condition: service_healthy
+        required: false
     profiles:
       - jira-ingestor
 
@@ -782,11 +820,20 @@ services:
       - CONFLUENCE_MAX_CONCURRENCY=${CONFLUENCE_MAX_CONCURRENCY:-5}
       - CONFLUENCE_MAX_INGESTION_TASKS=${CONFLUENCE_MAX_INGESTION_TASKS:-5}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - REDIS_URL=redis://rag-redis:6379/0
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       - RAG_SERVER_URL=http://rag-server:9446
     env_file: [.env]
     restart: unless-stopped
-    depends_on: [rag-server, rag-redis]
+    depends_on:
+      rag-server:
+        condition: service_started
+      caipe-mongodb:
+        condition: service_healthy
+        required: false
+      caipe-documentdb:
+        condition: service_healthy
+        required: false
     profiles:
       - confluence-ingestor
 
@@ -800,7 +847,8 @@ services:
       - SLACK_WORKSPACE_URL=${SLACK_WORKSPACE_URL:-https://slack.com}
       - SLACK_MAX_INGESTION_TASKS=${SLACK_MAX_INGESTION_TASKS:-5}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - REDIS_URL=redis://rag-redis:6379/0
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       - RAG_SERVER_URL=http://rag-server:9446
       - SYNC_INTERVAL=${SYNC_INTERVAL:-86400}
       - INIT_DELAY_SECONDS=${INIT_DELAY_SECONDS:-0}
@@ -808,7 +856,15 @@ services:
       - MAX_DOCUMENTS_PER_INGEST=${MAX_DOCUMENTS_PER_INGEST:-1000}
     env_file: [.env]
     restart: unless-stopped
-    depends_on: [rag-server, rag-redis]
+    depends_on:
+      rag-server:
+        condition: service_started
+      caipe-mongodb:
+        condition: service_healthy
+        required: false
+      caipe-documentdb:
+        condition: service_healthy
+        required: false
     profiles:
       - slack-ingestor
 
@@ -821,7 +877,8 @@ services:
       - WEBEX_BOT_NAME=${WEBEX_BOT_NAME}
       - WEBEX_MAX_INGESTION_TASKS=${WEBEX_MAX_INGESTION_TASKS:-5}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - REDIS_URL=redis://rag-redis:6379/0
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
       - RAG_SERVER_URL=http://rag-server:9446
       - SYNC_INTERVAL=${SYNC_INTERVAL:-86400}
       - INIT_DELAY_SECONDS=${INIT_DELAY_SECONDS:-60}
@@ -829,7 +886,15 @@ services:
       - MAX_DOCUMENTS_PER_INGEST=${MAX_DOCUMENTS_PER_INGEST:-1000}
     env_file: [.env]
     restart: unless-stopped
-    depends_on: [rag-server, rag-redis]
+    depends_on:
+      rag-server:
+        condition: service_started
+      caipe-mongodb:
+        condition: service_healthy
+        required: false
+      caipe-documentdb:
+        condition: service_healthy
+        required: false
     profiles:
       - webex-ingestor
 
@@ -872,17 +937,6 @@ services:
     profiles:
       - graph_rag
 
-  rag-redis:
-    image: redis
-    container_name: rag-redis
-    volumes:
-      - rag_redis_data:/data
-    command: ["/bin/sh", "-c", "redis-server --save 60 1 --appendonly yes"]
-    ports: [":6379"]
-    restart: unless-stopped
-    profiles:
-      - rag
-      - graph_rag
 
   milvus-standalone:
     image: milvusdb/milvus:v2.5.14
@@ -1663,8 +1717,6 @@ volumes:
   langfuse_minio_data:
     driver: local
   langfuse_redis_data:
-    driver: local
-  rag_redis_data:
     driver: local
   milvus_etcd:
     driver: local

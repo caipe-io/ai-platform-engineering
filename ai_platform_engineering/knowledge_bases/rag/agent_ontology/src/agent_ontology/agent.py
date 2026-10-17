@@ -20,7 +20,7 @@ from common.models.ontology import (
 )
 from langchain_core.messages import HumanMessage
 import gc
-import redis.asyncio as redis
+from common.mongo_storage import MongoStorage
 import common.utils as utils
 from cnoe_agent_utils import LLMFactory
 from langfuse import get_client as get_langfuse_client
@@ -35,7 +35,7 @@ class OntologyAgent:
    agent follows to determine relations.
   """
 
-  def __init__(self, graph_db: GraphDB, ontology_graph_db: GraphDB, redis: redis.Redis, min_count_for_eval: int, count_change_threshold_ratio: float, max_concurrent_evaluation: int, agent_recursion_limit: int):
+  def __init__(self, graph_db: GraphDB, ontology_graph_db: GraphDB, redis: MongoStorage, min_count_for_eval: int, count_change_threshold_ratio: float, max_concurrent_evaluation: int, agent_recursion_limit: int):
     """
     Initializes the OntologyAgent with the given parameters.
     Args:

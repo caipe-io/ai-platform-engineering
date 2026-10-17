@@ -41,7 +41,7 @@ The RAG (Retrieval-Augmented Generation) platform is a knowledge base system tha
                     │  └──────────────┘  └──────────────┘  └──────────────┘    │
                     │                                                          │
                     │  ┌───────────────────┐                                   │
-                    │  │    Redis          │                                   │
+                    │  │    MongoDB        │                                   │
                     │  │  (Metadata +      │                                   │
                     │  │  Graph Metrics)   │                                   │
                     │  └───────────────────┘                                   │
@@ -88,7 +88,7 @@ Neo4j Data Graph → Ontology Agent
             (Validate candidates)
                         │
                         ▼
-                Redis (Metrics)
+                MongoDB (Metrics)
                 + Neo4j Ontology Graph
                         │
                         ▼
@@ -106,7 +106,7 @@ Neo4j Data Graph → Ontology Agent
 - Agent automatically runs every 6 hours (configurable)
 - Builds BM25 index with Bloom filter pre-filtering
 - Discovers candidate relationships via fuzzy property matching
-- Stores metrics in Redis, structure in Neo4j ontology graph
+- Stores metrics in MongoDB, structure in Neo4j ontology graph
 - Distributes candidates to parallel LLM workers for evaluation
 - Accepted relations synced back to data graph
 
@@ -161,7 +161,7 @@ Entity Types     Entity Instances
 
 ### Server (Port 9446)
 
-**Technologies:** FastAPI, LangChain, Milvus, Neo4j, Redis
+**Technologies:** FastAPI, LangChain, Milvus, Neo4j, MongoDB
 
 **Key Responsibilities:**
 - Document processing pipeline with automatic chunking
@@ -179,7 +179,7 @@ Entity Types     Entity Instances
 - BM25 fuzzy search with Bloom filter optimization (10M bits, 1% error rate)
 - Deep property matching with quality scoring
 - Parallel LLM evaluation (10 workers, isolated queues)
-- Dual storage: Redis for hot metrics, Neo4j for structure
+- Dual storage: MongoDB for hot metrics, Neo4j for structure
 - Automatic synchronization to data graph
 - Background processing with manual trigger support
 
@@ -207,7 +207,7 @@ Entity Types     Entity Instances
 - **Neo4j:** Primary graph database for data storage
 - **Neo4j Ontology:** Separate instance for ontology relationships
 - **Milvus:** Vector database for embeddings storage
-- **Redis:** Key-value store for caching and state management
+- **MongoDB:** Durable metadata, jobs, command queues, and ontology metrics
 
 ### Backend
 - **Python 3.14** with UV package manager
