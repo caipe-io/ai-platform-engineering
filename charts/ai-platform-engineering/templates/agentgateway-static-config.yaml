@@ -93,7 +93,7 @@ data:
                   transformations:
                     request:
                       set:
-                        authorization: '"Bearer " + default(request.headers["x-caipe-provider-token"], "")'
+                        authorization: 'has(request.headers["x-caipe-provider-token"]) && request.headers["x-caipe-provider-token"] != "" ? "Bearer " + request.headers["x-caipe-provider-token"] : request.headers.get("authorization", "")'
                   {{- end }}
                 {{- end }}
                 backends:

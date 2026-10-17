@@ -1678,6 +1678,19 @@ function AdminPage() {
                   <p className="mt-1 text-sm text-muted-foreground">
                     This account has no Admin areas or connected Slack/Webex resources available.
                   </p>
+                  {isSimulationActive && (
+                    <>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        Admin access from a bootstrap or session role may not appear in this OpenFGA preview.
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Active subject: <code>{simulation?.subject?.openfga_user ?? `${simulationTarget?.type}:${simulationTarget?.id}`}</code>
+                      </p>
+                      <Button type="button" variant="outline" className="mt-4" onClick={clearSimulationTarget}>
+                        Exit preview
+                      </Button>
+                    </>
+                  )}
                 </div>
               )}
 

@@ -251,6 +251,7 @@ async function probeHttpDiagnostic({
   remediation,
   failureStatus = "down",
   failureDetailPrefix,
+  healthyPayload,
 }: {
   id: string;
   label: string;
@@ -260,6 +261,7 @@ async function probeHttpDiagnostic({
   remediation?: DiagnosticProbeRemediation;
   failureStatus?: DiagnosticProbeStatus;
   failureDetailPrefix?: string;
+  healthyPayload?: (payload: unknown) => boolean;
 }): Promise<DiagnosticProbeResult> {
   const startedAt = Date.now();
   const controller = new AbortController();
@@ -273,16 +275,19 @@ async function probeHttpDiagnostic({
       cache: "no-store",
     });
     const latencyMs = Date.now() - startedAt;
-    const detail = `HTTP ${response.status}`;
+    const payloadHealthy = !response.ok || !healthyPayload ||
+      healthyPayload(await response.clone().json().catch(() => null));
+    const healthy = response.ok && payloadHealthy;
+    const detail = payloadHealthy ? `HTTP ${response.status}` : `HTTP ${response.status} (unhealthy status)`;
     return {
       id,
       label,
       group,
-      status: response.ok ? "healthy" : failureStatus,
-      detail: response.ok || !failureDetailPrefix ? detail : `${failureDetailPrefix}: ${detail}`,
+      status: healthy ? "healthy" : failureStatus,
+      detail: healthy || !failureDetailPrefix ? detail : `${failureDetailPrefix}: ${detail}`,
       target,
       latency_ms: latencyMs,
-      remediation: response.ok ? undefined : remediation,
+      remediation: healthy ? undefined : remediation,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "request failed";
@@ -620,7 +625,8 @@ async function buildDiagnosticProbes(): Promise<DiagnosticProbeResult[]> {
       id: "dynamic-agents-runtime",
       label: "Dynamic Agents Runtime",
       group: "runtime",
-      target: `${dynamicAgentsUrl}/health`,
+      target: `${dynamicAgentsUrl}/healthz`,
+      healthyPayload: isHealthyStatusPayload,
       remediation: {
         label: "Dynamic Agents",
         href: "/agents",
