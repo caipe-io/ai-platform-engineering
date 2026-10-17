@@ -726,7 +726,6 @@ services:
       # chart values file — see the comment in
       # charts/.../caipe-ui/values.yaml.
       - ALLOW_KEYCLOAK_ADMIN_PASSWORD_FALLBACK=${ALLOW_KEYCLOAK_ADMIN_PASSWORD_FALLBACK:-true}
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
       # Canonical Slack workspace namespace used by UI-managed Slack ReBAC/routes.
       - SLACK_WORKSPACE_ALIAS=${SLACK_WORKSPACE_ALIAS:-CAIPE}
       # UI BFF -> Slack bot admin API. The browser never calls the bot directly;
@@ -939,7 +938,6 @@ services:
       - KEYCLOAK_ADMIN_CLIENT_ID=${KEYCLOAK_ADMIN_CLIENT_ID:-admin-cli}
       - KEYCLOAK_ADMIN_CLIENT_SECRET=${KEYCLOAK_ADMIN_CLIENT_SECRET:-}
       - ALLOW_KEYCLOAK_ADMIN_PASSWORD_FALLBACK=${ALLOW_KEYCLOAK_ADMIN_PASSWORD_FALLBACK:-true}
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
       - SLACK_WORKSPACE_ALIAS=${SLACK_WORKSPACE_ALIAS:-CAIPE}
       - SLACK_BOT_ADMIN_URL=${SLACK_BOT_ADMIN_URL:-http://slack-bot:3001}
       - SLACK_BOT_ADMIN_AUDIENCE=${SLACK_BOT_ADMIN_AUDIENCE:-caipe-slack-bot-admin}

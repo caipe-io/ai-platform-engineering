@@ -4,7 +4,6 @@
 
 import {
   getIntegrationAvailability,
-  getSlackIntegrationToken,
   getWebexLinkAllowedOrgId,
   getWebexLinkScopes,
   isSlackIntegrationEnabled,
@@ -69,11 +68,9 @@ it("detects Webex from its flag, admin secret, or Compose profile", () => {
   expect(isWebexIntegrationEnabled()).toBe(true);
 });
 
-it("ignores placeholder Slack tokens and returns the configured alias", () => {
-  process.env.SLACK_BOT_TOKEN = "<your-token>";
-  process.env.SLACK_INTEGRATION_BOT_TOKEN = "slack-token";
-
-  expect(getSlackIntegrationToken()).toBe("slack-token");
+it("does not require Slack provider credentials on the UI", () => {
+  process.env.SLACK_INTEGRATION_ENABLED = "true";
+  expect(isSlackIntegrationEnabled()).toBe(true);
 });
 
 it("returns both surface flags from the shared availability helper", () => {

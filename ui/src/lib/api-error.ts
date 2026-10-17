@@ -22,6 +22,8 @@ import type { AuthFailureAction,AuthFailureReason } from "./auth-error";
 import type { PublicationDriftItem } from "@/types/publication-approval";
 
 export class ApiError extends Error {
+  retryAfterSeconds?: number;
+
   constructor(
     message: string,
     public statusCode: number = 500,

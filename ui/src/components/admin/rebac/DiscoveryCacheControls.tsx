@@ -94,7 +94,7 @@ export function DiscoveryCacheControls({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveResult, setSaveResult] = useState<"success" | "error" | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [refreshResult, setRefreshResult] = useState<"success" | "error" | null>(null);
+  const [refreshResult, setRefreshResult] = useState<"success" | "pending" | "error" | null>(null);
 
   // Lazy-load the persisted TTL the first time the popover opens. We
   // don't fetch on mount so a viewer who never opens the popover doesn't
@@ -177,13 +177,11 @@ export function DiscoveryCacheControls({
       const route = ROUTE_BY_PROVIDER[provider];
       const params = new URLSearchParams({ refresh: "1", limit: "1", ...refreshQuery });
       const res = await fetch(`${route}?${params.toString()}`);
-      // 200 OK = fresh snapshot built. 503 = the connector isn't
-      // configured (e.g. no SLACK_BOT_TOKEN), which is "not an error"
-      // from the admin's POV — there's just nothing to refresh. We
-      // treat both as success so the UI message reads sensibly.
-      const okish = res.ok || res.status === 503;
-      setRefreshResult(okish ? "success" : "error");
-      if (okish) {
+      const body = await res.json().catch(() => null);
+      const pending = (res.status === 503 && res.headers.has("Retry-After")) ||
+        (res.ok && (body?.data?.refreshing === true || body?.data?.warming === true));
+      setRefreshResult(pending ? "pending" : res.ok ? "success" : "error");
+      if (res.ok && !pending) {
         onAfterRefresh?.();
       }
       setTimeout(() => setRefreshResult(null), 3000);
@@ -308,6 +306,9 @@ export function DiscoveryCacheControls({
               )}
               {refreshResult === "error" && (
                 <span className="text-xs text-destructive">Refresh failed</span>
+              )}
+              {refreshResult === "pending" && (
+                <span className="text-xs text-muted-foreground" role="status">Refresh in progress</span>
               )}
             </div>
           </div>

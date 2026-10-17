@@ -239,11 +239,12 @@ config:
   AGENT_GATEWAY_URL: ""
   # Canonical Slack workspace namespace used by UI-managed Slack ReBAC/routes.
   SLACK_WORKSPACE_ALIAS: "CAIPE"
-  # Slack bot internal admin API used for route-cache reload and one-time
+  # Slack bot internal directory/admin API used for lookups, route-cache reload and one-time
   # static-config-to-MongoDB/OpenFGA migration. The Web UI backend uses the
   # existing OIDC_CLIENT_ID/OIDC_CLIENT_SECRET Keycloak client credentials.
   SLACK_BOT_ADMIN_URL: ""
   SLACK_BOT_ADMIN_AUDIENCE: "caipe-slack-bot-admin"
+  # Directory access uses the default slack:directory:read scope installed by Keycloak init.
   # SLACK_BOT_ADMIN_SCOPE: "slack:routes:read slack:routes:reload slack:routes:sync"
   SLACK_DEFAULT_TEAM_SLUG: ""
   SLACK_DEFAULT_AGENT_ID: ""
