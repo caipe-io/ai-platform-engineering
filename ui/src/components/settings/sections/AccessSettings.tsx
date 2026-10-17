@@ -107,7 +107,7 @@ export function AccessSettings(): React.ReactElement {
     <div className="space-y-6">
       {webexLinkStatus === "success" ? (
         <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm" role="status">
-          Your Webex account has been linked.
+          Linking complete. You can now use your Webex bot.
         </div>
       ) : null}
       {webexLinkStatus === "error" ? (
