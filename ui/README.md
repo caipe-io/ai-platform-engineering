@@ -38,6 +38,15 @@ Browser chat traffic goes through the BFF routes under
 `/api/v1/chat/stream/*`; the browser does not call the Dynamic Agents service
 directly.
 
+## Team Members
+
+- Admin team rosters and member counts group active sources by normalized email,
+  with subject fallback when email is missing. One person can show several source badges.
+- The roster retains each source's provider, subject, and role. Its OpenFGA badge
+  checks each source's own subject and role; all must be synchronized to show synced.
+- Display grouping does not link login identities or change authorization, source
+  revocations, or directory-managed removal rules.
+
 ## Development Commands
 
 ```bash

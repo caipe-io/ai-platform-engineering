@@ -279,6 +279,27 @@ describe("GET /api/admin/teams/[id]/members", () => {
     const syncModule = require("@/lib/rbac/team-openfga-sync-status");
     const mockReadMemberTuples = syncModule.readTeamMemberOpenFgaTuples as jest.Mock;
 
+    it.each([false, true])("checks every source subject without transferring roles (missing admin: %s)", async (missingAdmin) => {
+      seedTeam();
+      mockLoadActiveTeamMembersPage.mockResolvedValueOnce({
+        members: [{
+          identity_key: "email:test-user@example.com", user_email: "test-user@example.com",
+          role: "admin", source_types: ["oidc_claim", "okta"], idp_managed: true,
+          source_memberships: [
+            { user_subject: "oidc-subject", relationship: "member", source_type: "oidc_claim" },
+            { user_subject: "directory-subject", relationship: "admin", source_type: "okta" },
+          ],
+        }], total: 1,
+      });
+      mockReadMemberTuples.mockResolvedValueOnce(new Map([
+        ["oidc-subject", new Set(["member"])],
+        ["directory-subject", new Set(missingAdmin ? ["member"] : ["admin", "member"])],
+      ]));
+      const { body } = await callGet(`/api/admin/teams/${TEAM_ID}/members`);
+      expect(mockReadMemberTuples).toHaveBeenCalledWith("platform", ["oidc-subject", "directory-subject"]);
+      expect(body.data.members[0].sync_status).toBe(missingAdmin ? "drifted" : "synced");
+    });
+
     it("marks a member synced when OpenFGA holds the required relation", async () => {
       seedTeam();
       mockLoadActiveTeamMembersPage.mockResolvedValueOnce({

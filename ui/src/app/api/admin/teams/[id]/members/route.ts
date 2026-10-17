@@ -240,25 +240,36 @@ export const GET = withErrorHandler(async (
   // of tuples) and previously truncated at 1000, falsely flagging most members
   // as "drifted". Read-only — computing the badge never writes tuples.
   const subjects = members
-    .map((m) => m.user_subject)
+    .flatMap((m) => m.source_memberships?.map((source) => source.user_subject) ?? [m.user_subject])
     .filter((s): s is string => Boolean(s));
   const relationsBySubject = teamSlug
     ? await readTeamMemberOpenFgaTuples(teamSlug, subjects)
     : null;
 
   const membersWithSync = members.map((member) => {
-    // `owner` grants both admin+member; otherwise the role maps directly.
-    const requiredRelations = mongoRoleToOpenFgaRelations(member.role);
-    const relationsHeld = member.user_subject
-      ? (relationsBySubject?.get(member.user_subject) ?? null)
-      : null;
-    const sync = classifyMemberSyncStatus({
+    // A display role must not transfer an admin requirement to a different subject.
+    const sources = member.source_memberships?.length
+      ? member.source_memberships
+      : [{ user_subject: member.user_subject, relationship: member.role }];
+    const statuses = sources.map((source) => classifyMemberSyncStatus({
       teamSlug,
-      userSubject: member.user_subject,
-      requiredRelations,
-      relationsHeld: teamSlug ? relationsHeld : null,
-    });
-    return { ...member, sync_status: sync.status, sync_reason: sync.reason };
+      userSubject: source.user_subject,
+      requiredRelations: mongoRoleToOpenFgaRelations(source.relationship),
+      relationsHeld: teamSlug && source.user_subject
+        ? (relationsBySubject?.get(source.user_subject) ?? null)
+        : null,
+    }));
+    const sync = statuses.find((status) => status.status === 'unknown')
+      ?? statuses.find((status) => status.status === 'drifted')
+      ?? statuses.find((status) => status.status === 'pending')
+      ?? statuses[0];
+    return {
+      ...member,
+      sync_status: sync.status,
+      sync_reason: sync.status === 'synced' && sources.length > 1
+        ? 'All active source memberships are synchronized with OpenFGA.'
+        : sync.reason,
+    };
   });
 
   return successResponse({

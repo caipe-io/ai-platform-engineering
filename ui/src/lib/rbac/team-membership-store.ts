@@ -149,10 +149,9 @@ export async function loadActiveTeamMembers(
 }
 
 /**
- * Count the distinct active members of a team. Equivalent to
- * `(await loadActiveTeamMembers(slug)).length` but cheaper because
- * dedupe happens server-side via aggregation, and it does not return
- * row data.
+ * Count distinct people for the admin roster, grouping by normalized email
+ * and falling back to subject when email is missing. This display count
+ * does not merge the source identities used by authorization readers.
  *
  * Used by `GET /api/admin/teams` to populate `member_count` on the list
  * response without N+1 round-trips.
@@ -232,8 +231,9 @@ export async function loadTeamMembersForSlugs(
 }
 
 /**
- * One page of a team's deduplicated, role-escalated members, plus the total
- * distinct member count for the (optionally search-filtered) set.
+ * One page of people grouped by normalized email, with source-specific
+ * subjects and roles retained for sync diagnostics. Missing emails fall
+ * back to subjects. The displayed role is the strongest active source role.
  *
  * `source_types` lists every active source that contributed a row for the
  * member (e.g. `["okta", "manual"]`). `idp_managed` is true when the member
@@ -243,6 +243,8 @@ export async function loadTeamMembersForSlugs(
 export interface TeamMemberPageRow {
   identity_key: string;
   user_subject?: string;
+  /** Source identities remain separate even when their emails share a display row. */
+  source_memberships?: Pick<TeamMembershipSource, "user_subject" | "relationship" | "source_type" | "provider_id">[];
   user_email?: string;
   // UI-facing role. The canonical store only tracks member/admin; "owner" is
   // derived from the team document's owner_id for display + sort purposes.
@@ -277,6 +279,19 @@ export interface LoadTeamMembersPageOptions extends QueryOptions {
    * role `"owner"` and sorted to the very top so it leads page 1.
    */
   ownerEmail?: string;
+}
+
+/** Display grouping only; authorization readers continue to resolve subjects independently. */
+function memberDisplayKey(): Record<string, unknown> {
+  const email = { $toLower: { $trim: { input: { $ifNull: ["$user_email", ""] } } } };
+  const subject = { $trim: { input: { $ifNull: ["$user_subject", ""] } } };
+  return {
+    $cond: [
+      { $ne: [email, ""] },
+      { $concat: ["email:", email] },
+      { $cond: [{ $ne: [subject, ""] }, { $concat: ["subject:", subject] }, null] },
+    ],
+  };
 }
 
 /**
@@ -327,9 +342,14 @@ export async function loadActiveTeamMembersPage(
 
   const groupStage = {
     $group: {
-      _id: { $ifNull: ["$user_subject", { $toLower: "$user_email" }] },
-      user_subject: { $first: "$user_subject" },
-      user_email: { $first: "$user_email" },
+      _id: memberDisplayKey(),
+      user_email: { $first: { $toLower: { $trim: { input: { $ifNull: ["$user_email", ""] } } } } },
+      source_memberships: { $addToSet: {
+        user_subject: "$user_subject",
+        relationship: "$relationship",
+        source_type: "$source_type",
+        provider_id: "$provider_id",
+      } },
       // Escalate to admin if ANY contributing row is an admin grant.
       is_admin: { $max: { $cond: [{ $eq: ["$relationship", "admin"] }, 1, 0] } },
       source_types: { $addToSet: "$source_type" },
@@ -362,6 +382,7 @@ export async function loadActiveTeamMembersPage(
         _id: string | null;
         user_subject?: string;
         user_email?: string;
+        source_memberships?: TeamMemberPageRow["source_memberships"];
         is_admin: number;
         source_types: TeamMembershipSource["source_type"][];
         added_at?: string;
@@ -378,10 +399,13 @@ export async function loadActiveTeamMembersPage(
 
   const members: TeamMemberPageRow[] = rows.map((row) => {
     const sourceTypes = Array.isArray(row.source_types) ? row.source_types : [];
+    const sourceMemberships = row.source_memberships ?? [];
+    const subjects = [...new Set(sourceMemberships.map((source) => source.user_subject).filter(Boolean))];
     const isOwner = Boolean(ownerEmail && (row.user_email ?? "").toLowerCase() === ownerEmail);
     return {
       identity_key: row._id ?? "",
-      user_subject: row.user_subject || undefined,
+      user_subject: subjects.length === 1 ? subjects[0] : undefined,
+      source_memberships: sourceMemberships,
       user_email: row.user_email || undefined,
       // Owner is a UI-only role label; the canonical store only tracks
       // member/admin. The owner is always at least an admin in OpenFGA.
@@ -429,8 +453,7 @@ export async function loadTeamMemberCounts(
       $group: {
         _id: {
           team_slug: "$team_slug",
-          // Mirrors `deriveIdentityKey`: prefer subject, fall back to email.
-          identity_key: { $ifNull: ["$user_subject", { $toLower: "$user_email" }] },
+          identity_key: memberDisplayKey(),
         },
       },
     },

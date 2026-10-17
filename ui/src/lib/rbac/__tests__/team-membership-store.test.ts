@@ -20,7 +20,12 @@ function findMatcher(filter: Record<string, unknown>) {
         if (!anyMatch) return false;
         continue;
       }
-      const rowValue = (row as unknown as Record<string, unknown>)[key];
+      const rowValue = key.split(".").reduce<unknown>((value, part) =>
+        (value as Record<string, unknown> | undefined)?.[part], row);
+      if (value && typeof value === "object" && "$ne" in value) {
+        if ((rowValue ?? null) === (value as { $ne: unknown }).$ne) return false;
+        continue;
+      }
       if (
         typeof value === "object" &&
         value !== null &&
@@ -54,48 +59,64 @@ function findStub(filter: Record<string, unknown>) {
   };
 }
 
+type Document = Record<string, unknown>;
+
+// Evaluate the emitted expressions so tests exercise the database grouping key.
+function expression(value: unknown, row: Document): unknown {
+  if (typeof value === "string" && value.startsWith("$")) {
+    return value.slice(1).split(".").reduce<unknown>((entry, key) =>
+      (entry as Document | undefined)?.[key], row);
+  }
+  if (!value || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((entry) => expression(entry, row));
+  const object = value as Document;
+  const args = (operator: string) => (object[operator] as unknown[]).map((entry) => expression(entry, row));
+  if ("$ifNull" in object) { const values = args("$ifNull"); return values[0] ?? values[1]; }
+  if ("$toLower" in object) return String(expression(object.$toLower, row) ?? "").toLowerCase();
+  if ("$trim" in object) return String(expression((object.$trim as Document).input, row) ?? "").trim();
+  if ("$concat" in object) return args("$concat").join("");
+  if ("$cond" in object) { const [test, yes, no] = object.$cond as unknown[]; return expression(expression(test, row) ? yes : no, row); }
+  if ("$eq" in object) { const [a, b] = args("$eq"); return a === b; }
+  if ("$ne" in object) { const [a, b] = args("$ne"); return a !== b; }
+  return Object.fromEntries(Object.entries(object).map(([key, entry]) => [key, expression(entry, row)]));
+}
+
 function aggregateStub(pipeline: Record<string, unknown>[]) {
-  // Minimal aggregation evaluator: $match on { team_slug, status (+ $in) },
-  // $group on { team_slug + identity_key } with $sum:1, then $group again
-  // by team_slug summing counts. Mirrors the exact pipeline shape produced
-  // by `loadTeamMemberCounts`. Updates here must be kept in sync.
-  let cursor: TeamMembershipSource[] = [...fixtureRows];
-
-  const stages = pipeline;
-  // Stage 0: $match
-  const stage0 = stages[0] as { $match?: Record<string, unknown> };
-  if (stage0?.$match) {
-    cursor = cursor.filter(findMatcher(stage0.$match));
+  let rows: Document[] = fixtureRows.map((row) => ({ ...row }));
+  for (const stage of pipeline) {
+    if (stage.$match) rows = rows.filter((row) => findMatcher(stage.$match as Document)(row as unknown as TeamMembershipSource));
+    else if (stage.$group) {
+      const group = stage.$group as Document;
+      const buckets = new Map<string, Document[]>();
+      for (const row of rows) {
+        const key = JSON.stringify(expression(group._id, row));
+        buckets.set(key, [...(buckets.get(key) ?? []), row]);
+      }
+      rows = [...buckets.values()].map((bucket) => Object.fromEntries(Object.entries(group).map(([key, accumulator]) => {
+        if (key === "_id") return [key, expression(accumulator, bucket[0])];
+        const [operator, operand] = Object.entries(accumulator as Document)[0];
+        const values = bucket.map((row) => expression(operand, row));
+        if (operator === "$first") return [key, values[0]];
+        if (operator === "$addToSet") return [key, [...new Map(values.map((v) => [JSON.stringify(v), v])).values()]];
+        if (operator === "$sum") return [key, values.reduce<number>((sum, v) => sum + Number(v), 0)];
+        if (operator === "$max") return [key, Math.max(...values.map(Number))];
+        if (operator === "$min") return [key, values.filter((v) => v != null).sort()[0]];
+        throw new Error(`Unsupported accumulator ${operator}`);
+      })));
+    } else if (stage.$addFields) rows = rows.map((row) => ({ ...row, ...expression(stage.$addFields, row) as Document }));
+    else if (stage.$sort) rows.sort((a, b) => {
+      for (const [key, direction] of Object.entries(stage.$sort as Document)) {
+        const comparison = String(a[key] ?? "").localeCompare(String(b[key] ?? ""));
+        if (comparison) return comparison * Number(direction);
+      }
+      return 0;
+    });
+    else if (stage.$skip !== undefined) rows = rows.slice(Number(stage.$skip));
+    else if (stage.$limit !== undefined) rows = rows.slice(0, Number(stage.$limit));
+    else if (stage.$count) rows = rows.length ? [{ [String(stage.$count)]: rows.length }] : [];
+    else throw new Error(`Unsupported stage ${Object.keys(stage)[0]}`);
   }
-
-  // Stage 1: $group by (team_slug, identity_key)
-  type GroupedKey = { team_slug: string; identity_key: string | null };
-  const grouped = new Map<string, GroupedKey>();
-  for (const row of cursor) {
-    const identity =
-      (row.user_subject && row.user_subject.trim()) ||
-      (row.user_email && row.user_email.trim().toLowerCase()) ||
-      null;
-    const key = `${row.team_slug}::${identity ?? "<null>"}`;
-    if (!grouped.has(key)) {
-      grouped.set(key, { team_slug: row.team_slug, identity_key: identity });
-    }
-  }
-  let groupedArr: { _id: GroupedKey }[] = Array.from(grouped.values()).map((g) => ({ _id: g }));
-
-  // Stage 2: $match identity_key !== null
-  groupedArr = groupedArr.filter((g) => g._id.identity_key !== null);
-
-  // Stage 3: $group by team_slug, sum
-  const counts = new Map<string, number>();
-  for (const item of groupedArr) {
-    counts.set(item._id.team_slug, (counts.get(item._id.team_slug) ?? 0) + 1);
-  }
-  const result = Array.from(counts.entries()).map(([slug, count]) => ({ _id: slug, count }));
-
-  return {
-    toArray: async () => result,
-  };
+  return { toArray: async () => rows };
 }
 
 const collectionStub = {
@@ -247,7 +268,7 @@ describe("loadTeamMemberCounts", () => {
     fixtureRows.push(
       row({ team_slug: "alpha", user_subject: "kc-A", source_type: "manual" }),
       row({ team_slug: "alpha", user_subject: "kc-A", source_type: "okta", provider_id: "okta-prod" }),
-      row({ team_slug: "alpha", user_subject: "kc-B" }),
+      row({ team_slug: "alpha", user_subject: "kc-B", user_email: "secondary@example.com" }),
     );
     const counts = await loadTeamMemberCounts(["alpha"]);
     expect(counts.get("alpha")).toBe(2);
@@ -315,11 +336,73 @@ describe("countActiveTeamMembers", () => {
   it("returns the same count as loadTeamMemberCounts", async () => {
     fixtureRows.push(
       row({ team_slug: "alpha", user_subject: "kc-A" }),
-      row({ team_slug: "alpha", user_subject: "kc-B" }),
+      row({ team_slug: "alpha", user_subject: "kc-B", user_email: "secondary@example.com" }),
       row({ team_slug: "beta", user_subject: "kc-A" }),
     );
     expect(await countActiveTeamMembers("alpha")).toBe(2);
     expect(await countActiveTeamMembers("beta")).toBe(1);
+  });
+});
+
+describe("member display across identity providers", () => {
+  beforeEach(() => {
+    fixtureRows.push(
+      row({ user_subject: "oidc-subject", user_email: " Test-User@Example.com ", source_type: "oidc_claim", provider_id: "primary", first_seen_at: "2026-06-05T00:00:00Z" }),
+      row({ user_subject: "directory-subject", user_email: "test-user@example.com", source_type: "okta", provider_id: "secondary", relationship: "admin", first_seen_at: "2026-06-17T00:00:00Z" }),
+      row({ user_subject: "removed-subject", user_email: "test-user@example.com", source_type: "manual", status: "removed" }),
+      row({ user_subject: "other-subject", user_email: "other@example.com" }),
+    );
+  });
+
+  it("shows one person with both active sources, original subjects, and earliest date", async () => {
+    const { members, total } = await loadActiveTeamMembersPage("platform");
+    expect(total).toBe(2);
+    const member = members.find((entry) => entry.user_email === "test-user@example.com")!;
+    expect(member).toMatchObject({ role: "admin", idp_managed: true, added_at: "2026-06-05T00:00:00Z" });
+    expect(member.user_subject).toBeUndefined();
+    expect(member.source_types).toEqual(expect.arrayContaining(["oidc_claim", "okta"]));
+    expect(member.source_memberships).toHaveLength(2);
+    expect(member.source_memberships).toEqual(expect.arrayContaining([
+      { user_subject: "oidc-subject", relationship: "member", source_type: "oidc_claim", provider_id: "primary" },
+      { user_subject: "directory-subject", relationship: "admin", source_type: "okta", provider_id: "secondary" },
+    ]));
+    expect((await loadTeamMemberCounts(["platform"])).get("platform")).toBe(total);
+    expect(fixtureRows).toHaveLength(4);
+  });
+
+  it("paginates people rather than splitting membership sources across pages", async () => {
+    const first = await loadActiveTeamMembersPage("platform", { pageSize: 1, ownerEmail: "test-user@example.com" });
+    const second = await loadActiveTeamMembersPage("platform", { pageSize: 1, page: 2, ownerEmail: "test-user@example.com" });
+    expect(first.members[0]).toMatchObject({ user_email: "test-user@example.com", role: "owner" });
+    expect(first.members[0].source_memberships).toHaveLength(2);
+    expect(second.members[0].user_email).toBe("other@example.com");
+    expect(first.total).toBe(2);
+  });
+
+  it("keeps authorization roles scoped to their original subject", async () => {
+    expect(await findUserRoleInTeam("platform", { user_subject: "oidc-subject" })).toBe("member");
+    expect(await findUserRoleInTeam("platform", { user_subject: "directory-subject" })).toBe("admin");
+    expect(await findUserRoleInTeam("platform", { user_subject: "removed-subject" })).toBeNull();
+  });
+
+  it("drops revoked source roles and provenance from the display without removing other sources", async () => {
+    fixtureRows[1].status = "removed";
+    const page = await loadActiveTeamMembersPage("platform");
+    const member = page.members.find((entry) => entry.user_email === "test-user@example.com")!;
+    expect(member).toMatchObject({ role: "member", user_subject: "oidc-subject", source_types: ["oidc_claim"] });
+    expect(member.source_memberships).toHaveLength(1);
+    expect(await findUserRoleInTeam("platform", { user_subject: "directory-subject" })).toBeNull();
+  });
+
+  it("keeps subjects without an email separate and drops unattributed rows", async () => {
+    fixtureRows.splice(0, fixtureRows.length,
+      row({ user_subject: "primary-subject", user_email: undefined }),
+      row({ user_subject: "secondary-subject", user_email: " " }),
+      row({ user_subject: undefined, user_email: undefined }),
+    );
+    const page = await loadActiveTeamMembersPage("platform");
+    expect(page.total).toBe(2);
+    expect(page.members.map((entry) => entry.user_subject)).toEqual(["primary-subject", "secondary-subject"]);
   });
 });
 
@@ -423,11 +506,7 @@ describe("loadActiveTeamMembersPage — DocumentDB compatibility", () => {
 });
 
 describe("loadActiveTeamMembersPage — search $match construction", () => {
-  // The aggregateStub above only faithfully simulates loadTeamMemberCounts's
-  // pipeline shape (per its own comment), not this function's — so, like the
-  // "DocumentDB compatibility" tests above, these assert on the constructed
-  // pipeline's $match stage directly rather than trusting the stub's
-  // simulated output.
+  // Search clauses are checked directly to cover regex escaping and directory matches.
   function matchStageOf(pipelines: Record<string, unknown>[][]) {
     return (pipelines[0][0] as { $match: Record<string, unknown> }).$match;
   }
