@@ -7,6 +7,13 @@ import { NextRequest } from "next/server";
 const mockCheckPermission = jest.fn();
 const mockGetCollection = jest.fn();
 const mockConnectToDatabase = jest.fn();
+const mockResolveSimulation = jest.fn();
+const mockSimulationCanManage = jest.fn();
+
+jest.mock("@/lib/rbac/admin-simulation-server", () => ({
+  resolveAuthorizedAdminSimulationScope: (...args: unknown[]) => mockResolveSimulation(...args),
+  simulationSubjectCanManageAdminSurface: (...args: unknown[]) => mockSimulationCanManage(...args),
+}));
 
 jest.mock("next-auth", () => ({
   getServerSession: jest.fn(async () => null),
@@ -68,9 +75,20 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockCheckPermission.mockResolvedValue({ allowed: false, reason: "DENY_NO_CAPABILITY" });
   mockLoadTeamMembersForSlugs.mockResolvedValue(new Map());
+  mockResolveSimulation.mockResolvedValue(null);
+  mockSimulationCanManage.mockResolvedValue(false);
 });
 
 describe("admin stats RBAC routes", () => {
+  it("denies skill metrics for a simulated subject without platform-wide access before cache or queries", async () => {
+    mockCheckPermission.mockResolvedValue({ allowed: true, reason: "ALLOW" });
+    mockResolveSimulation.mockResolvedValue({ openfgaUser: "user:test-user" });
+    const { GET } = await import("../skills/route");
+    const response = await GET(request("/api/admin/stats/skills?simulate_user=test-user"));
+    expect(response.status).toBe(403);
+    expect(mockSimulationCanManage).toHaveBeenCalledWith({ openfgaUser: "user:test-user" }, "stats");
+    expect(mockGetCollection).not.toHaveBeenCalled();
+  });
   it("denies bearer users without admin_ui#view before loading skill stats", async () => {
     const { GET } = await import("../skills/route");
 
@@ -104,7 +122,7 @@ describe("admin stats RBAC routes", () => {
     expect(configs.find).toHaveBeenCalledWith({
       created_at: { $gte: new Date(from), $lte: new Date(to) },
       owner_id: "person@example.com",
-    });
+    }, { maxTimeMS: 15000 });
     expect(configs.aggregate.mock.calls[0][0][0].$match).toEqual(expect.objectContaining({
       created_at: { $gte: new Date(from), $lte: new Date(to) },
       owner_id: "person@example.com",
@@ -144,7 +162,7 @@ describe("admin stats RBAC routes", () => {
     expect(mockLoadTeamMembersForSlugs).toHaveBeenCalledWith(["platform-team"]);
     expect(configs.find).toHaveBeenCalledWith(expect.objectContaining({
       owner_id: { $in: ["alice@example.com", "bob@example.com"] },
-    }));
+    }), { maxTimeMS: 15000 });
     for (const [pipeline] of runs.aggregate.mock.calls) {
       expect(pipeline[0].$match.owner_id).toEqual({
         $in: ["alice@example.com", "bob@example.com"],

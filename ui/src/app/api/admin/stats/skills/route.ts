@@ -7,6 +7,9 @@ successResponse,
 withErrorHandler,
 } from '@/lib/api-middleware';
 import { getCollection,isMongoDBConfigured } from '@/lib/mongodb';
+import { INSIGHTS_QUERY_TIMEOUT_MS, withInsightsResponseCache } from '@/lib/insights-cache';
+import { ApiError } from '@/lib/api-error';
+import { resolveAuthorizedAdminSimulationScope, simulationSubjectCanManageAdminSurface } from '@/lib/rbac/admin-simulation-server';
 import { resolveInsightsUserFilter } from '@/lib/rbac/insights-user-filter';
 import type { AgentSkill } from '@/types/agent-skill';
 import type { WorkflowRun } from '@/types/workflow-run';
@@ -56,7 +59,15 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 
   const { session } = await getAuthFromBearerOrSession(request);
   await requireRbacPermission(session, 'admin_ui', 'view');
+  const simulationScope = await resolveAuthorizedAdminSimulationScope(request.nextUrl.searchParams, session);
+  if (simulationScope && !(await simulationSubjectCanManageAdminSurface(simulationScope, 'stats'))) {
+    throw new ApiError('Platform-wide skill metrics require admin access', 403);
+  }
 
+  return withInsightsResponseCache(request, 'insights.skills', {
+    fullAdmin: true,
+    simulation: simulationScope?.openfgaUser ?? null,
+  }, async () => {
     const configs = await getCollection<AgentSkill>('agent_skills');
     const runs = await getCollection<WorkflowRun>('workflow_runs');
     const { searchParams } = request.nextUrl;
@@ -85,7 +96,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     }
     if (sourceFilter === 'slack') runFilter._id = null;
 
-    const allConfigs = await configs.find(configFilter).toArray();
+    const allConfigs = await configs.find(configFilter, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray();
 
     const systemSkills = allConfigs.filter((c) => c.is_system).length;
     const userConfigs = allConfigs.filter((c) => !c.is_system);
@@ -130,7 +141,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
           },
         },
         { $sort: { _id: 1 } },
-      ])
+      ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS })
       .toArray();
 
     const dailyCreated = dailyCreatedAgg.map((d) => ({
@@ -155,7 +166,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
             avg_duration_ms: { $avg: '$duration_ms' },
           },
         },
-      ])
+      ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS })
       .toArray();
 
     const overallRaw = overallRunAgg[0] || {
@@ -201,7 +212,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
         },
         { $sort: { total_runs: -1 } },
         { $limit: 15 },
-      ])
+      ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS })
       .toArray();
 
     const nameMap = new Map(allConfigs.map((c) => [c.id, c.name]));
@@ -231,4 +242,5 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       top_skills_by_runs: topSkillsByRuns,
       overall_run_stats: overallRunStats,
     });
+  });
 });

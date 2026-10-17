@@ -1582,10 +1582,9 @@ describe('Admin Dashboard Page', () => {
       expect(feedbackUrl.searchParams.get('search')).toBe('incorrect');
       expect(feedbackUrl.searchParams.get('team')).toBe('platform-team');
       expect(feedbackUrl.searchParams.get('user')).toBe('test-user@example.com');
-      const from = Date.parse(feedbackUrl.searchParams.get('from') ?? '');
-      const to = Date.parse(feedbackUrl.searchParams.get('to') ?? '');
-      expect(to - from).toBeGreaterThanOrEqual(6.9 * 24 * 60 * 60 * 1000);
-      expect(to - from).toBeLessThanOrEqual(7.1 * 24 * 60 * 60 * 1000);
+      expect(feedbackUrl.searchParams.get('range')).toBe('7d');
+      expect(feedbackUrl.searchParams.has('from')).toBe(false);
+      expect(feedbackUrl.searchParams.has('to')).toBe(false);
       expect(screen.getByRole('button', { name: 'negative' })).toHaveClass('bg-primary');
 
       fireEvent.click(screen.getByRole('button', { name: 'all' }));

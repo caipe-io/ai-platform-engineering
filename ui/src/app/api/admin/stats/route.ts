@@ -13,16 +13,12 @@ simulationSubjectCanManageAdminSurface,
 import { resolveInsightsUserFilter } from '@/lib/rbac/insights-user-filter';
 import { requireAdminSurfaceManage } from '@/lib/rbac/require-openfga';
 import { getAgentsByIds, getAllAgents, getOwnedAgentConversationIds, getOwnedAgents, getReadableSlackChannelNames, getReadableWebexSpaceIds, type OwnedAgent } from '@/lib/rbac/user-insights-scope';
-import {
-createJsonResponseCacheStore,
-envTtlMs,
-withJsonResponseCache,
-} from '@/lib/server-response-cache';
+import { INSIGHTS_QUERY_TIMEOUT_MS, withInsightsResponseCache } from '@/lib/insights-cache';
+import { envTtlMs } from '@/lib/server-response-cache';
 import { ADMIN_STATS_SECTIONS,type AdminStatsOwnerType,type AdminStatsSection } from '@/types/admin-stats';
 import type { Collection,Document } from 'mongodb';
 import { NextRequest,NextResponse } from 'next/server';
 
-const adminStatsCache = createJsonResponseCacheStore();
 let botOwnerIdsCache: { expiresAt: number; promise: Promise<string[]> } | null = null;
 const TOP_USERS_PAGE_SIZE = 10;
 const VALID_TOP_USER_OWNER_STAGE = {
@@ -328,7 +324,7 @@ async function getBotOwnerIds(conversations: Collection<Document>): Promise<stri
 
   const promise = conversations.distinct('owner_id', {
     'metadata.owner_is_bot': true,
-  }).then((ids) => ids.filter((id): id is string => typeof id === 'string' && id.length > 0));
+  }, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).then((ids) => ids.filter((id): id is string => typeof id === 'string' && id.length > 0));
 
   if (process.env.NODE_ENV !== 'test') {
     const cacheEntry = {
@@ -408,15 +404,7 @@ function andInto(target: Record<string, unknown>, clause: Record<string, unknown
 // `section=<name>` returns one independently cacheable metric group so clients
 // can paint cards as their queries finish. Omitting `section` preserves the
 // original complete response for existing callers.
-export const GET = withErrorHandler(async (request: NextRequest) => {
-  return withJsonResponseCache(request, adminStatsCache, () => getAdminStats(request), {
-    ttlMs: envTtlMs('ADMIN_STATS_CACHE_TTL_MS', 15_000),
-    // A filtered dashboard now occupies one small entry per section instead of
-    // one large entry. Keep roughly the same number of complete dashboard views
-    // resident without forcing hot sections to evict each other immediately.
-    maxEntries: 2_048,
-  });
-});
+export const GET = withErrorHandler(getAdminStats);
 
 async function getAdminStats(request: NextRequest) {
   if (!isMongoDBConfigured) {
@@ -443,9 +431,6 @@ async function getAdminStats(request: NextRequest) {
       { status: 400 },
     );
   }
-  const includesSection = (section: AdminStatsSection): boolean => (
-    requestedSection === 'all' || requestedSection === section
-  );
   const simulationScope = await resolveAuthorizedAdminSimulationScope(searchParams, session);
   const isFullAdmin = simulationScope
     ? await simulationSubjectCanManageAdminSurface(simulationScope, 'stats')
@@ -483,6 +468,19 @@ async function getAdminStats(request: NextRequest) {
     nonAdminScope = { channelNames, ownerEmail: email, ownedAgents, sub, webexSpaceIds };
   }
 
+  return withInsightsResponseCache(request, 'insights.stats', {
+    fullAdmin: isFullAdmin,
+    subject: nonAdminScope?.sub,
+    ownerEmail: nonAdminScope?.ownerEmail,
+    channelNames: nonAdminScope?.channelNames,
+    webexSpaceIds: nonAdminScope?.webexSpaceIds,
+    ownedAgents: nonAdminScope?.ownedAgents,
+    simulation: simulationScope ? simulationScope.openfgaUser : null,
+  }, async () => {
+    let degraded = false;
+    const includesSection = (section: AdminStatsSection): boolean => (
+      requestedSection === 'all' || requestedSection === section
+    );
     const { rangeStart, rangeEnd, days, bucketUnit, bucketCount } = parseRange(searchParams);
     const rangeDateMatch = { $gte: rangeStart, $lte: rangeEnd };
 
@@ -563,7 +561,7 @@ async function getAdminStats(request: NextRequest) {
       // conversation_id join instead, the same join already used for
       // owned-agent/feedback scoping elsewhere in this route.
       const apiConversationIds = await (await getCollection('conversations'))
-        .distinct('_id', API_CONV_MATCH);
+        .distinct('_id', API_CONV_MATCH, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS });
       msgOwnerFilter.conversation_id = { $in: apiConversationIds.length > 0 ? apiConversationIds : [null] };
     }
     if (hasUserFilter) {
@@ -817,7 +815,7 @@ async function getAdminStats(request: NextRequest) {
           ? await users
               .find(
                 { email: { $in: userEmails } },
-                { projection: { keycloak_sub: 1, 'metadata.keycloak_sub': 1 } },
+                { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS, projection: { keycloak_sub: 1, 'metadata.keycloak_sub': 1 } },
               )
               .toArray()
           : [];
@@ -888,27 +886,27 @@ async function getAdminStats(request: NextRequest) {
           { $match: { updated_at: rangeDateMatch, ...activeIdentityFilter } },
           { $group: { _id: canonicalConversationOwner() } },
           { $count: 'total' },
-        ]).toArray().then((r) => r[0]?.total || 0),
+        ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray().then((r) => r[0]?.total || 0),
         // Scoped to the selected date range (rangeStart), matching daily_activity
         // and every other range-aware metric below — previously these were
         // always lifetime totals regardless of the selected range.
-        conversations.countDocuments({ created_at: rangeDateMatch, ...convSourceFilter }),
+        conversations.countDocuments({ created_at: rangeDateMatch, ...convSourceFilter }, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }),
         // Count only assistant rows (messages sent by the AI platform).
         // msgOwnerFilter also carries metadata.source when explicitly filtered;
         // without a source filter, assistant rows from every source are counted.
-        messages.countDocuments({ created_at: rangeDateMatch, ...AI_MESSAGE_MATCH, ...msgOwnerFilter }),
+        messages.countDocuments({ created_at: rangeDateMatch, ...AI_MESSAGE_MATCH, ...msgOwnerFilter }, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }),
         conversations.aggregate([
           { $match: { updated_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...activeIdentityFilter } },
           { $group: { _id: canonicalConversationOwner() } },
           { $count: 'total' },
-        ]).toArray().then((r) => r[0]?.total || 0),
+        ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray().then((r) => r[0]?.total || 0),
         conversations.aggregate([
           { $match: { updated_at: { $gte: monthRangeStart, $lte: rangeEnd }, ...activeIdentityFilter } },
           { $group: { _id: canonicalConversationOwner() } },
           { $count: 'total' },
-        ]).toArray().then((r) => r[0]?.total || 0),
-        conversations.countDocuments({ created_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...convSourceFilter }),
-        messages.countDocuments({ created_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...AI_MESSAGE_MATCH, ...msgOwnerFilter }),
+        ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray().then((r) => r[0]?.total || 0),
+        conversations.countDocuments({ created_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...convSourceFilter }, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }),
+        messages.countDocuments({ created_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...AI_MESSAGE_MATCH, ...msgOwnerFilter }, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }),
         // `andInto` rather than spreading a literal `$or` — the non-admin scope
         // can itself be an `$or`, which a spread would clobber (leaking shared
         // conversation counts outside the caller's scope).
@@ -927,7 +925,7 @@ async function getAdminStats(request: NextRequest) {
             });
             return sharedFilter;
           })()
-        ),
+        , { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }),
       ]);
     }
 
@@ -989,6 +987,19 @@ async function getAdminStats(request: NextRequest) {
       }
     }
 
+    // Resolve conversation identity once per conversation/owner pair instead of
+    // joining every message. Counts remain weighted by the original row count.
+    const messageOwnerStages: Document[] = [
+      { $group: { _id: { conversation: '$conversation_id', owner: '$owner_id' }, message_count: { $sum: 1 } } },
+      { $lookup: { from: 'conversations', localField: '_id.conversation', foreignField: '_id', as: '_conv' } },
+      { $addFields: {
+        _owner: { $ifNull: ['$_id.owner', { $arrayElemAt: ['$_conv.owner_id', 0] }] },
+        _ownerSubject: { $arrayElemAt: ['$_conv.owner_subject', 0] },
+        _ownerCanonicalSubject: { $arrayElemAt: ['$_conv.owner_canonical_subject', 0] },
+      } },
+      { $match: { _owner: { $ne: null } } },
+    ];
+
     const [
       dailyUserActivity,
       dailyConvActivity,
@@ -1015,7 +1026,7 @@ async function getAdminStats(request: NextRequest) {
             { $match: { updated_at: rangeDateMatch, ...activeIdentityFilter } },
             { $group: { _id: { date: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$updated_at' } }, user: canonicalConversationOwner() } } },
             { $group: { _id: '$_id.date', active_users: { $sum: 1 } } },
-          ]).toArray()
+          ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray()
         : Promise.resolve([]),
 
       // Daily conversations
@@ -1023,7 +1034,7 @@ async function getAdminStats(request: NextRequest) {
         ? conversations.aggregate([
             { $match: { created_at: rangeDateMatch, ...convSourceFilter } },
             { $group: { _id: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$created_at' } }, conversations: { $sum: 1 } } },
-          ]).toArray()
+          ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray()
         : Promise.resolve([]),
 
       // Daily AI messages. Human prompts remain persisted but are excluded by
@@ -1032,7 +1043,7 @@ async function getAdminStats(request: NextRequest) {
         ? messages.aggregate([
             { $match: { created_at: rangeDateMatch, ...AI_MESSAGE_MATCH, ...msgOwnerFilter } },
             { $group: { _id: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$created_at' } }, messages: { $sum: 1 } } },
-          ]).toArray()
+          ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray()
         : Promise.resolve([]),
 
       // Top users by conversations. Automated owners are omitted unless their
@@ -1048,28 +1059,22 @@ async function getAdminStats(request: NextRequest) {
             { $sort: { count: -1, _id: 1 } },
             { $skip: (topConversationsPage - 1) * TOP_USERS_PAGE_SIZE },
             { $limit: TOP_USERS_PAGE_SIZE },
-          ]).toArray()
+          ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray()
         : Promise.resolve([]),
 
       // Top users by AI messages ($lookup for legacy owner_id). Same bot handling.
       includesSection('top_users')
         ? messages.aggregate([
             { $match: { created_at: rangeDateMatch, ...AI_MESSAGE_MATCH, ...msgOwnerFilter } },
-            { $lookup: { from: 'conversations', localField: 'conversation_id', foreignField: '_id', as: '_conv' } },
-            { $addFields: {
-              _owner: { $ifNull: ['$owner_id', { $arrayElemAt: ['$_conv.owner_id', 0] }] },
-              _ownerSubject: { $arrayElemAt: ['$_conv.owner_subject', 0] },
-              _ownerCanonicalSubject: { $arrayElemAt: ['$_conv.owner_canonical_subject', 0] },
-            } },
-            { $match: { _owner: { $ne: null } } },
-            { $group: { _id: canonicalConversationOwner('$_owner', '$_ownerSubject', '$_ownerCanonicalSubject'), owner_id: { $first: '$_owner' }, count: { $sum: 1 } } },
+            ...messageOwnerStages,
+            { $group: { _id: canonicalConversationOwner('$_owner', '$_ownerSubject', '$_ownerCanonicalSubject'), owner_id: { $first: '$_owner' }, count: { $sum: '$message_count' } } },
             { $project: { _id: '$owner_id', count: 1 } },
             VALID_TOP_USER_OWNER_STAGE,
             ...topUserOwnerMatch,
             { $sort: { count: -1, _id: 1 } },
             { $skip: (topMessagesPage - 1) * TOP_USERS_PAGE_SIZE },
             { $limit: TOP_USERS_PAGE_SIZE },
-          ]).toArray()
+          ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray()
         : Promise.resolve([]),
 
       // Separate count pipelines keep pagination compatible with DocumentDB,
@@ -1083,25 +1088,19 @@ async function getAdminStats(request: NextRequest) {
             VALID_TOP_USER_OWNER_STAGE,
             ...topUserOwnerMatch,
             { $count: 'total' },
-          ]).toArray()
+          ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray()
         : Promise.resolve([]),
 
       includesSection('top_users')
         ? messages.aggregate([
             { $match: { created_at: rangeDateMatch, ...AI_MESSAGE_MATCH, ...msgOwnerFilter } },
-            { $lookup: { from: 'conversations', localField: 'conversation_id', foreignField: '_id', as: '_conv' } },
-            { $addFields: {
-              _owner: { $ifNull: ['$owner_id', { $arrayElemAt: ['$_conv.owner_id', 0] }] },
-              _ownerSubject: { $arrayElemAt: ['$_conv.owner_subject', 0] },
-              _ownerCanonicalSubject: { $arrayElemAt: ['$_conv.owner_canonical_subject', 0] },
-            } },
-            { $match: { _owner: { $ne: null } } },
+            ...messageOwnerStages,
             { $group: { _id: canonicalConversationOwner('$_owner', '$_ownerSubject', '$_ownerCanonicalSubject'), owner_id: { $first: '$_owner' } } },
             { $project: { _id: '$owner_id' } },
             VALID_TOP_USER_OWNER_STAGE,
             ...topUserOwnerMatch,
             { $count: 'total' },
-          ]).toArray()
+          ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray()
         : Promise.resolve([]),
 
       // Top agents — dynamic-agent usage across BOTH surfaces, since each records
@@ -1119,7 +1118,7 @@ async function getAdminStats(request: NextRequest) {
             conversations.aggregate([
               { $match: { created_at: rangeDateMatch, 'metadata.thread_owner_agent_id': { $nin: [null, '', 'unknown'] }, ...sectionConvMatch } },
               { $group: { _id: '$metadata.thread_owner_agent_id', count: { $sum: 1 } } },
-            ]).toArray(),
+            ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray(),
             // Count DISTINCT conversations per agent via a two-stage $group
             // (group by agent+conversation, then tally per agent). This avoids
             // $project/$size — DocumentDB supports $group/$sum but not all
@@ -1137,7 +1136,7 @@ async function getAdminStats(request: NextRequest) {
                   { $match: { ...AI_MESSAGE_MATCH, 'metadata.source': { $ne: 'slack' }, 'metadata.agent_name': { $nin: [null, '', 'unknown'] }, created_at: rangeDateMatch, ...sectionMsgMatch } },
                   { $group: { _id: { agent: '$metadata.agent_name', conv: '$conversation_id' } } },
                   { $group: { _id: '$_id.agent', count: { $sum: 1 } } },
-                ]).toArray(),
+                ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray(),
           ]).then(([slackAgents, webAgents]) => {
             const byLabel = new Map<string, number>();
             for (const row of [...slackAgents, ...webAgents] as Array<{ _id: string; count: number }>) {
@@ -1156,7 +1155,7 @@ async function getAdminStats(request: NextRequest) {
         ? feedbackColl!.aggregate([
             { $match: fbFilter },
             { $group: { _id: '$rating', count: { $sum: 1 } } },
-          ]).toArray()
+          ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray()
         : Promise.resolve([]),
 
       // Feedback: by source
@@ -1164,7 +1163,7 @@ async function getAdminStats(request: NextRequest) {
         ? feedbackColl!.aggregate([
             { $match: fbFilter },
             { $group: { _id: { source: '$source', rating: '$rating' }, count: { $sum: 1 } } },
-          ]).toArray()
+          ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray()
         : Promise.resolve([]),
 
       // Feedback: negative categories
@@ -1173,7 +1172,7 @@ async function getAdminStats(request: NextRequest) {
             { $match: { ...fbFilter, rating: 'negative', value: { $nin: ['thumbs_down'] } } },
             { $group: { _id: '$value', count: { $sum: 1 } } },
             { $sort: { count: -1 } },
-          ]).toArray()
+          ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray()
         : Promise.resolve([]),
 
       // Feedback: daily trend
@@ -1181,7 +1180,7 @@ async function getAdminStats(request: NextRequest) {
         ? feedbackColl!.aggregate([
             { $match: fbFilter },
             { $group: { _id: { date: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$created_at' } }, rating: '$rating' }, count: { $sum: 1 } } },
-          ]).toArray()
+          ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray()
         : Promise.resolve([]),
 
       // Response latency (overall)
@@ -1189,7 +1188,7 @@ async function getAdminStats(request: NextRequest) {
         ? messages.aggregate([
             { $match: { ...AI_MESSAGE_MATCH, 'metadata.latency_ms': { $exists: true, $gt: 0 }, created_at: rangeDateMatch, ...sectionMsgMatch } },
             { $group: { _id: null, avg_latency: { $avg: '$metadata.latency_ms' }, min_latency: { $min: '$metadata.latency_ms' }, max_latency: { $max: '$metadata.latency_ms' }, count: { $sum: 1 } } },
-          ]).toArray()
+          ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray()
         : Promise.resolve([]),
 
       // Latency trend, bucketed at the range's granularity (minute/hour/day)
@@ -1201,7 +1200,7 @@ async function getAdminStats(request: NextRequest) {
         ? messages.aggregate([
             { $match: { ...AI_MESSAGE_MATCH, 'metadata.latency_ms': { $exists: true, $gt: 0 }, created_at: rangeDateMatch, ...sectionMsgMatch } },
             { $group: { _id: { $dateToString: { format: BUCKET_DATE_FORMAT[bucketUnit], date: '$created_at' } }, avg_latency: { $avg: '$metadata.latency_ms' } } },
-          ]).toArray()
+          ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray()
         : Promise.resolve([]),
 
       // Completed Workflows metric — real workflow-engine runs (workflow_runs
@@ -1222,12 +1221,12 @@ async function getAdminStats(request: NextRequest) {
               failed: { $sum: { $cond: [{ $in: ['$status', ['failed', 'cancelled']] }, 1, 0] } },
               completed_steps: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, { $size: { $ifNull: ['$steps', []] } }, 0] } },
             } },
-          ]).toArray()
+          ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray()
         : Promise.resolve([]),
 
       // Completed workflows today — runs that reached `completed` today.
       includesSection('completed_workflows') && workflowRunFilter
-        ? workflowRuns.countDocuments({ status: 'completed', completed_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...workflowRunFilter })
+        ? workflowRuns.countDocuments({ status: 'completed', completed_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...workflowRunFilter }, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS })
         : Promise.resolve(0),
 
       // Hourly AI-message heatmap, combined with the section's owner filters.
@@ -1236,7 +1235,7 @@ async function getAdminStats(request: NextRequest) {
             { $match: { created_at: rangeDateMatch, ...AI_MESSAGE_MATCH, ...sectionMsgMatch } },
             { $addFields: { _ts: { $toDate: '$created_at' } } },
             { $group: { _id: { $hour: '$_ts' }, count: { $sum: 1 } } },
-          ]).toArray()
+          ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray()
         : Promise.resolve([]),
 
       // Available channel names (both schema variants). Non-admins get exactly
@@ -1247,8 +1246,8 @@ async function getAdminStats(request: NextRequest) {
         : nonAdminScope
         ? Promise.resolve([[], []] as [string[], string[]])
         : Promise.all([
-            conversations.distinct('slack_meta.channel_name', { source: 'slack', 'slack_meta.channel_name': { $ne: null } }),
-            conversations.distinct('metadata.channel_name', { client_type: 'slack', 'metadata.channel_name': { $ne: null } }),
+            conversations.distinct('slack_meta.channel_name', { source: 'slack', 'slack_meta.channel_name': { $ne: null } }, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }),
+            conversations.distinct('metadata.channel_name', { client_type: 'slack', 'metadata.channel_name': { $ne: null } }, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }),
           ]),
     ]);
 
@@ -1275,7 +1274,7 @@ async function getAdminStats(request: NextRequest) {
     const userDocs = topOwnerIds.length > 0
       ? await users.find(
           { $or: [{ email: { $in: topOwnerIds } }, { slack_user_id: { $in: topOwnerIds } }] },
-          { projection: { email: 1, name: 1, slack_user_id: 1 } },
+          { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS, projection: { email: 1, name: 1, slack_user_id: 1 } },
         ).toArray()
       : [];
 
@@ -1298,7 +1297,7 @@ async function getAdminStats(request: NextRequest) {
       const botOwnerDocs = await conversations
         .find(
           { owner_id: { $in: topOwnerIds }, 'metadata.owner_is_bot': true },
-          { projection: { owner_id: 1, 'metadata.owner_display_name': 1 } },
+          { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS, projection: { owner_id: 1, 'metadata.owner_display_name': 1 } },
         )
         .toArray();
       for (const d of botOwnerDocs) {
@@ -1474,7 +1473,7 @@ async function getAdminStats(request: NextRequest) {
             ],
           });
         }
-        const slackHasData = await conversations.countDocuments(SLACK_CONV_MATCH, { limit: 1 });
+        const slackHasData = await conversations.countDocuments(SLACK_CONV_MATCH, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS, limit: 1 });
 
         if (slackHasData > 0) {
           const platformConfig = await getCollection<ChannelStatsDocument>('platform_config');
@@ -1516,12 +1515,12 @@ async function getAdminStats(request: NextRequest) {
             selectedAgentRoutes,
           ] = await Promise.all([
             platformConfig.findOne({ _id: 'channel_stats' }),
-            conversations.countDocuments(slackFilter),
+            conversations.countDocuments(slackFilter, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }),
             conversations.aggregate([
               { $match: slackFilter },
               { $group: { _id: userId } },
               { $count: 'total' },
-            ]).toArray(),
+            ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray(),
             conversations.aggregate([
               { $match: slackFilter },
               {
@@ -1533,7 +1532,7 @@ async function getAdminStats(request: NextRequest) {
                 },
               },
               { $sort: { _id: 1 } },
-            ]).toArray(),
+            ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray(),
             conversations.aggregate([
               { $match: slackFilter },
               { $addFields: { _channelId: channelId, _channelName: channelName } },
@@ -1547,10 +1546,10 @@ async function getAdminStats(request: NextRequest) {
               },
               { $sort: { interactions: -1 } },
               { $limit: 10 },
-            ]).toArray(),
+            ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray(),
             channelMappingColl.find(
               mappingFilter,
-              { projection: { slack_channel_id: 1, channel_name: 1, created_at: 1, active: 1 } },
+              { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS, projection: { slack_channel_id: 1, channel_name: 1, created_at: 1, active: 1 } },
             ).toArray(),
             agentIds.length > 0
               ? getCollection<{ channel_id?: string }>('slack_channel_agent_routes')
@@ -1560,7 +1559,7 @@ async function getAdminStats(request: NextRequest) {
                       enabled: { $ne: false },
                       status: 'active',
                     },
-                    { projection: { channel_id: 1 } },
+                    { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS, projection: { channel_id: 1 } },
                   ).toArray())
               : Promise.resolve([]),
           ]);
@@ -1650,7 +1649,7 @@ async function getAdminStats(request: NextRequest) {
           };
         }
       } catch (err) {
-        // Slack data may not exist yet — silently skip
+        degraded = true;
         console.warn('Slack stats query failed:', err);
       }
     }
@@ -1679,7 +1678,7 @@ async function getAdminStats(request: NextRequest) {
             : { $in: nonAdminWebexSpaceIds };
           andInto(webexFilter, { 'metadata.webex_space_id': readableSpaceIds });
         }
-        const webexHasData = await conversations.countDocuments(WEBEX_CONV_MATCH, { limit: 1 });
+        const webexHasData = await conversations.countDocuments(WEBEX_CONV_MATCH, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS, limit: 1 });
 
         if (webexHasData > 0) {
           const spaceMappingColl = await getCollection<{
@@ -1705,13 +1704,13 @@ async function getAdminStats(request: NextRequest) {
             spaceMappings,
             selectedAgentRoutes,
           ] = await Promise.all([
-            conversations.countDocuments(webexFilter),
+            conversations.countDocuments(webexFilter, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }),
             conversations.aggregate([
               { $match: webexFilter },
               { $group: { _id: canonicalConversationOwner() } },
               { $match: { _id: { $nin: [null, ''] } } },
               { $count: 'total' },
-            ]).toArray(),
+            ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray(),
             conversations.aggregate([
               { $match: webexFilter },
               {
@@ -1722,7 +1721,7 @@ async function getAdminStats(request: NextRequest) {
                 },
               },
               { $sort: { _id: 1 } },
-            ]).toArray(),
+            ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray(),
             conversations.aggregate([
               {
                 $match: {
@@ -1743,10 +1742,10 @@ async function getAdminStats(request: NextRequest) {
               },
               { $sort: { interactions: -1 } },
               { $limit: 10 },
-            ]).toArray(),
+            ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray(),
             spaceMappingColl.find(
               mappingFilter,
-              { projection: { webex_space_id: 1, space_name: 1, space_title: 1, created_at: 1, active: 1 } },
+              { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS, projection: { webex_space_id: 1, space_name: 1, space_title: 1, created_at: 1, active: 1 } },
             ).toArray(),
             agentIds.length > 0
               ? getCollection<{ space_id?: string }>('webex_space_agent_routes')
@@ -1756,7 +1755,7 @@ async function getAdminStats(request: NextRequest) {
                       enabled: { $ne: false },
                       status: 'active',
                     },
-                    { projection: { space_id: 1 } },
+                    { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS, projection: { space_id: 1 } },
                   ).toArray())
               : Promise.resolve([]),
           ]);
@@ -1841,7 +1840,7 @@ async function getAdminStats(request: NextRequest) {
           };
         }
       } catch (err) {
-        // Webex data may not exist yet — silently skip
+        degraded = true;
         console.warn('Webex stats query failed:', err);
       }
     }
@@ -1870,17 +1869,17 @@ async function getAdminStats(request: NextRequest) {
         if (Object.keys(convSourceFilter).length > 0) {
           andInto(apiFilter, convSourceFilter);
         }
-        const apiHasData = await conversations.countDocuments(API_CONV_MATCH, { limit: 1 });
+        const apiHasData = await conversations.countDocuments(API_CONV_MATCH, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS, limit: 1 });
 
         if (apiHasData > 0) {
           const [apiTotal, apiUniqueUsers, apiDailyAgg] = await Promise.all([
-            conversations.countDocuments(apiFilter),
+            conversations.countDocuments(apiFilter, { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }),
             conversations.aggregate([
               { $match: apiFilter },
               { $group: { _id: canonicalConversationOwner() } },
               { $match: { _id: { $nin: [null, ''] } } },
               { $count: 'total' },
-            ]).toArray(),
+            ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray(),
             conversations.aggregate([
               { $match: apiFilter },
               {
@@ -1891,7 +1890,7 @@ async function getAdminStats(request: NextRequest) {
                 },
               },
               { $sort: { _id: 1 } },
-            ]).toArray(),
+            ], { maxTimeMS: INSIGHTS_QUERY_TIMEOUT_MS }).toArray(),
           ]);
 
           const apiDailyMap = new Map(
@@ -1916,7 +1915,7 @@ async function getAdminStats(request: NextRequest) {
           };
         }
       } catch (err) {
-        // API data may not exist yet — silently skip
+        degraded = true;
         console.warn('API stats query failed:', err);
       }
 
@@ -1929,6 +1928,7 @@ async function getAdminStats(request: NextRequest) {
       // who legitimately sees their own API conversations above) never
       // receives this key.
       const mcpActivity = isFullAdmin ? await fetchMcpActivityStats(rangeStart, rangeEnd) : undefined;
+      if (mcpActivity?.unavailable) degraded = true;
 
       if (apiActivity || mcpActivity) {
         api = {
@@ -1967,7 +1967,7 @@ async function getAdminStats(request: NextRequest) {
       satisfaction_rate: feedbackSummary.satisfaction_rate || 0,
     };
 
-    return successResponse({
+    const response = successResponse({
       range: searchParams.get('range') || '30d',
       days,
       ...(includesSection('overview') ? {
@@ -2028,4 +2028,10 @@ async function getAdminStats(request: NextRequest) {
         available_agents: availableAgents,
       } : {}),
     });
+    if (degraded) {
+      response.headers.set('x-caipe-cache-bypass', 'degraded');
+      response.headers.set('cache-control', 'private, no-store');
+    }
+    return response;
+  });
 }

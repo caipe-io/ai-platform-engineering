@@ -15,7 +15,7 @@ interface ComputedJsonResponse {
 
 export interface JsonResponseCacheStore {
   responses: Map<string, CachedJsonResponse>;
-  inflight: Map<string, Promise<ComputedJsonResponse | null>>;
+  inflight: Map<string, Promise<ComputedJsonResponse | NextResponse>>;
 }
 
 export interface JsonResponseCacheOptions {
@@ -101,24 +101,23 @@ export async function withJsonResponseCache(
   const shared = store.inflight.get(key);
   if (shared) {
     const entry = await shared;
-    return entry ? jsonResponse(entry, "shared") : compute();
+    return entry instanceof NextResponse ? entry.clone() as NextResponse : jsonResponse(entry, "shared");
   }
 
-  // assisted-by Codex Codex-sonnet-4-6
   // Keep one upstream computation per cache key under load; callers waiting on
   // the promise receive a fresh JSON response built from the same computed body.
-  const promise = (async (): Promise<ComputedJsonResponse | null> => {
+  const promise = (async (): Promise<ComputedJsonResponse | NextResponse> => {
     const response = await compute();
     const cacheableStatus = options.cacheableStatus ?? ((status: number) => status >= 200 && status < 300);
     if (!cacheableStatus(response.status)) {
-      return null;
+      return response;
     }
 
     let body: unknown;
     try {
       body = await response.clone().json();
     } catch {
-      return null;
+      return response;
     }
 
     const entry = {
@@ -136,7 +135,7 @@ export async function withJsonResponseCache(
   store.inflight.set(key, promise);
   try {
     const entry = await promise;
-    return entry ? jsonResponse(entry, "miss") : compute();
+    return entry instanceof NextResponse ? entry.clone() as NextResponse : jsonResponse(entry, "miss");
   } finally {
     store.inflight.delete(key);
   }

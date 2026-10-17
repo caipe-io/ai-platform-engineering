@@ -25,7 +25,8 @@
  */
 
 import { NextRequest } from 'next/server';
-import { ObjectId } from 'mongodb';
+import { ObjectId, type Document } from 'mongodb';
+import { resetServerCacheForTests } from '@/lib/server-cache';
 
 // ============================================================================
 // Mocks
@@ -820,6 +821,15 @@ describe('GET /api/admin/stats — Top Users', () => {
       );
     });
     expect(hasLookupPipeline).toBe(true);
+    const pipeline = aggregateCalls.map((call: unknown[]) => call[0]).find((stages) =>
+      Array.isArray(stages) && stages.some((stage: Document) => stage.$lookup));
+    const joinIndex = pipeline.findIndex((stage: Document) => stage.$lookup);
+    expect(pipeline[joinIndex - 1].$group).toEqual({
+      _id: { conversation: '$conversation_id', owner: '$owner_id' },
+      message_count: { $sum: 1 },
+    });
+    expect(pipeline.find((stage: Document) => stage.$group?.count)?.$group.count)
+      .toEqual({ $sum: '$message_count' });
   });
 
   it('top users by messages pipeline uses $ifNull for backward compat', async () => {
@@ -934,7 +944,7 @@ describe('GET /api/admin/stats — Top Users', () => {
 
     await GET(makeRequest('/api/admin/stats?section=top_users'));
 
-    expect(convCol.distinct).toHaveBeenCalledWith('owner_id', { 'metadata.owner_is_bot': true });
+    expect(convCol.distinct).toHaveBeenCalledWith('owner_id', { 'metadata.owner_is_bot': true }, { maxTimeMS: 15000 });
     expect(excludesOwnerIds(convCol.aggregate.mock.calls, ['U05LC2AV99N'])).toBe(true);
     expect(excludesOwnerIds(msgCol.aggregate.mock.calls, ['U05LC2AV99N'])).toBe(true);
   });
@@ -2364,7 +2374,7 @@ describe('GET /api/admin/stats — API Activity', () => {
     // Unlike Slack/Webex, messages are NOT filtered by metadata.source (that
     // field is not reliably stamped 'api') — they're scoped by conversation_id,
     // resolved from conversations.distinct('_id', API_CONV_MATCH).
-    expect(convCol.distinct).toHaveBeenCalledWith('_id', { client_type: 'api' });
+    expect(convCol.distinct).toHaveBeenCalledWith('_id', { client_type: 'api' }, { maxTimeMS: 15000 });
     const msgCountCalls = msgCol.countDocuments.mock.calls;
     const hasConversationIdJoin = msgCountCalls.some(
       (call: unknown[]) => Array.isArray((call[0] as { conversation_id?: { $in?: unknown[] } })?.conversation_id?.$in),
@@ -2565,5 +2575,68 @@ describe('GET /api/admin/stats — Direct MCP Activity', () => {
     if (body.data.api) {
       expect(body.data.api).not.toHaveProperty('mcp_activity');
     }
+  });
+});
+
+describe('GET /api/admin/stats — shared authorized cache', () => {
+  beforeEach(async () => {
+    resetMocks();
+    process.env.ADMIN_STATS_CACHE_TTL_MS = '60000';
+    await resetServerCacheForTests();
+  });
+  afterEach(async () => {
+    delete process.env.ADMIN_STATS_CACHE_TTL_MS;
+    await resetServerCacheForTests();
+  });
+
+  it('shares equivalent admin results and rechecks authentication before hits', async () => {
+    const { convCol } = setupAdminWithCollections();
+    mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
+    const url = '/api/admin/stats?section=overview&range=7d';
+    const first = await GET(makeRequest(url));
+    expect(first.status).toBe(200);
+    const countCalls = convCol.countDocuments.mock.calls.length;
+    mockGetServerSession.mockResolvedValue({ ...adminSession(), sub: 'secondary-admin', user: { email: 'secondary@example.test', name: 'Secondary' } });
+    const second = await GET(makeRequest(url));
+    expect(second.status).toBe(200);
+    expect(second.headers.get('x-caipe-cache')).toBe('hit');
+    expect(convCol.countDocuments).toHaveBeenCalledTimes(countCalls);
+    mockGetServerSession.mockResolvedValue(null);
+    const unauthenticated = await GET(makeRequest(url));
+    expect(unauthenticated.status).toBe(401);
+  });
+
+  it('does not reuse a full-admin entry after access becomes scoped', async () => {
+    setupAdminWithCollections();
+    mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
+    const url = '/api/admin/stats?section=overview&range=7d';
+    await GET(makeRequest(url));
+    mockGetServerSession.mockResolvedValue(userSession());
+    mockCheckOpenFgaTuple.mockResolvedValue({ allowed: false });
+    const scoped = await GET(makeRequest(url));
+    expect(scoped.status).toBe(200);
+    expect(scoped.headers.get('x-caipe-cache')).toBe('miss');
+    expect(mockGetReadableSlackChannelNames).toHaveBeenCalled();
+  });
+
+  it('does not reuse malformed scalar filters for valid filters', async () => {
+    const { convCol } = setupAdminWithCollections();
+    await GET(makeRequest('/api/admin/stats?section=overview&source=slack%20'));
+    const countCalls = convCol.countDocuments.mock.calls.length;
+    const response = await GET(makeRequest('/api/admin/stats?section=overview&source=slack'));
+    expect(response.headers.get('x-caipe-cache')).toBe('miss');
+    expect(convCol.countDocuments.mock.calls.length).toBeGreaterThan(countCalls);
+  });
+
+  it('does not cache a transient section query failure', async () => {
+    const { convCol } = setupAdminWithCollections();
+    convCol.countDocuments.mockRejectedValueOnce(new Error('query deadline exceeded'));
+    const url = '/api/admin/stats?section=slack';
+    const first = await GET(makeRequest(url));
+    expect(first.headers.get('x-caipe-cache-bypass')).toBe('degraded');
+    const countCalls = convCol.countDocuments.mock.calls.length;
+    const second = await GET(makeRequest(url));
+    expect(second.headers.get('x-caipe-cache')).toBe('miss');
+    expect(convCol.countDocuments.mock.calls.length).toBeGreaterThan(countCalls);
   });
 });

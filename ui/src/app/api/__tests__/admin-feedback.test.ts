@@ -21,6 +21,7 @@
 
 import { NextRequest } from 'next/server';
 import { ObjectId } from 'mongodb';
+import { resetServerCacheForTests } from '@/lib/server-cache';
 
 // ============================================================================
 // Mocks
@@ -623,5 +624,28 @@ describe('GET /api/admin/feedback', () => {
     const res = await GET(makeRequest('/api/admin/feedback'));
     const body = await res.json();
     expect(body.data.entries[0].reason).toBe('Too verbose');
+  });
+
+  it('reuses counts, summary and options when an admin changes page or rating', async () => {
+    process.env.ADMIN_FEEDBACK_CACHE_TTL_MS = '60000';
+    await resetServerCacheForTests();
+    try {
+      mockGetServerSession.mockResolvedValue(adminSession());
+      const feedbackCol = setupFeedbackCollection([], 100);
+      const first = await GET(makeRequest('/api/admin/feedback?range=7d&page=1'));
+      const second = await GET(makeRequest('/api/admin/feedback?range=7d&page=2'));
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(feedbackCol.find).toHaveBeenCalledTimes(2);
+      expect(feedbackCol.countDocuments).toHaveBeenCalledTimes(1);
+      expect(feedbackCol.aggregate).toHaveBeenCalledTimes(1);
+      expect(feedbackCol.distinct).toHaveBeenCalledTimes(2);
+      await GET(makeRequest('/api/admin/feedback?range=7d&rating=negative'));
+      expect(feedbackCol.aggregate).toHaveBeenCalledTimes(1);
+      expect(feedbackCol.distinct).toHaveBeenCalledTimes(2);
+    } finally {
+      delete process.env.ADMIN_FEEDBACK_CACHE_TTL_MS;
+      await resetServerCacheForTests();
+    }
   });
 });

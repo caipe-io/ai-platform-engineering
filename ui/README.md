@@ -86,3 +86,27 @@ entries open each task's delivery timeline.
 - [UI configuration](../docs/docs/ui/configuration.md)
 - [Dynamic Agents API](../docs/docs/api/dynamic-agents-mcp.md)
 - [Helm chart reference](../docs/docs/installation/helm-charts/ai-platform-engineering/caipe-ui.md)
+
+## Insights caching
+
+Statistics sections, skill metrics, and Feedback use the shared server cache after
+checking the caller's current authorization. Equivalent full admins share results;
+personal and simulated views use separate scopes.
+
+- Set `CAIPE_CACHE_REDIS_URL` to use the platform Redis cache. Without it, the same
+  helpers provide bounded process-local caching and request coalescing.
+- `ADMIN_STATS_CACHE_TTL_MS` and `ADMIN_FEEDBACK_CACHE_TTL_MS` default to `60000`.
+  Set either to `0` to disable its cache.
+- Results can be served for up to five minutes while refreshing or during a brief
+  dependency failure. `refresh=true` requests a coordinated refresh.
+- `x-caipe-cache`, `x-caipe-computed-at`, and `x-caipe-cache-age` describe the data
+  returned. Authenticated responses use `Cache-Control: private, no-store`.
+- Feedback accepts relative `range` presets (`1h`, `12h`, `24h`, `7d`, `30d`,
+  `90d`) or exact `from`/`to` timestamps. Counts, summaries, and filter options
+  have independent entries so changing page does not repeat those queries.
+
+Database queries have a 15-second execution limit. Expensive cache loaders are
+bounded by the shared helper, including when Redis is unavailable.
+
+See the [local synthetic benchmark](../docs/docs/evaluations/insights-cache-benchmark.md)
+for the dataset, results, and reproduction commands.

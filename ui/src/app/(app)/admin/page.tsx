@@ -1236,8 +1236,12 @@ function AdminPage() {
     }
     if (selectedUsers.size > 0) params.set('user', [...selectedUsers].join(','));
     if (selectedTeams.size > 0) params.set('team', [...selectedTeams].join(','));
-    if (range.from) params.set('from', range.from);
-    if (range.to) params.set('to', range.to);
+    if (datePreset !== 'custom' && range === dateRange) {
+      params.set('range', datePreset);
+    } else {
+      if (range.from) params.set('from', range.from);
+      if (range.to) params.set('to', range.to);
+    }
 
     return withAdminSimulationParams(`/api/admin/feedback?${params}`, simulationTarget);
   };

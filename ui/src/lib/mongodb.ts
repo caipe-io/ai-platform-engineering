@@ -304,6 +304,8 @@ async function createIndexes(db: Db) {
     safeCreateIndex(db, 'feedback', { source: 1, created_at: -1 }),
     safeCreateIndex(db, 'feedback', { rating: 1, created_at: -1 }),
     safeCreateIndex(db, 'feedback', { channel_name: 1, created_at: -1 }),
+    safeCreateIndex(db, 'feedback', { user_email: 1, created_at: -1 }),
+    safeCreateIndex(db, 'feedback', { conversation_id: 1, created_at: -1 }),
     safeCreateIndex(db, 'feedback', { trace_id: 1 }),
 
     // Turns collection (per-turn persistence decoupled from messages)
