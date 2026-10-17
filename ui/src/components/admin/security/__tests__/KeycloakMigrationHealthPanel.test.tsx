@@ -693,4 +693,39 @@ describe("KeycloakMigrationHealthPanel", () => {
     expect(row1Text).toMatch(/KEYCLOAK_USER_PROFILE_UNMANAGED_ATTRIBUTE_POLICY/);
   });
 
+  it("shows a friendly error when a refresh fetch fails with a transient network error", async () => {
+    // First load succeeds (hasLoadedHealthRef becomes true), then a Refresh
+    // throws TypeError: fetch failed — should show the friendly message
+    // rather than silently doing nothing.
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(completedHealth))
+      .mockRejectedValueOnce(Object.assign(new TypeError("fetch failed"), {}));
+
+    render(<KeycloakMigrationHealthPanel />);
+
+    // Wait for first load to finish — button is disabled while loading.
+    const refreshBtn = screen.getByRole("button", { name: /Refresh/i });
+    await waitFor(() => expect(refreshBtn).not.toBeDisabled());
+
+    expect(screen.queryByText(/Failed to refresh/i)).not.toBeInTheDocument();
+
+    fireEvent.click(refreshBtn);
+
+    expect(await screen.findByText(/Failed to refresh.*connection error/i)).toBeInTheDocument();
+  });
+
+  it("surfaces the raw error on first load when the network is unreachable", async () => {
+    // On the very first load hasLoadedHealthRef is false, so a transient
+    // network failure must not be suppressed — the user needs to know the
+    // panel never loaded.
+    global.fetch = jest
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new TypeError("fetch failed"), {}));
+
+    render(<KeycloakMigrationHealthPanel />);
+
+    expect(await screen.findByText(/fetch failed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Failed to refresh/i)).not.toBeInTheDocument();
+  });
 });
