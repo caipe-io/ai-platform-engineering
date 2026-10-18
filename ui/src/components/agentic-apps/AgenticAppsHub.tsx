@@ -69,6 +69,15 @@ export function AgenticAppsHub(): React.ReactElement {
               </p>
             </div>
           </div>
+          <a
+            href="https://github.com/caipe-io/ai-platform-engineering/blob/main/docs/docs/features/agentic-app-manifest.md"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Build a CAIPE app (opens in a new tab)"
+            className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Build a CAIPE app <ArrowUpRight className="h-4 w-4" aria-hidden />
+          </a>
         </header>
 
         {state.status === "loading" ? (

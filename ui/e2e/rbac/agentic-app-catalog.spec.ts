@@ -43,10 +43,21 @@ for (const scenario of [
     await expect(page.getByRole("region", { name: "Available Apps" })).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("data-theme", scenario.theme);
     await expect(page.getByText("2 of 2 apps")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Build a CAIPE app (opens in a new tab)" })).toHaveAttribute("target", "_blank");
     await expect(page.getByRole("link", { name: "Secondary workspace", exact: true })).toHaveCount(0);
     await expect(page.getByText("Access required: unauthorized")).toBeVisible();
     const main = page.getByRole("main");
     expect(await main.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    for (const app of apps) {
+      await page.getByRole("button", { name: `Rendering details for ${app.displayName}` }).focus();
+      const tooltip = page.getByRole("tooltip");
+      await expect(tooltip).toBeVisible();
+      const bounds = await tooltip.boundingBox();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(scenario.width);
+      expect(await tooltip.evaluate(element => getComputedStyle(element).whiteSpace)).toBe("normal");
+      await page.getByRole("searchbox").focus();
+    }
     await page.screenshot({ path: testInfo.outputPath(`catalog-${scenario.theme}-${scenario.width}.png`), fullPage: true });
     await page.getByRole("searchbox").fill("ENGINEERING document search");
     await expect(page.getByText("1 of 2 apps")).toBeVisible();

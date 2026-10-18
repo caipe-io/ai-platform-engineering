@@ -1,17 +1,13 @@
 "use client";
 
-import { ArrowUpRight, CloudSun, DollarSign, Info, LayoutGrid, Sparkles } from "lucide-react";
+import { ArrowUpRight, Info } from "lucide-react";
+import { AppIcon } from "@/components/shared/AppIcon";
 import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { PublicAgenticApp } from "@/types/agentic-app";
 
-const icons = { "layout-grid": LayoutGrid, "cloud-sun": CloudSun, "dollar-sign": DollarSign, sparkles: Sparkles };
-
 /** Presentation consumes browser-safe catalog metadata, never runtime origins. */
 export function AgenticAppCard({ app }: { app: PublicAgenticApp }): React.ReactElement {
-  const Icon = app.icon && Object.hasOwn(icons, app.icon)
-    ? icons[app.icon as keyof typeof icons]
-    : LayoutGrid;
   // Hosted URLs distinguish the host document from child-runtime traffic at
   // the gateway. Only native routes support ordinary Next.js client navigation.
   const LaunchLink = app.uiMode === "native-package" ? NavigationProgressLink : "a";
@@ -19,7 +15,7 @@ export function AgenticAppCard({ app }: { app: PublicAgenticApp }): React.ReactE
     <article className="group relative flex min-h-64 flex-col overflow-hidden rounded-2xl border border-border bg-card p-5 shadow-sm transition-colors hover:border-primary/40">
       <div aria-hidden className="pointer-events-none absolute -right-16 -top-24 h-48 w-48 rounded-full bg-primary/10 blur-3xl" />
       <div className="relative flex items-start justify-between gap-3">
-        <span className="rounded-xl bg-primary/15 p-3 text-primary"><Icon className="h-5 w-5" aria-hidden /></span>
+        <span className="rounded-xl bg-primary/15 p-3 text-primary"><AppIcon appId={app.appId} icon={app.icon} className="h-5 w-5 object-contain" /></span>
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -27,7 +23,7 @@ export function AgenticAppCard({ app }: { app: PublicAgenticApp }): React.ReactE
                 <Info className="h-4 w-4" aria-hidden />
               </button>
             </TooltipTrigger>
-            <TooltipContent className="max-w-72">
+            <TooltipContent side="left" className="max-w-[min(18rem,calc(100vw-2rem))] whitespace-normal break-words">
               {app.uiMode === "native-package"
                 ? "Native package: renders in the CAIPE document using the host router."
                 : "Hosted app: renders in a separate iframe document through the authenticated gateway."}
