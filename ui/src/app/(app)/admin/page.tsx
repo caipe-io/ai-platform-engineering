@@ -11,6 +11,7 @@ TopCreatorsCard,
 VisibilityBreakdown,
 } from "@/components/admin/insights/SkillMetricsCards";
 import { AsyncStatsCard } from "@/components/admin/insights/AsyncStatsCard";
+import { AppUsageCard } from "@/components/admin/insights/AppUsageCard";
 import { AutonomousTeamAccessPanel } from "@/components/admin/autonomous/AutonomousTeamAccessPanel";
 import { ReviewConfigsTab } from "@/components/admin/settings/ReviewConfigsTab";
 import {
@@ -2388,6 +2389,7 @@ function AdminPage() {
                 </div>
 
                   <div className="space-y-4">
+                    {!isSimulationActive && effectiveOrganizationAdmin && <AppUsageCard />}
                     <OverviewStatsCards
                       error={statsSectionStatuses.overview.error}
                       loading={statsSectionStatuses.overview.loading}
