@@ -95,7 +95,7 @@
  * attribute also classified Light and Legacy Light as dark, so dark: utility
  * classes fought the light palette whenever either light theme was selected.
  */
-@variant dark (&:where(.dark, [data-theme="dark"], [data-theme="midnight"], [data-theme="nord"], [data-theme="tokyo"], [data-theme="cyberpunk"], [data-theme="tron"], [data-theme="matrix"]));
+@variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *, [data-theme="midnight"], [data-theme="midnight"] *, [data-theme="nord"], [data-theme="nord"] *, [data-theme="tokyo"], [data-theme="tokyo"] *, [data-theme="cyberpunk"], [data-theme="cyberpunk"] *, [data-theme="tron"], [data-theme="tron"] *, [data-theme="matrix"], [data-theme="matrix"] *));
 
 /*
  * next-themes cannot infer whether custom theme ids are light or dark. Keep
