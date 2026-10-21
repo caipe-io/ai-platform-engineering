@@ -72,6 +72,7 @@ def register_document_routes(server: FastMCP, documents: SharePointDocuments) ->
                     document_format = documents.format_for_item(row)
                     if not folder and document_format is None:
                         continue
+                    limit = documents.byte_limit(document_format) if document_format else None
                     items.append(
                         {
                             "id": row.get("id"),
@@ -79,15 +80,21 @@ def register_document_routes(server: FastMCP, documents: SharePointDocuments) ->
                             "webUrl": row.get("webUrl"),
                             "size": row.get("size"),
                             "folder": folder,
+                            "max_bytes": limit,
                             "supported": not folder
                             and isinstance(row.get("file"), dict)
-                            and int(row.get("size") or 0) <= documents.byte_limit(document_format),
+                            and int(row.get("size") or 0) <= limit,
                         }
                     )
             return JSONResponse({"items": items, "has_more": page["has_more"], "next_cursor": page["next_cursor"]}, headers=headers)
         except (ValidationError, ValueError):
             return JSONResponse({"error": "Invalid SharePoint browse parameters."}, status_code=400, headers=headers)
         except SharePointGraphError as exc:
+            if request.query_params.get("query") and exc.status_code >= 500:
+                return JSONResponse({
+                    "error": "SharePoint library search is unavailable for this connection. Browse folders to select files.",
+                    "code": "search_unavailable",
+                }, status_code=503, headers=headers)
             return JSONResponse({"error": exc.message, "code": exc.code}, status_code=exc.status_code, headers=headers)
         except (httpx.HTTPError, TimeoutError):
             return JSONResponse({"error": "SharePoint could not be reached. Try refreshing."}, status_code=504, headers=headers)

@@ -60,6 +60,7 @@ or a per-user Grid OAuth provider.
 | `SHAREPOINT_SITE_URL` | yes | — | Fixed `https://*.sharepoint.com/sites/...` or `/teams/...` URL |
 | `SHAREPOINT_REQUEST_TIMEOUT_SECONDS` | no | `30` | Graph request timeout, up to 120 seconds |
 | `SHAREPOINT_MAX_DOWNLOAD_BYTES` | no | `2000000` | Text-file/site-page download ceiling, up to 10 MB |
+| `SHAREPOINT_MAX_TEXT_DOCUMENT_BYTES` | no | `8000000` | Text document streaming ceiling, independent of the chat download limit. Catalog entries expose their effective `max_bytes` limit. |
 | `SHAREPOINT_MAX_DOCUMENT_BYTES` | no | `2147483648` | Visual document streaming ceiling (2 GiB), maximum 4 GiB |
 | `SHAREPOINT_MAX_RENDERED_PDF_BYTES` | no | `268435456` | Microsoft-rendered PDF ceiling (256 MiB), maximum 1 GiB |
 | `SHAREPOINT_DOCUMENT_TIMEOUT_SECONDS` | no | `600` | Total document stream deadline, maximum 1800 seconds |
@@ -112,11 +113,20 @@ Collection tools return `count`, `has_more`, and `next_cursor`. Pass
 
 ### Text files and site pages
 
+Library search uses Microsoft's indexed drive search API, which does not support
+the `Sites.Selected` application permission. Such connections can still browse
+their configured site's libraries/folders and read permitted files. A provider
+search failure returns `search_unavailable` with browsing guidance; it does not
+change permissions or imply that document access failed. See
+[Microsoft's search permissions](https://learn.microsoft.com/en-us/graph/api/driveitem-search?view=graph-rest-1.0#permissions).
+
 - Supported text: Markdown, TXT, HTML/HTM, JSON/JSONL, CSV, XML, YAML, logs,
   and other files with an allowed text MIME type. JSONL is accepted even when
   Graph reports `application/octet-stream`.
-- Text original streams share `SHAREPOINT_MAX_DOWNLOAD_BYTES` with the existing
-  MCP text reader. They do not use the larger visual-document ceiling and do
+- Text original streams use `SHAREPOINT_MAX_TEXT_DOCUMENT_BYTES` independently
+  of `SHAREPOINT_MAX_DOWNLOAD_BYTES`, which still bounds the MCP chat text reader.
+  Their effective limit is also bounded by `SHAREPOINT_MAX_DOCUMENT_BYTES`.
+  They do
   not request PDF conversion. HTML download responses use attachment/sandbox
   headers; preparation extracts readable text without executing scripts.
 - **Site pages** appears as a selectable collection in the first catalog page.

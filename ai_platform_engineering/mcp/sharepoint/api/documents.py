@@ -103,7 +103,7 @@ class SharePointDocuments:
         if document_format in IMAGE_FORMATS:
             return min(self.client.config.max_document_bytes, MAX_IMAGE_BYTES)
         return self.client.config.max_document_bytes if document_format in VISUAL_FORMATS else min(
-            self.client.config.max_document_bytes, self.client.config.max_download_bytes,
+            self.client.config.max_document_bytes, self.client.config.max_text_document_bytes,
         )
 
     async def _assert_drive(self, drive_id: str) -> None:

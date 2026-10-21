@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -151,8 +152,27 @@ async def test_text_has_an_independent_download_limit() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(oversized)) as http:
         with pytest.raises(SharePointGraphError) as error:
-            await read_stream(SharePointDocuments(SharePointGraphClient(config(max_download_bytes=1024), http)))
+            await read_stream(SharePointDocuments(SharePointGraphClient(config(max_text_document_bytes=1024), http)))
     assert error.value.status_code == 413
+
+
+async def test_text_document_stream_limit_is_independent_of_chat_download_limit() -> None:
+    content = b'{"message":"example"}\n' * 300_000
+    assert 5 * 1024 * 1024 < len(content) < 8_000_000
+
+    def large_text(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/content"):
+            return httpx.Response(200, content=content)
+        response = handler(request)
+        if "/items/" in request.url.path:
+            return httpx.Response(200, json={**response.json(), "name": "Events.jsonl", "size": len(content)})
+        return response
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(large_text)) as http:
+        documents = SharePointDocuments(SharePointGraphClient(config(max_download_bytes=1024), http))
+        assert documents.client.config.max_download_bytes == 1024
+        assert (await documents.manifest("drive-1", "item-1"))["size"] == len(content)
+        assert await read_stream(documents) == content
 
 
 async def test_image_downloads_use_their_own_limit_and_original_mime(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -232,7 +252,7 @@ async def test_workbooks_have_native_streams_and_never_use_pdf_conversion(extens
             async with documents.stream("drive-1", "item-1", "pdf"):
                 pytest.fail("Workbooks must use native extraction, not PDF conversion")
         assert documents.byte_limit(extension) == 104_857_600
-        assert documents.byte_limit("csv") == documents.client.config.max_download_bytes
+        assert documents.byte_limit("csv") == documents.client.config.max_text_document_bytes
         assert documents.byte_limit(extension) > documents.byte_limit("csv")
         assert documents.format_for_item({"name": "Example.csv", "file": {"mimeType": "application/vnd.ms-excel"}}) == "csv"
 
@@ -396,6 +416,8 @@ def test_catalog_is_authenticated_paginated_and_site_scoped(monkeypatch: pytest.
                         {"id": "svg-file", "name": "Diagram.svg", "size": 512, "file": {}},
                         {"id": "large-image", "name": "Large.jpg", "size": 20_971_521, "file": {}},
                         {"id": "workbook-file", "name": "Example.xlsx", "size": 512, "file": {}},
+                        {"id": "manual-data", "name": "Manual.jsonl", "size": 6_000_000, "file": {}},
+                        {"id": "oversized-data", "name": "Large.jsonl", "size": 9_930_000, "file": {}},
                         {"id": "other-file", "name": "Example.xlsb", "file": {}},
                         {"id": "remote-file", "name": "External.pdf", "file": {}, "remoteItem": {}},
                     ],
@@ -413,13 +435,16 @@ def test_catalog_is_authenticated_paginated_and_site_scoped(monkeypatch: pytest.
         response = http.get("/documents/catalog/items?drive_id=drive-1&limit=50&cursor=previous", headers=headers)
         assert response.status_code == 200
         assert [row["id"] for row in response.json()["items"]] == [
-            "folder-1", "item-1", "word-file", "image-file", "svg-file", "large-image", "workbook-file",
+            "folder-1", "item-1", "word-file", "image-file", "svg-file", "large-image", "workbook-file", "manual-data", "oversized-data",
         ]
         assert response.json()["items"][2]["supported"] is True
         assert response.json()["items"][3]["supported"] is True
         assert response.json()["items"][4]["supported"] is True
         assert response.json()["items"][5]["supported"] is False
         assert response.json()["items"][6]["supported"] is True
+        assert response.json()["items"][7]["supported"] is True
+        assert response.json()["items"][8]["supported"] is False
+        assert response.json()["items"][8]["max_bytes"] == 8_000_000
         assert response.json()["next_cursor"] == "next"
         assert response.headers["cache-control"] == "no-store"
         assert any(request.url.params.get("$skiptoken") == "previous" for request in seen)
@@ -431,6 +456,26 @@ def test_catalog_disabled_without_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(auth, "MCP_AUTH_MODE", "none")
     with TestClient(build_server(config()).http_app()) as http:
         assert http.get("/documents/catalog/libraries").status_code == 503
+
+
+def test_search_provider_failure_is_actionable_and_does_not_disable_folder_browsing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(auth, "MCP_AUTH_MODE", "shared_key")
+    monkeypatch.setattr(auth, "MCP_SHARED_KEY", "catalog-test-key")
+    monkeypatch.setattr(
+        SharePointGraphClient, "search_drive_items",
+        AsyncMock(side_effect=SharePointGraphError(500, "generalException", "private provider error")),
+    )
+    graph_http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    app = build_server(config(), graph_http).http_app(middleware=[Middleware(auth.MCPAuthMiddleware)])
+    with TestClient(app) as http:
+        headers = {"Authorization": "Bearer catalog-test-key"}
+        response = http.get("/documents/catalog/items?drive_id=drive-1&query=example", headers=headers)
+        assert response.status_code == 503
+        assert response.json()["code"] == "search_unavailable"
+        assert "Browse folders" in response.json()["error"]
+        assert "private" not in response.text
+        assert http.get("/documents/catalog/libraries", headers=headers).status_code == 200
+        assert http.get("/documents/catalog/items?drive_id=drive-1", headers=headers).status_code == 200
 
 
 @pytest.mark.parametrize("failure_type", [httpx.ReadTimeout, httpx.RemoteProtocolError])
