@@ -6,11 +6,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import json
 import logging
 import time
 from pathlib import PurePosixPath
 from typing import Any
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import httpx
 
@@ -316,6 +319,81 @@ class SharePointGraphClient:
             ),
         )
         return self._page(payload)
+
+    async def search_drive_item_names(
+        self, drive_id: str, query: str, limit: int, cursor: str | None, *, folder_item_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Search read-only hierarchy metadata without the indexed search permission.
+
+        A request checks at most five metadata pages, stopping at the first page
+        with matches. Sparse results retain a continuation, including empty
+        pages; callers must not interpret them as an exhausted library search.
+        No file contents, delta checkpoints, or catalog state are persisted.
+        """
+        if folder_item_id:
+            from api.folder_search import search_folder_names
+
+            return await search_folder_names(self, drive_id, folder_item_id, query, limit, cursor)
+        scope = hashlib.sha256(f"{drive_id}\0{query.casefold()}".encode()).hexdigest()
+        token = None
+        if cursor:
+            try:
+                decoded = json.loads(base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True))
+                if (
+                    not isinstance(decoded, dict) or set(decoded) != {"v", "scope", "token"}
+                    or decoded["v"] != 1 or decoded["scope"] != scope
+                    or not isinstance(decoded["token"], str) or not decoded["token"]
+                ):
+                    raise ValueError
+                token = decoded["token"]
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise ValueError("Invalid filename search cursor. Start the search again.") from exc
+        path = f"/drives/{self._id(drive_id)}/root/delta"
+        seen_tokens = {token}
+        for _ in range(5):
+            params: dict[str, Any] = {
+                "$top": limit,
+                "$select": "id,name,size,webUrl,file,folder,parentReference,remoteItem,deleted,root",
+            }
+            if token:
+                params["token"] = token
+            payload = await self._request_json(path, params=params)
+            rows = payload.get("value")
+            if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                raise SharePointGraphError(502, "invalid_graph_response", "Microsoft Graph returned an invalid metadata page.")
+            matches = [
+                row for row in rows
+                if not any(facet in row for facet in ("deleted", "remoteItem", "root"))
+                and ("file" in row or "folder" in row)
+                and query.casefold() in str(row.get("name") or "").casefold()
+            ]
+            next_link = payload.get("@odata.nextLink")
+            token = None
+            if next_link is not None:
+                try:
+                    parsed = urlsplit(next_link) if isinstance(next_link, str) else None
+                except ValueError as exc:
+                    raise SharePointGraphError(
+                        502, "invalid_graph_response", "Microsoft Graph returned an invalid search continuation.",
+                    ) from exc
+                next_params = parse_qs(parsed.query) if parsed else {}
+                tokens = next_params.get("token", [])
+                if (
+                    parsed is None or parsed.scheme != "https" or parsed.netloc != "graph.microsoft.com"
+                    or parsed.fragment or unquote(parsed.path) != unquote(f"/v1.0{path}")
+                    or len(tokens) != 1 or not tokens[0] or tokens[0] in seen_tokens
+                ):
+                    raise SharePointGraphError(502, "invalid_graph_response", "Microsoft Graph returned an invalid search continuation.")
+                token = tokens[0]
+                seen_tokens.add(token)
+            if matches or token is None:
+                break
+        next_cursor = None
+        if token:
+            next_cursor = base64.urlsafe_b64encode(json.dumps({"v": 1, "scope": scope, "token": token}).encode()).decode().rstrip("=")
+            if len(next_cursor) > 4096:
+                raise SharePointGraphError(502, "invalid_graph_response", "Microsoft Graph returned an oversized search continuation.")
+        return {"items": matches, "has_more": token is not None, "next_cursor": next_cursor, "search_scope": "names"}
 
     async def get_drive_item(self, drive_id: str, item_id: str) -> dict[str, Any]:
         return await self._request_json(

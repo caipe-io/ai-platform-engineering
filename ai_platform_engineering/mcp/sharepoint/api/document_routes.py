@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from api.client import SharePointGraphError
 from api.documents import SharePointDocuments
 from api.pages import SITE_PAGES_LIBRARY_ID, SITE_PAGES_ROOT_ID
-from models import DriveItemInput, ListDriveItemsInput, PageInput, SearchDriveItemsInput
+from models import DriveItemInput, ListDriveItemsInput, PageInput, SearchDriveItemNamesInput
 
 
 def register_document_routes(server: FastMCP, documents: SharePointDocuments) -> None:
@@ -42,7 +42,8 @@ def register_document_routes(server: FastMCP, documents: SharePointDocuments) ->
             else:
                 if params.get("drive_id") == SITE_PAGES_LIBRARY_ID:
                     args = (
-                        SearchDriveItemsInput.model_validate(params) if params.get("query") else ListDriveItemsInput.model_validate(params)
+                        SearchDriveItemNamesInput.model_validate(params)
+                        if params.get("query") else ListDriveItemsInput.model_validate(params)
                     )
                     if not params.get("query") and not params.get("folder_item_id"):
                         return JSONResponse({
@@ -56,9 +57,11 @@ def register_document_routes(server: FastMCP, documents: SharePointDocuments) ->
                         {"items": page["items"], "has_more": page["has_more"], "next_cursor": page["next_cursor"]}, headers=headers,
                     )
                 if params.get("query"):
-                    args = SearchDriveItemsInput.model_validate(params)
+                    args = SearchDriveItemNamesInput.model_validate(params)
                     await documents._assert_drive(args.drive_id)
-                    page = await documents.client.search_drive_items(args.drive_id, args.query, args.limit, args.cursor)
+                    page = await documents.client.search_drive_item_names(
+                        args.drive_id, args.query, args.limit, args.cursor, folder_item_id=args.folder_item_id,
+                    )
                 else:
                     args = ListDriveItemsInput.model_validate(params)
                     await documents._assert_drive(args.drive_id)
@@ -81,12 +84,16 @@ def register_document_routes(server: FastMCP, documents: SharePointDocuments) ->
                             "size": row.get("size"),
                             "folder": folder,
                             "max_bytes": limit,
+                            **({"search_parent_folders": row["search_parent_folders"]} if "search_parent_folders" in row else {}),
                             "supported": not folder
                             and isinstance(row.get("file"), dict)
                             and int(row.get("size") or 0) <= limit,
                         }
                     )
-            return JSONResponse({"items": items, "has_more": page["has_more"], "next_cursor": page["next_cursor"]}, headers=headers)
+            result = {"items": items, "has_more": page["has_more"], "next_cursor": page["next_cursor"]}
+            if page.get("search_scope"):
+                result["search_scope"] = page["search_scope"]
+            return JSONResponse(result, headers=headers)
         except (ValidationError, ValueError):
             return JSONResponse({"error": "Invalid SharePoint browse parameters."}, status_code=400, headers=headers)
         except SharePointGraphError as exc:
@@ -114,12 +121,26 @@ def register_document_routes(server: FastMCP, documents: SharePointDocuments) ->
                     return JSONResponse({"error": "Choose true or false for select_files."}, status_code=400, headers=headers)
                 snapshot = await documents.folder_snapshot(args.drive_id, args.item_id, select_files=select_files == "true")
                 return JSONResponse(snapshot, headers=headers)
+            header_only = request.query_params.get("header_only", "false")
+            if header_only not in {"true", "false"}:
+                return JSONResponse({"error": "Choose true or false for header_only."}, status_code=400, headers=headers)
+            metadata_only = request.query_params.get("metadata_only", "false")
+            if metadata_only not in {"true", "false"}:
+                return JSONResponse({"error": "Choose true or false for metadata_only."}, status_code=400, headers=headers)
             if request.url.path.endswith("/metadata"):
-                return JSONResponse(await documents.manifest(args.drive_id, args.item_id), headers=headers)
+                return JSONResponse(
+                    await documents.manifest(
+                        args.drive_id, args.item_id, header_only=header_only == "true", metadata_only=metadata_only == "true",
+                    ), headers=headers,
+                )
+            if metadata_only == "true":
+                return JSONResponse(
+                    {"error": "Metadata-only inspection does not allow a content download."}, status_code=400, headers=headers,
+                )
             format = request.query_params.get("format", "original")
             if format not in {"original", "pdf"}:
                 return JSONResponse({"error": "Choose original or pdf."}, status_code=400, headers=headers)
-            context = documents.stream(args.drive_id, args.item_id, format)
+            context = documents.stream(args.drive_id, args.item_id, format, header_only=header_only == "true")
             stream = await context.__aenter__()
             closed = False
 

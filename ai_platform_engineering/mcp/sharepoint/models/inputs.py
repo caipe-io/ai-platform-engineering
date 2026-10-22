@@ -19,6 +19,13 @@ class ToolInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    @field_validator("drive_id", "item_id", "folder_item_id", "list_id", check_fields=False)
+    @classmethod
+    def reject_path_segments(cls, value: str | None) -> str | None:
+        if value in {".", ".."}:
+            raise ValueError("Choose a SharePoint identifier, not a relative path segment.")
+        return value
+
 
 class PageInput(ToolInput):
     """Cursor-based Graph collection input."""
@@ -60,6 +67,12 @@ class ListDriveItemsInput(PageInput):
             description="Folder item ID. Omit to list the drive root.",
         ),
     ] = None
+
+
+class SearchDriveItemNamesInput(ListDriveItemsInput):
+    """Search names in the library, or only below the selected folder."""
+
+    query: Annotated[str, Field(min_length=1, max_length=200)]
 
 
 class SearchDriveItemsInput(PageInput):

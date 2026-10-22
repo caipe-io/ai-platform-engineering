@@ -61,7 +61,7 @@ or a per-user Grid OAuth provider.
 | `SHAREPOINT_REQUEST_TIMEOUT_SECONDS` | no | `30` | Graph request timeout, up to 120 seconds |
 | `SHAREPOINT_MAX_DOWNLOAD_BYTES` | no | `2000000` | Text-file/site-page download ceiling, up to 10 MB |
 | `SHAREPOINT_MAX_TEXT_DOCUMENT_BYTES` | no | `8000000` | Text document streaming ceiling, independent of the chat download limit. Catalog entries expose their effective `max_bytes` limit. |
-| `SHAREPOINT_MAX_DOCUMENT_BYTES` | no | `2147483648` | Visual document streaming ceiling (2 GiB), maximum 4 GiB |
+| `SHAREPOINT_MAX_DOCUMENT_BYTES` | no | `2147483648` | General document/CSV streaming ceiling (2 GiB), maximum 4 GiB |
 | `SHAREPOINT_MAX_RENDERED_PDF_BYTES` | no | `268435456` | Microsoft-rendered PDF ceiling (256 MiB), maximum 1 GiB |
 | `SHAREPOINT_DOCUMENT_TIMEOUT_SECONDS` | no | `600` | Total document stream deadline, maximum 1800 seconds |
 | `MCP_MODE` | no | `streamable-http` | `streamable-http`, `http`, `sse`, or `stdio` |
@@ -113,22 +113,45 @@ Collection tools return `count`, `has_more`, and `next_cursor`. Pass
 
 ### Text files and site pages
 
-Library search uses Microsoft's indexed drive search API, which does not support
-the `Sites.Selected` application permission. Such connections can still browse
-their configured site's libraries/folders and read permitted files. A provider
-search failure returns `search_unavailable` with browsing guidance; it does not
-change permissions or imply that document access failed. See
+The document and folder pickers search file/folder **names**. At the library
+root, search covers the library through read-only hierarchy metadata (`root/delta`).
+With `folder_item_id` selected, search walks only that folder's `children` and
+its descendants; it never switches to the library root or returns the selected
+folder's ancestors/siblings. Nested results include `search_parent_folders` so
+navigation retains the actual breadcrumb. Each request reads at most five metadata
+pages without downloading contents or saving a synchronization checkpoint.
+Continue with `next_cursor` while `has_more` is true, even if a result page is empty.
+Folder-search cursors are signed and bound to the library, selected folder, query
+and page size; clearing search returns to the selected folder. Provider failures
+retain browsing guidance and never widen the search scope.
+The separate `sharepoint_search_drive_items` MCP tool uses Microsoft's indexed
+content search, which does not support the `Sites.Selected` application permission. See
 [Microsoft's search permissions](https://learn.microsoft.com/en-us/graph/api/driveitem-search?view=graph-rest-1.0#permissions).
 
 - Supported text: Markdown, TXT, HTML/HTM, JSON/JSONL, CSV, XML, YAML, logs,
   and other files with an allowed text MIME type. JSONL is accepted even when
   Graph reports `application/octet-stream`.
-- Text original streams use `SHAREPOINT_MAX_TEXT_DOCUMENT_BYTES` independently
+- Non-CSV text original streams use `SHAREPOINT_MAX_TEXT_DOCUMENT_BYTES` independently
   of `SHAREPOINT_MAX_DOWNLOAD_BYTES`, which still bounds the MCP chat text reader.
   Their effective limit is also bounded by `SHAREPOINT_MAX_DOCUMENT_BYTES`.
   They do
   not request PDF conversion. HTML download responses use attachment/sandbox
   headers; preparation extracts readable text without executing scripts.
+- CSV originals use `SHAREPOINT_MAX_DOCUMENT_BYTES`, not the smaller text or
+  Excel archive ceilings. The picker exposes that same limit. TOME stages large
+  manual CSVs for scoped, read-only row queries instead of full-text expansion.
+- CSV structure discovery can use `?header_only=true` on document metadata
+  and content routes. Metadata inspection is independent of full-download
+  size ceilings; content returns at most the first 65,536 bytes. A bounded Range
+  request follows the existing host/site/auth checks, and a server that ignores
+  Range is still stopped at the prefix bound. Partial responses must start at
+  byte zero. Non-CSV content cannot use this mode. Full/manual text streaming
+  limits remain unchanged; this prefix is not full ingestion or validated schema.
+- `?metadata_only=true` on the metadata route inspects a supported file's identity,
+  version and size without granting a content download. This allows automatic
+  discovery to report large spreadsheets or skip oversized JSONL/logs honestly.
+  Authentication and configured-site checks still apply; the content route rejects
+  this flag, and full/manual downloads retain their format-specific size limits.
 - **Site pages** appears as a selectable collection in the first catalog page.
   The reserved `drive_id: "site-pages"` identifies this collection, not a Graph
   drive. Its `item_id: "root"` folder preview lists pages with their stable Graph
