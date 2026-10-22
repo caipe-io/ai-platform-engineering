@@ -369,14 +369,14 @@ class WebexSSEClient:
         content: str = "",
         bearer_token: Optional[str] = None,
     ) -> None:
-        """Persist a single message row via the shared API (metadata-only).
+        """Persist a single message row via the caller-authorized shared API.
 
         Calls ``POST /api/chat/conversations/{id}/messages``. Mirrors the
         Slack bot's ``SSEClient.add_message``: records per-turn message
         metadata (source, agent, latency, linking) so admin stats count
-        Webex messages the same way as web and Slack — WITHOUT duplicating
-        the message content that already lives in Webex. ``content``
-        defaults to empty.
+        Webex messages the same way as web and Slack. The Webex dispatcher
+        supplies full turn content so truncated responses can be read in the
+        browser. Other callers may omit ``content`` for metadata-only rows.
 
         The upsert is keyed on ``message_id``, so this is idempotent — a
         retried dispatch updates the row instead of duplicating it.

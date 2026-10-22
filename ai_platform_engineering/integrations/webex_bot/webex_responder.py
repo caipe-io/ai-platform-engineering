@@ -9,8 +9,10 @@ import logging
 import os
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -22,6 +24,7 @@ from .a2a_client import (
 )
 from .app import WebexMessageResult
 from .utils.chat_envelope import augment_webex_client_context
+from .utils.message_limits import WEBEX_MESSAGE_MAX_BYTES, bounded_markdown
 from .utils.reasoning_effort import get_default_pending_effort_store
 from .utils.thread_ownership import ThreadOwnerCache, get_default_thread_owner_cache
 from .utils.user_messages import FRIENDLY_REASON_MESSAGES, GENERIC_REQUEST_DENIED_MESSAGE
@@ -327,6 +330,54 @@ class WebexResponder:
         )
 
 
+@dataclass
+class _ReplyDelivery:
+    """Budget edits per message; delivery failures must not interrupt the agent stream."""
+
+    api: WebexApiProtocol
+    room_id: str
+    parent_id: str
+    max_edits: int
+    message_id: str | None = None
+    edits: int = 0
+    blocked: bool = False
+    last_markdown: str = ""
+
+    @property
+    def can_stream(self) -> bool:
+        return bool(self.message_id) and not self.blocked and self.edits < self.max_edits - 1
+
+    def publish(self, markdown: str, *, final: bool = False) -> bool:
+        if markdown == self.last_markdown:
+            return True
+        edit_limit = self.max_edits if final else self.max_edits - 1
+        if self.message_id and not self.blocked and self.edits < edit_limit:
+            # Count attempts: a timeout may have occurred after Webex accepted the edit.
+            self.edits += 1
+            try:
+                self.api.update_message(message_id=self.message_id, room_id=self.room_id, markdown=markdown)
+                self.last_markdown = markdown
+                return True
+            except httpx.HTTPError as exc:
+                self.blocked = True
+                logger.warning("Webex reply edit failed; deferring to final reply (type=%s)", type(exc).__name__)
+        if not final:
+            return False
+        # A rejected edit (including an edit-limit response) never retries the
+        # exhausted message. Post one final reply under the original thread root.
+        try:
+            self.message_id = self.api.create_message(
+                room_id=self.room_id, parent_id=self.parent_id, markdown=markdown
+            )
+            self.edits = 0
+            self.blocked = False
+            self.last_markdown = markdown
+            return True
+        except httpx.HTTPError as exc:
+            logger.warning("Webex final reply could not be delivered (type=%s)", type(exc).__name__)
+            return False
+
+
 class WebexThreadedStreamDispatcher:
     """Dispatch allowed messages to Dynamic Agents and stream results into a Webex thread."""
 
@@ -336,6 +387,8 @@ class WebexThreadedStreamDispatcher:
         webex_api: WebexApiProtocol | None = None,
         sse_client: WebexSSEClient | None = None,
         update_every_chars: int = 240,
+        max_message_edits: int | None = None,
+        update_interval_seconds: float = 1.0,
         thread_owner_cache: ThreadOwnerCache | None = None,
     ) -> None:
         self._webex_api = webex_api or WebexRestApi()
@@ -343,6 +396,13 @@ class WebexThreadedStreamDispatcher:
             os.environ.get("CAIPE_API_URL", "http://caipe-ui:3000")
         )
         self._update_every_chars = max(1, update_every_chars)
+        self._max_message_edits = (
+            max_message_edits if max_message_edits is not None
+            else int(os.environ.get("WEBEX_MESSAGE_MAX_EDITS", "10"))
+        )
+        if not 1 <= self._max_message_edits <= 20:
+            raise ValueError("WEBEX_MESSAGE_MAX_EDITS must be between 1 and 20")
+        self._update_interval_seconds = max(0.0, update_interval_seconds)
         self._thread_owner_cache = thread_owner_cache or get_default_thread_owner_cache()
 
     async def __call__(self, payload: dict[str, Any]) -> None:
@@ -365,10 +425,12 @@ class WebexThreadedStreamDispatcher:
             raise ValueError("Webex threaded stream dispatch payload is missing required fields")
 
         t0 = time.monotonic()
-        reply_id: str | None = None
+        delivery = _ReplyDelivery(self._webex_api, room_id, parent_id, self._max_message_edits)
         accumulated = ""
         last_sent_len = 0
         agent_name = "Assistant"
+        last_update_at = float("-inf")
+        preview_frozen = False
 
         try:
             agent_message = _message_with_thread_context(
@@ -450,11 +512,7 @@ class WebexThreadedStreamDispatcher:
                 logger.warning("Agent display-name lookup failed (type=%s)", type(exc).__name__)
                 agent_name = "Assistant"
 
-            reply_id = self._webex_api.create_message(
-                room_id=room_id,
-                parent_id=parent_id,
-                markdown=_agent_reply_markdown(agent_name, "Working on it...", bot_name=bot_name, is_direct=is_direct),
-            )
+            delivery.publish(_bounded_agent_reply(agent_name, "Working on it...", bot_name=bot_name, is_direct=is_direct), final=True)
 
             self._thread_owner_cache.set(thread_key, agent_id)
             if not conv_metadata.get("thread_owner_agent_id"):
@@ -498,20 +556,19 @@ class WebexThreadedStreamDispatcher:
             ):
                 if event.type == SSEEventType.TEXT_MESSAGE_CONTENT and event.delta:
                     accumulated += event.delta
-                    if len(accumulated) - last_sent_len >= self._update_every_chars:
-                        self._webex_api.update_message(
-                            message_id=reply_id,
-                            room_id=room_id,
-                            markdown=_agent_reply_markdown(agent_name, accumulated, bot_name=bot_name, is_direct=is_direct),
-                        )
+                    now = time.monotonic()
+                    if (
+                        not preview_frozen and delivery.can_stream
+                        and len(accumulated) - last_sent_len >= self._update_every_chars
+                        and now - last_update_at >= self._update_interval_seconds
+                    ):
+                        delivery.publish(_bounded_agent_reply(agent_name, accumulated, bot_name=bot_name, is_direct=is_direct, notice="\n\n_Response continues…_"))
                         last_sent_len = len(accumulated)
+                        last_update_at = now
+                        preview_frozen = _reply_exceeds_limit(agent_name, accumulated, bot_name=bot_name, is_direct=is_direct)
                 elif event.type == SSEEventType.RUN_ERROR:
                     message = event.message or "The agent run failed."
-                    self._webex_api.update_message(
-                        message_id=reply_id,
-                        room_id=room_id,
-                        markdown=_agent_reply_markdown(agent_name, message, bot_name=bot_name, is_direct=is_direct),
-                    )
+                    delivery.publish(_bounded_agent_reply(agent_name, message, bot_name=bot_name, is_direct=is_direct), final=True)
                     return
         except AgentAccessDeniedError as exc:
             logger.info(
@@ -519,46 +576,35 @@ class WebexThreadedStreamDispatcher:
                 space_id,
                 exc.agent_id,
             )
-            self._post_or_update_reply(
-                reply_id=reply_id,
-                room_id=room_id,
-                parent_id=parent_id,
-                markdown=_agent_reply_markdown(
+            delivery.publish(
+                _bounded_agent_reply(
                     agent_name,
                     (
                         f"You don't have permission to use agent `{exc.agent_id}`. "
                         f"Ask an admin to grant you access in {_app_name()}."
                     ),
-                    bot_name=bot_name,
-                    is_direct=is_direct,
-                ),
+                    bot_name=bot_name, is_direct=is_direct,
+                ), final=True,
             )
             return
         except Exception as exc:
             logger.warning("Webex threaded stream dispatch failed (type=%s)", type(exc).__name__)
-            self._post_or_update_reply(
-                reply_id=reply_id,
-                room_id=room_id,
-                parent_id=parent_id,
-                markdown=_agent_reply_markdown(
+            delivery.publish(
+                _bounded_agent_reply(
                     agent_name,
                     "I could not complete the request. Please try again.",
-                    bot_name=bot_name,
-                    is_direct=is_direct,
-                ),
+                    bot_name=bot_name, is_direct=is_direct,
+                ), final=True,
             )
             return
 
         final_markdown = accumulated.strip() or "Done."
-        self._webex_api.update_message(
-            message_id=reply_id,
-            room_id=room_id,
-            markdown=_agent_reply_markdown(agent_name, final_markdown, bot_name=bot_name, is_direct=is_direct),
-        )
-
-        # Persist per-turn message rows for stats/linking — only reached on a
-        # genuine successful response (denied/error dispatches return above).
-        self._record_message_turns(
+        oversized = _reply_exceeds_limit(agent_name, final_markdown, bot_name=bot_name, is_direct=is_direct)
+        if not oversized:
+            delivery.publish(_bounded_agent_reply(agent_name, final_markdown, bot_name=bot_name, is_direct=is_direct), final=True)
+        # Save the complete turn before advertising a browser link. Delivery and
+        # Webex truncation do not change the content stored through the scoped BFF.
+        saved = self._record_message_turns(
             conversation_id=conversation_id,
             space_id=space_id,
             room_id=room_id,
@@ -568,21 +614,16 @@ class WebexThreadedStreamDispatcher:
             is_direct=is_direct,
             response_time_ms=int((time.monotonic() - t0) * 1000),
             bearer_token=obo_token,
+            user_content=text,
+            assistant_content=final_markdown,
         )
-
-    def _post_or_update_reply(
-        self, *, reply_id: str | None, room_id: str, parent_id: str, markdown: str
-    ) -> None:
-        """Surface an error, editing the placeholder if it exists or posting fresh otherwise.
-
-        ``reply_id`` is ``None`` when the failure happened while resolving
-        thread ownership/conversation setup, before the placeholder message
-        was created.
-        """
-        if reply_id:
-            self._webex_api.update_message(message_id=reply_id, room_id=room_id, markdown=markdown)
-        else:
-            self._webex_api.create_message(room_id=room_id, parent_id=parent_id, markdown=markdown)
+        if oversized:
+            url = _public_conversation_url(conversation_id) if saved else None
+            if url:
+                notice = f"\n\n[View full response in {_app_name()}]({url})"
+            else:
+                notice = "\n\n_Response truncated. The full-response link is unavailable._"
+            delivery.publish(_bounded_agent_reply(agent_name, final_markdown, bot_name=bot_name, is_direct=is_direct, notice=notice), final=True)
 
     def _record_message_turns(
         self,
@@ -596,16 +637,10 @@ class WebexThreadedStreamDispatcher:
         is_direct: bool = False,
         response_time_ms: int | None = None,
         bearer_token: str | None = None,
-    ) -> None:
-        """Persist per-turn message rows (metadata-only) for a Webex exchange.
-
-        Mirrors Slack's ``_record_message_turns``: Webex turn content lives in
-        Webex / the LangGraph checkpointer, so we do NOT duplicate it here. We
-        write two content-less ``messages`` rows — one ``user`` turn and one
-        ``assistant`` turn — carrying just the metadata admin stats need to
-        count Webex messages the same way as web and Slack (source, agent,
-        latency).
-        """
+        user_content: str = "",
+        assistant_content: str = "",
+    ) -> bool:
+        """Persist full turns for browser viewing, retaining existing IDs and metadata."""
         link_meta: dict[str, object] = {
             "source": "webex",
             "agent_id": agent_id,
@@ -622,6 +657,7 @@ class WebexThreadedStreamDispatcher:
                 conversation_id=conversation_id,
                 message_id=f"{base_id}-user",
                 role="user",
+                content=user_content,
                 metadata={**link_meta, "turn_id": f"{message_id}-user"},
                 bearer_token=bearer_token,
             )
@@ -629,6 +665,7 @@ class WebexThreadedStreamDispatcher:
                 conversation_id=conversation_id,
                 message_id=f"{base_id}-assistant",
                 role="assistant",
+                content=assistant_content,
                 metadata={
                     **link_meta,
                     "turn_id": f"{message_id}-assistant",
@@ -637,8 +674,10 @@ class WebexThreadedStreamDispatcher:
                 },
                 bearer_token=bearer_token,
             )
-        except Exception:  # noqa: BLE001 - best-effort telemetry; never break the Webex reply.
+            return True
+        except (httpx.HTTPError, RuntimeError, ValueError):
             logger.warning("Failed to record Webex message turns for conversation=%s", conversation_id)
+            return False
 
 
 def _thread_refs(event: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -771,10 +810,45 @@ def _agent_reply_markdown(
     agent_name: str, body: str, *, bot_name: str, is_direct: bool = False
 ) -> str:
     content = body.strip() or "Done."
+    return content + _agent_reply_footer(agent_name, bot_name=bot_name, is_direct=is_direct)
+
+
+def _agent_reply_footer(agent_name: str, *, bot_name: str, is_direct: bool = False) -> str:
     footer = f"Agent: {' '.join(agent_name.split()) or 'Assistant'}"
     if not is_direct:
         footer += f" • **Mention @{bot_name} to continue**"
-    return f"{content}\n\n{footer}{_BOT_REPLY_MARKER}"
+    return f"\n\n{footer}{_BOT_REPLY_MARKER}"
+
+
+def _reply_exceeds_limit(agent_name: str, body: str, *, bot_name: str, is_direct: bool = False) -> bool:
+    return len(_agent_reply_markdown(agent_name, body, bot_name=bot_name, is_direct=is_direct).encode("utf-8")) > WEBEX_MESSAGE_MAX_BYTES
+
+
+def _bounded_agent_reply(
+    agent_name: str, body: str, *, bot_name: str, is_direct: bool = False,
+    notice: str = "\n\n_Response truncated._",
+) -> str:
+    return bounded_markdown(body, footer=_agent_reply_footer(agent_name, bot_name=bot_name, is_direct=is_direct), notice=notice)
+
+
+def _public_conversation_url(conversation_id: str) -> str | None:
+    # These are operator-configured public origins. Never expose the internal
+    # CAIPE_API_URL or include the caller's OBO token in a browser link.
+    base = (os.environ.get("CAIPE_UI_BASE_URL") or os.environ.get("WEBEX_LINKING_BASE_URL") or "").strip().rstrip("/")
+    try:
+        parts = urlsplit(base)
+        # Accessing port validates malformed/non-numeric port declarations.
+        _ = parts.port
+        if (
+            parts.scheme not in {"https", "http"} or not parts.hostname
+            or parts.username or parts.password or parts.query or parts.fragment
+            or any(character.isspace() for character in base)
+        ):
+            return None
+    except ValueError:
+        return None
+    url = f"{base}/chat/{quote(conversation_id, safe='')}".replace("(", "%28").replace(")", "%29")
+    return url if len(url.encode("utf-8")) <= 2048 else None
 
 
 def _message_with_thread_context(
