@@ -1347,13 +1347,14 @@ services:
 
   agent_ontology:
     build:
-      context: ./ai_platform_engineering/knowledge_bases/rag
-      dockerfile: ./build/Dockerfile.agent-ontology
+      context: .
+      dockerfile: ./ai_platform_engineering/knowledge_bases/rag/build/Dockerfile.agent-ontology
     image: ghcr.io/caipe-io/caipe-rag-agent-ontology:${IMAGE_TAG:-localtag}
     container_name: agent_ontology
     volumes:
       - ./ai_platform_engineering/knowledge_bases/rag/agent_ontology/src/agent_ontology:/app/agent_ontology/src/agent_ontology
       - ./ai_platform_engineering/knowledge_bases/rag/common/src/common:/app/common/src/common
+      - ./ai_platform_engineering/llm_wrapper/src/llm_wrapper:/llm_wrapper/src/llm_wrapper
     ports: ["8098:8098"]
     environment:
       - PYTHONPATH=/app/common/src:/app/agent_ontology/src

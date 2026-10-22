@@ -9,6 +9,7 @@ on:
       - '.github/actions/prebuild-status/**'
       - '.github/actions/publish-prebuild-manifest/**'
       - 'ai_platform_engineering/knowledge_bases/rag/**'
+      - 'ai_platform_engineering/llm_wrapper/**'
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -75,6 +76,7 @@ jobs:
             agent-ontology:
               - 'ai_platform_engineering/knowledge_bases/rag/agent_ontology/**'
               - 'ai_platform_engineering/knowledge_bases/rag/build/Dockerfile.agent-ontology'
+              - 'ai_platform_engineering/llm_wrapper/**'
             server:
               - 'ai_platform_engineering/knowledge_bases/rag/server/**'
               - 'ai_platform_engineering/knowledge_bases/rag/build/Dockerfile.server'
@@ -136,7 +138,7 @@ jobs:
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: ${{ github.repository_owner }}/caipe-rag-${{ matrix.component }}
-      BUILD_CTX: ai_platform_engineering/knowledge_bases/rag
+      BUILD_CTX: ${{ matrix.component == 'agent-ontology' && '.' || 'ai_platform_engineering/knowledge_bases/rag' }}
       DOCKERFILE: ai_platform_engineering/knowledge_bases/rag/build/Dockerfile.${{ matrix.component }}
 
     steps:

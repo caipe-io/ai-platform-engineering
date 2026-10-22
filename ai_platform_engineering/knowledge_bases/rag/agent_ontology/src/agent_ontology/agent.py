@@ -22,7 +22,7 @@ from langchain_core.messages import HumanMessage
 import gc
 import redis.asyncio as redis
 import common.utils as utils
-from cnoe_agent_utils import LLMFactory
+from llm_wrapper.build import build_chat_model
 from langfuse import get_client as get_langfuse_client
 from langfuse.langchain import CallbackHandler
 
@@ -512,7 +512,25 @@ class OntologyAgent:
       system_prompt = SYSTEM_PROMPT_1.format(entity_types=entity_types_str)
 
       # Get base LLM
-      base_llm = LLMFactory().get_llm()
+      provider = os.getenv("LLM_PROVIDER")
+      if not provider:
+        raise ValueError("LLM_PROVIDER environment variable is required to evaluate ontology relations")
+      temperature_env = {
+        "azure-openai": "AZURE_TEMPERATURE",
+        "openai": "OPENAI_TEMPERATURE",
+        "anthropic-claude": "ANTHROPIC_TEMPERATURE",
+        "aws-bedrock": "BEDROCK_TEMPERATURE",
+        "bedrock": "BEDROCK_TEMPERATURE",
+        "google-gemini": "GOOGLE_TEMPERATURE",
+        "gcp-vertexai": "VERTEXAI_TEMPERATURE",
+        "groq": "GROQ_TEMPERATURE",
+      }.get(provider.lower().replace("_", "-"))
+      try:
+        temperature = float(os.getenv(temperature_env, "0.0")) if temperature_env else 0.0
+      except ValueError:
+        self.logger.warning("Invalid LLM temperature setting in %s; using 0.0", temperature_env)
+        temperature = 0.0
+      base_llm = build_chat_model(provider, temperature=max(0.0, min(2.0, temperature)))
 
       # Create shared progress tracker (dict is thread-safe for simple increments in Python)
       # Using a dict instead of separate variables so workers can update the same object

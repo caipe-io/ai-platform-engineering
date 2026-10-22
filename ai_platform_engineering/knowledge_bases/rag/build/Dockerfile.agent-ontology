@@ -10,16 +10,17 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 ENV UV_PYTHON_DOWNLOADS=0
 
 # Copy over the local dependencies
-COPY common /app/common
+COPY ai_platform_engineering/knowledge_bases/rag/common /app/common
+COPY ai_platform_engineering/llm_wrapper /llm_wrapper
 
 WORKDIR /app/agent_ontology
 # Increase timeout for large packages (e.g., pyarrow 39MB)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=agent_ontology/uv.lock,target=uv.lock \
-    --mount=type=bind,source=agent_ontology/pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=ai_platform_engineering/knowledge_bases/rag/agent_ontology/uv.lock,target=uv.lock \
+    --mount=type=bind,source=ai_platform_engineering/knowledge_bases/rag/agent_ontology/pyproject.toml,target=pyproject.toml \
     UV_HTTP_TIMEOUT=900 uv sync --locked --no-install-project --no-dev
 
-COPY agent_ontology .
+COPY ai_platform_engineering/knowledge_bases/rag/agent_ontology .
 RUN --mount=type=cache,target=/root/.cache/uv \
     UV_HTTP_TIMEOUT=900 uv sync --locked --no-dev
 
@@ -57,6 +58,7 @@ RUN groupadd -g 1001 app && useradd -u 1001 -g app -m app
 
 # Copy the application from the builder
 COPY --from=builder --chown=app:app /app /app
+COPY --from=builder --chown=app:app /llm_wrapper /llm_wrapper
 
 WORKDIR /app/agent_ontology
 
