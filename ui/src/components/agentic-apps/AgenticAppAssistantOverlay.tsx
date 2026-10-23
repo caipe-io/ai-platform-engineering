@@ -522,6 +522,7 @@ export function AgenticAppAssistantOverlay({
                 key={assistantConversation.id}
                 conversationId={assistantConversation.id}
                 agentId={assistantAgentId}
+                readOnly={selectedAccess === "shared_readonly"} readOnlyReason={selectedAccess === "shared_readonly" ? "shared_readonly" : undefined}
                 requestOptions={requestOptions} composerHeader={composerHeader}
                 placeholder={options?.presentation?.placeholder}
                 showAuditNotice={options?.presentation?.showAuditNotice}

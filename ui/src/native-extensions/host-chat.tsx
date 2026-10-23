@@ -48,6 +48,7 @@ function loadLocalConversation(id: string) {
 export function createHostChatCapability(appId: string, assistantAvailable = false, options?: AssistantOptions): NativeHostChat {
   function Panel(props: NativeHostChatPanelProps) {
     const [loaded, setLoaded] = useState("");
+    const [readOnly, setReadOnly] = useState(false);
     const [agent, setAgent] = useState<DynamicAgentConfig | null>(null);
     const [error, setError] = useState<{ key: string; message: string } | null>(null);
     const key = `${props.conversationId}:${props.agentId}`;
@@ -62,7 +63,7 @@ export function createHostChatCapability(appId: string, assistantAvailable = fal
         activated = true;
         useChatStore.getState().setActiveConversation(saved._id);
         await useChatStore.getState().loadMessagesFromServer(saved._id, { force: true });
-        if (!cancelled) { setAgent(availableAgent); setLoaded(key); setError(null); }
+        if (!cancelled) { setAgent(availableAgent); setReadOnly(saved.access_level === "shared_readonly"); setLoaded(key); setError(null); }
       }
       void open().catch(reason => { if (!cancelled) setError({ key, message: reason instanceof Error ? reason.message : "Chat is unavailable" }); });
       // Restore only our selection; the host keeps the stream alive after unmount.
@@ -76,7 +77,7 @@ export function createHostChatCapability(appId: string, assistantAvailable = fal
     }, [key, props.agentId, props.conversationId]);
     if (error?.key === key) return <p role="alert" className="p-4 text-sm text-destructive">{error.message}</p>;
     if (loaded !== key) return <p role="status" className="p-4 text-sm text-muted-foreground">Loading conversation…</p>;
-    return <Suspense fallback={<p role="status">Loading conversation…</p>}><ChatPanel {...props} agent={agent} /></Suspense>;
+    return <Suspense fallback={<p role="status">Loading conversation…</p>}><ChatPanel {...props} agent={agent} readOnly={readOnly} readOnlyReason={readOnly ? "shared_readonly" : undefined} /></Suspense>;
   }
   function Actions(props: NativeHostConversationActionsProps) {
     return <Suspense fallback={null}><ConversationActions key={`${props.conversationId}:${props.agentId}`} {...props} appId={appId} /></Suspense>;
