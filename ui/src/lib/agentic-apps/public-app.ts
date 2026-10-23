@@ -19,6 +19,14 @@ export function buildPublicAgenticApp(
       assistantLabel: app.manifest.ui.assistant.label,
       assistantAgentName: app.manifest.ui.assistant.name,
     } : {}),
+    ...(app.manifest.ui.navigation && app.installation.navigationOverrides?.visible !== false ? {
+      navigation: {
+        label: app.installation.navigationOverrides?.label ?? app.manifest.ui.navigation.label,
+        href: agenticAppEntryHref(app),
+        icon: app.manifest.ui.navigation.icon,
+        order: app.installation.navigationOverrides?.order ?? app.manifest.surfaces.navOrder,
+      },
+    } : {}),
     displayName: app.manifest.displayName,
     ...(icon ? { icon } : {}),
     description: app.manifest.description,

@@ -54,6 +54,7 @@ type RawInstallation = {
   runtime_mount_path?: unknown;
   runtime_origin_override?: unknown;
   access_overrides?: unknown;
+  navigation_overrides?: unknown;
   selected_ui_profile?: unknown;
   app_version?: unknown;
   bindings?: unknown;
@@ -208,6 +209,8 @@ export function loadConfiguredAgenticApps(
             ),
           }
         : {}),
+      ...(raw.navigation_overrides !== undefined
+        ? { navigationOverrides: parseNavigationOverrides(raw.navigation_overrides, `${path}.navigation_overrides`) } : {}),
       ...(raw.access_overrides !== undefined
         ? {
             accessOverrides: parseAccessOverrides(
@@ -687,6 +690,18 @@ function parseAccessOverrides(
           ),
         }
       : {}),
+  };
+}
+
+function parseNavigationOverrides(value: unknown, path: string): AgenticAppInstallation["navigationOverrides"] {
+  const raw = asRecord(value, path);
+  assertKnownKeys(raw, ["visible", "label", "order"], path);
+  if (raw.order !== undefined && (typeof raw.order !== "number" || !Number.isFinite(raw.order)))
+    throw new Error(`${path}.order must be finite`);
+  return {
+    ...(raw.visible !== undefined ? { visible: optionalBoolean(raw.visible, true, `${path}.visible`) } : {}),
+    ...(raw.label !== undefined ? { label: requiredString(raw.label, `${path}.label`) } : {}),
+    ...(raw.order !== undefined ? { order: raw.order as number } : {}),
   };
 }
 
