@@ -35,7 +35,7 @@ export interface AgenticAppManifest {
       placement: "after-chat";
       icon?: "book-open" | "layout-grid";
     };
-    assistant?: { agentId: string; label: string; name: string; streamPath?: string; resumePath?: string; cancelPath?: string; statusPath?: string; overlay?: "host" | "app"; supportedClients?: Array<"webui" | "webex">; webexGroupChat?: boolean };
+    assistant?: { agentId: string; label: string; name: string; streamPath?: string; resumePath?: string; cancelPath?: string; statusPath?: string; overlay?: "host" | "app"; supportedClients?: Array<"webui" | "webex">; webexGroupChat?: boolean; hostOptions?: import("./assistant-options.mjs").AssistantOptions };
   };
   api: { mounts: string[] };
   auth: { mode: AgenticAppAuthMode };

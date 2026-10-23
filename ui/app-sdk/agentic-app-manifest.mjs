@@ -1,3 +1,4 @@
+import { validateAssistantOptions } from "./assistant-options.mjs";
 import {
   RESERVED_HOST_PATHS,
   RESERVED_API_PATHS,
@@ -215,7 +216,7 @@ export function validateAgenticAppManifest(value) {
   if (ui.assistant !== undefined) {
     const assistant = record(
       ui.assistant,
-      ["agentId", "label", "name", "streamPath", "resumePath", "cancelPath", "statusPath", "overlay", "supportedClients", "webexGroupChat"],
+      ["agentId", "label", "name", "streamPath", "resumePath", "cancelPath", "statusPath", "overlay", "supportedClients", "webexGroupChat", "hostOptions"],
       "ui.assistant",
     );
     identifier(assistant.agentId, "ui.assistant.agentId");
@@ -228,6 +229,7 @@ export function validateAgenticAppManifest(value) {
     if (assistant.webexGroupChat !== undefined &&
         (typeof assistant.webexGroupChat !== "boolean" || !assistant.supportedClients?.includes("webex")))
       throw new Error("assistant webexGroupChat requires explicit Webex support");
+    if (assistant.hostOptions !== undefined) validateAssistantOptions(assistant.hostOptions);
     if (assistant.overlay !== undefined && !["host", "app"].includes(assistant.overlay))
       throw new Error("assistant overlay must be host or app");
     if (

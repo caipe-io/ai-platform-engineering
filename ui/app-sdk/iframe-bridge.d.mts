@@ -1,5 +1,6 @@
 import type { AppAssistantContext } from "./index.js";
 export interface AgenticAppBridgeCapabilities {
+  assistantOptions?: import("./assistant-options.mjs").AssistantOptions;
   assistant: boolean;
   context: boolean;
   navigation: boolean;
@@ -7,6 +8,8 @@ export interface AgenticAppBridgeCapabilities {
 }
 export interface AgenticAppBridge {
   getCapabilities(): AgenticAppBridgeCapabilities | null;
+  configureAssistant(configuration: import("./assistant-options.mjs").AssistantConfiguration): void;
+  closeAssistant(): void;
   openAssistant(context?: AppAssistantContext): void;
   setContext(context: AppAssistantContext): void;
   navigate(href: string): void;
@@ -14,6 +17,7 @@ export interface AgenticAppBridge {
 }
 export function createAgenticAppBridge(options: {
   appId: string;
+  onAssistantState?: (open: boolean) => void;
   onNavigate?: (href: string) => void;
   onStatus?: (status: string, capabilities?: AgenticAppBridgeCapabilities) => void;
   timeoutMs?: number;

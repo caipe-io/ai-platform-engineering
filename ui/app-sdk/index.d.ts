@@ -73,7 +73,12 @@ export interface AppAssistantContext {
   resourceRefs?: Array<Record<string, string>>;
   suggestedPrompts?: string[];
 }
+export type { AssistantOptions, AssistantConfiguration } from "./assistant-options.mjs";
 export interface HostAssistantCapability {
+  extensions?: readonly string[];
+  configure?(configuration: import("./assistant-options.mjs").AssistantConfiguration): void;
   open(context?: AppAssistantContext): void;
+  close?(): void;
+  subscribe?(onOpenChange: (open: boolean) => void): () => void;
   setContext(context: AppAssistantContext): void;
 }
