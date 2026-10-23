@@ -53,6 +53,7 @@ export interface NativeHostChatPanelProps {
   clientContext?: Record<string, unknown>;
   requestOptions?: Record<string, unknown>;
   composerHeader?: import("react").ReactNode;
+  suggestedPrompts?: string[];
   placeholder?: string;
   emptyStateTitle?: string;
   /** Whether to show the agent identity row. Defaults to true; embedded surfaces may opt out. */

@@ -319,3 +319,16 @@ size/secret filters and stays untrusted data, never an authorization grant.
 The native wrapper resolves the installation's bound agent and agent-use policy
 before mounting the popup; chat dependencies load lazily. Account, subject,
 organization and role changes reset the assistant binding.
+
+## Shared assistant history and conversation controls
+
+- The host popup provides Chat/History views with the existing rename, share and
+  recoverable archive controls on each history item. No archive browser is added.
+- History selection revalidates the installation, bound agent and conversation.
+- `?assistant_chat=<conversation-id>` restores that exact authorized conversation;
+  invalid links report an error instead of silently creating another chat.
+- Context suggestions fill the composer; the user explicitly sends the message.
+- Host-owned popups support validated context and suggestions. App-specific source
+  selectors remain available through native `chat.Panel` composer composition.
+  Unsupported iframe composer extensions are rejected explicitly. Apps requiring
+  their own controls can retain `overlay: "app"`.

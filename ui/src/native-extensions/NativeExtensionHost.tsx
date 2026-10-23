@@ -93,6 +93,7 @@ export function NativeExtensionHost({
           assistant={extension.manifest.assistant}
           extensionId={extensionId}
           pathname={pathname}
+          search={search}
         />
       )}
       {children}

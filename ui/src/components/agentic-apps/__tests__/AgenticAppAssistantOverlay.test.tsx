@@ -57,6 +57,7 @@ describe("AgenticAppAssistantOverlay", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     window.localStorage.clear();
+    window.history.replaceState(null, "", "/");
     mockChatStoreState.activeConversationId = "previous-conversation";
     mockChatStoreState.conversations = [];
     mockCreateConversation.mockResolvedValue("assistant-conversation");

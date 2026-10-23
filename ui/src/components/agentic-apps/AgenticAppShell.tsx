@@ -163,6 +163,10 @@ export function AgenticAppShell({
     };
   }, [appId, assistantBindingKey, assistantConfigured, requestedAgentId, assistantRetry]);
 
+  useEffect(() => {
+    if (assistantAgent && assistantConfigured && searchParams.has("assistant_chat")) queueMicrotask(() => setAssistantOpen(true));
+  }, [assistantAgent, assistantConfigured, searchParams]);
+
   function notifyFrame(): void {
     if (state.status !== "ready") return;
     const target = iframeRef.current?.contentWindow;
@@ -248,7 +252,9 @@ export function AgenticAppShell({
     );
   }
 
-  const query = searchParams.toString();
+  const runtimeSearch = new URLSearchParams(search);
+  runtimeSearch.delete("assistant_chat");
+  const query = runtimeSearch.toString();
   const runtimePath = `${buildAgenticAppPublicPath(appId, path)}${query ? `?${query}` : ""}${hash}`;
   return (
     <div className="flex min-h-0 flex-1 flex-col">

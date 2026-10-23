@@ -115,6 +115,8 @@ interface ChatPanelProps {
   clientContext?: Record<string, unknown>;
   requestOptions?: Record<string, unknown>;
   composerHeader?: React.ReactNode;
+  /** App suggestions only fill the composer; sending remains an explicit user action. */
+  suggestedPrompts?: string[];
   placeholder?: string;
   emptyStateTitle?: string;
   showAgentHeader?: boolean;
@@ -134,7 +136,7 @@ export function ChatPanel({
   isLoadingMessages,
   onAgentRelinked,
   clientContext: suppliedClientContext,
-  requestOptions, composerHeader, placeholder, emptyStateTitle, showAgentHeader = true, showAuditNotice = true, feedbackPrompt,
+  requestOptions, composerHeader, suggestedPrompts, placeholder, emptyStateTitle, showAgentHeader = true, showAuditNotice = true, feedbackPrompt,
 }: ChatPanelProps) {
   // Derive display values from agent object
   const agentGradient = agent?.ui?.gradient_theme ?? null;
@@ -2352,6 +2354,12 @@ export function ChatPanel({
                       useGlobalTheme
                     />
                     <h2 className="text-2xl font-bold mb-4">{emptyStateTitle ?? `Welcome to ${getConfig('appName')}`}</h2>
+                    {!panelReadOnly && suggestedPrompts?.length ? <div className="mx-auto mb-4 flex max-w-lg flex-wrap justify-center gap-2">
+                      {suggestedPrompts.slice(0, 8).map((prompt, index) => <button key={index} type="button"
+                        disabled={isThisConversationStreaming || isRemoteResponse || Boolean(pendingUserInput || pendingToolApproval)}
+                        onClick={() => { setInput(prompt); inputRef.current?.focus(); }}
+                        className="rounded-lg border px-3 py-2 text-sm hover:bg-accent disabled:opacity-50">{prompt}</button>)}
+                    </div> : null}
                     {!emptyStateTitle && <>
                     <p className="text-muted-foreground mb-3">
                       Start your conversation with

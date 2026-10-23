@@ -13,10 +13,11 @@ const AgenticAppAssistantOverlay = lazy(() => import("@/components/agentic-apps/
   .then(module => ({ default: module.AgenticAppAssistantOverlay })));
 
 /** Native and iframe renderers share one host popup and conversation lifecycle. */
-export function NativeExtensionAssistant({ extensionId, pathname }: {
+export function NativeExtensionAssistant({ extensionId, pathname, search = "" }: {
   assistant: NonNullable<NativeExtensionManifest["assistant"]>;
   extensionId: string;
   pathname: string;
+  search?: string;
 }): React.ReactElement | null {
   const { data: session, status } = useSession();
   const identity = session?.user?.email
@@ -47,6 +48,9 @@ export function NativeExtensionAssistant({ extensionId, pathname }: {
   useEffect(() => {
     queueMicrotask(() => { setOpen(false); setContext(null); });
   }, [key]);
+  useEffect(() => {
+    if (app?.canLaunch && new URLSearchParams(search).has("assistant_chat")) queueMicrotask(() => setOpen(true));
+  }, [app, search]);
   useEffect(() => {
     function onRequest(event: Event) {
       const detail = (event as CustomEvent).detail;
