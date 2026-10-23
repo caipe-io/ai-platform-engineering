@@ -3,6 +3,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 
 import type { NativeHostChat, NativeHostChatPanelProps, NativeHostConversationActionsProps } from "../../app-sdk";
+import { requestHostAssistant } from "@/lib/agentic-apps/assistant-events";
 import { apiClient } from "@/lib/api-client";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { getAgentId } from "@/types/a2a";
@@ -29,7 +30,7 @@ export async function loadHostConversation(appId: string, agentId: string, conve
 }
 
 /** A native package receives a renderer, never a second copy of the host store. */
-export function createHostChatCapability(appId: string): NativeHostChat {
+export function createHostChatCapability(appId: string, assistantAvailable = false): NativeHostChat {
   function Panel(props: NativeHostChatPanelProps) {
     const [loaded, setLoaded] = useState("");
     const [agent, setAgent] = useState<DynamicAgentConfig | null>(null);
@@ -68,5 +69,8 @@ export function createHostChatCapability(appId: string): NativeHostChat {
   function Actions(props: NativeHostConversationActionsProps) {
     return <Suspense fallback={null}><ConversationActions key={`${props.conversationId}:${props.agentId}`} {...props} appId={appId} /></Suspense>;
   }
-  return { Panel, ConversationActions: Actions };
+  return { Panel, ConversationActions: Actions, ...(assistantAvailable ? { assistant: {
+    open: context => requestHostAssistant(appId, context),
+    setContext: context => requestHostAssistant(appId, context, false),
+  } } : {}) };
 }

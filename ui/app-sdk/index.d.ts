@@ -32,6 +32,8 @@ export interface NativeExtensionModule {
 
 /** Host owns streaming, history persistence and activity across native screens. */
 export interface NativeHostChat {
+  /** Optional: request the host-owned popup instead of bundling an overlay. */
+  assistant?: HostAssistantCapability;
   Panel: ComponentType<NativeHostChatPanelProps>;
   /** Optional controls reuse host sharing and recoverable archive. */
   ConversationActions?: ComponentType<NativeHostConversationActionsProps>;
@@ -69,4 +71,8 @@ export interface AppAssistantContext {
   selection?: string;
   resourceRefs?: Array<Record<string, string>>;
   suggestedPrompts?: string[];
+}
+export interface HostAssistantCapability {
+  open(context?: AppAssistantContext): void;
+  setContext(context: AppAssistantContext): void;
 }

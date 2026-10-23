@@ -283,6 +283,7 @@ export function AgenticAppShell({
           key={`${identity}:${appId}:${assistantAgent.id}`}
           appId={state.app.appId}
           appName={state.app.displayName}
+          assistantIcon={state.app.icon}
           assistantLabel={state.app.assistantLabel}
           assistantAgentName={state.app.assistantAgentName}
           activeContext={assistantContext}

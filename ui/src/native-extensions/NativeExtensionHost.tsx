@@ -22,7 +22,6 @@ export function NativeExtensionHost({
   extensionId: string;
   slot?: boolean;
 }): React.ReactElement {
-  const chat = useMemo(() => createHostChatCapability(extensionId), [extensionId]);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -34,6 +33,8 @@ export function NativeExtensionHost({
       ),
     [extensionId],
   );
+  const chat = useMemo(() => createHostChatCapability(extensionId,
+    Boolean(extension?.manifest.assistant && extension.manifest.assistant.overlay !== "app")), [extensionId, extension]);
   const [breadcrumbs, setBreadcrumbs] = useState<
     NativeExtensionBreadcrumb[]
   >(() =>
