@@ -5,6 +5,11 @@ import type { Conversation } from "@/types/a2a";
 
 import { AgenticAppAssistantOverlay } from "../AgenticAppAssistantOverlay";
 
+const mockCreateConversation = jest.fn();
+const mockDeleteConversation = jest.fn();
+const mockLoadConversationsFromServer = jest.fn();
+const mockLoadMessagesFromServer = jest.fn();
+const mockSetActiveConversation = jest.fn();
 const mockFindConversation = jest.fn();
 const mockRestoreConversation = jest.fn();
 jest.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(window.location.search) }));
