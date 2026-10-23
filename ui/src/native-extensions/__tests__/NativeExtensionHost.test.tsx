@@ -9,6 +9,7 @@ jest.mock("@/store/chat-store", () => ({ useChatStore: {} }));
 jest.mock("../NativeExtensionAssistant", () => ({
   NativeExtensionAssistant: () => <div data-testid="native-assistant" />,
 }));
+jest.mock("next-auth/react", () => ({ useSession: () => ({ status: "authenticated", data: { sub: "test-user", user: { email: "test-user@example.test" } } }) }));
 
 jest.mock("next/navigation", () => ({
   usePathname: () => "/example",

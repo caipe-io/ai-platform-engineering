@@ -14,7 +14,7 @@ jest.mock("@/native-extensions/HostConversationActions", () => ({ __esModule: tr
 const binding = { conversation_surface: "agentic-app", agentic_app_id: "example-app", agentic_app_agent_id: "example-agent" };
 function conversation(id: string, metadata?: Record<string, unknown>): Conversation {
   return { id, title: id, participants: [{ type: "agent", id: "example-agent" }], metadata,
-    createdAt: new Date("2026-01-01"), updatedAt: new Date("2026-01-01"), messages: [], streamEvents: [] };
+    createdAt: new Date("2026-01-01"), updatedAt: new Date("2026-01-01"), messages: [{ id: "example-message", role: "user", content: "Example question", timestamp: new Date("2026-01-01") }], streamEvents: [] };
 }
 
 beforeEach(() => {

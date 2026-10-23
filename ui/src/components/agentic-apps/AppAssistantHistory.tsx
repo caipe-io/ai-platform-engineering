@@ -3,17 +3,17 @@
 import { useEffect, useState } from "react";
 import { MoreHorizontal, RefreshCw } from "lucide-react";
 
+import { matchesAssistantConversation } from "@/lib/agentic-apps/assistant-conversations";
 import { apiClient } from "@/lib/api-client";
 import { getStorageMode } from "@/lib/storage-config";
-import { matchesAssistantConversation } from "@/lib/agentic-apps/assistant-conversations";
 import HostConversationActions from "@/native-extensions/HostConversationActions";
 import { useChatStore } from "@/store/chat-store";
 import { getAgentId, type Conversation } from "@/types/a2a";
 import { Button } from "@/components/ui/button";
 
-/** History requires explicit app/agent bindings; the API remains the authorization boundary. */
-export function AppAssistantHistory({ appId, agentId, selectedId, onSelect, onArchived }: {
-  appId: string; agentId: string; selectedId?: string;
+/** History requires app/agent bindings unless legacy history is explicitly enabled; the API remains the authorization boundary. */
+export function AppAssistantHistory({ appId, agentId, includeLegacy = false, selectedId, onSelect, onArchived }: {
+  appId: string; agentId: string; includeLegacy?: boolean; selectedId?: string;
   onSelect: (id: string) => Promise<void>;
   onArchived: (id: string) => void;
 }): React.ReactElement {
@@ -26,13 +26,13 @@ export function AppAssistantHistory({ appId, agentId, selectedId, onSelect, onAr
     let cancelled = false;
     async function load() {
       const matches = (agent: string | null | undefined, metadata?: Record<string, unknown>) =>
-        matchesAssistantConversation(appId, agentId, agent ?? undefined, metadata);
+        matchesAssistantConversation(appId, agentId, agent, metadata, includeLegacy);
       if (getStorageMode() !== "mongodb") return useChatStore.getState().conversations
-        .filter((item: Conversation) => (!item.accessLevel || item.accessLevel === "owner") && matches(getAgentId(item), item.metadata))
+        .filter((item: Conversation) => (!item.accessLevel || item.accessLevel === "owner") && item.messages.length > 0 && matches(getAgentId(item), item.metadata))
         .map(item => ({ id: item.id, title: item.title }));
       const result: Array<{ id: string; title: string }> = [];
       for (let page = 1; page <= 100 && !cancelled; page++) {
-        const response = await apiClient.getConversations({ page, page_size: 100, source: "web", client_type: "webui", archived: false });
+        const response = await apiClient.getConversations({ page, page_size: 100, source: "web", client_type: "webui", archived: false, non_empty: true });
         result.push(...response.items.filter(item => item.access_level === "owner" && matches(getAgentId(item), item.metadata))
           .map(item => ({ id: item._id, title: item.title })));
         if (!response.has_more) return result;
@@ -43,7 +43,7 @@ export function AppAssistantHistory({ appId, agentId, selectedId, onSelect, onAr
     void load().then(result => { if (!cancelled) setItems(result); })
       .catch(reason => { if (!cancelled) setError(reason instanceof Error ? reason.message : "History unavailable"); });
     return () => { cancelled = true; };
-  }, [appId, agentId, refresh]);
+  }, [appId, agentId, includeLegacy, refresh]);
   async function select(id: string) {
     setPending(true);
     try { await onSelect(id); }

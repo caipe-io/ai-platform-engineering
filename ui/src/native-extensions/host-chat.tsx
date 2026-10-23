@@ -3,7 +3,8 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 
 import type { NativeHostChat, NativeHostChatPanelProps, NativeHostConversationActionsProps } from "../../app-sdk";
-import { requestHostAssistant } from "@/lib/agentic-apps/assistant-events";
+import { ASSISTANT_EXTENSIONS, validateAssistantConfiguration, type AssistantOptions } from "../../app-sdk/assistant-options.mjs";
+import { configureHostAssistant, HOST_ASSISTANT_EVENT, HOST_ASSISTANT_STATE_EVENT, requestHostAssistant } from "@/lib/agentic-apps/assistant-events";
 import { apiClient } from "@/lib/api-client";
 import { getStorageMode } from "@/lib/storage-config";
 import { mergeAppConversation } from "@/lib/agentic-apps/assistant-conversations";
@@ -15,7 +16,7 @@ const ChatPanel = lazy(() => import("@/components/chat/DynamicAgentChatPanel").t
 const ConversationActions = lazy(() => import("./HostConversationActions"));
 
 /** Resolve the installation and agent-use policy before restoring app chat UI. */
-export async function loadHostConversation(appId: string, agentId: string, conversationId: string) {
+export async function loadHostConversation(appId: string, agentId: string, conversationId: string, personalHistory = false) {
   const response = await fetch(`/api/agentic-apps/${encodeURIComponent(appId)}`, { cache: "no-store" });
   if (!response.ok) throw new Error("Assistant app is unavailable or access was denied");
   const { item } = await response.json();
@@ -29,8 +30,9 @@ export async function loadHostConversation(appId: string, agentId: string, conve
   const saved = getStorageMode() === "mongodb"
     ? await apiClient.getConversation(conversationId) : loadLocalConversation(conversationId);
   if (getAgentId(saved) !== agentId) throw new Error("Agent does not match this conversation");
-  if (saved.metadata?.agentic_app_id && saved.metadata.agentic_app_id !== appId)
-    throw new Error("Conversation belongs to another app");
+  if (saved.metadata?.agentic_app_id && saved.metadata.agentic_app_id !== appId) throw new Error("Conversation belongs to another app");
+  if (personalHistory ? saved.access_level !== "owner" : !["owner", "shared", "shared_readonly"].includes(saved.access_level ?? ""))
+    throw new Error("Conversation is not available for this assistant");
   return { saved, agent };
 }
 
@@ -43,7 +45,7 @@ function loadLocalConversation(id: string) {
 }
 
 /** A native package receives a renderer, never a second copy of the host store. */
-export function createHostChatCapability(appId: string, assistantAvailable = false): NativeHostChat {
+export function createHostChatCapability(appId: string, assistantAvailable = false, options?: AssistantOptions): NativeHostChat {
   function Panel(props: NativeHostChatPanelProps) {
     const [loaded, setLoaded] = useState("");
     const [agent, setAgent] = useState<DynamicAgentConfig | null>(null);
@@ -80,6 +82,20 @@ export function createHostChatCapability(appId: string, assistantAvailable = fal
     return <Suspense fallback={null}><ConversationActions key={`${props.conversationId}:${props.agentId}`} {...props} appId={appId} /></Suspense>;
   }
   return { Panel, ConversationActions: Actions, ...(assistantAvailable ? { assistant: {
+    extensions: ASSISTANT_EXTENSIONS,
+    configure: configuration => {
+      validateAssistantConfiguration(configuration, options);
+      configureHostAssistant(appId, structuredClone(configuration));
+    },
+    close: () => window.dispatchEvent(new CustomEvent(HOST_ASSISTANT_EVENT, { detail: { appId, close: true } })),
+    subscribe: onOpenChange => {
+      const listener = (event: Event) => {
+        const detail = (event as CustomEvent).detail;
+        if (detail?.appId === appId && typeof detail.open === "boolean") onOpenChange(detail.open);
+      };
+      window.addEventListener(HOST_ASSISTANT_STATE_EVENT, listener);
+      return () => window.removeEventListener(HOST_ASSISTANT_STATE_EVENT, listener);
+    },
     open: context => requestHostAssistant(appId, context),
     setContext: context => requestHostAssistant(appId, context, false),
   } } : {}) };

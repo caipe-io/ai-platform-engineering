@@ -87,6 +87,7 @@ export interface PublicAgenticApp {
   uiMode?: "native-package" | "iframe";
   hostPaths?: string[];
   navigation?: { label: string; href: string; icon?: "book-open" | "layout-grid"; order?: number };
+  assistantOptions?: import("../../app-sdk/assistant-options.mjs").AssistantOptions;
   assistantOverlay?: "host" | "app";
   assistantEnabled?: boolean;
   assistantAgentId?: string;

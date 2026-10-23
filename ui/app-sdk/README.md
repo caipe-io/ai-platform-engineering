@@ -338,3 +338,57 @@ organization and role changes reset the assistant binding.
   selectors remain available through native `chat.Panel` composer composition.
   Unsupported iframe composer extensions are rejected explicitly. Apps requiring
   their own controls can retain `overlay: "app"`.
+
+### Shared assistant configuration
+
+Declare `ui.assistant.overlay: "host"` to use CAIPE's popup. Optional
+`ui.assistant.hostOptions` is a validated `AssistantOptions` declaration:
+
+```json
+{
+  "version": "1.0",
+  "requireConfiguration": true,
+  "includeLegacyAgentHistory": true,
+  "legacyConversationQueryParams": ["example_chat"],
+  "controls": [{
+    "id": "sources", "label": "Search sources", "requestKey": "verify_sources",
+    "defaultChoice": "local",
+    "choices": [{"id": "local", "label": "Local only", "value": false},
+                {"id": "verify", "label": "Verify sources", "value": true}]
+  }]
+}
+```
+
+- Native: check `chat.assistant.extensions`, then call `configure`,
+  `setContext`, `open`, `close`, and optionally `subscribe` to synchronize app buttons.
+- Iframe: use `createAgenticAppBridge` from `@caipe-io/app-sdk/iframe-bridge`.
+  Wait for capabilities; use `configureAssistant`, `setContext`, `openAssistant`,
+  `closeAssistant`, and `onAssistantState`. Call `dispose` on unmount.
+- `configuration.v1`, `choices.v1`, and `presentation.v1` advertise support.
+  Missing capabilities must produce an explicit unavailable state; do not render
+  a second popup as an embedded fallback.
+- Runtime configuration supplies `{version: "1.0", visible: boolean}` and may
+  narrow declared controls with `{choices: [id], defaultChoice: id}`. With
+  `requireConfiguration`, the launcher stays hidden until configuration arrives.
+  Hide it during settings loading/failure and release visibility on app unmount.
+- `presentation` declares placeholder, feedback wording, audit-notice visibility,
+  font scale, and bounded default width/height. Users can change text size,
+  expand and reset size through the common display menu. Audit presentation
+  does not disable logging. One remaining choice applies without a selector.
+- Choice values are scalar, publisher-declared `forwarded_props` entries.
+  Runtime messages cannot add keys/values. Routing, identity, authorization and
+  other protected keys are rejected; the BFF revalidates choices for app streams.
+  App backends must still validate settings and enforce resource permissions.
+- Legacy history is an explicit opt-in for the installation-bound agent.
+  Personal history contains owned chats only; every selection refreshes access.
+  Explicit shared links retain existing conversation permissions. App metadata
+  never grants access; conversations marked for another app are rejected.
+- Declared query aliases resolve exact chats and become `assistant_chat` only
+  after successful restoration. Invalid/conflicting/denied links show errors.
+  Chat query parameters stay outside the iframe URL to avoid reloading the app.
+- Account changes remount the controllers. Context is untrusted data; iframe
+  messages validate source/origin/app/version and never carry host credentials.
+  Browser authentication consistency for restricted apps is tracked separately
+  by the session-stream authentication fix.
+- Standalone apps can retain their own assistant when no host exists. Keep it
+  outside native bundles; host-owned embedded apps use the host renderer/store.

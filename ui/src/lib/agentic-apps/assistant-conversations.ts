@@ -17,18 +17,20 @@ export function mergeAppConversation(conversations: Conversation[], saved: {
 }
 
 /** App history requires explicit app and agent bindings; metadata never grants access. */
-export function matchesAssistantConversation(appId: string, agentId: string, agent: string | undefined,
-  metadata?: Record<string, unknown>): boolean {
-  return agent === agentId && metadata?.conversation_surface === "agentic-app" &&
+export function matchesAssistantConversation(appId: string, agentId: string, agent: string | null | undefined,
+  metadata?: Record<string, unknown>, includeLegacy = false): boolean {
+  if (agent !== agentId) return false;
+  if (metadata?.agentic_app_id !== undefined) return metadata.conversation_surface === "agentic-app" &&
     metadata.agentic_app_id === appId && metadata.agentic_app_agent_id === agentId;
+  return includeLegacy && metadata?.conversation_surface !== "agentic-app" && metadata?.agentic_app_agent_id === undefined;
 }
 
 /** Search explicit web history without changing the user's sidebar filter. */
 export async function findLatestAppConversation(
-  local: Conversation[], appId: string, agentId: string,
+  local: Conversation[], appId: string, agentId: string, includeLegacy = false,
 ): Promise<Conversation | null> {
   const matches = (conversation: { participants?: Conversation["participants"]; metadata?: Record<string, unknown> }) =>
-    matchesAssistantConversation(appId, agentId, getAgentId(conversation), conversation.metadata);
+    matchesAssistantConversation(appId, agentId, getAgentId(conversation), conversation.metadata, includeLegacy);
   if (getStorageMode() !== "mongodb") {
     return local.filter((conversation) => (!conversation.accessLevel || conversation.accessLevel === "owner") && matches(conversation))
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0] ?? null;

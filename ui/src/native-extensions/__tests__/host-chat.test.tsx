@@ -25,7 +25,7 @@ beforeEach(() => {
     url === "/api/dynamic-agents/available" ? { success: true, data: [{ _id: "example-agent", name: "Example Assistant",
       presentation: { app: { id: "example-app", name: "Example App" }, available: true } }] } : { item: {
       canLaunch: true, assistantAgentId: "example-agent" } } }));
-  mockGet.mockResolvedValue({ _id: "example-chat", title: "Example", participants: [{ type: "agent", id: "example-agent" }],
+  mockGet.mockResolvedValue({ _id: "example-chat", title: "Example", access_level: "owner", participants: [{ type: "agent", id: "example-agent" }],
     metadata: { agent_id: "example-agent" }, created_at: "2026-01-01", updated_at: "2026-01-01" });
   mockLoad.mockResolvedValue(undefined);
 });

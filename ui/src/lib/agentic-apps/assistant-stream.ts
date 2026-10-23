@@ -1,3 +1,4 @@
+import { validateAssistantRequestOptions } from "../../../app-sdk/assistant-options.mjs";
 import { NextResponse } from "next/server";
 
 import type { AuthResult } from "@/lib/da-proxy";
@@ -94,6 +95,11 @@ export async function proxyAgenticAppAssistantStream(
   }
   if ((operation === "start" || operation === "resume") && body.protocol !== undefined && body.protocol !== "agui") {
     return NextResponse.json({ success: false, error: "App assistant streams require AG-UI" }, { status: 400 });
+  }
+  const options = getAgenticAppRoutingSnapshot().find(app => app.installation.appId === target.appId)?.manifest.ui.assistant?.hostOptions;
+  if (options && body.forwarded_props !== undefined) {
+    try { validateAssistantRequestOptions(body.forwarded_props, options); }
+    catch { return NextResponse.json({ success: false, error: "Invalid assistant request options" }, { status: 400 }); }
   }
   const response = await proxyAgenticAppRequest(request, {
     params: Promise.resolve({ appId: target.appId, path: target.path }),

@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
+import { ASSISTANT_EXTENSIONS, validateAssistantConfiguration, type AssistantConfiguration } from "../../../app-sdk/assistant-options.mjs";
+import { readAssistantDeepLink } from "@/lib/agentic-apps/assistant-links";
 import { ownsAppPath } from "@/lib/agentic-apps/host-routes";
 
 import { AgenticAppAssistantOverlay } from "@/components/agentic-apps/AgenticAppAssistantOverlay";
@@ -39,6 +41,7 @@ export function AgenticAppShell({
   const identity = session?.user?.email
     ? JSON.stringify([session.sub ?? session.user.email, session.org ?? "", session.role ?? ""])
     : undefined;
+  const [configuration, setConfiguration] = useState<AssistantConfiguration | null>(null);
   const [assistantError, setAssistantError] = useState<string | null>(null);
   const [assistantRetry, setAssistantRetry] = useState(0);
   const [bridgeError, setBridgeError] = useState<string | null>(null);
@@ -66,6 +69,7 @@ export function AgenticAppShell({
     queueMicrotask(() => {
       setState({ status: "loading" });
       setAssistantContext(null);
+      setConfiguration(null);
       setAssistantOpen(false);
       setAssistantBinding(null);
       setBridgeError(null);
@@ -164,15 +168,17 @@ export function AgenticAppShell({
   }, [appId, assistantBindingKey, assistantConfigured, requestedAgentId, assistantRetry]);
 
   useEffect(() => {
-    if (assistantAgent && assistantConfigured && searchParams.has("assistant_chat")) queueMicrotask(() => setAssistantOpen(true));
-  }, [assistantAgent, assistantConfigured, searchParams]);
+    if (assistantAgent && assistantConfigured && readAssistantDeepLink(searchParams.toString(), state.status === "ready" ? state.app.assistantOptions : undefined).requested) queueMicrotask(() => setAssistantOpen(true));
+  }, [assistantAgent, assistantConfigured, searchParams, state]);
 
   function notifyFrame(): void {
     if (state.status !== "ready") return;
+    setConfiguration(null);
+    setAssistantContext(null);
     const target = iframeRef.current?.contentWindow;
     const envelope = { version: "1.0", appId };
     target?.postMessage({ ...envelope, type: "caipe.agenticApp.bridge.capabilities.v1",
-      capabilities: { assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, navigation: true, composerExtensions: [] } }, window.location.origin);
+      capabilities: { assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, navigation: true, composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
     target?.postMessage({ ...envelope, type: "caipe.agenticApp.navigation.v1",
       href: window.location.pathname + window.location.search + window.location.hash }, window.location.origin);
   }
@@ -188,11 +194,16 @@ export function AgenticAppShell({
       function reply(error?: string) {
         expectedSource.postMessage({ type: error ? "caipe.agenticApp.bridge.error.v1" : "caipe.agenticApp.bridge.capabilities.v1",
           version: "1.0", appId, ...(error ? { error } : { capabilities: {
-            assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, navigation: true, composerExtensions: [],
+            assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, navigation: true, composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: app.assistantOptions,
           } }) }, window.location.origin);
       }
       if (message.version !== "1.0") { reply("unsupported_version"); setBridgeError("This app uses an unsupported bridge version."); return; }
-      if (message.type === "caipe.agenticApp.bridge.connect.v1") { reply(); return; }
+      if (message.type === "caipe.agenticApp.bridge.connect.v1") {
+        reply();
+        expectedSource.postMessage({ type: "caipe.agenticApp.navigation.v1", version: "1.0", appId,
+          href: window.location.pathname + window.location.search + window.location.hash }, window.location.origin);
+        return;
+      }
       if (message.type === "caipe.agenticApp.navigate.v1") {
         const href = message.href;
         if (typeof href !== "string" || !href.startsWith("/") || href.startsWith("//") || /[\\\u0000-\u0020]/.test(href)) { reply("invalid_route"); return; }
@@ -204,7 +215,21 @@ export function AgenticAppShell({
         return;
       }
       if (!assistantConfigured) { reply("assistant_unavailable_or_app_owned"); return; }
+      if (message.type === "caipe.agenticApp.assistant.configure.v1") {
+        try {
+          validateAssistantConfiguration(message.configuration, app.assistantOptions);
+          setConfiguration(message.configuration);
+          if (!message.configuration.visible) setAssistantOpen(false);
+          setBridgeError(null);
+          expectedSource.postMessage({ type: "caipe.agenticApp.assistant.configured.v1", version: "1.0", appId }, window.location.origin);
+        } catch (reason) {
+          reply("invalid_assistant_configuration");
+          setBridgeError(reason instanceof Error ? reason.message : "Invalid assistant configuration");
+        }
+        return;
+      }
       if (message.requestOptions || message.composerExtensions) { reply("unsupported_composer_extension"); return; }
+      if (message.type === "caipe.agenticApp.assistant.close.v1") { setAssistantOpen(false); return; }
       if (isAssistantOpenMessage(message, appId)) { setAssistantOpen(true); return; }
       const result = validateAssistantContextMessage({ message, appId,
         origin: event.origin, expectedOrigin: window.location.origin,
@@ -221,8 +246,12 @@ export function AgenticAppShell({
     if (!target || state.status !== "ready") return;
     target.postMessage({ type: "caipe.agenticApp.bridge.capabilities.v1", version: "1.0", appId,
       capabilities: { assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured,
-        navigation: true, composerExtensions: [] } }, window.location.origin);
+        navigation: true, composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
   }, [appId, assistantAgent, assistantConfigured, state]);
+
+  useEffect(() => {
+    iframeRef.current?.contentWindow?.postMessage({ type: "caipe.agenticApp.assistant.state.v1", version: "1.0", appId, open: assistantOpen }, window.location.origin);
+  }, [appId, assistantOpen]);
 
   if (state.status === "loading") {
     return (
@@ -253,7 +282,7 @@ export function AgenticAppShell({
   }
 
   const runtimeSearch = new URLSearchParams(search);
-  runtimeSearch.delete("assistant_chat");
+  for (const key of ["assistant_chat", ...(state.app.assistantOptions?.legacyConversationQueryParams ?? [])]) runtimeSearch.delete(key);
   const query = runtimeSearch.toString();
   const runtimePath = `${buildAgenticAppPublicPath(appId, path)}${query ? `?${query}` : ""}${hash}`;
   return (
@@ -276,7 +305,7 @@ export function AgenticAppShell({
         {assistantError} <button type="button" onClick={() => setAssistantRetry(n => n + 1)} className="underline">Retry assistant</button>
       </p> : null}
       {bridgeError ? <p role="alert" className="p-3 text-sm text-destructive">{bridgeError}</p> : null}
-      <iframe
+      <iframe key={identity}
         onLoad={notifyFrame}
         ref={iframeRef}
         className="min-h-0 flex-1 border-0 bg-background"
@@ -284,9 +313,10 @@ export function AgenticAppShell({
         title={state.app.displayName}
         allow="clipboard-read; clipboard-write"
       />
-      {assistantConfigured && assistantAgent ? (
+      {assistantConfigured && assistantAgent && (configuration?.visible ?? !state.app.assistantOptions?.requireConfiguration) ? (
         <AgenticAppAssistantOverlay
           key={`${identity}:${appId}:${assistantAgent.id}`}
+          options={state.app.assistantOptions} configuration={configuration ?? undefined}
           appId={state.app.appId}
           appName={state.app.displayName}
           assistantIcon={state.app.icon}
