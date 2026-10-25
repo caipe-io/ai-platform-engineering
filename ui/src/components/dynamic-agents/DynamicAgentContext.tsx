@@ -252,7 +252,7 @@ export function DynamicAgentContext({
 
   return (
     <div
-      className="relative h-full flex flex-col bg-card/30 backdrop-blur-sm border-l border-border/50 overflow-hidden"
+      className="relative h-full flex flex-col bg-card/20 backdrop-blur-sm overflow-hidden"
     >
       {/* Header - only show when expanded */}
       {!collapsed && (

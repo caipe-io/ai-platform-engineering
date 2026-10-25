@@ -2,6 +2,12 @@ import fs from "fs";
 import { NextRequest,NextResponse } from "next/server";
 import path from "path";
 
+import { getCollection } from "@/lib/mongodb";
+import { PLATFORM_CONFIG_ID } from "@/lib/platform-default-agent";
+import { ApiError, getAuthFromBearerOrSession } from "@/lib/api-middleware";
+import { isValidReleaseNotesRef, parseReleaseNotesRepository } from "@/lib/release-notes-ref";
+import { approvedReleaseNotesRepository } from "@/lib/release-notes-config";
+
 export const dynamic = "force-dynamic";
 
 const GITHUB_OWNER = "caipe-io";
@@ -17,6 +23,8 @@ const RELEASE_FILE_PATTERN = /release-(\d+)-(\d+)-(\d+)\.mdx?$/i;
 
 const LISTING_TTL_MS = 10 * 60 * 1000;
 const CONTENT_TTL_MS = 10 * 60 * 1000;
+const COMPARE_TTL_MS = 10 * 60 * 1000;
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,64}$/i;
 
 interface ReleaseFile {
   name: string;
@@ -35,11 +43,38 @@ interface CachedContent {
   body: string;
 }
 
+interface GithubCompareCommit {
+  sha: string;
+  commit?: {
+    message?: string;
+    author?: { date?: string | null } | null;
+    committer?: { date?: string | null } | null;
+  };
+}
+
+interface GithubComparePage {
+  commits?: GithubCompareCommit[];
+}
+
+interface CompareReleaseNotes {
+  title: string;
+  date: string;
+  body: string;
+  changelogUrl: string;
+}
+
+interface CachedCompare {
+  at: number;
+  notes: CompareReleaseNotes;
+}
+
 // Module-level caches keep us well under the unauthenticated GitHub rate limit
 // (the dialog is fetched once per user session). They are best-effort and reset
 // on cold start.
 let listingCache: CachedListing | null = null;
 const contentCache = new Map<string, CachedContent>();
+const compareCache = new Map<string, CachedCompare>();
+const compareRequests = new Map<string, Promise<CompareReleaseNotes | null>>();
 
 export interface ReleaseNotesResponse {
   requestedVersion: string;
@@ -47,12 +82,257 @@ export interface ReleaseNotesResponse {
   title: string | null;
   date: string | null;
   body: string | null;
-  source: "github" | "local" | "none";
+  source: "generated" | "github-compare" | "github" | "local" | "none";
+  changelogUrl: string | null;
+}
+
+interface MainIncrementReleaseNotes {
+  version: string;
+  title: string;
+  date: string;
+  body: string;
+  changelogUrl: string;
+}
+
+interface GithubRepository {
+  owner: string;
+  repository: string;
+}
+
+interface ConfiguredGithubCompare {
+  repository: GithubRepository;
+  previousCommit: string;
+  latestCommit: string;
+}
+
+function parseGithubRepositoryUrl(value: string): GithubRepository | null {
+  return parseReleaseNotesRepository(value);
+}
+
+async function readConfiguredGithubCompare(): Promise<ConfiguredGithubCompare | null> {
+  const collection = await getCollection<{ _id: string; release_notes?: unknown }>("platform_config");
+  const document = await collection.findOne({ _id: PLATFORM_CONFIG_ID } as never);
+  if (!document?.release_notes || typeof document.release_notes !== "object") return null;
+  const config = document.release_notes as Record<string, unknown>;
+  const repositoryUrl = typeof config.repository_url === "string" ? config.repository_url.trim() : "";
+  const previousCommit = typeof config.previous_commit === "string" ? config.previous_commit.trim() : "";
+  const latestCommit = typeof config.latest_commit === "string" ? config.latest_commit.trim() : "";
+  // Recheck deployment policy before consulting the compare cache or GitHub.
+  // Existing DB settings must not retain access after a repository is removed.
+  const approvedRepository = approvedReleaseNotesRepository(repositoryUrl);
+  const repository = approvedRepository ? parseGithubRepositoryUrl(approvedRepository) : null;
+  if (
+    !repository ||
+    !isValidReleaseNotesRef(previousCommit) ||
+    !isValidReleaseNotesRef(latestCommit)
+  ) {
+    return null;
+  }
+  return { repository, previousCommit, latestCommit };
+}
+
+function markdownText(value: string): string {
+  return value.replace(/([\\`*_[\]<>])/g, "\\$1");
+}
+
+function classifyCommitSubject(subject: string): {
+  category: "features" | "fixes" | "security" | "performance" | "docs" | "maintenance";
+  pullRequest: string | null;
+  scope: string | null;
+  text: string;
+} {
+  const pullRequestMatch = subject.match(/\s+\(#(\d+)\)$/);
+  const pullRequest = pullRequestMatch?.[1] ?? null;
+  const withoutPullRequest = pullRequestMatch
+    ? subject.slice(0, pullRequestMatch.index).trim()
+    : subject.trim();
+  const conventional = withoutPullRequest.match(
+    /^(feat|fix|docs|perf|security|refactor|chore|build|ci|test)(?:\(([^)]+)\))?:\s*(.+)$/i,
+  );
+  if (!conventional) {
+    return { category: "maintenance", pullRequest, scope: null, text: withoutPullRequest };
+  }
+
+  const [, rawType, scope, text] = conventional;
+  const type = rawType.toLowerCase();
+  const category =
+    type === "feat"
+      ? "features"
+      : type === "fix"
+        ? "fixes"
+        : type === "security"
+          ? "security"
+          : type === "docs"
+            ? "docs"
+            : type === "perf"
+              ? "performance"
+              : "maintenance";
+  return { category, pullRequest, scope: scope ?? null, text };
+}
+
+function renderCompareMarkdown(
+  commits: GithubCompareCommit[],
+  repository: GithubRepository,
+  previousCommit: string,
+  latestCommit: string,
+  compareUrl: string,
+): string {
+  const groups = new Map<
+    ReturnType<typeof classifyCommitSubject>["category"],
+    { heading: string; entries: string[] }
+  >([
+    ["features", { heading: "What's New", entries: [] }],
+    ["fixes", { heading: "Bug Fixes", entries: [] }],
+    ["security", { heading: "Security", entries: [] }],
+    ["performance", { heading: "Performance", entries: [] }],
+    ["docs", { heading: "Documentation", entries: [] }],
+    ["maintenance", { heading: "Maintenance", entries: [] }],
+  ]);
+
+  for (const commit of commits) {
+    const subject = commit.commit?.message?.split("\n", 1)[0]?.trim() || commit.sha;
+    const change = classifyCommitSubject(subject);
+    const scope = change.scope ? `**${markdownText(change.scope)}**: ` : "";
+    const target = change.pullRequest
+      ? `https://github.com/${repository.owner}/${repository.repository}/pull/${change.pullRequest}`
+      : `https://github.com/${repository.owner}/${repository.repository}/commit/${commit.sha}`;
+    const label = change.pullRequest ? `#${change.pullRequest}` : commit.sha.slice(0, 9);
+    groups.get(change.category)?.entries.push(
+      `- ${scope}${markdownText(change.text)} ([${label}](${target}))`,
+    );
+  }
+
+  const sections = [
+    `> Changes from \`${previousCommit.slice(0, 12)}\` through \`${latestCommit.slice(0, 12)}\`.`,
+  ];
+  for (const { heading, entries } of groups.values()) {
+    if (entries.length > 0) sections.push(`## ${heading}\n\n${entries.join("\n")}`);
+  }
+  if (commits.length === 0) {
+    sections.push("## Maintenance\n\nNo changes were found in the configured commit range.");
+  }
+  sections.push(`[Compare all changes](${compareUrl})`);
+  return sections.join("\n\n");
+}
+
+async function readGithubCompareReleaseNotes(
+  repository: GithubRepository,
+  previousCommit: string,
+  latestCommit: string,
+): Promise<CompareReleaseNotes | null> {
+  const cacheKey = JSON.stringify([repository.owner, repository.repository, previousCommit, latestCommit]);
+  const cached = compareCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < COMPARE_TTL_MS) return cached.notes;
+  const inProgress = compareRequests.get(cacheKey);
+  if (inProgress) return inProgress;
+
+  const request = fetchGithubCompareReleaseNotes(repository, previousCommit, latestCommit)
+    .then((notes) => {
+      if (notes) {
+        // Only one platform range is active; do not retain previous private ranges.
+        compareCache.clear();
+        compareCache.set(cacheKey, { at: Date.now(), notes });
+      }
+      return notes;
+    })
+    .finally(() => compareRequests.delete(cacheKey));
+  compareRequests.set(cacheKey, request);
+  return request;
+}
+
+async function fetchGithubCompareReleaseNotes(
+  repository: GithubRepository,
+  previousCommit: string,
+  latestCommit: string,
+): Promise<CompareReleaseNotes | null> {
+  const commits: GithubCompareCommit[] = [];
+  const compareRange = `${encodeURIComponent(previousCommit)}...${encodeURIComponent(latestCommit)}`;
+  const compareUrl = `https://github.com/${repository.owner}/${repository.repository}/compare/${compareRange}`;
+  // Prefer the UI's standard GitHub token. The PAT name remains a compatibility
+  // fallback for older Compose deployments.
+  const token =
+    process.env.RELEASE_NOTES_GITHUB_TOKEN?.trim() ||
+    process.env.GITHUB_TOKEN?.trim() ||
+    process.env.GITHUB_PERSONAL_ACCESS_TOKEN?.trim();
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  try {
+    for (let page = 1; page <= 10; page += 1) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      const apiUrl =
+        `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/` +
+        `${encodeURIComponent(repository.repository)}/compare/${compareRange}` +
+        `?per_page=100&page=${page}`;
+      let response: Response;
+      let payload: GithubComparePage;
+      try {
+        response = await fetch(apiUrl, {
+          signal: controller.signal,
+          headers,
+          cache: "no-store",
+          redirect: "error",
+        });
+        if (!response.ok) return null;
+        payload = (await response.json()) as GithubComparePage;
+      } finally {
+        clearTimeout(timeout);
+      }
+      const pageCommits = Array.isArray(payload.commits) ? payload.commits : [];
+      commits.push(
+        ...pageCommits.filter(
+          (commit): commit is GithubCompareCommit =>
+            typeof commit?.sha === "string" && COMMIT_SHA_PATTERN.test(commit.sha),
+        ),
+      );
+      if (pageCommits.length < 100) break;
+      // Do not publish a silently incomplete comparison at the bounded limit.
+      if (page === 10) return null;
+    }
+  } catch (error) {
+    console.warn("[Release Notes API] GitHub compare request failed:", error);
+    return null;
+  }
+
+  const lastCommit = commits.at(-1);
+  const dateValue = lastCommit?.commit?.committer?.date ?? lastCommit?.commit?.author?.date ?? null;
+  const notes: CompareReleaseNotes = {
+    title: `Changes ${previousCommit.slice(0, 9)} → ${latestCommit.slice(0, 9)}`,
+    date: dateValue ? dateValue.slice(0, 10) : new Date().toISOString().slice(0, 10),
+    body: renderCompareMarkdown(commits, repository, previousCommit, latestCommit, compareUrl),
+    changelogUrl: compareUrl,
+  };
+  return notes;
 }
 
 /** Strip a leading `v` and any pre-release / build suffix (`-dev.14`, `-rc.1`). */
 function baseVersion(value: string): string {
   return value.trim().replace(/^v/i, "").split(/[-+]/)[0];
+}
+
+function readMainIncrementReleaseNotes(requestedVersion: string): MainIncrementReleaseNotes | null {
+  const notesPath = path.join(process.cwd(), "public", "main-increment-release-notes.json");
+  try {
+    if (!fs.existsSync(notesPath)) return null;
+    const parsed = JSON.parse(fs.readFileSync(notesPath, "utf8")) as Partial<MainIncrementReleaseNotes>;
+    if (
+      parsed.version !== requestedVersion ||
+      typeof parsed.title !== "string" ||
+      typeof parsed.date !== "string" ||
+      typeof parsed.body !== "string" ||
+      typeof parsed.changelogUrl !== "string"
+    ) {
+      return null;
+    }
+    return parsed as MainIncrementReleaseNotes;
+  } catch (error) {
+    console.warn("[Release Notes API] Generated main increment notes are invalid:", error);
+    return null;
+  }
 }
 
 function buildReleaseFile(name: string, rawUrl: string, localPath?: string): ReleaseFile | null {
@@ -211,6 +491,7 @@ function parseFrontmatter(raw: string): { title: string | null; date: string | n
 export async function GET(request: NextRequest) {
   const requestedVersionRaw = request.nextUrl.searchParams.get("version") ?? "";
   const requestedVersion = requestedVersionRaw.trim();
+  const useConfiguredCompare = request.nextUrl.searchParams.get("compare") === "platform";
   const empty: ReleaseNotesResponse = {
     requestedVersion,
     matchedVersion: null,
@@ -218,6 +499,7 @@ export async function GET(request: NextRequest) {
     date: null,
     body: null,
     source: "none",
+    changelogUrl: null,
   };
 
   if (!requestedVersion) {
@@ -225,6 +507,44 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    if (useConfiguredCompare) {
+      // Authenticate on every read, before configuration, cache or GitHub work.
+      // This deliberately allows ordinary admitted users, not just admins.
+      await getAuthFromBearerOrSession(request);
+      const configuredCompare = await readConfiguredGithubCompare();
+      const headers = { "Cache-Control": "private, no-store" };
+      if (!configuredCompare) return NextResponse.json(empty, { status: 400, headers });
+      const { repository, previousCommit, latestCommit } = configuredCompare;
+      const compareNotes = await readGithubCompareReleaseNotes(
+        repository,
+        previousCommit,
+        latestCommit,
+      );
+      if (!compareNotes) return NextResponse.json(empty, { status: 502, headers });
+      return NextResponse.json({
+        requestedVersion,
+        matchedVersion: requestedVersion,
+        title: compareNotes.title,
+        date: compareNotes.date,
+        body: compareNotes.body,
+        source: "github-compare",
+        changelogUrl: compareNotes.changelogUrl,
+      } satisfies ReleaseNotesResponse, { headers });
+    }
+
+    const generated = readMainIncrementReleaseNotes(requestedVersion);
+    if (generated) {
+      return NextResponse.json({
+        requestedVersion,
+        matchedVersion: generated.version,
+        title: generated.title,
+        date: generated.date,
+        body: generated.body,
+        source: "generated",
+        changelogUrl: generated.changelogUrl,
+      } satisfies ReleaseNotesResponse);
+    }
+
     const files = await getReleaseFiles();
     const selected = selectRelease(files, baseVersion(requestedVersion));
     if (!selected) {
@@ -248,9 +568,19 @@ export async function GET(request: NextRequest) {
       date,
       body,
       source: content.source,
+      changelogUrl: null,
     };
     return NextResponse.json(result);
   } catch (error) {
+    if (useConfiguredCompare && error instanceof ApiError) {
+      return NextResponse.json(empty, {
+        status: error.statusCode, headers: { "Cache-Control": "private, no-store" },
+      });
+    }
+    if (useConfiguredCompare) {
+      console.error("[Release Notes API] Configured compare unavailable");
+      return NextResponse.json(empty, { status: 500, headers: { "Cache-Control": "private, no-store" } });
+    }
     console.error("[Release Notes API] Error resolving release notes:", error);
     return NextResponse.json(empty, { status: 500 });
   }

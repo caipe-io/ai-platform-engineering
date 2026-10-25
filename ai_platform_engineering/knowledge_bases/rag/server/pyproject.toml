@@ -11,7 +11,7 @@ readme = "README.md"
 requires-python = ">=3.14,<3.15"
 dependencies = [
     # LangChain ecosystem (versions must align with common's langchain-openai)
-    "langchain-core==1.6.0",
+    "langchain-core==1.6.12",
     "langchain-text-splitters==1.1.2",
     "langchain-milvus==0.3.3",
     # Vector DB
@@ -30,7 +30,7 @@ dependencies = [
     "python-dotenv==1.2.2",
     "PyJWT[crypto]==2.15.1",
     "common",
-    "pypdf==6.19.0",
+    "pypdf==6.21.1",
 ]
 
 [project.scripts]

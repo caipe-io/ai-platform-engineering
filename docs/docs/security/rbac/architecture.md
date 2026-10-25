@@ -1214,8 +1214,10 @@ and before Dynamic Agent dispatch, the bot may fetch bounded prior thread contex
 from the Webex Messages API: the root message plus recent replies filtered by the
 same `parentId` and capped by `WEBEX_THREAD_CONTEXT_MAX_MESSAGES` /
 `WEBEX_THREAD_CONTEXT_MAX_CHARS`. The context is sent only to the already selected
-and authorized Dynamic Agent under the user's OBO token; fetch failures do not
-weaken authorization and fall back to sending only the current message. Bot replies
+and authorized Dynamic Agent under the user's OBO token. Parent and reply fetches
+handle HTTP failures independently, retaining any available context. If neither
+fetch provides context, only the current message is sent. Fetch failures do not
+weaken authorization. Bot replies
 include the selected `agent_id` and tell users to continue in the same Webex
 thread. Whether the bot processes follow-up posts still depends on route listen
 mode: `mention`, `message`, or `all`.

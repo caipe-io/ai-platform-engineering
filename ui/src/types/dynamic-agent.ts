@@ -428,8 +428,19 @@ export type ResumeData =
       }>;
     };
 
+/** Read-only catalog projection. Never persisted or used to select a runtime or grant access. */
+export interface AgentPresentation {
+  app: { id: string; name: string; icon?: string };
+  available: boolean;
+}
+
 export interface DynamicAgentConfig {
+  /** Deployment-owned, opt-in model-input projection. Not a permission grant. */
+  app_context_prompt?: { app_ids: string[]; fields: string[]; max_bytes?: number };
   _id: string;
+  readonly presentation?: AgentPresentation;
+  /** Runtime selected by Harness Gateway. Missing legacy values mean Dynamic Agents. */
+  execution_harness_id?: string;
   name: string;
   description?: string;
   system_prompt: string;
@@ -437,7 +448,7 @@ export interface DynamicAgentConfig {
   allowed_remote_agents?: string[];
   remote_agent_timeouts?: Record<string, number>;
   builtin_tools?: BuiltinToolsConfig; // Built-in tools configuration
-  model: ModelConfig; // Required: LLM model configuration
+  model?: ModelConfig; // Required for Deep Agents; other harnesses use their operator profile.
   visibility: VisibilityType;
   shared_with_teams?: string[];
   subagents: SubAgentRef[]; // Other dynamic agents that can be delegated to
@@ -506,6 +517,7 @@ export interface DynamicAgentConfigWithPermissions extends DynamicAgentConfig {
 
 export interface DynamicAgentConfigCreate {
   id: string; // Required: User-friendly slug ID derived from name
+  execution_harness_id?: string;
   name: string;
   description?: string;
   system_prompt: string;
@@ -513,7 +525,7 @@ export interface DynamicAgentConfigCreate {
   allowed_remote_agents?: string[];
   remote_agent_timeouts?: Record<string, number>;
   builtin_tools?: BuiltinToolsConfig;
-  model: ModelConfig; // Required: LLM model configuration
+  model?: ModelConfig; // Required for Deep Agents; other harnesses use their operator profile.
   /** Accepts legacy `'private'` for back-compat; the BFF coerces it to `'team'`. */
   visibility?: LegacyVisibilityType;
   shared_with_teams?: string[];
@@ -534,6 +546,7 @@ export interface DynamicAgentConfigCreate {
 }
 
 export interface DynamicAgentConfigUpdate {
+  execution_harness_id?: string;
   name?: string;
   description?: string;
   system_prompt?: string;

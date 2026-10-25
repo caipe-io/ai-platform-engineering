@@ -269,6 +269,8 @@ export interface UserSettings {
     releaseNotesDismissedAnnouncementIds?: string[];
     /** Ids of Home page widgets the user has enabled, in display order. */
     home_widgets?: string[];
+    /** Private chat folders and grouping; does not change sharing or ownership. */
+    chat_history?: import("@/lib/chat-history-organization").ChatHistoryOrganization;
     /** Schema version used to migrate widget defaults without undoing explicit removals. */
     home_widgets_version?: number;
     /** Which Home page layout the user sees — the new default, or the previous fixed layout. */

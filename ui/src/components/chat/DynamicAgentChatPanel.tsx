@@ -2,10 +2,13 @@
 
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
 import { ContextUsageIndicator } from "@/components/chat/ContextUsageIndicator";
+import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
 import type { TaskItem } from "@/components/shared/timeline";
 import { MarkdownRenderer } from "@/components/shared/timeline";
+import { ReportProblemDialog } from "@/components/ticket/ReportProblemDialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/components/ui/tooltip";
 import { useAgentTimeline } from "@/hooks/useDynamicAgentTimeline";
@@ -14,6 +17,7 @@ import { authErrorToastTitle,type AuthError } from "@/lib/auth-error";
 import { getDeterministicAgentThemeId } from "@/lib/agent-theme";
 import { interruptedAuthReason,interruptedTurnFallbackText } from "@/lib/chat-interrupt";
 import { getConfig } from "@/lib/config";
+import { captureChatFeedbackContext } from "@/lib/chat-feedback";
 import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
 import { ACCEPT_ATTRIBUTE,fileToInputFile,type InputFile,validateFiles } from "@/lib/file-attachments";
 import { getGradientColors } from "@/lib/gradient-themes";
@@ -28,7 +32,7 @@ import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import { buildParticipants,ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
 import type { DynamicAgentConfig,ReasoningEffort } from "@/types/dynamic-agent";
 import { AnimatePresence,motion,useReducedMotion } from "framer-motion";
-import { Activity,AlertTriangle,ArrowDown,ArrowLeft,Check,Copy,Loader2,Paperclip,Pencil,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
+import { Activity,AlertTriangle,ArrowDown,ArrowLeft,Check,Copy,Loader2,Paperclip,Pencil,RotateCcw,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
 import { AgentPicker } from "@/components/ui/agent-picker";
 import { signIn,useSession } from "next-auth/react";
@@ -109,6 +113,15 @@ interface ChatPanelProps {
   onAgentRelinked?: (agentId: string) => void;
   /** Bounded, host-validated metadata attached to each app-assistant turn. */
   clientContext?: Record<string, unknown>;
+  requestOptions?: Record<string, unknown>;
+  composerHeader?: React.ReactNode;
+  placeholder?: string;
+  emptyStateTitle?: string;
+  showAgentHeader?: boolean;
+  /** Show the audit logging notice when configured. Defaults to true. */
+  showAuditNotice?: boolean;
+  /** App-owned copy for the host correction form; omitted for the standard disclaimer. */
+  feedbackPrompt?: { message: string; actionLabel: string; trailingText?: string };
 }
 
 export function ChatPanel({
@@ -121,6 +134,7 @@ export function ChatPanel({
   isLoadingMessages,
   onAgentRelinked,
   clientContext: suppliedClientContext,
+  requestOptions, composerHeader, placeholder, emptyStateTitle, showAgentHeader = true, showAuditNotice = true, feedbackPrompt,
 }: ChatPanelProps) {
   // Derive display values from agent object
   const agentGradient = agent?.ui?.gradient_theme ?? null;
@@ -188,6 +202,9 @@ export function ChatPanel({
   );
 
   const [input, setInput] = useState("");
+  const [feedbackFormOpen, setFeedbackFormOpen] = useState(false);
+  const [feedbackChatContext, setFeedbackChatContext] = useState<string>();
+  const showFeedbackPrompt = Boolean(feedbackPrompt && getConfig("reportProblemEnabled"));
   const [hasRelinkedAgent, setHasRelinkedAgent] = useState(false);
   const relinkRestoresWriteAccess = hasRelinkedAgent && (
     readOnlyReason === 'agent_deleted' || readOnlyReason === 'agent_disabled'
@@ -288,6 +305,11 @@ export function ChatPanel({
     clearConversationInputRequired,
   } = useChatStore();
 
+  useEffect(() => {
+    setFeedbackFormOpen(false);
+    setFeedbackChatContext(undefined);
+  }, [conversationId, activeConversationId]);
+
   // Re-link this deprecated/deleted-agent conversation to the platform default agent,
   // then reload the page so ChatContainer picks up the new participants.
   const handleStartNewConversation = useCallback(async () => {
@@ -355,11 +377,10 @@ export function ChatPanel({
   // Slash command registry
   const slashCommands = useSlashCommands(agentSkills, agent?.allowed_tools, agent?.subagents);
 
-  // Get access token from session (if SSO is enabled and user is authenticated)
-  const ssoEnabled = getConfig('ssoEnabled');
-  const accessToken = ssoEnabled ? session?.accessToken : undefined;
-
   const conversation = getActiveConversation();
+  const conversationTitle = useChatStore((state) => state.conversations
+    .find((item) => item.id === (conversationId ?? state.activeConversationId))
+    ?.title?.trim()) || "New chat";
   const isAutonomousHistory = conversation?.source === "autonomous";
   const autonomousFollowUps = useAutonomousFollowUps(
     isAutonomousHistory && !panelReadOnly ? conversation?.task_id : undefined,
@@ -562,6 +583,11 @@ export function ChatPanel({
   const isThisConversationStreaming = activeConversationId
     ? isConversationStreaming(activeConversationId)
     : false;
+  const externalActivity = useChatStore(state => activeConversationId ? state.externalActivity[activeConversationId] : undefined);
+  const isRemoteResponse = !!externalActivity && !isThisConversationStreaming;
+  useEffect(() => {
+    if (isRemoteResponse) setIsRewindConfirmationOpen(false);
+  }, [isRemoteResponse]);
   const hasAssistantMessageForInterruptCheck = conversation?.messages?.some((message) => message.role === "assistant") ?? false;
 
   // Check if user is near the bottom of the scroll area
@@ -710,7 +736,7 @@ export function ChatPanel({
     // this effect can fire before ChatContainer finishes loading messages
     // from MongoDB, causing lastMsg to be undefined and recovery to fail)
     if (isLoadingMessages) return;
-    if (isThisConversationStreaming) return;
+    if (isThisConversationStreaming || isRemoteResponse) return;
     // Empty chats have no assistant turn to attach restored HITL state to.
     if (!hasAssistantMessageForInterruptCheck) return;
 
@@ -804,7 +830,7 @@ export function ChatPanel({
     };
 
     checkInterruptState();
-  }, [conversationId, agentId, isLoadingMessages, isThisConversationStreaming, hasAssistantMessageForInterruptCheck, isAutonomousHistory]);
+  }, [conversationId, agentId, isLoadingMessages, isThisConversationStreaming, hasAssistantMessageForInterruptCheck, isAutonomousHistory, isRemoteResponse]);
 
   // ═══════════════════════════════════════════════════════════════
   // FILES & TASKS FETCH (for timeline display in latest message)
@@ -1296,7 +1322,7 @@ export function ChatPanel({
     const validMessages = messagesToSend.filter(
       (message) => message.text.trim() || message.files.length > 0,
     );
-    if (validMessages.length === 0 || isThisConversationStreaming) return;
+    if (validMessages.length === 0 || isThisConversationStreaming || isRemoteResponse) return;
     const messageToSend = buildQueuedBatchPrompt(validMessages);
     const filesToSend = validMessages.flatMap((message) => message.files);
 
@@ -1368,7 +1394,6 @@ export function ChatPanel({
     // Create protocol-agnostic adapter
     const adapter = createStreamAdapter({
       protocol: agentProtocol as "custom" | "agui",
-      accessToken,
     });
 
     const loopState: StreamLoopState = {
@@ -1399,6 +1424,7 @@ export function ChatPanel({
           turnId,
           reasoningEffort: requestReasoningEffort,
           clientContext,
+          forwardedProps: requestOptions,
           ...(filesToSend.length > 0 && { files: filesToSend }),
         },
         callbacks,
@@ -1437,7 +1463,7 @@ export function ChatPanel({
       });
       setConversationStreaming(convId, null);
     }
-  }, [isAutonomousHistory, isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, requestReasoningEffort, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
+  }, [isAutonomousHistory, isThisConversationStreaming, activeConversationId, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, requestReasoningEffort, session?.user, showAuthErrorToast, suppliedClientContext, toast, requestOptions, isRemoteResponse]);
 
   const submitMessage = useCallback(
     (messageToSend: string, filesToSend: InputFile[] = []) => submitMessageBatch([{
@@ -1447,6 +1473,29 @@ export function ChatPanel({
     }]),
     [submitMessageBatch],
   );
+
+  // Retry re-sends a prompt as a new turn and keeps the existing history; edit
+  // (below) rewinds the conversation instead.
+  const handleRetry = useCallback((messages: ChatMessageType[]) => {
+    if (isThisConversationStreaming) return;
+    if (messages.some((message) => message.attachments?.some((attachment) => !attachment.data))) {
+      toast(
+        "This prompt has an attachment that is no longer available. Re-upload it in a new message instead.",
+        "error",
+        8000,
+      );
+      return;
+    }
+    void submitMessageBatch(messages.map((message) => ({
+      id: generateId(),
+      text: message.content,
+      files: (message.attachments ?? []).map((attachment) => ({
+        mime_type: attachment.mime_type,
+        name: attachment.name,
+        data: attachment.data!,
+      })),
+    })));
+  }, [isThisConversationStreaming, submitMessageBatch, toast]);
 
   const startEditingMessage = useCallback((message: ChatMessageType) => {
     setIsRewindConfirmationOpen(false);
@@ -1462,7 +1511,7 @@ export function ChatPanel({
   }, [isSavingEdit]);
 
   const requestEditedMessageSave = useCallback(() => {
-    if (!editingMessageId || !activeConversationId || isSavingEdit) return;
+    if (!editingMessageId || !activeConversationId || isSavingEdit || isRemoteResponse) return;
     const targetMessage = getActiveConversation()?.messages.find(
       (message) => message.id === editingMessageId,
     );
@@ -1487,12 +1536,13 @@ export function ChatPanel({
     editDraft,
     editingMessageId,
     getActiveConversation,
+    isRemoteResponse,
     isSavingEdit,
     toast,
   ]);
 
   const saveEditedMessage = useCallback(async () => {
-    if (!editingMessageId || !activeConversationId || isSavingEdit) return;
+    if (!editingMessageId || !activeConversationId || isSavingEdit || isRemoteResponse) return;
     const targetMessage = getActiveConversation()?.messages.find(
       (message) => message.id === editingMessageId,
     );
@@ -1523,6 +1573,12 @@ export function ChatPanel({
     setIsSavingEdit(true);
     try {
       await saveMessagesToServer(activeConversationId);
+      // Activity may have started while the pending message save completed.
+      const current = useChatStore.getState();
+      if (current.externalActivity[activeConversationId] || current.streamingConversations.has(activeConversationId)) {
+        setIsRewindConfirmationOpen(false);
+        return;
+      }
       await apiClient.rewindConversation(activeConversationId, {
         agent_id: agentId,
         message_id: editingMessageId,
@@ -1554,6 +1610,7 @@ export function ChatPanel({
     editDraft,
     editingMessageId,
     getActiveConversation,
+    isRemoteResponse,
     isSavingEdit,
     saveMessagesToServer,
     submitMessage,
@@ -1579,6 +1636,7 @@ export function ChatPanel({
   useEffect(() => {
     if (
       isThisConversationStreaming ||
+      isRemoteResponse ||
       queuedMessages.length === 0 ||
       queueFlushInProgressRef.current ||
       pendingUserInput ||
@@ -1593,6 +1651,7 @@ export function ChatPanel({
     });
   }, [
     isThisConversationStreaming,
+    isRemoteResponse,
     pendingToolApproval,
     pendingUserInput,
     queuedMessages,
@@ -1918,7 +1977,6 @@ export function ChatPanel({
     // Create protocol-agnostic adapter for resume
     const adapter = createStreamAdapter({
       protocol: agentProtocol as "custom" | "agui",
-      accessToken,
     });
 
     // Build client context for system prompt rendering and user_info tool
@@ -1966,7 +2024,7 @@ export function ChatPanel({
       updateMessage(activeConversationId, assistantMsgId, { turnStatus: "interrupted" as TurnStatus });
       setConversationStreaming(activeConversationId, null);
     }
-  }, [pendingUserInput, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
+  }, [pendingUserInput, activeConversationId, agentProtocol, addMessage, updateMessage,
       appendToMessage, addStreamEvent, setConversationStreaming,
       clearStreamEvents, getActiveConversation, buildStreamCallbacks, finalizeStreamLoop,
       suppliedClientContext, requestReasoningEffort]);
@@ -2023,7 +2081,6 @@ export function ChatPanel({
 
     const adapter = createStreamAdapter({
       protocol: agentProtocol as "custom" | "agui",
-      accessToken,
     });
 
     const clientContext: Record<string, unknown> = {
@@ -2086,7 +2143,7 @@ export function ChatPanel({
       });
       setConversationStreaming(activeConversationId, null);
     }
-  }, [pendingToolApproval, activeConversationId, accessToken, agentProtocol, addMessage, updateMessage,
+  }, [pendingToolApproval, activeConversationId, agentProtocol, addMessage, updateMessage,
       addStreamEvent, setConversationStreaming, clearStreamEvents, getActiveConversation,
       buildStreamCallbacks, finalizeStreamLoop, suppliedClientContext, requestReasoningEffort]);
 
@@ -2232,6 +2289,33 @@ export function ChatPanel({
 
   return (
     <div className="h-full w-full flex flex-col bg-background relative">
+      {showAgentHeader && <div
+        className="flex min-h-14 shrink-0 items-center gap-3 bg-gradient-to-r from-primary/[0.06] via-background/70 to-background px-4 py-2"
+        aria-label={`Chat: ${conversationTitle}`}
+      >
+        <AgentAvatar
+          agent={agent}
+          agentId={agentId}
+          rounded="rounded-lg"
+          size="h-9 w-9"
+          iconSize="h-4 w-4"
+          isLoading={!agent && !readOnly}
+        />
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-sm font-semibold" title={conversationTitle}>
+            {conversationTitle}
+          </h1>
+          <p className="truncate text-xs text-muted-foreground" title={agentName || agentId}>
+            {agentName || agentId}
+          </p>
+        </div>
+        {agent ? (
+          <AgentHarnessBadge harnessId={agent.execution_harness_id} presentation={agent.presentation} />
+        ) : (
+          <Skeleton className="h-6 w-24 rounded-full" />
+        )}
+      </div>}
+
       {/* Messages Area */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
         <ScrollArea className="flex-1" viewportRef={scrollViewportRef}>
@@ -2267,7 +2351,8 @@ export function ChatPanel({
                       icon={Sparkles}
                       useGlobalTheme
                     />
-                    <h2 className="text-2xl font-bold mb-4">Welcome to {getConfig('appName')}</h2>
+                    <h2 className="text-2xl font-bold mb-4">{emptyStateTitle ?? `Welcome to ${getConfig('appName')}`}</h2>
+                    {!emptyStateTitle && <>
                     <p className="text-muted-foreground mb-3">
                       Start your conversation with
                     </p>
@@ -2284,6 +2369,7 @@ export function ChatPanel({
                         {agentName || "your agent"}
                       </span>
                     </div>
+                    </>}
                   </>
                 )}
               </div>
@@ -2303,7 +2389,8 @@ export function ChatPanel({
 
                     {allMessages.map((msg, index, arr) => {
                       const isLastMessage = index === arr.length - 1;
-                      const isAssistantStreaming = isThisConversationStreaming && msg.role === "assistant" && isLastMessage;
+                      const remoteMessage = isRemoteResponse && !msg.isFinal && (!externalActivity?.turnId || externalActivity.turnId === msg.turnId);
+                      const isAssistantStreaming = (isThisConversationStreaming || remoteMessage) && msg.role === "assistant" && isLastMessage;
                       const messageOwner = msg.senderEmail ?? conversation?.owner_id;
                       const isOwnMessage = !messageOwner || !session?.user?.email ||
                         messageOwner === session.user.email;
@@ -2318,8 +2405,35 @@ export function ChatPanel({
                         !panelReadOnly &&
                         !isAutonomousHistory &&
                         !isThisConversationStreaming &&
+                        !isRemoteResponse &&
                         !pendingUserInput &&
                         !pendingToolApproval;
+
+                      // Queued user bubbles share one turnId and produce one response.
+                      // Regenerate the whole batch; older messages may lack that binding.
+                      const canRetryMessage = !panelReadOnly &&
+                        !isAutonomousHistory &&
+                        !isThisConversationStreaming &&
+                        !isRemoteResponse &&
+                        !pendingUserInput &&
+                        !pendingToolApproval;
+                      const getRetryMessages = (): ChatMessageType[] => {
+                        if (msg.role === "user") return [msg];
+                        if (msg.turnId) {
+                          const batch = arr.slice(0, index).filter(
+                            (message) => message.role === "user" && message.turnId === msg.turnId,
+                          );
+                          if (batch.length > 0) return batch;
+                        }
+                        for (let i = index - 1; i >= 0; i--) {
+                          if (arr[i].role === "user") return [arr[i]];
+                        }
+                        return [];
+                      };
+                      const retryMessages = canRetryMessage ? getRetryMessages() : [];
+                      const hasRetryPrompt = retryMessages.some(
+                        (message) => message.content.trim() || message.attachments?.length,
+                      );
 
                       // Check if this is the last assistant message (latest answer)
                       const isLastAssistantMessage = msg.role === "assistant" &&
@@ -2329,7 +2443,7 @@ export function ChatPanel({
                       // - For completed messages: use msg.streamEvents (persisted with the message)
                       // - For streaming (latest message): use conversation.streamEvents (live buffer)
                       // - Fall back to timestamp-based filtering if msg.streamEvents is not available
-                      const isStreaming = isLastAssistantMessage && isThisConversationStreaming;
+                      const isStreaming = isLastAssistantMessage && isAssistantStreaming;
                       let turnEvents: StreamEvent[];
                       
                       if (msg.role !== "assistant") {
@@ -2353,7 +2467,7 @@ export function ChatPanel({
                       return (
                         <ChatMessage
                           key={msg.id}
-                          message={msg}
+                          message={remoteMessage ? { ...msg, isInterrupted: false } : msg}
                           onCopy={handleCopy}
                           canEdit={canEditMessage}
                           isEditing={editingMessageId === msg.id}
@@ -2363,6 +2477,7 @@ export function ChatPanel({
                           onEditDraftChange={setEditDraft}
                           onCancelEdit={cancelEditingMessage}
                           onSaveEdit={requestEditedMessageSave}
+                          onRetry={hasRetryPrompt ? () => handleRetry(retryMessages) : undefined}
                           isCopied={copiedId === msg.id}
                           isStreaming={isAssistantStreaming}
                           isLatestAnswer={isLastAssistantMessage}
@@ -2423,7 +2538,6 @@ export function ChatPanel({
                     if (pendingUserInput.isSSE && pendingUserInput.agentId && activeConversationId) {
                       const dismissAdapter = createStreamAdapter({
                         protocol: agentProtocol as "custom" | "agui",
-                        accessToken,
                       });
                       // Fire-and-forget: resume with rejection message
                       const dismissalPayload = JSON.stringify({ type: "form_input", dismissed: true });
@@ -2732,7 +2846,7 @@ export function ChatPanel({
 
             <div
               className={cn(
-                "relative flex flex-col gap-2 bg-card rounded-xl border p-3 transition-all duration-200",
+                "relative flex flex-col gap-1 rounded-3xl border bg-card px-3 py-2.5 shadow-sm transition-all duration-200 focus-within:border-foreground/30",
                 isDraggingFiles
                   ? "border-primary ring-2 ring-primary/40"
                   : "border-border",
@@ -2745,13 +2859,13 @@ export function ChatPanel({
                 <div
                   key={`max-effort-armor-${maxEffortAnimationKey}`}
                   aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 z-10 overflow-hidden rounded-xl"
+                  className="pointer-events-none absolute inset-0 z-10 overflow-hidden rounded-3xl"
                   data-testid="max-effort-animation"
                 >
                   {!prefersReducedMotion && (
                     <>
                       <motion.span
-                        className="absolute inset-y-1 left-0 w-[calc(50%+4rem)] rounded-r-xl border-y border-l border-white/20"
+                        className="absolute inset-y-1 left-0 w-[calc(50%+4rem)] rounded-r-3xl border-y border-l border-white/20"
                         style={{
                           background: `linear-gradient(115deg, ${maxEffortTheme.from}, ${maxEffortTheme.to})`,
                           boxShadow: `inset 0 0 18px rgb(255 255 255 / 0.24), 0 0 14px ${maxEffortTheme.to}`,
@@ -2764,7 +2878,7 @@ export function ChatPanel({
                         transition={{ duration: 2.4, times: [0, 0.2, 0.4, 0.78, 1], ease: "easeInOut" }}
                       />
                       <motion.span
-                        className="absolute inset-y-1 right-0 w-[calc(50%+4rem)] rounded-l-xl border-y border-r border-white/20"
+                        className="absolute inset-y-1 right-0 w-[calc(50%+4rem)] rounded-l-3xl border-y border-r border-white/20"
                         style={{
                           background: `linear-gradient(245deg, ${maxEffortTheme.from}, ${maxEffortTheme.to})`,
                           boxShadow: `inset 0 0 18px rgb(255 255 255 / 0.24), 0 0 14px ${maxEffortTheme.to}`,
@@ -2809,7 +2923,7 @@ export function ChatPanel({
                     </>
                   )}
                   <motion.span
-                    className="absolute inset-0 rounded-xl border-2"
+                    className="absolute inset-0 rounded-3xl border-2"
                     style={{ borderColor: maxEffortTheme.to }}
                     initial={{ opacity: 0 }}
                     animate={{ opacity: prefersReducedMotion ? [0, 0.75, 0] : [0, 1, 0.55, 0] }}
@@ -2834,9 +2948,10 @@ export function ChatPanel({
               />
 
               {/* Staged attachment previews (above the input row). */}
+              {composerHeader}
               <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
 
-              <div className="relative z-20 flex items-end gap-3">
+              <div className="relative z-20 flex items-center">
                 <AnimatePresence initial={false} mode="wait">
                   {effortStatus && (
                     <motion.span
@@ -2863,79 +2978,85 @@ export function ChatPanel({
                 <TextareaAutosize
                   ref={inputRef}
                   aria-label="Message"
+                  disabled={isRemoteResponse}
                   value={input}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
                   placeholder={
-                    isThisConversationStreaming
+                    isRemoteResponse ? "Response is continuing in another view…" : isThisConversationStreaming
                       ? `Type to queue another message${queuedMessages.length > 0 ? ` (${queuedMessages.length} queued)` : ""}, or Cmd+Enter to send now...`
-                      : `Ask anything, or type / to see commands, skills, and agents...`
+                      : placeholder ?? `Ask anything, or type / to see commands, skills, and agents...`
                   }
-                  className="flex-1 bg-transparent resize-none outline-none px-3 py-2.5 text-sm"
+                  className="min-h-10 w-full resize-none bg-transparent px-1.5 py-2 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground"
                   minRows={1}
                   maxRows={10}
                 />
-                <div className="relative flex shrink-0 items-center gap-2 pt-5">
-                  <span
-                    className="absolute right-0 top-0 flex max-w-56 items-center gap-1 whitespace-nowrap text-[10px] font-medium text-muted-foreground max-sm:max-w-40"
-                    title={`${agent?.model?.id || "Model"} · ${reasoningEffort}`}
-                    data-testid="composer-model-effort"
-                  >
-                    <span className="truncate">{agent?.model?.id || "Model"}</span>
-                    <span aria-hidden="true">·</span>
-                    <span
-                      className={cn("text-foreground/80", reasoningEffort === "max" && "font-bold")}
-                      style={reasoningEffort === "max"
-                        ? {
-                            background: `linear-gradient(90deg, ${maxEffortTheme.from}, ${maxEffortTheme.to})`,
-                            backgroundClip: "text",
-                            color: "transparent",
-                            WebkitBackgroundClip: "text",
-                            WebkitTextFillColor: "transparent",
-                          }
-                        : undefined}
-                    >
-                      {reasoningEffort}
-                    </span>
-                  </span>
+              </div>
 
-                  {/* Attach files */}
-                  <div className="shrink-0">
+              <div className="relative z-20 flex min-h-9 items-center justify-end gap-2">
+                <span
+                  className="flex min-w-0 max-w-56 items-center gap-1 whitespace-nowrap text-xs text-muted-foreground max-sm:max-w-40"
+                  title={`${agent?.model?.id || "Model"} · ${reasoningEffort}`}
+                  data-testid="composer-model-effort"
+                >
+                  <span className="truncate">{agent?.model?.id || "Model"}</span>
+                  <span aria-hidden="true">·</span>
+                  <span
+                    className={cn("text-foreground/80", reasoningEffort === "max" && "font-bold")}
+                    style={reasoningEffort === "max"
+                      ? {
+                          background: `linear-gradient(90deg, ${maxEffortTheme.from}, ${maxEffortTheme.to})`,
+                          backgroundClip: "text",
+                          color: "transparent",
+                          WebkitBackgroundClip: "text",
+                          WebkitTextFillColor: "transparent",
+                        }
+                      : undefined}
+                  >
+                    {reasoningEffort}
+                  </span>
+                </span>
+
+                {/* Attach files */}
+                <div className="shrink-0">
+                  <Button
+                    size="icon"
+                    onClick={() => fileInputRef.current?.click()}
+                    variant="ghost"
+                    className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
+                    title="Attach files"
+                    aria-label="Attach files"
+                  >
+                    <Paperclip className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                {/* Send/Stop button - toggles based on streaming state */}
+                <div className="shrink-0">
+                  {isThisConversationStreaming ? (
                     <Button
                       size="icon"
-                      onClick={() => fileInputRef.current?.click()}
-                      variant="ghost"
-                      title="Attach files"
-                      aria-label="Attach files"
+                      onClick={handleStop}
+                      variant="destructive"
+                      className="h-8 w-8 rounded-full"
+                      title="Stop generating"
+                      aria-label="Stop generating"
                     >
-                      <Paperclip className="h-4 w-4" />
+                      <Square className="h-4 w-4" />
                     </Button>
-                  </div>
-
-                  {/* Send/Stop button - toggles based on streaming state */}
-                  <div className="shrink-0">
-                    {isThisConversationStreaming ? (
-                      <Button
-                        size="icon"
-                        onClick={handleStop}
-                        variant="destructive"
-                        title="Stop generating"
-                      >
-                        <Square className="h-4 w-4" />
-                      </Button>
-                    ) : (
-                      <Button
-                        size="icon"
-                        onClick={() => handleSubmit(false)}
-                        disabled={!input.trim() && attachments.length === 0}
-                        variant="default"
-                        title="Send message"
-                      >
-                        <Send className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
+                  ) : (
+                    <Button
+                      size="icon"
+                      onClick={() => handleSubmit(false)}
+                      disabled={isRemoteResponse || (!input.trim() && attachments.length === 0)}
+                      className="h-8 w-8 rounded-full border-0 bg-blue-600 text-white hover:bg-blue-700 disabled:bg-muted disabled:text-muted-foreground"
+                      title="Send message"
+                      aria-label="Send message"
+                    >
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>
@@ -2943,8 +3064,21 @@ export function ChatPanel({
 
           <div className="relative flex min-h-6 items-center justify-center">
             <p className="px-28 text-center text-xs text-muted-foreground max-sm:px-0 max-sm:pr-24">
-              {getConfig('appName')} can make mistakes. Verify important info.
-              {getConfig('auditLogsEnabled') && ' · Conversations are logged for audit.'}
+              {showFeedbackPrompt && feedbackPrompt ? <>
+                {feedbackPrompt.message && <>{feedbackPrompt.message}{" "}</>}
+                <button type="button" className="underline underline-offset-2 hover:text-foreground focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => {
+                    const current = conversation?.id === (conversationId ?? activeConversationId) ? conversation : undefined;
+                    setFeedbackChatContext(current
+                      ? captureChatFeedbackContext(current, window.location.origin, isThisConversationStreaming || isRemoteResponse)
+                      : undefined);
+                    setFeedbackFormOpen(true);
+                  }}>
+                  {feedbackPrompt.actionLabel}
+                </button>
+                {feedbackPrompt.trailingText && <> {feedbackPrompt.trailingText}</>}
+              </> : <>{getConfig('appName')} can make mistakes. Verify important info.</>}
+              {showAuditNotice && getConfig('auditLogsEnabled') && ' · Conversations are logged for audit.'}
             </p>
             {showContextUsage && contextUsage && (
               <div className="absolute right-0">
@@ -2956,6 +3090,9 @@ export function ChatPanel({
       </div>
       )}
 
+      {showFeedbackPrompt && feedbackFormOpen && (
+        <ReportProblemDialog open={feedbackFormOpen} onOpenChange={setFeedbackFormOpen} chatContext={feedbackChatContext} />
+      )}
       <RewindConfirmationDialog
         open={isRewindConfirmationOpen}
         messageCount={rewindMessageCount}
@@ -3019,6 +3156,8 @@ interface ChatMessageProps {
   onEditDraftChange?: (value: string) => void;
   onCancelEdit?: () => void;
   onSaveEdit?: () => void;
+  /** Re-send the prompt behind this message as a new turn. */
+  onRetry?: () => void;
   isCopied: boolean;
   isStreaming?: boolean;
   isLatestAnswer?: boolean;
@@ -3060,6 +3199,7 @@ const ChatMessage = React.memo(function ChatMessage({
   onEditDraftChange,
   onCancelEdit,
   onSaveEdit,
+  onRetry,
   isCopied,
   isStreaming = false,
   isLatestAnswer = false,
@@ -3229,7 +3369,7 @@ const ChatMessage = React.memo(function ChatMessage({
                   </Button>
                   <Button
                     size="sm"
-                    disabled={isSavingEdit || (!editDraft.trim() && !message.attachments?.length)}
+                    disabled={!canEdit || isSavingEdit || (!editDraft.trim() && !message.attachments?.length)}
                     onClick={onSaveEdit}
                   >
                     {isSavingEdit ? (
@@ -3272,7 +3412,27 @@ const ChatMessage = React.memo(function ChatMessage({
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>
-                        Edit message and rewind conversation
+                        Edit message and rewind conversation (removes later messages)
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+                {onRetry && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
+                          onClick={onRetry}
+                          aria-label="Retry this prompt"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Retry this prompt: send it again and keep the history
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
@@ -3329,6 +3489,17 @@ const ChatMessage = React.memo(function ChatMessage({
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium">Response was interrupted</p>
                     </div>
+                    {onRetry && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={onRetry}
+                        className="shrink-0 gap-1.5 border-amber-500/30 text-amber-400 hover:bg-amber-500/20 hover:text-amber-300"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        Retry
+                      </Button>
+                    )}
                   </>
                 )}
               </motion.div>
@@ -3369,6 +3540,26 @@ const ChatMessage = React.memo(function ChatMessage({
                 animate={{ opacity: isHovered ? 1 : 0.8 }}
                 className="flex items-center gap-1 mt-2"
               >
+                {onRetry && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
+                          onClick={onRetry}
+                          aria-label="Regenerate response"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Regenerate response: ask again and keep the history
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import httpx
 import pytest
 
 from ai_platform_engineering.integrations.webex_bot.app import WebexMessageResult
@@ -20,11 +21,13 @@ from ai_platform_engineering.integrations.webex_bot.a2a_client import (
 from ai_platform_engineering.integrations.webex_bot.utils.thread_ownership import ThreadOwnerCache
 from ai_platform_engineering.integrations.webex_bot.webex_responder import (
     WebexResponder,
+    WebexRestApi,
     WebexThreadedStreamDispatcher,
     _BOT_REPLY_MARKER,
     _agent_reply_markdown,
     _format_thread_context,
     _is_webex_bot_reply,
+    _message_with_thread_context,
 )
 
 
@@ -953,6 +956,98 @@ def test_threaded_stream_dispatcher_includes_bounded_thread_context_in_agent_pro
         "what changed?"
     )
     assert "prior bot answer" not in sse.calls[0]["message"]
+
+
+@pytest.mark.parametrize("parent_status", [404, None], ids=["not-found", "timeout"])
+def test_thread_context_uses_replies_when_parent_fetch_fails(
+    parent_status: int | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("WEBEX_THREAD_CONTEXT_ENABLED", "true")
+    monkeypatch.setenv("WEBEX_THREAD_CONTEXT_MAX_MESSAGES", "10")
+    requests: list[httpx.Request] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/messages/root-message-id":
+            if parent_status is None:
+                raise httpx.ReadTimeout("parent fetch timed out", request=request)
+            return httpx.Response(parent_status)
+        assert request.url.path == "/messages"
+        assert dict(request.url.params) == {
+            "roomId": "room-id",
+            "parentId": "root-message-id",
+            "beforeMessage": "current-message-id",
+            "max": "10",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {"id": "current-message-id", "text": "create an issue"},
+                    {"id": "newer-reply-id", "text": "Add a settings tab", "personEmail": "bob@example.com"},
+                    {"id": "bot-reply-id", "markdown": f"prior bot answer{_BOT_REPLY_MARKER}"},
+                    {"id": "older-reply-id", "text": "Remove the duplicate button", "personEmail": "alice@example.com"},
+                ]
+            },
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handle_request)) as client:
+        api = WebexRestApi(access_token="example-token", base_url="https://webex.example.test", http_client=client)
+        prompt = _message_with_thread_context(
+            api,
+            room_id="room-id",
+            parent_id="root-message-id",
+            message_id="current-message-id",
+            text="create an issue",
+        )
+
+    assert len(requests) == 2
+    assert prompt == (
+        "Webex thread context (oldest to newest, excluding the current request):\n"
+        "- alice@example.com: Remove the duplicate button\n"
+        "- bob@example.com: Add a settings tab\n\n"
+        "Current Webex request:\n"
+        "create an issue"
+    )
+
+
+@pytest.mark.parametrize("parent_status", [200, 404], ids=["parent-retained", "no-history"])
+def test_thread_context_preserves_available_context_when_replies_fetch_fails(
+    parent_status: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("WEBEX_THREAD_CONTEXT_ENABLED", "true")
+    requests: list[httpx.Request] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/messages/root-message-id":
+            return httpx.Response(
+                parent_status,
+                json={"id": "root-message-id", "text": "original incident details", "personEmail": "alice@example.com"},
+            )
+        assert request.url.path == "/messages"
+        return httpx.Response(503)
+
+    with httpx.Client(transport=httpx.MockTransport(handle_request)) as client:
+        api = WebexRestApi(access_token="example-token", base_url="https://webex.example.test", http_client=client)
+        prompt = _message_with_thread_context(
+            api,
+            room_id="room-id",
+            parent_id="root-message-id",
+            message_id="current-message-id",
+            text="continue investigating",
+        )
+
+    assert len(requests) == 2
+    if parent_status == 200:
+        assert prompt == (
+            "Webex thread context (oldest to newest, excluding the current request):\n"
+            "- alice@example.com: original incident details\n\n"
+            "Current Webex request:\n"
+            "continue investigating"
+        )
+    else:
+        assert prompt == "continue investigating"
 
 
 def test_thread_context_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:

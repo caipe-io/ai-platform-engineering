@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter,useSearchParams } from "next/navigation";
-import { use,useEffect,useMemo,useState } from "react";
+import { use,useEffect,useMemo,useRef,useState } from "react";
 
 import { AuthGuard } from "@/components/auth-guard";
 import {
@@ -95,9 +95,12 @@ export default function SkillWorkspacePage({
   const [ready, setReady] = useState(isNew);
   const [notFound, setNotFound] = useState(false);
 
-  // Lazy-load the store if empty.
+  // Lazy-load the store if empty. Attempt once: catalog-only skills never
+  // appear in the store, so it can legitimately stay empty after loading.
+  const loadAttempted = useRef(false);
   useEffect(() => {
-    if (!isNew && configs.length === 0 && !isLoading) {
+    if (!isNew && configs.length === 0 && !isLoading && !loadAttempted.current) {
+      loadAttempted.current = true;
       loadSkills();
     }
   }, [isNew, configs.length, isLoading, loadSkills]);

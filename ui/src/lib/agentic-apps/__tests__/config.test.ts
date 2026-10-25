@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadConfiguredAgenticApps } from "../config";
+import { getAgenticAppRoutingSnapshot, loadConfiguredAgenticApps } from "../config";
 
 describe("External Apps deployment config", () => {
   const previousEnabled = process.env.AGENTIC_APPS_INSTALL_ENABLED;
@@ -16,6 +16,17 @@ describe("External Apps deployment config", () => {
   afterAll(() => {
     if (previousEnabled === undefined) delete process.env.AGENTIC_APPS_INSTALL_ENABLED;
     else process.env.AGENTIC_APPS_INSTALL_ENABLED = previousEnabled;
+  });
+
+  it("keeps the validated routing snapshot after a failed refresh", () => {
+    const previous = process.env.AGENTIC_APPS_CONFIG_PATH;
+    try { withConfig(validConfig(), path => {
+      process.env.AGENTIC_APPS_CONFIG_PATH = path;
+      const apps = loadConfiguredAgenticApps();
+      writeFileSync(path, "invalid: catalog");
+      expect(() => loadConfiguredAgenticApps()).toThrow();
+      expect(getAgenticAppRoutingSnapshot()).toEqual(apps);
+    }); } finally { if (previous === undefined) delete process.env.AGENTIC_APPS_CONFIG_PATH; else process.env.AGENTIC_APPS_CONFIG_PATH = previous; }
   });
 
   it("loads and joins generic packages and installations", () => {

@@ -16,12 +16,15 @@ import { render, screen } from '@testing-library/react'
 // Mocks — must be before imports
 // ============================================================================
 
+jest.mock("@/lib/agentic-apps/use-chat-session-recovery", () => ({ useChatSessionRecovery: jest.fn() }));
+
 let mockStreamingConversations = new Map<string, unknown>()
 
 jest.mock('@/store/chat-store', () => {
   const store = (selector?: (s: unknown) => unknown) => {
     const state = {
       streamingConversations: mockStreamingConversations,
+      externalActivity: {},
     }
     return selector ? selector(state) : state
   }

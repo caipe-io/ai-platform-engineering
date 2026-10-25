@@ -26,12 +26,7 @@ const CANCEL_URL = `${STREAM_BASE}/cancel`;
 // ═══════════════════════════════════════════════════════════════
 
 export class CustomStreamAdapter implements StreamAdapter {
-  private accessToken?: string;
   private abortController: AbortController | null = null;
-
-  constructor(accessToken?: string) {
-    this.accessToken = accessToken;
-  }
 
   abort(): void {
     if (this.abortController) {
@@ -45,12 +40,10 @@ export class CustomStreamAdapter implements StreamAdapter {
 
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (this.accessToken) {
-        headers["Authorization"] = `Bearer ${this.accessToken}`;
-      }
 
       const response = await fetch(CANCEL_URL, {
         method: "POST",
+        credentials: "same-origin",
         headers,
         body: JSON.stringify({
           conversation_id: conversationId,
@@ -113,13 +106,11 @@ export class CustomStreamAdapter implements StreamAdapter {
       "Content-Type": "application/json",
       "Accept": "text/event-stream",
     };
-    if (this.accessToken) {
-      headers["Authorization"] = `Bearer ${this.accessToken}`;
-    }
 
     try {
       const response = await fetch(url, {
         method: "POST",
+        credentials: "same-origin",
         headers,
         body,
         signal: this.abortController.signal,

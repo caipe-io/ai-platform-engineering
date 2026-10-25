@@ -29,6 +29,7 @@ from deepagents.middleware.skills import SkillsMiddleware
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
 from jinja2 import ChainableUndefined, TemplateSyntaxError
 from jinja2.sandbox import ImmutableSandboxedEnvironment, SecurityError
+from langchain.agents.middleware.pii import PIIMiddleware
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.mongodb.saver import MongoDBSaver
 from langgraph.store.memory import InMemoryStore
@@ -49,6 +50,7 @@ from dynamic_agents.models import (
     SubAgentRef,
     UserContext,
 )
+from dynamic_agents.services.app_context_prompt import AppContextPromptMiddleware
 from dynamic_agents.services.attachment_store import (
     AttachmentStore,
     build_attachment_store,
@@ -90,6 +92,7 @@ from dynamic_agents.services.model_capabilities import (
 )
 from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
+from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryMiddleware
 from dynamic_agents.services.tracing import TracingManager
 
 if TYPE_CHECKING:
@@ -140,7 +143,7 @@ def _with_general_purpose_tool_result_recovery(
         "tools": tools,
         "model": model,
         "interrupt_on": interrupt_on,
-        "middleware": [ToolResultInvariantMiddleware()],
+        "middleware": [ToolCallRecoveryMiddleware(), ToolResultInvariantMiddleware()],
     }
     configured_subagents = [
         subagent
@@ -1164,6 +1167,12 @@ class AgentRuntime:
             attachment_store=self._get_attachment_store(),
             enable_prompt_cache=self._prompt_cache_enabled(),
         )
+        # PII middleware checks graph state before this request-only projection is added.
+        # Omit the projection when PII handling is configured so it cannot bypass that policy.
+        if self.config.app_context_prompt is not None and not any(
+            isinstance(middleware, PIIMiddleware) for middleware in middleware_stack
+        ):
+            middleware_stack.insert(0, AppContextPromptMiddleware())
         # Prepend skills middleware so it runs before other middleware
         if skills_middleware:
             middleware_stack = [skills_middleware] + middleware_stack

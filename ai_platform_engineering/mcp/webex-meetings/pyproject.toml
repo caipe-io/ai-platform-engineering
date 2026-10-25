@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [tool.uv]
-constraint-dependencies = ["uv==0.12.6"]
+constraint-dependencies = ["uv==0.13.4"]
 
 [dependency-groups]
 dev = [

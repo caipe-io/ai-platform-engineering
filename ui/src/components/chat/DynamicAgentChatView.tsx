@@ -83,7 +83,7 @@ export function ChatView({
         </div>
       </ResizablePanel>
 
-      <ResizableHandle />
+      <ResizableHandle className="bg-transparent hover:bg-primary/40 focus-visible:bg-primary/40" />
 
       {/* Context Panel - Dynamic Agent variant */}
       <ResizablePanel

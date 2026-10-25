@@ -11,11 +11,19 @@ interface ApiEnvelope<T> {
 export interface ResolvedChatAgent {
   id: string;
   name: string;
-  source: "user-default" | "platform-default" | "first-available";
+  source: "configured" | "user-default" | "platform-default" | "first-available";
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, { cache: "no-store" });
+export interface ResolveUsableChatAgentOptions {
+  signal?: AbortSignal;
+  /** Select this exact agent from the authorization-filtered available list. */
+  requestedAgentId?: string;
+  /** Do not trust a default when the available-agent lookup fails. */
+  requireAvailableAgent?: boolean;
+}
+
+async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, { cache: "no-store", signal });
   if (!response.ok) {
     throw new Error(`Failed to load ${url}: ${response.status}`);
   }
@@ -32,13 +40,13 @@ export interface ChatDefaultAgentIds {
 }
 
 /** Load personal and platform Web defaults in one preferences request. */
-export async function fetchChatDefaultAgentIds(): Promise<ChatDefaultAgentIds> {
+export async function fetchChatDefaultAgentIds(signal?: AbortSignal): Promise<ChatDefaultAgentIds> {
   const payload = await fetchJson<
     ApiEnvelope<{
       web_default_agent_id?: unknown;
       platform_default_agent_id?: unknown;
     }>
-  >("/api/user/preferences");
+  >("/api/user/preferences", signal);
   const data = payload.success ? payload.data : null;
   return {
     userDefaultAgentId: normalizedAgentId(data?.web_default_agent_id),
@@ -65,9 +73,10 @@ export async function updateWebDefaultAgentId(agentId: string): Promise<void> {
   }
 }
 
-async function fetchAvailableAgents(): Promise<DynamicAgentConfig[]> {
+async function fetchAvailableAgents(signal?: AbortSignal): Promise<DynamicAgentConfig[]> {
   const payload = await fetchJson<ApiEnvelope<DynamicAgentConfig[]>>(
     "/api/dynamic-agents/available",
+    signal,
   );
   if (!payload.success || !Array.isArray(payload.data)) {
     throw new Error(payload.error || "Failed to load available agents");
@@ -75,20 +84,42 @@ async function fetchAvailableAgents(): Promise<DynamicAgentConfig[]> {
   return payload.data.filter((agent) => agent.enabled);
 }
 
-export async function resolveUsableChatAgent(): Promise<ResolvedChatAgent> {
+export async function resolveUsableChatAgent(
+  options: ResolveUsableChatAgentOptions = {},
+): Promise<ResolvedChatAgent> {
+  options.signal?.throwIfAborted();
+  const requestedAgentId = normalizedAgentId(options.requestedAgentId);
   const [defaultsResult, agentsResult] = await Promise.allSettled([
-    fetchChatDefaultAgentIds(),
-    fetchAvailableAgents(),
+    requestedAgentId ? Promise.resolve(null) : fetchChatDefaultAgentIds(options.signal),
+    fetchAvailableAgents(options.signal),
   ]);
+  // Cancellation is not an availability failure: never fall back to a default
+  // or return a completed response for an overlay that no longer owns the lookup.
+  options.signal?.throwIfAborted();
 
   const defaults =
-    defaultsResult.status === "fulfilled"
+    defaultsResult.status === "fulfilled" && defaultsResult.value
       ? defaultsResult.value
       : { userDefaultAgentId: null, platformDefaultAgentId: null };
   const userDefaultAgentId = defaults.userDefaultAgentId;
   const defaultAgentId = defaults.platformDefaultAgentId;
   const availableAgents =
     agentsResult.status === "fulfilled" ? agentsResult.value : [];
+
+  if (requestedAgentId) {
+    if (agentsResult.status === "rejected") throw agentsResult.reason;
+    const configuredAgent = availableAgents.find((agent) => agent._id === requestedAgentId);
+    if (configuredAgent) {
+      return {
+        id: configuredAgent._id,
+        name: configuredAgent.name,
+        source: "configured",
+      };
+    }
+    throw new Error(
+      `Configured agent "${requestedAgentId}" is unavailable or not authorized for this user.`,
+    );
+  }
 
   // Highest priority: the user's own Web default, but only if they still have
   // access to it (it's in the available list). A stale/revoked choice falls
@@ -114,7 +145,7 @@ export async function resolveUsableChatAgent(): Promise<ResolvedChatAgent> {
       };
     }
 
-    if (agentsResult.status === "rejected") {
+    if (agentsResult.status === "rejected" && !options.requireAvailableAgent) {
       return {
         id: defaultAgentId,
         name: "Default agent",

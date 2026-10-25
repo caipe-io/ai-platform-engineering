@@ -25,7 +25,7 @@ dev = [
 
 [tool.uv]
 package = false
-constraint-dependencies = ["uv==0.12.6"]
+constraint-dependencies = ["uv==0.13.4"]
 
 [tool.uv.sources]
 mcp-agent-auth = { path = "../common/mcp-auth", editable = true }

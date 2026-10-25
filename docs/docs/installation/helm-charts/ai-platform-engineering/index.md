@@ -201,6 +201,11 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | caipe-ui.volumes[1].configMap.name | string | `"skills-live-skills"` |  |
 | caipe-ui.volumes[1].configMap.optional | bool | `true` |  |
 | caipe-ui.volumes[1].name | string | `"skills-live-skills"` |  |
+| caipeDatabase.backend | string | `"mongodb"` | Shared URI backend: mongodb or documentdb (AWS DocumentDB). See docs/docs/installation/persistence.md. |
+| caipeDatabase.documentdb.host | string | `""` | DocumentDB hostname used by UI health checks. |
+| caipeDatabase.documentdb.remoteKey | string | `""` | Secret-store key containing the DocumentDB MONGODB_URI property. |
+| caipeDatabase.manageExternalSecret | bool | `false` | Let the parent chart manage the shared UI database ExternalSecret. |
+| caipeDatabase.secretName | string | `""` | Target Secret name; must match caipe-ui.existingSecret. |
 | dynamic-agents.agentContext.existingSecret.key | string | `"CAIPE_AGENT_CONTEXT_HMAC_SECRET"` |  |
 | dynamic-agents.agentContext.existingSecret.name | string | `""` |  |
 | dynamic-agents.config.AGENT_GATEWAY_MCP_SERVER_IDS | string | `"all"` |  |

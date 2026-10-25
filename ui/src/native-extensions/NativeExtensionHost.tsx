@@ -7,6 +7,7 @@ import { isSupportedNativeContractVersion } from "../../app-sdk/contract-version
 
 import { HeaderBreadcrumbPortal } from "@/components/layout/HeaderBreadcrumbSlot";
 import { WorkspaceBreadcrumbs } from "@/components/layout/WorkspacePageHeader";
+import { createHostChatCapability } from "./host-chat";
 import { NativeExtensionAssistant } from "./NativeExtensionAssistant";
 import { installedNativeExtensions } from "./installed.generated";
 import { isSafeHostHref } from "./navigation";
@@ -21,6 +22,7 @@ export function NativeExtensionHost({
   extensionId: string;
   slot?: boolean;
 }): React.ReactElement {
+  const chat = useMemo(() => createHostChatCapability(extensionId), [extensionId]);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -83,8 +85,9 @@ export function NativeExtensionHost({
         navigate={navigate}
         Link={Link}
         setBreadcrumbs={setBreadcrumbs}
+        chat={chat}
       />
-      {!slot && extension.manifest.assistant && (
+      {!slot && extension.manifest.assistant && extension.manifest.assistant.overlay !== "app" && (
         <NativeExtensionAssistant
           assistant={extension.manifest.assistant}
           extensionId={extensionId}

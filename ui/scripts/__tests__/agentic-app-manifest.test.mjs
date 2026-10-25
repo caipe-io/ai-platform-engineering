@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmSync,
   writeFileSync,
+  symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,9 +19,10 @@ import {
   normalizeNativeExtensionManifest,
   normalizeLegacyAgenticAppManifest,
   nativeUiDescriptor,
+  resolveAgenticAppIcon,
 } from "../../app-sdk/agentic-app-manifest.mjs";
 import { validateManifest } from "../../app-sdk/checker.mjs";
-import { generateNativeExtensions } from "../generate-native-extensions.mjs";
+import { generateNativeExtensions, installAppIcon } from "../generate-native-extensions.mjs";
 
 export function exampleManifest() {
   return {
@@ -56,6 +58,41 @@ export function exampleManifest() {
     ],
   };
 }
+
+test("app icons are owned same-origin assets; legacy symbolic names remain compatible", () => {
+  const app = exampleManifest();
+  const icon = "/app-icons/example-app/logo.svg";
+  assert.equal(validateAgenticAppManifest({ ...app, catalog: { icon } }).catalog.icon, icon);
+  assert.equal(resolveAgenticAppIcon(app.id, icon), icon);
+  assert.equal(resolveAgenticAppIcon(app.id, "book-open"), undefined);
+  assert.doesNotThrow(() => validateAgenticAppManifest({ ...app, catalog: { icon: "book-open" } }));
+  for (const unsafe of ["//example.test/logo.svg", "https://example.test/logo.svg", "data:image/svg+xml,evil", "/app-icons/other/logo.svg", "/app-icons/example-app/../logo.svg", "/app-icons/example-app/%2e.svg", "/app-icons/example-app/logo.svg?x=1", "/api/example/logo.svg"]) {
+    assert.equal(resolveAgenticAppIcon(app.id, unsafe), undefined);
+    assert.throws(() => validateAgenticAppManifest({ ...app, catalog: { icon: unsafe } }), /catalog.icon/);
+  }
+});
+
+test("native logo installation requires a bounded asset inside the pinned package", () => {
+  const root = mkdtempSync(join(tmpdir(), "app-icon-"));
+  try {
+    const pkg = join(root, "package");
+    const host = join(root, "host");
+    const icon = "/app-icons/example-app/logo.png";
+    const app = { ...exampleManifest(), catalog: { icon } };
+    const asset = join(pkg, "public", icon);
+    mkdirSync(join(pkg, "public", "app-icons", "example-app"), { recursive: true });
+    assert.throws(() => installAppIcon(host, pkg, app), /ENOENT/);
+    writeFileSync(asset, "example-image");
+    installAppIcon(host, pkg, app);
+    assert.equal(readFileSync(join(host, "public", icon), "utf8"), "example-image");
+    writeFileSync(asset, Buffer.alloc(256 * 1024 + 1));
+    assert.throws(() => installAppIcon(host, pkg, app), /256 KiB/);
+    rmSync(asset);
+    writeFileSync(join(root, "outside.png"), "outside");
+    symlinkSync(join(root, "outside.png"), asset);
+    assert.throws(() => installAppIcon(host, pkg, app), /packaged image/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test("publisher and host use the exported nested manifest, not a root decoy", () => {
   const root = mkdtempSync(join(tmpdir(), "nested-native-manifest-"));
