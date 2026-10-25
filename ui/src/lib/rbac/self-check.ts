@@ -107,6 +107,7 @@ interface TeamMembershipSourceDoc extends Document {
 }
 
 interface McpServerDoc extends Document {
+  visibility?: string;
   _id?: string;
   id?: string;
   name?: string;
@@ -689,6 +690,7 @@ function buildExpectedTuplesAndStaleReferences(
     } else if (agent.owner_id === "system" || agent.is_system === true || agent.config_driven === true) {
       tuples.push(expected("dynamic_agents.system_owner", "user:system", "owner", object, resource));
     }
+    if (agent.visibility === "private") continue;
     tuples.push(expected("dynamic_agents.org_admin_manager", `${orgObject}#admin`, "manager", object, resource));
     const teamGrants = teamGrantTuples({
       object,
@@ -713,6 +715,8 @@ function buildExpectedTuplesAndStaleReferences(
       tuples.push(expected("dynamic_agents.visibility", "user:*", "user", object, resource));
     }
     for (const [serverId, toolName] of normalizeAllowedTools(agent.allowed_tools)) {
+      // A stale shared-agent configuration must not repair private tool access.
+      if (input.mcpServers.some((server) => normalizeObjectId(server) === serverId && server.visibility === "private")) continue;
       const toolRef = `${serverId}/${toolName}`;
       if (!scopeResourceExists("tool", toolRef, resourceIndex)) {
         staleReferences.push(stale(
@@ -738,10 +742,10 @@ function buildExpectedTuplesAndStaleReferences(
       tuples.push(expected("mcp_servers.config_driven", `${orgObject}#member`, "user", object, resource));
       tuples.push(expected("mcp_servers.config_driven", `${orgObject}#admin`, "manager", object, resource));
     } else {
-      if (isValidOpenFgaId(server.owner_subject)) {
+      if ((server.visibility === "private" || server.visibility === undefined) && isValidOpenFgaId(server.owner_subject)) {
         tuples.push(expected("mcp_servers.owner_subject", `user:${server.owner_subject}`, "owner", object, resource));
       }
-      if (isValidOpenFgaId(server.owner_team_slug)) {
+      if (server.visibility !== "private" && isValidOpenFgaId(server.owner_team_slug)) {
         if (resourceIndex.teamSlugs.has(server.owner_team_slug)) {
           tuples.push(expected("mcp_servers.owner_team_slug", `team:${server.owner_team_slug}#member`, "reader", object, resource));
           tuples.push(expected("mcp_servers.owner_team_slug", `team:${server.owner_team_slug}#member`, "user", object, resource));
@@ -757,7 +761,7 @@ function buildExpectedTuplesAndStaleReferences(
           ));
         }
       }
-      tuples.push(expected("mcp_servers.org_admin_manager", `${orgObject}#admin`, "manager", object, resource));
+      if (server.visibility !== "private") tuples.push(expected("mcp_servers.org_admin_manager", `${orgObject}#admin`, "manager", object, resource));
     }
   }
 

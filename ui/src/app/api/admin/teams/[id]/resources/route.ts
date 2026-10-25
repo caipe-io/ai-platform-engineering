@@ -54,6 +54,7 @@ interface DynamicAgentLite {
 }
 
 interface MCPServerLite {
+  visibility?: string;
   _id: string;
   name?: string;
   description?: string;
@@ -369,13 +370,18 @@ export const PUT = withErrorHandler(
 
       const mcpCol = await getCollection<MCPServerLite>("mcp_servers");
       const allMcpServers = await mcpCol
-        .find({ enabled: { $ne: false } } as never, { projection: { _id: 1 } })
+        .find({ enabled: { $ne: false }, visibility: { $ne: "private" } } as never, { projection: { _id: 1 } })
         .toArray()
         .catch(() => [] as MCPServerLite[]);
-      const allMcpServerIds = allMcpServers.map((server) => String(server._id));
+      const allMcpServerIds = allMcpServers.filter((server) => server.visibility !== "private").map((server) => String(server._id));
 
       // Wildcard == select-all-servers (identical tuples), so expand it into
       // explicit `<server>/*` prefixes and reconcile plain per-server grants.
+      const privateServers = await mcpCol.find({ visibility: "private" } as never, { projection: { _id: 1 } }).toArray();
+      const privateIds = new Set(privateServers.filter((server) => server.visibility === "private").map((server) => String(server._id)));
+      if (selectedTools.some((tool) => privateIds.has(tool.split("/")[0].replace(/_\*$/, "")))) {
+        throw new ApiError("Private MCP servers cannot be granted to teams", 400, "PRIVATE_MCP_TEAM_GRANT");
+      }
       const nextTools = expandToolWildcard(selectedTools, wildcard, allMcpServerIds);
 
       // ── 1. Previous state from OpenFGA (single source of truth). Reading the

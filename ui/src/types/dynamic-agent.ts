@@ -11,28 +11,19 @@ export type TransportType = "stdio" | "sse" | "http";
 /**
  * Visibility of a dynamic agent.
  *
+ *   - `private`: only the human owner may use it, and only from a personal
+ *                web session or verified Slack/Webex direct message.
  *   - `team`:   the owner team's members get `can_use`; the owner team's
  *               admins get `can_manage`. Additional teams in
  *               `shared_with_teams` get `can_use`.
  *   - `global`: everyone gets `can_use` (via `user:* user agent:<id>`).
  *               The owner team's admins still manage the agent.
  *
- * NOTE: `'private'` was retired on 2026-05-22. Every dynamic agent is now
- * team-owned. Users who want a truly personal agent should create a
- * single-member team and own the agent through that team. Legacy
- * `visibility: 'private'` documents are coerced to `'team'` at read time
- * and converted in place by the admin "Reconcile dynamic agent OpenFGA"
- * migration. See `docs/docs/changes/2026-05-22-remove-private-agents.md`.
  */
-export type VisibilityType = "team" | "global";
+export type VisibilityType = 'private' | 'team' | 'global';
 
-/**
- * Wire-level type accepted on the way IN to the BFF. We still accept the
- * historical `'private'` string so old clients (and Mongo docs being
- * re-saved) don't fail outright — the BFF normalizes it to `'team'` and
- * surfaces a deprecation warning in the response.
- */
-export type LegacyVisibilityType = VisibilityType | "private";
+/** Compatibility alias for API clients using the older type name. */
+export type LegacyVisibilityType = VisibilityType;
 
 // =============================================================================
 // MCP Server Types
@@ -56,7 +47,11 @@ export interface MCPServerConfig {
   agentgateway_target_endpoint?: string;
   owner_id?: string;
   owner_subject?: string;
+  owner_subject_kind?: "user" | "service_account";
+  creator_subject?: string;
   owner_team_slug?: string;
+  visibility?: VisibilityType;
+  shared_with_teams?: string[];
   created_at: string;
   updated_at: string;
 }
@@ -131,6 +126,8 @@ export interface MCPServerConfigCreate {
   credential_sources?: MCPCredentialSource[];
   enabled?: boolean;
   owner_team_slug?: string;
+  visibility?: VisibilityType;
+  shared_with_teams?: string[];
 }
 
 export interface MCPServerConfigUpdate {
@@ -144,6 +141,9 @@ export interface MCPServerConfigUpdate {
   env?: Record<string, string>;
   credential_sources?: MCPCredentialSource[];
   enabled?: boolean;
+  owner_team_slug?: string;
+  visibility?: VisibilityType;
+  shared_with_teams?: string[];
 }
 
 export interface MCPToolInfo {
@@ -475,13 +475,13 @@ export interface DynamicAgentConfig {
   enabled: boolean;
   owner_id: string;
   owner_subject?: string;
+  /** Immutable creator identity. Server-controlled; never accepted from clients. */
+  creator_id?: string;
+  creator_subject?: string;
   /**
-   * Every dynamic agent is owned by a team (visibility was either `team`
-   * or `global`). `owner_team_slug` is the source of truth; `owner_team_id`
-   * is the matching Mongo ObjectId string for legacy lookups. Both are
-   * effectively required from 2026-05-22 onward — the BFF rejects writes
-   * that omit them. They remain optional on the type only so the legacy
-   * coercion path (`normalizeLegacyVisibility`) can flag drift.
+   * Team/global agents are owned by a team; private agents intentionally
+   * omit team ownership. `owner_team_slug` is the source of truth and
+   * `owner_team_id` is retained for legacy lookups.
    */
   owner_team_slug?: string;
   owner_team_id?: string;
@@ -511,9 +511,24 @@ export interface AgentRowPermissions {
   can_discover: boolean;
 }
 
-export interface DynamicAgentConfigWithPermissions extends DynamicAgentConfig {
-  permissions: AgentRowPermissions;
+/** Directory-resolved identity safe to return to browser clients. */
+export interface AgentIdentityDisplay {
+  label: string;
+  name?: string;
+  email?: string;
 }
+
+export type DynamicAgentBrowserConfig = Omit<
+  DynamicAgentConfig,
+  "owner_subject" | "creator_subject"
+> & {
+  owner?: AgentIdentityDisplay;
+  creator?: AgentIdentityDisplay;
+};
+
+export type DynamicAgentConfigWithPermissions = DynamicAgentBrowserConfig & {
+  permissions: AgentRowPermissions;
+};
 
 export interface DynamicAgentConfigCreate {
   id: string; // Required: User-friendly slug ID derived from name
@@ -526,7 +541,7 @@ export interface DynamicAgentConfigCreate {
   remote_agent_timeouts?: Record<string, number>;
   builtin_tools?: BuiltinToolsConfig;
   model?: ModelConfig; // Required for Deep Agents; other harnesses use their operator profile.
-  /** Accepts legacy `'private'` for back-compat; the BFF coerces it to `'team'`. */
+  /** Access scope for the agent. */
   visibility?: LegacyVisibilityType;
   shared_with_teams?: string[];
   /** Required for the new contract. */
@@ -555,7 +570,7 @@ export interface DynamicAgentConfigUpdate {
   remote_agent_timeouts?: Record<string, number>;
   builtin_tools?: BuiltinToolsConfig;
   model?: ModelConfig;
-  /** Accepts legacy `'private'` for back-compat; the BFF coerces it to `'team'`. */
+  /** Access scope for the agent. */
   visibility?: LegacyVisibilityType;
   /** Updates may move the agent to a different owner team. */
   owner_team_slug?: string;

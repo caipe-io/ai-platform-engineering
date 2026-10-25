@@ -356,7 +356,7 @@ class WebexThreadedStreamDispatcher:
         text = str(payload.get("text") or "")
         person_id = str(payload.get("person_id") or "")
         obo_token = str(payload.get("obo_token") or "")
-        is_direct = bool(payload.get("is_direct") or False)
+        is_direct = payload.get("is_direct") is True
         person_id = str(payload.get("person_id") or "")
         if not all((room_id, message_id, parent_id, space_id, agent_id, text, obo_token)):
             raise ValueError("Webex threaded stream dispatch payload is missing required fields")
@@ -383,6 +383,7 @@ class WebexThreadedStreamDispatcher:
                     "webex_space_id": space_id,
                     "webex_message_id": parent_id,
                     "webex_room_id": room_id,
+                    "room_type": "direct" if is_direct else "group",
                     "webex_is_direct": is_direct,
                     **({"owner_connector_id": person_id} if person_id else {}),
                 },
@@ -463,17 +464,11 @@ class WebexThreadedStreamDispatcher:
                 "webex_message_id": message_id,
                 **({"webex_thread_parent_id": parent_id} if thread_parent_id else {}),
             }
-            # Phase 1: propagate originating space context so RAG/PDP can
-            # derive team_id from channel_id (spec FR-016/FR-017). 1:1
-            # rooms are signalled by absence of a channel_team_mappings row
-            # downstream (FR-018), so we always emit surface_kind="channel"
-            # here; the receiving server treats unmapped channel_ids as
-            # DM-like for personal-team-union evaluation.
             client_context = augment_webex_client_context(
                 client_context,
                 space_id=space_id,
                 thread_parent_id=parent_id if thread_parent_id else None,
-                surface_kind="channel",
+                surface_kind="dm" if is_direct else "channel",
             )
             for event in self._sse_client.stream_chat(
                 message=agent_message,

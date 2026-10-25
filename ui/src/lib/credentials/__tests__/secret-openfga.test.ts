@@ -9,6 +9,8 @@ describe("secret_ref OpenFGA tuple builders", () => {
         ownerSubject: "alice-sub",
       }),
     ).toEqual([
+      { user: "user:alice-sub", relation: "creator", object: "secret_ref:secret-1" },
+      { user: "user:alice-sub", relation: "owner", object: "secret_ref:secret-1" },
       { user: "user:alice-sub", relation: "metadata_reader", object: "secret_ref:secret-1" },
       { user: "user:alice-sub", relation: "user", object: "secret_ref:secret-1" },
       { user: "user:alice-sub", relation: "manager", object: "secret_ref:secret-1" },

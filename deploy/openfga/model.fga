@@ -192,7 +192,10 @@ type agent
 
 type mcp_server
   relations
+    define creator: [user]
     define owner: [user, service_account]
+    # Resource visibility is checked independently of caller capabilities.
+    define private_marker: [organization]
     define reader: [user, service_account, team#member, team#admin, external_group#member, slack_channel, webex_space, organization#member]
     define user: [user, service_account, team#member, team#admin, external_group#member, slack_channel, webex_space, organization#member]
     define invoker: [user, service_account, team#member, team#admin, external_group#member, slack_channel, webex_space, organization#member]
@@ -488,14 +491,16 @@ type audit_log
 
 type secret_ref
   relations
+    define creator: [user]
+    define owner: [user]
     define metadata_reader: [user, service_account, team#member, team#admin, organization#member, organization#admin]
     define user: [user, service_account, team#member, team#admin, organization#member, organization#admin]
     define manager: [user, service_account, team#admin, organization#admin]
     define auditor: [user, service_account, team#admin, organization#admin]
     define can_discover: can_read_metadata
-    define can_read_metadata: metadata_reader or can_manage
-    define can_use: user or can_manage
-    define can_manage: manager
+    define can_read_metadata: metadata_reader or can_manage or owner
+    define can_use: user or can_manage or owner
+    define can_manage: manager or owner
     define can_share: can_manage
     define can_audit: auditor or can_manage
 

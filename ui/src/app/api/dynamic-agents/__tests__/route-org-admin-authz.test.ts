@@ -1,8 +1,8 @@
 /**
  * @jest-environment node
  *
- * Integration-style route tests that exercise the real requireAgentPermission
- * helper (org-admin OpenFGA bypass) instead of mocking it away.
+ * Integration-style route tests for the per-agent permission contract used by
+ * organization admins and regular members.
  */
 
 import { NextRequest } from "next/server";
@@ -74,12 +74,6 @@ jest.mock("@/lib/rbac/resource-authz", () => {
       action: string,
     ) => {
       const subject = `user:${session.sub}`;
-      const org = await mockCheckOpenFgaTuple({
-        user: subject,
-        relation: "can_manage",
-        object: "organization:caipe",
-      });
-      if (org.allowed) return;
       const result = await mockCheckOpenFgaTuple({
         user: subject,
         relation: `can_${action}`,
@@ -124,15 +118,12 @@ function request(path: string, init?: RequestInit): NextRequest {
 const orgAdminSession = { sub: "admin-sub", role: "admin" };
 const memberSession = { sub: "alice-sub", role: "user" };
 
-function mockOpenFgaForOrgAdmin(allowOrgAdmin: boolean, allowAgentWrite = false) {
+function mockOpenFgaAgentWrite(allowAgentWrite: boolean) {
   mockCheckOpenFgaTuple.mockImplementation(async (tuple: {
     user: string;
     relation: string;
     object: string;
   }) => {
-    if (tuple.object === "organization:caipe" && tuple.relation === "can_manage") {
-      return { allowed: allowOrgAdmin };
-    }
     if (tuple.object === "agent:hello-world" && tuple.relation === "can_write") {
       return { allowed: allowAgentWrite };
     }
@@ -148,9 +139,9 @@ describe("dynamic-agents PUT with real requireAgentPermission", () => {
     mockIsPlatformDefaultAgent.mockResolvedValue(false);
   });
 
-  it("allows org admins to update an agent without a per-agent write tuple", async () => {
+  it("allows org admins to update a team agent through its per-agent manager grant", async () => {
     mockGetAuthFromBearerOrSession.mockResolvedValue({ session: orgAdminSession });
-    mockOpenFgaForOrgAdmin(true, false);
+    mockOpenFgaAgentWrite(true);
 
     const findOneAndUpdate = jest.fn().mockResolvedValue({
       _id: "hello-world",
@@ -182,17 +173,14 @@ describe("dynamic-agents PUT with real requireAgentPermission", () => {
     expect(findOneAndUpdate).toHaveBeenCalled();
     expect(mockCheckOpenFgaTuple).toHaveBeenCalledWith({
       user: "user:admin-sub",
-      relation: "can_manage",
-      object: "organization:caipe",
+      relation: "can_write",
+      object: "agent:hello-world",
     });
-    expect(mockCheckOpenFgaTuple).not.toHaveBeenCalledWith(
-      expect.objectContaining({ object: "agent:hello-world", relation: "can_write" }),
-    );
   });
 
   it("denies non-org-admins without agent write access", async () => {
     mockGetAuthFromBearerOrSession.mockResolvedValue({ session: memberSession });
-    mockOpenFgaForOrgAdmin(false, false);
+    mockOpenFgaAgentWrite(false);
 
     mockGetCollection.mockResolvedValue({
       findOne: jest.fn().mockResolvedValue({

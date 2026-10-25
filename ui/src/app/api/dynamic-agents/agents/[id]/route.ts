@@ -12,6 +12,8 @@ successResponse,
 withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
+import { dynamicAgentForBrowser } from "@/lib/dynamic-agent-response";
+import { isPrivateAgentOwner } from "@/lib/rbac/agent-ownership-scope";
 import { projectAgentAppIdentity } from "@/lib/agentic-apps/agent-catalog";
 import {
 agentRowPermissionsOrDefault,
@@ -50,6 +52,13 @@ export const GET = withErrorHandler(
         throw new ApiError("Agent not found", 404);
       }
 
+      if (
+        agent.visibility === "private"
+        && (typeof session.sub !== "string" || !isPrivateAgentOwner(agent, session.sub))
+      ) {
+        throw new ApiError("Agent not found", 404);
+      }
+
       try {
         await requireAgentPermission(session, id, "read");
       } catch (error) {
@@ -68,8 +77,9 @@ export const GET = withErrorHandler(
 
       const resourceId = String(agent._id);
       const { rows } = await resolveAgentListPermissions(session, [resourceId]);
+      const browserAgent = await dynamicAgentForBrowser(doc as unknown as DynamicAgentConfig);
       const result: DynamicAgentConfigWithPermissions = {
-        ...(doc as unknown as DynamicAgentConfig),
+        ...browserAgent,
         permissions: agentRowPermissionsOrDefault(rows, resourceId),
       };
 

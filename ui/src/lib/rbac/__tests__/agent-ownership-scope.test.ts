@@ -1,12 +1,26 @@
 // assisted-by Codex Codex-sonnet-4-6
 
+jest.mock("@/lib/mongodb", () => ({
+  getCollection: jest.fn(async () => ({ findOne: jest.fn(async () => null) })),
+  isMongoDBConfigured: false,
+}));
+jest.mock("@/lib/authz", () => ({
+  authorize: jest.fn(),
+}));
+
+import { authorize } from "@/lib/authz";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 
 import {
   filterAgentsByOwnershipScope,
+  filterAgentsByOwnershipScopeForSession,
+  filterPrivateAgentsByOwner,
+  isPrivateAgentOwner,
   isAgentInOwnershipScope,
   type AgentOwnershipScopeContext,
 } from "../agent-ownership-scope";
+
+const mockAuthorize = authorize as jest.MockedFunction<typeof authorize>;
 
 function ctx(overrides: Partial<AgentOwnershipScopeContext> = {}): AgentOwnershipScopeContext {
   return {
@@ -86,6 +100,32 @@ describe("isAgentInOwnershipScope", () => {
     ).toBe(true);
   });
 
+  it("includes a private agent only for its direct owner", () => {
+    const privateAgent = agent({
+      _id: "private-agent",
+      visibility: "private",
+      owner_id: "owner@example.test",
+      owner_subject: "owner-sub",
+      owner_team_slug: undefined,
+    });
+
+    expect(isAgentInOwnershipScope(privateAgent, ctx({ userSub: "owner-sub" }))).toBe(true);
+    expect(isAgentInOwnershipScope(privateAgent, ctx({ userSub: "other-sub" }))).toBe(false);
+  });
+
+  it("does not expose a private agent through the platform-default exception", () => {
+    expect(
+      isAgentInOwnershipScope(
+        agent({
+          _id: "private-default",
+          visibility: "private",
+          owner_subject: "owner-sub",
+        }),
+        ctx({ userSub: "other-sub", platformDefaultAgentId: "private-default" }),
+      ),
+    ).toBe(false);
+  });
+
   it("excludes other teams' agents for a generic member", () => {
     expect(
       isAgentInOwnershipScope(
@@ -99,6 +139,54 @@ describe("isAgentInOwnershipScope", () => {
         ctx(),
       ),
     ).toBe(false);
+  });
+});
+
+describe("isPrivateAgentOwner", () => {
+  it("requires private visibility and a matching stable subject", () => {
+    const privateAgent = agent({
+      _id: "private-agent",
+      visibility: "private",
+      owner_subject: "owner-sub",
+    });
+
+    expect(isPrivateAgentOwner(privateAgent, "owner-sub")).toBe(true);
+    expect(isPrivateAgentOwner(privateAgent, "other-sub")).toBe(false);
+    expect(isPrivateAgentOwner({ ...privateAgent, visibility: "team" }, "owner-sub")).toBe(false);
+  });
+});
+
+describe("filterPrivateAgentsByOwner", () => {
+  it("keeps team/global agents for admins but hides private agents they do not own", () => {
+    const agents = [
+      agent({ _id: "global-agent", visibility: "global" }),
+      agent({ _id: "team-agent", visibility: "team" }),
+      agent({ _id: "owned-private", visibility: "private", owner_subject: "admin-sub" }),
+      agent({ _id: "other-private", visibility: "private", owner_subject: "other-sub" }),
+    ];
+
+    expect(filterPrivateAgentsByOwner(agents, "admin-sub").map((item) => item._id)).toEqual([
+      "global-agent",
+      "team-agent",
+      "owned-private",
+    ]);
+  });
+
+  it("applies the private owner filter when the session is an organization admin", async () => {
+    mockAuthorize.mockResolvedValue({ decision: "ALLOW" } as Awaited<ReturnType<typeof authorize>>);
+    const agents = [
+      agent({ _id: "team-agent", visibility: "team" }),
+      agent({ _id: "owned-private", visibility: "private", owner_subject: "admin-sub" }),
+      agent({ _id: "other-private", visibility: "private", owner_subject: "other-sub" }),
+    ];
+
+    const filtered = await filterAgentsByOwnershipScopeForSession(
+      { sub: "admin-sub", role: "admin" },
+      agents,
+      null,
+    );
+
+    expect(filtered.map((item) => item._id)).toEqual(["team-agent", "owned-private"]);
   });
 });
 

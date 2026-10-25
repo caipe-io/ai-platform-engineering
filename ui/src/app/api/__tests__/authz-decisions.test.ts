@@ -2,6 +2,7 @@
  * @jest-environment node
  */
 import { NextRequest } from "next/server";
+import { createHmac } from "crypto";
 
 const mockAuthorize = jest.fn();
 const mockGetAuth = jest.fn();
@@ -16,10 +17,11 @@ jest.mock("@/lib/mongodb", () => ({ getCollection: jest.fn(), isMongoDBConfigure
 
 import { POST } from "../authz/v1/decisions/route";
 
-function post(body: unknown): NextRequest {
+function post(body: unknown, headers?: Record<string, string>): NextRequest {
   return new NextRequest(new URL("/api/authz/v1/decisions", "http://localhost:3000"), {
     method: "POST",
     body: typeof body === "string" ? body : JSON.stringify(body),
+    headers,
   });
 }
 
@@ -28,7 +30,12 @@ const resource = { type: "agent", id: "pe" };
 
 beforeEach(() => {
   jest.clearAllMocks();
+  process.env.CAIPE_AGENT_CONTEXT_HMAC_SECRET = "test-agent-context-secret";
   mockGetAuth.mockResolvedValue({ session: { sub: "alice", org: "acme" } });
+});
+
+afterAll(() => {
+  delete process.env.CAIPE_AGENT_CONTEXT_HMAC_SECRET;
 });
 
 it("returns 200 ALLOW for a self-subject grant", async () => {
@@ -36,6 +43,58 @@ it("returns 200 ALLOW for a self-subject grant", async () => {
   const res = await POST(post({ subject: selfSubject, resource, action: "use" }));
   expect(res.status).toBe(200);
   expect(await res.json()).toMatchObject({ decision: "ALLOW", reason: "OK" });
+});
+
+it("forwards a valid internal interaction proof as trusted context", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const token = Buffer.from(JSON.stringify({
+    source: "web",
+    conversationKind: "personal",
+    iat: now,
+    exp: now + 60,
+  })).toString("base64url");
+  const signature = createHmac("sha256", process.env.CAIPE_AGENT_CONTEXT_HMAC_SECRET!)
+    .update(token)
+    .digest("hex");
+  mockAuthorize.mockResolvedValue({ decision: "ALLOW", reason: "OK", retriable: false });
+
+  await POST(post(
+    { subject: selfSubject, resource, action: "use" },
+    {
+      "X-CAIPE-Trusted-Interaction": token,
+      "X-CAIPE-Trusted-Interaction-Signature": signature,
+    },
+  ));
+
+  expect(mockAuthorize).toHaveBeenCalledWith(
+    expect.objectContaining({
+      trustedContext: {
+        interaction: { source: "web", conversationKind: "personal", verified: true },
+      },
+    }),
+    expect.anything(),
+  );
+});
+
+it("fails closed when the internal interaction proof is forged", async () => {
+  mockAuthorize.mockResolvedValue({ decision: "DENY", reason: "PRIVATE_RESOURCE_CONTEXT_DENIED", retriable: false });
+
+  await POST(post(
+    { subject: selfSubject, resource, action: "use" },
+    {
+      "X-CAIPE-Trusted-Interaction": "forged-payload",
+      "X-CAIPE-Trusted-Interaction-Signature": "0".repeat(64),
+    },
+  ));
+
+  expect(mockAuthorize).toHaveBeenCalledWith(
+    expect.objectContaining({
+      trustedContext: {
+        interaction: { source: "api", conversationKind: "unknown", verified: false },
+      },
+    }),
+    expect.anything(),
+  );
 });
 
 it("returns 200 DENY (not 403) when the decision is no", async () => {

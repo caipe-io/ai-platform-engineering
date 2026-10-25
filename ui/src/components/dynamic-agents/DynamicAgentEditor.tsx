@@ -1,6 +1,7 @@
 "use client";
 
 import { getErrorMessage } from "@/lib/error-utils";
+import { getConfig } from "@/lib/config";
 import type { Extension } from "@codemirror/state";
 
 import {
@@ -67,6 +68,7 @@ import {
   GripHorizontal,
   Info,
   Loader2,
+  Lock,
   Pencil,
   Sparkles,
   Users,
@@ -129,29 +131,24 @@ function normalizeKnowledgeIds(value: unknown): string[] {
   );
 }
 
-// Visibility picker — `private` was retired on 2026-05-22 (see
-// `docs/docs/changes/2026-05-22-remove-private-agents.md` and the
-// `VisibilityType` definition in `@/types/dynamic-agent`). Every dynamic
-// agent is now team-owned; users who want a truly personal agent should
-// create a single-member team and own the agent through that team.
-const VISIBILITY_OPTIONS: {
-  value: VisibilityType;
-  label: string;
-  icon: React.ReactNode;
-  description: string;
-}[] = [
+const VISIBILITY_OPTIONS: { value: VisibilityType; label: string; icon: React.ReactNode; description: string }[] = [
+  {
+    value: "private",
+    label: "Private",
+    icon: <Lock className="h-4 w-4" />,
+    description: "Only you, in the web UI or direct messages.",
+  },
   {
     value: "team",
     label: "Team",
     icon: <Users className="h-4 w-4" />,
-    description:
-      "Team members can use; you manage as creator; team admins can manage. Optionally share with other teams.",
+    description: "Your team and any teams you share it with.",
   },
   {
     value: "global",
     label: "Global",
     icon: <Globe className="h-4 w-4" />,
-    description: "Available to all users; owner-team admins manage it.",
+    description: "Every signed-in user.",
   },
 ];
 
@@ -464,6 +461,7 @@ export function DynamicAgentEditor({
 }: DynamicAgentEditorProps) {
   const isEditing = !!agent;
   const isCloning = !!cloneFrom;
+  const privateResourcesEnabled = getConfig("privateResourcesEnabled");
   const { toast } = useToast();
   const connectionConfigured = useAgentCoreConnectionAccess();
   const [connectionDialogOpen, setConnectionDialogOpen] = React.useState(false);
@@ -481,17 +479,9 @@ export function DynamicAgentEditor({
   const [systemPrompt, setSystemPrompt] = React.useState(
     source?.system_prompt || "",
   );
-  // Default to `team` for new agents — every agent must have an owner
-  // team, and team-scoped sharing is the safest default. `private` is
-  // retired (see `VisibilityType` in `@/types/dynamic-agent`); legacy
-  // docs that still carry `visibility: 'private'` on the wire are coerced
-  // to `team` here so the picker has a matching tile to highlight. The
-  // BFF-side `coerceAgentVisibilityOnRead` helper does the same on read,
-  // but we coerce defensively in the UI in case a stale GET response
-  // slips through before that helper is wired into every route.
   const [visibility, setVisibility] = React.useState<VisibilityType>(() => {
-    const raw = source?.visibility as VisibilityType | "private" | undefined;
-    if (raw === "team" || raw === "global") return raw;
+    const raw = source?.visibility;
+    if (raw === "private" || raw === "team" || raw === "global") return raw;
     return "team";
   });
   const [sharedWithTeams, setSharedWithTeams] = React.useState<string[]>(
@@ -1489,7 +1479,7 @@ export function DynamicAgentEditor({
           // Ownership transfer (US3): only send owner_team_slug when the user
           // changed the owner picker, so a normal edit never trips the route's
           // transfer guard.
-          ...(transferRequested
+          ...(visibility !== "private" && transferRequested
             ? {
                 owner_team_slug: ownerTeamSlug,
                 confirm_not_member: confirmNotMember,
@@ -1525,7 +1515,7 @@ export function DynamicAgentEditor({
           description: description || undefined,
           system_prompt: systemPrompt,
           visibility,
-          owner_team_slug: ownerTeamSlug,
+          owner_team_slug: visibility === "private" ? undefined : ownerTeamSlug,
           shared_with_teams:
             visibility === "team" ? sharedWithTeams : undefined,
           ...runtimeFields,
@@ -2413,6 +2403,7 @@ export function DynamicAgentEditor({
                   allowTransfer={isEditing}
                   resourceNoun="agent"
                   disabled={loading || !!readOnly}
+                  showOwner={visibility !== "private"}
                   showShare={visibility === "team"}
                   currentUserTeamSlugs={availableTeams
                     .map((team) => team.slug)
@@ -2478,7 +2469,7 @@ export function DynamicAgentEditor({
                       </p>
                     ) : null
                   }
-                  betweenOwnerAndShare={
+                  beforeOwner={
                     <div className="space-y-2">
                       <Label>Visibility</Label>
                       {isPlatformDefault && (
@@ -2492,8 +2483,8 @@ export function DynamicAgentEditor({
                           visibility.
                         </p>
                       )}
-                      <div className="grid grid-cols-2 gap-2">
-                        {VISIBILITY_OPTIONS.map((opt) => {
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        {VISIBILITY_OPTIONS.filter((opt) => opt.value !== "private" || privateResourcesEnabled || visibility === "private").map((opt) => {
                           // When this agent is the platform default, lock the
                           // selector so the admin can't try to demote
                           // `global → team` here — the BFF will reject it.

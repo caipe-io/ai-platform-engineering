@@ -2034,3 +2034,27 @@ In Helm and GitOps installs, `charts/ai-platform-engineering/charts/slack-bot/te
   replies with the `default_agent_id` selection UI.
 - **DA receives a request without a user JWT** → middleware logs
   WARNING, MCP call goes out without `Authorization`, AGW 401s.
+
+
+## Private personal resources
+
+- Agents, MCP servers, and credentials use the shared ownership/provenance and
+  transfer/revocation primitives introduced for RAG. Visibility is a separate
+  execution restriction; RAG Search audiences retain their existing semantics.
+- `PRIVATE_RESOURCES_ENABLED` defaults to `false`. Complete the private-resource
+  visibility migration before enabling it in the BFF and gateway bridge.
+- Private credentials cannot use the unattended ingestion usage fallback.
+- Private resources require their human owner and a personal web session or a
+  verified Slack/Webex DM. Groups, service accounts, and unattended use are denied.
+- MCP reconciliation writes an organization `private_marker` independently of
+  caller grants. The gateway requires ownership and trusted interaction when that
+  marker exists, even if stale team/tool grants still allow invocation.
+- Wildcard teams exclude private MCP servers. Conversion to private removes broad
+  server grants and exact/wildcard tool grants for unrelated users, teams, and
+  agents; later private reconciliation does not restore those grants.
+- The BFF signs an execution binding (subject, agent, execution ID) with an initial
+  90-second proof. The authenticated runtime may renew only a fresh, verified,
+  matching binding. Each outbound HTTP request receives a proof lasting at most
+  90 seconds, bounded by both the original 15-minute execution lease and bearer
+  expiry. Expired incoming proofs cannot establish renewal authority. A new turn
+  must receive a new BFF binding; group or caller-supplied contexts cannot renew.

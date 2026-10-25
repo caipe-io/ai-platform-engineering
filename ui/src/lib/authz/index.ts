@@ -7,6 +7,7 @@
 import type {
   Action,
   AuthorizeRequest,
+  TrustedAuthorizeContext,
   AuthorizeResult,
   DecisionContext,
   GrantIntent,
@@ -14,6 +15,7 @@ import type {
   ResourceType,
   Subject,
 } from "./contract";
+import { isPrivateResourcesEnabled } from "@/lib/feature-flags/private-resources";
 import { compose } from "./compose";
 import { emitBatchDecisionAudit, emitDecisionAudit, emitGrantAudit, emitListObjectsDecisionAudit } from "./audit";
 import { createOpenFgaEngine, createOpenFgaAdmin } from "./engines/openfga";
@@ -22,7 +24,13 @@ import { workflowDelegationPreCheck } from "./domains/workflow";
 // ─── Singleton engine (module-level, reused across requests) ──────────────────
 
 const engine = compose(createOpenFgaEngine(), {
-  preCheck: async (req) => workflowDelegationPreCheck(req),
+  preCheck: async (req) => {
+    // Keep Mongo-backed product policy out of the module-load path used by
+    // pure tuple builders and CLI tooling. Runtime decisions still load and
+    // evaluate persisted visibility before the OpenFGA check.
+    const { privateResourcePreCheck } = await import("./domains/private-resource");
+    return (await privateResourcePreCheck(req)) ?? workflowDelegationPreCheck(req);
+  },
 });
 
 const admin = createOpenFgaAdmin();
@@ -56,7 +64,20 @@ export async function authorizeMany(
   resourceType: ResourceType,
   ids: string[],
   ctx: DecisionContext = {},
+  trustedContext?: AuthorizeRequest["trustedContext"],
 ): Promise<Map<string, AuthorizeResult>> {
+  if (trustedContext && (action === "use" || action === "invoke" || action === "call")) {
+    const entries = await Promise.all(ids.map(async (id) => [
+      id,
+      await authorize({
+        subject,
+        action,
+        resource: { type: resourceType, id },
+        trustedContext,
+      }, ctx),
+    ] as const));
+    return new Map(entries);
+  }
   const results = await engine.batchCheck(subject, action, resourceType, ids);
   emitBatchDecisionAudit(subject, action, resourceType, results, ctx);
   return results;
@@ -135,11 +156,12 @@ export async function listAccessible(
   resourceType: ResourceType,
   candidateIds: string[],
   ctx: DecisionContext = {},
+  trustedContext?: TrustedAuthorizeContext,
 ): Promise<ListAccessibleResult> {
   if (candidateIds.length === 0) return { accessible: [], reason: "OK" };
 
-  if (candidateIds.length <= LIST_OBJECTS_MIN_CANDIDATES) {
-    const results = await authorizeMany(subject, action, resourceType, candidateIds, ctx);
+  if (trustedContext || (["agent", "mcp_server", "secret_ref"].includes(resourceType) && isPrivateResourcesEnabled()) || candidateIds.length <= LIST_OBJECTS_MIN_CANDIDATES) {
+    const results = await authorizeMany(subject, action, resourceType, candidateIds, ctx, trustedContext);
     const accessible = candidateIds.filter((id) => results.get(id)?.decision === "ALLOW");
     const unavailable = Array.from(results.values()).some((result) => result.reason === "AUTHZ_UNAVAILABLE");
     return { accessible, reason: unavailable ? "AUTHZ_UNAVAILABLE" : "OK" };
@@ -197,6 +219,7 @@ export type { EngineStats } from "./engines/openfga";
 export type {
   Action,
   AuthorizeRequest,
+  TrustedAuthorizeContext,
   AuthorizeResult,
   DecisionContext,
   DecisionValue,

@@ -513,6 +513,7 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
                 "webex_space_id": "6f91b070-531a-11f1-926d-6fd3c20dfdc4",
                 "webex_message_id": "message-public-id",
                 "webex_room_id": "room-public-id",
+                "room_type": "group",
                 "webex_is_direct": False,
                 "owner_connector_id": "person-public-id",
             },

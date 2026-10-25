@@ -1,15 +1,9 @@
 /**
  * Unit tests for the dynamic-agent ownership normalization helpers.
- *
- * Background: on 2026-05-22 the `'private'` visibility value was retired
- * (see `docs/docs/changes/2026-05-22-remove-private-agents.md`). Every
- * dynamic agent is now team-owned. These helpers are the single source
- * of truth for coercing legacy payloads and enforcing the new contract.
  */
 
 import {
   coerceAgentVisibilityOnRead,
-  isLegacyPrivateDoc,
   normalizeLegacyVisibility,
   resolveOwnerTeamSlug,
   validateAgentOwnership,
@@ -17,10 +11,10 @@ import {
 import type { VisibilityType } from "@/types/dynamic-agent";
 
 describe("normalizeLegacyVisibility", () => {
-  it("coerces 'private' to 'team' and flags it deprecated", () => {
+  it("passes 'private' through as a supported visibility", () => {
     expect(normalizeLegacyVisibility("private")).toEqual({
-      value: "team",
-      deprecated: true,
+      value: "private",
+      deprecated: false,
       coercedFromInvalid: false,
     });
   });
@@ -59,10 +53,10 @@ describe("normalizeLegacyVisibility", () => {
 });
 
 describe("coerceAgentVisibilityOnRead", () => {
-  it("flips legacy 'private' to 'team' on a Mongo doc", () => {
+  it("preserves a private Mongo doc", () => {
     const doc = { _id: "agent-foo", visibility: "private" } as Record<string, unknown>;
     const out = coerceAgentVisibilityOnRead(doc);
-    expect(out.visibility).toBe("team");
+    expect(out.visibility).toBe("private");
     expect(out).toBe(doc); // mutates in place and returns the same reference
   });
 
@@ -119,14 +113,13 @@ describe("validateAgentOwnership", () => {
     ).toBe("OWNER_TEAM_REQUIRED");
   });
 
-  it("rejects an invalid visibility value", () => {
+  it("accepts private visibility without an owner team", () => {
     const result = validateAgentOwnership({
       visibility: "private" as unknown as VisibilityType,
-      ownerTeamSlug: "platform",
+      ownerTeamSlug: null,
       ownerTeamId: null,
     });
-    expect(result.ok).toBe(false);
-    expect(result.code).toBe("VISIBILITY_INVALID");
+    expect(result).toEqual({ ok: true });
   });
 });
 
@@ -148,21 +141,5 @@ describe("resolveOwnerTeamSlug", () => {
 
   it("trims body values before returning", () => {
     expect(resolveOwnerTeamSlug({ owner_team_slug: "  platform  " }, null)).toBe("platform");
-  });
-});
-
-describe("isLegacyPrivateDoc", () => {
-  it("identifies legacy private docs", () => {
-    expect(
-      isLegacyPrivateDoc({
-        visibility: "private" as unknown as VisibilityType,
-        owner_team_slug: undefined,
-      }),
-    ).toBe(true);
-  });
-
-  it("returns false for current docs", () => {
-    expect(isLegacyPrivateDoc({ visibility: "team", owner_team_slug: "platform" })).toBe(false);
-    expect(isLegacyPrivateDoc({ visibility: "global", owner_team_slug: "platform" })).toBe(false);
   });
 });

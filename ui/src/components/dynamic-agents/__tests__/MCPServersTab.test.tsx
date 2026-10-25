@@ -46,7 +46,10 @@ describe("MCPServersTab", () => {
     jest.clearAllMocks();
     serverItems = [jiraServer];
     global.fetch = jest.fn((url: string, init?: RequestInit) => {
-      if (url === "/api/mcp-servers?page_size=100") {
+      if (
+        url === "/api/mcp-servers?page_size=100"
+        || url.startsWith("/api/mcp-servers?page_size=100&sort_by=")
+      ) {
         return Promise.resolve({
           json: async () => ({
             success: true,
@@ -141,6 +144,32 @@ describe("MCPServersTab", () => {
 
     expect(screen.getByText("AgentGateway")).toBeInTheDocument();
     expect(screen.getByText(/Target: http:\/\/rag-server:9446\/mcp/i)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["Name", "name", "desc"],
+    ["Transport", "transport", "asc"],
+    ["Endpoint / Command", "endpoint", "asc"],
+    ["Status", "status", "asc"],
+  ])("sorts globally by %s", async (label, sortBy, sortOrder) => {
+    render(<MCPServersTab />);
+
+    await screen.findByText("Jira");
+    jest.mocked(global.fetch).mockClear();
+    fireEvent.click(screen.getByRole("button", {
+      name: `Sort by ${label} ${sortOrder === "asc" ? "ascending" : "descending"}`,
+    }));
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        `/api/mcp-servers?page_size=100&sort_by=${sortBy}&sort_order=${sortOrder}`,
+        { cache: "no-store" },
+      );
+    });
+    expect(await screen.findByRole("columnheader", { name: new RegExp(label) })).toHaveAttribute(
+      "aria-sort",
+      sortOrder === "asc" ? "ascending" : "descending",
+    );
   });
 
   it("opens a test modal and invokes a saved MCP tool", async () => {

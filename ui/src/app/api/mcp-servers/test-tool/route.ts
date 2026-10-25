@@ -21,6 +21,7 @@ import {
 import { writeOpenFgaTuples, type OpenFgaTupleKey } from "@/lib/rbac/openfga";
 import { requireResourcePermission } from "@/lib/rbac/resource-authz";
 import type { MCPServerConfig } from "@/types/dynamic-agent";
+import { trustedInteractionFromRequest } from "@/lib/authz/trusted-interaction";
 import { NextRequest } from "next/server";
 
 const COLLECTION_NAME = "mcp_servers";
@@ -227,8 +228,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const serverId = readString(body.serverId, "serverId");
   const toolName = readString(body.toolName, "toolName");
   const params = readParams(body.params);
+  const interaction = trustedInteractionFromRequest(request);
 
-  await requireResourcePermission(session, { type: "mcp_server", id: serverId, action: "invoke" });
+  await requireResourcePermission(
+    session,
+    { type: "mcp_server", id: serverId, action: "invoke" },
+    { trustedContext: { interaction } },
+  );
 
   const collection = await getCollection<MCPServerConfig>(COLLECTION_NAME);
   const server = await collection.findOne({ _id: serverId });

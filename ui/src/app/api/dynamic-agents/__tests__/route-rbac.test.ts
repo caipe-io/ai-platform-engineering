@@ -86,7 +86,9 @@ jest.mock("@/lib/api-middleware", () => {
 });
 
 jest.mock("@/lib/mongodb", () => ({
-  getCollection: (...args: unknown[]) => mockGetCollection(...args),
+  getCollection: (...args: unknown[]) => args[0] === "mcp_servers"
+    ? { find: () => ({ toArray: async () => [] }) }
+    : mockGetCollection(...args),
   isMongoDBConfigured: true,
 }));
 
@@ -170,6 +172,7 @@ const user = { email: "alice@example.com" };
 describe("dynamic agents RBAC routes", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.PRIVATE_RESOURCES_ENABLED = "true";
     mockGetAuthFromBearerOrSession.mockResolvedValue({ user, session });
     mockRequireRbacPermission.mockResolvedValue(undefined);
     mockGetUserTeamIds.mockResolvedValue(["team-a"]);
@@ -252,6 +255,11 @@ describe("dynamic agents RBAC routes", () => {
       session,
       agents,
       { type: "agent", action: "discover", id: expect.any(Function) },
+      {
+        trustedContext: {
+          interaction: { source: "web", conversationKind: "personal", verified: false },
+        },
+      },
     );
     expect(body).toMatchObject({
       success: true,
@@ -281,6 +289,11 @@ describe("dynamic agents RBAC routes", () => {
       session,
       [{ _id: "agent-runtime", enabled: true }],
       { type: "agent", action: "use", id: expect.any(Function) },
+      {
+        trustedContext: {
+          interaction: { source: "web", conversationKind: "personal", verified: false },
+        },
+      },
     );
   });
 
@@ -654,6 +667,7 @@ describe("dynamic agents RBAC routes", () => {
     mockGetCollection.mockImplementation(async (name: string) => {
       if (name === "dynamic_agents") return dynamicAgents;
       if (name === "teams") return teams;
+      if (name === "mcp_servers") return { find: jest.fn(() => ({ toArray: jest.fn().mockResolvedValue([]) })) };
       throw new Error(`unexpected collection ${name}`);
     });
     const { POST } = await import("../route");
@@ -1578,9 +1592,7 @@ describe("dynamic agents RBAC routes", () => {
     );
   });
 
-  it("rejects creation when 'private' visibility is sent without an owner team (private retired)", async () => {
-    // Post-2026-05-22 'private' visibility was retired: the API coerces the
-    // legacy value to 'team', which then requires an explicit owner team.
+  it("creates a private agent without an owner team", async () => {
     const insertOne = jest.fn();
     mockGetCollection.mockImplementation(async (name: string) => {
       if (name === "dynamic_agents") {
@@ -1606,12 +1618,43 @@ describe("dynamic agents RBAC routes", () => {
       }),
     );
 
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({
-      code: "OWNER_TEAM_REQUIRED",
+    expect(response.status).toBe(201);
+    expect(mockReconcileAgentRelationships).toHaveBeenCalledWith(
+      expect.objectContaining({ personalOwnerAccess: true, ownerTeamSlug: null }),
+    );
+    expect(insertOne).toHaveBeenCalledWith(
+      expect.objectContaining({ visibility: "private", shared_with_teams: [] }),
+    );
+  });
+
+  it("rejects private agent creation while the rollout flag is disabled", async () => {
+    process.env.PRIVATE_RESOURCES_ENABLED = "false";
+    const insertOne = jest.fn();
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "dynamic_agents") {
+        return { findOne: jest.fn().mockResolvedValue(null), insertOne };
+      }
+      throw new Error(`unexpected collection ${name}`);
     });
-    expect(mockReconcileAgentRelationships).not.toHaveBeenCalled();
+    const { POST } = await import("../route");
+
+    const response = await POST(
+      request("/api/dynamic-agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Private Helper",
+          system_prompt: "Help privately",
+          model: { id: "gpt-4.1", provider: "openai" },
+          visibility: "private",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "PRIVATE_RESOURCES_DISABLED" });
     expect(insertOne).not.toHaveBeenCalled();
+    expect(mockReconcileAgentRelationships).not.toHaveBeenCalled();
   });
 
   it("returns 404 when the requested owner team does not exist", async () => {
@@ -2040,6 +2083,39 @@ describe("dynamic agents RBAC routes", () => {
       code: "AGENT_IS_PLATFORM_DEFAULT",
     });
     expect(mockIsPlatformDefaultAgent).toHaveBeenCalledWith("agent-default");
+    expect(findOneAndUpdate).not.toHaveBeenCalled();
+    expect(mockReconcileAgentRelationships).not.toHaveBeenCalled();
+  });
+
+  it("blocks converting the current platform default to private", async () => {
+    const findOneAndUpdate = jest.fn();
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "agent-default",
+        name: "Default",
+        visibility: "team",
+        owner_team_slug: "team-a",
+        owner_subject: "owner-sub",
+        allowed_tools: {},
+      }),
+      findOneAndUpdate,
+    });
+    mockIsPlatformDefaultAgent.mockResolvedValue(true);
+    const { PUT } = await import("../route");
+
+    const response = await PUT(
+      request("/api/dynamic-agents?id=agent-default", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visibility: "private" }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      success: false,
+      code: "AGENT_IS_PLATFORM_DEFAULT",
+    });
     expect(findOneAndUpdate).not.toHaveBeenCalled();
     expect(mockReconcileAgentRelationships).not.toHaveBeenCalled();
   });

@@ -77,7 +77,7 @@ export interface RbacCheckResult {
 export type AuditOutcome = "allow" | "deny";
 
 /** PDP that evaluated the decision */
-export type AuditPdp = "keycloak" | "agent_gateway" | "local" | "openfga";
+export type AuditPdp = "keycloak" | "agent_gateway" | "local" | "openfga" | "cas";
 
 /** Reason codes for authorization decisions */
 export type AuditReasonCode =
@@ -89,7 +89,8 @@ export type AuditReasonCode =
   | "DENY_SCOPE"
   | "DENY_TENANT"
   | "DENY_UNLINKED"
-  | "DENY_PDP_UNAVAILABLE";
+  | "DENY_PDP_UNAVAILABLE"
+  | "PRIVATE_RESOURCE_CONTEXT_DENIED";
 
 /** Structured audit event for authorization decisions (FR-005, data-model.md) */
 export interface AuditEvent {

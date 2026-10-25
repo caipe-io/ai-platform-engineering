@@ -15,7 +15,8 @@ export type ReasonCode =
   | "NO_CAPABILITY"    // DENY — no relationship
   | "NOT_AUTHENTICATED"// caller token missing or invalid
   | "AUTHZ_UNAVAILABLE"// PDP error, retriable
-  | "INVALID_REQUEST"; // bad id or malformed input
+  | "INVALID_REQUEST"  // bad id or malformed input
+  | "PRIVATE_RESOURCE_CONTEXT_DENIED"; // private use outside web/personal or a verified DM
 
 export interface Subject {
   type: SubjectType;
@@ -29,6 +30,11 @@ export interface Resource {
 
 export interface TrustedAuthorizeContext {
   workflowRunId?: string;
+  interaction?: {
+    source: "slack" | "webex" | "web" | "api";
+    conversationKind: "direct" | "group" | "personal" | "unknown";
+    verified: boolean;
+  };
 }
 
 export interface AuthorizeRequest {

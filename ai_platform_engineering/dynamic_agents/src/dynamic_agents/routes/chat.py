@@ -31,13 +31,13 @@ from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryError
 logger = logging.getLogger(__name__)
 
 
-async def _enforce_chat_authz(*, agent_id: str, user_sub: str | None, autonomous: bool) -> None:
+async def _enforce_chat_authz(*, agent_id: str, user_sub: str | None, autonomous: bool, trusted_interaction: dict[str, Any] | None = None) -> None:
     """Authorize a chat call.
 
     Every caller needs access to the selected agent. Autonomous calls also
     require the user to belong to at least one autonomous-enabled team.
     """
-    await require_agent_use_permission(agent_id, delegated_user_sub=user_sub)
+    await require_agent_use_permission(agent_id, delegated_user_sub=user_sub, **({"trusted_interaction": trusted_interaction} if trusted_interaction else {}))
     if autonomous:
         await require_autonomous_permission(delegated_user_sub=user_sub)
 
@@ -398,6 +398,7 @@ async def chat_start_stream(
         agent_id=request.agent_id,
         user_sub=getattr(user, "sub", None),
         autonomous=getattr(request, "autonomous", False),
+        trusted_interaction=request.client_context.model_dump() if request.client_context else None,
     )
 
     # Get agent config after the runtime policy check passes.
@@ -528,6 +529,7 @@ async def chat_resume_stream(
         agent_id=request.agent_id,
         user_sub=getattr(user, "sub", None),
         autonomous=getattr(request, "autonomous", False),
+        trusted_interaction=request.client_context.model_dump() if request.client_context else None,
     )
 
     # Get agent config after the runtime policy check passes.
@@ -590,6 +592,7 @@ async def chat_invoke(
         agent_id=request.agent_id,
         user_sub=getattr(user, "sub", None),
         autonomous=getattr(request, "autonomous", False),
+        trusted_interaction=request.client_context.model_dump() if request.client_context else None,
     )
 
     # Get agent config after the runtime policy check passes.

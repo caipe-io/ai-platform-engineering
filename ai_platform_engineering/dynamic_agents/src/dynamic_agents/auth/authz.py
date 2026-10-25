@@ -21,7 +21,7 @@ import json
 import logging
 import os
 import re
-from typing import Any
+from typing import Any, Mapping
 
 import httpx
 from fastapi import HTTPException
@@ -107,6 +107,7 @@ async def _decide_action(
     resource_id: str,
     bearer: str,
     action: str,
+    trusted_interaction: Mapping[str, Any] | None = None,
 ) -> bool:
     """Ask CAS whether ``subject`` may perform ``action`` on a resource.
 
@@ -120,6 +121,12 @@ async def _decide_action(
     if not base:
         raise RuntimeError("AUTHZ_SERVICE_URL is not configured")
     headers = {"Authorization": f"Bearer {bearer}", "Content-Type": "application/json"}
+    if trusted_interaction:
+        proof = trusted_interaction.get("_caipe_trusted_interaction")
+        signature = trusted_interaction.get("_caipe_trusted_interaction_signature")
+        if isinstance(proof, str) and isinstance(signature, str) and proof and signature:
+            headers["X-CAIPE-Trusted-Interaction"] = proof
+            headers["X-CAIPE-Trusted-Interaction-Signature"] = signature
     traceparent = current_traceparent.get()
     if traceparent:
         headers["traceparent"] = traceparent
@@ -146,6 +153,7 @@ async def _require_action(
     action: str,
     deny_code: str,
     delegated_user_sub: str | None = None,
+    trusted_interaction: Mapping[str, Any] | None = None,
 ) -> None:
     """Require the current bearer's subject to perform an action on a resource.
 
@@ -197,6 +205,7 @@ async def _require_action(
             resource_id,
             token,
             action,
+            **({"trusted_interaction": trusted_interaction} if trusted_interaction else {}),
         )
     except _CasMetaError as exc:
         # A definitive 4xx from CAS (e.g. 403 subject-binding, 400 bad request, 401)
@@ -244,10 +253,10 @@ async def _require_action(
 
 
 async def require_agent_use_permission(
-    agent_id: str, delegated_user_sub: str | None = None
+    agent_id: str, trusted_interaction: Mapping[str, Any] | None = None, *, delegated_user_sub: str | None = None
 ) -> None:
     """Require the current bearer's subject to be allowed to use ``agent_id``"""
-    await _require_action("agent", agent_id, "use", "agent#use", delegated_user_sub)
+    await _require_action("agent", agent_id, "use", "agent#use", delegated_user_sub, trusted_interaction)
 
 
 async def require_autonomous_permission(delegated_user_sub: str | None = None) -> None:

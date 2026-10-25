@@ -607,8 +607,26 @@ export async function gotoMcpServersTab(page: Page): Promise<void> {
 }
 
 export async function openAddMcpServerEditor(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Add Server" }).first().click();
-  await page.getByText("Add MCP Server").waitFor({ state: "visible" });
+  await dismissReleaseUpgradeDialog(page);
+  const addServerButton = page.getByRole("button", { name: "Add Server" }).first();
+  const addServerTitle = page.getByText("Add MCP Server", { exact: true });
+
+  await expect(addServerButton).toBeVisible({ timeout: 15_000 });
+  await addServerButton.click();
+
+  // A click can land on server-rendered markup just before React hydration
+  // attaches the handler. Retry once when the editor did not open instead of
+  // spending the entire test timeout waiting on a click that was discarded.
+  const opened = await addServerTitle
+    .waitFor({ state: "visible", timeout: 3_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!opened) {
+    await dismissReleaseUpgradeDialog(page);
+    await addServerButton.click();
+  }
+
+  await addServerTitle.waitFor({ state: "visible", timeout: 15_000 });
   await skipCatalogPickerToBlankForm(page);
 }
 

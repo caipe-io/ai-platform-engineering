@@ -22,6 +22,7 @@
  */
 
 import { getCollection } from "@/lib/mongodb";
+import { isPrivateResourcesEnabled } from "@/lib/feature-flags/private-resources";
 
 import { CREDENTIAL_COLLECTIONS } from "./collections";
 
@@ -88,6 +89,12 @@ export async function hasActiveIngestPreviewGrant(secretRef: string): Promise<bo
 
 /** Whether an ingestor may resolve this credential right now. */
 export async function ingestorMayUseSecret(secretRef: string): Promise<boolean> {
+  if (isPrivateResourcesEnabled()) {
+    const secrets = await getCollection<{ visibility?: string; owner?: { type?: string }; sharedWithTeams?: string[] }>(CREDENTIAL_COLLECTIONS.secretRefs);
+    const secret = await secrets.findOne({ id: secretRef });
+    const visibility = secret?.visibility ?? (secret?.owner?.type === "user" && !secret.sharedWithTeams?.length ? "private" : "team");
+    if (!secret || visibility === "private") return false;
+  }
   if (await secretIsReferencedByIngestionSource(secretRef)) return true;
   return hasActiveIngestPreviewGrant(secretRef);
 }

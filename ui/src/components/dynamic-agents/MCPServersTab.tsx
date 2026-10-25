@@ -19,7 +19,10 @@ import { toYaml } from "@/lib/yaml-serializer";
 import type { MCPServerConfigWithPermissions, MCPToolInfo } from "@/types/dynamic-agent";
 import {
 AlertCircle,
+ArrowDown,
+ArrowUp,
 CheckCircle2,
+ChevronsUpDown,
 Download,
 FlaskConical,
 Globe,
@@ -40,6 +43,9 @@ import { RemoteMCPCatalogDialog, type RemoteMCPTemplate } from "./RemoteMCPCatal
 
 export const MCP_SERVERS_REFRESH_INTERVAL_MS = 10_000;
 const MCP_SERVERS_LIST_URL = "/api/mcp-servers?page_size=100";
+
+type McpServerSortField = "name" | "transport" | "endpoint" | "status";
+type SortDirection = "asc" | "desc";
 
 const DEFAULT_ROW_PERMISSIONS = {
   can_manage: false,
@@ -207,6 +213,8 @@ export function MCPServersTab({
   const [pendingDeleteServerId, setPendingDeleteServerId] = React.useState<string | null>(null);
   const [deletingServerId, setDeletingServerId] = React.useState<string | null>(null);
   const [rowActionErrors, setRowActionErrors] = React.useState<Record<string, string>>({});
+  const [sortBy, setSortBy] = React.useState<McpServerSortField>("name");
+  const [sortOrder, setSortOrder] = React.useState<SortDirection>("asc");
 
   const fetchServers = React.useCallback(async ({
     showLoading = true,
@@ -219,7 +227,10 @@ export function MCPServersTab({
       setError(null);
     }
     try {
-      const response = await fetch(MCP_SERVERS_LIST_URL, { cache: "no-store" });
+      const listUrl = sortBy === "name" && sortOrder === "asc"
+        ? MCP_SERVERS_LIST_URL
+        : `${MCP_SERVERS_LIST_URL}&sort_by=${sortBy}&sort_order=${sortOrder}`;
+      const response = await fetch(listUrl, { cache: "no-store" });
       const data = await response.json();
       if (data.success) {
         const items = (data.data.items || []) as MCPServerConfigWithPermissions[];
@@ -244,7 +255,7 @@ export function MCPServersTab({
         setLoading(false);
       }
     }
-  }, []);
+  }, [sortBy, sortOrder]);
 
   React.useEffect(() => {
     fetchServers();
@@ -338,6 +349,50 @@ export function MCPServersTab({
       return next;
     });
   }, []);
+
+  const handleSort = React.useCallback((field: McpServerSortField) => {
+    if (sortBy === field) {
+      setSortOrder((current) => current === "asc" ? "desc" : "asc");
+    } else {
+      setSortBy(field);
+      setSortOrder("asc");
+    }
+  }, [sortBy]);
+
+  const sortableHeader = (
+    field: McpServerSortField,
+    label: string,
+    className: string,
+  ) => {
+    const active = sortBy === field;
+    const nextDirection = active && sortOrder === "asc" ? "descending" : "ascending";
+    return (
+      <div
+        className={className}
+        role="columnheader"
+        aria-sort={active ? (sortOrder === "asc" ? "ascending" : "descending") : "none"}
+      >
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => handleSort(field)}
+          aria-label={`Sort by ${label} ${nextDirection}`}
+          title={`Sort by ${label} ${nextDirection}`}
+        >
+          <span>{label}</span>
+          {active ? (
+            sortOrder === "asc" ? (
+              <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+            ) : (
+              <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+            )
+          ) : (
+            <ChevronsUpDown className="h-3.5 w-3.5 opacity-50" aria-hidden="true" />
+          )}
+        </button>
+      </div>
+    );
+  };
 
   const handleDelete = async (serverId: string) => {
     setDeletingServerId(serverId);
@@ -630,10 +685,10 @@ export function MCPServersTab({
           <div className="space-y-3">
             {/* Header */}
             <div className="grid grid-cols-12 gap-4 pb-2 border-b text-xs font-medium text-muted-foreground px-2">
-              <div className="col-span-3">Name</div>
-              <div className="col-span-2">Transport</div>
-              <div className="col-span-3">Endpoint / Command</div>
-              <div className="col-span-2">Status</div>
+              {sortableHeader("name", "Name", "col-span-3")}
+              {sortableHeader("transport", "Transport", "col-span-2")}
+              {sortableHeader("endpoint", "Endpoint / Command", "col-span-3")}
+              {sortableHeader("status", "Status", "col-span-2")}
               <div className="col-span-2 text-right">Actions</div>
             </div>
 

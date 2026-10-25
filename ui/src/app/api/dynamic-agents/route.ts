@@ -1,3 +1,7 @@
+import { dynamicAgentForBrowser, dynamicAgentsForBrowser } from "@/lib/dynamic-agent-response";
+import { trustedInteractionFromRequest } from "@/lib/authz/trusted-interaction";
+import { isPrivateResourcesEnabled } from "@/lib/feature-flags/private-resources";
+import { isPrivateAgentOwner } from "@/lib/rbac/agent-ownership-scope";
 /**
  * API routes for Dynamic Agents management.
  *
@@ -54,6 +58,7 @@ import type {
   DynamicAgentConfigWithPermissions,
   LegacyVisibilityType,
   ModelConfig,
+  MCPServerConfig,
   SubAgentRef,
   VisibilityType,
 } from "@/types/dynamic-agent";
@@ -66,7 +71,31 @@ const PLATFORM_DEFAULT_VISIBILITY_ERROR =
 const PLATFORM_DEFAULT_DELETE_ERROR =
   "This agent is currently the platform default for new chats. Open Settings → Platform settings → Defaults and change the platform default before deleting this agent.";
 
+function requirePrivateAgentOwner(
+  agent: Pick<DynamicAgentConfig, "visibility" | "owner_id" | "owner_subject">,
+  session: { sub?: unknown },
+): void {
+  if (agent.visibility !== "private") return;
+  const userSub = normalizeString(session.sub);
+  if (!userSub || !isPrivateAgentOwner(agent, userSub)) {
+    // Private resources are non-discoverable to non-owners, including org admins.
+    throw new ApiError("Agent not found", 404);
+  }
+}
+
 const COLLECTION_NAME = "dynamic_agents";
+type AgentSortField = "name" | "visibility" | "tools" | "grade" | "status";
+type SortDirection = "asc" | "desc";
+
+const AGENT_SORT_FIELDS = new Set<AgentSortField>([
+  "name",
+  "visibility",
+  "tools",
+  "grade",
+  "status",
+]);
+
+
 const OPENFGA_RESOURCE_ID_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}$/;
 const EXECUTION_HARNESS_ID_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
@@ -591,6 +620,7 @@ async function validateSubagentVisibility(
   parentVisibility: VisibilityType,
   subagents: SubAgentRef[],
   collection: Collection<DynamicAgentConfig>,
+  parentOwnerSubject?: string | null,
 ): Promise<{ valid: boolean; error?: string }> {
   if (!subagents || subagents.length === 0) return { valid: true };
 
@@ -608,6 +638,16 @@ async function validateSubagentVisibility(
     // private for the purpose of these checks.
     const subVis = sub.visibility as LegacyVisibilityType;
 
+    if (
+      parentVisibility === "private"
+      && (subVis !== "private" || sub.owner_subject !== parentOwnerSubject)
+    ) {
+      return {
+        valid: false,
+        error: `Private agents can only use private subagents owned by the same user. "${sub.name}" is not compatible.`,
+      };
+    }
+
     // Global parent → only global subagents
     if (parentVisibility === "global" && subVis !== "global") {
       return {
@@ -616,11 +656,7 @@ async function validateSubagentVisibility(
       };
     }
     // Team parent → team or global subagents only
-    if (
-      parentVisibility === "team" &&
-      subVis !== "team" &&
-      subVis !== "global"
-    ) {
+    if (parentVisibility === "team" && subVis !== "team" && subVis !== "global") {
       return {
         valid: false,
         error: `Team agents can only use team or global subagents. "${sub.name}" is ${subVis}.`,
@@ -629,6 +665,27 @@ async function validateSubagentVisibility(
   }
 
   return { valid: true };
+}
+
+async function validateMcpVisibility(
+  agentVisibility: VisibilityType,
+  allowedTools: Record<string, string[] | boolean>,
+  ownerSubject: string,
+): Promise<void> {
+  const serverIds = Object.keys(allowedTools);
+  if (serverIds.length === 0) return;
+  const servers = await getCollection<MCPServerConfig>("mcp_servers");
+  const docs = await servers.find({ _id: { $in: serverIds } }).toArray();
+  for (const server of docs) {
+    if (server.visibility !== "private") continue;
+    if (agentVisibility !== "private" || server.owner_subject !== ownerSubject) {
+      throw new ApiError(
+        `Private MCP server "${server.name}" can only be attached to a private agent owned by the same user.`,
+        400,
+        "PRIVATE_DEPENDENCY_SCOPE_MISMATCH",
+      );
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -643,6 +700,70 @@ async function validateSubagentVisibility(
  * - enabled_only=true: Only return enabled agents (useful for subagent selection)
  * - search=<string>: Filter agents by name or description (case-insensitive)
  */
+function agentToolCount(agent: DynamicAgentConfig): number {
+  return Object.keys(agent.allowed_tools ?? {}).length;
+}
+
+function compareOptionalNumbers(
+  left: number | undefined,
+  right: number | undefined,
+  direction: SortDirection,
+): number {
+  if (left === undefined && right === undefined) return 0;
+  if (left === undefined) return 1;
+  if (right === undefined) return -1;
+  return (left - right) * (direction === "asc" ? 1 : -1);
+}
+
+function sortAgents(
+  agents: DynamicAgentConfig[],
+  field: AgentSortField,
+  direction: SortDirection,
+  pinnedAgentId: string | null,
+): DynamicAgentConfig[] {
+  const multiplier = direction === "asc" ? 1 : -1;
+  return [...agents].sort((left, right) => {
+    const leftPinned = pinnedAgentId !== null && String(left._id) === pinnedAgentId;
+    const rightPinned = pinnedAgentId !== null && String(right._id) === pinnedAgentId;
+    if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+
+    let comparison = 0;
+    switch (field) {
+      case "name":
+        comparison = left.name.localeCompare(right.name, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+        break;
+      case "visibility":
+        comparison = left.visibility.localeCompare(right.visibility);
+        break;
+      case "tools":
+        comparison = agentToolCount(left) - agentToolCount(right);
+        break;
+      case "grade":
+        comparison = compareOptionalNumbers(
+          left.last_review?.score,
+          right.last_review?.score,
+          direction,
+        );
+        if (comparison !== 0) {
+          return comparison;
+        }
+        break;
+      case "status":
+        comparison = Number(left.enabled) - Number(right.enabled);
+        break;
+    }
+
+    if (comparison !== 0) return comparison * multiplier;
+    return left.name.localeCompare(right.name, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    });
+  });
+}
+
 export const GET = withErrorHandler(async (request: NextRequest) => {
   const { session } = await getAuthFromBearerOrSession(request);
 
@@ -651,6 +772,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const { searchParams } = new URL(request.url);
   const enabledOnly = searchParams.get("enabled_only") === "true";
   const search = searchParams.get("search")?.trim() || "";
+  const requestedSortField = searchParams.get("sort_by") as AgentSortField | null;
+  const sortField = requestedSortField && AGENT_SORT_FIELDS.has(requestedSortField) ? requestedSortField : "name";
+  const sortDirection: SortDirection = searchParams.get("sort_order") === "desc" ? "desc" : "asc";
 
   const query: Record<string, unknown> = enabledOnly
     ? { $or: [{ enabled: true }, { enabled: { $exists: false } }] }
@@ -696,15 +820,17 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     session,
     scopedItems,
     listTarget,
+    { trustedContext: { interaction: trustedInteractionFromRequest(request) } },
   );
   const projectedItems = projectAgentAppIdentity(visibleItems, session, { availableOnly: enabledOnly });
-  const pageItems = projectedItems.slice(skip, skip + pageSize);
+  const pageItems = sortAgents(projectedItems, sortField, sortDirection, platformDefaultAgentId).slice(skip, skip + pageSize);
   const { rows } = await resolveAgentListPermissions(
     session,
     pageItems.map((agent) => String(agent._id)),
   );
 
-  const items: DynamicAgentConfigWithPermissions[] = pageItems.map((agent) => ({
+  const browserItems = await dynamicAgentsForBrowser(pageItems);
+  const items: DynamicAgentConfigWithPermissions[] = browserItems.map((agent) => ({
     ...(agent as DynamicAgentConfig),
     permissions: agentRowPermissionsOrDefault(rows, String(agent._id)),
   }));
@@ -745,12 +871,16 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   body.model = normalizeAgentModel(body.model, executionHarnessId === "dynamic_agents");
   const requestedOwnerTeamSlug = normalizeString(body.owner_team_slug);
   const requestedOwnerTeamId = normalizeString(body.owner_team_id);
-  // Coerce any legacy 'private' on the wire to 'team' (private visibility was
-  // retired 2026-05-22; see refactor commit 096a8b159). New agents without an
-  // explicit visibility default to 'team' so they always have an owner team.
+  // Omitted visibility retains the team default.
   const rawVisibility = body.visibility as LegacyVisibilityType | undefined;
   const visibility: VisibilityType =
-    rawVisibility === "global" ? "global" : "team";
+    rawVisibility === "private" ? "private" : rawVisibility === "global" ? "global" : "team";
+  if (visibility === "private" && !isPrivateResourcesEnabled()) {
+    throw new ApiError("Private agents are not enabled for this deployment", 409, "PRIVATE_RESOURCES_DISABLED");
+  }
+  if (visibility === "private" && session.isServiceAccount) {
+    throw new ApiError("Service accounts cannot own private agents", 403, "PRIVATE_OWNER_MUST_BE_USER");
+  }
   let ownerTeam: TeamOwnershipDoc | null = null;
   let ownerTeamSlug: string | null = null;
   if (visibility === "global") {
@@ -763,7 +893,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       );
     }
   }
-  if (requestedOwnerTeamSlug || requestedOwnerTeamId || visibility === "team") {
+  if (visibility !== "private" && (requestedOwnerTeamSlug || requestedOwnerTeamId || visibility === "team")) {
     if (!requestedOwnerTeamSlug && !requestedOwnerTeamId) {
       throw new ApiError(
         "Owner team is required for team agents",
@@ -825,6 +955,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     throw new ApiError(`Agent with ID "${agentId}" already exists`, 409);
   }
 
+  const ownerSubject = requireStableSubject(session);
   // Subagent visibility validation
   const subagents: SubAgentRef[] = body.subagents ?? [];
   if (subagents.length > 0) {
@@ -832,6 +963,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       visibility,
       subagents,
       collection,
+      ownerSubject,
     );
     if (!result.valid) {
       throw new ApiError(result.error!, 400);
@@ -849,7 +981,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // semantically a no-op for OpenFGA (deduped at write time).
   const { slugs: rawSharedTeamSlugs, droppedInputs: droppedSharedInputs } =
     await resolveSharedTeamSlugs(body.shared_with_teams);
-  const sharedTeamSlugs = ownerTeamSlug
+  const sharedTeamSlugs = visibility === "private" ? [] : ownerTeamSlug
     ? rawSharedTeamSlugs.filter((slug) => slug !== ownerTeamSlug)
     : rawSharedTeamSlugs;
   if (droppedSharedInputs.length > 0) {
@@ -875,7 +1007,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   await validateRagCollectionSelection(ragCollectionIds, session);
 
   // Build document with explicit field allowlist (Security VII)
-  const ownerSubject = requireStableSubject(session);
   const now = new Date();
   const allowedRemoteAgents = await validateRemoteAgentIds(body.allowed_remote_agents);
   const doc: DynamicAgentConfig = {
@@ -910,6 +1041,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // Server-controlled fields — never from request body
     owner_id: user.email,
     owner_subject: ownerSubject,
+    creator_subject: ownerSubject,
+    creator_id: user.email,
     is_system: false,
     config_driven: false,
     created_at: now.toISOString(),
@@ -922,11 +1055,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const unlinkedServiceAccountSub =
     visibility === "global" ? await resolveUnlinkedServiceAccountSub() : null;
 
+  await validateMcpVisibility(visibility, doc.allowed_tools, ownerSubject);
   await reconcileAgentRelationships({
     agentId,
     previousAllowedTools: {},
     nextAllowedTools: doc.allowed_tools,
     ownerSubject: doc.owner_subject,
+    creatorSubject: ownerSubject,
+    personalOwnerAccess: visibility === "private",
     organizationId: caipeOrgKey(),
     ownerTeamSlug,
     nextSharedTeamSlugs: sharedTeamSlugs,
@@ -951,7 +1087,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     throw error;
   }
 
-  return successResponse(doc, 201);
+  return successResponse(await dynamicAgentForBrowser(doc), 201);
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -981,6 +1117,7 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
   if (!agent) {
     throw new ApiError("Agent not found", 404);
   }
+  requirePrivateAgentOwner(agent, session);
   await requireAgentWritePermission(session, id);
 
   // Config-driven guard
@@ -1068,7 +1205,7 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     !isTransferRequest
   ) {
     // No fields to update — return current state
-    return successResponse(agent);
+    return successResponse(await dynamicAgentForBrowser(agent));
   }
 
   // Subagent visibility validation (using merged final values)
@@ -1088,7 +1225,11 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     | VisibilityType
     | "private"
     | undefined;
-  const isDemoteToTeam =
+  const stableOwnerSubject = normalizeString(agent.owner_subject) ?? requireStableSubject(session);
+  if (finalVisibility === "private" && (session.isServiceAccount || (currentVisibility !== "private" && !isPrivateResourcesEnabled()))) {
+    throw new ApiError("Private agent creation is unavailable", 409, "PRIVATE_RESOURCES_DISABLED");
+  }
+  const isDemoteToTeam = finalVisibility === "private" ||
     finalVisibility === "team" && currentVisibility === "global";
   if (isDemoteToTeam && (await isPlatformDefaultAgent(id))) {
     throw new ApiError(
@@ -1103,6 +1244,7 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       finalVisibility,
       finalSubagents,
       collection,
+      stableOwnerSubject,
     );
     if (!result.valid) {
       throw new ApiError(result.error!, 400);
@@ -1140,6 +1282,12 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     updateData.shared_with_teams = sharedTeamSlugs;
   }
 
+  if (finalVisibility === "private") {
+    sharedTeamSlugs = [];
+    updateData.shared_with_teams = [];
+    unsetData.owner_team_slug = "";
+    unsetData.owner_team_id = "";
+  }
   updateData.updated_at = new Date().toISOString();
 
   // Ownership transfer (spec 2026-06-03, US3): owner_team_slug is immutable
@@ -1151,7 +1299,9 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
   // its own org-admin/tool-caller tuples via `reconcileAgentRelationships`,
   // so we use the resolver for the decision only and apply persistence here.
   const previousOwnerTeamSlug = normalizeString(agent.owner_team_slug);
-  const resolvedOwnership = await resolveShareableOwnershipWrite(
+  const resolvedOwnership = finalVisibility === "private" ? {
+    ownerTeamSlug: null, sharedTeamSlugs: [], transferred: !!previousOwnerTeamSlug, previousOwnerTeamSlug,
+  } : await resolveShareableOwnershipWrite(
     {
       objectType: "agent",
       objectId: id,
@@ -1180,7 +1330,7 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
   const transferPreviousOwner = resolvedOwnership.transferred
     ? (resolvedOwnership.previousOwnerTeamSlug ?? undefined)
     : undefined;
-  if (resolvedOwnership.transferred) {
+  if (resolvedOwnership.transferred && nextOwnerTeamSlug) {
     const destinationTeam = await loadOwnerTeam({ slug: nextOwnerTeamSlug! });
     if (!destinationTeam) {
       throw new ApiError(
@@ -1230,11 +1380,15 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       ? await resolveUnlinkedServiceAccountGrantState()
       : { sub: null, explicitAgentIds: new Set<string>() };
 
+  await validateMcpVisibility(finalVisibility, finalAllowedTools, stableOwnerSubject);
   await reconcileAgentRelationships({
     agentId: id,
     previousAllowedTools: allowedToolsFromAgent(agent),
     nextAllowedTools: finalAllowedTools,
-    ownerSubject: agent.owner_subject ?? agent.owner_id,
+    ownerSubject: stableOwnerSubject,
+    creatorSubject: agent.creator_subject ?? stableOwnerSubject,
+    personalOwnerAccess: finalVisibility === "private",
+    previousPersonalOwnerAccess: currentVisibility === "private",
     organizationId: caipeOrgKey(),
     ownerTeamSlug: nextOwnerTeamSlug,
     previousOwnerTeamSlug: transferPreviousOwner,
@@ -1265,7 +1419,7 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
   }
 
   return successResponse(
-    normalizeAgentDoc(updated as unknown as Record<string, unknown>),
+    await dynamicAgentForBrowser(normalizeAgentDoc(updated as unknown as Record<string, unknown>) as unknown as DynamicAgentConfig),
   );
 });
 
@@ -1287,7 +1441,7 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
   }
 
   const { user, session } = await getAuthFromBearerOrSession(request);
-  await requireAgentPermission(session, id, "delete");
+
 
   const collection = await getCollection<DynamicAgentConfig>(COLLECTION_NAME);
 
@@ -1296,6 +1450,9 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
   if (!agent) {
     throw new ApiError("Agent not found", 404);
   }
+  requirePrivateAgentOwner(agent, session);
+  await requireAgentPermission(session, id, "delete");
+
 
   // System agent guard
   if (agent.is_system) {

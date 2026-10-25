@@ -114,6 +114,8 @@ describe("POST /api/mcp-servers/agent-context", () => {
     expect(body.data.server_ids.sort()).toEqual(["argocd", "jira"]);
     expect(body.data.headers["X-CAIPE-Agent-Context"]).toEqual(expect.any(String));
     expect(body.data.headers["X-CAIPE-Agent-Context-Signature"]).toEqual(expect.any(String));
+    expect(body.data.headers["X-CAIPE-Trusted-Interaction"]).toEqual(expect.any(String));
+    expect(body.data.headers["X-CAIPE-Trusted-Interaction-Signature"]).toEqual(expect.any(String));
     const payload = decodeAgentContextPayload(body.data.headers);
     expect(payload.kind).toBe("local");
     // Local contexts get an 8h TTL (see AGENT_CONTEXT_TTL_SECONDS.local in

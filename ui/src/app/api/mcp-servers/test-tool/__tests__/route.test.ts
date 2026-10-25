@@ -167,6 +167,14 @@ describe("POST /api/mcp-servers/test-tool", () => {
       type: "mcp_server",
       id: "mcp-test-argocd",
       action: "invoke",
+    }, {
+      trustedContext: {
+        interaction: {
+          source: "web",
+          conversationKind: "personal",
+          verified: false,
+        },
+      },
     });
     expect(mockRetrieve).toHaveBeenCalledWith({
       headers: expect.any(Headers),
@@ -181,11 +189,19 @@ describe("POST /api/mcp-servers/test-tool", () => {
     expect(initializeHeaders["X-CAIPE-Provider-Token"]).toBe("argocd-provider-token");
     expect(initializeHeaders["X-CAIPE-Agent-Context"]).toEqual(expect.any(String));
     expect(initializeHeaders["X-CAIPE-Agent-Context-Signature"]).toEqual(expect.any(String));
+    expect(initializeHeaders["X-CAIPE-Trusted-Interaction"]).toEqual(expect.any(String));
+    expect(initializeHeaders["X-CAIPE-Trusted-Interaction-Signature"]).toEqual(expect.any(String));
     expect(invokeHeaders.Authorization).toBe("Bearer user-keycloak-token");
     expect(invokeHeaders["X-CAIPE-Provider-Token"]).toBe("argocd-provider-token");
     expect(invokeHeaders["X-CAIPE-Agent-Context"]).toBe(initializeHeaders["X-CAIPE-Agent-Context"]);
     expect(invokeHeaders["X-CAIPE-Agent-Context-Signature"]).toBe(
       initializeHeaders["X-CAIPE-Agent-Context-Signature"],
+    );
+    expect(invokeHeaders["X-CAIPE-Trusted-Interaction"]).toBe(
+      initializeHeaders["X-CAIPE-Trusted-Interaction"],
+    );
+    expect(invokeHeaders["X-CAIPE-Trusted-Interaction-Signature"]).toBe(
+      initializeHeaders["X-CAIPE-Trusted-Interaction-Signature"],
     );
     expect(invokeHeaders["mcp-session-id"]).toBe("mcp-session-1");
     expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({

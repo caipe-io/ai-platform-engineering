@@ -1,6 +1,7 @@
 // assisted-by Codex Codex-sonnet-4-6
 
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
+import { reconcileTupleDiff } from "@/lib/authz";
 
 import {
 isOpenFgaReconciliationEnabled,
@@ -19,14 +20,16 @@ export interface AgentToolTupleDiffInput {
   previousAllowedTools?: AllowedToolsConfig;
   nextAllowedTools: AllowedToolsConfig;
   ownerSubject?: string | null;
+  creatorSubject?: string | null;
+  personalOwnerAccess?: boolean;
+  previousPersonalOwnerAccess?: boolean;
   organizationId?: string | null;
   /**
-   * The current desired owner-team slug. Required for every dynamic agent
-   * after 2026-05-22 (private was retired). When set, we write the
+   * The current desired owner-team slug. Required for team/global agents.
+   * When set, we write the
    * canonical pair of inheritance tuples that grants team members
    * `can_use` and team admins `can_manage`. When `null`/`undefined` we
-   * skip team writes — used only by the legacy migration path; live
-   * routes should always pass a slug.
+   * skip team writes for private agents.
    */
   ownerTeamSlug?: string | null;
   /**
@@ -165,15 +168,35 @@ export function buildAgentRelationshipTupleDiff(input: AgentToolTupleDiffInput):
   const writes: OpenFgaTupleKey[] = [];
   const deletes: OpenFgaTupleKey[] = [];
 
-  if (input.ownerSubject && isValidOpenFgaId(input.ownerSubject)) {
+  if (input.creatorSubject && isValidOpenFgaId(input.creatorSubject)) {
+    writes.push({
+      user: `user:${input.creatorSubject}`,
+      relation: "creator",
+      object: `agent:${input.agentId}`,
+    });
+  }
+  const legacyDirectOwnerAccess = input.personalOwnerAccess === undefined;
+  if ((input.personalOwnerAccess || legacyDirectOwnerAccess) && input.ownerSubject && isValidOpenFgaId(input.ownerSubject)) {
     writes.push({
       user: `user:${input.ownerSubject}`,
       relation: "owner",
       object: `agent:${input.agentId}`,
     });
+  } else if (input.previousPersonalOwnerAccess && input.ownerSubject && isValidOpenFgaId(input.ownerSubject)) {
+    deletes.push({
+      user: `user:${input.ownerSubject}`,
+      relation: "owner",
+      object: `agent:${input.agentId}`,
+    });
   }
-  if (input.organizationId && isValidOpenFgaId(input.organizationId)) {
+  if (!input.personalOwnerAccess && input.organizationId && isValidOpenFgaId(input.organizationId)) {
     writes.push({
+      user: `organization:${input.organizationId}#admin`,
+      relation: "manager",
+      object: `agent:${input.agentId}`,
+    });
+  } else if (input.personalOwnerAccess && input.organizationId && isValidOpenFgaId(input.organizationId)) {
+    deletes.push({
       user: `organization:${input.organizationId}#admin`,
       relation: "manager",
       object: `agent:${input.agentId}`,
@@ -339,7 +362,10 @@ export async function reconcileAgentRelationships(
 ): Promise<OpenFgaReconcileResult> {
   const diff = buildAgentRelationshipTupleDiff(input);
   try {
-    return await writeOpenFgaTupleDiff(diff);
+    return await reconcileTupleDiff(diff, {
+      caller: input.ownerSubject ? { type: "user", id: input.ownerSubject } : undefined,
+      source: "agent_relationship_reconcile",
+    });
   } catch (error) {
     if (input.failClosed ?? true) {
       throw error;

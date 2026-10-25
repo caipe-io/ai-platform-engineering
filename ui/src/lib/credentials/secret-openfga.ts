@@ -1,9 +1,9 @@
 import {
 isOpenFgaReconciliationEnabled,
 readOpenFgaTuples,
-writeOpenFgaTupleDiff,
 type OpenFgaTupleKey,
 } from "@/lib/rbac/openfga";
+import { reconcileTupleDiff } from "@/lib/authz";
 import type { CredentialOwnerRef } from "./types";
 
 const OPENFGA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}$/;
@@ -39,6 +39,8 @@ export function buildSecretRefOwnerTuples(input: {
 
   if (input.owner.type === "user" && input.ownerSubject && validId(input.ownerSubject)) {
     tuples.push(
+      { user: `user:${input.ownerSubject}`, relation: "creator", object },
+      { user: `user:${input.ownerSubject}`, relation: "owner", object },
       { user: `user:${input.ownerSubject}`, relation: "metadata_reader", object },
       { user: `user:${input.ownerSubject}`, relation: "user", object },
       { user: `user:${input.ownerSubject}`, relation: "manager", object },
@@ -83,24 +85,27 @@ export async function reconcileSecretRefOwnerRelationships(input: {
   owner: CredentialOwnerRef;
   ownerSubject?: string | null;
 }): Promise<void> {
-  await writeOpenFgaTupleDiff({
+  await reconcileTupleDiff({
     writes: buildSecretRefOwnerTuples(input),
     deletes: [],
+  }, {
+    caller: input.ownerSubject ? { type: "user", id: input.ownerSubject } : undefined,
+    source: "secret_ref_owner_reconcile",
   });
 }
 
 export async function reconcileSecretRefShare(secretId: string, teamId: string): Promise<void> {
-  await writeOpenFgaTupleDiff({
+  await reconcileTupleDiff({
     writes: buildSecretRefShareTuples(secretId, teamId),
     deletes: [],
-  });
+  }, { source: "secret_ref_share" });
 }
 
 export async function deleteSecretRefShare(secretId: string, teamId: string): Promise<void> {
-  await writeOpenFgaTupleDiff({
+  await reconcileTupleDiff({
     writes: [],
     deletes: buildSecretRefShareTuples(secretId, teamId),
-  });
+  }, { source: "secret_ref_share_revoke" });
 }
 
 export async function deleteAllSecretRefRelationships(secretId: string): Promise<void> {
@@ -114,8 +119,8 @@ export async function deleteAllSecretRefRelationships(secretId: string): Promise
     continuationToken = page.continuationToken;
   } while (continuationToken);
 
-  await writeOpenFgaTupleDiff({
+  await reconcileTupleDiff({
     writes: [],
     deletes: tuples.filter((tuple) => tuple.object === object),
-  });
+  }, { source: "secret_ref_delete" });
 }

@@ -33,6 +33,10 @@ import {
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
 import { buildAgentContextHeaders, localAgentContextId } from "@/lib/mcp-http-server-client";
+import {
+  trustedInteractionFromRequest,
+  trustedInteractionProofHeaders,
+} from "@/lib/authz/trusted-interaction";
 import { filterResourcesByPermission } from "@/lib/rbac/resource-authz";
 import type { MCPServerConfig } from "@/types/dynamic-agent";
 import { NextRequest } from "next/server";
@@ -50,6 +54,7 @@ function readRequestedServerIds(value: unknown): string[] | undefined {
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const { session } = await getAuthFromBearerOrSession(request);
+  const interaction = trustedInteractionFromRequest(request);
   const body = request.headers.get("content-length") === "0" ? {} : ((await request.json().catch(() => ({}))) as Record<string, unknown>);
   const requestedServerIds = readRequestedServerIds(body.serverIds);
 
@@ -63,7 +68,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     type: "mcp_server",
     action: "invoke",
     id: (server: MCPServerConfig) => String(server._id),
-  });
+  }, { trustedContext: { interaction } });
 
   if (requestedServerIds !== undefined) {
     const invokableIds = new Set(invokableServers.map((server) => String(server._id)));
@@ -81,7 +86,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const serverIds = invokableServers.map((server) => String(server._id));
   const agentId = localAgentContextId(session);
-  const headers = buildAgentContextHeaders(agentId, "local");
+  const headers = {
+    ...buildAgentContextHeaders(agentId, "local"),
+    ...trustedInteractionProofHeaders(interaction),
+  };
   if (Object.keys(headers).length === 0) {
     throw new ApiError(
       "Agent context signing is not configured on this deployment.",

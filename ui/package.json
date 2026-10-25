@@ -28,6 +28,7 @@
     "test:e2e:rbac-live-openfga": "RUN_RBAC_E2E=1 playwright test e2e/rbac/openfga-live.spec.ts --config=playwright.rbac.config.ts",
     "test:e2e:rbac-live-slack-bff": "RUN_RBAC_E2E=1 playwright test e2e/rbac/slack-bff-user-directory-live.spec.ts --config=playwright.rbac.config.ts",
     "test:e2e:rbac-live-resources": "RUN_RBAC_E2E=1 playwright test e2e/rbac/resource-lifecycle-live.spec.ts --config=playwright.rbac.config.ts",
+    "test:e2e:rbac-live-private": "RUN_RBAC_E2E=1 playwright test e2e/rbac/private-resources-live.spec.ts --config=playwright.rbac.config.ts",
     "test:e2e:rbac-live-rich": "RUN_RBAC_E2E=1 playwright test e2e/rbac/rbac-rich-local-regression-live.spec.ts --config=playwright.rbac.config.ts",
     "test:e2e:rbac-live-rich-keep": "RUN_RBAC_E2E=1 RBAC_RICH_KEEP_FIXTURE=1 playwright test e2e/rbac/rbac-rich-local-regression-live.spec.ts --config=playwright.rbac.config.ts",
     "test:e2e:rbac-live-rich-cleanup": "RUN_RBAC_E2E=1 playwright test e2e/rbac/rbac-rich-local-regression-live.spec.ts --config=playwright.rbac.config.ts",

@@ -172,7 +172,7 @@ describe("resource-authz org-admin bypass", () => {
   });
 
   describe("requireAgentPermission", () => {
-    it("allows organization admins without a per-agent tuple", async () => {
+    it("does not let organization admins bypass the per-agent tuple", async () => {
       const check = jest.fn(async (tuple) => {
         if (tuple.object === "organization:caipe" && tuple.relation === "can_manage") {
           return { allowed: true };
@@ -181,15 +181,15 @@ describe("resource-authz org-admin bypass", () => {
       });
       await expect(
         requireAgentPermission({ sub: "admin-sub" }, "hello-world", "write", { check }),
-      ).resolves.toBeUndefined();
+      ).rejects.toBeInstanceOf(ApiError);
       expect(check).toHaveBeenCalledWith({
         user: "user:admin-sub",
-        relation: "can_manage",
-        object: "organization:caipe",
+        relation: "can_write",
+        object: "agent:hello-world",
       });
-      expect(check).not.toHaveBeenCalledWith(
-        expect.objectContaining({ object: "agent:hello-world" }),
-      );
+      expect(check).not.toHaveBeenCalledWith(expect.objectContaining({
+        object: "organization:caipe",
+      }));
     });
 
     it("falls through to per-agent checks when the caller is not an org admin", async () => {

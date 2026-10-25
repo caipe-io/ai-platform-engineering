@@ -18,11 +18,10 @@
  * The component is **controlled** and does not persist — the host editor saves
  * with its own button (consistent with the agent editor's button-save).
  *
- * Layout flexibility: the agent editor interleaves a visibility toggle between
- * the owner picker and the share section, and only shows sharing when
- * visibility is "team". Those are supported via `betweenOwnerAndShare` and
- * `showShare` so the agent editor can adopt this component without reordering
- * its UI (SC-006). RAG/MCP editors simply omit them.
+ * Layout flexibility: access controls can appear before the owner picker or
+ * between ownership and sharing. The agent editor uses this to show visibility
+ * first and sharing only for team-visible agents. Other editors can omit these
+ * slots.
  */
 
 import * as React from "react";
@@ -79,6 +78,10 @@ export interface TeamOwnershipFieldsProps {
   shareHelpText?: React.ReactNode;
   /** When false, the entire share section is hidden (e.g. agent visibility !== "team"). */
   showShare?: boolean;
+  /** When false, hide the owner-team picker (personal/private resources). */
+  showOwner?: boolean;
+  /** Rendered before the owner block (for access scope selectors). */
+  beforeOwner?: React.ReactNode;
   /** Rendered between the owner block and the share block (e.g. agent visibility toggle). */
   betweenOwnerAndShare?: React.ReactNode;
   /** Rendered at the bottom of the owner block (e.g. agent platform-admin warning). */
@@ -117,6 +120,8 @@ export function TeamOwnershipFields(props: TeamOwnershipFieldsProps) {
     shareLabel = "Share with Teams",
     shareHelpText,
     showShare = true,
+    showOwner = true,
+    beforeOwner,
     betweenOwnerAndShare,
     ownerExtra,
     // `renderGrantDetail` and `extraGrantPreviewItems` remain in the props
@@ -156,8 +161,10 @@ export function TeamOwnershipFields(props: TeamOwnershipFieldsProps) {
 
   return (
     <div className="space-y-4">
+      {beforeOwner}
+
       {/* Owner team ------------------------------------------------------ */}
-      <div className="space-y-2 rounded-lg">
+      {showOwner && <div className="space-y-2 rounded-lg">
         <Label htmlFor="ownerTeam">
           {ownerLabel}{" "}
           {ownerRequired && !isEditing && (
@@ -190,9 +197,7 @@ export function TeamOwnershipFields(props: TeamOwnershipFieldsProps) {
         </p>
         {isEditing && allowTransfer && onTransfer && (
           <p className="text-xs text-amber-600 dark:text-amber-400">
-            Changing the owner team will transfer ownership when you save. If
-            you are not a member of the destination team, saving may remove your
-            own access.
+            Changing the owner team will transfer ownership when you save. If you are not a member of the destination team, saving may remove your own access.
           </p>
         )}
         {creatorSubject && (
@@ -202,7 +207,7 @@ export function TeamOwnershipFields(props: TeamOwnershipFieldsProps) {
           </p>
         )}
         {ownerExtra}
-      </div>
+      </div>}
 
       {betweenOwnerAndShare}
 

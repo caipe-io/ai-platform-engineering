@@ -16,8 +16,11 @@ import type { DynamicAgentConfigWithPermissions } from "@/types/dynamic-agent";
 import {
 Bot,
 AlertCircle,
+ArrowDown,
+ArrowUp,
 ChevronLeft,
 ChevronRight,
+ChevronsUpDown,
 CopyPlus,
 Download,
 Globe,
@@ -46,6 +49,9 @@ const DEFAULT_ROW_PERMISSIONS = {
   can_write: false,
   can_discover: false,
 } as const;
+
+type AgentSortField = "name" | "visibility" | "tools" | "grade" | "status";
+type SortDirection = "asc" | "desc";
 
 function agentCanEdit(agent: DynamicAgentConfigWithPermissions | null | undefined): boolean {
   if (!agent) return true;
@@ -96,6 +102,8 @@ export function DynamicAgentsTab({
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(20);
   const [total, setTotal] = React.useState(0);
+  const [sortBy, setSortBy] = React.useState<AgentSortField>("name");
+  const [sortOrder, setSortOrder] = React.useState<SortDirection>("asc");
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -108,6 +116,10 @@ export function DynamicAgentsTab({
         page_size: pageSize.toString(),
       });
       if (search.trim()) params.set("search", search.trim());
+      if (sortBy !== "name" || sortOrder !== "asc") {
+        params.set("sort_by", sortBy);
+        params.set("sort_order", sortOrder);
+      }
       const response = await fetch(`/api/dynamic-agents?${params}`);
       const data = await response.json();
       if (data.success) {
@@ -126,7 +138,7 @@ export function DynamicAgentsTab({
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, search]);
+  }, [page, pageSize, search, sortBy, sortOrder]);
 
   React.useEffect(() => {
     fetchAgents();
@@ -208,6 +220,51 @@ export function DynamicAgentsTab({
       return next;
     });
   }, []);
+
+  const handleSort = React.useCallback((field: AgentSortField) => {
+    if (sortBy === field) {
+      setSortOrder((current) => current === "asc" ? "desc" : "asc");
+    } else {
+      setSortBy(field);
+      setSortOrder("asc");
+    }
+    setPage(1);
+  }, [sortBy]);
+
+  const sortableHeader = (
+    field: AgentSortField,
+    label: string,
+    className: string,
+  ) => {
+    const active = sortBy === field;
+    const nextDirection = active && sortOrder === "asc" ? "descending" : "ascending";
+    return (
+      <div
+        className={className}
+        role="columnheader"
+        aria-sort={active ? (sortOrder === "asc" ? "ascending" : "descending") : "none"}
+      >
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => handleSort(field)}
+          aria-label={`Sort by ${label} ${nextDirection}`}
+          title={`Sort by ${label} ${nextDirection}`}
+        >
+          <span>{label}</span>
+          {active ? (
+            sortOrder === "asc" ? (
+              <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+            ) : (
+              <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+            )
+          ) : (
+            <ChevronsUpDown className="h-3.5 w-3.5 opacity-50" aria-hidden="true" />
+          )}
+        </button>
+      </div>
+    );
+  };
 
   const handleDelete = async (agentId: string) => {
     setDeletingAgentId(agentId);
@@ -466,11 +523,12 @@ export function DynamicAgentsTab({
           <div className="space-y-3">
             {/* Header */}
             <div className="grid grid-cols-12 gap-4 pb-2 border-b text-xs font-medium text-muted-foreground px-2">
-              <div className="col-span-4">Name</div>
-              <div className="col-span-2">Visibility</div>
-              <div className="col-span-1">Tools</div>
-              <div className="col-span-1">Grade</div>
-              <div className="col-span-2">Status</div>
+              {sortableHeader("name", "Name", "col-span-3")}
+              <div className="col-span-2">Created by</div>
+              {sortableHeader("visibility", "Visibility", "col-span-2")}
+              {sortableHeader("tools", "Tools", "col-span-1")}
+              {sortableHeader("grade", "Grade", "col-span-1")}
+              {sortableHeader("status", "Status", "col-span-1")}
               <div className="col-span-2 text-right">Actions</div>
             </div>
 
@@ -518,6 +576,20 @@ export function DynamicAgentsTab({
                     </div>
                 </div>
 
+                <div className="col-span-2 min-w-0">
+                  <div
+                    className="truncate text-sm"
+                    title={agent.creator?.label ?? "Unknown user"}
+                  >
+                    {agent.creator?.label ?? "Unknown user"}
+                  </div>
+                  {agent.creator?.email && agent.creator.email !== agent.creator.label && (
+                    <div className="truncate text-xs text-muted-foreground">
+                      {agent.creator.email}
+                    </div>
+                  )}
+                </div>
+
                 <div className="col-span-2">
                   <Badge
                     variant="outline"
@@ -538,7 +610,7 @@ export function DynamicAgentsTab({
                   <LastReviewBadge review={agent.last_review} />
                 </div>
 
-                <div className="col-span-2">
+                <div className="col-span-1">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

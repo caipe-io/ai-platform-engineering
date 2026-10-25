@@ -42,6 +42,7 @@ interface OwnedResourceInput {
   previousOwnerSubject?: string | null;
   previousOwnerSubjectKind?: OwnerSubjectKind;
   ownerTeamSlug?: string | null;
+  previousOwnerTeamSlug?: string | null;
   /**
    * Keycloak `sub` of the creator. Written once as an audit-only
    * `user:<sub> creator <type>:<id>` tuple and never deleted (spec
@@ -49,10 +50,18 @@ interface OwnedResourceInput {
    * track provenance are unaffected.
    */
   creatorSubject?: string | null;
+  personalOwnerAccess?: boolean;
+  previousPersonalOwnerAccess?: boolean;
 }
 
 export interface McpServerRelationshipInput extends OwnedResourceInput {
   serverId: string;
+  nextSharedTeamSlugs?: readonly string[] | null;
+  previousSharedTeamSlugs?: readonly string[] | null;
+  /** Grant organization members discovery/use access to a global server. */
+  globalOrganizationAccess?: boolean;
+  /** Revoke the prior organization-member grant when demoting from global. */
+  previousGlobalOrganizationAccess?: boolean;
 }
 
 export interface ConfigDrivenMcpServerRelationshipInput {
@@ -493,7 +502,6 @@ export function buildShareableResourceTupleDiff(
       object,
     });
   }
-
   // creator and parent_kb are never in a delete set — only team + org grants are.
   return { writes: uniqueTuples(writes), deletes: uniqueTuples(deletes) };
 }
@@ -504,24 +512,60 @@ export function buildMcpServerRelationshipTupleDiff(
   if (!isValidOpenFgaId(input.serverId)) {
     throw new Error(`Invalid OpenFGA MCP server id: ${input.serverId}`);
   }
-  const writes: OpenFgaTupleKey[] = [];
   const object = `mcp_server:${input.serverId}`;
   const ownerUser = ownerPrincipal(input.ownerSubject, input.ownerSubjectKind);
-  if (ownerUser) {
-    writes.push({ user: ownerUser, relation: "owner", object });
+  const personalOwner = input.personalOwnerAccess !== false;
+  // RAG and MCP share identity, provenance, team sharing, and transfer/revoke
+  // semantics. Private execution restrictions are layered on that ownership.
+  const base = buildShareableResourceTupleDiff({
+    ...input,
+    objectType: "mcp_server", objectId: input.serverId,
+    ownerSubject: personalOwner ? input.ownerSubject : null,
+    previousOwnerSubject: !personalOwner && input.previousPersonalOwnerAccess
+      ? input.ownerSubject : input.previousOwnerSubject,
+    previousOwnerSubjectKind: input.ownerSubjectKind,
+    ownerTeamSlug: input.personalOwnerAccess ? null : input.ownerTeamSlug,
+    nextSharedTeamSlugs: input.personalOwnerAccess ? [] : input.nextSharedTeamSlugs,
+    extraMemberRelations: ["user", "invoker"],
+    sharedTeamAdminsManage: false,
+    previousSharedTeamAdminsManage: false,
+  });
+  const writes = [...base.writes];
+  const deletes = [...base.deletes];
+  const privateMarker = { user: organizationObjectId(), relation: "private_marker", object };
+  const ownerTool = ownerUser ? { user: ownerUser, relation: "caller", object: `tool:${input.serverId}/*` } : null;
+  if (input.personalOwnerAccess) {
+    writes.push(privateMarker);
+    if (ownerTool) writes.push(ownerTool);
+  } else if (input.previousPersonalOwnerAccess) {
+    deletes.push(privateMarker);
+    if (ownerTool) deletes.push(ownerTool);
   }
-  if (input.ownerTeamSlug && isValidOpenFgaId(input.ownerTeamSlug)) {
+  const orgMember = `${organizationObjectId()}#member`;
+  if (input.globalOrganizationAccess) {
     writes.push(
-      { user: `team:${input.ownerTeamSlug}#member`, relation: "reader", object },
-      { user: `team:${input.ownerTeamSlug}#member`, relation: "user", object },
-      { user: `team:${input.ownerTeamSlug}#member`, relation: "invoker", object },
-      { user: `team:${input.ownerTeamSlug}#admin`, relation: "manager", object },
+      { user: orgMember, relation: "reader", object },
+      { user: orgMember, relation: "user", object },
+    );
+    // Direct invocation remains agent-scoped; global users may discover and
+    // attach the server but do not receive a raw invoker grant.
+    deletes.push({ user: orgMember, relation: "invoker", object });
+  } else if (input.previousGlobalOrganizationAccess) {
+    deletes.push(
+      { user: orgMember, relation: "reader", object },
+      { user: orgMember, relation: "user", object },
+      { user: orgMember, relation: "invoker", object },
     );
   }
   // assisted-by Codex Codex-sonnet-4-6
   // User-created servers should be visible/manageable to organization admins immediately.
-  writes.push({ user: `${organizationObjectId()}#admin`, relation: "manager", object });
-  return { writes: uniqueTuples(writes), deletes: [] };
+  const orgAdminManager = { user: `${organizationObjectId()}#admin`, relation: "manager", object };
+  if (input.personalOwnerAccess) {
+    deletes.push(orgAdminManager);
+  } else {
+    writes.push(orgAdminManager);
+  }
+  return { writes: uniqueTuples(writes), deletes: uniqueTuples(deletes) };
 }
 
 export function buildConfigDrivenMcpServerRelationshipTupleDiff(

@@ -289,6 +289,8 @@ config:
   # Connections & Secrets credential store. Disabled by default. Use local-cmk
   # only for non-production testing; production must use aws-kms.
   CAIPE_CREDENTIALS_ENABLED: "false"
+  # Enable only after private-resource visibility migration and shared HMAC wiring.
+  PRIVATE_RESOURCES_ENABLED: "false"
   CREDENTIAL_STORE_BACKEND: "mongodb-envelope"
   CREDENTIAL_KEY_PROVIDER: "local-cmk"
   CREDENTIAL_KMS_CMK_ID: ""
@@ -421,6 +423,13 @@ credentialSecretRefs: []
 # Slack bot admin sync/reload uses OIDC_CLIENT_ID/OIDC_CLIENT_SECRET. Webex bot
 # admin sync/reload still requires WEBEX_BOT_ADMIN_CLIENT_SECRET when enabled.
 existingSecret: ""
+
+agentContext:
+  # Shared with Dynamic Agents and the OpenFGA bridge. Required when private
+  # MCP or credential execution is enabled.
+  existingSecret:
+    name: ""
+    key: CAIPE_AGENT_CONTEXT_HMAC_SECRET
 
 # ---------- Keycloak Admin REST client wiring ----------
 #

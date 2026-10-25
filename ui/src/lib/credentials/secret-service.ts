@@ -41,6 +41,7 @@ export interface SecretRefDocument {
   type: CredentialSecretType;
   description?: string;
   sharedWithTeams: string[];
+  visibility?: "private" | "team";
   createdAt: Date;
   updatedAt: Date;
   rotatedAt?: Date;
@@ -55,6 +56,7 @@ export interface SecretMetadata {
   description?: string;
   maskedPreview: string;
   sharedWithTeams: string[];
+  visibility: "private" | "team";
   usage: SecretUsageReference[];
   storage: SecretStorageMetadata;
   createdAt: string;
@@ -230,6 +232,11 @@ function toMetadata(
     description: doc.description,
     maskedPreview,
     sharedWithTeams: doc.sharedWithTeams ?? [],
+    visibility: doc.visibility ?? (
+      doc.owner.type === "user" && (doc.sharedWithTeams?.length ?? 0) === 0
+        ? "private"
+        : "team"
+    ),
     usage,
     storage: secretStorageMetadata(),
     createdAt: doc.createdAt.toISOString(),
@@ -280,6 +287,7 @@ export class SecretService {
       type: input.type,
       description: input.description?.trim() || undefined,
       sharedWithTeams: [],
+      visibility: input.owner.type === "user" ? "private" : "team",
       createdAt: now,
       updatedAt: now,
       rotatedAt: now,
@@ -385,6 +393,7 @@ export class SecretService {
       type: input.type,
       description,
       sharedWithTeams,
+      visibility: owner.type === "user" && sharedWithTeams.length === 0 ? "private" : "team",
       createdAt: existing?.createdAt ?? now,
       updatedAt: metadataChanged || secretChanged ? now : existing?.updatedAt ?? now,
       rotatedAt: secretChanged ? now : existing?.rotatedAt,
@@ -528,7 +537,7 @@ export class SecretService {
     await this.reconcileShare(input.secretId, teamId);
     await this.secretRefsCollection.updateOne(
       { id: input.secretId },
-      { $addToSet: { sharedWithTeams: teamId } },
+      { $addToSet: { sharedWithTeams: teamId }, $set: { visibility: "team" } },
     );
   }
 
@@ -541,6 +550,13 @@ export class SecretService {
       { id: input.secretId },
       { $pull: { sharedWithTeams: teamId } },
     );
+    const updated = await this.getSecretRef(input.secretId);
+    if (updated.owner.type === "user" && updated.sharedWithTeams.length === 0) {
+      await this.secretRefsCollection.updateOne(
+        { id: input.secretId },
+        { $set: { visibility: "private" } },
+      );
+    }
   }
 
   async deleteSecret(input: SecretByIdInput): Promise<void> {

@@ -75,6 +75,7 @@ function request(path: string, init?: RequestInit): NextRequest {
 describe("MCP server per-resource RBAC", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.PRIVATE_RESOURCES_ENABLED = "true";
     mockSession = { sub: "alice-sub", role: "user", user: { email: "alice@example.com" } };
     mockPagination = { page: 1, pageSize: 20, skip: 0 };
     mockRequireRbacPermission.mockResolvedValue(undefined);
@@ -112,12 +113,18 @@ describe("MCP server per-resource RBAC", () => {
       expect.objectContaining({ sub: "alice-sub", role: "user" }),
       items,
       { type: "mcp_server", action: "read", id: expect.any(Function) },
-      { bypassForOrgAdmin: true },
+      {
+        bypassForOrgAdmin: true,
+        trustedContext: {
+          interaction: { source: "web", conversationKind: "personal", verified: false },
+        },
+      },
     );
     expect(body.data.items).toEqual([
       {
         _id: "mcp-visible",
         name: "Visible",
+        visibility: "global",
         permissions: { can_manage: true, can_invoke: true, can_discover: true },
       },
     ]);
@@ -125,8 +132,30 @@ describe("MCP server per-resource RBAC", () => {
     expect(mockResolveMcpServerListPermissions).toHaveBeenCalledWith(
       expect.objectContaining({ sub: "alice-sub", role: "user" }),
       ["mcp-visible"],
-      { bypassForOrgAdmin: true },
+      {
+        bypassForOrgAdmin: true,
+        trustedContext: {
+          interaction: { source: "web", conversationKind: "personal", verified: false },
+        },
+      },
     );
+  });
+
+  it("preserves explicit global visibility when listing MCP servers", async () => {
+    const items = [{ _id: "mcp-visible", name: "Global Tools", visibility: "global" }];
+    mockFilterResourcesByPermission.mockResolvedValue(items);
+    const toArray = jest.fn().mockResolvedValue(items);
+    mockGetCollection.mockResolvedValue({
+      countDocuments: jest.fn().mockResolvedValue(1),
+      find: jest.fn().mockReturnValue({ sort: jest.fn().mockReturnValue({ toArray }) }),
+    });
+    const { GET } = await import("../mcp-servers/route");
+
+    const response = await GET(request("/api/mcp-servers"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.items[0]).toEqual(expect.objectContaining({ visibility: "global" }));
   });
 
   it("filters admin MCP server lists through OpenFGA instead of role bypassing", async () => {
@@ -151,13 +180,19 @@ describe("MCP server per-resource RBAC", () => {
       expect.objectContaining({ sub: "admin-sub", role: "admin" }),
       items,
       { type: "mcp_server", action: "read", id: expect.any(Function) },
-      { bypassForOrgAdmin: true },
+      {
+        bypassForOrgAdmin: true,
+        trustedContext: {
+          interaction: { source: "web", conversationKind: "personal", verified: false },
+        },
+      },
     );
     expect(body.data.items).toEqual([
       {
         _id: "mcp-visible",
         name: "Visible",
         endpoint: "http://mcp-visible:8000/mcp",
+        visibility: "global",
         permissions: { can_manage: true, can_invoke: true, can_discover: true },
       },
     ]);
@@ -193,12 +228,18 @@ describe("MCP server per-resource RBAC", () => {
       expect.anything(),
       allServers,
       expect.objectContaining({ type: "mcp_server", action: "read" }),
-      { bypassForOrgAdmin: true },
+      {
+        bypassForOrgAdmin: true,
+        trustedContext: {
+          interaction: { source: "web", conversationKind: "personal", verified: false },
+        },
+      },
     );
     expect(body.data.items).toHaveLength(5);
     expect(body.data.items[0]).toEqual({
       _id: "mcp-server-10",
       name: "Server 10",
+      visibility: "global",
       permissions: { can_manage: true, can_invoke: true, can_discover: true },
     });
     expect(body.data.total).toBe(15);
@@ -230,12 +271,13 @@ describe("MCP server per-resource RBAC", () => {
       {
         _id: "knowledge-base",
         name: "Knowledge Base",
+        visibility: "global",
         permissions: { can_manage: true, can_invoke: true, can_discover: true },
       },
     ]);
   });
 
-  it("lets a service account create an MCP server with service_account owner tuples", async () => {
+  it("lets a service account create a team-owned MCP server", async () => {
     mockSession = {
       sub: "bot-client-id",
       isServiceAccount: true,
@@ -258,6 +300,8 @@ describe("MCP server per-resource RBAC", () => {
           name: "Bot Tools",
           transport: "http",
           endpoint: "https://mcp.example.test/mcp",
+          visibility: "team",
+          owner_team_slug: "platform",
         }),
       }),
     );
@@ -266,9 +310,12 @@ describe("MCP server per-resource RBAC", () => {
     expect(mockReconcileMcpServerRelationships).toHaveBeenCalledWith(
       {
         serverId: "mcp-bot-tools",
-        ownerSubject: "bot-client-id",
+        ownerSubject: null,
         ownerSubjectKind: "service_account",
-        ownerTeamSlug: null,
+        ownerTeamSlug: "platform",
+        creatorSubject: null,
+        personalOwnerAccess: false,
+        nextSharedTeamSlugs: [],
       },
       {
         caller: { type: "service_account", id: "bot-client-id" },
@@ -277,9 +324,92 @@ describe("MCP server per-resource RBAC", () => {
     );
     expect(insertOne).toHaveBeenCalledWith(
       expect.objectContaining({
-        owner_subject: "bot-client-id",
+        owner_subject: undefined,
+        owner_team_slug: "platform",
       }),
     );
+  });
+
+  it("lets a platform admin create a global MCP server", async () => {
+    mockSession = { sub: "admin-sub", role: "admin", user: { email: "admin@example.com" } };
+    const insertOne = jest.fn();
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue(null),
+      insertOne,
+    });
+    const { POST } = await import("../mcp-servers/route");
+
+    const response = await POST(
+      request("/api/mcp-servers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: "global-tools",
+          name: "Global Tools",
+          transport: "http",
+          endpoint: "https://mcp.example.test/mcp",
+          visibility: "global",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mockRequireResourcePermission).toHaveBeenCalledWith(
+      mockSession,
+      { type: "organization", id: "caipe", action: "manage" },
+    );
+    expect(mockReconcileMcpServerRelationships).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverId: "mcp-global-tools",
+        ownerSubject: null,
+        ownerTeamSlug: null,
+        personalOwnerAccess: false,
+        globalOrganizationAccess: true,
+      }),
+      expect.objectContaining({ source: "mcp_server_create" }),
+    );
+    expect(insertOne).toHaveBeenCalledWith(
+      expect.objectContaining({
+        visibility: "global",
+        owner_subject: undefined,
+        owner_team_slug: undefined,
+        shared_with_teams: [],
+      }),
+    );
+  });
+
+  it("rejects global MCP creation for a non-admin", async () => {
+    const insertOne = jest.fn();
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue(null),
+      insertOne,
+    });
+    mockRequireResourcePermission.mockImplementation(
+      async (_session, resource: { type: string; action: string }) => {
+        if (resource.type === "organization" && resource.action === "manage") {
+          throw new Error("forbidden");
+        }
+      },
+    );
+    const { POST } = await import("../mcp-servers/route");
+
+    const response = await POST(
+      request("/api/mcp-servers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: "global-tools",
+          name: "Global Tools",
+          transport: "http",
+          endpoint: "https://mcp.example.test/mcp",
+          visibility: "global",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(insertOne).not.toHaveBeenCalled();
+    expect(mockReconcileMcpServerRelationships).not.toHaveBeenCalled();
   });
 
   it("does not persist Mongo when MCP ownership reconciliation fails", async () => {
@@ -364,6 +494,9 @@ describe("MCP server per-resource RBAC", () => {
         ownerSubject: "alice-sub",
         ownerSubjectKind: "user",
         ownerTeamSlug: null,
+        creatorSubject: "alice-sub",
+        personalOwnerAccess: true,
+        nextSharedTeamSlugs: [],
       },
       {
         caller: { type: "user", id: "alice-sub" },
@@ -375,9 +508,38 @@ describe("MCP server per-resource RBAC", () => {
         _id: "mcp-ops-tools",
         owner_id: "alice@example.com",
         owner_subject: "alice-sub",
+        creator_subject: "alice-sub",
         owner_team_slug: undefined,
       }),
     );
+  });
+
+  it("rejects private MCP creation while the rollout flag is disabled", async () => {
+    process.env.PRIVATE_RESOURCES_ENABLED = "false";
+    const insertOne = jest.fn();
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue(null),
+      insertOne,
+    });
+    const { POST } = await import("../mcp-servers/route");
+
+    const response = await POST(
+      request("/api/mcp-servers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: "private-tools",
+          name: "Private Tools",
+          transport: "http",
+          endpoint: "https://mcp.example.test/mcp",
+          visibility: "private",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(insertOne).not.toHaveBeenCalled();
+    expect(mockReconcileMcpServerRelationships).not.toHaveBeenCalled();
   });
 
   it("requires a stable subject before writing MCP ownership tuples", async () => {
@@ -424,6 +586,7 @@ describe("MCP server per-resource RBAC", () => {
           name: "Team Tools",
           transport: "http",
           endpoint: "https://mcp.example.test/mcp",
+          visibility: "team",
           owner_team_slug: "platform",
         }),
       }),
@@ -437,9 +600,12 @@ describe("MCP server per-resource RBAC", () => {
     expect(mockReconcileMcpServerRelationships).toHaveBeenCalledWith(
       {
         serverId: "mcp-team-tools",
-        ownerSubject: "alice-sub",
+        ownerSubject: null,
         ownerSubjectKind: "user",
         ownerTeamSlug: "platform",
+        creatorSubject: "alice-sub",
+        personalOwnerAccess: false,
+        nextSharedTeamSlugs: [],
       },
       {
         caller: { type: "user", id: "alice-sub" },
@@ -454,7 +620,13 @@ describe("MCP server per-resource RBAC", () => {
   });
 
   it("requires mcp_server#manage before updating a server", async () => {
-    const server = { _id: "mcp-visible", name: "Visible", config_driven: false };
+    const server = {
+      _id: "mcp-visible",
+      name: "Visible",
+      config_driven: false,
+      visibility: "private",
+      owner_subject: "alice-sub",
+    };
     mockGetCollection.mockResolvedValue({
       findOne: jest.fn().mockResolvedValue(server),
       findOneAndUpdate: jest.fn().mockResolvedValue({ ...server, name: "Updated" }),
@@ -472,6 +644,52 @@ describe("MCP server per-resource RBAC", () => {
     expect(mockRequireResourcePermission).toHaveBeenCalledWith(
       expect.objectContaining({ sub: "alice-sub", role: "user" }),
       { type: "mcp_server", id: "mcp-visible", action: "manage" },
+    );
+  });
+
+  it("keeps a global MCP server global on an unrelated update", async () => {
+    mockSession = { sub: "admin-sub", role: "admin", user: { email: "admin@example.com" } };
+    const server = {
+      _id: "mcp-global",
+      name: "Global",
+      config_driven: false,
+      visibility: "global",
+      creator_subject: "admin-sub",
+      shared_with_teams: [],
+    };
+    const findOneAndUpdate = jest.fn().mockResolvedValue({ ...server, name: "Updated" });
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue(server),
+      findOneAndUpdate,
+    });
+    const { PUT } = await import("../mcp-servers/route");
+
+    const response = await PUT(
+      request("/api/mcp-servers?id=mcp-global", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Updated" }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockReconcileMcpServerRelationships).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverId: "mcp-global",
+        globalOrganizationAccess: true,
+        previousGlobalOrganizationAccess: true,
+        personalOwnerAccess: false,
+        previousPersonalOwnerAccess: false,
+      }),
+      expect.objectContaining({ source: "mcp_server_update" }),
+    );
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      { _id: "mcp-global" },
+      expect.objectContaining({
+        $set: expect.objectContaining({ visibility: "global", shared_with_teams: [] }),
+        $unset: expect.objectContaining({ owner_team_slug: "" }),
+      }),
+      { returnDocument: "after" },
     );
   });
 

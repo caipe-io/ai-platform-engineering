@@ -364,11 +364,12 @@ async function createSkill(page: Page, name: string) {
   return idFrom(result, ["id"]);
 }
 
-async function createWorkflow(page: Page, name: string, agentId: string) {
+async function createWorkflow(page: Page, name: string, agentId: string, teamSlug?: string) {
   const result = await postJson(page, "/api/workflow-configs", {
     name,
     description: "RBAC live lifecycle fixture",
-    visibility: "global",
+    visibility: teamSlug ? "team" : "global",
+    ...(teamSlug ? { shared_with_teams: [teamSlug] } : {}),
     steps: [
       {
         type: "step",
@@ -427,13 +428,18 @@ async function addOrganizationMemberTuple(
   }));
 }
 
-async function createMcpServer(page: Page, suffixValue: string, credentialId?: string) {
-  const inputId = `rbac-${suffixValue}`;
+async function createMcpServerForTeam(
+  page: Page,
+  suffixValue: string,
+  ownerTeamSlug: string,
+  credentialId?: string,
+) {
+  const inputId = `rbac-team-${suffixValue}`;
   const serverId = `mcp-${inputId}`;
   const result = await postJson(page, "/api/mcp-servers", {
     id: inputId,
-    name: `RBAC MCP ${suffixValue}`,
-    description: "RBAC live lifecycle fixture with custom headers",
+    name: `RBAC Team MCP ${suffixValue}`,
+    description: "RBAC live matrix fixture",
     transport: "http",
     endpoint: "https://mcp.example.test/mcp",
     env: {
@@ -450,26 +456,7 @@ async function createMcpServer(page: Page, suffixValue: string, credentialId?: s
           },
         ]
       : [],
-    enabled: true,
-  });
-  expect(result.status, JSON.stringify(result.body)).toBe(201);
-  expect(idFrom(result, ["_id", "id"])).toBe(serverId);
-  return serverId;
-}
-
-async function createMcpServerForTeam(
-  page: Page,
-  suffixValue: string,
-  ownerTeamSlug: string,
-) {
-  const inputId = `rbac-team-${suffixValue}`;
-  const serverId = `mcp-${inputId}`;
-  const result = await postJson(page, "/api/mcp-servers", {
-    id: inputId,
-    name: `RBAC Team MCP ${suffixValue}`,
-    description: "RBAC live matrix fixture",
-    transport: "http",
-    endpoint: "https://mcp.example.test/mcp",
+    visibility: "team",
     owner_team_slug: ownerTeamSlug,
     enabled: true,
   });
@@ -478,12 +465,17 @@ async function createMcpServerForTeam(
   return serverId;
 }
 
-async function maybeCreateCredential(page: Page, name: string): Promise<string | null> {
+async function maybeCreateCredential(
+  page: Page,
+  name: string,
+  ownerTeamSlug?: string,
+): Promise<string | null> {
   const result = await postJson(page, "/api/credentials/secrets", {
     name,
     description: "RBAC live lifecycle fixture",
     type: "custom",
     value: "rbac-live-fixture-value",
+    ...(ownerTeamSlug ? { ownerType: "team", ownerId: ownerTeamSlug } : {}),
   });
   if (result.status === 404 && JSON.stringify(result.body).includes("CREDENTIALS_DISABLED")) {
     return null;
@@ -1434,11 +1426,11 @@ test.describe("RBAC live e2e — resource lifecycle matrix", () => {
       });
     }));
 
-    const serverId = await createMcpServer(page, run);
+    const serverId = await createMcpServerForTeam(page, run, teamSlug);
     cleanups.push(adminCleanup(page, env, adminSubject, async () => {
       await deleteJson(page, `/api/mcp-servers?id=${encodeURIComponent(serverId)}`);
     }));
-    const agentId = await createGlobalAgent(page, `RBAC Team Agent ${run}`, {
+    const agentId = await createTeamAgent(page, `RBAC Team Agent ${run}`, teamSlug, {
       allowed_tools: { [serverId]: true },
     });
     cleanups.push(adminCleanup(page, env, adminSubject, async () => {
@@ -1632,18 +1624,24 @@ test.describe("RBAC live e2e — resource lifecycle matrix", () => {
     const run = suffix();
     const cleanups: Cleanup[] = [];
     const adminSubject = env.user.sub!;
+    const teamSlug = `rbac-mcp-workflow-${slugify(run)}`;
 
     try {
     await installSession(page, env, { email: env.user.email, subject: adminSubject, role: "admin" });
 
-    const credentialId = await maybeCreateCredential(page, `RBAC MCP Credential ${run}`);
+    const teamId = await createTeam(page, `RBAC MCP Workflow Team ${run}`, teamSlug, env.user.email);
+    cleanups.push(adminCleanup(page, env, adminSubject, async () => {
+      await deleteJson(page, `/api/admin/teams/${encodeURIComponent(teamId)}`);
+    }));
+
+    const credentialId = await maybeCreateCredential(page, `RBAC MCP Credential ${run}`, teamSlug);
     if (credentialId) {
       cleanups.push(adminCleanup(page, env, adminSubject, async () => {
         await deleteJson(page, `/api/credentials/secrets/${encodeURIComponent(credentialId)}`);
       }));
     }
 
-    const serverId = await createMcpServer(page, run, credentialId ?? undefined);
+    const serverId = await createMcpServerForTeam(page, run, teamSlug, credentialId ?? undefined);
     cleanups.push(adminCleanup(page, env, adminSubject, async () => {
       await deleteJson(page, `/api/mcp-servers?id=${encodeURIComponent(serverId)}`);
     }));
@@ -1661,7 +1659,7 @@ test.describe("RBAC live e2e — resource lifecycle matrix", () => {
       );
     }
 
-    const agentId = await createGlobalAgent(page, `RBAC MCP Workflow Agent ${run}`, {
+    const agentId = await createTeamAgent(page, `RBAC MCP Workflow Agent ${run}`, teamSlug, {
       allowed_tools: { [serverId]: true },
     });
     cleanups.push(adminCleanup(page, env, adminSubject, async () => {
@@ -1673,7 +1671,7 @@ test.describe("RBAC live e2e — resource lifecycle matrix", () => {
       object: `tool:${serverId}/*`,
     }, true);
 
-    const workflowId = await createWorkflow(page, `RBAC MCP Workflow ${run}`, agentId);
+    const workflowId = await createWorkflow(page, `RBAC MCP Workflow ${run}`, agentId, teamSlug);
     cleanups.push(adminCleanup(page, env, adminSubject, async () => {
       await deleteJson(page, `/api/workflow-configs?id=${encodeURIComponent(workflowId)}`);
     }));

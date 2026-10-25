@@ -19,8 +19,9 @@ export interface AgentOwnershipScopeContext {
   platformDefaultAgentId: string | null;
 }
 
-function normalizeVisibility(value: unknown): "global" | "team" {
-  return value === "global" ? "global" : "team";
+function normalizeVisibility(value: unknown): "global" | "private" | "team" {
+  if (value === "global" || value === "private") return value;
+  return "team";
 }
 
 function ownerSubject(agent: Pick<DynamicAgentConfig, "owner_id" | "owner_subject">): string | null {
@@ -28,6 +29,14 @@ function ownerSubject(agent: Pick<DynamicAgentConfig, "owner_id" | "owner_subjec
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+export function isPrivateAgentOwner(
+  agent: Pick<DynamicAgentConfig, "visibility" | "owner_id" | "owner_subject">,
+  userSub: string,
+): boolean {
+  return normalizeVisibility(agent.visibility) === "private"
+    && ownerSubject(agent) === userSub.trim();
 }
 
 function teamSlugMatches(teamSlugs: ReadonlySet<string>, slug: unknown): boolean {
@@ -55,15 +64,24 @@ export function isAgentInOwnershipScope(
   const agentId = String(agent._id ?? "").trim();
   if (!agentId) return false;
 
+  const visibility = normalizeVisibility(agent.visibility);
+  const owner = ownerSubject(agent);
+
+  // Private resources are discoverable only by their direct owner. Keep
+  // this ahead of the platform-default exception so inconsistent metadata
+  // cannot accidentally turn a private agent into a globally visible row.
+  if (visibility === "private") {
+    return isPrivateAgentOwner(agent, ctx.userSub);
+  }
+
   if (ctx.platformDefaultAgentId && agentId === ctx.platformDefaultAgentId) {
     return true;
   }
 
-  if (normalizeVisibility(agent.visibility) === "global") {
+  if (visibility === "global") {
     return true;
   }
 
-  const owner = ownerSubject(agent);
   if (owner && owner === ctx.userSub) {
     return true;
   }
@@ -100,6 +118,22 @@ export function filterAgentsByOwnershipScope<T extends DynamicAgentConfig>(
   return agents.filter((agent) => isAgentInOwnershipScope(agent, ctx));
 }
 
+/**
+ * Org admins retain broad discovery for team/global agents, but private
+ * agents still require direct ownership in the normal list surface.
+ */
+export function filterPrivateAgentsByOwner<T extends DynamicAgentConfig>(
+  agents: T[],
+  userSub: string,
+): T[] {
+  const normalizedSubject = userSub.trim();
+  if (!normalizedSubject) return [];
+  return agents.filter((agent) => (
+    normalizeVisibility(agent.visibility) !== "private"
+    || ownerSubject(agent) === normalizedSubject
+  ));
+}
+
 async function isOrgAdminSession(session: ResourceAuthzSession): Promise<boolean> {
   if (typeof session.sub !== "string" || !session.sub.trim()) return false;
   const result = await authorize({
@@ -114,8 +148,8 @@ async function isOrgAdminSession(session: ResourceAuthzSession): Promise<boolean
 }
 
 /**
- * Narrow agent candidates using Mongo ownership metadata. Org admins skip
- * this layer and rely on OpenFGA alone.
+ * Narrow agent candidates using Mongo ownership metadata. Org admins may
+ * discover all team/global agents, but private agents remain owner-only.
  */
 export async function filterAgentsByOwnershipScopeForSession<T extends DynamicAgentConfig>(
   session: ResourceAuthzSession,
@@ -123,7 +157,10 @@ export async function filterAgentsByOwnershipScopeForSession<T extends DynamicAg
   platformDefaultAgentId: string | null,
 ): Promise<T[]> {
   if (typeof session.sub !== "string" || !session.sub.trim()) return [];
-  if (await isOrgAdminSession(session)) return agents;
-  const ctx = await buildAgentOwnershipScopeContext(session.sub.trim(), platformDefaultAgentId);
+  const userSub = session.sub.trim();
+  if (await isOrgAdminSession(session)) {
+    return filterPrivateAgentsByOwner(agents, userSub);
+  }
+  const ctx = await buildAgentOwnershipScopeContext(userSub, platformDefaultAgentId);
   return filterAgentsByOwnershipScope(agents, ctx);
 }

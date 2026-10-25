@@ -432,6 +432,8 @@ services:
       # Connections & Secrets. Docker Compose reads provider bootstrap values
       # from .env; Kubernetes deployments use ESO to inject the same env names.
       - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-false}
+      - PRIVATE_RESOURCES_ENABLED=${PRIVATE_RESOURCES_ENABLED:-false}
+      - CAIPE_AGENT_CONTEXT_HMAC_SECRET=${CAIPE_AGENT_CONTEXT_HMAC_SECRET:-}
       - CREDENTIAL_STORE_BACKEND=${CREDENTIAL_STORE_BACKEND:-mongodb-envelope}
       - CREDENTIAL_KEY_PROVIDER=${CREDENTIAL_KEY_PROVIDER:-local-cmk}
       - CREDENTIAL_KMS_CMK_ID=${CREDENTIAL_KMS_CMK_ID:-}
@@ -1508,7 +1510,7 @@ services:
       OPENFGA_STORE_NAME: caipe-openfga
       OPENFGA_RELATION: can_call
       OPENFGA_OBJECT: mcp_gateway:list
-      OPENFGA_BYPASS_SUBS: ${OPENFGA_BYPASS_SUBS:-}
+      PRIVATE_RESOURCES_ENABLED: ${PRIVATE_RESOURCES_ENABLED:-false}
       # JWT validation config so the bridge can DECODE the caller's bearer and
       # detect service accounts (preferred_username starts "service-account-", T002)
       # → namespace service_account:<sub> vs user:<sub>. Without these,

@@ -20,8 +20,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 
 from dynamic_agents.auth.token_context import current_user_token
-from dynamic_agents.models import MCPServerConfig, TransportType
+from dynamic_agents.config import Settings
+from dynamic_agents.models import ClientContext, DynamicAgentConfig, MCPServerConfig, TransportType
 from dynamic_agents.services import mcp_client
+from dynamic_agents.services.agent_runtime import AgentRuntime
 from dynamic_agents.services.mcp_client import (
     build_agent_context_headers,
     build_httpx_client_factory,
@@ -276,3 +278,104 @@ def test_warn_if_agent_gateway_missing_hmac_is_quiet_without_gateway(monkeypatch
         warn_if_agent_gateway_missing_hmac()
 
     assert caplog.text == ""
+
+
+def _execution_proof(*, now: int, subject: str = "test-user", agent: str = "example", kind: str = "personal") -> dict[str, str]:
+    payload = {"source": "web", "conversationKind": kind, "iat": now, "exp": now + 90,
+               "subject": subject, "agent_id": agent, "execution_id": "test-execution", "renewal_exp": now + 900}
+    token = mcp_client._b64url(json.dumps(payload).encode())
+    signature = mcp_client.hmac.new(b"test-secret", token.encode(), mcp_client.hashlib.sha256).hexdigest()
+    return {"token": token, "signature": signature}
+
+
+def _execution_bearer(now: int) -> str:
+    claims = mcp_client._b64url(json.dumps({"sub": "test-user", "exp": now + 1800}).encode())
+    return f"header.{claims}.signature"
+
+
+@pytest.mark.asyncio
+async def test_private_execution_renews_each_request_within_bounded_lease(monkeypatch):
+    clock = [1_800_000_000]
+    monkeypatch.setenv("CAIPE_AGENT_CONTEXT_HMAC_SECRET", "test-secret")
+    monkeypatch.setattr(mcp_client.time, "time", lambda: clock[0])
+    bearer = _execution_bearer(clock[0])
+    token_ref = current_user_token.set(bearer)
+    try:
+        server = MCPServerConfig(id="primary", name="Primary", transport=TransportType.HTTP,
+                                 endpoint="https://example.test/mcp")
+        config = build_mcp_connection_config(server, agent_id="example", auth_bearer=bearer,
+                                             trusted_interaction=_execution_proof(now=clock[0]))
+        # Exercise the actual config/factory and a reused HTTP client, including
+        # the second request after the original 90-second proof has expired.
+        with _running_server() as url:
+            async with config["httpx_client_factory"](headers=config["headers"]) as client:
+                await client.get(url)
+                initial = _decode_agent_context(_CapturingHandler.captured["x-caipe-trusted-interaction"])
+                clock[0] += 91
+                await client.get(url)
+                headers = _CapturingHandler.captured
+                renewed = _decode_agent_context(headers["x-caipe-trusted-interaction"])
+                assert initial["exp"] < clock[0]
+                assert renewed["iat"] == clock[0]
+                assert renewed["exp"] == clock[0] + 90
+                assert renewed["subject"] == "test-user"
+                assert renewed["execution_id"] == initial["execution_id"]
+                expected = mcp_client.hmac.new(b"test-secret", headers["x-caipe-trusted-interaction"].encode(), mcp_client.hashlib.sha256).hexdigest()
+                assert headers["x-caipe-trusted-interaction-signature"] == expected
+                clock[0] += 810
+                await client.get(url)
+                expired = _decode_agent_context(_CapturingHandler.captured["x-caipe-trusted-interaction"])
+                assert expired["exp"] < clock[0]
+    finally:
+        current_user_token.reset(token_ref)
+
+
+@pytest.mark.parametrize("change", ["expired", "non-owner", "group", "agent", "forged"])
+def test_private_execution_cannot_renew_untrusted_context(monkeypatch, change):
+    now = 1_800_000_000
+    monkeypatch.setenv("CAIPE_AGENT_CONTEXT_HMAC_SECRET", "test-secret")
+    monkeypatch.setattr(mcp_client.time, "time", lambda: now)
+    proof = _execution_proof(now=now - 91 if change == "expired" else now,
+                             subject="other-user" if change == "non-owner" else "test-user",
+                             agent="secondary" if change == "agent" else "example",
+                             kind="group" if change == "group" else "personal")
+    if change == "forged":
+        proof["signature"] = "0" * 64
+    renewal = mcp_client.InteractionRenewal(proof, "example", _execution_bearer(now))
+    assert renewal.headers() == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outbound_agent", ["example", "child"])
+async def test_runtime_captures_renewal_before_slow_initialization(monkeypatch, outbound_agent):
+    clock = [1_800_000_000]
+    monkeypatch.setenv("ENABLE_TRACING", "false")
+    monkeypatch.setenv("CAIPE_AGENT_CONTEXT_HMAC_SECRET", "test-secret")
+    monkeypatch.setattr(mcp_client.time, "time", lambda: clock[0])
+    bearer = _execution_bearer(clock[0])
+    token_ref = current_user_token.set(bearer)
+    proof = _execution_proof(now=clock[0])
+    try:
+        runtime = AgentRuntime(
+            config=DynamicAgentConfig(_id="example", name="Example", owner_id="owner@example.test",
+                                      system_prompt="Example", model={"id": "example", "provider": "example"}),
+            mcp_servers=[], settings=Settings(default_runtime_backend="state"), ephemeral=True,
+            client_context=ClientContext(source="webui", _caipe_trusted_interaction=proof["token"],
+                                         _caipe_trusted_interaction_signature=proof["signature"]),
+        )
+        clock[0] += 91
+        server = MCPServerConfig(id="primary", name="Primary", transport=TransportType.HTTP,
+                                 endpoint="https://example.test/mcp")
+        config = build_mcp_connection_config(server, agent_id=outbound_agent, execution_agent_id="example",
+                                             auth_bearer=bearer, trusted_interaction=runtime._trusted_interaction_headers())
+        with _running_server() as url:
+            async with config["httpx_client_factory"](headers=config["headers"]) as client:
+                await client.get(url)
+        renewed = _decode_agent_context(_CapturingHandler.captured["x-caipe-trusted-interaction"])
+        assert renewed["iat"] == clock[0]
+        assert renewed["renewal_exp"] == 1_800_000_900
+        assert renewed["agent_id"] == "example"
+        tool_context = _decode_agent_context(_CapturingHandler.captured["x-caipe-agent-context"])
+        assert tool_context["agent_id"] == outbound_agent
+    finally:
+        current_user_token.reset(token_ref)

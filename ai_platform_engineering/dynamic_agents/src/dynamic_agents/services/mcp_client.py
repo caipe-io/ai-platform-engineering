@@ -181,7 +181,64 @@ def warn_if_agent_gateway_missing_hmac() -> None:
     )
 
 
-def build_httpx_client_factory(agent_id: str | None = None) -> Callable[..., httpx.AsyncClient]:
+class InteractionRenewal:
+    """An immutable, bounded BFF authorization captured before its proof expires.
+
+    Only an authenticated execution with a matching subject and agent may renew.
+    No endpoint accepts an expired proof or caller-authored renewal parameters.
+    """
+
+    def __init__(self, proof: dict[str, str] | None, agent_id: str | None, bearer: str | None) -> None:
+        self._payload: dict[str, Any] | None = None
+        self._secret = os.getenv("CAIPE_AGENT_CONTEXT_HMAC_SECRET", "").strip()
+        self._bearer = bearer
+        self._deadline = 0
+        if not proof or not self._secret or not bearer or not agent_id:
+            return
+        token, signature = proof.get("token", ""), proof.get("signature", "")
+        expected = hmac.new(self._secret.encode(), token.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            return
+        try:
+            payload = json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
+            claims_part = bearer.split(".")[1]
+            claims = json.loads(base64.urlsafe_b64decode(claims_part + "=" * (-len(claims_part) % 4)))
+            now = int(time.time())
+            permitted = (payload.get("source"), payload.get("conversationKind")) in {
+                ("web", "personal"), ("slack", "direct"), ("webex", "direct"),
+            }
+            times = [payload.get(key) for key in ("iat", "exp", "renewal_exp")]
+            if not all(type(value) is int for value in times):
+                return
+            issued, expires, deadline = times
+            if not (permitted and issued <= now <= expires <= issued + 90
+                    and expires <= deadline <= issued + 900
+                    and payload.get("subject") == claims.get("sub")
+                    and payload.get("agent_id") == agent_id
+                    and isinstance(payload.get("execution_id"), str) and payload["execution_id"]
+                    and not str(claims.get("preferred_username", "")).startswith("service-account-")):
+                return
+            bearer_exp = claims.get("exp")
+            if type(bearer_exp) is not int or bearer_exp <= now:
+                return
+            self._deadline = min(deadline, bearer_exp)
+            self._payload = payload
+        except (ValueError, IndexError, TypeError, AttributeError):
+            return
+
+    def headers(self) -> dict[str, str]:
+        now = int(time.time())
+        # A different request's bearer cannot reuse this execution's renewal.
+        active_bearer = current_user_token.get()
+        if not self._payload or now >= self._deadline or (active_bearer and active_bearer != self._bearer):
+            return {}
+        payload = {**self._payload, "iat": now, "exp": min(now + 90, self._deadline)}
+        token = _b64url(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode())
+        signature = hmac.new(self._secret.encode(), token.encode(), hashlib.sha256).hexdigest()
+        return {"X-CAIPE-Trusted-Interaction": token, "X-CAIPE-Trusted-Interaction-Signature": signature}
+
+
+def build_httpx_client_factory(agent_id: str | None = None, *, trusted_interaction: dict[str, str] | None = None, auth_bearer: str | None = None, execution_agent_id: str | None = None) -> Callable[..., httpx.AsyncClient]:
     """Build an httpx.AsyncClient factory that injects per-request CAIPE auth.
 
     Spec 102 Phase 8 / T106. Each MCP HTTP connection opened by
@@ -196,6 +253,7 @@ def build_httpx_client_factory(agent_id: str | None = None) -> Callable[..., htt
     Honors ``CUSTOM_CA_BUNDLE`` / ``REQUESTS_CA_BUNDLE`` /
     ``SSL_CERT_FILE`` and ``SSL_VERIFY=false``.
     """
+    renewal = InteractionRenewal(trusted_interaction, execution_agent_id or agent_id, auth_bearer or current_user_token.get())
     ca_bundle = (
         os.getenv("CUSTOM_CA_BUNDLE")
         or os.getenv("REQUESTS_CA_BUNDLE")
@@ -231,8 +289,16 @@ def build_httpx_client_factory(agent_id: str | None = None) -> Callable[..., htt
                 ):
                     del merged[key]
             merged.update(build_agent_context_headers(agent_id))
+        async def refresh_context(request: httpx.Request) -> None:
+            if agent_id:
+                request.headers.update(build_agent_context_headers(agent_id))
+            renewed = renewal.headers()
+            if renewed:
+                request.headers.update(renewed)
+
         return httpx.AsyncClient(
             headers=merged,
+            event_hooks={"request": [refresh_context]},
             timeout=timeout or httpx.Timeout(30.0),
             auth=auth,
             verify=verify,
@@ -247,6 +313,8 @@ def build_mcp_connection_config(
     agent_gateway_url: str | None = None,
     auth_bearer: str | None = None,
     agent_id: str | None = None,
+    trusted_interaction: dict[str, str] | None = None,
+    execution_agent_id: str | None = None,
 ) -> dict[str, Any]:
     """Build connection config dict for MultiServerMCPClient.
 
@@ -261,11 +329,17 @@ def build_mcp_connection_config(
     headers: dict[str, str] = {}
     if auth_bearer:
         headers["Authorization"] = f"Bearer {auth_bearer}"
+    if trusted_interaction:
+        token = trusted_interaction.get("token", "")
+        signature = trusted_interaction.get("signature", "")
+        if token and signature:
+            headers["X-CAIPE-Trusted-Interaction"] = token
+            headers["X-CAIPE-Trusted-Interaction-Signature"] = signature
 
     # Spec 102 Phase 8 / T106: also attach the httpx_client_factory so the
     # per-request user JWT and signed agent context are injected on every
     # outbound connection, even after this config is built.
-    factory = build_httpx_client_factory(agent_id=agent_id)
+    factory = build_httpx_client_factory(agent_id=agent_id, trusted_interaction=trusted_interaction, auth_bearer=auth_bearer, execution_agent_id=execution_agent_id)
     token = current_user_token.get()
     if token and "Authorization" not in headers:
         headers["Authorization"] = f"Bearer {token}"
@@ -322,6 +396,8 @@ def build_mcp_connections(
     agent_gateway_url: str | None = None,
     auth_bearer: str | None = None,
     agent_id: str | None = None,
+    trusted_interaction: dict[str, str] | None = None,
+    execution_agent_id: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Build MCP connections dict for MultiServerMCPClient.
 
@@ -358,6 +434,8 @@ def build_mcp_connections(
             agent_gateway_url=agent_gateway_url if use_gateway else None,
             auth_bearer=auth_bearer,
             agent_id=agent_id,
+            trusted_interaction=trusted_interaction,
+            **({"execution_agent_id": execution_agent_id} if execution_agent_id else {}),
         )
 
     return connections

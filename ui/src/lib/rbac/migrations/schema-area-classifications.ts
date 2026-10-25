@@ -103,6 +103,11 @@ export const SCHEMA_AREA_CLASSIFICATIONS: Record<string, SchemaAreaClassificatio
     classification: "migration",
     description: "Organization membership migration target.",
   },
+  private_resource_visibility: {
+    classification: "migration",
+    description:
+      "Classifies legacy MCP server and credential records before private-resource context enforcement is enabled.",
+  },
   platform_config: {
     classification: "baseline_v1",
     description: "Platform settings records.",

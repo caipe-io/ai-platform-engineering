@@ -21,18 +21,26 @@ class CredentialExchangeClient:
         audience: str,
         http_client: httpx.AsyncClient | Any | None = None,
         token_provider: Callable[[], str],
+        trusted_interaction: dict[str, str] | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._audience = audience
         self._http_client = http_client
         self._token_provider = token_provider
+        self._trusted_interaction = trusted_interaction or {}
 
     def _headers(self) -> dict[str, str]:
-        return {
+        headers = {
             "Authorization": f"Bearer {self._token_provider()}",
             "x-caipe-credential-caller": "dynamic_agent",
             "x-caipe-credential-audience": self._audience,
         }
+        token = self._trusted_interaction.get("token", "")
+        signature = self._trusted_interaction.get("signature", "")
+        if token and signature:
+            headers["x-caipe-trusted-interaction"] = token
+            headers["x-caipe-trusted-interaction-signature"] = signature
+        return headers
 
     async def retrieve_secret(self, secret_ref: str, *, intended_use: str) -> str:
         """Retrieve a BYO secret by reference for MCP/runtime use."""

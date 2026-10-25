@@ -93,4 +93,26 @@ describe("GET /api/dynamic-agents/agents/[id]", () => {
       permissions: { can_manage: true, can_write: true, can_discover: true },
     });
   });
+
+  it("does not expose another user's private agent through a direct admin-style read", async () => {
+    const findOne = jest.fn().mockResolvedValue({
+      _id: "private-agent",
+      name: "Private Agent",
+      visibility: "private",
+      owner_id: "owner@example.test",
+      owner_subject: "owner-sub",
+    });
+    mockGetCollection.mockResolvedValue({ findOne });
+    const { GET } = await import("../route");
+
+    const response = await GET(
+      new NextRequest("http://localhost/api/dynamic-agents/agents/private-agent"),
+      { params: Promise.resolve({ id: "private-agent" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(body.error).toBe("Agent not found");
+    expect(mockRequireAgentPermission).not.toHaveBeenCalled();
+  });
 });

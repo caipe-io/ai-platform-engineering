@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterator, Optional
 
 import httpx
 
+from .utils.interaction_signing import signed_interaction_headers
 logger = logging.getLogger("caipe.webex_bot.a2a_client")
 
 _SSE_ERROR_BODY_MAX_LEN = 200
@@ -41,6 +42,16 @@ def set_obo_token(token: Optional[str]) -> object:
 
 def get_obo_token() -> Optional[str]:
     return _obo_token_cv.get()
+
+
+def _interaction_kind(context: Optional[Dict[str, Any]]) -> str:
+    if not context:
+        return "group"
+    room_type = str(context.get("room_type") or "").lower()
+    if room_type:
+        return "direct" if room_type == "direct" else "group"
+    surface_kind = str(context.get("surface_kind") or "").lower()
+    return "direct" if surface_kind == "dm" else "group"
 
 
 def space_message_to_conversation_id(space_id: str, message_id: str) -> str:
@@ -244,13 +255,16 @@ class WebexSSEClient:
             client = httpx.Client(timeout=30)
         assert client is not None
         try:
+            headers = self._get_headers(bearer_token=bearer_token)
+            headers.update(signed_interaction_headers(
+                method="POST",
+                path="/api/chat/conversations",
+                kind=_interaction_kind(metadata),
+            ))
             response = client.post(
                 f"{self.base_url}/api/chat/conversations",
                 json=payload,
-                headers={
-                    **self._get_headers(bearer_token=bearer_token),
-                    "Accept": "application/json",
-                },
+                headers={**headers, "Accept": "application/json"},
             )
             if response.status_code == 403:
                 try:
@@ -380,11 +394,17 @@ class WebexSSEClient:
             client = httpx.Client(timeout=self.timeout)
         assert client is not None
         try:
+            headers = self._get_headers(bearer_token=bearer_token)
+            headers.update(signed_interaction_headers(
+                method="POST",
+                path=url.split("?", 1)[0].replace(self.base_url, "", 1),
+                kind=_interaction_kind(payload.get("client_context")),
+            ))
             with client.stream(
                 "POST",
                 url,
                 json=payload,
-                headers=self._get_headers(bearer_token=bearer_token),
+                headers=headers,
             ) as response:
                 if not response.is_success:
                     error_text = response.read().decode(errors="replace")

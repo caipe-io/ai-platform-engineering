@@ -87,8 +87,8 @@ function request(path: string, init: RequestInit & { body: string }): NextReques
   return new NextRequest(new URL(path, "http://localhost:3000"), init);
 }
 
-const session = { sub: "alice-sub", role: "admin" };
-const user = { email: "alice@example.com", sub: "alice-sub" };
+const session = { sub: "test-user", role: "admin" };
+const user = { email: "test-user@example.com", sub: "test-user" };
 
 beforeEach(() => {
   jest.resetModules();
@@ -97,6 +97,7 @@ beforeEach(() => {
   // reads this via agentGatewayMcpEndpointUrl(), which is also exercised
   // by other test suites — set it here so test order doesn't matter.
   process.env.AGENT_GATEWAY_URL = "http://agentgateway:4000";
+  process.env.PRIVATE_RESOURCES_ENABLED = "true";
 
   mockGetAuthFromBearerOrSession.mockResolvedValue({ session, user });
   mockRequireResourcePermission.mockResolvedValue(undefined);
@@ -261,6 +262,51 @@ describe("POST /api/mcp-servers — endpoint normalisation", () => {
 });
 
 describe("PUT /api/mcp-servers?id=<id> — endpoint normalisation", () => {
+  it("keeps an unclassified legacy server global when it is edited", async () => {
+    const existing = {
+      _id: "mcp-legacy",
+      name: "Legacy",
+      transport: "stdio",
+      command: "example-command",
+      config_driven: false,
+      owner_subject: "test-user",
+    };
+    mockFindOne.mockResolvedValue(existing);
+    mockFindOneAndUpdate.mockImplementation(async (_filter, update) => ({
+      ...existing,
+      ...(update as { $set: Record<string, unknown> }).$set,
+    }));
+    const { PUT } = await import("../route");
+
+    const response = await PUT(
+      request("/api/mcp-servers?id=mcp-legacy", {
+        method: "PUT",
+        body: JSON.stringify({ name: "Legacy renamed" }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockReconcileMcpServerRelationships).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverId: "mcp-legacy",
+        ownerSubject: "test-user",
+        personalOwnerAccess: false,
+        previousPersonalOwnerAccess: true,
+        globalOrganizationAccess: true,
+        previousGlobalOrganizationAccess: true,
+      }),
+      expect.any(Object),
+    );
+    expect(mockFindOneAndUpdate).toHaveBeenCalledWith(
+      { _id: "mcp-legacy" },
+      expect.objectContaining({
+        $set: expect.objectContaining({ visibility: "global" }),
+        $unset: expect.objectContaining({ owner_subject: "" }),
+      }),
+      { returnDocument: "after" },
+    );
+  });
+
   it("repairs a stale bare gateway endpoint when an admin re-saves the row", async () => {
     // Existing legacy row in Mongo with the broken bare endpoint.
     const existing = {
@@ -269,6 +315,8 @@ describe("PUT /api/mcp-servers?id=<id> — endpoint normalisation", () => {
       transport: "http",
       endpoint: "http://agentgateway:4000/mcp",
       config_driven: false,
+      visibility: "private",
+      owner_subject: "test-user",
     };
     mockFindOne.mockResolvedValue(existing);
     mockFindOneAndUpdate.mockImplementation(async (_filter, update) => ({
@@ -304,6 +352,8 @@ describe("PUT /api/mcp-servers?id=<id> — endpoint normalisation", () => {
       transport: "http",
       endpoint: "http://agentgateway:4000/mcp/mcp-jira",
       config_driven: false,
+      visibility: "private",
+      owner_subject: "test-user",
     };
     mockFindOne.mockResolvedValue(existing);
     mockFindOneAndUpdate.mockImplementation(async (_filter, update) => ({
@@ -335,6 +385,8 @@ describe("PUT /api/mcp-servers?id=<id> — endpoint normalisation", () => {
       transport: "http",
       endpoint: "http://agentgateway:4000/mcp/atlassian-confluence",
       config_driven: false,
+      visibility: "private",
+      owner_subject: "test-user",
     };
     mockFindOne.mockResolvedValue(existing);
     mockFindOneAndUpdate.mockImplementation(async (_filter, update) => ({

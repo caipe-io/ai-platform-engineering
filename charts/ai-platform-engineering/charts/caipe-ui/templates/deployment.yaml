@@ -194,6 +194,13 @@ spec:
             {{- end }}
             - name: OPENFGA_AUTHZ_BRIDGE_HOST
               value: {{ index .Values.config "OPENFGA_AUTHZ_BRIDGE_HOST" | default (printf "%s-openfga-authz-bridge" .Release.Name) | quote }}
+            {{- if .Values.agentContext.existingSecret.name }}
+            - name: CAIPE_AGENT_CONTEXT_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agentContext.existingSecret.name | quote }}
+                  key: {{ .Values.agentContext.existingSecret.key | quote }}
+            {{- end }}
             - name: ETCD_HOST
               value: {{ index .Values.config "ETCD_HOST" | default (printf "%s-etcd" .Release.Name) | quote }}
             - name: MILVUS_HEALTH_URL

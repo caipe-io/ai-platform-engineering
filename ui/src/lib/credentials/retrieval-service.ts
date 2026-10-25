@@ -1,3 +1,4 @@
+import { trustedInteractionFromInternalHeaders } from "@/lib/authz/trusted-interaction";
 import { ApiError } from "@/lib/api-error";
 import type { ResourceAuthzSession } from "@/lib/rbac/resource-authz";
 
@@ -12,6 +13,7 @@ interface PayloadStore {
 type AuthorizeSecretUse = (
   session: ResourceAuthzSession,
   target: { type: "secret_ref"; id: string; action: "use" },
+  options?: { trustedContext?: import("@/lib/authz").TrustedAuthorizeContext },
 ) => Promise<void>;
 
 export interface CredentialRetrievalServiceOptions {
@@ -94,7 +96,7 @@ export class CredentialRetrievalService {
     const actor = auditActorFor(input);
 
     try {
-      await this.authorize(input.session, { type: "secret_ref", id: secretRef, action: "use" });
+      await this.authorize(input.session, { type: "secret_ref", id: secretRef, action: "use" }, { trustedContext: { interaction: trustedInteractionFromInternalHeaders(input.headers, typeof input.session.sub === "string" ? input.session.sub : undefined) } });
     } catch (error) {
       // A service account's type alone grants no trust: scoped external
       // accounts also authenticate with client credentials.

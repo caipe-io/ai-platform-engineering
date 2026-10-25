@@ -350,6 +350,7 @@ jobs:
         working-directory: ui
         env:
           WORKFLOWS_ENABLED: 'true'
+          PRIVATE_RESOURCES_ENABLED: 'true'
           # The mocked Settings regression opens the authenticated user menu.
           # This public setting is compiled into the client bundle, so set it
           # while building as well as when serving the app below.
@@ -371,6 +372,7 @@ jobs:
         working-directory: ui
         env:
           WORKFLOWS_ENABLED: 'true'
+          PRIVATE_RESOURCES_ENABLED: 'true'
           NEXT_PUBLIC_SSO_ENABLED: 'true'
           MONGODB_URI: 'mongodb://mock:27017'
           MONGODB_DATABASE: 'mock'

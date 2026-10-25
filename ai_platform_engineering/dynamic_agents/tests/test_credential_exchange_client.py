@@ -79,3 +79,21 @@ async def test_exchange_provider_connection_uses_standard_exchange_endpoint():
     url, kwargs = fake_client.requests[0]
     assert url == "http://caipe-ui:3000/api/credentials/exchange"
     assert kwargs["json"] == {"provider_connection_id": "conn-1", "intended_use": "mcp_server"}
+
+
+@pytest.mark.asyncio
+async def test_retrieve_secret_forwards_trusted_interaction_proof():
+    fake_client = FakeAsyncClient()
+    client = CredentialExchangeClient(
+        base_url="http://caipe-ui:3000/api/credentials",
+        audience="caipe-credential-service",
+        http_client=fake_client,
+        token_provider=lambda: "user-token",
+        trusted_interaction={"token": "signed-payload", "signature": "signed-hash"},
+    )
+
+    await client.retrieve_secret("secret-1", intended_use="mcp_server")
+
+    _, kwargs = fake_client.requests[0]
+    assert kwargs["headers"]["x-caipe-trusted-interaction"] == "signed-payload"
+    assert kwargs["headers"]["x-caipe-trusted-interaction-signature"] == "signed-hash"

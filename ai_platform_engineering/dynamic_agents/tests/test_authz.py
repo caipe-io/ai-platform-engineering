@@ -52,7 +52,7 @@ async def test_allows_when_cas_allows(monkeypatch):
     posts: list = []
     monkeypatch.setattr(authz.httpx, "AsyncClient", _client(posts, _Resp(200, {"decision": "ALLOW"})))
 
-    token_ref = current_user_token.set(_fake_jwt({"sub": "alice-sub"}))
+    token_ref = current_user_token.set(_fake_jwt({"sub": "test-user"}))
     try:
         await authz.require_agent_use_permission("agent-1")  # no raise
     finally:
@@ -63,10 +63,57 @@ async def test_allows_when_cas_allows(monkeypatch):
     assert url == "http://caipe-ui:3000/api/authz/v1/decisions"
     assert headers["Authorization"].startswith("Bearer ")
     assert body == {
-        "subject": {"type": "user", "id": "alice-sub"},
+        "subject": {"type": "user", "id": "test-user"},
         "resource": {"type": "agent", "id": "agent-1"},
         "action": "use",
     }
+
+
+@pytest.mark.asyncio
+async def test_forwards_signed_interaction_proof_to_cas(monkeypatch):
+    from dynamic_agents.auth import authz
+
+    monkeypatch.setenv("AUTHZ_SERVICE_URL", "http://caipe-ui:3000")
+    posts: list = []
+    monkeypatch.setattr(authz.httpx, "AsyncClient", _client(posts, _Resp(200, {"decision": "ALLOW"})))
+
+    token_ref = current_user_token.set(_fake_jwt({"sub": "test-user"}))
+    try:
+        await authz.require_agent_use_permission(
+            "agent-1",
+            {
+                "_caipe_trusted_interaction": "signed-payload",
+                "_caipe_trusted_interaction_signature": "signed-hash",
+            },
+        )
+    finally:
+        current_user_token.reset(token_ref)
+
+    _url, headers, _body = posts[-1]
+    assert headers["X-CAIPE-Trusted-Interaction"] == "signed-payload"
+    assert headers["X-CAIPE-Trusted-Interaction-Signature"] == "signed-hash"
+
+
+@pytest.mark.asyncio
+async def test_does_not_forward_incomplete_interaction_proof(monkeypatch):
+    from dynamic_agents.auth import authz
+
+    monkeypatch.setenv("AUTHZ_SERVICE_URL", "http://caipe-ui:3000")
+    posts: list = []
+    monkeypatch.setattr(authz.httpx, "AsyncClient", _client(posts, _Resp(200, {"decision": "ALLOW"})))
+
+    token_ref = current_user_token.set(_fake_jwt({"sub": "test-user"}))
+    try:
+        await authz.require_agent_use_permission(
+            "agent-1",
+            {"_caipe_trusted_interaction": "unsigned-payload"},
+        )
+    finally:
+        current_user_token.reset(token_ref)
+
+    _url, headers, _body = posts[-1]
+    assert "X-CAIPE-Trusted-Interaction" not in headers
+    assert "X-CAIPE-Trusted-Interaction-Signature" not in headers
 
 
 @pytest.mark.asyncio

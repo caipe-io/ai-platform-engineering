@@ -238,8 +238,8 @@ tuple, written at create and removed at revoke — AND the OpenFGA model must al
 - The bridge's ext_authz entry point runs a COARSE gate for EVERY caller before any per-tool
   check: `deploy/openfga/bridge/main.py:648` → `_check_openfga(user, "can_call", "mcp_gateway:list")`.
   If this returns false, the request is denied (`DENY_NO_CAPABILITY`) and the per-tool / caller-keyed
-  checks at l.650+ never run. This applies to `service_account:<sub>` subjects too — there is no SA
-  exemption (`BYPASS_SUBS` is an explicit env allowlist, not a class).
+  checks at l.650+ never run. This applies to `service_account:<sub>` subjects too; the bridge has
+  no subject bypass or service-account exemption from the coarse gate.
 - **Humans get this baseline via a per-USER tuple, not team inheritance**:
   `memberBaselineGrantDefinitions()` (`ui/src/lib/rbac/baseline-access.ts:136-140`) defines
   `user:<sub> caller mcp_gateway:list`, written by `repairCurrentUserBaseline` on every admin-page

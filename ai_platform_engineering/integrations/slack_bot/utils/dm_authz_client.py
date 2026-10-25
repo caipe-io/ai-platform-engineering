@@ -28,6 +28,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Optional
 
+from .interaction_signing import signed_interaction_headers
+
 logger = logging.getLogger("caipe.slack_bot.dm_authz_client")
 
 
@@ -105,6 +107,11 @@ class DmAuthzClient:
                 "Authorization": f"Bearer {bearer_token}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
+                **signed_interaction_headers(
+                    method="POST",
+                    path="/api/user/check_agent_access",
+                    kind="direct",
+                ),
             },
         )
 

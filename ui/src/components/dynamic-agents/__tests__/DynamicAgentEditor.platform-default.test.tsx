@@ -180,18 +180,17 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     expect(await screen.findByTestId("platform-default-visibility-note")).toBeInTheDocument();
   });
 
-  it("shows a plain-language global visibility summary (no backend/OpenFGA terms) when visibility is global", async () => {
+  it("shows concise global visibility guidance without backend terms", async () => {
     mockFetch(null);
     const globalAgent = { ...editAgent, _id: "agent-global", visibility: "global" as const };
     render(<DynamicAgentEditor agent={globalAgent} onCancel={jest.fn()} onSave={jest.fn()} />);
     await flushAsync();
 
-    const preview = await screen.findByTestId("global-visibility-grant-preview");
-    expect(preview).toHaveTextContent("Everyone can use this agent");
-    expect(preview).toHaveTextContent("every signed-in user");
+    const option = await screen.findByRole("button", { name: /Global Every signed-in user/i });
+    expect(option).toBeInTheDocument();
     // Backend implementation details must not leak into the UX.
-    expect(preview).not.toHaveTextContent("user:*");
-    expect(preview).not.toHaveTextContent("OpenFGA");
+    expect(option).not.toHaveTextContent("user:*");
+    expect(option).not.toHaveTextContent("OpenFGA");
   });
 
   it("renders provider options from the selected harness descriptor", async () => {

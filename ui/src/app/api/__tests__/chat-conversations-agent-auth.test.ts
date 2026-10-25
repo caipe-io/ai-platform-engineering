@@ -193,6 +193,14 @@ describe("POST /api/chat/conversations agent authorization", () => {
       subject: "alice-sub",
       agentId: "foo-bar",
       email: "alice@example.com",
+      isServiceAccount: undefined,
+      trustedContext: {
+        interaction: {
+          source: "web",
+          conversationKind: "personal",
+          verified: false,
+        },
+      },
     });
     expect(insertOne).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -255,4 +255,69 @@ describe("GET /api/dynamic-agents search + pagination", () => {
     expect(page3Body.data.items[0]._id).toBe("agent-20");
     expect(page3Body.data.total).toBe(24);
   });
+
+  it.each([
+    ["name", "asc", ["alpha", "bravo", "gamma"]],
+    ["visibility", "asc", ["bravo", "gamma", "alpha"]],
+    ["tools", "asc", ["bravo", "gamma", "alpha"]],
+    ["grade", "asc", ["alpha", "gamma", "bravo"]],
+    ["status", "asc", ["bravo", "alpha", "gamma"]],
+    ["name", "desc", ["gamma", "bravo", "alpha"]],
+  ])("sorts the full result set by %s %s before pagination", async (sortBy, sortOrder, expectedIds) => {
+    mockFind([
+      {
+        _id: "gamma",
+        name: "Gamma",
+        visibility: "private",
+        allowed_tools: { first: true },
+        last_review: { score: 0.95 },
+        enabled: true,
+        model: { id: "m", provider: "p" },
+      },
+      {
+        _id: "alpha",
+        name: "Alpha",
+        visibility: "team",
+        allowed_tools: { first: true, second: true },
+        last_review: { score: 0.8 },
+        enabled: true,
+        model: { id: "m", provider: "p" },
+      },
+      {
+        _id: "bravo",
+        name: "Bravo",
+        visibility: "global",
+        allowed_tools: {},
+        enabled: false,
+        model: { id: "m", provider: "p" },
+      },
+    ]);
+    const { GET } = await import("../route");
+
+    const response = await GET(request(
+      `/api/dynamic-agents?sort_by=${sortBy}&sort_order=${sortOrder}`,
+    ));
+    const body = await response.json();
+
+    expect(body.data.items.map((agent: { _id: string }) => agent._id)).toEqual(expectedIds);
+  });
+
+  it("sorts by name by default while keeping the platform-default agent pinned first", async () => {
+    mockGetPlatformDefaultAgentId.mockResolvedValue("pinned");
+    mockFind([
+      { _id: "bravo", name: "Bravo", model: { id: "m", provider: "p" } },
+      { _id: "pinned", name: "Zulu", model: { id: "m", provider: "p" } },
+      { _id: "alpha", name: "Alpha", model: { id: "m", provider: "p" } },
+    ]);
+    const { GET } = await import("../route");
+
+    const response = await GET(request("/api/dynamic-agents"));
+    const body = await response.json();
+
+    expect(body.data.items.map((agent: { _id: string }) => agent._id)).toEqual([
+      "pinned",
+      "alpha",
+      "bravo",
+    ]);
+  });
 });

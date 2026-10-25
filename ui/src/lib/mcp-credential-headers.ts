@@ -13,6 +13,10 @@ import {
 import type { MCPCredentialSource, MCPServerConfig } from "@/types/dynamic-agent";
 import type { NextRequest } from "next/server";
 import type { ResourceAuthzSession } from "@/lib/rbac/resource-authz";
+import {
+  trustedInteractionFromRequest,
+  trustedInteractionProofHeaders,
+} from "@/lib/authz/trusted-interaction";
 
 export type McpCredentialOrigin =
   | "secret_ref"
@@ -77,11 +81,15 @@ export function providerCredentialValue(
   return credential;
 }
 
-function credentialServiceHeaders(caller: string): Headers {
+function credentialServiceHeaders(
+  caller: string,
+  interactionProof: Record<string, string>,
+): Headers {
   return new Headers({
     authorization: `Bearer ${caller}`,
     "x-caipe-credential-caller": "mcp_runtime",
     "x-caipe-credential-audience": process.env.CREDENTIAL_SERVICE_AUDIENCE || "caipe-credential-service",
+    ...interactionProof,
   });
 }
 
@@ -174,6 +182,7 @@ async function resolveSourceCredential(
   viaAgentGateway: boolean,
   retrievalCaller: string,
   callerAuthorization: string | null,
+  interactionProof: Record<string, string>,
 ): Promise<{ credential: string; origin: McpCredentialOrigin; debug: McpCredentialSourceDebug } | null> {
   if (source.target !== "header") return null;
 
@@ -193,7 +202,7 @@ async function resolveSourceCredential(
   if (source.kind === "secret_ref" && source.secret_ref) {
     const service = await getCredentialRetrievalService();
     const result = await service.retrieve({
-      headers: credentialServiceHeaders(retrievalCaller),
+      headers: credentialServiceHeaders(retrievalCaller, interactionProof),
       body: { secret_ref: source.secret_ref, intended_use: "mcp_server" },
       session,
     });
@@ -305,6 +314,9 @@ export async function resolveMcpHeaderCredentials(input: {
   const sources: McpCredentialSourceDebug[] = [];
   const retrievalCaller = input.retrievalCaller ?? "mcp-http-server-client";
   const callerAuthorization = userAuthorizationHeader(input.request, input.session);
+  const interactionProof = trustedInteractionProofHeaders(
+    trustedInteractionFromRequest(input.request),
+  );
   let agentGatewayServiceAuthorization: string | null = null;
 
   for (const source of input.server.credential_sources ?? []) {
@@ -315,6 +327,7 @@ export async function resolveMcpHeaderCredentials(input: {
       input.viaAgentGateway,
       retrievalCaller,
       callerAuthorization,
+      interactionProof,
     );
     if (!resolved) continue;
 
@@ -341,6 +354,7 @@ export async function resolveMcpHeaderCredentials(input: {
       throw new Error("MCP_AUTH_REQUIRED");
     }
     headers.Authorization = authorization;
+    Object.assign(headers, interactionProof);
   }
 
   return { headers, sources };

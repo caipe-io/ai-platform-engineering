@@ -26,6 +26,9 @@ import {
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
 import { evaluateAgentAccess } from "@/lib/rbac/pdp-shared";
+import { evaluatePrivateResourceContext } from "@/lib/authz/domains/private-resource";
+import { trustedInteractionFromRequest } from "@/lib/authz/trusted-interaction";
+import { isPrivateResourcesEnabled } from "@/lib/feature-flags/private-resources";
 
 const OPENFGA_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 
@@ -98,7 +101,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     });
   }
 
-  const agents = await getCollection<{ _id: string; enabled?: boolean }>(
+  const agents = await getCollection<{ _id: string; enabled?: boolean; visibility?: string }>(
     "dynamic_agents",
   );
   const agent = await agents.findOne({
@@ -110,6 +113,25 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       allowed: false,
       reason: "DENY_AGENT_NOT_FOUND",
       path: "denied",
+    });
+  }
+
+  const privateContextDecision = isPrivateResourcesEnabled()
+    ? evaluatePrivateResourceContext(
+        {
+          subject: { type: "user", id: subject },
+          resource: { type: "agent", id: raw },
+          action: "use",
+          trustedContext: { interaction: trustedInteractionFromRequest(request) },
+        },
+        agent.visibility === "private" ? "private" : null,
+      )
+    : null;
+  if (privateContextDecision?.decision === "DENY") {
+    return successResponse({
+      allowed: false,
+      reason: privateContextDecision.reason,
+      path: "private_dm_required",
     });
   }
 

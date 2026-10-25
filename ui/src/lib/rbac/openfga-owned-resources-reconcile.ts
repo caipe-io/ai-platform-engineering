@@ -1,3 +1,4 @@
+import { getCollection } from "@/lib/mongodb";
 // assisted-by Cursor:composer-2.5
 // assisted-by Codex Codex-sonnet-4-6
 //
@@ -164,15 +165,51 @@ export async function reconcileShareableResource(
   return reconcileOwnedResource(buildShareableResourceTupleDiff(input));
 }
 
+async function privateMcpServerTupleDiff(
+  input: McpServerRelationshipInput,
+  base: TeamResourceTupleDiff,
+): Promise<TeamResourceTupleDiff> {
+  const owner = `user:${input.ownerSubject}`;
+  const serverObject = `mcp_server:${input.serverId}`;
+  const agents = await getCollection<{ _id: string }>("dynamic_agents");
+  const ownedAgents = await agents.find({
+    visibility: "private", owner_subject: input.ownerSubject,
+    [`allowed_tools.${input.serverId}`]: { $exists: true, $ne: false },
+  }).toArray();
+  const permittedAgents = new Set(ownedAgents.map((agent) => `agent:${agent._id}`));
+  const existing = await readAllTuplesForObject(serverObject);
+  // OpenFGA's type-only read includes exact tool ids as well as both legacy
+  // and gateway wildcards. Read every page before issuing the CAS diff.
+  for (const type of ["tool:", "mcp_tool:"]) {
+    const tuples = await readAllTuplesForObject(type);
+    existing.push(...tuples.filter((tuple) =>
+      tuple.object.startsWith(`${type}${input.serverId}/`)
+      || tuple.object === `${type}${input.serverId}_*`,
+    ));
+  }
+  const allowed = (tuple: OpenFgaTupleKey): boolean => {
+    if (tuple.object === serverObject) {
+      return tuple.relation === "creator" || tuple.relation === "private_marker"
+        || (tuple.user === owner && tuple.relation === "owner");
+    }
+    return tuple.user === owner || permittedAgents.has(tuple.user);
+  };
+  const writes = base.writes.filter(allowed);
+  return {
+    writes,
+    deletes: uniqueTuples([...base.deletes, ...existing.filter((tuple) => !allowed(tuple))]),
+  };
+}
+
 export async function reconcileMcpServerRelationships(
   input: McpServerRelationshipInput,
   ctx?: TupleReconcileContext,
 ): Promise<OpenFgaReconcileResult> {
   const ownerKind = input.ownerSubjectKind ?? "user";
-  const diff = await withMcpServerToolWildcardBackfill(
-    input.serverId,
-    buildMcpServerRelationshipTupleDiff(input),
-  );
+  const base = buildMcpServerRelationshipTupleDiff(input);
+  const diff = input.personalOwnerAccess
+    ? await privateMcpServerTupleDiff(input, base)
+    : await withMcpServerToolWildcardBackfill(input.serverId, base);
   return reconcileTupleDiff(diff, {
     ...ctx,
     source: ctx?.source ?? "mcp_server_create",

@@ -17,6 +17,14 @@ from typing import Any, Dict, Iterator, Optional
 import httpx
 from loguru import logger
 
+try:
+  # Package import used by tests and ``python -m`` from the repository root.
+  from .utils.interaction_signing import signed_interaction_headers
+except ImportError:
+  # The Compose bot mounts this directory as /app and imports ``sse_client``
+  # as a top-level module through utils/ai.py.
+  from utils.interaction_signing import signed_interaction_headers
+
 
 # Spec 104 Story 3 — per-request OBO token. The Slack handler thread sets
 # this BEFORE calling into the SSE client (directly or via utils/ai.py), so
@@ -49,6 +57,16 @@ def set_obo_token(token: Optional[str]) -> object:
 def get_obo_token() -> Optional[str]:
   """Read the currently-bound OBO token (None when unbound)."""
   return _obo_token_cv.get()
+
+
+def _interaction_kind(context: Optional[Dict[str, Any]]) -> str:
+  if not context:
+    return "group"
+  channel_type = str(context.get("channel_type") or "").lower()
+  if channel_type:
+    return "direct" if channel_type in {"dm", "im"} else "group"
+  surface_kind = str(context.get("surface_kind") or "").lower()
+  return "direct" if surface_kind == "dm" else "group"
 
 # Deterministic namespace for Slack conversation IDs.
 # uuid5(NAMESPACE_URL, "slack.caipe.io") — fixed constant.
@@ -262,6 +280,11 @@ class SSEClient:
     """
     url = f"{self.base_url}/api/chat/conversations"
     headers = self._get_headers(bearer_token=bearer_token)
+    headers.update(signed_interaction_headers(
+      method="POST",
+      path="/api/chat/conversations",
+      kind=_interaction_kind(metadata),
+    ))
     # Conversation API expects JSON, not SSE
     headers["Accept"] = "application/json"
 
@@ -537,6 +560,11 @@ class SSEClient:
       payload["reasoning_effort"] = reasoning_effort
 
     headers = self._get_headers(bearer_token=bearer_token)
+    headers.update(signed_interaction_headers(
+      method="POST",
+      path="/api/v1/chat/invoke",
+      kind=_interaction_kind(client_context),
+    ))
     headers["Accept"] = "application/json"
 
     url = f"{self.base_url}/api/v1/chat/invoke"
@@ -570,11 +598,17 @@ class SSEClient:
     """
     try:
       with httpx.Client(timeout=self.timeout) as client:
+        headers = self._get_headers(bearer_token=bearer_token)
+        headers.update(signed_interaction_headers(
+          method="POST",
+          path=url.split("?", 1)[0].replace(self.base_url, "", 1),
+          kind=_interaction_kind(payload.get("client_context")),
+        ))
         with client.stream(
           "POST",
           url,
           json=payload,
-          headers=self._get_headers(bearer_token=bearer_token),
+          headers=headers,
         ) as response:
           if not response.is_success:
             error_text = response.read().decode()

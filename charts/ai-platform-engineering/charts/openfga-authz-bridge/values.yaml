@@ -29,7 +29,6 @@ openfga:
   storeId: ""
   relation: can_call
   object: mcp_gateway:list
-  bypassSubs: ""
 
 agentContext:
   # Secret shared with Dynamic Agents for signed agent_id context headers.
@@ -37,6 +36,9 @@ agentContext:
   existingSecret:
     name: ""
     key: CAIPE_AGENT_CONTEXT_HMAC_SECRET
+
+privateResources:
+  enabled: false
 
 tokenValidation:
   # The bridge validates bearer JWTs itself before calling OpenFGA. Keep this

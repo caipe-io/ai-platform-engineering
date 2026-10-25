@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { authorize } from "@/lib/authz";
+import { authorize, type TrustedAuthorizeContext } from "@/lib/authz";
 import { withAuthzSpan } from "./authz-tracing";
 
 export interface AgentUsePermissionInput {
@@ -13,6 +13,7 @@ export interface AgentUsePermissionInput {
   traceparent?: string;
   /** Caller classification supplied by authentication, never by the request body. */
   isServiceAccount?: boolean;
+  trustedContext?: TrustedAuthorizeContext;
 }
 
 const OPENFGA_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
@@ -40,6 +41,7 @@ export async function requireAgentUsePermission({
   correlationId,
   traceparent,
   isServiceAccount = false,
+  trustedContext,
 }: AgentUsePermissionInput): Promise<NextResponse | null> {
   if (!isValidOpenFgaId(subject)) {
     return authzResponse(
@@ -80,6 +82,7 @@ export async function requireAgentUsePermission({
             subject: { type: isServiceAccount ? "service_account" : "user", id: subject },
             resource: { type: "agent", id: agentId },
             action: "use",
+            trustedContext,
           },
           { tenantId, correlationId, traceId: trace.traceId, spanId: trace.spanId },
         );

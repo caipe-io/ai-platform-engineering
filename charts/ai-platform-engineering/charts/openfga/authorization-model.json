@@ -1593,6 +1593,9 @@
     {
       "type": "mcp_server",
       "relations": {
+        "creator": {
+          "this": {}
+        },
         "reader": {
           "this": {}
         },
@@ -1721,6 +1724,9 @@
         "owner": {
           "this": {}
         },
+        "private_marker": {
+          "this": {}
+        },
         "can_delete": {
           "computedUserset": {
             "relation": "can_manage"
@@ -1729,6 +1735,20 @@
       },
       "metadata": {
         "relations": {
+          "creator": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              }
+            ]
+          },
+          "private_marker": {
+            "directly_related_user_types": [
+              {
+                "type": "organization"
+              }
+            ]
+          },
           "reader": {
             "directly_related_user_types": [
               {
@@ -4836,6 +4856,12 @@
     {
       "type": "secret_ref",
       "relations": {
+        "creator": {
+          "this": {}
+        },
+        "owner": {
+          "this": {}
+        },
         "metadata_reader": {
           "this": {}
         },
@@ -4865,6 +4891,11 @@
                 "computedUserset": {
                   "relation": "can_manage"
                 }
+              },
+              {
+                "computedUserset": {
+                  "relation": "owner"
+                }
               }
             ]
           }
@@ -4881,13 +4912,29 @@
                 "computedUserset": {
                   "relation": "can_manage"
                 }
+              },
+              {
+                "computedUserset": {
+                  "relation": "owner"
+                }
               }
             ]
           }
         },
         "can_manage": {
-          "computedUserset": {
-            "relation": "manager"
+          "union": {
+            "child": [
+              {
+                "computedUserset": {
+                  "relation": "manager"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "owner"
+                }
+              }
+            ]
           }
         },
         "can_audit": {
@@ -4914,6 +4961,20 @@
       },
       "metadata": {
         "relations": {
+          "creator": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              }
+            ]
+          },
+          "owner": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              }
+            ]
+          },
           "metadata_reader": {
             "directly_related_user_types": [
               {

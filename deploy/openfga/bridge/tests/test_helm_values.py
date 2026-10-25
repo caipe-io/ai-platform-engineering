@@ -250,6 +250,36 @@ def test_openfga_helm_model_is_the_single_json_artifact() -> None:
     assert not (root / "deploy/openfga/init/authorization-model.json").exists()
 
 
+def test_bridge_uses_private_marker_without_subject_bypass() -> None:
+    root = _repo_root()
+    bridge_values = (
+        root / "charts/ai-platform-engineering/charts/openfga-authz-bridge/values.yaml"
+    ).read_text()
+    bridge_deployment = (
+        root
+        / "charts/ai-platform-engineering/charts/openfga-authz-bridge/templates/deployment.yaml"
+    ).read_text()
+    bridge_source = (root / "deploy/openfga/bridge/main.py").read_text()
+    model_dsl = (root / "deploy/openfga/model.fga").read_text()
+    model_json = json.loads(
+        (
+            root / "charts/ai-platform-engineering/charts/openfga/authorization-model.json"
+        ).read_text()
+    )
+
+    assert "bypassSubs" not in bridge_values
+    assert "OPENFGA_BYPASS_SUBS" not in bridge_deployment
+    assert "private_marker" in bridge_source
+    assert "define private_marker: [organization]" in model_dsl
+    mcp_server = next(
+        definition
+        for definition in model_json["type_definitions"]
+        if definition["type"] == "mcp_server"
+    )
+    assert "private_marker" in mcp_server["relations"]
+    assert "private_marker" in mcp_server["metadata"]["relations"]
+
+
 def test_keycloak_renders_webex_bot_client_secret_when_enabled() -> None:
     if shutil.which("helm") is None:
         pytest.skip("helm is required for chart render assertions")

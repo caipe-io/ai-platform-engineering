@@ -21,6 +21,7 @@
  * → agent via `evaluateAgentAccess` (PDP).
  */
 
+import { createHmac } from "crypto";
 import { NextRequest } from "next/server";
 
 const mockGetAuth = jest.fn();
@@ -45,12 +46,26 @@ jest.mock("@/lib/mongodb", () => ({
 
 import { POST } from "../route";
 
-function makeRequest(body: unknown): NextRequest {
+function makeRequest(body: unknown, extraHeaders: Record<string, string> = {}): NextRequest {
   return new NextRequest("http://localhost:3000/api/user/check_agent_access", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...extraHeaders },
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
+}
+
+function signedBotHeaders(kind: "direct" | "group"): Record<string, string> {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const payload = ["slack", kind, timestamp, "POST", "/api/user/check_agent_access"].join("\n");
+  return {
+    "x-client-source": "slack-bot",
+    "x-caipe-interaction-source": "slack",
+    "x-caipe-interaction-kind": kind,
+    "x-caipe-interaction-timestamp": timestamp,
+    "x-caipe-interaction-signature": createHmac("sha256", "test-slack-secret")
+      .update(payload)
+      .digest("hex"),
+  };
 }
 
 async function bodyOf(response: Response): Promise<Record<string, unknown>> {
@@ -60,6 +75,8 @@ async function bodyOf(response: Response): Promise<Record<string, unknown>> {
 describe("POST /api/user/check_agent_access", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.PRIVATE_RESOURCES_ENABLED = "true";
+    process.env.SLACK_LINK_HMAC_SECRET = "test-slack-secret";
     mockGetAuth.mockResolvedValue({
       user: { email: "alice@example.com", name: "Alice", role: "user" },
       session: { sub: "alice-sub", org: "default" },
@@ -93,6 +110,123 @@ describe("POST /api/user/check_agent_access", () => {
       subject: "alice-sub",
       agentId: "argocd-agent",
     });
+  });
+
+  it("allows the owner to use a private agent from the authenticated web UI", async () => {
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "private-agent",
+        enabled: true,
+        visibility: "private",
+      }),
+    });
+    mockEvaluateAgentAccess.mockResolvedValue({
+      allowed: true,
+      path: "direct_user_grant",
+      reasonCode: "ALLOW_DIRECT",
+    });
+
+    const response = await POST(makeRequest({ agent_id: "private-agent" }));
+
+    expect(response.status).toBe(200);
+    const json = await bodyOf(response);
+    expect(json.data).toEqual({
+      allowed: true,
+      reason: "ALLOW_DIRECT",
+      path: "direct_user_grant",
+    });
+  });
+
+  it("allows a private agent in a verified Slack DM", async () => {
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "private-agent",
+        enabled: true,
+        visibility: "private",
+      }),
+    });
+    mockEvaluateAgentAccess.mockResolvedValue({
+      allowed: true,
+      path: "direct_user_grant",
+      reasonCode: "ALLOW_DIRECT",
+    });
+
+    const response = await POST(makeRequest(
+      { agent_id: "private-agent" },
+      signedBotHeaders("direct"),
+    ));
+
+    expect(response.status).toBe(200);
+    expect((await bodyOf(response)).data).toMatchObject({ allowed: true });
+    expect(mockEvaluateAgentAccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("denies a private agent in a verified Slack channel before OpenFGA", async () => {
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "private-agent",
+        enabled: true,
+        visibility: "private",
+      }),
+    });
+
+    const response = await POST(makeRequest(
+      { agent_id: "private-agent" },
+      signedBotHeaders("group"),
+    ));
+
+    expect(response.status).toBe(200);
+    expect((await bodyOf(response)).data).toEqual({
+      allowed: false,
+      reason: "PRIVATE_RESOURCE_CONTEXT_DENIED",
+      path: "private_dm_required",
+    });
+    expect(mockEvaluateAgentAccess).not.toHaveBeenCalled();
+  });
+
+  it("denies an unsigned Slack bot request instead of treating it as web", async () => {
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "private-agent",
+        enabled: true,
+        visibility: "private",
+      }),
+    });
+
+    const response = await POST(makeRequest(
+      { agent_id: "private-agent" },
+      { "x-client-source": "slack-bot" },
+    ));
+
+    expect((await bodyOf(response)).data).toMatchObject({
+      allowed: false,
+      reason: "PRIVATE_RESOURCE_CONTEXT_DENIED",
+    });
+    expect(mockEvaluateAgentAccess).not.toHaveBeenCalled();
+  });
+
+  it("leaves legacy behavior unchanged while the rollout flag is disabled", async () => {
+    process.env.PRIVATE_RESOURCES_ENABLED = "false";
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "private-agent",
+        enabled: true,
+        visibility: "private",
+      }),
+    });
+    mockEvaluateAgentAccess.mockResolvedValue({
+      allowed: true,
+      path: "direct_user_grant",
+      reasonCode: "ALLOW_DIRECT",
+    });
+
+    const response = await POST(makeRequest(
+      { agent_id: "private-agent" },
+      { "x-client-source": "slack-bot" },
+    ));
+
+    expect((await bodyOf(response)).data).toMatchObject({ allowed: true });
+    expect(mockEvaluateAgentAccess).toHaveBeenCalledTimes(1);
   });
 
   it("allows via team union and surfaces the matched slug", async () => {
