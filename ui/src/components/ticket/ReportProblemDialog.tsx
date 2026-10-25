@@ -223,7 +223,6 @@ export function ReportProblemDialog({
           ...(includeChatContext && chatContext && chatContextDraft.trim()
             ? { chatContext: chatContextDraft.trim() } : {}),
         },
-        accessToken: session?.accessToken,
         signal: controller.signal,
         onEvent: (_event, logLine) => {
           appendLog(logLine);

@@ -246,7 +246,7 @@ export function loadConfiguredAgenticApps(
     if (
       profile?.mode !== "native-package" &&
       manifest.consumes.platformApis.some(
-        (api) => api.required && api.id.startsWith("host."),
+        (api) => api.required && api.id.startsWith("host.") && api.id !== "host.notifications",
       )
     )
       throw new Error(
@@ -277,7 +277,18 @@ export function loadConfiguredAgenticApps(
   const assistantIds = new Set<string>();
   const appIds = new Set<string>();
   const mountPaths = new Map<string, string>();
+  const serviceAccountClients = new Map<string, string>();
   for (const app of apps) {
+    const clientId = app.installation.bindings?.serviceAccountClientId;
+    if (clientId) {
+      const owner = serviceAccountClients.get(clientId);
+      if (owner) {
+        throw new Error(
+          `serviceAccountClientId "${clientId}" is bound to both "${owner}" and "${app.installation.appId}"`,
+        );
+      }
+      serviceAccountClients.set(clientId, app.installation.appId);
+    }
     const assistantId = app.manifest.ui.assistant?.agentId;
     if (assistantId && assistantIds.has(assistantId)) throw new Error("Multiple installed apps claim the assistant");
     if (assistantId) assistantIds.add(assistantId);
@@ -684,7 +695,7 @@ function parseBindings(
   path: string,
 ): NonNullable<AgenticAppInstallation["bindings"]> {
   const raw = asRecord(value, path);
-  assertKnownKeys(raw, ["runtimeOrigin", "resources"], path);
+  assertKnownKeys(raw, ["runtimeOrigin", "resources", "serviceAccountClientId"], path);
   const resources =
     raw.resources === undefined
       ? undefined
@@ -695,6 +706,14 @@ function parseBindings(
           runtimeOrigin: requiredHttpOrigin(
             raw.runtimeOrigin,
             `${path}.runtimeOrigin`,
+          ),
+        }
+      : {}),
+    ...(raw.serviceAccountClientId !== undefined
+      ? {
+          serviceAccountClientId: requiredString(
+            raw.serviceAccountClientId,
+            `${path}.serviceAccountClientId`,
           ),
         }
       : {}),

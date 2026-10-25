@@ -138,6 +138,7 @@ function extractTicketResult(text: string): TicketResult | null {
 
 export interface CreateTicketOptions {
   request: TicketRequest;
+  /** @deprecated Browser requests authenticate with the session cookie; this value is ignored. */
   accessToken?: string;
   onEvent?: (event: TicketStreamEvent, logLine: string) => void;
   onResult?: (result: TicketResult) => void;
@@ -151,7 +152,7 @@ export interface CreateTicketOptions {
 export async function createTicketViaAgent(
   options: CreateTicketOptions
 ): Promise<TicketResult | null> {
-  const { request, accessToken, onEvent, onResult, signal } = options;
+  const { request, onEvent, onResult, signal } = options;
   const prompt = buildPrompt(request);
 
   let finalContent = "";
@@ -178,7 +179,6 @@ export async function createTicketViaAgent(
 
   const adapter = createStreamAdapter({
     protocol: "custom",
-    accessToken,
   });
 
   if (signal?.aborted) {

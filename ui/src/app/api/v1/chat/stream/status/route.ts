@@ -4,10 +4,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { dispatchChatStream } from "../../_stream-gateway";
 import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
 import { authorizeConversationWriteAccess } from "../../_conversation-authz";
-import { authenticateRequest } from "../../_helpers";
+import { authenticateChatStreamRequest } from "../../_stream-auth";
 
 export async function POST(request: NextRequest): Promise<Response> {
-  const auth = await authenticateRequest(request);
+  const auth = await authenticateChatStreamRequest(request);
   if (auth instanceof NextResponse) return auth;
   const forwarded = request.clone();
   let body: Record<string, unknown>;

@@ -137,3 +137,18 @@ Native app chat panels may pass `showAgentHeader: false` when their own toolbar 
 Native panels can supply `feedbackPrompt` (`message`, `actionLabel`, optional `trailingText`) to replace the default disclaimer with an inline action opening the existing host feedback form. This respects `reportProblemEnabled`; when reporting is disabled, the standard disclaimer remains. The audit logging notice is shown by default; native panels can use `showAuditNotice: false` to omit that footer text without changing audit logging.
 
 Chat feedback offers an unchecked option to attach the latest question and response. It captures a snapshot when the form opens, limits each message to 6,000 characters with a truncation marker, and excludes tools and attachments. The reporter can edit the preview before submission; unchecking omits the excerpt from the request. Consent resets when the form closes.
+
+### Browser chat authentication
+
+First-party browser chat uses the same-origin session cookie for start, resume,
+status and cancel. The BFF resolves the session's role and forwards its server-side
+access token to the selected runtime. The browser does not attach a bearer token.
+
+- Session-authenticated stream requests require `Origin` to match `NEXTAUTH_URL`
+  (or the request origin when unset). An expired or missing session requires sign-in.
+  The explicitly enabled non-production anonymous development provider retains its existing behavior.
+- Explicit bearer credentials retain precedence, including when a cookie is also
+  present. Invalid credentials never fall back to the cookie. API callers keep
+  their bearer identity and do not inherit browser administrator privileges.
+- Conversation-write, agent-use and app installation admission checks remain in
+  force for every operation. Keep admin-only app policies unchanged.

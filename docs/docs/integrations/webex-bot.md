@@ -246,6 +246,11 @@ view of earlier messages from that Webex thread. Use
 `WEBEX_THREAD_CONTEXT_MAX_MESSAGES` and `WEBEX_THREAD_CONTEXT_MAX_CHARS` to cap
 that additional context.
 
+The parent message and replies are fetched independently. If the parent is
+unavailable (for example, Webex returns 404), accessible replies still provide
+context. If the replies cannot be fetched, the parent is retained when available.
+If neither fetch succeeds, the bot sends only the current request.
+
 ## Important Environment Variables
 
 | Variable | Purpose |

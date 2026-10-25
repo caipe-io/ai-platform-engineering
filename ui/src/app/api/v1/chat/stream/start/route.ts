@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { authenticateRequest } from "@/lib/da-proxy";
+import { authenticateChatStreamRequest } from "../../_stream-auth";
 import { createAuthzTraceContext } from "@/lib/rbac/authz-tracing";
 import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
 
@@ -19,7 +19,7 @@ export const maxDuration = 960; // Allows long native app streams plus cleanup.
 
 export async function POST(request: NextRequest): Promise<Response> {
   // Authenticate caller (session cookie or Bearer token)
-  const authResult = await authenticateRequest(request);
+  const authResult = await authenticateChatStreamRequest(request);
   if (authResult instanceof NextResponse) return authResult;
 
   const forwardedRequest = request.clone();

@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { authenticateRequest } from "@/lib/da-proxy";
+import { authenticateChatStreamRequest } from "../../_stream-auth";
 import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
 
 import { authorizeConversationWriteAccess } from "../../_conversation-authz";
@@ -15,7 +15,7 @@ import { dispatchChatStream } from "../../_stream-gateway";
 
 export async function POST(request: NextRequest): Promise<Response> {
   // Authenticate caller (session cookie or Bearer token)
-  const authResult = await authenticateRequest(request);
+  const authResult = await authenticateChatStreamRequest(request);
   if (authResult instanceof NextResponse) return authResult;
 
   const forwardedRequest = request.clone();

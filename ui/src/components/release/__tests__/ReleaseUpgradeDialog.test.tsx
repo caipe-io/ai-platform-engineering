@@ -183,6 +183,16 @@ describe("ReleaseUpgradeDialog", () => {
     ].join("\n"),
   };
 
+  it.each([
+    ["https://github.com/example/repository/compare/primary...secondary", "https://github.com/example/repository/compare/primary...secondary"],
+    ["javascript:alert(1)", "https://github.com/caipe-io/ai-platform-engineering/blob/main/CHANGELOG.md"],
+    ["https://user:password@github.com/example/repository", "https://github.com/caipe-io/ai-platform-engineering/blob/main/CHANGELOG.md"],
+  ])("uses only safe GitHub changelog destinations: %s", (changelogUrl, expected) => {
+    render(<ReleaseUpgradeDialog open isAdmin releaseVersion="0.5.7" release={null}
+      releaseMarkdown={{ ...markdownNotes, changelogUrl }} onSkipUntilNextLogin={jest.fn()} onDismissPermanently={jest.fn()} />);
+    expect(screen.getByRole("link", { name: "View full changelog" })).toHaveAttribute("href", expected);
+  });
+
   it("renders the full curated markdown body and prefers it over parsed sections (admin)", () => {
     render(
       <ReleaseUpgradeDialog

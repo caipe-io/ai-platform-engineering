@@ -1,3 +1,17 @@
+## 1.3.0-rc.16 (2026-10-23)
+
+### Feat
+
+- **ui**: enable remote MCP providers by default (#3047)
+- **dynamic-agents**: add opt-in app context prompt adapter (#3008)
+
+### Fix
+
+- **chat**: preserve browser session authorization for streams (#3057)
+- **chat**: restore retry and regenerate next to edit (#3009)
+- **harness-engine**: update vulnerable dependencies (#3044)
+- **ui**: preserve nested markdown list structure (#3000)
+
 ## 1.3.0-rc.15 (2026-10-22)
 
 ### Feat

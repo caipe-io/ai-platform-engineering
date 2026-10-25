@@ -229,7 +229,9 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await dismissReleaseUpgradeDialog(page);
 
     // Sidebar renders titles via title= attribute on the <p> element.
-    await expect(page.getByTitle(CONV_TITLE)).toBeVisible();
+    await expect(
+      page.getByTestId("conversation-history-scroll").getByTitle(CONV_TITLE),
+    ).toBeVisible();
   });
 
   test("shows banner even when the unlinked conversation has no messages", async ({
@@ -296,7 +298,9 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await page.goto(`/chat/${CONV_DELETED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
-    await expect(page.getByTitle(CONV_TITLE)).toBeVisible();
+    await expect(
+      page.getByTestId("conversation-history-scroll").getByTitle(CONV_TITLE),
+    ).toBeVisible();
   });
 
   test("deleted-agent banner is not shown for a healthy active agent", async ({ page }) => {

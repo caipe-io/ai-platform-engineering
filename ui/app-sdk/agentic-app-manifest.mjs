@@ -20,6 +20,7 @@ const HOST_APIS = new Set([
   "host.theme",
   "host.session",
   "host.chat",
+  "host.notifications",
   "app.gateway",
 ]);
 
@@ -364,7 +365,7 @@ export function validateAgenticAppManifest(value) {
       api.required &&
       (!HOST_APIS.has(api.id) ||
         api.version !== "1.0" ||
-        (api.id !== "app.gateway" && !modes.has("native-package")))
+        (api.id !== "app.gateway" && api.id !== "host.notifications" && !modes.has("native-package")))
     )
       throw new Error(
         `unsupported required platform capability: ${api.id}@${api.version}`,

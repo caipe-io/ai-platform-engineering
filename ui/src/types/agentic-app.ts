@@ -56,6 +56,8 @@ export interface AgenticAppInstallation {
   bindings?: {
     runtimeOrigin?: string;
     resources?: Record<string, string>;
+    /** Client id of the service account this app uses to call the host. */
+    serviceAccountClientId?: string;
   };
   runtimeMountPath?: string;
   runtimeOriginOverride?: string;

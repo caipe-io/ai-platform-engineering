@@ -8,7 +8,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select } from "@/components/ui/select";
 import { apiClient } from "@/lib/api-client";
 import { resolveUsableChatAgent } from "@/lib/chat-agent-selection";
-import { getConfig } from "@/lib/config";
 import { pushWithNavigationProgress } from "@/lib/navigation-progress";
 import { getMarkdownComponents } from "@/lib/markdown-components";
 import { createStreamAdapter,type StreamAdapter,type StreamCallbacks } from "@/lib/streaming";
@@ -756,8 +755,6 @@ export function SkillsRunner({
 
   // Auth - same pattern as ChatPanel
   const { data: session } = useSession();
-  const ssoEnabled = getConfig('ssoEnabled');
-  const accessToken = ssoEnabled ? session?.accessToken : undefined;
 
   // Router for navigation
   const router = useRouter();
@@ -1128,7 +1125,6 @@ export function SkillsRunner({
 
       const client = createStreamAdapter({
         protocol: "custom",
-        accessToken,
       });
       clientRef.current = client;
 
@@ -1281,7 +1277,7 @@ export function SkillsRunner({
     } finally {
       clientRef.current = null;
     }
-  }, [config, accessToken, session?.user?.email, createStreamCallbacks, createRun, updateRun]);
+  }, [config, session?.user?.email, createStreamCallbacks, createRun, updateRun]);
 
   /**
    * Stop workflow execution
@@ -1474,7 +1470,6 @@ export function SkillsRunner({
 
       const client = createStreamAdapter({
         protocol: "custom",
-        accessToken,
       });
       clientRef.current = client;
 
@@ -1505,7 +1500,7 @@ export function SkillsRunner({
       clientRef.current = null;
       setIsSubmittingInput(false);
     }
-  }, [accessToken, session?.user?.email, config.id, createStreamCallbacks, status]);
+  }, [session?.user?.email, config.id, createStreamCallbacks, status]);
 
   // Get current active step
   const activeStepIndex = steps.findIndex((s) => s.status === "in_progress");

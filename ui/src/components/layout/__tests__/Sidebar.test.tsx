@@ -668,8 +668,8 @@ describe('Sidebar — Live Status Indicator', () => {
       expect(screen.getByRole('radio', { name: 'Webhook runs' })).toBeInTheDocument()
       expect(screen.queryByText('History')).not.toBeInTheDocument()
       expect(screen.getByText('Normal Chat')).toBeInTheDocument()
-      expect(screen.queryByText('Review alerts')).not.toBeInTheDocument()
-      expect(screen.queryByText('Nightly report')).not.toBeInTheDocument()
+      expect(screen.queryByText('[Autonomous] Review alerts')).not.toBeInTheDocument()
+      expect(screen.queryByText('Scheduled Chat')).not.toBeInTheDocument()
 
       // These assertions are synchronous: there must be no outgoing title or
       // conversation retained by an exit animation during filter switches.
@@ -678,20 +678,20 @@ describe('Sidebar — Live Status Indicator', () => {
       expect(screen.queryByText('History')).not.toBeInTheDocument()
       expect(screen.getByText('[Autonomous] Review alerts')).toBeInTheDocument()
       expect(screen.queryByText('Normal Chat')).not.toBeInTheDocument()
-      expect(screen.queryByText('Nightly report')).not.toBeInTheDocument()
+      expect(screen.queryByText('Scheduled Chat')).not.toBeInTheDocument()
       expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'autonomous' })
 
       selectConversationFilter('Scheduled')
       expect(screen.getByText('Scheduled Chat')).toBeInTheDocument()
-      expect(screen.queryByText('Review alerts')).not.toBeInTheDocument()
+      expect(screen.queryByText('[Autonomous] Review alerts')).not.toBeInTheDocument()
       expect(screen.queryByText('History')).not.toBeInTheDocument()
       expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'scheduled' })
 
       selectConversationFilter('Chat')
       expect(screen.getByText('Normal Chat')).toBeInTheDocument()
       expect(screen.queryByText('History')).not.toBeInTheDocument()
-      expect(screen.queryByText('Nightly report')).not.toBeInTheDocument()
-      expect(screen.queryByText('Review alerts')).not.toBeInTheDocument()
+      expect(screen.queryByText('Scheduled Chat')).not.toBeInTheDocument()
+      expect(screen.queryByText('[Autonomous] Review alerts')).not.toBeInTheDocument()
       expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'web' })
     })
 
