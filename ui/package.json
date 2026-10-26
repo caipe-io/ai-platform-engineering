@@ -53,6 +53,7 @@
     "@dnd-kit/sortable": "10.0.0",
     "@dnd-kit/utilities": "3.2.2",
     "@lezer/highlight": "1.2.3",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@okta/okta-sdk-nodejs": "8.1.0",
     "@radix-ui/react-dialog": "1.1.23",
     "@radix-ui/react-label": "2.1.15",
@@ -100,6 +101,7 @@
     "tailwind-merge": "3.6.0",
     "uuid": "14.0.2",
     "yaml": "2.9.0",
+    "zod": "4.6.7",
     "zustand": "5.0.15"
   },
   "devDependencies": {

@@ -158,6 +158,8 @@ Supported trigger paths are:
   specific workflow definitions.
 - **REST API** — create a run through `POST /api/workflow-runs` with a valid
   bearer token.
+- **MCP** — call the [Workflows MCP server](#workflows-mcp-server) from an agent
+  or any MCP client.
 
 Workflow definitions do not currently contain cron schedules. For scheduled
 automation, configure a scheduled or autonomous agent and grant that agent
@@ -174,3 +176,42 @@ Workflow definitions and workflow runs use separate visibility models.
 - Admins can inspect runs for authorized troubleshooting.
 
 UI controls help explain the current access state, but server-side authorization remains authoritative.
+
+## Workflows MCP server
+
+The CAIPE UI serves a Workflows MCP endpoint at `/api/mcp/workflows`, so agents and
+MCP clients can define, run and monitor workflows without a separate container.
+Every call runs as the caller: the endpoint relays the caller's bearer token to the
+same workflow APIs, so the access control above applies unchanged.
+
+Enable it with Workflows itself. Set `caipe-ui.config.WORKFLOWS_ENABLED: "true"`, then
+register the server in `caipe-ui.appConfig.mcp_servers` so AgentGateway routes to it:
+
+```yaml
+- id: workflows
+  name: Workflows
+  transport: http
+  enabled: true
+  endpoint: http://<release>-agentgateway:4000/mcp/workflows
+  source: agentgateway
+  agentgateway_discovered: false
+  agentgateway_endpoint: http://<release>-agentgateway:4000/mcp/workflows
+  agentgateway_target_endpoint: http://<release>-caipe-ui:3000/api/mcp/workflows
+```
+
+The endpoint answers `404` while Workflows is off and requires a bearer token (a
+browser session cookie is not accepted).
+
+| Tool | What it does |
+|---|---|
+| `list_workflows`, `get_workflow` | Read definitions you can see |
+| `create_workflow`, `update_workflow`, `delete_workflow` | Manage definitions you own |
+| `check_workflow_agent_access` | Find agents the audience of a shared workflow cannot use |
+| `start_workflow_run` | Start a run as the caller; returns `{run_id, status}` |
+| `list_workflow_runs`, `get_workflow_run` | Read runs; events are omitted unless `include_events` is set |
+| `cancel_workflow_run`, `resume_workflow_run` | Stop a run, or answer a paused human-input step |
+| `share_workflow_run`, `delete_workflow_run` | Manage a run you own |
+
+Tools carry read-only and destructive hints so clients can ask before running
+destructive ones. `PUT /api/workflow-runs?id=` is deliberately not exposed: it writes
+the request body straight into the run document.
