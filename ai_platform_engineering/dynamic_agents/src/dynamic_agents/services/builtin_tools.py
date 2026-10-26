@@ -27,6 +27,55 @@ logger = logging.getLogger(__name__)
 
 _REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 _MAX_FETCH_REDIRECTS = 10
+_CURL_BOOLEAN_OPTIONS = {
+    "-f",
+    "--fail",
+    "--fail-with-body",
+    "-G",
+    "--get",
+    "-i",
+    "--include",
+    "-I",
+    "--head",
+    "-s",
+    "--silent",
+    "-S",
+    "--show-error",
+    "--compressed",
+}
+_CURL_VALUE_OPTIONS = {
+    "-A",
+    "--user-agent",
+    "--connect-timeout",
+    "-d",
+    "--data",
+    "--data-ascii",
+    "--data-binary",
+    "--data-raw",
+    "--data-urlencode",
+    "-e",
+    "--referer",
+    "-H",
+    "--header",
+    "--json",
+    "--max-time",
+    "--retry",
+    "--retry-delay",
+    "-u",
+    "--user",
+    "-X",
+    "--request",
+}
+_CURL_FILE_CAPABLE_OPTIONS = {
+    "-d",
+    "--data",
+    "--data-ascii",
+    "--data-binary",
+    "--data-urlencode",
+    "-H",
+    "--header",
+    "--json",
+}
 
 
 # assisted-by claude code claude-sonnet-4-6
@@ -90,6 +139,101 @@ def _validate_fetch_url(url: str, allowed_domains: str, allow_non_public_urls: b
         return False, error_msg, domain
 
     return True, "", domain
+
+
+def _validate_curl_option_value(option: str, value: str) -> str | None:
+    """Reject curl option values that can make curl read local files."""
+    if option not in _CURL_FILE_CAPABLE_OPTIONS:
+        return None
+
+    stripped_value = value.lstrip()
+    if stripped_value.startswith("@") or (option == "--data-urlencode" and "@" in value):
+        return f"Option '{option}' cannot read request data from a local file"
+    return None
+
+
+def _prepare_curl_args(
+    command: str,
+    allowed_domains: str,
+    https_only: bool,
+    allow_non_public_urls: bool,
+) -> tuple[list[str] | None, str | None]:
+    """Parse a curl command into a constrained argv and validate every URL."""
+    try:
+        parsed_args = shlex.split(command)
+    except ValueError as e:
+        return None, f"Failed to parse command: {e}"
+
+    if parsed_args and parsed_args[0] == "curl":
+        parsed_args = parsed_args[1:]
+
+    options: list[str] = []
+    urls: list[str] = []
+    index = 0
+    while index < len(parsed_args):
+        token = parsed_args[index]
+        if token == "--":
+            urls.extend(parsed_args[index + 1 :])
+            break
+        if not token.startswith("-") or token == "-":
+            urls.append(token)
+            index += 1
+            continue
+        if token in _CURL_BOOLEAN_OPTIONS:
+            options.append(token)
+            index += 1
+            continue
+        if token.startswith("-") and not token.startswith("--") and len(token) > 2:
+            short_option = token[:2]
+            if short_option in _CURL_VALUE_OPTIONS:
+                value = token[2:]
+                error = _validate_curl_option_value(short_option, value)
+                if error:
+                    return None, error
+                options.extend((short_option, value))
+                index += 1
+                continue
+            if all(f"-{flag}" in _CURL_BOOLEAN_OPTIONS for flag in token[1:]):
+                options.extend(f"-{flag}" for flag in token[1:])
+                index += 1
+                continue
+        option, separator, inline_value = token.partition("=")
+        if separator and option in _CURL_VALUE_OPTIONS:
+            error = _validate_curl_option_value(option, inline_value)
+            if error:
+                return None, error
+            options.extend((option, inline_value))
+            index += 1
+            continue
+        if token in _CURL_VALUE_OPTIONS:
+            if index + 1 >= len(parsed_args):
+                return None, f"Option '{token}' requires a value"
+            value = parsed_args[index + 1]
+            error = _validate_curl_option_value(token, value)
+            if error:
+                return None, error
+            options.extend((token, value))
+            index += 2
+            continue
+        return None, f"Curl option '{token}' is not supported"
+
+    if not urls:
+        return None, "A request URL is required"
+
+    for url in urls:
+        parsed_url = urlparse(url)
+        if parsed_url.scheme not in ("http", "https"):
+            return None, f"The URL scheme '{parsed_url.scheme or '(missing)'}://' is not supported"
+        if https_only and parsed_url.scheme != "https":
+            return None, "Only https:// URLs are allowed"
+        try:
+            is_valid, error_msg, _domain = _validate_fetch_url(url, allowed_domains, allow_non_public_urls)
+        except Exception as e:
+            return None, f"Failed to parse URL: {e}"
+        if not is_valid:
+            return None, error_msg
+
+    return ["curl", "--globoff", "--max-redirs", "0", *options, "--", *urls], None
 
 
 def get_builtin_tool_definitions() -> list[BuiltinToolDefinition]:
@@ -413,38 +557,15 @@ def create_curl_tool(allowed_domains: str = "*", https_only: bool = True, allow_
             # GET request (alternative to fetch_url)
             curl("curl -s https://api.example.com/data")
         """
-        try:
-            args = shlex.split(command)
-        except ValueError as e:
-            return f"ERROR: Failed to parse command: {e}"
-
-        if not args or args[0] != "curl":
-            args = ["curl"] + args
-
-        # Enforce https-only (configurable)
-        if https_only:
-            for token in args[1:]:
-                if "://" in token and not token.startswith("https://"):
-                    scheme = token.split("://")[0] + "://"
-                    msg = (
-                        f"The URL scheme '{scheme}' is not supported.\n\n"
-                        "**Only `https://` URLs are allowed.**\n\n"
-                        f"Please use an `https://` endpoint instead of `{token.split('?')[0]}`."
-                    )
-                    logger.warning(f"curl blocked non-https URL: {token.split('?')[0]}")
-                    return msg
-
-        # Check domain ACL and SSRF protection
-        for token in args[1:]:
-            if token.startswith("https://") or token.startswith("http://"):
-                try:
-                    is_valid, error_msg, domain = _validate_fetch_url(token, allowed_domains, allow_non_public_urls)
-                    if not is_valid:
-                        logger.warning(f"curl blocked: {domain} (patterns: {allowed_domains})")
-                        return f"ERROR: {error_msg}"
-                except Exception as e:
-                    return f"ERROR: Failed to parse URL: {e}"
-                break
+        args, validation_error = _prepare_curl_args(
+            command,
+            allowed_domains,
+            https_only,
+            allow_non_public_urls,
+        )
+        if validation_error or args is None:
+            logger.warning("curl command blocked: %s", validation_error)
+            return f"ERROR: {validation_error}"
 
         # Detect write method for post-execution warning
         write_method = None
