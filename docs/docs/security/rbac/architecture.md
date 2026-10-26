@@ -499,10 +499,14 @@ deduplication remains separate from authentication and permission decisions.
 4. Duo SSO login → auth code returned to Keycloak
 5. Keycloak issues JWT → NextAuth exchanges code for tokens
 6. NextAuth stores small session metadata in the encrypted httpOnly cookie
-7. Large OAuth tokens (access, refresh, ID token) stay in the UI server's in-process token cache and are rehydrated server-side
+7. OAuth credentials are read from the shared encrypted auth_token_cache record in MongoDB on each request; standalone mode without MongoDB uses the UI server's in-process token cache
 ```
 
-**Security note:** The session cookie is httpOnly, Secure, SameSite=Lax, and encrypted with `NEXTAUTH_SECRET`. Large OAuth tokens are kept out of the browser cookie to avoid oversized request headers when Keycloak emits RBAC scopes, groups, or relationship-derived claims. If the UI process restarts and the in-process token cache is lost while a browser still has a valid slim session cookie, the session is marked `AccessTokenMissing` and the token-expiry guard sends the user back through login instead of allowing tokenless backend proxy calls. For multi-replica deployments, use sticky sessions or replace the in-process token cache with a shared store.
+**Security note:** The session cookie is httpOnly, Secure, SameSite=Lax, and encrypted with `NEXTAUTH_SECRET`. Large OAuth tokens are kept out of the browser cookie to avoid oversized request headers when Keycloak emits RBAC scopes, groups, or relationship-derived claims.
+
+- Multi-replica deployments require shared MongoDB and a common `NEXTAUTH_SECRET`. Sticky sessions are not needed for credential consistency.
+- In standalone mode, losing the in-process token cache on restart marks an existing slim session cookie `AccessTokenMissing`. The token-expiry guard sends the user through login instead of allowing tokenless backend proxy calls.
+- A shared-store read failure withholds credentials for that request and reports `SharedStoreUnavailable`. This transient error is not written into the cookie, so a later successful read can recover the same credential version. Actual refresh failures remain sticky until newer credentials are published.
 
 ### Server-Side Authorization (`api-middleware.ts`)
 

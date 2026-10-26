@@ -857,7 +857,7 @@ export const authOptions: NextAuthOptions = {
       if (!token.error && token.sub && !token.accessToken) {
         token.error = "AccessTokenMissing";
       }
-      if (typeof token.expiresAt === 'number' && token.expiresAt <= Date.now() / 1000) {
+      if (!token.error && typeof token.expiresAt === 'number' && token.expiresAt <= Date.now() / 1000) {
         token.error = "RefreshTokenExpired";
       }
 
@@ -891,7 +891,8 @@ export const authOptions: NextAuthOptions = {
       if (
         token.error === "RefreshTokenExpired" ||
         token.error === "RefreshTokenError" ||
-        token.error === "AccessTokenMissing"
+        token.error === "AccessTokenMissing" ||
+        token.error === "SharedStoreUnavailable"
       ) {
         console.error(`[Auth] Session invalid due to: ${token.error}`);
         session.error = token.error;
@@ -928,6 +929,8 @@ export const authOptions: NextAuthOptions = {
         delete slimToken.accessToken;
         delete slimToken.refreshToken;
       }
+      // A read outage is request-scoped and must not poison the cookie.
+      if (slimToken.error === 'SharedStoreUnavailable') delete slimToken.error;
       delete slimToken.idToken;
       delete slimToken.version;
       // Dynamic import avoids top-level ESM/CJS conflict with jose in test environments
@@ -966,7 +969,8 @@ export const authOptions: NextAuthOptions = {
         } catch {
           decoded.accessToken = undefined;
           decoded.refreshToken = undefined;
-          decoded.error = 'RefreshTokenError';
+          // Keep genuine refresh failures sticky; a failed read alone is retryable.
+          decoded.error ??= 'SharedStoreUnavailable';
         }
       }
       if (decoded?.accessToken) {
