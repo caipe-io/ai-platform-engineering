@@ -1,4 +1,5 @@
 import os
+import asyncio
 import re
 import time
 import logging
@@ -7,6 +8,7 @@ import jwt
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
+from common.ingestor_listener import run_standalone_ingestion
 from common.ingestor import IngestorBuilder, Client
 from common.models.rag import StructuredEntity
 from common.models.rag import DataSourceInfo
@@ -569,364 +571,367 @@ async def sync_org(client: Client, github_client: "GitHubClient", org_login: str
     reload_interval=SYNC_INTERVAL,
     metadata={"github_api_url": GITHUB_API_URL, "organizations": [org_login]},
   )
-  await client.upsert_datasource(datasource_info)
-  logging.info(f"Created/updated datasource: {datasource_id}")
+  async def sync_datasource() -> None:
+    await client.upsert_datasource(datasource_info)
+    logging.info(f"Created/updated datasource: {datasource_id}")
 
-  # 2. Fetch all entities from GitHub
-  all_entities: List[StructuredEntity] = []
+    # 2. Fetch all entities from GitHub
+    all_entities: List[StructuredEntity] = []
 
-  logging.info(f"Processing organization: {org_login}")
+    logging.info(f"Processing organization: {org_login}")
 
-  # Create a job immediately when we start processing
-  job_response = await client.create_job(
-    datasource_id=datasource_id,
-    job_status=JobStatus.IN_PROGRESS,
-    message=f"Starting GitHub ingestion for {org_login}...",
-    total=1,  # Will update total once we know the counts
-  )
-  job_id = job_response["job_id"]
-  logging.info(f"Created job {job_id} for datasource={datasource_id}")
-
-  try:
-    # Fetch organization data
-    await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Fetching organization metadata for {org_login}...")
-    org_data = github_client.get_organization(org_login)
-    if not org_data:
-      error_msg = f"Could not fetch organization {org_login}"
-      await client.update_job(job_id=job_id, job_status=JobStatus.FAILED, message=error_msg)
-      logging.error(error_msg)
-      return
-
-    # Fetch repositories
-    await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Fetching repositories for {org_login}...")
-    logging.info(f"Fetching repositories for {org_login}...")
-    repos_data = fetch_all_paginated(github_client.get_organization_repositories, org_login)
-    logging.info(f"Fetched {len(repos_data)} repositories")
-
-    # Fetch teams
-    await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Fetching teams for {org_login}...")
-    logging.info(f"Fetching teams for {org_login}...")
-    teams_data = fetch_all_paginated(github_client.get_organization_teams, org_login)
-    logging.info(f"Fetched {len(teams_data)} teams")
-
-    # Fetch organization members (users)
-    await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Fetching members for {org_login}...")
-    logging.info(f"Fetching members for {org_login}...")
-    members_data = fetch_all_paginated(github_client.get_organization_members, org_login, include_org_emails=FETCH_ORG_EMAILS)
-    logging.info(f"Fetched {len(members_data)} members")
-
-    # Now update the total count
-    total_entities = (
-      1  # Organization
-      + len(repos_data)
-      + len(teams_data)
-      + len(members_data)
+    # Create a job immediately when we start processing
+    job_response = await client.create_job(
+      datasource_id=datasource_id,
+      job_status=JobStatus.IN_PROGRESS,
+      message=f"Starting GitHub ingestion for {org_login}...",
+      total=1,  # Will update total once we know the counts
     )
+    job_id = job_response["job_id"]
+    logging.info(f"Created job {job_id} for datasource={datasource_id}")
 
-    total_items = total_entities
+    try:
+      # Fetch organization data
+      await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Fetching organization metadata for {org_login}...")
+      org_data = (await asyncio.to_thread(github_client.get_organization, org_login))
+      if not org_data:
+        error_msg = f"Could not fetch organization {org_login}"
+        await client.update_job(job_id=job_id, job_status=JobStatus.FAILED, message=error_msg)
+        logging.error(error_msg)
+        return
 
-    logging.info(f"Total items to process for {org_login}: {total_items} ({total_entities} entities)")
+      # Fetch repositories
+      await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Fetching repositories for {org_login}...")
+      logging.info(f"Fetching repositories for {org_login}...")
+      repos_data = (await asyncio.to_thread(fetch_all_paginated, github_client.get_organization_repositories, org_login))
+      logging.info(f"Fetched {len(repos_data)} repositories")
 
-    # Update job with correct total
-    await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Fetching complete. Processing {total_items} entities...", total=total_items)
+      # Fetch teams
+      await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Fetching teams for {org_login}...")
+      logging.info(f"Fetching teams for {org_login}...")
+      teams_data = (await asyncio.to_thread(fetch_all_paginated, github_client.get_organization_teams, org_login))
+      logging.info(f"Fetched {len(teams_data)} teams")
 
-    if total_items == 0:
-      await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"No items to process for {org_login}")
-      logging.info(f"No items to process for {org_login}")
-      return
+      # Fetch organization members (users)
+      await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Fetching members for {org_login}...")
+      logging.info(f"Fetching members for {org_login}...")
+      members_data = (await asyncio.to_thread(fetch_all_paginated, github_client.get_organization_members, org_login, include_org_emails=FETCH_ORG_EMAILS))
+      logging.info(f"Fetched {len(members_data)} members")
 
-    # Create Organization entity
-    logging.info(f"Creating organization entity for {org_login}")
-    await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message="Converting organization metadata...")
-    org_entity = StructuredEntity(
-      entity_type="GitHubOrganization",
-      all_properties={
-        "github_instance": instance_name,
-        "id": org_data.get("id"),
-        "login": org_data.get("login"),
-        "name": org_data.get("name"),
-        "description": org_data.get("description"),
-        "email": org_data.get("email"),
-        "url": org_data.get("url"),
-        "website_url": org_data.get("websiteUrl"),
-        "location": org_data.get("location"),
-        "created_at": org_data.get("createdAt"),
-        "is_verified": org_data.get("isVerified"),
-        "twitter_username": org_data.get("twitterUsername"),
-      },
-      primary_key_properties=["github_instance", "id"],
-      additional_key_properties=[["login"]],
-    )
-    all_entities.append(org_entity)
-    await client.increment_job_progress(job_id, 1)
-    logging.info("Organization entity created and tracked")
+      # Now update the total count
+      total_entities = (
+        1  # Organization
+        + len(repos_data)
+        + len(teams_data)
+        + len(members_data)
+      )
 
-    # Convert Repositories
-    logging.info(f"Converting {len(repos_data)} repositories to entities")
-    await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Converting {len(repos_data)} repositories...")
-    repos_converted = 0
-    for repo in repos_data:
-      try:
-        # Extract languages - safely handle None values
-        languages = []
-        if repo.get("languages") and repo.get("languages").get("nodes"):
-          languages = [lang["name"] for lang in repo["languages"]["nodes"]]
+      total_items = total_entities
 
-        # Safely get primary language
-        primary_language = None
-        primary_lang_data = repo.get("primaryLanguage")
-        if primary_lang_data and isinstance(primary_lang_data, dict):
-          primary_language = primary_lang_data.get("name")
+      logging.info(f"Total items to process for {org_login}: {total_items} ({total_entities} entities)")
 
-        # Safely get default branch
-        default_branch = None
-        default_branch_data = repo.get("defaultBranchRef")
-        if default_branch_data and isinstance(default_branch_data, dict):
-          default_branch = default_branch_data.get("name")
+      # Update job with correct total
+      await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Fetching complete. Processing {total_items} entities...", total=total_items)
 
-        # Safely get license info
-        license_name = None
-        license_spdx = None
-        license_data = repo.get("licenseInfo")
-        if license_data and isinstance(license_data, dict):
-          license_name = license_data.get("name")
-          license_spdx = license_data.get("spdxId")
+      if total_items == 0:
+        await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"No items to process for {org_login}")
+        logging.info(f"No items to process for {org_login}")
+        return
 
-        # Safely get vulnerability alerts count
-        vulnerability_count = 0
-        vuln_data = repo.get("vulnerabilityAlerts")
-        if vuln_data and isinstance(vuln_data, dict):
-          vulnerability_count = vuln_data.get("totalCount", 0)
-
-        repo_entity = StructuredEntity(
-          entity_type="GitHubRepository",
-          all_properties={
-            "github_instance": instance_name,
-            "organization": org_login,
-            "id": repo.get("id"),
-            "name": repo.get("name"),
-            "name_with_owner": repo.get("nameWithOwner"),
-            "description": repo.get("description"),
-            "url": repo.get("url"),
-            "created_at": repo.get("createdAt"),
-            "updated_at": repo.get("updatedAt"),
-            "pushed_at": repo.get("pushedAt"),
-            "is_private": repo.get("isPrivate", False),
-            "is_fork": repo.get("isFork", False),
-            "is_archived": repo.get("isArchived", False),
-            "is_locked": repo.get("isLocked", False),
-            "is_template": repo.get("isTemplate", False),
-            "is_empty": repo.get("isEmpty", False),
-            "default_branch": default_branch,
-            "languages": languages,
-            "primary_language": primary_language,
-            "stargazer_count": repo.get("stargazerCount", 0),
-            "fork_count": repo.get("forkCount", 0),
-            "disk_usage": repo.get("diskUsage"),
-            "license": license_name,
-            "license_spdx_id": license_spdx,
-            "visibility": repo.get("visibility"),
-            "has_projects_enabled": repo.get("hasProjectsEnabled", False),
-            "has_wiki_enabled": repo.get("hasWikiEnabled", False),
-            "vulnerability_alerts_count": vulnerability_count,
-            "security_policy_url": repo.get("securityPolicyUrl"),
-          },
-          primary_key_properties=["github_instance", "id"],
-          additional_key_properties=[["organization", "name_with_owner"], ["organization", "name"], ["url"]],
-        )
-        all_entities.append(repo_entity)
-        repos_converted += 1
-
-        # Update progress every 50 repos
-        if repos_converted % 50 == 0:
-          await client.increment_job_progress(job_id, 50)
-          logging.info(f"Progress: {repos_converted}/{len(repos_data)} repositories converted")
-
-      except Exception as e:
-        logging.error(f"Error converting repository to StructuredEntity: {e}", exc_info=True)
-        await client.add_job_error(job_id, [f"Error converting repository: {str(e)}"])
-        await client.increment_job_failure(job_id, 1)
-
-    # Update remaining repos progress
-    remaining_repos = repos_converted % 50
-    if remaining_repos > 0:
-      await client.increment_job_progress(job_id, remaining_repos)
-    logging.info(f"Completed converting {repos_converted} repositories")
-
-    # Convert Teams
-    logging.info(f"Converting {len(teams_data)} teams to entities")
-    await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Converting {len(teams_data)} teams and fetching members/permissions...")
-    teams_converted = 0
-    for team in teams_data:
-      try:
-        team_slug = team.get("slug")
-
-        # Safely get counts
-        member_count = 0
-        if team.get("members"):
-          member_count = team["members"].get("totalCount", 0)
-
-        repo_count = 0
-        if team.get("repositories"):
-          repo_count = team["repositories"].get("totalCount", 0)
-
-        # Fetch team members and repos only if enabled (can create many API calls)
-        team_members = []
-        team_repos = []
-        members_info = []
-        repo_permissions = []
-
-        if FETCH_TEAM_DETAILS and team_slug:
-          # Fetch team members with error handling
-          try:
-            team_members = fetch_all_paginated(github_client.get_team_members, org_login, team_slug)
-            # Extract member info
-            for edge in team_members:
-              if edge and edge.get("node"):
-                members_info.append({"login": edge["node"].get("login"), "role": edge.get("role")})
-          except Exception as e:
-            logging.warning(f"Could not fetch members for team {team_slug}: {e}")
-
-          # Fetch team repositories with error handling
-          try:
-            team_repos = fetch_all_paginated(github_client.get_team_repositories, org_login, team_slug)
-            # Extract repository permissions
-            for edge in team_repos:
-              if edge and edge.get("node"):
-                repo_permissions.append({"repository": edge["node"].get("nameWithOwner"), "permission": edge.get("permission")})
-          except Exception as e:
-            logging.warning(f"Could not fetch repositories for team {team_slug}: {e}")
-        else:
-          if not FETCH_TEAM_DETAILS:
-            logging.debug(f"Skipping detailed member/repo fetch for team {team_slug} (FETCH_TEAM_DETAILS=false)")
-
-        team_entity = StructuredEntity(
-          entity_type="GitHubTeam",
-          all_properties={
-            "github_instance": instance_name,
-            "organization": org_login,
-            "id": team.get("id"),
-            "name": team.get("name"),
-            "slug": team.get("slug"),
-            "description": team.get("description"),
-            "privacy": team.get("privacy"),
-            "url": team.get("url"),
-            "created_at": team.get("createdAt"),
-            "updated_at": team.get("updatedAt"),
-            "member_count": member_count,
-            "repository_count": repo_count,
-            "members": members_info,
-            "repository_permissions": repo_permissions,
-          },
-          primary_key_properties=["github_instance", "organization", "id"],
-          additional_key_properties=[["organization", "slug"], ["organization", "name"], ["url"]],
-        )
-        all_entities.append(team_entity)
-        teams_converted += 1
-
-        # Update progress every 10 teams
-        if teams_converted % 10 == 0:
-          await client.increment_job_progress(job_id, 10)
-          logging.info(f"Progress: {teams_converted}/{len(teams_data)} teams converted")
-
-      except Exception as e:
-        logging.error(f"Error converting team to StructuredEntity: {e}", exc_info=True)
-        await client.add_job_error(job_id, [f"Error converting team: {str(e)}"])
-        await client.increment_job_failure(job_id, 1)
-
-    # Update remaining teams progress
-    remaining_teams = teams_converted % 10
-    if remaining_teams > 0:
-      await client.increment_job_progress(job_id, remaining_teams)
-    logging.info(f"Completed converting {teams_converted} teams")
-
-    # Convert Users (Organization Members)
-    logging.info(f"Converting {len(members_data)} users to entities")
-    await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Converting {len(members_data)} organization members...")
-    users_converted = 0
-    for member_edge in members_data:
-      try:
-        member = member_edge["node"]
-        role = member_edge["role"]
-
-        # Build user properties
-        user_properties = {
+      # Create Organization entity
+      logging.info(f"Creating organization entity for {org_login}")
+      await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message="Converting organization metadata...")
+      org_entity = StructuredEntity(
+        entity_type="GitHubOrganization",
+        all_properties={
           "github_instance": instance_name,
-          "id": member.get("id"),
-          "login": member.get("login"),
-          "name": member.get("name"),
-          "email": member.get("email"),
-          "bio": member.get("bio"),
-          "company": member.get("company"),
-          "location": member.get("location"),
-          "website_url": member.get("websiteUrl"),
-          "twitter_username": member.get("twitterUsername"),
-          "created_at": member.get("createdAt"),
-          "updated_at": member.get("updatedAt"),
-          "is_hireable": member.get("isHireable"),
-          "organization_role": role,
-        }
+          "id": org_data.get("id"),
+          "login": org_data.get("login"),
+          "name": org_data.get("name"),
+          "description": org_data.get("description"),
+          "email": org_data.get("email"),
+          "url": org_data.get("url"),
+          "website_url": org_data.get("websiteUrl"),
+          "location": org_data.get("location"),
+          "created_at": org_data.get("createdAt"),
+          "is_verified": org_data.get("isVerified"),
+          "twitter_username": org_data.get("twitterUsername"),
+        },
+        primary_key_properties=["github_instance", "id"],
+        additional_key_properties=[["login"]],
+      )
+      all_entities.append(org_entity)
+      await client.increment_job_progress(job_id, 1)
+      logging.info("Organization entity created and tracked")
 
-        # Add org verified domain emails if available
-        if FETCH_ORG_EMAILS and "organizationVerifiedDomainEmails" in member:
-          org_emails = member.get("organizationVerifiedDomainEmails", [])
-          if org_emails:
-            user_properties["organization_verified_emails"] = org_emails
+      # Convert Repositories
+      logging.info(f"Converting {len(repos_data)} repositories to entities")
+      await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Converting {len(repos_data)} repositories...")
+      repos_converted = 0
+      for repo in repos_data:
+        try:
+          # Extract languages - safely handle None values
+          languages = []
+          if repo.get("languages") and repo.get("languages").get("nodes"):
+            languages = [lang["name"] for lang in repo["languages"]["nodes"]]
 
-        # Build additional key properties - include email lookups
-        additional_keys = [["login"]]
+          # Safely get primary language
+          primary_language = None
+          primary_lang_data = repo.get("primaryLanguage")
+          if primary_lang_data and isinstance(primary_lang_data, dict):
+            primary_language = primary_lang_data.get("name")
 
-        # Add regular email as lookup key if present
-        if member.get("email"):
-          additional_keys.append(["email"])
+          # Safely get default branch
+          default_branch = None
+          default_branch_data = repo.get("defaultBranchRef")
+          if default_branch_data and isinstance(default_branch_data, dict):
+            default_branch = default_branch_data.get("name")
 
-        # Add each verified org email as a lookup key if enabled
-        if FETCH_ORG_EMAILS and "organizationVerifiedDomainEmails" in member:
-          org_emails = member.get("organizationVerifiedDomainEmails", [])
-          for org_email in org_emails:
-            if org_email:
-              additional_keys.append([org_email])
+          # Safely get license info
+          license_name = None
+          license_spdx = None
+          license_data = repo.get("licenseInfo")
+          if license_data and isinstance(license_data, dict):
+            license_name = license_data.get("name")
+            license_spdx = license_data.get("spdxId")
 
-        user_entity = StructuredEntity(entity_type="GitHubUser", all_properties=user_properties, primary_key_properties=["github_instance", "id"], additional_key_properties=additional_keys)
-        all_entities.append(user_entity)
-        users_converted += 1
+          # Safely get vulnerability alerts count
+          vulnerability_count = 0
+          vuln_data = repo.get("vulnerabilityAlerts")
+          if vuln_data and isinstance(vuln_data, dict):
+            vulnerability_count = vuln_data.get("totalCount", 0)
 
-        # Update progress every 50 users
-        if users_converted % 50 == 0:
-          await client.increment_job_progress(job_id, 50)
-          logging.info(f"Progress: {users_converted}/{len(members_data)} users converted")
+          repo_entity = StructuredEntity(
+            entity_type="GitHubRepository",
+            all_properties={
+              "github_instance": instance_name,
+              "organization": org_login,
+              "id": repo.get("id"),
+              "name": repo.get("name"),
+              "name_with_owner": repo.get("nameWithOwner"),
+              "description": repo.get("description"),
+              "url": repo.get("url"),
+              "created_at": repo.get("createdAt"),
+              "updated_at": repo.get("updatedAt"),
+              "pushed_at": repo.get("pushedAt"),
+              "is_private": repo.get("isPrivate", False),
+              "is_fork": repo.get("isFork", False),
+              "is_archived": repo.get("isArchived", False),
+              "is_locked": repo.get("isLocked", False),
+              "is_template": repo.get("isTemplate", False),
+              "is_empty": repo.get("isEmpty", False),
+              "default_branch": default_branch,
+              "languages": languages,
+              "primary_language": primary_language,
+              "stargazer_count": repo.get("stargazerCount", 0),
+              "fork_count": repo.get("forkCount", 0),
+              "disk_usage": repo.get("diskUsage"),
+              "license": license_name,
+              "license_spdx_id": license_spdx,
+              "visibility": repo.get("visibility"),
+              "has_projects_enabled": repo.get("hasProjectsEnabled", False),
+              "has_wiki_enabled": repo.get("hasWikiEnabled", False),
+              "vulnerability_alerts_count": vulnerability_count,
+              "security_policy_url": repo.get("securityPolicyUrl"),
+            },
+            primary_key_properties=["github_instance", "id"],
+            additional_key_properties=[["organization", "name_with_owner"], ["organization", "name"], ["url"]],
+          )
+          all_entities.append(repo_entity)
+          repos_converted += 1
 
-      except Exception as e:
-        logging.error(f"Error converting user to StructuredEntity: {e}", exc_info=True)
-        await client.add_job_error(job_id, [f"Error converting user: {str(e)}"])
-        await client.increment_job_failure(job_id, 1)
+          # Update progress every 50 repos
+          if repos_converted % 50 == 0:
+            await client.increment_job_progress(job_id, 50)
+            logging.info(f"Progress: {repos_converted}/{len(repos_data)} repositories converted")
 
-    # Update remaining users progress
-    remaining_users = users_converted % 50
-    if remaining_users > 0:
-      await client.increment_job_progress(job_id, remaining_users)
-    logging.info(f"Completed converting {users_converted} users")
+        except Exception as e:
+          logging.error(f"Error converting repository to StructuredEntity: {e}", exc_info=True)
+          await client.add_job_error(job_id, [f"Error converting repository: {str(e)}"])
+          await client.increment_job_failure(job_id, 1)
 
-    logging.info(f"Converted {len(all_entities)} GitHub items to StructuredEntity objects total")
+      # Update remaining repos progress
+      remaining_repos = repos_converted % 50
+      if remaining_repos > 0:
+        await client.increment_job_progress(job_id, remaining_repos)
+      logging.info(f"Completed converting {repos_converted} repositories")
 
-    # 3. Ingest entities using automatic batching
-    if all_entities:
-      logging.info(f"Ingesting {len(all_entities)} entities with automatic batching")
-      await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Ingesting {len(all_entities)} entities into RAG system...")
-      await client.ingest_entities(job_id=job_id, datasource_id=datasource_id, entities=all_entities, fresh_until=utils.get_fresh_until(SYNC_INTERVAL))
-      logging.info(f"Successfully ingested {len(all_entities)} entities")
+      # Convert Teams
+      logging.info(f"Converting {len(teams_data)} teams to entities")
+      await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Converting {len(teams_data)} teams and fetching members/permissions...")
+      teams_converted = 0
+      for team in teams_data:
+        try:
+          team_slug = team.get("slug")
 
-    # Mark job as complete
-    await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully ingested {len(all_entities)} entities (Org: 1, Repos: {len(repos_data)}, Teams: {len(teams_data)}, Users: {len(members_data)})")
-    logging.info(f"Successfully completed ingestion for {org_login}: {len(all_entities)} entities total")
+          # Safely get counts
+          member_count = 0
+          if team.get("members"):
+            member_count = team["members"].get("totalCount", 0)
 
-  except Exception as e:
-    # Mark job as failed
-    error_msg = f"Ingestion failed for {org_login}: {str(e)}"
-    await client.add_job_error(job_id, [error_msg])
-    await client.update_job(job_id=job_id, job_status=JobStatus.FAILED, message=error_msg)
-    logging.error(error_msg, exc_info=True)
-    raise
+          repo_count = 0
+          if team.get("repositories"):
+            repo_count = team["repositories"].get("totalCount", 0)
+
+          # Fetch team members and repos only if enabled (can create many API calls)
+          team_members = []
+          team_repos = []
+          members_info = []
+          repo_permissions = []
+
+          if FETCH_TEAM_DETAILS and team_slug:
+            # Fetch team members with error handling
+            try:
+              team_members = (await asyncio.to_thread(fetch_all_paginated, github_client.get_team_members, org_login, team_slug))
+              # Extract member info
+              for edge in team_members:
+                if edge and edge.get("node"):
+                  members_info.append({"login": edge["node"].get("login"), "role": edge.get("role")})
+            except Exception as e:
+              logging.warning(f"Could not fetch members for team {team_slug}: {e}")
+
+            # Fetch team repositories with error handling
+            try:
+              team_repos = (await asyncio.to_thread(fetch_all_paginated, github_client.get_team_repositories, org_login, team_slug))
+              # Extract repository permissions
+              for edge in team_repos:
+                if edge and edge.get("node"):
+                  repo_permissions.append({"repository": edge["node"].get("nameWithOwner"), "permission": edge.get("permission")})
+            except Exception as e:
+              logging.warning(f"Could not fetch repositories for team {team_slug}: {e}")
+          else:
+            if not FETCH_TEAM_DETAILS:
+              logging.debug(f"Skipping detailed member/repo fetch for team {team_slug} (FETCH_TEAM_DETAILS=false)")
+
+          team_entity = StructuredEntity(
+            entity_type="GitHubTeam",
+            all_properties={
+              "github_instance": instance_name,
+              "organization": org_login,
+              "id": team.get("id"),
+              "name": team.get("name"),
+              "slug": team.get("slug"),
+              "description": team.get("description"),
+              "privacy": team.get("privacy"),
+              "url": team.get("url"),
+              "created_at": team.get("createdAt"),
+              "updated_at": team.get("updatedAt"),
+              "member_count": member_count,
+              "repository_count": repo_count,
+              "members": members_info,
+              "repository_permissions": repo_permissions,
+            },
+            primary_key_properties=["github_instance", "organization", "id"],
+            additional_key_properties=[["organization", "slug"], ["organization", "name"], ["url"]],
+          )
+          all_entities.append(team_entity)
+          teams_converted += 1
+
+          # Update progress every 10 teams
+          if teams_converted % 10 == 0:
+            await client.increment_job_progress(job_id, 10)
+            logging.info(f"Progress: {teams_converted}/{len(teams_data)} teams converted")
+
+        except Exception as e:
+          logging.error(f"Error converting team to StructuredEntity: {e}", exc_info=True)
+          await client.add_job_error(job_id, [f"Error converting team: {str(e)}"])
+          await client.increment_job_failure(job_id, 1)
+
+      # Update remaining teams progress
+      remaining_teams = teams_converted % 10
+      if remaining_teams > 0:
+        await client.increment_job_progress(job_id, remaining_teams)
+      logging.info(f"Completed converting {teams_converted} teams")
+
+      # Convert Users (Organization Members)
+      logging.info(f"Converting {len(members_data)} users to entities")
+      await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Converting {len(members_data)} organization members...")
+      users_converted = 0
+      for member_edge in members_data:
+        try:
+          member = member_edge["node"]
+          role = member_edge["role"]
+
+          # Build user properties
+          user_properties = {
+            "github_instance": instance_name,
+            "id": member.get("id"),
+            "login": member.get("login"),
+            "name": member.get("name"),
+            "email": member.get("email"),
+            "bio": member.get("bio"),
+            "company": member.get("company"),
+            "location": member.get("location"),
+            "website_url": member.get("websiteUrl"),
+            "twitter_username": member.get("twitterUsername"),
+            "created_at": member.get("createdAt"),
+            "updated_at": member.get("updatedAt"),
+            "is_hireable": member.get("isHireable"),
+            "organization_role": role,
+          }
+
+          # Add org verified domain emails if available
+          if FETCH_ORG_EMAILS and "organizationVerifiedDomainEmails" in member:
+            org_emails = member.get("organizationVerifiedDomainEmails", [])
+            if org_emails:
+              user_properties["organization_verified_emails"] = org_emails
+
+          # Build additional key properties - include email lookups
+          additional_keys = [["login"]]
+
+          # Add regular email as lookup key if present
+          if member.get("email"):
+            additional_keys.append(["email"])
+
+          # Add each verified org email as a lookup key if enabled
+          if FETCH_ORG_EMAILS and "organizationVerifiedDomainEmails" in member:
+            org_emails = member.get("organizationVerifiedDomainEmails", [])
+            for org_email in org_emails:
+              if org_email:
+                additional_keys.append([org_email])
+
+          user_entity = StructuredEntity(entity_type="GitHubUser", all_properties=user_properties, primary_key_properties=["github_instance", "id"], additional_key_properties=additional_keys)
+          all_entities.append(user_entity)
+          users_converted += 1
+
+          # Update progress every 50 users
+          if users_converted % 50 == 0:
+            await client.increment_job_progress(job_id, 50)
+            logging.info(f"Progress: {users_converted}/{len(members_data)} users converted")
+
+        except Exception as e:
+          logging.error(f"Error converting user to StructuredEntity: {e}", exc_info=True)
+          await client.add_job_error(job_id, [f"Error converting user: {str(e)}"])
+          await client.increment_job_failure(job_id, 1)
+
+      # Update remaining users progress
+      remaining_users = users_converted % 50
+      if remaining_users > 0:
+        await client.increment_job_progress(job_id, remaining_users)
+      logging.info(f"Completed converting {users_converted} users")
+
+      logging.info(f"Converted {len(all_entities)} GitHub items to StructuredEntity objects total")
+
+      # 3. Ingest entities using automatic batching
+      if all_entities:
+        logging.info(f"Ingesting {len(all_entities)} entities with automatic batching")
+        await client.update_job(job_id=job_id, job_status=JobStatus.IN_PROGRESS, message=f"Ingesting {len(all_entities)} entities into RAG system...")
+        await client.ingest_entities(job_id=job_id, datasource_id=datasource_id, entities=all_entities, fresh_until=utils.get_fresh_until(SYNC_INTERVAL))
+        logging.info(f"Successfully ingested {len(all_entities)} entities")
+
+      # Mark job as complete
+      await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully ingested {len(all_entities)} entities (Org: 1, Repos: {len(repos_data)}, Teams: {len(teams_data)}, Users: {len(members_data)})")
+      logging.info(f"Successfully completed ingestion for {org_login}: {len(all_entities)} entities total")
+
+    except Exception as e:
+      # Mark job as failed
+      error_msg = f"Ingestion failed for {org_login}: {str(e)}"
+      await client.add_job_error(job_id, [error_msg])
+      await client.update_job(job_id=job_id, job_status=JobStatus.FAILED, message=error_msg)
+      logging.error(error_msg, exc_info=True)
+      raise
+
+  await run_standalone_ingestion(datasource_info.datasource_id, sync_datasource)
 
 
 async def sync_github_entities(client: Client):

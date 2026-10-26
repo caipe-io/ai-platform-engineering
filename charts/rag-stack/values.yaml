@@ -11,6 +11,7 @@ global:
     tag: ""
 
   rag:
+    writesPaused: false
     enableGraphRag: true
     openfga:
       httpUrl: ""
@@ -40,12 +41,13 @@ global:
       port: 7687 # This is hardcoded in the neo4j chart: https://github.com/neo4j/helm-charts/blob/2025.7.1/neo4j/templates/neo4j-svc.yaml#L155-L158
       username: neo4j
       password: dummy_password
-    redis:
-      host: "rag-redis"
-      port: 6379
-      # DB index (0-15). Use a dedicated index when sharing Redis with other
-      # workloads.
-      db: 0
+    mongodb:
+      existingSecret: ""
+      uriKey: "MONGODB_URI"
+      database: "caipe"
+      caConfigMap: ""
+      caKey: "global-bundle.pem"
+
 
   # Secrets configuration for LLM providers
   # When used as a subchart, global values can override these values
@@ -249,6 +251,7 @@ neo4j:
 
 # RAG Redis configuration
 rag-redis:
+  # Disable only after the staged backup/retention migration in the RAG runbook.
   enabled: true
   fullnameOverride: "rag-redis"
   image:

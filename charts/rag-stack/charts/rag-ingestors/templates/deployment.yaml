@@ -76,10 +76,7 @@ spec:
             - name: RAG_SERVER_URL
               value: {{ include "rag-ingestors.ragServerUrl" (list $ingestor $) | quote }}
             {{- end }}
-            {{- if not (hasKey $customEnv "REDIS_URL") }}
-            - name: REDIS_URL
-              value: {{ include "rag-ingestors.redisUrl" $ | quote }}
-            {{- end }}
+            {{- include "rag-ingestors.mongodbEnv" $ | nindent 12 }}
             {{- if not (hasKey $customEnv "LOG_LEVEL") }}
             - name: LOG_LEVEL
               value: {{ $ingestor.logLevel | default "INFO" | quote }}
@@ -130,8 +127,10 @@ spec:
 
             # Custom environment variables from ingestor config
             {{- range $key, $value := $ingestor.env }}
+            {{- if not (has $key (list "MONGODB_URI" "MONGODB_DATABASE" "MONGODB_TLS_CA_FILE" "RAG_WRITES_PAUSED")) }}
             - name: {{ $key }}
               value: {{ $value | quote }}
+            {{- end }}
             {{- end }}
           
           {{- with $ingestor.envFrom }}
@@ -139,10 +138,11 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           
-          {{- with $ingestor.volumeMounts }}
           volumeMounts:
+            {{- include "rag-ingestors.mongodbMount" $ | nindent 12 }}
+            {{- with $ingestor.volumeMounts }}
             {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- end }}
           
           {{- if $ingestor.resources }}
           resources:
@@ -152,10 +152,11 @@ spec:
             {{- toYaml $.Values.defaultResources | nindent 12 }}
           {{- end }}
       
-      {{- with $ingestor.volumes }}
       volumes:
+        {{- include "rag-ingestors.mongodbVolume" $ | nindent 8 }}
+        {{- with $ingestor.volumes }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       
       {{- with $ingestor.nodeSelector | default $.Values.nodeSelector }}
       nodeSelector:
