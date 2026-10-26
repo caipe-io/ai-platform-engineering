@@ -83,3 +83,18 @@ Determine if ingress is enabled - global takes precedence
 {{- .Values.global.image.tag | default .Chart.AppVersion -}}
 {{- end -}}
 
+
+{{/* Slack provider credentials belong to the bot, never the UI. */}}
+{{- define "caipe-ui.validate.slackCredentials" -}}
+{{- $credentials := list "SLACK_BOT_TOKEN" "SLACK_APP_TOKEN" "SLACK_SIGNING_SECRET" "SLACK_INTEGRATION_BOT_TOKEN" "SLACK_INTEGRATION_APP_TOKEN" "SLACK_INTEGRATION_SIGNING_SECRET" -}}
+{{- range $key := $credentials -}}
+{{- if hasKey $.Values.config $key -}}
+{{- fail (printf "%s belongs on slack-bot; remove it from caipe-ui.config" $key) -}}
+{{- end -}}
+{{- end -}}
+{{- range .Values.externalSecrets.data -}}
+{{- if has .secretKey $credentials -}}
+{{- fail (printf "%s belongs on slack-bot; remove it from caipe-ui.externalSecrets.data" .secretKey) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

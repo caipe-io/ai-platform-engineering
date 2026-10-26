@@ -203,6 +203,21 @@ describe("/api/platform/health", () => {
     });
   });
 
+  it("reports Slack healthy using bot status without a UI Slack token", async () => {
+    process.env.SLACK_INTEGRATION_ENABLED = "true";
+    process.env.SLACK_BOT_ADMIN_DEV_AUTH_ENABLED = "true";
+    process.env.SLACK_BOT_ADMIN_DEV_TOKEN = "example-admin-token";
+    process.env.DYNAMIC_AGENTS_ENABLED = "false";
+    (global.fetch as jest.Mock) = jest.fn(async (url: string) => {
+      if (url.includes("/v1/audit/status")) return jsonResponse(healthyAuditServiceStatus);
+      if (url.endsWith("/admin/slack/directory/status")) return jsonResponse({ configured: true });
+      return jsonResponse({});
+    });
+    const { GET } = await import("../route");
+    const body = await (await GET(request() as never)).json();
+    expect(body.capabilities.find((capability: { id: string }) => capability.id === "slack-integration")).toMatchObject({ status: "healthy", detail: "Slack ready" });
+  });
+
   it("degrades when audit-service reports queue worker problems", async () => {
     (global.fetch as jest.Mock) = jest.fn(async (url: string) => {
       if (url === "http://dynamic-agents:8001/healthz") return jsonResponse({ status: "healthy" });

@@ -58,3 +58,17 @@ not construct a Bolt app, call the platform API, retry, sleep, or exit the proce
 - Put domain behavior tests beside the owning extracted module.
 - Keep application-boundary tests limited to construction, registration, and startup ordering.
 - Preserve Slack-visible text, routing precedence, retry behavior, authorization denials, and audit calls with characterization tests.
+
+## UI directory API
+
+- The UI BFF calls authenticated `GET /admin/slack/directory/{channels,users,emoji,status}` on the bot admin port. Browser authorization stays in the UI.
+- The bot owns all Slack Web API requests for these UI features. Configure Slack bot/app/signing credentials on the bot deployment only; remove them from UI secrets and ConfigMaps. The UI Helm chart rejects provider credential entries in `config` and `externalSecrets.data`; operators must also remove stale provider keys from any separately managed `existingSecret`.
+- Service tokens must match the configured issuer, audience and allowed UI client, include `slack:directory:read`, and carry `slack-directory-service` in the signed `slack_bot_admin_roles` array. Keycloak's init script assigns that client role only to the BFF service-account user and maps its roles into access tokens. Browser user tokens with the same client, audience and scope are denied. Do not grant the service role to interactive users or add it to default user roles. Re-run the init/reconcile job when upgrading an existing realm; external issuers must provide an equivalent claim restricted to the BFF service account.
+- Fixed query parameters are limited to search, paging, refresh and user kind; these endpoints cannot forward arbitrary Slack methods, URLs or tokens.
+- Users and emoji refresh in the background every 24 hours. Searches serve the last complete snapshot while refreshing. Failed or truncated walks retain the previous snapshot; lookup results exclude email/search-only fields.
+- Channel discovery remains restricted to bot-member channels. `platform_config.slack_discovery_cache_ttl_minutes` takes precedence over `SLACK_DISCOVERY_CACHE_TTL_MINUTES` (default 60); zero disables caching. The bot reads this configuration from its existing MongoDB connection.
+- HTTP 429 cooldowns honor the full Slack `Retry-After` value. The UI proxy has a 20-second deadline; a directory refresh can continue independently of that request.
+- Channel requests share one background refresh per workspace and wait at most two seconds. Pending requests return HTTP 503 with `Retry-After: 1`; fresh cached reads continue immediately. The discovery controls distinguish pending refreshes from completed refreshes and configuration errors.
+- User status counts describe the last complete snapshot; `refresh_progress` reports a running scan separately. Invalid emoji values reject the refresh and retain the previous complete snapshot.
+
+For Compose, the production UI explicitly allowlists its supported environment settings instead of inheriting the shared `.env` file. The default first-install profiles do not require the Slack bot.

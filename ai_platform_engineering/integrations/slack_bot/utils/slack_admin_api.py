@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import jwt
 import requests
@@ -20,6 +20,7 @@ from pymongo import MongoClient
 from pymongo.collection import Collection
 
 from .config_models import AgentBinding, Config
+from .slack_directory import DIRECTORY_SCOPE, SlackDirectoryError, SlackDirectoryService
 from .slack_agent_routes import (
     DEFAULT_OPENFGA_HTTP,
     SlackAgentRouteResolver,
@@ -29,6 +30,7 @@ from .slack_agent_routes import (
 )
 
 logger = logging.getLogger("caipe.slack_bot.slack_admin_api")
+DIRECTORY_SERVICE_ROLE = "slack-directory-service"
 
 CollectionFactory = Callable[[str], Optional[Collection[Any]]]
 OpenFgaWriter = Callable[[dict[str, str]], None]
@@ -100,7 +102,9 @@ class SlackAdminTokenValidator:
         jwks_url = response.json().get("jwks_uri")
         return str(jwks_url) if jwks_url else None
 
-    def validate(self, token: str, *, required_scope: str | None = None) -> SlackAdminAuthResult:
+    def validate(
+        self, token: str, *, required_scope: str | None = None, require_directory_service: bool = False
+    ) -> SlackAdminAuthResult:
         dev_result = self._validate_dev_token(token, required_scope=required_scope)
         if dev_result is not None:
             return dev_result
@@ -126,6 +130,10 @@ class SlackAdminTokenValidator:
         scopes = str(claims.get("scope") or "").split()
         if required_scope and required_scope not in scopes:
             raise SlackAdminAuthError(f"Slack admin bearer token is missing scope {required_scope}")
+        if require_directory_service:
+            roles = claims.get("slack_bot_admin_roles")
+            if not isinstance(roles, list) or DIRECTORY_SERVICE_ROLE not in roles:
+                raise SlackAdminAuthError("Slack directory requires the BFF service-account role")
 
         return SlackAdminAuthResult(
             client_id=client_id,
@@ -155,6 +163,7 @@ class SlackBotAdminService:
         self._client: Optional[MongoClient] = None
         self._db_name = os.environ.get("MONGODB_DATABASE", "caipe")
         self._last_sync: dict[str, Any] | None = None
+        self.directory = SlackDirectoryService(request_get=request_get, collection_factory=self._collection)
 
     def _get_client(self) -> Optional[MongoClient]:
         uri = os.environ.get("MONGODB_URI", "").strip()
@@ -542,6 +551,29 @@ class _SlackAdminRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
         path = urlparse(self.path).path
+        directory_endpoints = {
+            "/admin/slack/directory/channels": (self.service.directory.channels, {"q", "limit", "cursor", "refresh", "member_only"}),
+            "/admin/slack/directory/users": (self.service.directory.users, {"q", "limit", "kind", "refresh"}),
+            "/admin/slack/directory/emoji": (self.service.directory.emoji, {"q", "limit", "refresh"}),
+            "/admin/slack/directory/status": (None, set()),
+        }
+        if path in directory_endpoints:
+            if not self._authorize(scope_env="SLACK_ADMIN_DIRECTORY_SCOPE", default_scope=DIRECTORY_SCOPE, require_directory_service=True):
+                return
+            handler, allowed = directory_endpoints[path]
+            try:
+                query = parse_qs(urlparse(self.path).query, keep_blank_values=True, max_num_fields=10)
+            except ValueError:
+                self._write_json({"error": "invalid_directory_parameters"}, status=400)
+                return
+            if any(key not in allowed or len(values) != 1 or len(values[0]) > 512 for key, values in query.items()):
+                self._write_json({"error": "invalid_directory_parameters"}, status=400)
+                return
+            try:
+                self._write_json(handler({key: values[0] for key, values in query.items()}) if handler else self.service.directory.status())
+            except SlackDirectoryError as exc:
+                self._write_json({"error": str(exc)}, status=exc.status, retry_after=exc.retry_after)
+            return
         if path not in {"/admin/slack/routes/status", "/admin/slack/routes/config-defaults"}:
             self._write_json({"error": "not_found"}, status=404)
             return
@@ -620,15 +652,15 @@ class _SlackAdminRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, _format: str, *_args: object) -> None:
         return
 
-    def _authorize(self, *, scope_env: str) -> bool:
+    def _authorize(self, *, scope_env: str, default_scope: str = "", require_directory_service: bool = False) -> bool:
         header = self.headers.get("Authorization", "")
         token = header.removeprefix("Bearer ").strip()
         if not token:
             self._write_json({"error": "missing_bearer"}, status=401)
             return False
         try:
-            required_scope = os.environ.get(scope_env, "").strip() or None
-            self.validator.validate(token, required_scope=required_scope)
+            required_scope = os.environ.get(scope_env, default_scope).strip() or default_scope or None
+            self.validator.validate(token, required_scope=required_scope, require_directory_service=require_directory_service)
             return True
         except SlackAdminAuthError as exc:
             self._write_json({"error": str(exc)}, status=403)
@@ -645,11 +677,13 @@ class _SlackAdminRequestHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return {}
 
-    def _write_json(self, payload: dict[str, Any], *, status: int = 200) -> None:
+    def _write_json(self, payload: dict[str, Any], *, status: int = 200, retry_after: int | None = None) -> None:
         encoded = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
+        if retry_after is not None:
+            self.send_header("Retry-After", str(retry_after))
         self.end_headers()
         self.wfile.write(encoded)
 

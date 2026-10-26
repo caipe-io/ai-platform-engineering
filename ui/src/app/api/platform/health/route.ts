@@ -8,7 +8,6 @@ import {
   getServerOnlyConfig,
 } from "@/lib/config";
 import {
-  getSlackIntegrationToken,
   isSlackIntegrationEnabled,
   isWebexIntegrationEnabled,
 } from "@/lib/integration-config";
@@ -932,15 +931,12 @@ async function probeSlackIntegration(): Promise<CapabilityResult | null> {
   const startedAt = Date.now();
   const issues: string[] = [];
 
-  if (!getSlackIntegrationToken()) {
-    issues.push("Slack directory token is not configured on the UI service");
-  }
-
   try {
-    await withTimeout(
-      callSlackBotAdmin("/admin/slack/routes/status"),
+    const directory = await withTimeout(
+      callSlackBotAdmin<{ configured: boolean }>("/admin/slack/directory/status"),
       "Slack bot admin check",
     );
+    if (!directory.configured) issues.push("Slack credentials are not configured on the bot service");
   } catch (error) {
     issues.push(error instanceof Error ? error.message : "Slack bot admin check failed");
   }

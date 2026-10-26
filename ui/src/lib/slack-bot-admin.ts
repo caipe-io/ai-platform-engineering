@@ -87,6 +87,7 @@ export async function callSlackBotAdmin<T>(
   const method = options.method ?? "GET";
   const response = await fetch(`${slackBotAdminBaseUrl()}${path}`, {
     method,
+    cache: "no-store",
     signal: options.signal,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -96,16 +97,41 @@ export async function callSlackBotAdmin<T>(
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new ApiError(
+    const error = new ApiError(
       typeof payload?.error === "string"
         ? `Slack bot admin request failed: ${payload.error}`
         : `Slack bot admin request failed: ${response.status}`,
-      response.status >= 400 && response.status < 500 ? response.status : 502
+      (response.status >= 400 && response.status < 500) || response.status === 503 ? response.status : 502
     );
+    const retryAfter = response.headers?.get("retry-after");
+    if (retryAfter && /^\d+$/.test(retryAfter)) error.retryAfterSeconds = Number(retryAfter);
+    throw error;
   }
   return payload as T;
 }
 
 export function _resetSlackBotAdminTokenCacheForTests(): void {
   tokenCache = null;
+}
+
+const DIRECTORY_PARAMETERS: Record<string, readonly string[]> = {
+  channels: ["q", "limit", "cursor", "refresh", "member_only"],
+  users: ["q", "limit", "kind", "refresh"],
+  emoji: ["q", "limit", "refresh"],
+  status: [],
+};
+
+export async function callSlackBotDirectory<T = Record<string, unknown>>(
+  directory: "channels" | "users" | "emoji" | "status",
+  params = new URLSearchParams(),
+): Promise<T> {
+  const query = new URLSearchParams();
+  for (const key of DIRECTORY_PARAMETERS[directory]) {
+    const value = params.get(key);
+    if (value !== null) query.set(key, value.slice(0, 512));
+  }
+  const suffix = query.size ? `?${query}` : "";
+  return callSlackBotAdmin<T>(`/admin/slack/directory/${directory}${suffix}`, {
+    signal: AbortSignal.timeout(20_000),
+  });
 }
