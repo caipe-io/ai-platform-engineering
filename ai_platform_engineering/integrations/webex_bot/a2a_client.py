@@ -376,15 +376,15 @@ class WebexSSEClient:
         payload: Dict[str, Any],
         bearer_token: Optional[str] = None,
     ) -> Iterator[SSEEvent]:
+        headers = self._get_headers(bearer_token=bearer_token)
+        body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
+        headers.update(native_assistant_headers(url=url, payload=payload, body=body,
+            bearer_token=headers.get("Authorization", "").removeprefix("Bearer ")))
         client = self._http_client
         owns_client = client is None
         if owns_client:
             client = httpx.Client(timeout=self.timeout)
         assert client is not None
-        headers = self._get_headers(bearer_token=bearer_token)
-        body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
-        headers.update(native_assistant_headers(url=url, payload=payload, body=body,
-            bearer_token=headers.get("Authorization", "").removeprefix("Bearer ")))
         try:
             with client.stream(
                 "POST",
