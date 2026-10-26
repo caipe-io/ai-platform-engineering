@@ -229,6 +229,7 @@ it.each(["removed", "rebound-agent", "different-app"] as const)(
   "keeps retained app conversations from falling through when the app is %s", async (change) => {
     mockConversationAccess.mockResolvedValue({ conversation: {
       _id: "example-conversation", client_type: "webui", participants: [{ type: "agent", id: "example-agent" }],
+      app_binding: { app_id: "example-app", agent_id: "example-agent" },
       metadata: { conversation_surface: "agentic-app", agentic_app_id: "example-app", agentic_app_agent_id: "example-agent" },
     } });
     const changed = change === "removed" ? [] : [{
