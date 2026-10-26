@@ -3,26 +3,23 @@
  * Tests OIDC configuration, token refresh, and group authorization
  */
 
-// Mock the token store so tests don't require a MongoDB/ESM environment.
-const _mockTokenStore = new Map<string, import('../auth-token-store').StoredTokenState>()
+// Callback tests use a shared-record double; isolated replica races are covered
+// with the real store in auth-token-store.test.ts.
+const _mockTokenStore = new Map<string, import('../auth-token-store').StoredTokens>()
 jest.mock('../auth-token-store', () => ({
-  ...jest.requireActual('../auth-token-store'),
-  getStoredTokens: jest.fn(async (sub: string | undefined) => _mockTokenStore.get(sub ?? '') ?? undefined),
-  storeTokens: jest.fn(async (sub: string | undefined, tokens: import('../auth-token-store').StoredTokens) => {
-    if (!sub) return
-    const state = { ...tokens, version: (_mockTokenStore.get(sub)?.version ?? 0) + 1 }
-    _mockTokenStore.set(sub, state)
-    return state
+  SESSION_FORMAT: 2, SESSION_MAX_AGE: 86400,
+  SessionExpiredError: class extends Error {},
+  SessionUnavailableError: class extends Error {},
+  RefreshRetryableError: class extends Error {},
+  createSession: jest.fn(async (_sub: string, tokens: import('../auth-token-store').StoredTokens) => {
+    _mockTokenStore.set('test-session', tokens)
+    return { ...tokens, sessionId: 'test-session', sessionVersion: 1 }
   }),
-  refreshStoredTokens: jest.fn(async (sub: string, version: number, exchange: (tokens: import('../auth-token-store').StoredTokenState) => Promise<import('../auth-token-store').StoredTokens>) => {
-    const current = _mockTokenStore.get(sub)
-    if (current && current.version !== version) return current
-    const fresh = await exchange(current ?? { version })
-    const state = { ...fresh, version: version + 1 }
-    _mockTokenStore.set(sub, state)
-    return state
-  }),
-  resetTokenStore: jest.fn(() => { _mockTokenStore.clear() }),
+  getStoredSession: jest.fn(async (id: string) => ({ ..._mockTokenStore.get(id), sessionId: id, sessionVersion: 1 })),
+  refreshSession: jest.fn(async (id: string, _sub: string, _version: number, exchange: (t: import('../auth-token-store').StoredTokens) => Promise<import('../auth-token-store').StoredTokens>) => ({
+    ...await exchange(_mockTokenStore.get(id)!), sessionId: id, sessionVersion: 2,
+  })),
+  revokeSession: jest.fn(),
 }))
 
 // Mock jose so we can control decodeJwt in group re-evaluation tests
@@ -30,9 +27,10 @@ jest.mock('jose', () => ({
   decodeJwt: jest.fn(),
 }))
 
-const mockCookieEncode = jest.fn(async () => 'encoded-session')
-const mockCookieDecode = jest.fn(async () => ({}))
-jest.mock('next-auth/jwt', () => ({ encode: mockCookieEncode, decode: mockCookieDecode }))
+jest.mock('next-auth/jwt', () => ({
+  encode: jest.fn(async () => 'encoded-session'),
+  decode: jest.fn(async () => ({})),
+}))
 
 const mockReconcileOidcClaimGroupsForUser = jest.fn()
 jest.mock('@/lib/rbac/oidc-claim-reconciler', () => ({
@@ -43,13 +41,18 @@ import {
   isAdminUser,
   canViewAdminDashboard,
   authOptions,
-  _resetInflightRefreshes,
   _resetServerTokenStore,
   extractGroups,
   cacheOidcClaimGroups,
   getCachedOidcClaimGroups,
   resolveLoginProviderId,
 } from '../auth-config'
+
+async function runJwt(params: { token: import('next-auth/jwt').JWT; [key: string]: unknown }) {
+  const token = { sub: 'test-user', sessionId: 'test-session', sessionVersion: 1, ...params.token }
+  _mockTokenStore.set(token.sessionId, token as import('../auth-token-store').StoredTokens)
+  return (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<import('next-auth/jwt').JWT>)({ ...params, token })
+}
 
 function withRequiredGroup<T>(requiredGroup: string | undefined, cb: (mod: typeof import('../auth-config')) => T): T {
   const previous = process.env.OIDC_REQUIRED_GROUP
@@ -409,7 +412,7 @@ describe('auth-config', () => {
     it('should store all tokens on initial sign-in', async () => {
       const now = Math.floor(Date.now() / 1000)
 
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+      const result = await runJwt({
         token: {},
         account: {
           access_token: 'at',
@@ -438,7 +441,7 @@ describe('auth-config', () => {
       const result = await withRequiredGroup('caipe-users', async ({ authOptions }) => (
         authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>
       )({
-        token: {},
+        token: { sub: 'test-user' },
         account: {
           access_token: 'at',
           id_token: 'idt',
@@ -459,7 +462,7 @@ describe('auth-config', () => {
       const result = await withRequiredGroup('', async ({ authOptions }) => (
         authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>
       )({
-        token: {},
+        token: { sub: 'test-user' },
         account: {
           access_token: 'at',
           id_token: 'idt',
@@ -479,7 +482,7 @@ describe('auth-config', () => {
     it('reconciles login claim groups by default without storing them in the session token', async () => {
       delete process.env.IDENTITY_SYNC_LOGIN_CLAIMS_ENABLED
       delete process.env.IDENTITY_SYNC_OIDC_CLAIM_PROVIDER_ID
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+      const result = await runJwt({
         token: {},
         account: {
           access_token: 'at',
@@ -512,7 +515,7 @@ describe('auth-config', () => {
     it('skips login claim reconciliation when explicitly disabled', async () => {
       process.env.IDENTITY_SYNC_LOGIN_CLAIMS_ENABLED = 'false'
       try {
-        await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+        await runJwt({
           token: {},
           account: {
             access_token: 'at',
@@ -537,7 +540,7 @@ describe('auth-config', () => {
     it('forwards allowTeamCreation=true when IDENTITY_SYNC_LOGIN_AUTO_CREATE_TEAMS is set', async () => {
       process.env.IDENTITY_SYNC_LOGIN_AUTO_CREATE_TEAMS = 'true'
       try {
-        await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+        await runJwt({
           token: {},
           account: {
             access_token: 'at',
@@ -565,7 +568,7 @@ describe('auth-config', () => {
     it('treats any non-"true" IDENTITY_SYNC_LOGIN_AUTO_CREATE_TEAMS value as false (strict opt-in)', async () => {
       process.env.IDENTITY_SYNC_LOGIN_AUTO_CREATE_TEAMS = '1'
       try {
-        await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+        await runJwt({
           token: {},
           account: {
             access_token: 'at',
@@ -593,7 +596,7 @@ describe('auth-config', () => {
     it('should NOT refresh token when expiry is more than 5 minutes away', async () => {
       const now = Math.floor(Date.now() / 1000)
 
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+      const result = await runJwt({
         token: {
           accessToken: 'old-at',
           refreshToken: 'rt',
@@ -609,7 +612,7 @@ describe('auth-config', () => {
     it('should attempt token refresh when within 5 minutes of expiry', async () => {
       const now = Math.floor(Date.now() / 1000)
 
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+      const result = await runJwt({
         token: {
           accessToken: 'old-at',
           idToken: 'old-idt',
@@ -627,7 +630,7 @@ describe('auth-config', () => {
     it('refreshes stale access tokens when a refresh token is still available', async () => {
       const now = Math.floor(Date.now() / 1000)
 
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+      const result = await runJwt({
         token: {
           accessToken: 'at',
           refreshToken: 'rt',
@@ -644,20 +647,20 @@ describe('auth-config', () => {
     it('should skip refresh attempt when token already has an error', async () => {
       const now = Math.floor(Date.now() / 1000)
 
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+      const result = await runJwt({
         token: {
           accessToken: 'at',
           refreshToken: 'rt',
           expiresAt: now + 60,
-          error: 'RefreshTokenExpired',
+          error: 'SessionExpired',
         },
       })
 
-      expect(result.error).toBe('RefreshTokenExpired')
+      expect(result.error).toBe('SessionExpired')
       expect(fetchSpy).not.toHaveBeenCalled()
     })
 
-    it('should return RefreshTokenExpired when token exchange returns non-JSON', async () => {
+    it('reports unavailability for an ambiguous non-JSON exchange', async () => {
       fetchSpy.mockRestore()
       fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(
         makeRefreshFetchMock({ nonJsonResponse: true }),
@@ -665,7 +668,7 @@ describe('auth-config', () => {
 
       const now = Math.floor(Date.now() / 1000)
 
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+      const result = await runJwt({
         token: {
           accessToken: 'at',
           refreshToken: 'rt',
@@ -673,7 +676,7 @@ describe('auth-config', () => {
         },
       })
 
-      expect(result.error).toBe('RefreshTokenExpired')
+      expect(result.error).toBe('SessionUnavailable')
     })
 
     it('should return RefreshTokenExpired when token exchange fails', async () => {
@@ -686,7 +689,7 @@ describe('auth-config', () => {
 
       // Access token already expired (-10s): if refresh token also gives invalid_grant
       // this is a real failure (not a concurrent race), so the user must re-authenticate.
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+      const result = await runJwt({
         token: {
           accessToken: 'at',
           refreshToken: 'rt',
@@ -694,7 +697,7 @@ describe('auth-config', () => {
         },
       })
 
-      expect(result.error).toBe('RefreshTokenExpired')
+      expect(result.error).toBe('SessionExpired')
     })
 
     it('should fall back to Keycloak-style token endpoint when OIDC discovery fails', async () => {
@@ -706,7 +709,7 @@ describe('auth-config', () => {
       const now = Math.floor(Date.now() / 1000)
 
       // Should still attempt the refresh using Keycloak fallback path
-      await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+      await runJwt({
         token: {
           accessToken: 'at',
           refreshToken: 'rt',
@@ -728,7 +731,7 @@ describe('auth-config', () => {
 
       const now = Math.floor(Date.now() / 1000)
 
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+      const result = await runJwt({
         token: {
           accessToken: 'at',
           refreshToken: 'original-rt',
@@ -776,7 +779,7 @@ describe('auth-config', () => {
         groups: ['caipe-users'],
       })
 
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+      const result = await runJwt({
         token: {
           accessToken: 'at',
           idToken: 'old-idt',
@@ -805,7 +808,7 @@ describe('auth-config', () => {
 
       mockDecodeJwt.mockReturnValue({ groups: ['caipe-users'] })
 
-      await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+      await runJwt({
         token: {
           accessToken: 'at',
           idToken: 'old-idt',
@@ -833,7 +836,7 @@ describe('auth-config', () => {
 
       // Access token already expired: this is a real refresh failure (not a race),
       // so the token gets error:'RefreshTokenExpired' and group re-eval is skipped.
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+      const result = await runJwt({
         token: {
           accessToken: 'at',
           idToken: 'old-idt',
@@ -847,7 +850,7 @@ describe('auth-config', () => {
 
       // Token refresh failed → shouldRecheckGroups is false → decodeJwt not called
       expect(mockDecodeJwt).not.toHaveBeenCalled()
-      expect(result.error).toBe('RefreshTokenExpired')
+      expect(result.error).toBe('SessionExpired')
     })
 
     it('should fall back gracefully when decodeJwt throws during group re-check', async () => {
@@ -859,7 +862,7 @@ describe('auth-config', () => {
 
       const consoleSpy = jest.spyOn(console, 'warn').mockImplementation()
 
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+      const result = await runJwt({
         token: {
           accessToken: 'at',
           idToken: 'old-idt',
@@ -915,14 +918,14 @@ describe('auth-config', () => {
         token: {
           accessToken: 'at',
           idToken: 'idt',
-          error: 'RefreshTokenExpired',
+          error: 'SessionExpired',
           isAuthorized: true,
           role: 'user',
         },
       })
 
       expect(result.accessToken).toBeUndefined()
-      expect(result.error).toBe('RefreshTokenExpired')
+      expect(result.error).toBe('SessionExpired')
     })
 
     it('should mark SSO sessions invalid when the server-side access token cache is missing', async () => {
@@ -937,7 +940,7 @@ describe('auth-config', () => {
       })
 
       expect(result.accessToken).toBeUndefined()
-      expect(result.error).toBe('AccessTokenMissing')
+      expect(result.error).toBe('SessionExpired')
     })
 
     it('should propagate isAuthorized=false into the browser session', async () => {
@@ -945,6 +948,7 @@ describe('auth-config', () => {
         session: { user: { name: 'Blocked', email: 'blocked@example.com' } },
         token: {
           accessToken: 'at',
+          expiresAt: 9999999999,
           isAuthorized: false,
           role: 'user',
         },
@@ -973,7 +977,7 @@ describe('auth-config', () => {
       const result = await (authOptions.callbacks!.session! as (...args: unknown[]) => Promise<unknown>)({
         session: { user: {} },
         token: {
-          // no role set
+          accessToken: 'at', expiresAt: 9999999999, // no role set
         },
       })
 
@@ -1141,7 +1145,6 @@ describe('auth-config', () => {
       await authOptions.jwt!.encode!({
         token: {
           sub: 'sub-123',
-          tokenStoreVersion: 1,
           accessToken: 'at',
           refreshToken: 'rt',
         },
@@ -1264,283 +1267,4 @@ describe('auth-config', () => {
   })
 
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Concurrent refresh race safety nets
-  // ─────────────────────────────────────────────────────────────────────────
-
-  describe('Concurrent refresh race safety nets', () => {
-    const originalEnv = process.env
-    let fetchSpy: jest.SpyInstance
-
-    beforeEach(() => {
-      process.env = {
-        ...originalEnv,
-        OIDC_ISSUER: 'https://sso.example.com',
-        OIDC_CLIENT_ID: 'test-client-id',
-        OIDC_CLIENT_SECRET: 'test-client-secret',
-        OIDC_ENABLE_REFRESH_TOKEN: 'true',
-      }
-      _resetInflightRefreshes()
-    })
-
-    afterEach(() => {
-      process.env = originalEnv
-      fetchSpy?.mockRestore()
-    })
-
-    it('Safety net 1: concurrent callers share one HTTP exchange', async () => {
-      // Two JWT callbacks with the same refresh token fire simultaneously.
-      // Only one fetch should happen (the in-flight dedup kicks in for the second).
-      let resolveExchange!: (v: Response) => void
-      const exchangeHeld = new Promise<Response>((res) => { resolveExchange = res })
-
-      let fetchCallCount = 0
-      fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (url) => {
-        fetchCallCount++
-        const urlStr = url.toString()
-        if (urlStr.includes('.well-known')) {
-          return {
-            ok: true,
-            json: async () => ({ token_endpoint: 'https://sso.example.com/token' }),
-          } as Response
-        }
-        // Hold the exchange until we're ready
-        return exchangeHeld
-      })
-
-      const now = Math.floor(Date.now() / 1000)
-      const baseToken = {
-        accessToken: 'at',
-        idToken: 'old-idt',
-        refreshToken: 'shared-rt',
-        expiresAt: now + 60,
-      }
-
-      // Fire two concurrent calls
-      const call1 = (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({ token: { ...baseToken } })
-      const call2 = (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({ token: { ...baseToken } })
-
-      // Resolve the held exchange with a successful response
-      resolveExchange({
-        ok: true,
-        headers: { get: () => 'application/json' },
-        json: async () => ({
-          access_token: 'new-at',
-          id_token: 'new-idt',
-          refresh_token: 'new-rt',
-          expires_in: 3600,
-        }),
-      } as unknown)
-
-      const [result1, result2] = await Promise.all([call1, call2])
-
-      // Both should get new tokens
-      expect(result1.accessToken).toBe('new-at')
-      expect(result2.accessToken).toBe('new-at')
-
-      // Only 2 fetches total: 1 discovery + 1 exchange (not 2 exchanges)
-      // (The second caller joined the in-flight Promise)
-      expect(fetchCallCount).toBe(2)
-    })
-
-    it('Safety net 2: invalid_grant with valid access token keeps session (no logout)', async () => {
-      const now = Math.floor(Date.now() / 1000)
-
-      fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(makeRefreshFetchMock({
-        tokenFails: false,
-        // Override to return invalid_grant specifically
-      }))
-      // Override with invalid_grant scenario
-      fetchSpy.mockRestore()
-      fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (url) => {
-        const urlStr = url.toString()
-        if (urlStr.includes('.well-known')) {
-          return {
-            ok: true,
-            json: async () => ({ token_endpoint: 'https://sso.example.com/token' }),
-          } as Response
-        }
-        // Token exchange: return invalid_grant
-        return {
-          ok: false,
-          headers: { get: () => 'application/json' },
-          json: async () => ({ error: 'invalid_grant', error_description: 'Token already used' }),
-        } as unknown
-      })
-
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
-        token: {
-          accessToken: 'still-valid-at',
-          refreshToken: 'consumed-rt',
-          expiresAt: now + 200, // access token still valid but within 5-min refresh window
-        },
-      })
-
-      // Should NOT be logged out — access token is still valid
-      expect(result.error).toBeUndefined()
-      expect(result.accessToken).toBe('still-valid-at')
-      // Should suppress further refresh attempts until token expires
-      expect(result.refreshSuppressedUntil).toBe(now + 200)
-    })
-
-    it('Safety net 3: suppressed refresh prevents further refresh attempts', async () => {
-      const now = Math.floor(Date.now() / 1000)
-
-      fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(makeRefreshFetchMock())
-
-      // Token has refreshSuppressedUntil set (from a prior graceful invalid_grant)
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
-        token: {
-          accessToken: 'still-valid-at',
-          refreshToken: 'consumed-rt',
-          expiresAt: now + 200,
-          refreshSuppressedUntil: now + 200, // suppressed until token expires
-        },
-      })
-
-      // Should return the token as-is without attempting refresh
-      expect(result.accessToken).toBe('still-valid-at')
-      expect(result.error).toBeUndefined()
-      // No fetch calls — refresh was suppressed
-      expect(fetchSpy).not.toHaveBeenCalled()
-    })
-
-    it('Safety net 2: invalid_grant with expired access token still logs out', async () => {
-      const now = Math.floor(Date.now() / 1000)
-
-      fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (url) => {
-        const urlStr = url.toString()
-        if (urlStr.includes('.well-known')) {
-          return {
-            ok: true,
-            json: async () => ({ token_endpoint: 'https://sso.example.com/token' }),
-          } as Response
-        }
-        return {
-          ok: false,
-          headers: { get: () => 'application/json' },
-          json: async () => ({ error: 'invalid_grant', error_description: 'Token already used' }),
-        } as unknown
-      })
-
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
-        token: {
-          accessToken: 'expired-at',
-          refreshToken: 'consumed-rt',
-          expiresAt: now - 300, // access token has already expired
-        },
-      })
-
-      // Access token is expired too — user must re-authenticate
-      expect(result.error).toBe('RefreshTokenExpired')
-    })
-  })
-})
-
-// Credential publication is independent of cookie serialization.
-describe('shared credential consistency', () => {
-  const store = jest.requireMock('../auth-token-store')
-  const codec = jest.requireMock('next-auth/jwt')
-  beforeEach(() => { _resetServerTokenStore(); jest.clearAllMocks() })
-
-  it('cannot write stale credentials back while encoding an older cookie', async () => {
-    await store.storeTokens('test-user', { accessToken: 'fresh', refreshToken: 'fresh-refresh', expiresAt: 9000 })
-    const writes = store.storeTokens.mock.calls.length
-    await authOptions.jwt!.encode!({ secret: 'example-secret', token: {
-      sub: 'test-user', tokenStoreVersion: 0, accessToken: 'expired', refreshToken: 'old-refresh', expiresAt: 1,
-    } })
-    expect(store.storeTokens).toHaveBeenCalledTimes(writes)
-    expect(await store.getStoredTokens('test-user')).toMatchObject({ accessToken: 'fresh', expiresAt: 9000 })
-    expect(codec.encode.mock.calls[0][0].token.accessToken).toBeUndefined()
-  })
-
-  it('hydrates the stored credential and expiry instead of a future expiry from another login', async () => {
-    await store.storeTokens('test-user', { accessToken: 'expired', refreshToken: 'refresh', expiresAt: 1 })
-    codec.decode.mockResolvedValueOnce({ sub: 'test-user', expiresAt: 9999999999 })
-    const token = await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' })
-    expect(token).toMatchObject({ accessToken: 'expired', expiresAt: 1, tokenStoreVersion: 1 })
-    const session = await (authOptions.callbacks!.session! as (...args: unknown[]) => Promise<Record<string, unknown>>)({ session: {}, token })
-    expect(session.accessToken).toBeUndefined()
-    expect(session.error).toBe('RefreshTokenExpired')
-  })
-
-  it('forces refresh when a legacy opaque token has no authoritative expiry', async () => {
-    _mockTokenStore.set('test-user', { accessToken: 'opaque', refreshToken: 'refresh', version: 0 })
-    codec.decode.mockResolvedValueOnce({ sub: 'test-user', expiresAt: 9999999999 })
-    expect(await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' }))
-      .toMatchObject({ accessToken: 'opaque', expiresAt: 1, tokenStoreVersion: 0 })
-  })
-
-  it('clears an old failure only after another replica publishes newer credentials', async () => {
-    await store.storeTokens('test-user', { accessToken: 'fresh', expiresAt: 9999999999 })
-    codec.decode.mockResolvedValueOnce({ sub: 'test-user', tokenStoreVersion: 0, error: 'RefreshTokenExpired', refreshSuppressedUntil: 9999999999 })
-    const token = await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' })
-    expect(token?.error).toBeUndefined()
-    expect(token?.refreshSuppressedUntil).toBeUndefined()
-    codec.decode.mockResolvedValueOnce({ sub: 'test-user', tokenStoreVersion: 1, error: 'RefreshTokenExpired' })
-    expect((await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' }))?.error).toBe('RefreshTokenExpired')
-  })
-
-  it('does not expose old credentials when the shared store is unavailable', async () => {
-    store.getStoredTokens.mockRejectedValueOnce(new Error('unavailable'))
-    codec.decode.mockResolvedValueOnce({ sub: 'test-user', tokenStoreVersion: 1, accessToken: 'old', refreshToken: 'old' })
-    const token = await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' })
-    expect(token).toMatchObject({ error: 'SharedStoreUnavailable' })
-    expect(token?.accessToken).toBeUndefined()
-    expect(token?.refreshToken).toBeUndefined()
-  })
-
-  it.each([9999999999, 1])('recovers from a shared-store read outage with the same credential version (cookie expiry %s)', async (expiresAt) => {
-    await store.storeTokens('test-user', { accessToken: 'fresh', refreshToken: 'refresh', expiresAt: 9999999999 })
-    store.getStoredTokens.mockRejectedValueOnce(new Error('unavailable'))
-    codec.decode.mockResolvedValueOnce({ sub: 'test-user', tokenStoreVersion: 1, expiresAt })
-    const decoded = await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' })
-    const token = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<Record<string, unknown>>)({ token: decoded })
-    const session = await (authOptions.callbacks!.session! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
-      session: { accessToken: 'old-client-token' }, token,
-    })
-    expect(session.error).toBe('SharedStoreUnavailable')
-    expect(session.accessToken).toBeUndefined()
-
-    // NextAuth serializes the token after the session callback has run.
-    await authOptions.jwt!.encode!({ secret: 'example-secret', token })
-    const cookie = codec.encode.mock.calls[0][0].token
-    expect(cookie.error).toBeUndefined()
-    expect(cookie.accessToken).toBeUndefined()
-    expect(cookie.refreshToken).toBeUndefined()
-    codec.decode.mockResolvedValueOnce(cookie)
-    const recovered = await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' })
-    expect(recovered).toMatchObject({ accessToken: 'fresh', refreshToken: 'refresh', expiresAt: 9999999999, tokenStoreVersion: 1 })
-    expect(recovered?.error).toBeUndefined()
-    expect(store.storeTokens).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not erase a prior refresh failure during a shared-store read outage', async () => {
-    store.getStoredTokens.mockRejectedValueOnce(new Error('unavailable'))
-    codec.decode.mockResolvedValueOnce({ sub: 'test-user', tokenStoreVersion: 1, error: 'RefreshTokenExpired' })
-    const token = await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' })
-    await authOptions.jwt!.encode!({ secret: 'example-secret', token: token! })
-    expect(codec.encode.mock.calls[0][0].token.error).toBe('RefreshTokenExpired')
-  })
-
-  it('retains self-contained legacy cookies without creating a shared record during encoding', async () => {
-    await authOptions.jwt!.encode!({ secret: 'example-secret', token: {
-      sub: 'test-user', accessToken: 'legacy', refreshToken: 'refresh', expiresAt: 9999999999,
-    } })
-    expect(codec.encode.mock.calls[0][0].token.accessToken).toBe('legacy')
-    expect(store.storeTokens).not.toHaveBeenCalled()
-  })
-
-  it('waits for shared publication before completing a new OAuth login', async () => {
-    let publish!: (state: import('../auth-token-store').StoredTokenState) => void
-    store.storeTokens.mockImplementationOnce(() => new Promise(resolve => { publish = resolve }))
-    let completed = false
-    const login = (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
-      token: { sub: 'test-user' }, account: { access_token: 'fresh', refresh_token: 'refresh', expires_at: 9999999999 },
-    }).then(token => { completed = true; return token })
-    await Promise.resolve()
-    expect(completed).toBe(false)
-    publish({ accessToken: 'fresh', refreshToken: 'refresh', expiresAt: 9999999999, version: 1 })
-    expect(await login).toMatchObject({ accessToken: 'fresh', expiresAt: 9999999999, tokenStoreVersion: 1 })
-  })
 })

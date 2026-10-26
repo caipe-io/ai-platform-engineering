@@ -238,6 +238,7 @@ describe('TokenExpiryGuard', () => {
         expect(mockSignOut).toHaveBeenCalledWith({
           callbackUrl:
             '/login?session_expired=true&callbackUrl=%2Fapps%2Fembed%2Fkaleidoscope%3Fview%3Dstudy%23report',
+          redirect: false,
         })
       })
     })
@@ -541,8 +542,8 @@ describe('TokenExpiryGuard', () => {
       })
 
       await act(async () => { jest.advanceTimersByTime(5000) })
-      expect(mockSignOut).toHaveBeenCalledWith({
-        callbackUrl: '/login?session_expired=true&callbackUrl=%2Fapps%2Fembed%2Fkaleidoscope%3Fview%3Dstudy%23report',
+expect(mockSignOut).toHaveBeenCalledWith({
+        redirect: false, callbackUrl: '/login?session_expired=true&callbackUrl=%2Fapps%2Fembed%2Fkaleidoscope%3Fview%3Dstudy%23report',
       })
 
       consoleSpy.mockRestore()
@@ -696,8 +697,8 @@ describe('TokenExpiryGuard', () => {
       fireEvent.click(screen.getByRole('button', { name: /sign in again/i }))
 
       await waitFor(() => {
-        expect(mockSignOut).toHaveBeenCalledWith({
-          callbackUrl: '/login?session_expired=true&callbackUrl=%2Fchat%2Fthread-123',
+expect(mockSignOut).toHaveBeenCalledWith({
+          redirect: false, callbackUrl: '/login?session_expired=true&callbackUrl=%2Fchat%2Fthread-123',
         })
       })
     })
@@ -753,8 +754,8 @@ describe('TokenExpiryGuard', () => {
       // Advance 5 seconds — auto-logout fires
       await act(async () => { jest.advanceTimersByTime(5000) })
 
-      expect(mockSignOut).toHaveBeenCalledWith({
-        callbackUrl: '/login?session_expired=true&callbackUrl=%2F',
+expect(mockSignOut).toHaveBeenCalledWith({
+        redirect: false, callbackUrl: '/login?session_expired=true&callbackUrl=%2F',
       })
     })
 
@@ -775,8 +776,8 @@ describe('TokenExpiryGuard', () => {
       await act(async () => { jest.advanceTimersByTime(0) })
       await act(async () => { jest.advanceTimersByTime(5000) })
 
-      expect(mockSignOut).toHaveBeenCalledWith({
-        callbackUrl: '/login?session_expired=true&callbackUrl=%2F',
+expect(mockSignOut).toHaveBeenCalledWith({
+        redirect: false, callbackUrl: '/login?session_expired=true&callbackUrl=%2F',
       })
     })
   })

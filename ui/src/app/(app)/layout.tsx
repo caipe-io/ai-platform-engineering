@@ -15,7 +15,12 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }): Promise<React.ReactElement> {
-  await requireApplicationSession();
+  if (!await requireApplicationSession()) {
+    return <main role="alert" className="p-6 text-center">
+      <p>Sign-in services are temporarily unavailable. Your session has not been cleared.</p>
+      <a className="underline" href="">Retry</a>
+    </main>;
+  }
 
   const cookieStore = await cookies();
   const initialNavigationCollapsed = isWorkspaceRailCollapsed(
@@ -40,15 +45,17 @@ export default async function AppLayout({
  * preserves the deliberately opt-in local anonymous development provider;
  * production always fails closed, even if SSO_ENABLED is accidentally false.
  */
-async function requireApplicationSession(): Promise<void> {
+async function requireApplicationSession(): Promise<boolean> {
   const authRequired = process.env.NODE_ENV === "production" || getConfig("ssoEnabled");
-  if (!authRequired) return;
+  if (!authRequired) return true;
 
   const session = await getServerSession(authOptions);
-  if (!session) {
+  if (session?.error === 'SessionUnavailable') return false;
+  if (!session || session.error || !session.user?.email) {
     redirect("/login");
   }
   if (session.isAuthorized === false) {
     redirect("/unauthorized");
   }
+  return true;
 }

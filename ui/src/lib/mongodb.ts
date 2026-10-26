@@ -204,7 +204,9 @@ async function createIndexes(db: Db) {
   // doesn't prevent other indexes from being created.
 
   await Promise.all([
-    // Auth token cache — shared across replicas; auto-expires after 24h
+    // Session expiry is enforced on reads; TTL only reclaims expired records.
+    safeCreateIndex(db, 'auth_sessions', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    // Retire old-format records through their existing TTL after the cutover.
     safeCreateIndex(db, 'auth_token_cache', { updatedAt: 1 }, { expireAfterSeconds: 24 * 60 * 60 }),
 
     // Users collection

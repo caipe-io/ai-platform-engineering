@@ -314,6 +314,7 @@ const sidebars: SidebarsConfig = {
           items: [
             { type: 'doc', id: 'security/index', label: 'Overview' },
             { type: 'doc', id: 'security/auth-flow', label: 'Authentication Flow' },
+            { type: 'doc', id: 'security/browser-sessions', label: 'Browser Sessions' },
             { type: 'doc', id: 'security/agent-context-hmac', label: 'Agent Context HMAC' },
             {
               type: 'category',
