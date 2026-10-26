@@ -311,3 +311,20 @@ Every reverse proxy or ingress in front of the UI must also admit the configured
 per-app limit plus that transport headroom. For example, an app configured for
 64 MiB requests needs an upstream allowance of at least 65 MiB; otherwise the
 upstream proxy will reject the request before the app-specific limit is applied.
+
+## Query navigation in embedded apps
+
+- An app connects with `caipe.agenticApp.bridge.connect.v1` (`version: "1.0"`,
+  its `appId`). The host advertises `queryNavigation: true` in
+  `caipe.agenticApp.bridge.capabilities.v1`.
+- `caipe.agenticApp.navigate.v1` accepts a public `href` and optional
+  `history: "push" | "replace"`. Only query/hash changes on the current app's
+  exact path are allowed. Cross-app, API, and external routes are rejected.
+- The host validates iframe source, same origin, app ID, and version. This
+  capability works independently of assistant availability and grants no API access.
+- The host owns browser history and publishes `caipe.agenticApp.navigation.v1`
+  on navigation and Back/Forward. A connected frame keeps its original `src`;
+  it restores local state and replaces its runtime query without adding a second
+  history entry. Older apps retain their existing iframe behavior.
+- Only display state belongs in query parameters. Credentials, approvals, and
+  operations that change resources must never be restored from a URL.
