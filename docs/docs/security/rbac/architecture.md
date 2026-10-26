@@ -483,6 +483,13 @@ The collection, env, and naming details are in the BFF library README at
 
 **Technically:** Next.js App Router with NextAuth (Auth.js v5) for OIDC session management. Every API route handler runs `requireRbacPermission()` which validates the server-side session and enforces role requirements before proxying to backend services.
 
+Cookie authentication reads credentials and their matching expiry from the
+shared encrypted `auth_token_cache` record on each request. Login waits for
+durable publication; refresh uses a fenced MongoDB lease. Cookie encoding never
+writes credentials back. The BFF does not cache authenticated credentials;
+`CAIPE_SESSION_AUTH_CACHE_TTL_MS` no longer enables that cache. Identity-write
+deduplication remains separate from authentication and permission decisions.
+
 ### Authentication Flow
 
 ```
