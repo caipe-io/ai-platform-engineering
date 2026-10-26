@@ -47,6 +47,7 @@ if TYPE_CHECKING:
 from dynamic_agents.metrics import MetricsAgentMiddleware
 from dynamic_agents.models import FeaturesConfig, MiddlewareEntry
 from dynamic_agents.services.context_usage import ContextUsageMiddleware
+from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryError, ToolCallRecoveryMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -330,14 +331,15 @@ class InterruptAwareToolRetryMiddleware(ToolRetryMiddleware):
     failures, relaunches the subagent, and eventually converts the interrupt
     into an error ``ToolMessage``. Raising from the retry predicate preserves
     LangGraph's checkpoint-and-resume behavior while retaining the configured
-    retry policy for real tool exceptions.
+    retry policy for real tool exceptions. Exhausted model-output recovery in a
+    child agent must also propagate, rather than relaunching that child.
     """
 
     def __init__(self, **kwargs: Any) -> None:
         retry_on = kwargs.pop("retry_on", (Exception,))
 
         def retry_non_control_flow(exc: Exception) -> bool:
-            if isinstance(exc, GraphBubbleUp):
+            if isinstance(exc, (GraphBubbleUp, ToolCallRecoveryError)):
                 raise exc
             if callable(retry_on):
                 return retry_on(exc)
@@ -677,7 +679,7 @@ def build_middleware(
     else:
         entries = features.middleware
 
-    result: list[AgentMiddleware] = []
+    result: list[AgentMiddleware] = [ToolCallRecoveryMiddleware()]
     seen_singletons: set[str] = set()
 
     for entry in entries:

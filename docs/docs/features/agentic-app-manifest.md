@@ -103,7 +103,7 @@ The full reference manifest is
 - `consumes` declares compatibility requirements. Unknown required capabilities
   are rejected; optional future references can remain descriptive metadata.
 - Currently recognized native host references are `host.navigation`,
-  `host.breadcrumbs`, `host.theme`, `host.session`, and `app.gateway`, version
+  `host.breadcrumbs`, `host.theme`, `host.session`, `host.chat`, and `app.gateway`, version
   `1.0`. Required host references cannot be satisfied by selecting the current
   iframe profile. A required gateway reference needs a declared runtime.
 - Unknown manifest fields, duplicate profiles/routes, ambiguous ownership,
@@ -154,6 +154,27 @@ agentic_apps:
 - Resource bindings remain references; they neither reveal credentials nor
   create permission grants.
 - Native UI code is selected at build time. Runtime enablement cannot install it.
+
+### Creating notifications from an app
+
+An installed app can create in-app notifications for named users.
+
+- The manifest declares `host.notifications` version `1.0` in
+  `consumes.platformApis`, for example
+  `{ "id": "host.notifications", "version": "1.0", "required": true }`.
+  This HTTP capability supports native, hosted, and service-only apps.
+- The installation names the app's service-account client id in
+  `bindings.serviceAccountClientId`. Each client id may be bound to only one app.
+- The app calls `POST /api/notifications` with that service account's bearer
+  token and `{ eventKey, recipientUserSubjects, title, message, href?, severity? }`.
+- Only an installed, enabled app that declares the capability and is bound to the
+  calling client may create notifications. Anything else is a `403`.
+- Recipients are user subjects only (1 to 50). `href` must be a host-local path
+  starting with `/`. Absolute URLs, `//`, backslashes, and control characters
+  are rejected.
+- The host prefixes `eventKey` with `app:<app_id>:` and sets the source label to
+  the app's display name. A repeated `eventKey` creates nothing: `201` when
+  created, `200` when already there.
 
 ### Internal apps
 
@@ -223,3 +244,30 @@ declarations, and integrity pins remain checked.
 - CAS app grants, trusted delegation adapters, immediate revocation guarantees,
   generic capability invocation, a shared iframe SDK, and per-app lazy loading
   remain follow-on phases.
+
+## App identity in agent catalogs
+
+- `catalog.icon` names a same-origin asset: `/app-icons/<app-id>/<filename>`.
+  Supported extensions: `svg`, `png`, `webp`, `jpg`, `jpeg`. URLs, query strings,
+  encoded paths and traversal are rejected. Legacy symbolic icon names remain valid
+  and use the generic app icon.
+- Native publishers include the asset at `public/app-icons/<app-id>/<filename>`
+  in the pinned npm package. The host copies the declared file during generation;
+  missing files, symlinks outside the package and images over 256 KiB fail the build.
+  Hosted installations may provision the same public asset namespace on the host.
+  Logos are public, reviewed assets; never put private content in this directory.
+- Authorized agent responses include read-only `presentation: { app: { id, name,
+  icon? }, available }`. The BFF derives it from the resolved
+  `bindings.resources.assistant` identity. Stored or submitted presentation fields
+  are ignored. Runtime origins and stream paths are not exposed in this projection.
+- App agents use the shared App spark mark (application window + sparkle), with
+  an `App: Example App` tooltip. The Apps destination, hub heading and generic
+  app fallbacks use the same mark. Catalog cards may display packaged app branding.
+  The legacy navigation value `layout-grid` now renders App spark.
+  The app's internal SDK is not inferred from an absent `execution_harness_id`.
+  Legacy platform agents keep their existing Deep Agents fallback.
+- Agent CAS permissions still apply. App role/launch policy further restricts the
+  chat catalog; an app stream also requires an interactive user. Disabled or
+  uninstalled apps are excluded from new-chat choices, while authorized details
+  retain app identity with `available: false`. Duplicate assistant claims fail
+  closed. Presentation never selects a runtime or grants access.

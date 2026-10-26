@@ -5,7 +5,7 @@ sidebar_position: 9
 # Harness Gateway and native ACP execution
 
 The [CAIPE metaharness proposal](https://github.com/orgs/caipe-io/discussions/2877)
-extends the existing [Harness Gateway](https://github.com/caipe-io/ai-platform-engineering/pull/2401)
+extends the merged [Harness Gateway](https://github.com/caipe-io/ai-platform-engineering/pull/2401)
 rather than introducing another router. The authenticated BFF selects the execution
 owner and translates its output into the existing client APIs. Default, SRE and
 custom agents remain logical agents in the shared DeepAgents/LangGraph runtime;
@@ -44,7 +44,15 @@ Each run belongs to exactly one coordinator and journal. Engine does not wrap
 `AgentExecutionService.start_run`, and native execution does not copy its output
 into Engine collections. Both use the canonical CAIPE MongoDB. A saved binding
 selects the owner before the current agent default is read; changing an agent
-cannot redirect an active or retained conversation into another runtime. Missing
+cannot redirect an active or retained conversation into another runtime. Installed app
+claims follow the same rule: retained ownership is checked before app dispatch,
+and an app-only invoke rejection cannot hide a saved native/provider binding.
+Conversely, retained app conversations fail closed if their stored installation
+is removed or rebound; a missing app claim cannot silently admit native work. New
+app admissions retain a server-managed binding on the existing conversation.
+Unmarked legacy app histories require explicit adoption. App/native cutovers
+require quiescent migration because existing app streams do not share the native
+and SDK backends' atomic admission contract. Missing
 provider configuration and inconsistent bindings fail explicitly.
 
 The gateway reuses its existing descriptor catalog, editor, harness badges and
@@ -66,7 +74,7 @@ native progress into the existing AG-UI or custom SSE frames.
 | Runtime | Keep DeepAgents/LangGraph, MCP integrations, native subagent delegation and logical files. ACP does not grant a real host filesystem. |
 | Protocol | Pin Python SDK 0.12.1 and wire protocol 1. Typed `caipe.io/native-acp` metadata and acknowledged `_caipe/event` requests preserve the native features beyond standard progress. |
 | Session identity | Reuse the original native thread and admitted storage coordinates. Do not reconstruct executable state from the UI transcript. |
-| Human input | Preserve checkpointed forms and edited batch approvals, exact pending identities and current narrowed tool authorization. |
+| Human input | Preserve checkpointed forms and edited batch approvals, exact pending identities and current narrowed MCP, built-in, URL-domain, workflow and subagent grants. |
 | Client output | Preserve attachments, tool/subagent progress, reasoning and native form detail through both existing encodings. |
 | Automation | Keep the workflow engine, scheduler and invoke lifetimes and their authorized execution-context mappings. |
 
@@ -297,3 +305,16 @@ than selecting another execution path inside this implementation.
 
 See the [Dynamic Agents configuration reference](https://github.com/caipe-io/ai-platform-engineering/tree/main/ai_platform_engineering/dynamic_agents#configuration-reference)
 for component settings.
+
+### Read authorization and transient storage loss
+
+Shared readers authorize against the visible CAIPE conversation. When automation
+uses a separate execution-context ID, the native backend independently verifies
+the canonical conversation-to-runtime and agent mapping before reading retained
+output. An arbitrary supplied conversation alias grants no access.
+
+A failed cancellation read or heartbeat acknowledgement is not itself proof that
+a producer lost authority. Retry transient database failures within the last
+confirmed lease budget, without extending that budget on an uncertain write.
+Stop execution at lease expiry or explicit revocation, including when a database
+call remains blocked, and drain cleanup before releasing the session.

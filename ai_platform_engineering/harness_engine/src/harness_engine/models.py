@@ -6,7 +6,9 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from harness_engine.config import AgentCoreRuntimeTarget
 
 
 def utc_now() -> datetime:
@@ -15,6 +17,30 @@ def utc_now() -> datetime:
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class ConnectAgentCoreRequest(StrictModel):
+    profile_id: str = Field(..., pattern=r"^existing-[a-z0-9][a-z0-9-]{0,54}$")
+    arn: str = Field(..., min_length=20, max_length=2048)
+    region: str = Field(..., min_length=1, max_length=32)
+    qualifier: str = Field("DEFAULT", min_length=1, max_length=64)
+
+    def target(self) -> AgentCoreRuntimeTarget:
+        return AgentCoreRuntimeTarget(arn=self.arn, region=self.region, qualifier=self.qualifier)
+
+    @model_validator(mode="after")
+    def validate_target(self) -> ConnectAgentCoreRequest:
+        target = self.target()
+        if self.arn.split(":")[3] != target.region:
+            raise ValueError("Region must match the AgentCore ARN")
+        return self
+
+
+class RegisteredAgentCoreProfile(StrictModel):
+    profile_id: str
+    target: AgentCoreRuntimeTarget
+    created_by: str
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class CapabilityLevel(StrEnum):

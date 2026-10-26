@@ -36,3 +36,11 @@ it("repairs a response marked interrupted when the detached worker actually comp
 it("replays a paused run to recover its pending approval when the placeholder lacks it", () => {
   expect(needsNativeRunReplay({ ...run, status: "awaiting_input" }, message)).toBe(true);
 });
+
+
+it("keeps a persisted non-final HITL pause without resetting its form or replaying the run", () => {
+  expect(needsNativeRunReplay(
+    { ...run, status: "awaiting_input" },
+    { ...message, isFinal: false, turnStatus: "waiting_for_input" },
+  )).toBe(false);
+});

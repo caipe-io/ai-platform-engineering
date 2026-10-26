@@ -122,6 +122,34 @@
   line-height: 1.625;
 }
 
+/* Keep nested and mixed lists distinct without affecting streaming fragments. */
+.streaming-markdown.md-final li > ul,
+.streaming-markdown.md-final li > ol {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.streaming-markdown.md-final ul ul {
+  list-style-type: circle;
+}
+
+.streaming-markdown.md-final ul ul ul {
+  list-style-type: square;
+}
+
+.streaming-markdown.md-final li > p {
+  margin-bottom: 0.25rem;
+}
+
+.streaming-markdown.md-final li > p:last-child {
+  margin-bottom: 0;
+}
+
+.streaming-markdown.md-final input[type="checkbox"] {
+  margin-right: 0.4rem;
+  vertical-align: middle;
+}
+
 .streaming-markdown.md-final strong {
   font-weight: 600;
   color: hsl(var(--foreground));

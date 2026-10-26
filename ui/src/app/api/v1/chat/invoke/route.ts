@@ -7,6 +7,7 @@
 
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
 import { reconcileConversationOwnerIdentity } from "@/lib/conversation-owner-identity";
+import { resolveConversationAppAssistant } from "@/lib/agentic-apps/assistant-stream";
 import {
   invokeHarnessGatewayRun,
   resolveHarnessGatewayTarget,
@@ -63,6 +64,22 @@ function metadataSetFields(metadata: Record<string, unknown>): Record<string, un
       .filter(([, value]) => value !== undefined)
       .map(([key, value]) => [`metadata.${key}`, value]),
   );
+}
+
+/** Invoke shares retained execution ownership with streaming; apps require declared streams. */
+async function resolveInvokeTarget(conversation: Conversation, agentId: string) {
+  const runtimeId = await resolveConversationRuntimeId(conversation);
+  const retained = await resolveHarnessGatewayTarget(agentId, { conversationId: runtimeId, retainedOnly: true });
+  if (retained instanceof NextResponse) return retained;
+  const app = resolveConversationAppAssistant(conversation, agentId, "start", Boolean(retained));
+  if (app instanceof NextResponse) return app;
+  if (app) return NextResponse.json(
+    { success: false, error: "This app assistant requires its declared chat stream endpoints", code: "APP_STREAM_REQUIRED" },
+    { status: 501 },
+  );
+  const target = retained ?? await resolveHarnessGatewayTarget(agentId, { conversationId: runtimeId, admit: true });
+  if (target instanceof NextResponse) return target;
+  return { target, runtimeId };
 }
 
 function compactMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
@@ -459,8 +476,13 @@ async function handleScheduledInvoke(
   }
   body = { ...body, conversation_id: conversationId };
 
-  const target = await resolveHarnessGatewayTarget(String(body.agent_id), { conversationId: String(body.conversation_id), admit: true });
-  if (target instanceof NextResponse) return target;
+  const conversations = await getCollection<Conversation>("conversations");
+  const conversation = await conversations.findOne({ _id: conversationId });
+  if (!conversation) return NextResponse.json({ success: false, error: "Conversation not found" }, { status: 404 });
+  const resolved = await resolveInvokeTarget(conversation, String(body.agent_id));
+  if (resolved instanceof NextResponse) return resolved;
+  const { target } = resolved;
+  body.conversation_id = resolved.runtimeId;
   let response: Response;
   if (target.kind === "harness_engine") {
     body.expected_harness_id = target.harnessId;
@@ -536,18 +558,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   const conversationAuthz = await authorizeConversationWriteAccess(
     authResult,
     String(body.conversation_id),
+    body.agent_id,
   );
   if (conversationAuthz.denial) return conversationAuthz.denial;
 
-  body = {
-    ...body,
-    conversation_id: await resolveConversationRuntimeId(
-      conversationAuthz.conversation,
-    ),
-  };
-
-  const target = await resolveHarnessGatewayTarget(String(body.agent_id), { conversationId: String(body.conversation_id), admit: true });
-  if (target instanceof NextResponse) return target;
+  const resolved = await resolveInvokeTarget(conversationAuthz.conversation, String(body.agent_id));
+  if (resolved instanceof NextResponse) return resolved;
+  const { target } = resolved;
+  body = { ...body, conversation_id: resolved.runtimeId };
   let response: Response;
   if (target.kind === "harness_engine") {
     body.expected_harness_id = target.harnessId;

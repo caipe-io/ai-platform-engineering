@@ -83,6 +83,52 @@ Keycloak realm roles are **not created for CAIPE permissions**. New deployments 
 
 Rule of thumb: **Keycloak owns identity and JWT claims; OpenFGA owns who is related to which organization, team, or resource.**
 
+### Native app assistants from Webex
+
+Native dispatch keeps the linked human's identity and the stored `webex` client
+type. It does not convert bot credentials into a browser session or admin role.
+
+```mermaid
+flowchart LR
+    Event[Verified Webex event] --> Bot[Existing identity and room gates]
+    Bot --> OBO[Linked human OBO token]
+    OBO --> CAS[Agent use and conversation write]
+    CAS --> Context[Verify signed request and stored thread]
+    Context --> App[App role and HTTP policy]
+    App --> Runtime[Native app verifies host proof and data access]
+```
+
+- Apps opt in with `ui.assistant.supportedClients`; the default is `webui` only.
+  Webex groups additionally require `webexGroupChat: true` and app-side enforcement
+  of which data may be disclosed to that room. Declaring either capability
+  grants no access. Unsupported clients fail closed without runtime fallback.
+- OIDC validation retains the signature-verified `azp` claim as `authorizedParty`.
+  Native Webex calls require the configured bot OAuth client and a human bearer,
+  never a service-account principal or a caller-supplied identity header.
+- The bot signs the exact request bytes, bearer hash, room, space, thread,
+  conversation, agent, method, path and timestamp using `WEBEX_LINK_HMAC_SECRET`.
+  The BFF verifies that proof against the authenticated request and stored thread
+  after the existing CAS/conversation gates. A public `client_context` field or
+  `X-Client-Source` value cannot establish a trusted room or direct-message status.
+- The app gateway still enforces installation availability, required roles,
+  declared HTTP actions and the configured token mode. Bearer users retain the
+  normal user role; the native assistant path adds no admin bypass or user grants.
+- The private runtime receives a 60-second, app-audience JWT in
+  `X-CAIPE-Assistant-Context`. The JWT's assistant-purpose claim binds the human,
+  actual upstream bearer, body, target path and stored conversation/room. The
+  proxy strips caller-provided CAIPE identity/context headers before adding its
+  own proof. Apps must independently verify it and enforce their project/tool
+  permissions and room-data policy; the proof is provenance, not a data grant.
+- Operators configure a shared bot/host HMAC key and the existing host/app token
+  key. Missing, stale, mismatched or unavailable verification fails closed.
+  Existing Dynamic Agents calls do not require this native-specific handshake.
+- Existing MCP-backed threads remain pinned until an explicit migration preserves
+  IDs, transcripts and permissions, updates the stored agent/thread owner, and
+  clears the bot's ownership cache. Do not copy provider-specific checkpoints
+  into another runtime; load recent authorized transcript context instead.
+
+The request and app-verification contract is documented in `ui/app-sdk/README.md`.
+
 ### Web UI BFF RBAC Caches
 
 The Web UI backend uses short-lived in-process caches to keep repeated navigation from turning into repeated OpenFGA, MongoDB, and platform-health probes:
@@ -1229,8 +1275,10 @@ and before Dynamic Agent dispatch, the bot may fetch bounded prior thread contex
 from the Webex Messages API: the root message plus recent replies filtered by the
 same `parentId` and capped by `WEBEX_THREAD_CONTEXT_MAX_MESSAGES` /
 `WEBEX_THREAD_CONTEXT_MAX_CHARS`. The context is sent only to the already selected
-and authorized Dynamic Agent under the user's OBO token; fetch failures do not
-weaken authorization and fall back to sending only the current message. Bot replies
+and authorized Dynamic Agent under the user's OBO token. Parent and reply fetches
+handle HTTP failures independently, retaining any available context. If neither
+fetch provides context, only the current message is sent. Fetch failures do not
+weaken authorization. Bot replies
 include the selected `agent_id` and tell users to continue in the same Webex
 thread. Whether the bot processes follow-up posts still depends on route listen
 mode: `mention`, `message`, or `all`.

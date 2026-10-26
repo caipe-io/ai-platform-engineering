@@ -1,31 +1,23 @@
 /**
- * POST /api/v1/chat/stream/cancel — Harness Gateway cancellation entry point.
+ * POST /api/v1/chat/stream/cancel — agent operation routed by server-owned bindings.
  *
- * Body: { conversation_id, agent_id, turn_id? }
+ * Body: { conversation_id, agent_id }
  * Response: JSON { success, cancelled, agent_id, conversation_id }
  */
 
-import {
-cancelHarnessGatewayRun,
-resolveHarnessGatewayTarget,
-withHarnessGatewayTarget,
-} from "@/lib/harness-gateway";
-import { NextRequest,NextResponse } from "next/server";
-import {
-authorizeConversationWriteAccess,
-resolveConversationRuntimeId,
-} from "../../_conversation-authz";
-import {
-authenticateRequest,
-getDynamicAgentsConfig,
-proxyJSONRequest,
-} from "../../_helpers";
+import { NextRequest, NextResponse } from "next/server";
+
+import { authenticateChatStreamRequest } from "../../_stream-auth";
+
+import { authorizeConversationWriteAccess } from "../../_conversation-authz";
+import { dispatchChatStream } from "../../_stream-gateway";
 
 export async function POST(request: NextRequest): Promise<Response> {
   // Authenticate caller (session cookie or Bearer token)
-  const authResult = await authenticateRequest(request);
+  const authResult = await authenticateChatStreamRequest(request);
   if (authResult instanceof NextResponse) return authResult;
 
+  const forwardedRequest = request.clone();
   // Parse body
   let body: Record<string, unknown>;
   try {
@@ -37,43 +29,22 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
-  if (!body.conversation_id || !body.agent_id) {
+  if (!body || typeof body.conversation_id !== "string" || !body.conversation_id || typeof body.agent_id !== "string" || !body.agent_id) {
     return NextResponse.json(
       { success: false, error: "Missing required fields: conversation_id, agent_id" },
       { status: 400 },
     );
   }
 
-  // Stop is a conversation mutation, not another agent invocation. A caller
-  // whose agent-use grant was revoked must still be able to stop their run.
+
   const conversationAuthz = await authorizeConversationWriteAccess(
     authResult,
     String(body.conversation_id),
+    body.agent_id,
   );
   if (conversationAuthz.denial) return conversationAuthz.denial;
 
-  body = {
-    ...body,
-    conversation_id: await resolveConversationRuntimeId(
-      conversationAuthz.conversation,
-    ),
-  };
-
-  const target = await resolveHarnessGatewayTarget(String(body.agent_id), { conversationId: String(body.conversation_id) });
-  if (target instanceof NextResponse) return target;
-  if (target.kind === "harness_engine") {
-    return cancelHarnessGatewayRun(body, authResult);
-  }
-
-  // Preserve the existing Dynamic Agents cancellation path.
-  const daConfig = getDynamicAgentsConfig();
-  if (daConfig instanceof NextResponse) return daConfig;
-  const backendUrl = `${daConfig.dynamicAgentsUrl}/api/v1/chat/stream/cancel`;
-
-  return withHarnessGatewayTarget(await proxyJSONRequest(
-    backendUrl,
-    JSON.stringify(body),
-    authResult,
-    "[stream/cancel]",
-  ), target);
+  return dispatchChatStream(
+    forwardedRequest, authResult, conversationAuthz.conversation, body, "cancel",
+  );
 }

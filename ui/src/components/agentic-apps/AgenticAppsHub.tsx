@@ -1,10 +1,12 @@
 "use client";
 
-import { ArrowUpRight, LayoutGrid, LoaderCircle, Search } from "lucide-react";
+import { ArrowUpRight, LoaderCircle, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import type { PublicAgenticApp } from "@/types/agentic-app";
+import { AppIcon } from "@/components/shared/AppIcon";
+import { AgenticAppIcon } from "@/components/shared/AgenticAppIcon";
 
 type LoadState =
   | { status: "loading" }
@@ -65,7 +67,7 @@ export function AgenticAppsHub(): React.ReactElement {
         <header>
           <div className="flex items-center gap-3">
             <span className="rounded-xl bg-primary/10 p-2 text-primary">
-              <LayoutGrid className="h-6 w-6" aria-hidden />
+              <AgenticAppIcon className="h-6 w-6" aria-hidden />
             </span>
             <div>
               <h1 className="text-3xl font-semibold tracking-tight">Apps</h1>
@@ -123,7 +125,7 @@ export function AgenticAppsHub(): React.ReactElement {
                   <article key={app.appId} className="flex min-h-56 flex-col rounded-xl border bg-card p-5 shadow-sm">
                     <div className="flex items-start justify-between gap-4">
                       <span className="rounded-lg bg-primary/10 p-2 text-primary">
-                        <LayoutGrid className="h-5 w-5" aria-hidden />
+                        <AppIcon appId={app.appId} icon={app.icon} className="h-5 w-5 object-contain" />
                       </span>
                       {app.categories[0] ? (
                         <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">

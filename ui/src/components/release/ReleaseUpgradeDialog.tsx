@@ -29,6 +29,14 @@ interface ReleaseUpgradeDialogProps {
 
 const CHANGELOG_URL = "https://github.com/caipe-io/ai-platform-engineering/blob/main/CHANGELOG.md";
 
+function safeChangelogUrl(value?: string | null): string {
+  try {
+    const url = new URL(value ?? "");
+    if (url.protocol === "https:" && url.hostname === "github.com" && !url.username && !url.password && !url.port) return url.href;
+  } catch { /* Fall back to the canonical changelog. */ }
+  return CHANGELOG_URL;
+}
+
 function userVisibleSections(sections: ReleaseNote["sections"], isAdmin: boolean): ReleaseNote["sections"] {
   if (isAdmin) return sections;
 
@@ -213,7 +221,7 @@ export function ReleaseUpgradeDialog({
 
         <div className="text-xs text-muted-foreground">
           <a
-            href={CHANGELOG_URL}
+            href={safeChangelogUrl(releaseMarkdown?.changelogUrl)}
             target="_blank"
             rel="noopener noreferrer"
             className="font-medium text-primary underline-offset-2 hover:underline"

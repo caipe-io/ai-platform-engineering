@@ -1,10 +1,14 @@
 # Harness Engine Architecture
 
+> **Delivery scope:** Follow [Delivery phases](delivery-phases.md). Phase 1 is the independent engine/gateway; `DeepAgentsAdapter` integration is Phase 2, external workers are Phase 3, and cross-harness delegation is Phase 4. Worker/broker diagrams below describe target boundaries unless explicitly identified as implemented.
+
 ## Goal
 
-Replace Dynamic Agents without changing its external architecture, then make the execution loop pluggable. Existing clients continue to see one runtime service and the same protocols. Internally, a selected harness is an implementation behind a common contract.
+Add opt-in harnesses without disrupting Dynamic Agents, then integrate the existing runtime as `DeepAgentsAdapter` in a separate phase. Existing clients retain the same BFF APIs. Later phases add external sandbox execution and governed cross-harness composition behind those contracts.
 
 ## Context
+
+This view combines the current split routing with planned worker and broker integrations. It does not mean Phase 1 already runs local harnesses in sandbox pods; see the [current and target diagrams](delivery-phases.md).
 
 ```mermaid
 flowchart LR
@@ -15,7 +19,7 @@ flowchart LR
     HG -->|"opt-in harness"| HE["Harness Engine"]
     HE --> DB["MongoDB / GridFS"]
     HE --> OBJ["Local or S3 attachments"]
-    HE --> FGA["OpenFGA / authz bridge"]
+    HE --> AUTHZ["CAS / existing authorization adapters"]
     HE --> GW["AgentGateway / MCP servers"]
     HE --> KAS["Kubernetes Agent Sandbox API"]
     KAS --> P1["Exclusive Deep Agents pod"]
@@ -61,7 +65,7 @@ fallback.
 
 ## Agent creation control flow
 
-The existing five-step editor remains the builder shell. Harness selection is added before model selection, and every later section consumes one server-produced capability projection rather than embedding harness-specific policy in the browser. Detailed interaction and component rules are in [agent-creation-ui.md](./agent-creation-ui.md).
+The existing editor remains the builder shell. Harness selection precedes model selection; the Phase 2 target projects server-produced capabilities into its stable sections. Phase 1 must keep current controls truthful about supported functionality. Detailed interaction and component rules are in [agent-creation-ui.md](./agent-creation-ui.md).
 
 ```mermaid
 flowchart LR

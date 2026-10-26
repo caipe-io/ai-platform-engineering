@@ -25,8 +25,8 @@ import { BrowserStreamTransport } from "./browser-stream-transport";
 export class CustomStreamAdapter implements StreamAdapter {
   private transport: BrowserStreamTransport;
 
-  constructor(accessToken?: string) {
-    this.transport = new BrowserStreamTransport(accessToken);
+  constructor() {
+    this.transport = new BrowserStreamTransport();
   }
 
   abort(): void {

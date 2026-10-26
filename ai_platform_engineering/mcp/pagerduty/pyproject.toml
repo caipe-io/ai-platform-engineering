@@ -13,12 +13,12 @@ dependencies = [
   "python-dotenv==1.2.2",
   "pydantic==2.13.4",
   "mcp-agent-auth", # gitleaks:allow - package name, not a credential
-  "fastmcp==3.4.7",
+  "fastmcp==3.4.10",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "black==26.5.1",
+  "black==26.10.1",
   "isort==8.0.1",
   "mypy==2.3.1",
   "pytest==9.1.1",

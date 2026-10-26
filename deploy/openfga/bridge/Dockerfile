@@ -4,7 +4,7 @@ FROM python:3.14-slim AS builder
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
         gcc \
-    && pip install --no-cache-dir uv==0.12.6 \
+    && pip install --no-cache-dir uv==0.13.4 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

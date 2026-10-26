@@ -1,36 +1,28 @@
 /**
- * POST /api/v1/chat/stream/start — Harness Gateway streaming entry point.
+ * POST /api/v1/chat/stream/start — agent stream routed by server-owned bindings.
  *
  * Body: { message, conversation_id, agent_id, protocol?, trace_id?, client_context? }
  * Response: SSE stream (text/event-stream)
  */
 
+import { NextRequest, NextResponse } from "next/server";
+
+import { authenticateChatStreamRequest } from "../../_stream-auth";
 import { createAuthzTraceContext } from "@/lib/rbac/authz-tracing";
 import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
-import {
-resolveHarnessGatewayTarget,
-withHarnessGatewayTarget,
-streamHarnessGatewayRun,
-} from "@/lib/harness-gateway";
-import { NextRequest,NextResponse } from "next/server";
-import {
-authorizeConversationWriteAccess,
-resolveConversationRuntimeId,
-} from "../../_conversation-authz";
-import {
-authenticateRequest,
-getDynamicAgentsConfig,
-proxySSEStream,
-} from "../../_helpers";
+
+import { authorizeConversationWriteAccess } from "../../_conversation-authz";
+import { dispatchChatStream } from "../../_stream-gateway";
 
 export const runtime = "nodejs";
-export const maxDuration = 300; // 5 minutes
+export const maxDuration = 960; // Allows long native app streams plus cleanup.
 
 export async function POST(request: NextRequest): Promise<Response> {
   // Authenticate caller (session cookie or Bearer token)
-  const authResult = await authenticateRequest(request);
+  const authResult = await authenticateChatStreamRequest(request);
   if (authResult instanceof NextResponse) return authResult;
 
+  const forwardedRequest = request.clone();
   // Parse body
   let body: Record<string, unknown>;
   try {
@@ -42,7 +34,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
-  if (!body.message || !body.conversation_id || !body.agent_id) {
+  if (!body || typeof body.message !== "string" || !body.message.trim() || typeof body.conversation_id !== "string" || !body.conversation_id || typeof body.agent_id !== "string" || !body.agent_id) {
     return NextResponse.json(
       { success: false, error: "Missing required fields: message, conversation_id, agent_id" },
       { status: 400 },
@@ -65,32 +57,11 @@ export async function POST(request: NextRequest): Promise<Response> {
   const conversationAuthz = await authorizeConversationWriteAccess(
     authResult,
     String(body.conversation_id),
+    body.agent_id,
   );
   if (conversationAuthz.denial) return conversationAuthz.denial;
 
-  body = {
-    ...body,
-    conversation_id: await resolveConversationRuntimeId(
-      conversationAuthz.conversation,
-    ),
-  };
-
-  const target = await resolveHarnessGatewayTarget(String(body.agent_id), { conversationId: String(body.conversation_id), admit: true });
-  if (target instanceof NextResponse) return target;
-  if (target.kind === "harness_engine") {
-    body.expected_harness_id = target.harnessId;
-    return streamHarnessGatewayRun(body, authResult, request.signal);
-  }
-
-  // Preserve the existing Dynamic Agents path byte-for-byte for default agents.
-  const daConfig = getDynamicAgentsConfig();
-  if (daConfig instanceof NextResponse) return daConfig;
-  const backendUrl = `${daConfig.dynamicAgentsUrl}/api/v1/chat/stream/start`;
-
-  return withHarnessGatewayTarget(await proxySSEStream(
-    backendUrl,
-    JSON.stringify(body),
-    authResult,
-    "[stream/start]",
-  ), target);
+  return dispatchChatStream(
+    forwardedRequest, authResult, conversationAuthz.conversation, body, "start",
+  );
 }

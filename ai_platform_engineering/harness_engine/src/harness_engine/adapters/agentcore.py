@@ -11,7 +11,7 @@ from typing import Any, Protocol
 
 import boto3
 
-from harness_engine.config import Settings
+from harness_engine.config import AgentCoreRuntimeTarget, Settings
 from harness_engine.models import (
     AdapterEvaluation,
     AgentBlueprint,
@@ -74,6 +74,14 @@ class AgentCoreAdapter:
             prefix="harness-session-",
             checkpoint_strategy="remote_managed",
         )
+
+    def set_registered_profiles(self, targets: dict[str, AgentCoreRuntimeTarget]) -> None:
+        configured = self._settings.agentcore_targets()
+        if configured.keys() & targets.keys():
+            raise ValueError("Registered AgentCore profiles conflict with environment configuration")
+        # Connections are append-only; an older concurrent read must not remove
+        # a connection another request has already loaded.
+        self._targets = {**self._targets, **configured, **targets}
 
     @property
     def configured_aliases(self) -> list[str]:

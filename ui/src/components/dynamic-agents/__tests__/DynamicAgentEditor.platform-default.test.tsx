@@ -204,8 +204,7 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     });
 
     expect(screen.getByLabelText("Operator profile")).toHaveValue("safe");
-    expect(screen.getByLabelText("Maximum turns")).toHaveValue(20);
-    expect(screen.getByText(/browser never receives credentials/)).toBeInTheDocument();
+    expect(screen.getByText(/Profiles are managed by your administrator/)).toBeInTheDocument();
 
     fireEvent.focus(screen.getByRole("button", { name: "About operator profiles" }));
     expect(screen.getByRole("tooltip")).toHaveTextContent(
@@ -214,6 +213,8 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     expect(screen.getByRole("tooltip")).toHaveTextContent(
       "without exposing credentials or infrastructure identifiers",
     );
+    fireEvent.click(screen.getByRole("button", { name: /Advanced/i }));
+    expect(screen.getByLabelText("Maximum turns")).toHaveValue(20);
   });
 
   it("validates a provider blueprint before updating existing agent metadata", async () => {
@@ -256,7 +257,7 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     fireEvent.change(screen.getByLabelText("Execution harness"), {
       target: { value: "claude_agent_sdk" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /Instructions/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^\d+\s+Instructions$/i }));
     fireEvent.change(await screen.findByTestId("codemirror-mock"), {
       target: { value: "You are a provider-backed agent." },
     });
@@ -314,7 +315,7 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     await flushAsync();
 
     expect(
-      screen.getByRole("option", { name: "LangChain Deep Agents (default)" }),
+      screen.getByRole("option", { name: "LangChain Deep Agents (default) — Stable" }),
     ).toHaveValue("dynamic_agents");
     expect(screen.getByLabelText("Execution harness")).toHaveValue("dynamic_agents");
     expect(

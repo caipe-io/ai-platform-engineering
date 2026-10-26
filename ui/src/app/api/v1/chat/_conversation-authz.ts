@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getCollection } from "@/lib/mongodb";
 import { requireConversationResourcePermission } from "@/lib/rbac/conversation-implicit-authz";
+import { getAgentId } from "@/types/a2a";
 import type { Conversation } from "@/types/mongodb";
 
 import type { AuthResult } from "./_helpers";
@@ -16,39 +17,41 @@ export type ConversationAuthorization =
   | { conversation: Conversation; denial: null }
   | { conversation: Conversation | null; denial: NextResponse };
 
-export async function authorizeConversationReadAccess(
-  authResult: AuthResult,
-  conversationId: string,
-  agentId: string,
-): Promise<ConversationAuthorization> {
-  const result = await authorizeConversationAccess(authResult, conversationId, "read");
-  if (result.denial) return result;
-  const storedAgentId = result.conversation.participants?.find(
-    (participant) => participant.type === "agent",
-  )?.id;
-  if (storedAgentId !== agentId) {
-    return {
-      conversation: result.conversation,
-      denial: NextResponse.json(
-        { success: false, error: "Agent does not match this conversation" },
-        { status: 403 },
-      ),
-    };
-  }
-  return result;
-}
-
 export async function authorizeConversationWriteAccess(
   authResult: AuthResult,
   conversationId: string,
+  agentId?: unknown,
 ): Promise<ConversationAuthorization> {
-  return authorizeConversationAccess(authResult, conversationId, "write");
+  return authorizeConversationAccess(authResult, conversationId, "write", agentId);
+}
+
+export async function authorizeConversationReadAccess(
+  authResult: AuthResult,
+  conversationId: string,
+  agentId?: unknown,
+): Promise<ConversationAuthorization> {
+  return authorizeConversationAccess(authResult, conversationId, "read", agentId);
+}
+
+function checkConversationAgent(conversation: Conversation, agentId?: unknown): ConversationAuthorization {
+  const savedAgentId = getAgentId(conversation);
+  if (agentId !== undefined && savedAgentId && agentId !== savedAgentId) {
+    return {
+      conversation,
+      denial: NextResponse.json(
+        { success: false, error: "Agent does not match this conversation", code: "CONVERSATION_AGENT_MISMATCH" },
+        { status: 409 },
+      ),
+    };
+  }
+  return { conversation, denial: null };
 }
 
 async function authorizeConversationAccess(
   authResult: AuthResult,
   conversationId: string,
   permission: "read" | "write",
+  agentId?: unknown,
 ): Promise<ConversationAuthorization> {
   const conversations = await getCollection<Conversation>("conversations");
   const conversation = await conversations.findOne({ _id: conversationId });
@@ -83,7 +86,7 @@ async function authorizeConversationAccess(
   //   - Metadata mutation is separately gated (owner-only), so routing keys
   //     cannot be injected via this path.
   if (permission === "write" && conversation.client_type === "slack") {
-    return { conversation, denial: null };
+    return checkConversationAgent(conversation, agentId);
   }
 
   try {
@@ -107,7 +110,7 @@ async function authorizeConversationAccess(
         }, { status: 409 }),
       };
     }
-    return { conversation, denial: null };
+    return checkConversationAgent(conversation, agentId);
   } catch (error) {
     return {
       conversation,

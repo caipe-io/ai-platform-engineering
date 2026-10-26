@@ -34,12 +34,12 @@ export function nativeRunQuery(params: { conversationId: string; agentId: string
 
 export async function getLatestNativeRun(
   params: { conversationId: string; agentId: string },
-  options: { accessToken?: string; signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal } = {},
 ): Promise<NativeRun | null> {
   const response = await fetch(`/api/v1/chat/runs?${nativeRunQuery(params)}`, {
     cache: "no-store",
     signal: options.signal,
-    ...(options.accessToken && { headers: { Authorization: `Bearer ${options.accessToken}` } }),
+    credentials: "same-origin",
   });
   if (!response.ok) throw await buildStreamErrorFromResponse(response);
   const result = await response.json() as { run: NativeRun | null };

@@ -24,6 +24,12 @@ const availableAgents = [
     enabled: true,
     execution_harness_id: "agentcore",
   },
+  {
+    _id: "app-agent",
+    name: "App Assistant",
+    enabled: true,
+    presentation: { app: { id: "example-app", name: "Example Workspace", icon: "/app-icons/example-app/logo.png" }, available: true },
+  },
 ];
 
 beforeEach(() => {
@@ -93,5 +99,18 @@ describe("AgentPicker", () => {
         }),
       ).toBeInTheDocument();
     });
+  });
+
+  it("identifies and searches an app assistant by its app without inferring a harness", async () => {
+    render(<AgentPicker selectedAgentId="app-agent" onSelectAgent={jest.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Choose agent. Current agent: App Assistant" }));
+    expect(screen.getAllByLabelText("App: Example Workspace")).toHaveLength(2);
+    const search = screen.getByRole("searchbox");
+    fireEvent.change(search, { target: { value: "Example Workspace" } });
+    expect(screen.getAllByText("App Assistant")).toHaveLength(2);
+    expect(screen.queryByText("Legacy Agent")).not.toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "Deep Agents" } });
+    expect(screen.getByText("Legacy Agent")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^App Assistant/ })).not.toBeInTheDocument();
   });
 });

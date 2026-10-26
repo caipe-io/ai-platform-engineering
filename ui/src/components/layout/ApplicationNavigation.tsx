@@ -57,6 +57,7 @@ import {
   ChevronDown,
   Database,
   FolderKanban,
+  Grip,
   Home,
   KeyRound,
   LayoutGrid,
@@ -310,7 +311,7 @@ function ApplicationNavigationContents({
       key: "apps",
       href: "/apps",
       label: "Apps",
-      icon: LayoutGrid,
+      icon: Grip,
     },
     storageMode === "mongodb"
       && config.dynamicAgentsEnabled

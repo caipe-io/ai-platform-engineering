@@ -31,8 +31,8 @@ export class AGUIStreamAdapter implements StreamAdapter {
   private transport: BrowserStreamTransport;
   private protocolState: AGUIProtocolState;
 
-  constructor(accessToken?: string) {
-    this.transport = new BrowserStreamTransport(accessToken);
+  constructor() {
+    this.transport = new BrowserStreamTransport();
     this.protocolState = createAGUIProtocolState();
   }
 
@@ -52,6 +52,7 @@ export class AGUIStreamAdapter implements StreamAdapter {
       ...(params.reasoningEffort && { reasoning_effort: params.reasoningEffort }),
       ...(params.turnId && { turn_id: params.turnId }),
       protocol: "agui",
+      ...(params.forwardedProps && { forwarded_props: params.forwardedProps }),
       ...(params.clientContext && { client_context: params.clientContext }),
       ...(params.files?.length && { files: params.files }),
     });

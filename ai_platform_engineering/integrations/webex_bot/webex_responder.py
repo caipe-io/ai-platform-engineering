@@ -460,8 +460,10 @@ class WebexThreadedStreamDispatcher:
                 "source": "webex",
                 "surface": "webex",
                 "webex_space_id": space_id,
+                "webex_room_id": room_id,
+                "webex_is_direct": is_direct,
                 "webex_message_id": message_id,
-                **({"webex_thread_parent_id": parent_id} if thread_parent_id else {}),
+                "webex_thread_parent_id": parent_id,
             }
             # Phase 1: propagate originating space context so RAG/PDP can
             # derive team_id from channel_id (spec FR-016/FR-017). 1:1
@@ -801,19 +803,33 @@ def _load_thread_context_messages(
     messages: list[dict[str, Any]] = []
     remaining = max_messages
     if parent_id != message_id:
-        root = webex_api.get_message(message_id=parent_id)
-        if root:
-            messages.append(root)
-            remaining -= 1
+        try:
+            root = webex_api.get_message(message_id=parent_id)
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "Unable to load Webex thread parent (type=%s); continuing with replies",
+                type(exc).__name__,
+            )
+        else:
+            if root:
+                messages.append(root)
+                remaining -= 1
 
     if remaining > 0:
-        replies = webex_api.list_messages(
-            room_id=room_id,
-            parent_id=parent_id,
-            before_message_id=message_id,
-            max_messages=remaining,
-        )
-        messages.extend(reversed(replies))
+        try:
+            replies = webex_api.list_messages(
+                room_id=room_id,
+                parent_id=parent_id,
+                before_message_id=message_id,
+                max_messages=remaining,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "Unable to load Webex thread replies (type=%s); retaining available context",
+                type(exc).__name__,
+            )
+        else:
+            messages.extend(reversed(replies))
     return [message for message in messages if message.get("id") != message_id]
 
 

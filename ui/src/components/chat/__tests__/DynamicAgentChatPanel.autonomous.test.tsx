@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ChatMessage, Conversation } from "@/types/a2a";
 import type { StreamCallbacks } from "@/lib/streaming";
 import { createStreamEvent } from "@/lib/streaming/types";
@@ -27,6 +27,7 @@ const mockChatState = {
   setConversationStreaming: jest.fn(),
   saveMessagesToServer: jest.fn().mockResolvedValue(undefined),
   loadMessagesFromServer: jest.fn(),
+  externalActivity: {},
   contextUsageByConversation: {},
   messageHistory: {},
   setContextUsage: jest.fn(),
@@ -34,7 +35,7 @@ const mockChatState = {
 };
 
 jest.mock("@/store/chat-store", () => ({
-  useChatStore: Object.assign(() => mockChatState, { getState: () => mockChatState }),
+  useChatStore: Object.assign((selector?: (state: typeof mockChatState) => unknown) => selector ? selector(mockChatState) : mockChatState, { getState: () => mockChatState }),
 }));
 jest.mock("@/store/feature-flag-store", () => ({
   useFeatureFlagStore: (selector: (state: unknown) => unknown) => selector({
@@ -79,6 +80,8 @@ function runMessages(runId: string): ChatMessage[] {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockChatState.activeConversationId = "task-chat";
+  mockStreamMessage.mockResolvedValue(undefined);
   HTMLElement.prototype.scrollIntoView = jest.fn();
   mockConversation = {
     id: "task-chat",
@@ -213,3 +216,34 @@ it("shows the retained execution harness even when the agent default has changed
   expect(await screen.findByLabelText("Execution harness: Claude Agent SDK")).toBeInTheDocument();
   expect(mockReattachStream).not.toHaveBeenCalled();
 });
+
+
+it.each(["completed", "failed", "input", "approval"] as const)(
+  "does not display a background conversation's %s status or input controls", async (event) => {
+    mockConversation = { ...mockConversation, source: "web", messages: [] };
+    let finish!: () => void;
+    mockStreamMessage.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const panel = render(<ChatPanel agentId="example-agent" conversationId="task-chat" />);
+    fireEvent.change(screen.getByPlaceholderText(/Ask anything/), { target: { value: "Inspect" } });
+    fireEvent.click(screen.getByTitle("Send message"));
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalled());
+    const callbacks = mockStreamMessage.mock.calls[0][1] as StreamCallbacks;
+    mockChatState.activeConversationId = "other-chat";
+    mockConversation = { ...mockConversation, id: "other-chat", title: "Other conversation", messages: [] };
+    panel.rerender(<ChatPanel agentId="example-agent" conversationId="other-chat" />);
+    await act(async () => {
+      if (event === "completed") callbacks.onDone?.();
+      if (event === "failed") callbacks.onError?.("Example failure");
+      if (event === "input") callbacks.onInputRequired?.("interrupt-example", "Background input", [], undefined);
+      if (event === "approval") callbacks.onToolApprovalRequired?.("interrupt-example", "inspect", {}, ["approve", "reject"], undefined);
+    });
+    expect(screen.queryByText("Run completed.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Run failed. Saved progress is retained.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Waiting for input or approval.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Background input")).not.toBeInTheDocument();
+    if (event === "input" || event === "approval") expect(mockChatState.addStreamEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "input_required" }), "task-chat",
+    );
+    await act(async () => finish());
+  },
+);

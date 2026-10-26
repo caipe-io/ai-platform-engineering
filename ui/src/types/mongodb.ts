@@ -72,6 +72,8 @@ export interface Participant {
 }
 
 export interface Conversation {
+  /** Server-managed app routing identity. Public metadata edits cannot change it. */
+  app_binding?: { app_id: string; agent_id: string };
   _id: string; // UUID for shareable links (server-generated)
   title: string;
   client_type: ClientType; // Top-level: 'webui' | 'slack' (promoted from metadata)
@@ -269,6 +271,8 @@ export interface UserSettings {
     releaseNotesDismissedAnnouncementIds?: string[];
     /** Ids of Home page widgets the user has enabled, in display order. */
     home_widgets?: string[];
+    /** Private chat folders and grouping; does not change sharing or ownership. */
+    chat_history?: import("@/lib/chat-history-organization").ChatHistoryOrganization;
     /** Schema version used to migrate widget defaults without undoing explicit removals. */
     home_widgets_version?: number;
     /** Which Home page layout the user sees — the new default, or the previous fixed layout. */

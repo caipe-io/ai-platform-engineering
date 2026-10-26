@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, ValidationError
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
-from dynamic_agents.models import DynamicAgentConfig
+from dynamic_agents.models import AppContextPromptConfig, BuiltinToolsConfig, DynamicAgentConfig
 from dynamic_agents.services.mcp_client import intersect_allowed_tools
 from dynamic_agents.services.runtime_storage import materialize_runtime_config, resolve_runtime_storage
 
@@ -128,6 +128,9 @@ def require_native_execution_owner(
     if mongo._db is None:
         raise SessionBindingError("MongoDB not connected")
     database = mongo._db
+    conversation = database["conversations"].find_one({"_id": session_id}, {"app_binding": 1})
+    if conversation is not None and "app_binding" in conversation:
+        raise ExecutionOwnerConflictError("This execution context belongs to an installed app; use its admitted gateway")
     deleted = database["native_acp_deleted_sessions"]
     if deleted.find_one({"_id": session_id}) is not None:
         raise ExecutionOwnerConflictError("This execution context was permanently deleted")
@@ -169,6 +172,73 @@ def require_native_execution_owner(
         raise ExecutionOwnerConflictError("The execution owner changed; use the canonical gateway or create a new conversation")
     if deleted.find_one({"_id": session_id}) is not None:
         raise ExecutionOwnerConflictError("This execution context was permanently deleted")
+
+
+def _intersect_domains(saved: str, current: str) -> str:
+    """Intersect the exact/domain-suffix patterns understood by URL tools."""
+    patterns: list[str] = []
+    for left in (part.strip().lower() for part in saved.split(",") if part.strip()):
+        for right in (part.strip().lower() for part in current.split(",") if part.strip()):
+            match = None
+            if left == right or right == "*":
+                match = left
+            elif left == "*":
+                match = right
+            elif left.startswith("*.") and right.startswith("*."):
+                if right[2:].endswith("." + left[2:]):
+                    match = right
+                elif left[2:].endswith("." + right[2:]):
+                    match = left
+            elif left.startswith("*.") and (right == left[2:] or right.endswith("." + left[2:])):
+                match = right
+            elif right.startswith("*.") and (left == right[2:] or left.endswith("." + right[2:])):
+                match = left
+            if match is not None and match not in patterns:
+                patterns.append(match)
+    return ",".join(patterns)
+
+
+def _intersect_builtin_tools(
+    saved: BuiltinToolsConfig | None, current: BuiltinToolsConfig | None,
+) -> BuiltinToolsConfig | None:
+    """Keep an admitted tool only with its current grant and tighter limits."""
+    if saved is None or current is None:
+        return None
+    result = saved.model_copy(deep=True)
+    for name in BuiltinToolsConfig.model_fields:
+        admitted = getattr(saved, name)
+        authorized = getattr(current, name)
+        if name == "workflows":
+            setattr(result, name, [value for value in admitted if value in (authorized or [])] if admitted else admitted)
+        elif admitted is not None and authorized is not None:
+            updates: dict[str, object] = {"enabled": admitted.enabled and authorized.enabled}
+            if name in {"fetch_url", "curl"}:
+                domains = _intersect_domains(admitted.allowed_domains, authorized.allowed_domains)
+                updates.update(allowed_domains=domains, enabled=bool(updates["enabled"] and domains))
+            if name == "curl":
+                updates.update(
+                    https_only=admitted.https_only or authorized.https_only,
+                    allow_non_public_urls=admitted.allow_non_public_urls and authorized.allow_non_public_urls,
+                )
+            if name == "wait":
+                updates["max_seconds"] = min(admitted.max_seconds, authorized.max_seconds)
+            setattr(result, name, admitted.model_copy(update=updates, deep=True))
+        else:
+            setattr(result, name, None)
+    return result
+
+
+def _intersect_app_context(
+    saved: AppContextPromptConfig | None, current: AppContextPromptConfig | None,
+) -> AppContextPromptConfig | None:
+    """A retained approval cannot restore a revoked app-data projection."""
+    if saved is None or current is None:
+        return None
+    app_ids = [app_id for app_id in saved.app_ids if app_id in current.app_ids]
+    fields = [field for field in saved.fields if field in current.fields]
+    if not app_ids or not fields:
+        return None
+    return saved.model_copy(update={"app_ids": app_ids, "fields": fields, "max_bytes": min(saved.max_bytes, current.max_bytes)})
 
 
 def resolve_native_binding(
@@ -225,6 +295,12 @@ def resolve_native_binding(
                 "allowed_remote_agents": [
                     agent_id for agent_id in binding.effective_config.allowed_remote_agents
                     if agent_id in agent.allowed_remote_agents
+                ],
+                "builtin_tools": _intersect_builtin_tools(binding.effective_config.builtin_tools, agent.builtin_tools),
+                "app_context_prompt": _intersect_app_context(binding.effective_config.app_context_prompt, agent.app_context_prompt),
+                "subagents": [
+                    reference for reference in binding.effective_config.subagents
+                    if reference.agent_id in {current.agent_id for current in agent.subagents}
                 ],
             }, deep=True)
         else:

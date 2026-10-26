@@ -12,7 +12,7 @@ RUN if [ -z "$AGENT_NAME" ]; then \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     tzdata \
-    && pip install uv==0.12.6 \
+    && pip install uv==0.13.4 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

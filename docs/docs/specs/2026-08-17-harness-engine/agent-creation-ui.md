@@ -1,30 +1,52 @@
 # Agent Creation UI Architecture
 
+> **Delivery scope:** [Phase 1](delivery-phases.md) exposes supported profiles/options and prevents unsupported controls from implying functionality. Phase 2 adds the full capability/schema/panel architecture with `DeepAgentsAdapter`; Phase 4 enables cross-harness delegation controls only after runtime support is qualified.
+
+> **Pending interface sketches:** [Deep Agents Adapter and Pluggable Agent Builder](deep-agents-integration-pending.md) details capability-driven panels, schema validation, and migration pseudocode. These interfaces are proposed work, not current functionality.
+
 > **Implemented vertical slice (2026-08-18):** The existing editor now fetches
 > descriptors from the independent Harness Engine, renders sanitized operator
 > profiles and primitive JSON-Schema options, performs server-side draft
 > validation, and saves a separate immutable blueprint. Dynamic Agents remains
-> the default and its stored document/runtime is unchanged. Compatibility diffs,
+> the default with its existing runtime behavior. Compatibility diffs,
 > typed complex panels, memory policy controls, and pre-Dynamic-Agent atomic save
 > coordination remain follow-up work.
 
 ## Goal
 
-Evolve the existing `DynamicAgentEditor` into a Harness Engine agent builder. The selected harness controls compatibility, available models, field behavior, validation, and operator context without changing the existing five-step navigation or default Deep Agents experience.
+Evolve the existing `DynamicAgentEditor` into a Harness Engine agent builder. The selected harness controls compatibility, available models, field behavior, validation, and operator context without changing the existing step navigation or default Deep Agents experience.
 
-## Current UI baseline
+## Phase 1 builder behavior
+
+| Harness | Agent author controls |
+|---|---|
+| Deep Agents (`dynamic_agents`) | Identity/access, instructions, model/reasoning, tools, knowledge, skills, and the existing Advanced sections |
+| Claude Agent SDK | Identity/access, instructions, operator profile; schema-declared SDK options under Advanced |
+| AgentCore | Identity/access, instructions, operator profile; Advanced appears only when the descriptor declares options |
+
+- Tool selection requires a `native` or `emulated` `tools.broker` capability. Both current engine adapters report it unavailable; Claude SDK also disables its built-in tools.
+- Provider-runtime tools configured outside this builder are not portable builder tool bindings.
+- Non-Deep-Agents execution models come from operator profiles. An optional writing-assistant model is used only for AI Suggest, is not saved as the execution model, and does not block saving when absent.
+- The BFF requires a model for Deep Agents, including when switching back to it. Engine-backed metadata can omit that field.
+- Deep Agents settings already saved in metadata remain intact while another harness is selected. They are omitted from that harness's execution blueprint and its AI Suggest context.
+- Switching harnesses retains profile/options drafts for each harness while the editor is open.
+- Navigation includes supported steps only, retaining the existing step IDs. A deep link to a hidden step opens Basic Info.
+- An unavailable harness/profile or a failed saved-configuration load blocks engine-backed saves. The default Deep Agents path remains available without Engine.
+- These are Phase 1 controls around the existing descriptor contract. Full per-feature schemas, trusted panel registration, and `DeepAgentsAdapter` remain Phase 2.
+
+## Baseline before Phase 1 UI changes
 
 The current editor:
 
 - is one client component with local React state;
-- has fixed `basic`, `instructions`, `tools`, `skills`, and `advanced` steps;
+- has fixed `basic`, `instructions`, `tools`, `knowledge`, `skills`, and `advanced` steps;
 - fetches one unfiltered model list on mount;
 - renders tools, skills, middleware, subagents, interrupts, and workflows unconditionally;
 - computes only local required-field blockers;
 - writes directly through the existing Next.js BFF CRUD route;
 - tracks the entire form as one dirty-state snapshot.
 
-The Harness Engine UI preserves these behaviors for an agent with no `harness` field, resolving it to `deepagents`.
+The Phase 1 UI preserves the Deep Agents experience for an agent with no `execution_harness_id`, resolving it to `dynamic_agents`. The sections below describe the broader target contract; they are not all implemented by Phase 1.
 
 ## Design principles
 

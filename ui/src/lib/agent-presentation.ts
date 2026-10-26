@@ -1,3 +1,5 @@
+import type { AgentPresentation } from "@/types/dynamic-agent";
+
 export { getDeterministicAgentThemeId } from "@/lib/agent-theme";
 
 export interface HarnessPresentation {
@@ -72,4 +74,26 @@ export function getHarnessPresentation(
       label: normalized,
     }
   );
+}
+
+/** App provenance takes precedence; an app stream does not identify its internal SDK. */
+export function getAgentPresentation(
+  harnessId?: string | null,
+  presentation?: AgentPresentation,
+): { label: string; logoSrc?: string; isApp: boolean; searchTerms: string[] } {
+  if (presentation?.app) {
+    const app = presentation.app;
+    return {
+      label: `App: ${app.name}${presentation.available ? "" : " (unavailable)"}`,
+      isApp: true,
+      searchTerms: [app.id, app.name, "app"],
+    };
+  }
+  const harness = getHarnessPresentation(harnessId);
+  return {
+    label: `Execution harness: ${harness.label}`,
+    logoSrc: harness.logoSrc,
+    isApp: false,
+    searchTerms: [harness.id, harness.label, harness.shortLabel],
+  };
 }

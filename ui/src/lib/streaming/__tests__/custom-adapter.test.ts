@@ -82,7 +82,7 @@ describe("CustomStreamAdapter", () => {
       ]),
     );
     const cb = callbacks();
-    const adapter = new CustomStreamAdapter("token-1");
+    const adapter = new CustomStreamAdapter();
 
     await adapter.streamMessage(
       {
@@ -101,7 +101,6 @@ describe("CustomStreamAdapter", () => {
         headers: {
           "Content-Type": "application/json",
           Accept: "text/event-stream",
-          Authorization: "Bearer token-1",
         },
         body: JSON.stringify({
           message: "hello",
@@ -231,7 +230,7 @@ describe("CustomStreamAdapter", () => {
   });
 
   it("cancels streams with bearer auth and handles failed cancellation", async () => {
-    const adapter = new CustomStreamAdapter("token-1");
+    const adapter = new CustomStreamAdapter();
 
     mockFetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ cancelled: true }), { status: 200 }),
@@ -243,7 +242,6 @@ describe("CustomStreamAdapter", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: "Bearer token-1",
         },
         body: JSON.stringify({
           conversation_id: "conversation-1",

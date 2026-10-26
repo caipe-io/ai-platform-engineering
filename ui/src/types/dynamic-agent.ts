@@ -428,8 +428,17 @@ export type ResumeData =
       }>;
     };
 
+/** Read-only catalog projection. Never persisted or used to select a runtime or grant access. */
+export interface AgentPresentation {
+  app: { id: string; name: string; icon?: string };
+  available: boolean;
+}
+
 export interface DynamicAgentConfig {
+  /** Deployment-owned, opt-in model-input projection. Not a permission grant. */
+  app_context_prompt?: { app_ids: string[]; fields: string[]; max_bytes?: number };
   _id: string;
+  readonly presentation?: AgentPresentation;
   /** Runtime selected by Harness Gateway. Missing legacy values mean Dynamic Agents. */
   execution_harness_id?: string;
   name: string;
@@ -439,7 +448,7 @@ export interface DynamicAgentConfig {
   allowed_remote_agents?: string[];
   remote_agent_timeouts?: Record<string, number>;
   builtin_tools?: BuiltinToolsConfig; // Built-in tools configuration
-  model: ModelConfig; // Required: LLM model configuration
+  model?: ModelConfig; // Required for Deep Agents; other harnesses use their operator profile.
   visibility: VisibilityType;
   shared_with_teams?: string[];
   subagents: SubAgentRef[]; // Other dynamic agents that can be delegated to
@@ -516,7 +525,7 @@ export interface DynamicAgentConfigCreate {
   allowed_remote_agents?: string[];
   remote_agent_timeouts?: Record<string, number>;
   builtin_tools?: BuiltinToolsConfig;
-  model: ModelConfig; // Required: LLM model configuration
+  model?: ModelConfig; // Required for Deep Agents; other harnesses use their operator profile.
   /** Accepts legacy `'private'` for back-compat; the BFF coerces it to `'team'`. */
   visibility?: LegacyVisibilityType;
   shared_with_teams?: string[];

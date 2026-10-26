@@ -92,6 +92,12 @@ class AgentCoreHarnessProvisioner:
         self._profiles = settings.agentcore_targets()
         self._clients = dict(control_clients or {})
 
+    def set_registered_profiles(self, targets: dict[str, AgentCoreRuntimeTarget]) -> None:
+        configured = self._settings.agentcore_targets()
+        if configured.keys() & targets.keys():
+            raise ValueError("Registered AgentCore profiles conflict with environment configuration")
+        self._profiles = {**self._profiles, **configured, **targets}
+
     def _profile(self, profile_id: str) -> AgentCoreRuntimeTarget:
         try:
             return self._profiles[profile_id]

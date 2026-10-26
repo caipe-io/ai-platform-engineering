@@ -23,6 +23,7 @@ from dynamic_agents.services import native_acp
 from dynamic_agents.services.native_acp import cancel_native_acp, native_acp_stream, native_acp_turn
 from dynamic_agents.services.stream_encoders import get_encoder
 from dynamic_agents.services.stream_encoders.semantic import SemanticStreamEncoder
+from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryError
 from tests.test_stream_cancellation_cleanup import _runtime
 
 
@@ -497,3 +498,18 @@ async def test_cancelled_langgraph_turn_does_not_replay_in_follow_up() -> None:
         )]
     assert follow_up.get_accumulated_content() == "RECOVERY-OK"
     assert "CANCELLED-CONTENT" not in "".join(frames)
+
+
+@pytest.mark.parametrize("resume", [False, True])
+async def test_model_recovery_failure_retains_typed_error_over_acp(resume: bool) -> None:
+    class ExhaustedRuntime(FakeRuntime):
+        async def stream(self, *args: Any, **kwargs: Any) -> Any:
+            raise ToolCallRecoveryError("The model could not repair its incomplete tool call.")
+            yield
+
+    with pytest.raises(ToolCallRecoveryError, match="could not repair"):
+        _ = [frame async for frame in native_acp_stream(
+            ExhaustedRuntime(), message=None if resume else "Example request", session_id="example-session",
+            user_email="test-user@example.test", encoder=get_encoder("custom"),
+            resume_data="{}" if resume else None,
+        )]

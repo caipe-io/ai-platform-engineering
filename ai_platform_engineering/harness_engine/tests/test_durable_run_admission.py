@@ -752,3 +752,20 @@ async def test_stopped_local_iterator_is_not_remote_provider_drain_proof(
         await second.delete_session("test-owner", "agent-example", "conversation-example")
     assert await stores[0]._read_run(run.run_id) is not None
     await second.shutdown()
+
+
+async def test_direct_engine_admission_cannot_bypass_a_retained_app_binding(stores: tuple[Repository, Repository]) -> None:
+    adapter = PausedAdapter()
+    first, second = await setup_coordinators(stores, adapter)
+    if isinstance(stores[0], MongoRunRepository):
+        await asyncio.to_thread(stores[0]._db.conversations.insert_one, {
+            "_id": "conversation-example",
+            "app_binding": {"app_id": "example-app", "agent_id": "agent-example"},
+        })
+    else:
+        stores[0]._gateway_owners[("agent-example", "conversation-example")] = "app:example-app"
+    with pytest.raises(RunAdmissionConflict):
+        await first.start_run(request_turn(), "test-owner")
+    assert adapter.calls == [] and first._tasks == {}
+    await first.shutdown()
+    await second.shutdown()

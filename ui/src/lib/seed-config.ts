@@ -335,6 +335,7 @@ export async function seedAgents(
       ui: (agentData.ui as DynamicAgentConfig["ui"]) ?? undefined,
       features:
         (agentData.features as DynamicAgentConfig["features"]) ?? undefined,
+      app_context_prompt: agentData.app_context_prompt as DynamicAgentConfig["app_context_prompt"],
       interrupt_on:
         (agentData.interrupt_on as DynamicAgentConfig["interrupt_on"]) ??
         undefined,

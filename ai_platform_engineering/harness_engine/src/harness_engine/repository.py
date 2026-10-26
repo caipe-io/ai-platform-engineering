@@ -21,6 +21,7 @@ from harness_engine.models import (
     AgentVersion,
     CreateRunRequest,
     ProviderResource,
+    RegisteredAgentCoreProfile,
     RunEvent,
     RunRecord,
     RunStatus,
@@ -562,6 +563,10 @@ class RunRepository(Protocol):
 
     async def close(self) -> None: ...
 
+    async def list_agentcore_profiles(self) -> list[RegisteredAgentCoreProfile]: ...
+
+    async def create_agentcore_profile(self, profile: RegisteredAgentCoreProfile) -> None: ...
+
     async def get_agent(self, agent_id: str) -> AgentRecord | None: ...
 
     async def get_agent_version(self, agent_id: str, version: int | None = None) -> AgentVersion | None: ...
@@ -656,6 +661,7 @@ class InMemoryRunRepository(RunLifecycle):
         self._versions: dict[tuple[str, int], AgentVersion] = {}
         self._sessions: dict[str, SessionBinding] = {}
         self._provider_resources: dict[str, ProviderResource] = {}
+        self._agentcore_profiles: dict[str, RegisteredAgentCoreProfile] = {}
         self._runs: dict[str, dict[str, Any]] = {}
         self._session_claims: dict[str, dict[str, Any]] = {}
         self._deleted_contexts: set[str] = set()
@@ -668,6 +674,15 @@ class InMemoryRunRepository(RunLifecycle):
 
     async def close(self) -> None:
         return None
+
+    async def list_agentcore_profiles(self) -> list[RegisteredAgentCoreProfile]:
+        return [profile.model_copy(deep=True) for profile in self._agentcore_profiles.values()]
+
+    async def create_agentcore_profile(self, profile: RegisteredAgentCoreProfile) -> None:
+        async with self._lock:
+            if profile.profile_id in self._agentcore_profiles:
+                raise RevisionConflictError(profile.profile_id)
+            self._agentcore_profiles[profile.profile_id] = profile.model_copy(deep=True)
 
     async def get_agent(self, agent_id: str) -> AgentRecord | None:
         record = self._agents.get(agent_id)
@@ -966,6 +981,7 @@ class MongoRunRepository(RunLifecycle):
             self._db.harness_agents.create_index("agent_id", unique=True)
             self._db.harness_agent_versions.create_index([("agent_id", ASCENDING), ("version", ASCENDING)], unique=True)
             self._db.harness_provider_resources.create_index("agent_id", unique=True)
+            self._db.harness_agentcore_profiles.create_index("profile_id", unique=True)
             self._db.harness_sessions.create_index("binding_id", unique=True)
             self._db.harness_sessions.create_index(
                 [
@@ -985,6 +1001,16 @@ class MongoRunRepository(RunLifecycle):
 
     async def close(self) -> None:
         await asyncio.to_thread(self._client.close)
+
+    async def list_agentcore_profiles(self) -> list[RegisteredAgentCoreProfile]:
+        docs = await asyncio.to_thread(lambda: list(self._db.harness_agentcore_profiles.find({}, {"_id": 0})))
+        return [RegisteredAgentCoreProfile.model_validate(doc) for doc in docs]
+
+    async def create_agentcore_profile(self, profile: RegisteredAgentCoreProfile) -> None:
+        try:
+            await asyncio.to_thread(self._db.harness_agentcore_profiles.insert_one, profile.model_dump(mode="python"))
+        except DuplicateKeyError as exc:
+            raise RevisionConflictError(profile.profile_id) from exc
 
     async def get_agent(self, agent_id: str) -> AgentRecord | None:
         doc = await asyncio.to_thread(self._db.harness_agents.find_one, {"agent_id": agent_id}, {"_id": 0})
@@ -1302,6 +1328,11 @@ class MongoRunRepository(RunLifecycle):
         await asyncio.to_thread(purge)
 
     async def gateway_harness(self, agent_id: str, conversation_id: str) -> str | None:
+        conversation = await asyncio.to_thread(
+            self._db.conversations.find_one, {"_id": conversation_id}, {"app_binding": 1},
+        )
+        if conversation is not None and "app_binding" in conversation:
+            raise RunAdmissionConflict("Execution context belongs to an installed app; use its admitted gateway")
         key = hashlib.sha256(f"{agent_id}\0{conversation_id}".encode()).hexdigest()
         claim = await asyncio.to_thread(self._db.harness_gateway_bindings.find_one, {"_id": key}, {"harness_id": 1})
         return claim["harness_id"] if claim else None

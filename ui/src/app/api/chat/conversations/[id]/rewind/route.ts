@@ -66,6 +66,7 @@ export async function POST(
   const conversationAuthz = await authorizeConversationWriteAccess(
     authResult,
     conversationId,
+    body.agent_id,
   );
   if (conversationAuthz.denial) return conversationAuthz.denial;
 

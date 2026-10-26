@@ -221,6 +221,7 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
               {defaultAgent ? (
                 <AgentHarnessBadge
                   harnessId={defaultAgent.execution_harness_id}
+                  presentation={defaultAgent.presentation}
                   compact
                 />
               ) : null}
@@ -251,6 +252,7 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
           {defaultAgentId && defaultAgent && (
             <AgentHarnessBadge
               harnessId={defaultAgent.execution_harness_id}
+              presentation={defaultAgent.presentation}
               compact
               className="ml-auto"
             />
@@ -372,7 +374,7 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
                   >
                     <span className="flex items-center gap-2">
                       <span className="min-w-0 flex-1 truncate font-medium">{agent.name}</span>
-                      <AgentHarnessBadge harnessId={agent.execution_harness_id} compact />
+                      <AgentHarnessBadge harnessId={agent.execution_harness_id} presentation={agent.presentation} compact />
                     </span>
                     {agent.description && (
                       <span className="block truncate text-xs text-muted-foreground">

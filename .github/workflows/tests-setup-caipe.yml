@@ -7,6 +7,7 @@ on:
       - 'tests/integration/test_setup_caipe_sudo_consent.sh'
       - 'tests/integration/test_setup_caipe_fresh_install_defaults.sh'
       - 'tests/integration/test_setup_caipe_public_urls.sh'
+      - 'tests/integration/test_setup_caipe_workspace_migrations.cjs'
       - '.github/workflows/tests-setup-caipe.yml'
   push:
     branches: [main]
@@ -15,6 +16,7 @@ on:
       - 'tests/integration/test_setup_caipe_sudo_consent.sh'
       - 'tests/integration/test_setup_caipe_fresh_install_defaults.sh'
       - 'tests/integration/test_setup_caipe_public_urls.sh'
+      - 'tests/integration/test_setup_caipe_workspace_migrations.cjs'
       - '.github/workflows/tests-setup-caipe.yml'
   workflow_dispatch:
 
@@ -59,3 +61,6 @@ jobs:
 
       - name: Run public URL and NodePort regression tests
         run: /bin/bash tests/integration/test_setup_caipe_public_urls.sh
+
+      - name: Run workspace migration initialization regression tests
+        run: node --test tests/integration/test_setup_caipe_workspace_migrations.cjs

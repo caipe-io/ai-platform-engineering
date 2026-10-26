@@ -1,6 +1,9 @@
 /** @jest-environment node */
 
 import { NextRequest } from "next/server";
+import { createHash } from "node:crypto";
+import { proxyAgenticAppRequest } from "@/lib/agentic-apps/proxy";
+import { verifyAgenticAppToken } from "@/lib/agentic-apps/tokens";
 
 import type { ConfiguredAgenticApp } from "@/types/agentic-app";
 import { normalizeLegacyAgenticAppManifest, validateAgenticAppManifest } from "../../../../../../../app-sdk/agentic-app-manifest.mjs";
@@ -99,6 +102,7 @@ describe("External App runtime route", () => {
           "sec-fetch-dest": "iframe",
           "x-example-app-position": "admin",
           "x-caipe-roles": "admin",
+          "x-caipe-assistant-context": "forged-context",
           "x-untrusted-hop": "remove-me",
         },
       }),
@@ -112,6 +116,7 @@ describe("External App runtime route", () => {
     expect(headers.get("authorization")).toMatch(/^Bearer /);
     expect(headers.get("x-forwarded-prefix")).toBe("/apps/example-app");
     expect(headers.get("cookie")).toBeNull();
+    expect(headers.get("x-caipe-assistant-context")).toBeNull();
     expect(headers.get("keep-alive")).toBeNull();
     expect(headers.get("x-untrusted-hop")).toBeNull();
     expect(headers.get("x-example-app-position")).toBeNull();
@@ -119,6 +124,33 @@ describe("External App runtime route", () => {
     expect(response.headers.get("x-frame-options")).toBeNull();
 
     fetchMock.mockRestore();
+  });
+
+  it("signs the actual upstream bearer, body and runtime path for a validated Webex invocation", async () => {
+    mockGetAuthenticatedUser.mockResolvedValueOnce({ user: { email: "test-user@example.com", role: "user" },
+      session: { sub: "example-user", role: "user", accessToken: "example-obo-token" } });
+    mockGetConfiguredAgenticApp.mockReturnValueOnce({ ...configuredApp, manifest: { ...configuredApp.manifest,
+      auth: { mode: "forward-user-access-token" }, access: { ...configuredApp.manifest.access,
+        policyActions: [{ action: "proxy:POST", defaultEffect: "allow" }] } } });
+    const upstream = jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response("data: example\n\n", { headers: { "content-type": "text/event-stream" } }));
+    const body = '{"message":"Hello 🌍"}';
+    try {
+      const result = await proxyAgenticAppRequest(new Request("https://example.test/api/v1/chat/stream/start", {
+        method: "POST", body, headers: { "x-caipe-assistant-context": "forged-proof", "x-caipe-roles": "admin" },
+      }), { params: Promise.resolve({ appId: "example-app", path: ["api", "items"] }) }, undefined,
+      { client: "webex", kind: "direct", conversationId: "example-chat", agentId: "example-agent",
+        roomId: "example-room", spaceId: "example-space", threadId: "example-thread" });
+      expect(result.status).toBe(200);
+      const headers = new Headers(upstream.mock.calls[0][1]?.headers);
+      expect(headers.get("authorization")).toBe("Bearer example-obo-token");
+      expect(headers.get("x-caipe-roles")).toBe("user");
+      const proof = await verifyAgenticAppToken(headers.get("x-caipe-assistant-context")!, "example-app");
+      expect(proof).toMatchObject({ sub: "example-user", purpose: "assistant-stream", assistant_context: {
+        client: "webex", kind: "direct", conversationId: "example-chat", path: "/api/items", method: "POST",
+        bodyHash: createHash("sha256").update(body).digest("hex"), tokenHash: createHash("sha256").update("example-obo-token").digest("hex"),
+      } });
+      expect(proof.exp - Number(proof.iat)).toBe(60);
+    } finally { upstream.mockRestore(); }
   });
 
   it("fails closed when an operational native API mount has no service origin", async () => {

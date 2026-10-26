@@ -42,7 +42,7 @@ describe("durable conversation read authorization", () => {
 
   it("denies unrelated agent bindings after authorizing the resource", async () => {
     const result = await authorizeConversationReadAccess(caller, "conversation-1", "agent-2");
-    expect(result.denial?.status).toBe(403);
+    expect(result.denial?.status).toBe(409);
   });
 
   it("does not expose run state to a caller without conversation read permission", async () => {

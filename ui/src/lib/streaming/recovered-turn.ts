@@ -13,8 +13,9 @@ export function recoveredAssistantMessage(run: NativeRun, messages: ChatMessage[
 
 export function needsNativeRunReplay(run: NativeRun, message: ChatMessage | undefined): boolean {
   if (run.status === "queued" || run.status === "running") return true;
-  if (!message || !message.isFinal) return true;
-  if (run.status === "completed") return message.turnStatus !== "done";
+  if (!message) return true;
   if (run.status === "awaiting_input") return message.turnStatus !== "waiting_for_input";
+  if (!message.isFinal) return true;
+  if (run.status === "completed") return message.turnStatus !== "done";
   return message.turnStatus !== "interrupted";
 }

@@ -6,6 +6,7 @@ export const RESERVED_HOST_PATHS = [
   "/admin",
   "/agent-builder",
   "/apps",
+  "/app-icons",
   "/autonomous",
   "/chat",
   "/credentials",

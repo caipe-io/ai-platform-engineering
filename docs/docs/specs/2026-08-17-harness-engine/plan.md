@@ -1,5 +1,7 @@
 # Implementation Plan: Harness Engine
 
+> **Delivery alignment (2026-10-21):** [Delivery phases](delivery-phases.md) defines the common sequence used by this plan, the discussion and PR: independent engine/gateway, separate Deep Agents integration, external sandbox execution, then cross-harness composition. Older task workstreams are technical backlog, not competing release phases.
+
 > **Independent track (2026-08-18):** The current implementation follows the
 > standalone control-plane slice in [Portable abstractions](portable-abstractions.md).
 > Tasks that name `ai_platform_engineering/dynamic_agents/` remain future
@@ -10,7 +12,7 @@
 
 ## Summary
 
-Build Harness Engine as an independent service and adopt it beside Dynamic Agents. The first vertical slice supports Amazon Bedrock AgentCore through either a legacy operator-owned shared target or a server-provisioned Harness per CAIPE agent. No source file, route, database schema, stream, or execution behavior in `ai_platform_engineering/dynamic_agents/` changes.
+Build Harness Engine as an independent service and adopt it beside Dynamic Agents. The first delivery phase supports opt-in AgentCore and Claude SDK execution, with operator-owned profiles and explicit experimental capabilities. No source file, route, database schema, stream, or execution behavior in `ai_platform_engineering/dynamic_agents/` changes.
 
 The Next.js BFF remains horizontally stateless. Its existing chat endpoints now
 form the **Harness Gateway**: they resolve the BFF-owned
@@ -35,16 +37,16 @@ each adapter owns its native checkpoint/session representation
 **Target Platform**: Independent Linux control-plane container calling the managed AgentCore Runtime plane; local memory repository is test/development only
 **Project Type**: New backend service plus additive Next.js BFF routes and agent-editor overlay
 **Performance Goals**: Compatibility control-plane overhead within 10% excluding declared sandbox startup; canonical translation under 25 ms p95 per event batch; warm worker readiness under 5 seconds p95 and cold readiness under 30 seconds p95; no more than 20% control-plane memory growth
-**Constraints**: Zero Dynamic Agents runtime changes; fail closed before provider invocation; no arbitrary AgentCore ARN or execution role from browser/agent data; no user bearer propagation; no BFF affinity; no automatic fallback after side effects
-**Scale/Scope**: AgentCore first; horizontally scaled BFF and Harness Engine readers over a shared Mongo event log; additional harnesses and sandbox workers follow the same boundary
+**Phase 1 constraints**: Zero Dynamic Agents runtime changes; fail closed before provider invocation; no arbitrary AgentCore ARN or execution role from browser/agent data; no user bearer propagation into experimental provider calls; no BFF affinity; no automatic fallback after side effects. Phase 2 separately specifies governed caller delegation for existing tool behavior.
+**Scale/Scope**: Opt-in AgentCore and Claude SDK; horizontally scaled BFF and Harness Engine readers over a shared Mongo event log; Deep Agents integration and sandbox workers follow the staged delivery gates
 
 ## Constitution Check
 
-*GATE: Passed before Phase 0 research. Re-checked after Phase 1 design.*
+*Historical Spec Kit research/design checklist, not delivery-phase approval. Current merge and certification gates are recorded in [Delivery phases](delivery-phases.md).*
 
 | Principle | Design response | Status |
 |---|---|---|
-| Worse is Better | Evolve the proven service in place; first wrap the current runtime, then move the same worker behind a narrow sandbox protocol without changing public routes or data. | PASS |
+| Worse is Better | Add the independent opt-in engine first; reuse the existing runtime in a separate compatibility phase, then add isolated execution and composition. | Design intent |
 | YAGNI | Implement only the four requested adapters, one minimal internal worker protocol, static profiles, and Agent Sandbox claims. No marketplace, arbitrary plugin loader, or automatic cost router. | PASS |
 | Rule of Three | A common adapter contract is justified by four concrete harnesses. Provider-specific configuration remains duplicated inside adapters until a third identical pattern appears. | PASS |
 | Composition over Inheritance | Use small runtime, adapter, tool, session, and event protocols composed by a registry; no adapter inheritance tree. | PASS |
@@ -64,17 +66,21 @@ Before enabling an adapter, record its exact locked version, license/terms, tran
 
 ```mermaid
 flowchart TB
-    C["Web UI / Slack / Webex"] --> HG["Harness Gateway\nexisting BFF chat routes"]
+    C["Web UI / CLI / Slack / Webex"] --> HG["Harness Gateway\nexisting BFF chat routes"]
     HG -->|"missing/default marker"| DA["Dynamic Agents"]
     HG -->|"non-default marker\ninternal token + subject"| HE["Independent Harness Engine"]
-    HE --> CFG["Independent harness overlays"]
-    HE --> RUNS["Mongo runs + ordered event log"]
+    HG -->|"app-defined assistant"| APP["App-owned stream"]
+    HE --> CFG["Immutable execution versions"]
+    HE --> RUNS["Mongo sessions + runs + ordered event log"]
+    HE --> CLAUDE["Claude SDK adapter"]
     HE --> AC["AgentCore adapter"]
     AC --> AWS["Operator-allowlisted AgentCore Runtime"]
     C -. "reconnect run_id + cursor" .-> HG
 ```
 
-### Ownership boundary
+### Target ownership boundary
+
+The table includes future shared services from delivery Phases 2–4. Phase 1 retains BFF/CAS policy enforcement and the unchanged Dynamic Agents default; protocol declarations alone do not claim those services are implemented.
 
 | Common engine owns | Harness adapter owns |
 |---|---|
@@ -185,7 +191,7 @@ charts/ai-platform-engineering/charts/dynamic-agents/
 └── templates/                           # control plane, RBAC, policies, profiles/pools
 ```
 
-**Structure Decision**: Create `ai_platform_engineering/harness_engine/` as a separate package, image, API, persistence boundary, and test suite. Add only new `/api/harness-engine/*` BFF routes and a UI overlay. Do not modify `ai_platform_engineering/dynamic_agents/`; future migration is separately specified and reversible.
+**Structure Decision**: Phase 1 creates `ai_platform_engineering/harness_engine/` as a separate package, image, API, persistence boundary and test suite. Extend the existing BFF chat routes with Harness Gateway and add `/api/harness-engine/*` controls. Preserve `ai_platform_engineering/dynamic_agents/`; Phase 2 integration is separately specified and reversible.
 
 ### Implemented vertical-slice structure
 
@@ -215,7 +221,7 @@ ui/src/
 └── types/harness-engine.ts
 ```
 
-The dependency-ordered implementation backlog, independent story checkpoints, exact file targets, and release gates are defined in [tasks.md](./tasks.md), generated as the Spec Kit Phase 2 deliverable.
+The technical implementation backlog, story checkpoints, file targets and release gates are defined in [tasks.md](./tasks.md), generated through Spec Kit task planning. [Delivery phases](delivery-phases.md) owns release order; task workstream numbers are stable backlog references.
 
 ### Harness Gateway vertical slice
 
@@ -330,84 +336,46 @@ Tracing uses sanitized W3C Trace Context across the control plane, worker, model
 
 ## Implementation Phases
 
-### Phase 0 - Freeze the compatibility oracle
+These are the same delivery phases published in [Discussion 2405](https://github.com/orgs/caipe-io/discussions/2405). [Delivery phases](delivery-phases.md) is the canonical scope and gate reference. This sequence supersedes the earlier replacement-first ordering.
 
-- Inventory every current route, schema, SSE event, error, metric, persistence namespace, built-in tool, middleware outcome, and deployment setting.
-- Convert current behavior into black-box golden contract tests before refactoring.
-- Create the compatibility matrix and baseline latency/memory benchmark.
-- Record exact adapter dependency and security reviews.
+### Phase 1 — Independent engine and gateway (PR 2401)
 
-**Exit**: Existing behavior is machine-verifiable and the architecture amendment is approved.
+- Retain Dynamic Agents as the default; add opt-in AgentCore and Claude SDK adapters without refactoring its Python runtime.
+- Deliver current gateway/session/run/replay contracts and preserve app-owned streams.
+- Keep unsupported capabilities explicit and provider settings truthful in the builder.
+- Resolve retained-owner routing, optional-engine coupling, current-path UI issues and required CI/review gates.
 
-### Phase 1 - Add contracts without changing execution
+**Exit:** Approved Phase 1 scope and current-path correctness/compatibility evidence. No claim of Deep Agents integration, sandbox isolation or cross-harness delegation.
 
-- Add canonical models, validator, adapter/runtime protocols, static registry, capabilities, and catalog/validation routes.
-- Add optional `harness` configuration with read-time `deepagents` default.
-- Add `harness_sessions` repository and indexes, initially unused by compatibility conversations.
-- Add adapter labels to existing telemetry with `deepagents` as the only value.
+### Phase 2 — Deep Agents integration and pluggable builder
 
-**Exit**: All existing tests and benchmarks pass; no user-visible behavior changes.
+- Extract and reuse the existing runtime behind `DeepAgentsAdapter`; preserve its graph, tools, middleware, skills and native subagents.
+- Add typed events, completed/paused/cancelled outcomes, authorized resume, attachments and caller-scoped credential handling.
+- Preserve checkpoint/file identities and scheduled/workflow behavior; migrate bindings gradually with one execution authority and a reconciled rollback path.
+- Render supported editor features through bounded schemas and a trusted reusable panel registry.
+- Keep service retirement separate until remaining management and operational APIs have replacements.
 
-### Phase 2 - Wrap the current runtime
+**Exit:** Native behavior, CAS/credential isolation, lifecycle, migration and UI conformance pass. See [interface and migration sketches](deep-agents-integration-pending.md).
 
-- Implement `deepagents` adapter by delegation to the current `AgentRuntime`.
-- Translate LangGraph chunks to canonical events.
-- Refactor custom SSE and AG-UI encoders to consume canonical events while preserving golden frames.
-- Change runtime cache and chat routes to depend on `HarnessRuntime`, retaining cache keys, TTL, LRU, capacity, and error shapes.
+### Phase 3 — External sandbox execution
 
-**Exit**: The unchanged Dynamic Agents suite plus the full adapter conformance suite passes for `deepagents` within performance budgets.
+- Keep `SandboxManager` in the engine container; call a pluggable external backend such as Kubernetes Agent Sandbox.
+- Acquire operator-approved claims and conversation-scoped worker leases; keep AgentCore provider-managed.
+- Move full local harness loops to workers through the worker protocol, governed model/tool/state interfaces and generation fencing.
+- Validate external durable state, reuse/restore, cancellation, cleanup, credentials and runtime/network isolation before production certification.
 
-### Phase 3 - Move portable policy to common services
+**Exit:** Each advertised sandbox profile passes worker lifecycle, recovery and isolation gates. Tool-only sandboxing is labeled as a narrower mode.
 
-- Introduce ToolBroker, DelegationBroker, session binding, provider-neutral interrupt records, and common attachment/skill inputs.
-- Introduce ThreadStateStore durable-head commits, MemoryBroker scopes/revisions/provenance, and the common W3C tracing topology.
-- Route Deep Agents through those services to prove no regression.
-- Add concurrent-turn locks, canonical event bounds, credential lifetime rules, and adapter-specific capacity partitions.
+### Phase 4 — Cross-harness agent composition
 
-**Exit**: Deep Agents remains certified; existing threads resume unchanged; memory isolation/conflicts and end-to-end trace/redaction have fault tests.
+- Add `DelegationBroker` to admit child agents through their adapters under the effective caller's authorization.
+- Preserve parent/child identity, session/workspace boundaries, output, approvals and coordinated cancellation.
+- Enforce compatible capabilities, target permissions, cycle/depth/concurrency controls and budgets.
+- Enable reusable delegation UI only for qualified adapter/deployment combinations.
 
-### Phase 4 - Introduce the sandbox execution plane
+**Exit:** Cross-harness delegation and child-run visibility pass authorization, lifecycle and isolation conformance. Existing Deep Agents native subagents remain available through Phase 2 parity.
 
-- Install and pin Agent Sandbox CRDs/controller in test clusters.
-- Define operator-owned Deep Agents, Claude, and Strands templates, warm pools, RuntimeClasses, resource limits, and NetworkPolicies.
-- Implement the worker protocol, capability issuer/verifier, SandboxLeaseManager, readiness, generation fencing, orphan reconciliation, and signed adapter images.
-- Shadow Deep Agents turns against sandbox workers with no client traffic, then canary new conversations while retaining explicit in-process rollback.
-- Test eviction, hibernation, max lifetime, controller outage, stale events/tool calls, pod escape, egress denial, credential canaries, and 1,000-binding isolation.
-
-**Exit**: Deep Agents has wire-compatible output from sandbox pods, warm/cold startup meets SLOs, no sandbox contains raw credentials, and stale generations have zero accepted events or tool calls.
-
-### Phase 5 - Add adapters one at a time
-
-1. Claude Agent SDK worker: state facade, MCP facade, permissions/HITL, stream translator, subprocess cleanup.
-2. Strands worker: session facade, hooks/stream translator, MCP/tool facade, interrupts.
-3. AgentCore Harness: control-plane validation, deterministic remote session mapping, streaming translator, inline tool callback loop, explicit IAM and timeout policy.
-
-Each adapter lands disabled and experimental, runs the same adapter and isolation conformance suites, then becomes certified independently. No adapter blocks another adapter's rollout.
-
-**Exit**: Each advertised certified adapter passes all required tests; unresolved native gaps remain visible as experimental and cannot be called supported.
-
-### Phase 6 - Builder and operator surfaces
-
-- Refactor the existing local editor state into a revisioned draft hook without changing the five stable step IDs or the default Deep Agents rendering.
-- Add the catalog-driven harness selector before model selection and load models through a harness-filtered BFF query.
-- Project the field-addressable capability report into the existing Basic, Instructions, Tools, Skills, and Advanced sections.
-- Add the harness-switch compatibility dialog, per-harness transient option parking, active-conversation confirmation, and unified error navigation.
-- Add portable memory controls, read-only thread/tracing summaries, and first-party typed harness-option panels backed by static JSON Schema.
-- Extend the BFF allowlist for `harness` and `memory`; revalidate the exact payload and fingerprint before MongoDB/OpenFGA mutation.
-- Add harness health/capacity details to existing diagnostics and dashboards.
-- Preserve unknown or unavailable stored harnesses for inspection; show policy-hidden adapters only when referenced by an existing agent.
-
-**Exit**: Existing Deep Agents editor tests pass unchanged, builders cannot save an incompatible or stale selection, and harness switching causes zero silent field loss.
-
-### Phase 7 - Rollout and replacement
-
-- Shadow event translation without invoking tools, then canary the compatibility adapter.
-- Route traffic to Harness Engine under the existing service alias.
-- Enable selected experimental adapters only for test agents, then certify/canary per adapter.
-- Keep Dynamic Agents image rollback available until compatibility SLOs and soak gates pass.
-- Rename user-facing labels and deployment objects only under a later cleanup spec.
-
-**Exit**: Compatibility traffic meets SLOs, rollback rehearsal succeeds, and Harness Engine is the production runtime.
+Additional harnesses, long-term memory, process-failure takeover and ACP are separately scoped extensions. Capability declarations and certification follow demonstrated implementations, not roadmap position.
 
 ## Testing Strategy
 

@@ -1,3 +1,18 @@
+# Optional shared UI database Secret management.
+# Keep the MongoDB subchart enabled independently to retain existing data/PVs.
+caipeDatabase:
+  # -- Let the parent chart manage the shared UI database ExternalSecret.
+  manageExternalSecret: false
+  # -- Shared URI backend: mongodb or documentdb (AWS DocumentDB). See docs/docs/installation/persistence.md.
+  backend: mongodb
+  # -- Target Secret name; must match caipe-ui.existingSecret.
+  secretName: ""
+  documentdb:
+    # -- Secret-store key containing the DocumentDB MONGODB_URI property.
+    remoteKey: ""
+    # -- DocumentDB hostname used by UI health checks.
+    host: ""
+
 tags:
   basic: false
   complete: false
@@ -1685,11 +1700,6 @@ openfga-authz-bridge:
     fullFidelityAllows: false
     allowRollupFlushSeconds: 60
 
-######### RAG Stack configuration #########
-# RAG Stack - Complete stack including web, server, agent, Redis, and Milvus
-# Below values are only a subset of the values that are available in the rag-stack chart.
-# For more values, please refer to the rag-stack chart values.yaml file.
-rag-stack:
 ######### RAG Stack configuration #########
 # RAG Stack - Complete stack including web, server, agent, Redis, and Milvus
 # Below values are only a subset of the values that are available in the rag-stack chart.

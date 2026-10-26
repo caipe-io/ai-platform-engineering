@@ -9,7 +9,7 @@ RUN for i in 1 2 3; do apk add --no-cache python-3.14 shadow && break; [ $i -lt 
     apk upgrade --no-cache
 
 # Use the official uv binary rather than apk uv to avoid stale packaged crates.
-COPY --from=ghcr.io/astral-sh/uv:0.12.24 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.13.4 /uv /usr/local/bin/uv
 
 RUN mkdir -p /usr/local/bin \
     && ln -sf /usr/bin/python3.14 /usr/local/bin/python3.14 \

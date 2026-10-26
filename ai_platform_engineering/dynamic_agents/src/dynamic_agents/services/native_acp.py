@@ -48,6 +48,7 @@ from dynamic_agents.services.stream_encoders.events import (
     ToolStarted,
 )
 from dynamic_agents.services.stream_encoders.semantic import SemanticStreamEncoder
+from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryError
 
 if TYPE_CHECKING:
     from dynamic_agents.services.agent_runtime import AgentRuntime
@@ -209,6 +210,8 @@ class _NativeAgent:
             return PromptResponse(stop_reason="end_turn")
         except asyncio.CancelledError:
             return PromptResponse(stop_reason="cancelled")
+        except ToolCallRecoveryError as exc:
+            raise RequestError.internal_error({"kind": "tool_call_recovery", "reason": str(exc)}) from None
         except Exception:
             logger.exception("Native ACP execution failed for session %s", self.session_id)
             raise RequestError.internal_error({"reason": "Native agent execution failed"}) from None
@@ -390,6 +393,10 @@ async def _stream_admitted_turn(
                 await connection.prompt(session_id, _prompt_blocks(message or "", files), **{
                     EXTENSION: {"trace_id": trace_id, "turn_id": turn_id, "resume_data": resume_data},
                 })
+            except RequestError as exc:
+                if isinstance(exc.data, dict) and exc.data.get("kind") == "tool_call_recovery" and isinstance(exc.data.get("reason"), str):
+                    raise ToolCallRecoveryError(exc.data["reason"]) from exc
+                raise
             finally:
                 await client.finish()
 

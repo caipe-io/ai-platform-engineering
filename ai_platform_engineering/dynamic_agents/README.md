@@ -53,7 +53,7 @@ Dynamic Agents provide a flexible way to create purpose-built AI assistants with
 Default and custom agent turns execute through one in-service Agent Client
 Protocol (ACP) path while keeping their existing DeepAgents/LangGraph runtime.
 The native ACP client and logical agent exchange JSON-RPC messages using the
-pinned Python SDK 0.12.1, schema 1.19 and wire protocol 1.
+pinned Python SDK 0.12.1 and wire protocol 1, with released schema 1.26.0 as the feature-coverage reference.
 
 - Existing chat endpoints, AG-UI/custom SSE, workflow/invoke behavior, native
   tools, logical files, subagent delegation and human input remain available.
@@ -126,6 +126,38 @@ These tests create and remove random test databases. Use a test server rather
 than a deployed application database. Model calls are deterministic fixtures;
 ACP serialization, native checkpoint persistence and session admission remain
 real.
+
+### Optional app-context prompt adapter
+
+- Structured `client_context` remains separate from the user's message.
+- Off by default. Operators may opt in an agent through its deployment-owned YAML definition:
+
+```yaml
+app_context_prompt:
+  app_ids: [example-app]
+  fields: [title, selection.city, selection.forecast.temperature]
+  max_bytes: 4096
+```
+
+- A chat `config_override` cannot enable or change this policy; the ordinary agent editor does not edit it.
+- Send `source: agentic_app_context`, `trust: untrusted_user_visible_data`, the matching `appId`,
+  and a timezone-qualified `expiresAt` in the next ten minutes. `selection` may be an object or JSON string.
+- Only configured scalar paths are projected: `title`, `summary`, `route`, or dotted `selection.*` paths.
+  Whole objects/arrays, credential-named paths, bearer/JWT-looking values and strings over 2,048 characters are omitted.
+- Invalid/expired context, input over 16 KiB, or formatted output over the configured limit is omitted.
+  Limits include the complete formatted reference block; oversize data is not silently truncated into invalid JSON.
+  Expiration is rechecked when preparing model requests, including after a long-running tool.
+- When PII middleware is enabled, the adapter omits the projection. PII middleware checks graph-state
+  messages before this request-only block is added, so it cannot redact or block the projected data.
+- The root agent receives a labelled, untrusted reference block in a copy of its current model request.
+  The UI question, system instructions, attachments, and checkpoint messages are not rewritten.
+  Subagents are not implicitly opted in. Context is task-local and reset on success, exception or cancellation.
+- Streaming, invoke and resume use only the current request, including when the runtime is cached. Resume requires
+  resending fresh context; no old snapshot is replayed. This adapter does not add snapshots to checkpoint state.
+- App IDs, resource references and trust labels from the browser are not authorization evidence. Existing API/tool
+  permissions remain authoritative. Delimiters and heuristics are not a prompt-injection defense or a secret scanner.
+- Selected data reaches the model and may appear in provider traces/logs. Include only necessary, approved data.
+  Existing raw-context tooling/templates and their telemetry are unchanged; this adapter is not a general DLP layer.
 
 ## Running Locally
 
@@ -219,6 +251,22 @@ python -m uvicorn dynamic_agents.main:app --reload --port 8001
 The API documentation is available at:
 - Swagger UI: http://localhost:8001/docs
 - ReDoc: http://localhost:8001/redoc
+
+## Tool call recovery
+
+Every agent and subagent checks model output before executing tools:
+
+- Output-limit stops (`length` / `max_tokens`), invalid tool-call JSON, and invalid
+  Pydantic tool arguments trigger recovery. Remote JSON-schema tools are checked
+  for missing required top-level arguments and malformed `required` metadata.
+- The entire defective parallel batch is rejected, including otherwise complete
+  calls. Rejected calls never run and raw tool-use blocks are removed from history.
+- The model gets one repair attempt, with feedback to use smaller file edits.
+  Consecutive failure counts belong to each invocation and reset after success.
+- Exhaustion emits an actionable stream error for start/resume, or HTTP 422 for
+  invoke. A later conversation turn can continue from the sanitized checkpoint.
+
+This guard does not change context compaction thresholds or model output budgets.
 
 ## Configuration Reference
 

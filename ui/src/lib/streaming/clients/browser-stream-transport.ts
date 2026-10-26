@@ -31,8 +31,6 @@ export class BrowserStreamTransport {
   private abortController: AbortController | null = null;
   private cancelledTurns = new Set<string>();
 
-  constructor(private accessToken?: string) {}
-
   abort(): void {
     this.abortController?.abort();
     this.abortController = null;
@@ -49,13 +47,14 @@ export class BrowserStreamTransport {
       for (let attempt = 0; attempt < MAX_RECONNECT_ATTEMPTS; attempt += 1) {
         const response = await fetch(`${STREAM_BASE}/cancel`, {
           method: "POST",
+          credentials: "same-origin",
           headers: this.headers(),
           body: JSON.stringify({ conversation_id: conversationId, agent_id: agentId, ...(turnId && { turn_id: turnId }) }),
         });
         if (!response.ok) return false;
         if ((await response.json()).cancelled) return true;
         if (!turnId) return false;
-        const run = await getLatestNativeRun({ conversationId, agentId }, { accessToken: this.accessToken });
+        const run = await getLatestNativeRun({ conversationId, agentId }, {});
         if (run?.turn_id === turnId && ["completed", "failed", "cancelled", "interrupted", "awaiting_input"].includes(run.status)) {
           return run.status === "cancelled";
         }
@@ -85,6 +84,7 @@ export class BrowserStreamTransport {
       try {
         return await fetch(`${STREAM_BASE}/${action}`, {
           method: "POST",
+          credentials: "same-origin",
           headers: this.headers(true),
           body,
           signal,
@@ -97,7 +97,7 @@ export class BrowserStreamTransport {
           callbacks.onConnectionState?.("reconnecting");
           await waitForRetry(Math.min(500 * 2 ** attempt, 8000), signal);
           try {
-            const run = await getLatestNativeRun(params, { accessToken: this.accessToken, signal });
+            const run = await getLatestNativeRun(params, { signal });
             if (run?.turn_id === params.turnId) {
               return this.replayResponse({ ...params, runId: run.run_id }, 0, signal);
             }
@@ -122,7 +122,6 @@ export class BrowserStreamTransport {
     return {
       "Content-Type": "application/json",
       ...(stream && { Accept: "text/event-stream" }),
-      ...(this.accessToken && { Authorization: `Bearer ${this.accessToken}` }),
     };
   }
 
@@ -131,6 +130,7 @@ export class BrowserStreamTransport {
     query.set("after", String(after));
     return fetch(`/api/v1/chat/runs/${encodeURIComponent(params.runId)}/stream?${query}`, {
       headers: this.headers(true),
+      credentials: "same-origin",
       cache: "no-store",
       signal,
     });

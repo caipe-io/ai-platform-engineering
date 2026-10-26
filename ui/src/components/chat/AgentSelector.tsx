@@ -2,7 +2,7 @@
 
 import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
 import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/components/ui/tooltip";
-import { getHarnessPresentation } from "@/lib/agent-presentation";
+import { getAgentPresentation } from "@/lib/agent-presentation";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { Bot,Check,ChevronDown,Loader2,Lock,Search } from "lucide-react";
 import React from "react";
@@ -18,15 +18,15 @@ interface AgentOption {
   name: string;
   description?: string;
   harnessId?: string;
+  presentation?: DynamicAgentConfig["presentation"];
 }
 
 /**
  * Harness-neutral picker for every chat-capable agent.
  *
  * The backing endpoint and document IDs intentionally remain unchanged so
- * legacy Dynamic Agents continue to resolve exactly as before. Agents without
- * an execution_harness_id are presented as the LangChain Deep Agents
- * compatibility runtime.
+ * legacy Dynamic Agents continue to resolve exactly as before. App identity
+ * comes from the server-resolved installation binding, independently of harness.
  */
 export function AgentPicker({ selectedAgentId, onSelectAgent, disabled }: AgentPickerProps) {
   const [open, setOpen] = React.useState(false);
@@ -91,6 +91,7 @@ export function AgentPicker({ selectedAgentId, onSelectAgent, disabled }: AgentP
       name: agent.name,
       description: agent.description,
       harnessId: agent.execution_harness_id,
+      presentation: agent.presentation,
     }));
   }, [agents]);
 
@@ -99,13 +100,11 @@ export function AgentPicker({ selectedAgentId, onSelectAgent, disabled }: AgentP
     if (!normalizedQuery) return options;
 
     return options.filter((option) => {
-      const harness = getHarnessPresentation(option.harnessId);
+      const identity = getAgentPresentation(option.harnessId, option.presentation);
       return [
         option.name,
         option.description,
-        option.harnessId,
-        harness.label,
-        harness.shortLabel,
+        ...identity.searchTerms,
       ].some((value) => value?.toLocaleLowerCase().includes(normalizedQuery));
     });
   }, [options,searchQuery]);
@@ -163,6 +162,7 @@ export function AgentPicker({ selectedAgentId, onSelectAgent, disabled }: AgentP
                     <AgentHarnessBadge
                       compact
                       harnessId={selectedOption.harnessId}
+                      presentation={selectedOption.presentation}
                     />
                   )}
                   {disabled ? (
@@ -240,7 +240,7 @@ export function AgentPicker({ selectedAgentId, onSelectAgent, disabled }: AgentP
                     <div className="flex-1 min-w-0">
                       <div className="flex min-w-0 items-center justify-between gap-2">
                         <div className="truncate text-sm font-medium">{option.name}</div>
-                        <AgentHarnessBadge compact harnessId={option.harnessId} />
+                        <AgentHarnessBadge compact harnessId={option.harnessId} presentation={option.presentation} />
                       </div>
                       {option.description && (
                         <div className="text-xs text-muted-foreground line-clamp-2">

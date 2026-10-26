@@ -14,10 +14,19 @@ from pymongo import ASCENDING, ReturnDocument
 from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from dynamic_agents.config import Settings
-from dynamic_agents.models import AgentBackend, AgentBackendConfig, DynamicAgentConfig, ModelConfig
+from dynamic_agents.models import (
+    AgentBackend,
+    AgentBackendConfig,
+    AppContextPromptConfig,
+    BuiltinToolsConfig,
+    DynamicAgentConfig,
+    ModelConfig,
+    SubAgentRef,
+)
 from dynamic_agents.services.mongo import MongoDBService
 from dynamic_agents.services.session_bindings import (
     SESSION_BINDINGS_COLLECTION,
+    ExecutionOwnerConflictError,
     SessionBindingError,
     get_native_binding,
     resolve_native_binding,
@@ -315,6 +324,103 @@ def test_competing_resume_narrowing_uses_the_existing_revision_guard() -> None:
     assert racing.find_one_and_update.call_args.args[0]["revision"] == 1
 
 
+@pytest.mark.parametrize("saved,current,expected", [
+    ("*", "api.example.test", "api.example.test"),
+    ("api.example.test", "*", "api.example.test"),
+    ("*.example.test", "*.api.example.test", "*.api.example.test"),
+    ("*.api.example.test", "*.example.test", "*.api.example.test"),
+    ("*.example.test", "example.test,api.example.test", "example.test,api.example.test"),
+    ("example.test", "*.example.test", "example.test"),
+    ("API.EXAMPLE.TEST, secondary.example.test", "api.example.test", "api.example.test"),
+    ("*.example.test", "notexample.test", ""),
+    ("primary.example.test", "secondary.example.test", ""),
+    ("*", "", ""),
+    ("", "*", ""),
+])
+def test_resume_intersects_url_domains_without_broadening_or_reenabling_empty_grants(
+    saved: str, current: str, expected: str,
+) -> None:
+    collection = _AtomicCollection()
+    mongo = _mongo(collection)
+    def config(domains: str) -> BuiltinToolsConfig:
+        return BuiltinToolsConfig.model_validate({
+            "fetch_url": {"enabled": True, "allowed_domains": domains},
+            "curl": {"enabled": True, "allowed_domains": domains},
+        })
+
+    resolve_native_binding(mongo, _agent(builtin_tools=config(saved)), "step-attempt")
+    resumed = resolve_native_binding(mongo, _agent(builtin_tools=config(current)), "step-attempt", resume=True)
+    for field in ("fetch_url", "curl"):
+        tool = getattr(resumed.builtin_tools, field)
+        assert tool.allowed_domains == expected
+        assert tool.enabled == bool(expected)
+    restored = resolve_native_binding(_mongo(collection), _agent(builtin_tools=config("*")), "step-attempt", resume=True)
+    assert restored == resumed
+
+
+def test_resume_only_narrows_builtin_limits_and_does_not_admit_new_tools() -> None:
+    collection = _AtomicCollection()
+    mongo = _mongo(collection)
+    saved = BuiltinToolsConfig.model_validate({
+        "curl": {"enabled": True, "allowed_domains": "*", "https_only": False, "allow_non_public_urls": True},
+        "current_datetime": {"enabled": True},
+        "user_info": {"enabled": False},
+        "wait": {"enabled": True, "max_seconds": 300},
+        "workflows": ["primary-workflow", "secondary-workflow"],
+    })
+    current = BuiltinToolsConfig.model_validate({
+        "curl": {"enabled": True, "allowed_domains": "*.example.test", "https_only": True, "allow_non_public_urls": False},
+        "current_datetime": {"enabled": False},
+        "user_info": {"enabled": True},
+        "wait": {"enabled": True, "max_seconds": 10},
+        "request_user_input": {"enabled": True},
+        "workflows": ["secondary-workflow", "new-workflow"],
+    })
+    first = resolve_native_binding(mongo, _agent(builtin_tools=saved), "step-attempt")
+    resumed = resolve_native_binding(mongo, _agent(builtin_tools=current), "step-attempt", resume=True)
+    expected = BuiltinToolsConfig.model_validate({
+        "curl": {"enabled": True, "allowed_domains": "*.example.test", "https_only": True, "allow_non_public_urls": False},
+        "current_datetime": {"enabled": False},
+        "user_info": {"enabled": False},
+        "wait": {"enabled": True, "max_seconds": 10},
+        "workflows": ["secondary-workflow"],
+    })
+    assert resumed == first.model_copy(update={"builtin_tools": expected}, deep=True)
+    assert get_native_binding(_mongo(collection), "primary", "step-attempt") == resumed
+    assert resolve_native_binding(_mongo(collection), _agent(builtin_tools=saved), "step-attempt", resume=True) == resumed
+
+
+@pytest.mark.parametrize("saved,current", [(None, {}), ({"fetch_url": {"enabled": True}}, None)])
+def test_resume_cannot_add_or_restore_a_revoked_builtin_configuration(saved: dict | None, current: dict | None) -> None:
+    collection = _AtomicCollection()
+    mongo = _mongo(collection)
+    resolve_native_binding(mongo, _agent(builtin_tools=BuiltinToolsConfig.model_validate(saved) if saved is not None else None), "step-attempt")
+    resumed = resolve_native_binding(mongo, _agent(builtin_tools=BuiltinToolsConfig.model_validate(current) if current is not None else None), "step-attempt", resume=True)
+    assert resumed.builtin_tools is None
+    assert resolve_native_binding(_mongo(collection), _agent(builtin_tools=BuiltinToolsConfig.model_validate({
+        "fetch_url": {"enabled": True, "allowed_domains": "*"},
+    })), "step-attempt", resume=True).builtin_tools is None
+
+
+def test_resume_intersects_subagents_by_identity_and_persists_revocation() -> None:
+    collection = _AtomicCollection()
+    mongo = _mongo(collection)
+    original = SubAgentRef(agent_id="primary-child", name="saved-routing-name", description="Admitted description")
+    removed = SubAgentRef(agent_id="removed-child", name="removed", description="Removed")
+    resolve_native_binding(mongo, _agent(subagents=[original, removed]), "step-attempt")
+    current = [
+        SubAgentRef(agent_id="primary-child", name="changed-routing-name", description="Changed description"),
+        SubAgentRef(agent_id="new-child", name="saved-routing-name", description="Different child with reused name"),
+    ]
+    resumed = resolve_native_binding(mongo, _agent(subagents=current), "step-attempt", resume=True)
+    assert resumed.subagents == [original]
+    assert get_native_binding(_mongo(collection), "primary", "step-attempt").subagents == [original]
+    assert resolve_native_binding(_mongo(collection), _agent(subagents=[original, removed]), "step-attempt", resume=True) == resumed
+    revoked = resolve_native_binding(mongo, _agent(subagents=[]), "step-attempt", resume=True)
+    assert revoked.subagents == []
+    assert resolve_native_binding(_mongo(collection), _agent(subagents=[original]), "step-attempt", resume=True) == revoked
+
+
 def test_read_binding_preserves_admitted_snapshot_without_changing_it() -> None:
     collection = _AtomicCollection()
     admitted = resolve_native_binding(_mongo(collection), _agent(backend=_workflow_backend()), "step-attempt")
@@ -517,3 +623,24 @@ def test_legacy_native_snapshot_without_execution_selector_remains_readable() ->
     restored = get_native_binding(mongo, "primary", "legacy-context")
     assert restored is not None and restored.execution_harness_id == "dynamic_agents"
     assert restored.backend.config.fs_namespace == ["primary", "legacy-context", "filesystem"]
+
+
+def test_resume_cannot_restore_a_revoked_app_projection_from_the_saved_snapshot() -> None:
+    collection = _AtomicCollection()
+    mongo = _mongo(collection)
+    policy = AppContextPromptConfig(app_ids=["example-app"], fields=["title"])
+    resolve_native_binding(mongo, _agent(app_context_prompt=policy), "pending-turn")
+    revoked = resolve_native_binding(mongo, _agent(app_context_prompt=None), "pending-turn", resume=True)
+    assert revoked.app_context_prompt is None
+    attempted_restore = resolve_native_binding(mongo, _agent(app_context_prompt=policy), "pending-turn", resume=True)
+    assert attempted_restore.app_context_prompt is None
+
+
+@pytest.mark.parametrize("app_binding", [None, {}, {"app_id": "example-app", "agent_id": "primary"}])
+def test_direct_native_admission_cannot_bypass_a_retained_app_binding(app_binding: dict | None) -> None:
+    collection = _AtomicCollection()
+    mongo = _mongo(collection)
+    mongo._db["conversations"].find_one.return_value = {"_id": "app-chat", "app_binding": app_binding}
+    with pytest.raises(ExecutionOwnerConflictError, match="installed app"):
+        resolve_native_binding(mongo, _agent(), "app-chat")
+    assert collection.rows == {} and mongo._db["harness_gateway_bindings"].rows == {}
