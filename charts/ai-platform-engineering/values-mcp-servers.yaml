@@ -1,0 +1,98 @@
+# Optional overlay: seed the CAIPE UI with pre-configured MCP server entries.
+#
+# Usage:
+#   helm install caipe oci://ghcr.io/cnoe-io/charts/ai-platform-engineering \
+#     -f values.yaml \
+#     -f values-mcp-servers.yaml
+#
+# All entries are disabled by default (enabled: false) with no endpoint set.
+# To activate a server in your deployment-specific values:
+#
+#   caipe-ui:
+#     appConfig:
+#       mcp_servers:
+#         - id: argocd
+#           enabled: true
+#           endpoint: "http://<release>-mcp-argocd-mcp.<namespace>.svc.cluster.local:8000/mcp"
+#           # e.g. for release=caipe, namespace=caipe:
+#           # endpoint: "http://caipe-mcp-argocd-mcp.caipe.svc.cluster.local:8000/mcp"
+
+caipe-ui:
+  appConfig:
+    mcp_servers:
+      # ── SRE / Platform Operations ──────────────────────────────────────────
+      - id: "argocd"
+        name: "ArgoCD"
+        description: "ArgoCD application and deployment management"
+        transport: "http"
+        endpoint: ""
+        enabled: false
+      - id: "backstage"
+        name: "Backstage"
+        description: "Backstage service catalog and developer portal"
+        transport: "http"
+        endpoint: ""
+        enabled: false
+      - id: "pagerduty"
+        name: "PagerDuty"
+        description: "PagerDuty incident management — incidents, services, on-call schedules"
+        transport: "http"
+        endpoint: ""
+        enabled: false
+      - id: "splunk"
+        name: "Splunk"
+        description: "Splunk log search and analysis"
+        transport: "http"
+        endpoint: ""
+        enabled: false
+      - id: "netutils"
+        name: "Network Utilities"
+        description: "Network diagnostic tools — ping, traceroute, DNS lookup"
+        transport: "http"
+        endpoint: ""
+        enabled: false
+      # ── DevOps / CI-CD ─────────────────────────────────────────────────────
+      - id: "github"
+        name: "GitHub"
+        description: "GitHub repository operations — search, file read/write, branches, PRs, issues, workflow runs"
+        transport: "http"
+        endpoint: ""
+        enabled: false
+      - id: "gitlab"
+        name: "GitLab"
+        description: "GitLab repository operations — projects, pipelines, merge requests"
+        transport: "http"
+        endpoint: ""
+        enabled: false
+      - id: "jira"
+        name: "Jira"
+        description: "Jira issue tracking and project management"
+        transport: "http"
+        endpoint: ""
+        enabled: false
+      - id: "confluence"
+        name: "Confluence"
+        description: "Confluence wiki and documentation search"
+        transport: "http"
+        endpoint: ""
+        enabled: false
+      # ── Infrastructure ─────────────────────────────────────────────────────
+      - id: "aws"
+        name: "AWS"
+        description: "AWS read-only CLI and EKS kubectl operations"
+        transport: "http"
+        endpoint: ""
+        enabled: false
+      # ── Collaboration ──────────────────────────────────────────────────────
+      - id: "slack"
+        name: "Slack"
+        description: "Slack messaging and channel operations"
+        transport: "http"
+        endpoint: ""
+        enabled: false
+      - id: "webex"
+        name: "Webex"
+        description: "Webex messaging and spaces"
+        transport: "http"
+        endpoint: ""
+        enabled: false
