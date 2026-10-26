@@ -266,3 +266,32 @@ numeric `order`; overrides cannot move a link outside the app's entry route.
 Native and iframe profiles share the catalog, preventing duplicate entries.
 Canonical `/apps/<id>` entries use document navigation through the existing
 unsaved-change guard; compiled native host paths keep client navigation.
+
+## Iframe host routes and bridge
+
+Publishers declare `ui.routes`; operators explicitly approve iframe takeover
+using installation `host_route_claims`:
+
+```yaml
+- app_id: example-app
+  installed: true
+  enabled: true
+  selected_ui_profile: hosted
+  host_route_claims: [/projects]
+  bindings:
+    runtimeOrigin: http://example-app.example.svc:3000
+```
+
+- The declared `/projects` subtree renders inside the host shell while its public
+  path, query and fragment stay in the address bar. The iframe continues loading
+  through `/apps/example-app/projects/...`; private origins stay server-side.
+- Canonical `/apps/<id>` links resolve to approved public routes without loops.
+- Reserved routes and conflicting active owners fail closed. Disabling an app
+  or removing its claims restores host routing. Profile changes require reload.
+- Host route admission and the existing app gateway both enforce app access.
+- `@caipe-io/app-sdk/iframe-bridge` supplies `createAgenticAppBridge`. Its existing
+  context/open protocol gains a capability handshake and owned-route navigation.
+  The host validates source, origin, app ID and version before handling messages.
+- Apps use `bridge.navigate(href)` for host URL synchronization and dispose the
+  bridge on unmount. Unsupported versions/capabilities report explicit errors.
+- Same-origin iframe hosting is a trust boundary, not JavaScript isolation.

@@ -60,3 +60,13 @@ export interface NativeHostChatPanelProps {
   /** App-owned copy linking to the host feedback form when reporting is enabled. */
   feedbackPrompt?: { message: string; actionLabel: string; trailingText?: string };
 }
+
+/** User-visible context is untrusted input, never an authorization grant. */
+export interface AppAssistantContext {
+  route: string;
+  title?: string;
+  summary?: string;
+  selection?: string;
+  resourceRefs?: Array<Record<string, string>>;
+  suggestedPrompts?: string[];
+}

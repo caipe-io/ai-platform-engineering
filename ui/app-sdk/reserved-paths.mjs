@@ -3,6 +3,7 @@ export const RESERVED_HOST_PATHS = [
   "/api",
   "/_next",
   "/native-extensions",
+  "/agentic-app-routes",
   "/admin",
   "/agent-builder",
   "/apps",

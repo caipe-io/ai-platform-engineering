@@ -61,6 +61,8 @@ export interface AgenticAppInstallation {
   };
   runtimeMountPath?: string;
   runtimeOriginOverride?: string;
+  /** Explicit operator approval of declared iframe host routes. */
+  hostRouteClaims?: string[];
   navigationOverrides?: { visible?: boolean; label?: string; order?: number };
   accessOverrides?: {
     requiredRoles?: string[];

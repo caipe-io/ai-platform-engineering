@@ -285,9 +285,10 @@ export function validateAgenticAppManifest(value) {
   if (
     modes.has("iframe") &&
     !modes.has("native-package") &&
-    routes.some((route) => route.path !== `/apps/${app.id}`)
+    routes.some(route => route.path !== `/apps/${app.id}` &&
+      RESERVED_HOST_PATHS.some(root => route.path === root || route.path.startsWith(`${root}/`)))
   )
-    throw new Error("iframe-only routes must use the canonical /apps mount");
+    throw new Error("invalid or reserved iframe host path");
   record(app.surfaces, ["showInHub", "navOrder", "homeEligible"], "surfaces");
   boolean(app.surfaces.showInHub, "surfaces.showInHub");
   if (
