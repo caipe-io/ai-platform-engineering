@@ -47,10 +47,13 @@ selects the owner before the current agent default is read; changing an agent
 cannot redirect an active or retained conversation into another runtime. Installed app
 claims follow the same rule: retained ownership is checked before app dispatch,
 and an app-only invoke rejection cannot hide a saved native/provider binding.
-Conversely, retained app conversations fail closed if their stored installation
-is removed or rebound; a missing app claim cannot silently admit native work. New
-app admissions retain a server-managed binding on the existing conversation.
-Unmarked legacy app histories require explicit adoption. App/native cutovers
+Conversely, a server-managed `conversation.app_binding` retains external app
+execution and fails closed if that installation is removed or rebound. New app
+admissions record that binding on the existing conversation. Editable overlay
+metadata only associates a conversation with an app UI; Managed and SDK overlays
+continue to use their ordinary retained backend. Older external app histories
+without a server binding require explicit adoption before relying on that
+retained-app guarantee. App/native cutovers
 require quiescent migration because existing app streams do not share the native
 and SDK backends' atomic admission contract. Missing
 provider configuration and inconsistent bindings fail explicitly.

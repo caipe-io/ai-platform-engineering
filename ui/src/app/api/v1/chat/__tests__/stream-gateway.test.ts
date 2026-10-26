@@ -106,9 +106,23 @@ it("admits the ordinary configured backend only after no retained owner or app m
 it("rejects contradictory retained app and native ownership instead of choosing either", async () => {
   resolve.mockResolvedValue({ kind: "dynamic_agents", harnessId: "dynamic_agents" });
   const response = await dispatchChatStream(request(), auth, {
-    ...conversation, metadata: { conversation_surface: "agentic-app", agentic_app_id: "example-app", agentic_app_agent_id: "agent-example" },
+    ...conversation, app_binding: { app_id: "example-app", agent_id: "agent-example" },
   }, body, "start");
   expect(response.status).toBe(409);
   expect(app).not.toHaveBeenCalled();
   expect(nativeStream).not.toHaveBeenCalled();
 });
+
+it.each(["dynamic_agents", "agentcore", "claude_agent_sdk"])(
+  "preserves retained %s execution for a metadata-only overlay", async (harnessId) => {
+    resolve.mockResolvedValue({ kind: harnessId === "dynamic_agents" ? "dynamic_agents" : "harness_engine", harnessId });
+    const response = await dispatchChatStream(request(), auth, {
+      ...conversation, participants: [{ type: "agent", id: "agent-example" }], metadata: {
+        conversation_surface: "agentic-app", agentic_app_id: "example-app", agentic_app_agent_id: "agent-example",
+      },
+    }, body, "start");
+    expect(response.status).toBe(200);
+    expect(app).not.toHaveBeenCalled();
+    expect(harnessId === "dynamic_agents" ? nativeStream : engineStream).toHaveBeenCalledTimes(1);
+  },
+);

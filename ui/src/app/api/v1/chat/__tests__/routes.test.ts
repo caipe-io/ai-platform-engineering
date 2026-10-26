@@ -123,6 +123,7 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
     "does not send a retained app conversation through invoke when its app is %s", async (change) => {
       mockGetCollection.mockResolvedValue({ findOne: async () => ({
         _id: "conv-1", owner_subject: "alice-sub", participants: [{ type: "agent", id: "agent-1" }],
+        app_binding: { app_id: "app-primary", agent_id: "agent-1" },
         metadata: { conversation_surface: "agentic-app", agentic_app_id: "app-primary", agentic_app_agent_id: "agent-1" },
       }) });
       mockAppCatalog = change === "removed" ? [] : [{
@@ -378,10 +379,17 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
   ])("keeps %s on the pinned Engine backend after the agent default changes", async (operation, handler, nativeProxy) => {
     mockAuthenticateRequest.mockResolvedValue({ subject: "test-user", email: "test-user@example.com", tenantId: "primary", bearerToken: "test-token" });
     mockFindGatewayBinding.mockResolvedValue({ agent_id: "agent-1", session_id: "conv-1", harness_id: "agentcore" });
+    mockAppCatalog = [{
+      installation: { appId: "app-primary", installed: true, enabled: true },
+      manifest: { ui: { assistant: { agentId: "agent-1" } } },
+    }];
     mockGetCollection.mockImplementation(async (name: string) => ({
       findOne: jest.fn(async () => name === "dynamic_agents"
         ? { _id: "agent-1", execution_harness_id: "dynamic_agents" }
-        : { _id: "conv-1", owner_id: "test-user@example.com", owner_subject: "test-user" }),
+        : { _id: "conv-1", owner_id: "test-user@example.com", owner_subject: "test-user",
+          participants: [{ type: "agent", id: "agent-1" }], metadata: {
+            conversation_surface: "agentic-app", agentic_app_id: "app-primary", agentic_app_agent_id: "agent-1",
+          } }),
     }));
     const run = { run_id: "run-pinned", conversation_id: "conv-1", agent_id: "agent-1", status: "completed", last_sequence: 1 };
     const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (input) => {

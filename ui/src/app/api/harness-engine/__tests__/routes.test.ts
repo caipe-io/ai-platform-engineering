@@ -227,6 +227,21 @@ it("denies event replay after the conversation read grant is revoked", async () 
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("admits a provider-backed overlay whose metadata does not claim app execution", async () => {
+    mockRequireConversationWriteAccess.mockResolvedValue({ conversation: {
+      _id: "conversation-example", participants: [{ type: "agent", id: "agent-example" }], metadata: {
+        conversation_surface: "agentic-app", agentic_app_id: "app-primary", agentic_app_agent_id: "agent-example",
+      },
+    }, denial: null });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({ success: true, data: ownedRun }), { status: 202 }));
+    const response = await startRun(new NextRequest("https://example.test/api/harness-engine/runs", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_id: "agent-example", conversation_id: "conversation-example", message: "Inspect" }),
+    }));
+    expect(response.status).toBe(202);
+    expect(fetchMock).toHaveBeenCalledWith("http://harness-engine:8010/api/v1/runs", expect.objectContaining({ method: "POST" }));
+  });
+
   it("rejects unsupported direct Engine attachments instead of silently dropping them", async () => {
     const fetchMock = jest.spyOn(global, "fetch");
     const response = await startRun(new NextRequest("http://localhost/api/harness-engine/runs", {

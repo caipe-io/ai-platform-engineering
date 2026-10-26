@@ -23,7 +23,6 @@ it("records a new app route for a non-app entry point in the existing conversati
   expect(update).toHaveBeenCalledWith(expect.objectContaining({
     _id: conversation._id, app_binding: { $exists: false },
     participants: { $elemMatch: { type: "agent", id: "agent-primary" } },
-    "metadata.agentic_app_id": { $exists: false },
   }), { $set: { app_binding: binding } }, { returnDocument: "after" });
 });
 
@@ -53,6 +52,24 @@ it("does not let mutable legacy labels substitute a different authoritative app 
     metadata: { conversation_surface: "agentic-app", agentic_app_id: "app-primary", agentic_app_agent_id: "agent-primary" } as Conversation["metadata"],
   }, "agent-primary");
   expect(result).toHaveProperty("status", 409);
+});
+
+it("keeps an authoritative app owner when mutable overlay labels change", () => {
+  const result = resolveConversationAppAssistant({ ...conversation, app_binding: binding,
+    metadata: { conversation_surface: "agentic-app", agentic_app_id: "app-secondary", agentic_app_agent_id: "agent-secondary" } as Conversation["metadata"],
+  }, "agent-primary");
+  expect(result).toMatchObject(target);
+});
+
+it("does not include editable overlay labels in atomic app admission", async () => {
+  update.mockResolvedValue({ ...conversation, app_binding: binding });
+  expect(await admitConversationApp({ ...conversation,
+    metadata: { conversation_surface: "agentic-app", agentic_app_id: "app-secondary" } as Conversation["metadata"],
+  }, target)).toBeNull();
+  expect(update.mock.calls[0][0]).toEqual({
+    _id: conversation._id, app_binding: { $exists: false },
+    participants: { $elemMatch: { type: "agent", id: "agent-primary" } },
+  });
 });
 
 it("reports a database admission failure without forwarding or choosing another backend", async () => {
