@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { load as loadYaml } from "js-yaml";
 import {
   normalizeLegacyAgenticAppManifest,
+  matchesAgenticAppHttpPath,
   resolveAgenticAppHttpPolicyAction,
   validateAgenticAppManifest,
   validateAgenticAppOwnership,
@@ -104,8 +105,8 @@ export function loadConfiguredAgenticApps(
       assertKnownKeys(policy, ["browserContextPaths"], path);
       const paths = policy.browserContextPaths === undefined ? []
         : requiredStringArray(policy.browserContextPaths, `${path}.browserContextPaths`, true);
-      if (paths.length > 32 || new Set(paths).size !== paths.length || paths.some((route) => !isCanonicalApiPath(route))) {
-        throw new Error(`${path}.browserContextPaths requires at most 32 distinct canonical API paths`);
+      if (paths.length > 32 || new Set(paths).size !== paths.length || paths.some((route) => !isCanonicalApiRoutePattern(route))) {
+        throw new Error(`${path}.browserContextPaths requires at most 32 distinct canonical API route patterns`);
       }
       gatewayPolicies.set(appId, { browserContextPaths: paths });
     }
@@ -419,11 +420,11 @@ export function getConfiguredAgenticApp(
 /** One dispatch table for the primary assistant and additional operator bindings. */
 export { getAgenticAppAgentStreams } from "./agent-stream-bindings";
 
-/** Only an exact operator-admitted API path receives signed browser provenance. */
+/** Only a complete operator-admitted API route receives signed browser provenance. */
 export function isAgenticAppBrowserContextPath(app: ConfiguredAgenticApp, segments: string[]): boolean {
   const path = `/${segments.join("/")}`;
   return segments.every((segment) => /^[A-Za-z0-9._~-]+$/.test(segment) && segment !== "." && segment !== "..")
-    && (app.gatewayPolicy?.browserContextPaths?.includes(path) ?? false);
+    && (app.gatewayPolicy?.browserContextPaths?.some(pattern => matchesAgenticAppHttpPath(pattern, path)) ?? false);
 }
 
 function parseManifest(value: unknown, path: string): AgenticAppManifest {
@@ -824,6 +825,12 @@ function parseAgentStreams(value: unknown, path: string): AgenticAppAgentStream[
       ...(raw.webexGroupChat !== undefined ? { webexGroupChat: raw.webexGroupChat as boolean } : {}),
     };
   });
+}
+
+function isCanonicalApiRoutePattern(route: string): boolean {
+  return route.startsWith("/api/") && route.slice(1).split("/").every(segment =>
+    /^:[A-Za-z][A-Za-z0-9_]*$/.test(segment) ||
+    (/^[A-Za-z0-9._~-]+$/.test(segment) && segment !== "." && segment !== ".."));
 }
 
 function isCanonicalApiPath(route: string): boolean {

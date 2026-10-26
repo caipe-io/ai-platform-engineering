@@ -5,12 +5,12 @@ import { mintAgenticAppToken } from "../tokens";
 beforeEach(() => { process.env.AGENTIC_APP_TOKEN_SECRET = "example-test-secret-".repeat(3); });
 afterEach(() => { delete process.env.AGENTIC_APP_TOKEN_SECRET; });
 
-async function signedRequest() {
+async function signedRequest(path = "/api/research") {
   const body = JSON.stringify({ question: "Example" });
   const proof = await mintAgenticAppToken({ appId: "example-app", subject: "primary-user", scopes: [],
     decisionId: "example-decision", correlationId: "example-request", ttlSeconds: 300,
-    browserContext: browserRequestContext("POST", "/api/research", new TextEncoder().encode(body).buffer, "example-token") });
-  return new Request("https://app.example.test/api/research", { method: "POST", body,
+    browserContext: browserRequestContext("POST", path, new TextEncoder().encode(body).buffer, "example-token") });
+  return new Request(`https://app.example.test${path}`, { method: "POST", body,
     headers: { authorization: "Bearer example-token", [BROWSER_CONTEXT_HEADER]: proof.token } });
 }
 
@@ -32,4 +32,13 @@ it.each(["body", "path", "query", "method", "token", "app", "subject", "missing"
   });
   await expect(verifyAgenticAppBrowserContext(request, change === "app" ? "other-app" : "example-app",
     change === "subject" ? "other-user" : "primary-user")).rejects.toThrow();
+});
+
+it("binds a template-approved proof to its concrete project resource", async () => {
+  const original = await signedRequest("/api/projects/first/research");
+  await expect(verifyAgenticAppBrowserContext(original, "example-app", "primary-user")).resolves.toMatchObject({ sub: "primary-user" });
+  const another = new Request("https://app.example.test/api/projects/second/research", {
+    method: "POST", headers: original.headers, body: await original.text(),
+  });
+  await expect(verifyAgenticAppBrowserContext(another, "example-app", "primary-user")).rejects.toThrow();
 });

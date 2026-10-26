@@ -93,8 +93,17 @@ it("admits only exact operator-owned browser proof paths", () => {
 
 it.each(["/*", "/api/example/*", "/api/example/../admin", "/api/example//start", "/api/example/start/", "/api/example/%2fstart"])
   ("rejects noncanonical browser proof policy %s", (path) => {
-    expect(() => load({}, manifest, { gateway_policies: { "example-app": { browserContextPaths: [path] } } })).toThrow(/canonical API paths/);
+    expect(() => load({}, manifest, { gateway_policies: { "example-app": { browserContextPaths: [path] } } })).toThrow(/canonical API route patterns/);
   });
 it("rejects browser proof policy for an absent app", () => {
   expect(() => load({}, manifest, { gateway_policies: { missing: { browserContextPaths: [] } } })).toThrow(/absent installation/);
 });
+
+it("admits bounded project route templates without enumerating projects", () => {
+  const [app] = load({}, manifest, { gateway_policies: { "example-app": { browserContextPaths: ["/api/projects/:projectId/research"] } } });
+  expect(isAgenticAppBrowserContextPath(app, ["api", "projects", "new-project", "research"])).toBe(true);
+});
+it.each(["/api/:/research", "/api/:project*/research", "/api/:project.id/research", "/api/projects/**", "/api/projects/:id?"])
+  ("rejects unbounded or malformed route template %s", path => {
+    expect(() => load({}, manifest, { gateway_policies: { "example-app": { browserContextPaths: [path] } } })).toThrow(/canonical API route patterns/);
+  });

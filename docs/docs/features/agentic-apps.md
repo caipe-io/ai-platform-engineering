@@ -380,8 +380,8 @@ atomic migration between the app binding and provider journals.
 
 ## Browser-only delegated actions
 
-An operator can enable `gateway_policies.<appId>.browserContextPaths` for exact app
-API paths that need evidence of a current browser login. The gateway authenticates
+An operator can enable `gateway_policies.<appId>.browserContextPaths` for complete app
+API routes that need evidence of a current browser login. The gateway authenticates
 its existing session, applies same-origin checks, and sends
 `X-CAIPE-Browser-Context`, a signed assertion valid for at most 60 seconds. It binds
 the app audience, authenticated subject, forwarded access token, HTTP method,
@@ -392,7 +392,10 @@ cookie. Incoming assertions are discarded before forwarding.
 The app must independently validate its normal authentication and route scopes,
 then validate this assertion before using browser-only credentials. The host reference helper
 `verifyAgenticAppBrowserContext(request, appId, authenticatedSubject)` shows
-the required verification and is covered by request-substitution tests. No CAIPE cookie is forwarded. Paths
+the required verification and is covered by request-substitution tests. No CAIPE cookie is forwarded. Route templates such as `/api/projects/:projectId/research` match one canonical
+segment per named parameter, allowing new project resources without catalog edits.
+Wildcards, prefix rules, encoded separators and traversal are rejected. The signed
+assertion always binds the concrete upstream path and query. Paths
 without this operator policy keep their existing authentication behavior; a
 requested assertion fails closed if signing is unavailable.
 
