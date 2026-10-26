@@ -20,6 +20,7 @@ from dynamic_agents.services.app_context_prompt import app_context_scope
 from dynamic_agents.services.llm_clients import LLMConfigError
 from dynamic_agents.services.model_capabilities import supports_reasoning_effort
 from dynamic_agents.services.mongo import MongoDBService, get_mongo_service
+from dynamic_agents.services.native_admission import require_native_execution
 from dynamic_agents.services.runtime_cache import (
     RuntimeCapacityError,
     RuntimeInitError,
@@ -98,7 +99,9 @@ def apply_config_override(agent: DynamicAgentConfig, config_override: dict[str, 
     # Convert agent to dict, deep merge, reconstruct
     agent_dict = agent.model_dump(by_alias=True)
     merged = _deep_merge(agent_dict, config_override)
-    return DynamicAgentConfig.model_validate(merged)
+    result = DynamicAgentConfig.model_validate(merged)
+    result._execution_harness_id = getattr(agent, "_execution_harness_id", None)
+    return result
 
 
 def _validate_allowed_tools_subset(
@@ -404,6 +407,7 @@ async def chat_start_stream(
     agent = mongo.get_agent(request.agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    await require_native_execution(mongo, agent, request.conversation_id, user)
 
     # Apply config_override if provided (deep merge, validated)
     if request.config_override:
@@ -534,6 +538,7 @@ async def chat_resume_stream(
     agent = mongo.get_agent(request.agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    await require_native_execution(mongo, agent, request.conversation_id, user)
 
     # Apply config_override if provided (same as /stream/start)
     if request.config_override:
@@ -596,6 +601,7 @@ async def chat_invoke(
     agent = mongo.get_agent(request.agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    await require_native_execution(mongo, agent, request.conversation_id, user)
 
     # Apply config_override if provided (deep merge, validated)
     if request.config_override:
@@ -716,6 +722,7 @@ async def restart_runtime(
     agent = mongo.get_agent(request.agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    await require_native_execution(mongo, agent, request.conversation_id, user)
 
     # Invalidate the runtime cache
     cache = get_runtime_cache()
@@ -759,6 +766,7 @@ async def cancel_stream(
     agent = mongo.get_agent(request.agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    await require_native_execution(mongo, agent, request.conversation_id, user)
 
     # Cancel the stream via the runtime cache
     cache = get_runtime_cache()

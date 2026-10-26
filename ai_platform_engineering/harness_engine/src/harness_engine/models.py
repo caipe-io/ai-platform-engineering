@@ -70,6 +70,7 @@ class HarnessProfile(StrictModel):
     display_name: str
     description: str = ""
     available: bool = True
+    capabilities: dict[str, CapabilityResult] = Field(default_factory=dict)
 
 
 class HarnessDescriptor(StrictModel):
@@ -122,18 +123,14 @@ class ThreadPolicy(StrictModel):
 
 class MemoryPolicy(StrictModel):
     enabled: bool = False
-    read_scopes: list[Literal["user", "agent", "organization"]] = Field(
-        default_factory=lambda: ["user"], max_length=3
-    )
+    read_scopes: list[Literal["user", "agent", "organization"]] = Field(default_factory=lambda: ["user"], max_length=3)
     write_scope: Literal["user", "agent"] = "user"
     kinds: list[Literal["semantic", "episodic_reference", "procedural"]] = Field(
         default_factory=lambda: ["semantic"], max_length=3
     )
     retrieval: Literal["startup_bounded", "on_demand"] = "on_demand"
     max_results: int = Field(10, ge=1, le=50)
-    write_policy: Literal["disabled", "automatic_scoped", "approval_for_sensitive"] = (
-        "approval_for_sensitive"
-    )
+    write_policy: Literal["disabled", "automatic_scoped", "approval_for_sensitive"] = "approval_for_sensitive"
     retention_profile: str = Field("standard", max_length=64)
 
 
@@ -250,37 +247,6 @@ class AdapterEvaluation(StrictModel):
     issues: list[ValidationIssue] = Field(default_factory=list)
 
 
-class RunStatus(StrEnum):
-    QUEUED = "queued"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-TERMINAL_RUN_STATUSES = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}
-
-
-class RunRecord(StrictModel):
-    run_id: str
-    owner_subject: str
-    agent_id: str
-    agent_version: int
-    conversation_id: str
-    binding_id: str
-    harness_id: str
-    profile_id: str
-    provider_session_id: str | None = None
-    status: RunStatus = RunStatus.QUEUED
-    last_sequence: int = 0
-    client_request_id: str | None = None
-    request_fingerprint: str | None = None
-    cancellation_requested: bool = False
-    error_code: str | None = None
-    traceparent: str | None = None
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
-
 class SessionBinding(StrictModel):
     binding_id: str
     owner_subject: str
@@ -294,8 +260,6 @@ class SessionBinding(StrictModel):
     epoch: int = Field(0, ge=0)
     revision: int = Field(1, ge=1)
     status: Literal["active", "degraded", "closed"] = "active"
-    active_run: RunRecord | None = None
-    dispatch_started: bool = False
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -311,23 +275,76 @@ class ClearAgentSessionResult(StrictModel):
     next_epoch: int = Field(0, ge=0)
 
 
+class AttachmentReference(StrictModel):
+    """Opaque canonical artifact identity; providers resolve authorized bytes."""
+
+    id: str = Field(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
+    name: str = Field(..., min_length=1, max_length=256)
+    media_type: str = Field(..., min_length=1, max_length=128)
+    size_bytes: int = Field(..., ge=0, le=100_000_000)
+    sha256: str | None = Field(None, pattern=r"^[a-f0-9]{64}$")
+
+
 class CreateRunRequest(StrictModel):
     agent_id: str = Field(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     conversation_id: str = Field(..., min_length=1, max_length=256)
     message: str = Field(..., min_length=1, max_length=1_000_000)
     context: str | None = Field(None, max_length=500_000)
     client_request_id: str | None = Field(None, min_length=1, max_length=128)
+    protocol: Literal["agui", "custom"] = "agui"
+    expected_harness_id: str | None = Field(None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
+    attachments: list[AttachmentReference] = Field(default_factory=list, max_length=20)
+    visible_conversation_id: str | None = Field(None, min_length=1, max_length=256)
 
 
 class CancelActiveRunRequest(StrictModel):
     agent_id: str = Field(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     conversation_id: str = Field(..., min_length=1, max_length=256)
+    client_request_id: str | None = Field(None, min_length=1, max_length=128)
 
 
 class CancelActiveRunResult(StrictModel):
     cancelled: bool
     run_id: str | None = None
     cancellation_requested: bool = False
+
+
+class RunStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    AWAITING_INPUT = "awaiting_input"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
+
+
+TERMINAL_RUN_STATUSES = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.INTERRUPTED}
+
+
+class RunRecord(StrictModel):
+    run_id: str
+    owner_subject: str
+    agent_id: str
+    agent_version: int
+    conversation_id: str
+    visible_conversation_id: str | None = Field(None, min_length=1, max_length=256)
+    binding_id: str
+    harness_id: str
+    profile_id: str
+    contract_version: int = Field(1, ge=1)
+    capabilities: dict[str, CapabilityResult] = Field(default_factory=dict)
+    provider_session_id: str | None = None
+    status: RunStatus = RunStatus.QUEUED
+    last_sequence: int = 0
+    client_request_id: str | None = None
+    protocol: Literal["agui", "custom"] = "agui"
+    cancellation_requested: bool = False
+    pending_interrupt_id: str | None = Field(None, min_length=1, max_length=256)
+    error_code: str | None = None
+    traceparent: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
 
 CanonicalEventType = Literal[
@@ -338,18 +355,27 @@ CanonicalEventType = Literal[
     "tool.started",
     "tool.completed",
     "interrupt.requested",
+    "interrupt.resolved",
     "subagent.started",
     "subagent.event",
     "usage.updated",
     "run.completed",
     "run.failed",
     "run.cancelled",
+    "run.interrupted",
 ]
 
 
 class CanonicalEventDraft(StrictModel):
     event_type: CanonicalEventType
     data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProviderTurnOutcome(StrictModel):
+    """A provider's explicit stopped-turn result; the Engine commits finality."""
+
+    status: Literal["completed", "cancelled", "interrupted"]
+    checkpoint: str | None = Field(None, max_length=4096)
 
 
 class RunEvent(CanonicalEventDraft):
@@ -371,7 +397,10 @@ class RenderedPrompt(StrictModel):
 class TurnInput(StrictModel):
     run_id: str
     message: str
+    context: str | None = Field(None, max_length=500_000)
     traceparent: str | None = None
+    attachments: list[AttachmentReference] = Field(default_factory=list, max_length=20)
+    visible_conversation_id: str | None = Field(None, min_length=1, max_length=256)
 
 
 class RunContext(StrictModel):
@@ -379,3 +408,4 @@ class RunContext(StrictModel):
     binding: SessionBinding
     prompt: RenderedPrompt
     turn: TurnInput
+    producer_token: str | None = Field(None, exclude=True, repr=False)

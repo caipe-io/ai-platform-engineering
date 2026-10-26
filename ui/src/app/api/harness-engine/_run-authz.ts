@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   authorizeConversationReadAccess,
   authorizeConversationWriteAccess,
+  resolveConversationRuntimeId,
 } from "@/app/api/v1/chat/_conversation-authz";
 import { authenticateRequest, type AuthResult } from "@/lib/da-proxy";
 import {
@@ -41,7 +42,11 @@ export async function authorizeHarnessRunAccess(
   });
   if (denied) return denied;
   const authorize = permission === "write" ? authorizeConversationWriteAccess : authorizeConversationReadAccess;
-  const access = await authorize(auth, run.conversation_id, run.agent_id);
+  const visibleId = typeof run.visible_conversation_id === "string" && run.visible_conversation_id ? run.visible_conversation_id : run.conversation_id;
+  const access = await authorize(auth, visibleId, run.agent_id);
   if (access.denial) return access.denial;
+  if (await resolveConversationRuntimeId(access.conversation) !== run.conversation_id) {
+    return NextResponse.json({ error: "Runtime does not match its visible conversation" }, { status: 409 });
+  }
   return { auth, config, response };
 }

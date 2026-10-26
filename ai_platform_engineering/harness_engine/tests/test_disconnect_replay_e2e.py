@@ -53,9 +53,7 @@ def test_run_continues_without_attached_event_client_and_replays_from_cursor(set
         ]
         cursor = first_page["events"][2]["sequence"]
 
-        replay = client.get(
-            f"/api/v1/runs/{run_id}/events?after={cursor}", headers=auth_headers()
-        ).json()["data"]
+        replay = client.get(f"/api/v1/runs/{run_id}/events?after={cursor}", headers=auth_headers()).json()["data"]
         assert [event["data"].get("text") for event in replay["events"]] == ["three", None]
         assert replay["next_cursor"] == first_page["next_cursor"]
 
@@ -78,9 +76,7 @@ def test_run_continues_without_attached_event_client_and_replays_from_cursor(set
 
 def test_run_applies_optional_cli_context_without_changing_the_saved_blueprint(settings) -> None:
     adapter = FakeHarnessAdapter(chunks=["done"])
-    app = create_app(
-        settings=settings, repository=InMemoryRunRepository(), adapters=[adapter]
-    )
+    app = create_app(settings=settings, repository=InMemoryRunRepository(), adapters=[adapter])
 
     with TestClient(app) as client:
         configure_agent(client)
@@ -114,9 +110,7 @@ def test_run_applies_optional_cli_context_without_changing_the_saved_blueprint(s
 
 def test_session_pins_agent_version_across_agent_updates(settings) -> None:
     adapter = FakeHarnessAdapter()
-    app = create_app(
-        settings=settings, repository=InMemoryRunRepository(), adapters=[adapter]
-    )
+    app = create_app(settings=settings, repository=InMemoryRunRepository(), adapters=[adapter])
     with TestClient(app) as client:
         configure_agent(client)
         first = client.post(
@@ -172,9 +166,7 @@ def test_session_pins_agent_version_across_agent_updates(settings) -> None:
         assert fresh.status_code == 202
         assert fresh.json()["data"]["agent_version"] == 2
         assert fresh.json()["data"]["binding_id"] != first.json()["data"]["binding_id"]
-        assert fresh.json()["data"]["provider_session_id"] != (
-            first.json()["data"]["provider_session_id"]
-        )
+        assert fresh.json()["data"]["provider_session_id"] != (first.json()["data"]["provider_session_id"])
 
 
 def test_session_clear_is_scoped_to_the_authenticated_owner(settings) -> None:
@@ -244,9 +236,7 @@ def test_session_clear_cancels_an_active_run(settings) -> None:
                 "conversation_id": "conversation-example",
             },
         )
-        events = client.get(
-            f"/api/v1/runs/{run_id}/events", headers=auth_headers()
-        ).json()["data"]
+        events = client.get(f"/api/v1/runs/{run_id}/events", headers=auth_headers()).json()["data"]
 
         assert cleared.json()["data"]["cleared"] is True
         assert events["run"]["status"] == "cancelled"
@@ -291,8 +281,8 @@ def test_cancel_active_preserves_the_session_binding(settings) -> None:
         assert cancelled.status_code == 200
         assert cancelled.json()["data"] == {
             "cancelled": True,
-            "run_id": started.json()["data"]["run_id"],
             "cancellation_requested": True,
+            "run_id": started.json()["data"]["run_id"],
         }
         assert continued.json()["data"]["binding_id"] == started.json()["data"]["binding_id"]
 
@@ -314,9 +304,7 @@ def test_run_is_hidden_from_other_subjects(settings) -> None:
                 "message": "hello",
             },
         ).json()["data"]["run_id"]
-        response = client.get(
-            f"/api/v1/runs/{run_id}", headers=auth_headers("different-user")
-        )
+        response = client.get(f"/api/v1/runs/{run_id}", headers=auth_headers("different-user"))
         assert response.status_code == 404
 
 
@@ -327,7 +315,5 @@ def test_service_rejects_missing_internal_credential(settings) -> None:
         adapters=[FakeHarnessAdapter()],
     )
     with TestClient(app) as client:
-        response = client.get(
-            "/api/v1/harnesses", headers={"X-Harness-Engine-Subject": "test-user"}
-        )
+        response = client.get("/api/v1/harnesses", headers={"X-Harness-Engine-Subject": "test-user"})
         assert response.status_code == 401

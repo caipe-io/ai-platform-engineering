@@ -13,8 +13,10 @@ import {
 import {
   cancelHarnessGatewayRun,
   resolveHarnessGatewayTarget,
+  lookupPinnedHarnessGatewayTarget,
+  resumeHarnessGatewayRun,
+  statusHarnessGatewayRun,
   streamHarnessGatewayRun,
-  unsupportedHarnessResume,
 } from "@/lib/harness-gateway";
 import type { Conversation } from "@/types/mongodb";
 
@@ -28,39 +30,41 @@ export async function dispatchChatStream(
   body: Record<string, unknown>,
   operation: AssistantStreamOperation,
 ): Promise<Response> {
-  // Apps own their native sessions and receive the canonical conversation ID.
-  // Every claimed operation returns here, including denials and unsupported operations.
-  const appResponse = await proxyAgenticAppAssistantStream(
-    request, auth, conversation, body, operation,
-  );
-  if (appResponse) return appResponse;
-
-  if (operation === "status") {
-    return NextResponse.json(
-      { error: "Status is not available for this runtime" },
-      { status: 501 },
-    );
-  }
-
   const runtimeBody = {
     ...body,
     conversation_id: await resolveConversationRuntimeId(conversation),
   };
-  const target = await resolveHarnessGatewayTarget(String(body.agent_id), {
-    subject: auth.subject,
-    conversationId: runtimeBody.conversation_id,
-    traceparent: auth.traceparent,
-  });
+  const context = { subject: auth.subject, conversationId: runtimeBody.conversation_id, traceparent: auth.traceparent };
+  let target = await lookupPinnedHarnessGatewayTarget(String(body.agent_id), context);
   if (target instanceof NextResponse) return target;
+  if (!target) {
+    const appResponse = await proxyAgenticAppAssistantStream(request, auth, conversation, body, operation);
+    if (appResponse) return appResponse;
+    if (operation === "status") return NextResponse.json({ error: "Status is not available for this runtime" }, { status: 501 });
+    target = await resolveHarnessGatewayTarget(String(body.agent_id), context);
+    if (target instanceof NextResponse) return target;
+  }
+  const engineBody = { ...runtimeBody, visible_conversation_id: conversation._id, expected_harness_id: target.harnessId };
   if (target.kind === "harness_engine") {
-    if (operation === "start") return streamHarnessGatewayRun(runtimeBody, auth, request.signal);
-    if (operation === "cancel") return cancelHarnessGatewayRun(runtimeBody, auth);
-    return unsupportedHarnessResume();
+    if (operation === "start") return streamHarnessGatewayRun(engineBody, auth, request.signal);
+    if (operation === "cancel") return cancelHarnessGatewayRun(engineBody, auth);
+    if (operation === "status") return statusHarnessGatewayRun(engineBody, auth, request.signal);
+    return resumeHarnessGatewayRun(engineBody, auth, request.signal);
   }
 
+  if (operation === "status") return NextResponse.json({ error: "Status is not available for this runtime" }, { status: 501, headers: { "X-Harness-History-Owner": "client" } });
   const config = getDynamicAgentsConfig();
-  if (config instanceof NextResponse) return config;
+  if (config instanceof NextResponse) {
+    config.headers.set("X-Harness-History-Owner", "client");
+    return config;
+  }
   const url = `${config.dynamicAgentsUrl}/api/v1/chat/stream/${operation}`;
   const proxy = operation === "cancel" ? proxyJSONRequest : proxySSEStream;
-  return proxy(url, JSON.stringify(runtimeBody), auth, `[stream/${operation}]`);
+  const response = await proxy(url, JSON.stringify(runtimeBody), auth, `[stream/${operation}]`);
+  const headers = new Headers(response.headers);
+  // The retained native target establishes writer ownership even when its
+  // upstream fails before returning SSE. Do not turn a native error into an
+  // ambiguous Engine admission that blocks the user's next prompt.
+  headers.set("X-Harness-History-Owner", "client");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }

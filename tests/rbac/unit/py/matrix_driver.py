@@ -73,7 +73,7 @@ MATRIX_YAML = REPO_ROOT / "tests" / "rbac" / "rbac-matrix.yaml"
 # drivers disjoint avoids double-execution (and double-counting in
 # the audit-log assertions).
 PYTHON_SURFACES: frozenset[str] = frozenset(
-    {"mcp", "dynamic_agents", "rag", "slack_bot"}
+    {"mcp", "dynamic_agents", "rag", "slack_bot", "harness_engine"}
 )
 
 
@@ -108,6 +108,7 @@ class MatrixRow:
     skip_reason: str | None
     notes: str | None
     migration_status: str
+    authorization_system: str = "keycloak"
 
 
 def _load_matrix() -> dict[str, Any]:
@@ -160,6 +161,7 @@ def expand_matrix() -> list[MatrixRow]:
                     skip_reason=exp.get("skip_reason"),
                     notes=notes,
                     migration_status=migration_status,
+                    authorization_system=r.get("authorization_system", "keycloak"),
                 )
             )
     return rows
@@ -177,6 +179,11 @@ def matrix_param_id(row: MatrixRow) -> str:
 
 def _surface_base_url(surface: str, resource: str) -> str:
     """Resolve the base URL for the given surface (and resource, for MCP)."""
+    if surface == "harness_engine":
+        base = os.environ.get("E2E_HARNESS_ENGINE_URL")
+        if not base:
+            pytest.skip("Engine bearer-only checks require explicit E2E_HARNESS_ENGINE_URL")
+        return base.rstrip("/")
     if surface == "dynamic_agents":
         return os.environ.get("E2E_DA_URL", "http://localhost:8200").rstrip("/")
     if surface == "rag":

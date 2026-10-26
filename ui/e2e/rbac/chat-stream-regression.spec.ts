@@ -49,6 +49,7 @@ async function fulfillStream(route: Route, mode: StreamMode): Promise<void> {
     await route.fulfill({
       status: 500,
       contentType: "text/plain",
+      headers: { "X-Harness-History-Owner": "client" },
       body: OLD_BEDROCK_SCHEMA_ERROR,
     });
     return;
@@ -58,6 +59,7 @@ async function fulfillStream(route: Route, mode: StreamMode): Promise<void> {
     await route.fulfill({
       status: 500,
       contentType: "text/plain",
+      headers: { "X-Harness-History-Owner": "client" },
       body: MISSING_TOOL_RESULT_ERROR,
     });
     return;

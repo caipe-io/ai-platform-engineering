@@ -1788,3 +1788,23 @@ describe('POST /api/chat/conversations/[id]/messages — admin audit write block
     expect(res.status).toBe(200);
   });
 });
+
+describe('runtime-owned transcript writes', () => {
+  beforeEach(resetMocks);
+  it.each(['reserved ID', 'existing row', 'provisional duplicate'])('rejects a browser %s without changing canonical history', async kind => {
+    mockGetServerSession.mockResolvedValue(authenticatedSession());
+    const conversations = createMockCollection(); conversations.findOne.mockResolvedValue({ _id: testConversationId, owner_id: 'user@example.com' }); mockCollections.conversations = conversations;
+    const messages = createMockCollection(); mockCollections.messages = messages;
+    if (kind !== 'reserved ID') messages.findOne.mockResolvedValue({ message_id: 'message-run-example', metadata: { history_owner: 'harness_engine', turn_id: 'turn-example' } });
+    const req = makeRequest(`/api/chat/conversations/${testConversationId}/messages`, { method: 'POST', body: JSON.stringify({ role: 'assistant', message_id: kind === 'reserved ID' ? `message-run-${'a'.repeat(64)}` : kind === 'existing row' ? 'message-run-example' : 'browser-provisional', content: 'stale client output', metadata: { turn_id: 'turn-example' } }) });
+    const response = await POST(req, { params: Promise.resolve({ id: testConversationId }) });
+    expect(response.status).toBe(409); expect(messages.updateOne).not.toHaveBeenCalled(); expect(conversations.updateOne).not.toHaveBeenCalled();
+  });
+  it('rejects direct message updates to a server-owned row', async () => {
+    mockGetServerSession.mockResolvedValue({ ...authenticatedSession(), accessToken: undefined });
+    const messages = createMockCollection(); messages.findOne.mockResolvedValue({ message_id: 'message-run-example', conversation_id: testConversationId, metadata: { history_owner: 'harness_engine' } }); mockCollections.messages = messages;
+    const { PUT } = await import('../chat/messages/[id]/route');
+    const response = await PUT(makeRequest('/api/chat/messages/message-run-example', { method: 'PUT', body: JSON.stringify({ content: 'replacement', metadata: { is_final: true } }) }), { params: Promise.resolve({ id: 'message-run-example' }) });
+    expect(response.status).toBe(409); expect(messages.updateOne).not.toHaveBeenCalled();
+  });
+});

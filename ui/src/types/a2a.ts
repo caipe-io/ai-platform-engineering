@@ -100,6 +100,12 @@ export interface MessageFeedback {
 }
 
 export interface ChatMessage {
+  /** Canonical transcript rows belong to the admitted runtime, not the browser. */
+  historyOwner?: "server";
+  admissionPending?: boolean;
+  /** A Stop request awaits an acknowledged canonical runtime outcome. */
+  cancellationRequested?: boolean;
+  serverRunId?: string;
   id: string;
   role: "user" | "assistant";
   content: string;

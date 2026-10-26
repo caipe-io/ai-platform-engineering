@@ -172,7 +172,10 @@ class MongoDBService:
         """Get a dynamic agent config by ID."""
         doc = self._get_agents_collection().find_one({"_id": agent_id})
         if doc:
-            return DynamicAgentConfig(**_strip_nulls(doc))
+            agent = DynamicAgentConfig(**_strip_nulls(doc))
+            selected = doc.get("execution_harness_id")
+            agent._execution_harness_id = selected if isinstance(selected, str) else None
+            return agent
         return None
 
     def resolve_rag_datasource_ids(

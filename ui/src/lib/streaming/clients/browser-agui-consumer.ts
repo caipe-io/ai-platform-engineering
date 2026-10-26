@@ -12,6 +12,8 @@
  */
 
 import type { StreamAdapter } from "../adapter";
+import { serverHistoryFromHeaders } from "../server-history";
+import { buildStreamErrorFromResponse } from "../stream-error";
 import type { RawStreamEvent,StreamCallbacks,StreamParams } from "../callbacks";
 import { parseSSEStream,type RawSSEEvent } from "../parse-sse";
 import {
@@ -44,8 +46,8 @@ export class AGUIStreamAdapter implements StreamAdapter {
     }
   }
 
-  async cancelStream(conversationId: string, agentId: string): Promise<boolean> {
-    this.abort();
+  async cancelStream(conversationId: string, agentId: string, options?: { keepSubscription?: boolean }): Promise<boolean> {
+    if (!options?.keepSubscription) this.abort();
 
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -97,6 +99,7 @@ export class AGUIStreamAdapter implements StreamAdapter {
       agent_id: params.agentId,
       ...(params.reasoningEffort && { reasoning_effort: params.reasoningEffort }),
       resume_data: params.resumeData,
+      ...(params.turnId && { turn_id: params.turnId }),
       protocol: "agui",
       ...(params.clientContext && { client_context: params.clientContext }),
     });
@@ -104,9 +107,16 @@ export class AGUIStreamAdapter implements StreamAdapter {
     await this._stream(url, body, callbacks);
   }
 
+  async reconnectStream(params: StreamParams, callbacks: StreamCallbacks): Promise<void> {
+    await this._stream(`${STREAM_BASE}/status`, JSON.stringify({
+      conversation_id: params.conversationId, agent_id: params.agentId,
+      protocol: "agui", replay: true,
+    }), callbacks, true);
+  }
+
   // ── Private: shared stream loop ────────────────────────────
 
-  private async _stream(url: string, body: string, callbacks: StreamCallbacks): Promise<void> {
+  private async _stream(url: string, body: string, callbacks: StreamCallbacks, reconnect = false): Promise<void> {
     resetProtocolState(this.protocolState);
 
     if (this.abortController) {
@@ -128,18 +138,19 @@ export class AGUIStreamAdapter implements StreamAdapter {
         signal: this.abortController.signal,
       });
 
-      if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error(
-            "Session expired: Your authentication token has expired. " +
-            "Please save your work and log in again.",
-          );
+      const admission = serverHistoryFromHeaders(response.headers);
+      if (admission) {
+        if (admission.conversationId !== JSON.parse(body).conversation_id) {
+          throw new Error("The runtime returned another conversation's history");
         }
-        const errorBody = await response.text().catch(() => "");
-        throw new Error(
-          `HTTP error: ${response.status} ${response.statusText}. ${errorBody || "(empty)"}`,
-        );
+        callbacks.onRunAdmission?.(admission);
       }
+      if (!admission && ((!reconnect && (response.ok || (response.status >= 400 && response.status < 500 && response.status !== 499))) ||
+          response.headers.get("X-Harness-History-Owner") === "client")) callbacks.onClientHistory?.();
+      if (reconnect && (response.status === 404 || response.status === 501 ||
+          (response.ok && !admission))) return;
+
+      if (!response.ok) throw await buildStreamErrorFromResponse(response);
 
       for await (const raw of parseSSEStream(response)) {
         this._emitRawEvent(raw, callbacks);

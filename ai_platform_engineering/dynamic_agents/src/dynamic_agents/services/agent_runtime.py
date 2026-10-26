@@ -90,6 +90,7 @@ from dynamic_agents.services.model_capabilities import (
     ModelCapabilities,
     get_model_capabilities,
 )
+from dynamic_agents.services.native_admission import require_native_execution
 from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
 from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryMiddleware
@@ -100,6 +101,19 @@ if TYPE_CHECKING:
     from dynamic_agents.services.stream_encoders import StreamEncoder
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class AgentPlatformResources:
+    """Admitted platform integrations shared by native and sandbox runtimes."""
+
+    tools: list[Any]
+    system_prompt: str
+    skills: list[dict[str, Any]]
+    skills_files: dict[str, Any]
+    skills_sources: list[str]
+    builtin_tool_names: set[str]
+    skills_middleware: Any | None
 
 
 @dataclass
@@ -584,6 +598,7 @@ class AgentRuntime:
     # the per-instance values; these are the fall-through.
     _attachment_store: "AttachmentStore | None" = None
     _attachment_store_built: bool = False
+    _platform_resources: AgentPlatformResources | None = None
 
     def __init__(
         self,
@@ -675,6 +690,7 @@ class AgentRuntime:
                 ttl_seconds=fs_ttl,
             )
         self._initialized = False
+        self._platform_resources = None
         self._active_stream_count = 0
         self._is_streaming = False  # guards LRU eviction — never evict mid-stream
         self._created_at = time.time()
@@ -857,12 +873,14 @@ class AgentRuntime:
             else detail
         )
 
-    async def initialize(self) -> None:
-        """Build the DeepAgent graph with tools and instructions."""
-        if self._initialized:
-            return
+    async def prepare_platform_resources(self) -> "AgentPlatformResources":
+        """Resolve current platform tools, prompt and skills without an LLM/graph.
 
-        t_start = time.monotonic()
+        Native graphs and external harness brokers use this same preparation.
+        Credentials stay in the resulting server-side tool closures.
+        """
+        if self._platform_resources is not None:
+            return self._platform_resources
 
         # ─────────────────────────────────────────────────────────────────
         # Tools
@@ -987,32 +1005,11 @@ class AgentRuntime:
             logger.error(f"Agent '{self.config.name}' failed to initialize: {exc}")
             raise RuntimeError(f"Agent '{self.config.name}' failed to initialize: {exc}") from exc
 
-        # 5. Instantiate LLM
-        logger.info(
-            f"[llm] Instantiating LLM for agent '{self.config.name}': "
-            f"provider={self.config.model.provider}, model={self.config.model.id}"
-        )
-        llm = get_llm(
-            self.config.model.provider,
-            self.config.model.id,
-            self.config.model.reasoning_effort,
-        )
-        logger.info(f"[llm] LLM instantiated for agent '{self.config.name}': type={type(llm).__name__}")
-
-        # ─────────────────────────────────────────────────────────────────
-        # Extensions
-        # ─────────────────────────────────────────────────────────────────
-
-        # 6. Subagents
-        subagents = await self._resolve_subagents(self.config.subagents)
-        if subagents:
-            logger.info(
-                f"Agent '{self.config.name}': resolved {len(subagents)} subagents: {[s['name'] for s in subagents]}"
-            )
-
         # 7. Skills
         self._skills_files: dict[str, Any] = {}
         skills_middleware = None
+        skills_data: list[dict[str, Any]] = []
+        skills_sources: list[str] = []
 
         # Always clear stale skill files from the shared filesystem when using
         # StoreBackend.  This is critical for workflows where multiple agents
@@ -1146,7 +1143,7 @@ class AgentRuntime:
                     "agent_name": self.config.name,
                     "agent_id": self.config.id,
                     "conv_id": self._session_id,
-                    "user_context": self._user.model_dump(exclude={"raw_claims"}) if self._user else None,
+                    "user_context": self._user.model_dump(exclude={"raw_claims", "access_token", "obo_jwt"}) if self._user else None,
                     "client_context": self._client_context.model_dump() if self._client_context else None,
                 },
                 workflow_labels=getattr(self, "_workflow_labels", None),
@@ -1156,29 +1153,6 @@ class AgentRuntime:
                 f"Agent '{self.config.name}': added {len(wf_tools)} workflow tools "
                 f"for workflows: {self._valid_workflow_configs}"
             )
-
-        # 9. Build middleware stack
-        middleware_stack = build_middleware(
-            self.config.features,
-            self._session_id,
-            agent_name=self.config.name,
-            model_id=self.config.model.id,
-            model_provider=self.config.model.provider,
-            attachment_store=self._get_attachment_store(),
-            enable_prompt_cache=self._prompt_cache_enabled(),
-        )
-        # PII middleware checks graph state before this request-only projection is added.
-        # Omit the projection when PII handling is configured so it cannot bypass that policy.
-        if self.config.app_context_prompt is not None and not any(
-            isinstance(middleware, PIIMiddleware) for middleware in middleware_stack
-        ):
-            middleware_stack.insert(0, AppContextPromptMiddleware())
-        # Prepend skills middleware so it runs before other middleware
-        if skills_middleware:
-            middleware_stack = [skills_middleware] + middleware_stack
-
-        # 10. Interrupt config
-        interrupt_config = self._build_interrupt_config(tools, builtin_tool_names)
 
         # 10b. Append workflow details to system prompt (after section 8 validates workflows)
         if self._workflow_prompt_addendum:
@@ -1205,6 +1179,68 @@ class AgentRuntime:
                 "The following resources were configured but failed to load. Do not attempt to use them.\n\n"
             )
             system_prompt += "\n".join(warning_lines)
+
+        self._platform_resources = AgentPlatformResources(
+            tools=tools, system_prompt=system_prompt, skills=skills_data,
+            skills_files=self._skills_files, skills_sources=skills_sources,
+            builtin_tool_names=builtin_tool_names, skills_middleware=skills_middleware,
+        )
+        return self._platform_resources
+
+    async def initialize(self) -> None:
+        """Build the native DeepAgent graph from shared platform resources."""
+        await require_native_execution(getattr(self, "_mongo_service", None), self.config, getattr(self, "_session_id", None), getattr(self, "_user", None))
+        if self._initialized:
+            return
+        if self.config.model is None:
+            raise RuntimeError("Native agent execution requires a model")
+        t_start = time.monotonic()
+        resources = await self.prepare_platform_resources()
+        tools = list(resources.tools)
+        system_prompt = resources.system_prompt
+        builtin_tool_names = resources.builtin_tool_names
+        skills_middleware = resources.skills_middleware
+
+        # 5. Instantiate LLM
+        logger.info(
+            f"[llm] Instantiating LLM for agent '{self.config.name}': "
+            f"provider={self.config.model.provider}, model={self.config.model.id}"
+        )
+        llm = get_llm(
+            self.config.model.provider,
+            self.config.model.id,
+            self.config.model.reasoning_effort,
+        )
+        logger.info(f"[llm] LLM instantiated for agent '{self.config.name}': type={type(llm).__name__}")
+
+        # 6. Subagents
+        subagents = await self._resolve_subagents(self.config.subagents)
+        if subagents:
+            logger.info(
+                f"Agent '{self.config.name}': resolved {len(subagents)} subagents: {[s['name'] for s in subagents]}"
+            )
+
+        # 9. Build middleware stack
+        middleware_stack = build_middleware(
+            self.config.features,
+            self._session_id,
+            agent_name=self.config.name,
+            model_id=self.config.model.id,
+            model_provider=self.config.model.provider,
+            attachment_store=self._get_attachment_store(),
+            enable_prompt_cache=self._prompt_cache_enabled(),
+        )
+        # Request-only app data cannot bypass configured PII handling.
+        if self.config.app_context_prompt is not None and not any(
+            isinstance(middleware, PIIMiddleware) for middleware in middleware_stack
+        ):
+            middleware_stack.insert(0, AppContextPromptMiddleware())
+        # Prepend skills middleware so it runs before other middleware
+        if skills_middleware:
+            middleware_stack = [skills_middleware] + middleware_stack
+
+        # 10. Interrupt config
+        interrupt_config = self._build_interrupt_config(tools, builtin_tool_names)
 
         # 11. Create agent graph
         # Sanitize agent name for use as OpenAI message `name` field.
@@ -1500,6 +1536,8 @@ class AgentRuntime:
                 logger.warning(f"Agent '{self.config.name}': Subagent '{ref.name}' is disabled, skipping")
                 continue
 
+            await require_native_execution(self._mongo_service, subagent_config, getattr(self, "_session_id", None), getattr(self, "_user", None))
+
             # Build MCP tools for subagent
             subagent_tools, builtin_tool_names = await self._build_subagent_tools(subagent_config)
             interrupt_config = self._build_interrupt_config(
@@ -1653,6 +1691,7 @@ class AgentRuntime:
         self._graph = None
 
         self._initialized = False
+        self._platform_resources = None
         self._active_stream_count = 0
         self._is_streaming = False
 
@@ -1695,6 +1734,8 @@ class AgentRuntime:
         Includes remote A2A registry entries selected by the parent or its subagents.
         """
         if agent_config.updated_at != self._config_updated_at:
+            return True
+        if getattr(agent_config, "_execution_harness_id", None) != getattr(self.config, "_execution_harness_id", None):
             return True
         if agent_config.model != self.config.model:
             return True
@@ -1773,6 +1814,7 @@ class AgentRuntime:
 
         Yields SSE frame strings produced by the encoder.
         """
+        await require_native_execution(getattr(self, "_mongo_service", None), self.config, session_id, getattr(self, "_user", None))
         observation = _TurnObservation(started_at=time.monotonic(), turn_type="stream")
         implementation = self._stream_impl(
             message,
@@ -2352,6 +2394,7 @@ class AgentRuntime:
         - ``{"type": "tool_approval", "decision": "reject"}``
         - ``{"type": "tool_approval", "decision": "edit", "edited_args": {...}}``
         """
+        await require_native_execution(getattr(self, "_mongo_service", None), self.config, session_id, getattr(self, "_user", None))
         observation = _TurnObservation(started_at=time.monotonic(), turn_type="resume")
         implementation = self._resume_impl(
             session_id,

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -672,6 +672,8 @@ class DynamicAgentConfigBase(BaseModel):
 
 class DynamicAgentConfig(DynamicAgentConfigBase):
     """Full dynamic agent config as stored in MongoDB."""
+
+    _execution_harness_id: str | None = PrivateAttr(default=None)
 
     id: str = Field(..., alias="_id", description="Unique ID")
     owner_id: str = Field(..., description="Creator's email")

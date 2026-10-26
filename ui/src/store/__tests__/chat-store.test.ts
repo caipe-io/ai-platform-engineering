@@ -2431,3 +2431,73 @@ describe('chat-store', () => {
   });
 
 });
+
+describe('server-owned run history', () => {
+  beforeEach(() => { jest.clearAllMocks(); jest.useFakeTimers(); (global as unknown).__mockStorageMode = 'mongodb'; resetStore(); });
+  afterEach(() => { jest.clearAllTimers(); jest.useRealTimers(); });
+  const admission = { owner: 'server' as const, runId: 'run-example', conversationId: 'conversation-example', userMessageId: 'user-run-example', assistantMessageId: 'message-run-example' };
+  it.each([false, true])('keeps server Stop pending until the canonical outcome even when cancel returns %s', async cancelled => {
+    const assistant = makeMessage({ id: admission.assistantMessageId, role: 'assistant', content: 'working', historyOwner: 'server', isFinal: false });
+    const c = makeConversation({ id: admission.conversationId, participants: [{ type: 'agent', id: 'agent-example' }], messages: [assistant] });
+    const abort = jest.fn();
+    const cancelStream = jest.fn().mockResolvedValue(cancelled);
+    useChatStore.setState({ conversations: [c], activeConversationId: c.id });
+    useChatStore.getState().setConversationStreaming(c.id, { conversationId: c.id, messageId: assistant.id, client: { abort },
+      streamAdapter: { cancelStream, abort, streamMessage: jest.fn(), resumeStream: jest.fn() } });
+    useChatStore.getState().cancelConversationRequest(c.id);
+    await Promise.resolve();
+    expect(cancelStream).toHaveBeenCalledWith(c.id, expect.any(String), { keepSubscription: true });
+    expect(abort).not.toHaveBeenCalled();
+    expect(useChatStore.getState().streamingConversations.has(c.id)).toBe(true);
+    expect(useChatStore.getState().conversations[0].messages[0]).toEqual(expect.objectContaining({ content: 'working', isFinal: false, cancellationRequested: true }));
+    await useChatStore.getState().saveMessagesToServer(c.id);
+    expect(mockApiClient.addMessage).not.toHaveBeenCalled();
+  });
+
+  it('adopts admitted IDs once, collapsing queued provisional bubbles without writing a second transcript', async () => {
+    const c = makeConversation({ id: admission.conversationId, messages: [makeMessage({ id: 'user-one', role: 'user', content: 'first', turnId: 'turn-example' }), makeMessage({ id: 'user-two', role: 'user', content: 'second', turnId: 'turn-example' }), makeMessage({ id: 'provisional-assistant', role: 'assistant', content: 'live', turnId: 'turn-example' })] });
+    useChatStore.setState({ conversations: [c], activeConversationId: c.id });
+    const handle = { conversationId: c.id, messageId: 'provisional-assistant', client: { abort: jest.fn() } };
+    useChatStore.getState().setConversationStreaming(c.id, handle);
+    useChatStore.getState().adoptServerHistory(c.id, admission, { turnId: 'turn-example', assistantMessageId: handle.messageId, userContent: 'first\nsecond' });
+    useChatStore.getState().adoptServerHistory(c.id, admission, { turnId: 'turn-example', assistantMessageId: handle.messageId, userContent: 'first\nsecond' });
+    const rows = useChatStore.getState().conversations[0].messages;
+    expect(rows.map(m => m.id)).toEqual([admission.userMessageId, admission.assistantMessageId]);
+    expect(rows[0].content).toBe('first\nsecond');
+    expect(useChatStore.getState().streamingConversations.get(c.id)?.messageId).toBe(admission.assistantMessageId);
+    useChatStore.getState().updateMessage(c.id, admission.assistantMessageId, { content: 'done', isFinal: true });
+    await useChatStore.getState().saveMessagesToServer(c.id);
+    expect(mockApiClient.addMessage).not.toHaveBeenCalled();
+  });
+  it('uses canonical final projection while preserving another conversation and its controls', async () => {
+    const active = makeConversation({ id: 'active-example' });
+    const c = makeConversation({ id: admission.conversationId, messages: [makeMessage({ id: admission.assistantMessageId, role: 'assistant', content: 'local', historyOwner: 'server', serverRunId: admission.runId })] });
+    useChatStore.setState({ conversations: [active, c], activeConversationId: active.id });
+    mockApiClient.getMessages.mockResolvedValueOnce({ items: [{ message_id: admission.assistantMessageId, conversation_id: c.id, role: 'assistant', content: 'canonical completed', created_at: new Date(), metadata: { turn_id: 'turn-example', history_owner: 'harness_engine', run_id: admission.runId, is_final: true } }], has_more: false } as never);
+    await useChatStore.getState().loadMessagesFromServer(c.id, { force: true });
+    expect(useChatStore.getState().conversations.find(row => row.id === c.id)?.messages[0]).toEqual(expect.objectContaining({ content: 'canonical completed', historyOwner: 'server', serverRunId: admission.runId, autonomousRunId: undefined }));
+    expect(useChatStore.getState().activeConversationId).toBe(active.id);
+    expect(useChatStore.getState().conversations[0]).toEqual(active);
+  });
+  it('deleting a live run releases only that subscription and never recreates the conversation on late admission', async () => {
+    const c = makeConversation({ id: admission.conversationId }); const other = makeConversation({ id: 'other-example' }); const abort = jest.fn();
+    useChatStore.setState({ conversations: [c, other], activeConversationId: c.id, streamingConversations: new Map([[c.id, { conversationId: c.id, messageId: admission.assistantMessageId, client: { abort } }], [other.id, { conversationId: other.id, messageId: 'other-message', client: { abort: jest.fn() } }]]) });
+    await useChatStore.getState().deleteConversation(c.id);
+    useChatStore.getState().adoptServerHistory(c.id, admission);
+    expect(abort).toHaveBeenCalledTimes(1);
+    expect(useChatStore.getState().conversations.map(row => row.id)).toEqual([other.id]);
+    expect([...useChatStore.getState().streamingConversations.keys()]).toEqual([other.id]);
+  });
+});
+
+describe('ambiguous run admission', () => {
+  beforeEach(() => { jest.clearAllMocks(); (global as unknown).__mockStorageMode = 'mongodb'; resetStore(); });
+  it('does not persist provisional rows while admission is unresolved, then preserves the confirmed browser writer', async () => {
+    const c = makeConversation({ messages: [makeMessage({ id: 'pending-user', role: 'user', turnId: 'pending-turn', admissionPending: true }), makeMessage({ id: 'pending-assistant', role: 'assistant', turnId: 'pending-turn', admissionPending: true })] });
+    useChatStore.setState({ conversations: [c] });
+    await useChatStore.getState().saveMessagesToServer(c.id); expect(mockApiClient.addMessage).not.toHaveBeenCalled();
+    useChatStore.getState().updateMessage(c.id, 'pending-user', { admissionPending: false });
+    useChatStore.getState().updateMessage(c.id, 'pending-assistant', { admissionPending: false });
+    await useChatStore.getState().saveMessagesToServer(c.id); expect(mockApiClient.addMessage).toHaveBeenCalledTimes(2);
+  });
+});

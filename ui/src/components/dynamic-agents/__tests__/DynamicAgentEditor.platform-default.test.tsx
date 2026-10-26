@@ -96,7 +96,7 @@ const editAgent = {
   updated_at: "2026-04-29T00:00:00Z",
 };
 
-function mockFetch(platformDefaultId: string | null, includeHarnesses = false) {
+function mockFetch(platformDefaultId: string | null, includeHarnesses = false, capabilities: Record<string, unknown> = {}) {
   const fetchMock = jest.fn(async (url: RequestInfo | URL) => {
     const u = typeof url === "string" ? url : url.toString();
     if (u.includes("/api/dynamic-agents/models")) {
@@ -146,7 +146,7 @@ function mockFetch(platformDefaultId: string | null, includeHarnesses = false) {
               },
             },
             ui_schema: {},
-            capabilities: {},
+            capabilities,
           }] : [],
         },
       });
@@ -322,4 +322,48 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
       screen.getByText(/Configure tools, knowledge, and skills for LangChain Deep/),
     ).toBeInTheDocument();
   });
+});
+
+
+it("preserves platform selections and delegates the selected specialists for a capable provider", async () => {
+  const supported = { level: "native", explanation: "", constraints: {} };
+  const fetchMock = mockFetch(null, true, Object.fromEntries(["tools.broker", "tools.platform", "knowledge.platform", "skills.files", "multi_agent.delegation", "sandbox.workspace"].map(key => [key, supported])));
+  const configured = { ...editAgent, allowed_tools: { repository: true },
+    builtin_tools: { fetch_url: { enabled: true, allowed_domains: "example.test" } },
+    subagents: [{ agent_id: "specialist-example", name: "Specialist", description: "Selected specialist" }],
+    allowed_remote_agents: ["remote-example"], remote_agent_timeouts: { "remote-example": 300 },
+    skills: ["skill-example"], datasource_ids: ["source-example"], rag_collection_ids: ["collection-example"],
+    features: { middleware: [{ type: "model_retry", enabled: false, params: {} }] },
+    interrupt_on: { repository: { write_tool: true } },
+  };
+  const onSave = jest.fn();
+  render(<DynamicAgentEditor agent={configured} onCancel={jest.fn()} onSave={onSave} />);
+  await flushAsync();
+  fireEvent.change(screen.getByLabelText("Execution harness"), { target: { value: "claude_agent_sdk" } });
+  expect(screen.getByRole("button", { name: /Knowledge/i })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Skills/i })).toBeInTheDocument();
+  const initial = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (url, init) => {
+    const requestPath = String(url);
+    if (requestPath.endsWith("/agent-drafts/validate")) {
+      const input = JSON.parse(String(init?.body));
+      return jsonResponse({ success: true, data: { valid: true, normalized_blueprint: input.blueprint, catalog_revision: "catalog-1", config_fingerprint: "fingerprint-example" } });
+    }
+    if (requestPath.includes("/api/harness-engine/agents/") && init?.method === "PUT") return jsonResponse({ success: true, data: { record: { revision: 1 } } });
+    return initial(url);
+  });
+  fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+  await flushAsync();
+  const nativeCall = fetchMock.mock.calls.find(([url, init]) => String(url).startsWith("/api/dynamic-agents?id=") && init?.method === "PUT");
+  expect(nativeCall).toBeDefined();
+  const native = JSON.parse(String(nativeCall![1]?.body));
+  for (const key of ["allowed_tools", "builtin_tools", "subagents", "skills", "datasource_ids", "rag_collection_ids", "features", "interrupt_on", "allowed_remote_agents", "remote_agent_timeouts"] as const) expect(native[key]).toEqual(configured[key]);
+  expect(native).not.toHaveProperty("model");
+  const validation = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/agent-drafts/validate"));
+  const blueprint = JSON.parse(String(validation![1]?.body)).blueprint;
+  expect(blueprint.tools.bindings).toEqual([{ tool_id: "repository.*" }]);
+  expect(blueprint.delegation).toEqual({ agents: ["specialist-example"], max_depth: 1, max_parallel: 1 });
+  expect(blueprint.model).toEqual({ policy: "harness_default" });
+  expect(blueprint.workspace).toEqual({ persistence: "thread" });
+  expect(onSave).toHaveBeenCalledTimes(1);
 });

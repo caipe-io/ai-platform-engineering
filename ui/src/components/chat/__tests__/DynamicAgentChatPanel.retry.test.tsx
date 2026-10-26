@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { apiClient } from "@/lib/api-client";
+import { StreamError } from "@/lib/streaming";
 import type { ExternalChatActivity } from "@/store/chat-store";
 import type { ChatMessage, Conversation } from "@/types/a2a";
 import { ChatPanel } from "../DynamicAgentChatPanel";
@@ -10,6 +11,9 @@ const mockPush = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 const mockToast = jest.fn();
 const mockStreamMessage = jest.fn().mockResolvedValue(undefined);
+const mockReconnect = jest.fn();
+const mockResume = jest.fn().mockResolvedValue(undefined);
+let mockRecovery = false;
 const mockChatState = {
   activeConversationId: "chat-1",
   getActiveConversation: () => mockConversation,
@@ -21,6 +25,13 @@ const mockChatState = {
     mockConversation.messages.push(message(id, value.role as "user" | "assistant", value.content, { ...value, turnId }));
     return id;
   }),
+  adoptServerHistory: jest.fn((_conversationId, admission, provisional) => {
+    const user = mockConversation.messages.find(m => m.id === admission.userMessageId) ?? mockConversation.messages.find(m => m.turnId === provisional?.turnId && m.role === "user");
+    const assistant = mockConversation.messages.find(m => m.id === admission.assistantMessageId || m.id === provisional?.assistantMessageId);
+    if (user) Object.assign(user, { id: admission.userMessageId, historyOwner: "server", admissionPending: false, serverRunId: admission.runId });
+    if (assistant) Object.assign(assistant, { id: admission.assistantMessageId, historyOwner: "server", admissionPending: false, serverRunId: admission.runId });
+  }),
+  addStreamEvent: jest.fn(),
   updateMessage: jest.fn((_conversationId: string, id: string, updates: Partial<ChatMessage>) => {
     const target = mockConversation.messages.find((item) => item.id === id);
     if (target) Object.assign(target, updates);
@@ -29,6 +40,7 @@ const mockChatState = {
   clearStreamEvents: jest.fn(),
   setConversationStreaming: jest.fn(),
   loadMessagesFromServer: jest.fn(),
+  saveMessagesToServer: jest.fn().mockResolvedValue(undefined),
   externalActivity: {} as Record<string, ExternalChatActivity>,
   contextUsageByConversation: {},
   messageHistory: {},
@@ -54,7 +66,8 @@ jest.mock("@/components/autonomous/api", () => ({
   autonomousApi: { openFollowUpChat: jest.fn(), listFollowUpChats: async () => ({}) },
 }));
 jest.mock("@/lib/streaming", () => ({
-  createStreamAdapter: () => ({ streamMessage: mockStreamMessage, abort: jest.fn() }),
+  ...jest.requireActual("@/lib/streaming"),
+  createStreamAdapter: () => ({ streamMessage: mockStreamMessage, resumeStream: mockResume, ...(mockRecovery && { reconnectStream: mockReconnect }), abort: jest.fn() }),
 }));
 jest.mock("@/hooks/useDynamicAgentTimeline", () => ({ useAgentTimeline: () => ({ data: {} }) }));
 jest.mock("@/components/shared/timeline", () => ({
@@ -62,6 +75,8 @@ jest.mock("@/components/shared/timeline", () => ({
 }));
 jest.mock("@/components/dynamic-agents/AgentAvatar", () => ({ AgentAvatar: () => null }));
 jest.mock("../DynamicAgentTimeline", () => ({ AgentTimeline: () => null }));
+jest.mock("../MetadataInputForm", () => ({ MetadataInputForm: ({ onSubmit }: { onSubmit: (values: Record<string, string>) => void }) => <button onClick={() => onSubmit({ scope: "primary" })}>Submit input</button> }));
+jest.mock("../ToolApprovalCard", () => ({ ToolApprovalCard: ({ onApprove }: { onApprove: () => void }) => <button onClick={onApprove}>Approve operation</button> }));
 jest.mock("../FeedbackButton", () => ({ FeedbackButton: () => null }));
 jest.mock("../useSlashCommands", () => ({ useSlashCommands: () => [] }));
 jest.mock("../CustomCallButtons", () => ({ DEFAULT_AGENTS: [] }));
@@ -94,6 +109,8 @@ const mockAttachment = { mime_type: "text/plain", name: "example.txt", data: "ZX
 beforeEach(() => {
   jest.clearAllMocks();
   mockStreaming = false;
+  mockRecovery = false;
+  mockChatState.activeConversationId = "chat-1";
   mockChatState.externalActivity = {};
   HTMLElement.prototype.scrollIntoView = jest.fn();
   setConversation([
@@ -268,4 +285,93 @@ describe("retry is unavailable when it would be unsafe", () => {
     render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
     expectNoRetry();
   });
+});
+
+
+describe("durable execution handoff", () => {
+  const admission = { owner: "server", runId: "run-example", conversationId: "chat-1", userMessageId: "user-run-example", assistantMessageId: "message-run-example" };
+  beforeEach(() => {
+    mockChatState.setConversationStreaming.mockImplementation((_id, state) => { mockStreaming = !!state; });
+  });
+  afterEach(() => {
+    mockChatState.setConversationStreaming.mockReset();
+    mockStreamMessage.mockReset().mockResolvedValue(undefined);
+    mockRecovery = false;
+  });
+  it("connected completion renders and finalizes the admitted assistant rather than its provisional ID", async () => {
+    mockStreamMessage.mockImplementationOnce(async (_params, callbacks) => {
+      callbacks.onRunAdmission(admission);
+      callbacks.onContent("server answer", []);
+      callbacks.onDone();
+    });
+    const view = render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Retry this prompt" })[0]);
+    await waitFor(() => expect(mockChatState.updateMessage).toHaveBeenCalledWith("chat-1", admission.assistantMessageId, expect.objectContaining({ content: "server answer", isFinal: true })));
+    expect(mockConversation.messages.at(-1)).toEqual(expect.objectContaining({ id: admission.assistantMessageId, historyOwner: "server" }));
+    expect(mockChatState.adoptServerHistory).toHaveBeenCalledTimes(1);
+    view.rerender(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    expect(screen.queryAllByRole("button", { name: "Edit message" })).toHaveLength(0);
+    expect(screen.getByText(/Edit and rewind are unavailable/)).toBeInTheDocument();
+  });
+  it("reload replays a retained run without submitting another prompt or creating bubbles", async () => {
+    setConversation([message(admission.userMessageId, "user", "question", { historyOwner: "server" }), message(admission.assistantMessageId, "assistant", "", { historyOwner: "server", isFinal: false })]);
+    mockRecovery = true;
+    mockReconnect.mockImplementationOnce(async (_params, callbacks) => {
+      callbacks.onRunAdmission(admission);
+      callbacks.onContent("recovered answer", []);
+      callbacks.onDone();
+    });
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    await waitFor(() => expect(mockChatState.updateMessage).toHaveBeenCalledWith("chat-1", admission.assistantMessageId, expect.objectContaining({ content: "recovered answer", isFinal: true })));
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+    expect(mockChatState.addMessage).not.toHaveBeenCalled();
+    expect(mockConversation.messages.map(m => m.id)).toEqual([admission.userMessageId, admission.assistantMessageId]);
+  });
+  it("holds a lost initial admission and reattaches without automatically sending it again", async () => {
+    mockStreamMessage.mockImplementationOnce(async () => { mockRecovery = true; throw new Error("Network connection lost"); });
+    mockReconnect.mockImplementationOnce(async (_params, callbacks) => {
+      callbacks.onRunAdmission(admission); callbacks.onContent("detached completion", []); callbacks.onDone();
+    });
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Retry this prompt" })[0]);
+    await waitFor(() => expect(mockChatState.updateMessage).toHaveBeenCalledWith("chat-1", admission.assistantMessageId, expect.objectContaining({ content: "detached completion", isFinal: true })), { timeout: 5000 });
+    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+    expect(mockConversation.messages.filter(m => m.admissionPending)).toHaveLength(0);
+    expect(mockConversation.messages.at(-1)?.id).toBe(admission.assistantMessageId);
+  });
+
+  it("keeps an unconfirmed backend error visible while holding its writer, then releases only after native confirmation", async () => {
+    const backendError = "ValidationException: input_schema does not support oneOf";
+    mockStreamMessage.mockImplementationOnce(async () => { mockRecovery = true; throw new StreamError(backendError, 500); });
+    mockReconnect.mockImplementationOnce(async (_params, callbacks) => { callbacks.onClientHistory(); });
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Retry this prompt" })[0]);
+    await waitFor(() => expect(mockConversation.messages.at(-1)).toEqual(expect.objectContaining({ error: backendError, admissionPending: true })));
+    expect(mockChatState.saveMessagesToServer).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockConversation.messages.at(-1)).toEqual(expect.objectContaining({ error: backendError, admissionPending: false })), { timeout: 5000 });
+    expect(mockChatState.saveMessagesToServer).toHaveBeenCalledWith("chat-1");
+    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["form", "tool"])("reattaches a consumed %s decision after an acknowledgement transport failure", async kind => {
+    setConversation([message(admission.userMessageId, "user", "question", { historyOwner: "server" }), message(admission.assistantMessageId, "assistant", "", { historyOwner: "server", isFinal: false })]);
+    mockRecovery = true;
+    mockReconnect.mockImplementationOnce(async (_params, callbacks) => {
+      callbacks.onRunAdmission(admission);
+      if (kind === "form") callbacks.onInputRequired("input-example", "Choose", [{ field_name: "scope", field_label: "Scope", field_type: "text", required: true }], "Example");
+      else callbacks.onToolApprovalRequired("input-example", "write_example", {}, ["approve", "reject"], "Example");
+    }).mockImplementationOnce(async (_params, callbacks) => {
+      callbacks.onRunAdmission(admission); callbacks.onContent("decision completed", []); callbacks.onDone();
+    });
+    mockResume.mockRejectedValueOnce(new Error("Decision acknowledgement lost"));
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: kind === "form" ? "Submit input" : "Approve operation" }));
+    await waitFor(() => expect(mockConversation.messages.at(-1)?.content).toBe("decision completed"), { timeout: 5000 });
+    expect(mockResume).toHaveBeenCalledTimes(1);
+    expect(mockReconnect).toHaveBeenCalledTimes(2);
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+    expect(mockChatState.addMessage).not.toHaveBeenCalled();
+    expect(mockConversation.messages.map(row => row.id)).toEqual([admission.userMessageId, admission.assistantMessageId]);
+  });
+
 });

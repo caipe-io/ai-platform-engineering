@@ -176,6 +176,8 @@ export interface Message {
     run_id?: string;
     kind?: string;
     execution_context_id?: string;
+    history_owner?: "harness_engine";
+    client_request_id?: string;
     parent_run_id?: string;
     turn_status?: string;
     is_interrupted?: boolean;

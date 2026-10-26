@@ -18,9 +18,7 @@ def test_registry_catalog_contains_both_contract_probes(settings) -> None:
 
 def test_registry_blocks_unconnected_portable_capability(settings) -> None:
     registry = HarnessRegistry([ClaudeSDKAdapter(settings)])
-    draft = blueprint(
-        harness_id="claude_agent_sdk", profile_id="safe", options={"max_turns": 10}
-    )
+    draft = blueprint(harness_id="claude_agent_sdk", profile_id="safe", options={"max_turns": 10})
     draft["memory"] = {"enabled": True}
 
     result = registry.validate(AgentBlueprint.model_validate(draft))
@@ -28,16 +26,15 @@ def test_registry_blocks_unconnected_portable_capability(settings) -> None:
     assert result.valid is False
     assert result.normalized_blueprint.harness.options == {"max_turns": 10}
     assert [(issue.path, issue.capability) for issue in result.issues] == [
-        ("memory", "memory.long_term")
+        ("thread.persistence", "thread.persistence"),
+        ("memory", "memory.long_term"),
     ]
 
 
 def test_registry_rejects_a_stale_catalog_revision(settings) -> None:
     registry = HarnessRegistry([AgentCoreAdapter(settings)])
 
-    result = registry.validate(
-        AgentBlueprint.model_validate(blueprint()), requested_catalog_revision="stale"
-    )
+    result = registry.validate(AgentBlueprint.model_validate(blueprint()), requested_catalog_revision="stale")
 
     assert result.valid is False
     assert result.issues[0].path == "catalog_revision"

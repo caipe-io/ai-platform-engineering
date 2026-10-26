@@ -1,9 +1,15 @@
-export type HarnessRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type HarnessRunStatus = "queued" | "running" | "awaiting_input" | "completed" | "failed" | "cancelled" | "interrupted";
 
 export interface HarnessRun {
   run_id: string;
+  owner_subject?: string;
   agent_id: string;
   conversation_id: string;
+  visible_conversation_id?: string | null;
+  client_request_id?: string | null;
+  capabilities?: Record<string, HarnessCapability>;
+  contract_version?: number;
+  pending_interrupt_id?: string | null;
   agent_version: number;
   binding_id: string;
   harness_id: string;
@@ -23,12 +29,14 @@ export interface HarnessRunEvent {
     | "tool.started"
     | "tool.completed"
     | "interrupt.requested"
+    | "interrupt.resolved"
     | "subagent.started"
     | "subagent.event"
     | "usage.updated"
     | "run.completed"
     | "run.failed"
-    | "run.cancelled";
+    | "run.cancelled"
+    | "run.interrupted";
   data: Record<string, unknown>;
 }
 
@@ -46,6 +54,7 @@ export interface HarnessProfile {
   display_name: string;
   description: string;
   available: boolean;
+  capabilities?: Record<string, HarnessCapability>;
 }
 
 export interface HarnessDescriptor {

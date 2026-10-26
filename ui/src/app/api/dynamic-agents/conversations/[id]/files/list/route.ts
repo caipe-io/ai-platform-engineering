@@ -1,3 +1,4 @@
+import { proxyHarnessConversationOperation } from "@/lib/harness-gateway";
 /**
  * Conversation-scoped Dynamic Agents file list proxy.
  *
@@ -41,6 +42,8 @@ export async function GET(
     scope: "invoke",
   });
   if (authResult instanceof NextResponse) return authResult;
+  const harness = await proxyHarnessConversationOperation(authResult, conversationId, agentId, "files");
+  if (harness) return harness;
 
   const daConfig = getDynamicAgentsConfig();
   if (daConfig instanceof NextResponse) return daConfig;

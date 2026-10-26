@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import suppress
 
 import mongomock
 import pytest
@@ -19,7 +18,7 @@ from harness_engine.models import (
     RunStatus,
 )
 from harness_engine.registry import HarnessRegistry
-from harness_engine.repository import InMemoryRunRepository, MongoRunRepository, RunAdmissionError, RunRepository
+from harness_engine.repository import InMemoryRunRepository, MongoRunRepository, RunAdmissionConflict, RunRepository
 from harness_engine.sessions import CAIPEAgentSessionManager
 from tests.conftest import FakeHarnessAdapter, blueprint
 
@@ -83,9 +82,9 @@ async def test_duplicate_requests_join_one_producer_and_busy_turns_are_rejected(
     await asyncio.wait_for(compiler.entered.wait(), 1)
     duplicate = await second.start_run(request(), "test-user")
     assert duplicate.run_id == run.run_id
-    with pytest.raises(RunAdmissionError, match="active run"):
+    with pytest.raises(RunAdmissionConflict, match="active run"):
         await second.start_run(request("request-2"), "test-user")
-    with pytest.raises(RunAdmissionError, match="different input"):
+    with pytest.raises(RunAdmissionConflict, match="different input"):
         await second.start_run(request(message="different"), "test-user")
     compiler.resume.set()
     await asyncio.wait_for(first._tasks[run.run_id], 1)
@@ -106,8 +105,7 @@ async def test_clear_from_another_coordinator_fences_a_start_paused_in_compile(
     cleared = await second.clear_session("test-user", "agent-example", "conversation-example")
     assert cleared.cleared
     compiler.resume.set()
-    with suppress(asyncio.CancelledError):
-        await asyncio.wait_for(task, 1)
+    await asyncio.wait_for(task, 1)
     assert adapter.calls == []
     stored = await durable_repository.get_run(run.run_id)
     assert stored and stored.status == RunStatus.CANCELLED
@@ -120,7 +118,7 @@ async def test_simultaneous_admission_and_dispatch_are_unique(durable_repository
 
     def run(number: int) -> RunRecord:
         return RunRecord(
-            run_id=f"run-{number}",
+            run_id="run-same-request",
             owner_subject="test-user",
             agent_id="agent-example",
             agent_version=version.version,
@@ -129,19 +127,21 @@ async def test_simultaneous_admission_and_dispatch_are_unique(durable_repository
             harness_id=binding.harness_id,
             profile_id=binding.profile_id,
             client_request_id="same-request",
-            request_fingerprint="same-input",
         )
 
-    results = await asyncio.gather(*(durable_repository.admit_run(run(number)) for number in range(8)))
+    results = await asyncio.gather(*(durable_repository.admit_run(run(number), "same-input", f"producer-{number}", 30.0) for number in range(8)))
     assert len({item.run_id for item, _ in results}) == 1
     assert sum(admitted for _, admitted in results) == 1
     run_id = results[0][0].run_id
+    winner = next(index for index, (_, admitted) in enumerate(results) if admitted)
+    producer_id = f"producer-{winner}"
+    await durable_repository.append_event(run_id, "run.started", {}, RunStatus.RUNNING, producer_id=producer_id)
     dispatched = await asyncio.gather(
-        *(durable_repository.claim_dispatch(binding.binding_id, run_id) for _ in range(8))
+        *(durable_repository.begin_provider(run_id, producer_id, 30.0) for _ in range(8))
     )
     assert sum(dispatched) == 1
     await durable_repository.close_session(binding.binding_id)
-    assert not await durable_repository.claim_dispatch(binding.binding_id, run_id)
+    assert not await durable_repository.begin_provider(run_id, producer_id, 30.0)
 
 
 async def test_cancel_before_preparation_starts_releases_the_reservation(durable_repository: RunRepository) -> None:
@@ -151,7 +151,7 @@ async def test_cancel_before_preparation_starts_releases_the_reservation(durable
     assert cancelled and cancelled.status == RunStatus.CANCELLED
     assert adapter.calls == []
     binding = await second._session_manager.current("test-user", "agent-example", "conversation-example")
-    assert binding and binding.active_run is None
+    assert binding and not (await durable_repository._read_binding(binding.binding_id)).get("_active_run_id")
 
 
 class PausingAdapter(FakeHarnessAdapter):
@@ -188,7 +188,7 @@ async def test_remote_cancel_keeps_the_reservation_until_the_producer_drains(
         assert not adapter.drained.is_set()
         stored = await durable_repository.get_run(run.run_id)
         assert stored and stored.cancellation_requested and stored.status == RunStatus.RUNNING
-        with pytest.raises(RunAdmissionError, match="active run"):
+        with pytest.raises(RunAdmissionConflict, match="active run"):
             await second.start_run(request("request-2"), "test-user")
         adapter.resume.set()
         with pytest.raises(asyncio.CancelledError):
@@ -198,7 +198,11 @@ async def test_remote_cancel_keeps_the_reservation_until_the_producer_drains(
         assert stored and stored.status == RunStatus.CANCELLED
         events = await durable_repository.list_events(run.run_id, 0)
         assert [event.event_type for event in events] == ["run.started", "run.cancelled"]
-        continued = await second.start_run(request("request-2"), "test-user")
+        rejected = await second.start_run(request("request-2"), "test-user")
+        assert rejected.status == RunStatus.FAILED and rejected.error_code == "session_conflict"
+        # A rejected turn retains its failed record; a fresh turn can use the
+        # original provider binding only after its previous producer drained.
+        continued = await second.start_run(request("request-3"), "test-user")
         await asyncio.wait_for(second._tasks[continued.run_id], 1)
         assert len(adapter.calls) == 2
     finally:
@@ -217,7 +221,7 @@ async def test_remote_cancel_is_observed_while_prompt_preparation_is_paused(
     assert result.cancelled and result.cancellation_requested
     assert adapter.calls == []
     binding = await durable_repository.get_session(run.binding_id)
-    assert binding and binding.active_run is None
+    assert binding and not (await durable_repository._read_binding(binding.binding_id)).get("_active_run_id")
 
 
 async def test_cancel_without_a_live_owner_is_unconfirmed_and_cannot_free_the_binding(
@@ -230,8 +234,8 @@ async def test_cancel_without_a_live_owner_is_unconfirmed_and_cannot_free_the_bi
         conversation_id="conversation-example", binding_id=binding.binding_id, harness_id=binding.harness_id,
         profile_id=binding.profile_id,
     )
-    await durable_repository.admit_run(run)
+    await durable_repository.admit_run(run, "example-input", "absent-producer", 30.0)
     result = await second.cancel_active("test-user", "agent-example", "conversation-example")
     assert result.cancellation_requested and not result.cancelled
-    with pytest.raises(RunAdmissionError, match="active run"):
+    with pytest.raises(RunAdmissionConflict, match="active run"):
         await second.start_run(request("request-2"), "test-user")

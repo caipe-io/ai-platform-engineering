@@ -7,6 +7,7 @@ RUN uv sync --frozen --no-dev
 COPY ai_platform_engineering/harness_engine/src ./src
 
 FROM python:3.13-slim-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src

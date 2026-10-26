@@ -40,6 +40,7 @@ from dynamic_agents.routes import (
     chat,
     conversations,
     files,
+    harness_resources,
     health,
     mcp_servers,
     middleware,
@@ -174,6 +175,7 @@ def create_app() -> FastAPI:
 
     # Mount routes
     app.include_router(health.router)
+    app.include_router(harness_resources.router, prefix="/api/v1")
     app.include_router(builtin_tools.router, prefix="/api/v1")
     app.include_router(mcp_servers.router, prefix="/api/v1")
     app.include_router(remote_agents.router, prefix="/api/v1")

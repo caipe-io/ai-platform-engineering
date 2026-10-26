@@ -3,6 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 
 import { POST as invokePost } from "../invoke/route";
 import { POST as cancelPost } from "../stream/cancel/route";
@@ -225,7 +226,7 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
     }));
 
     const fetchMock = harnessId === "dynamic_agents" ? undefined : jest.spyOn(global, "fetch").mockImplementation(async (input) => {
-      const run = { run_id: "run-api", status: "completed", last_sequence: 2, agent_id: "agent-1", conversation_id: "conv-1" };
+      const run = { run_id: "run-api", harness_id: harnessId, status: "completed", last_sequence: 2, agent_id: "agent-1", conversation_id: "conv-1" };
       const data = String(input).includes("/events?") ? {
         run, next_cursor: 2, events: [
           { run_id: run.run_id, sequence: 1, event_type: "content.delta", data: { text: "response" } },
@@ -363,13 +364,13 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
     ["cancel", cancelPost, mockProxyJSONRequest],
   ])("keeps %s on the pinned Engine backend after the agent default changes", async (operation, handler, nativeProxy) => {
     mockAuthenticateRequest.mockResolvedValue({ subject: "test-user", email: "test-user@example.com", tenantId: "primary", bearerToken: "test-token" });
-    mockFindGatewayBinding.mockResolvedValue({ harness_id: "agentcore" });
+    mockFindGatewayBinding.mockResolvedValue({ _id: createHash("sha256").update(JSON.stringify(["test-user", "agent-1", "conv-1"])).digest("hex"), owner_subject: "test-user", agent_id: "agent-1", conversation_id: "conv-1", harness_id: "agentcore" });
     mockGetCollection.mockImplementation(async (name: string) => ({
       findOne: jest.fn(async () => name === "dynamic_agents"
         ? { _id: "agent-1", execution_harness_id: "dynamic_agents" }
         : { _id: "conv-1", owner_id: "test-user@example.com", owner_subject: "test-user" }),
     }));
-    const run = { run_id: "run-pinned", conversation_id: "conv-1", agent_id: "agent-1", status: "completed", last_sequence: 1 };
+    const run = { run_id: "run-pinned", harness_id: "agentcore", conversation_id: "conv-1", agent_id: "agent-1", status: "completed", last_sequence: 1 };
     const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("events/stream")) return new Response('id: 1\nevent: run.completed\ndata: {}\n\n');

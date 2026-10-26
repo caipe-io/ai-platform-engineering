@@ -104,6 +104,10 @@ export async function POST(
     );
   }
 
+  if (orderedMessages.slice(targetIndex).some(message => message.metadata?.history_owner === "harness_engine")) {
+    return NextResponse.json({ code: "HARNESS_CAPABILITY_UNSUPPORTED", error: "This runtime manages its transcript; edit and rewind are unavailable" }, { status: 409 });
+  }
+
   const targetMessage = orderedMessages[targetIndex];
   if (targetMessage.role !== "user") {
     return NextResponse.json(

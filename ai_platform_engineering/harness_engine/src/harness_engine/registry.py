@@ -26,13 +26,28 @@ class HarnessRegistry:
         if len(self._adapters) != len(adapters):
             raise ValueError("Harness IDs must be unique")
         mismatched = [
-            adapter.descriptor.id
-            for adapter in adapters
-            if adapter.session_manager.harness_id != adapter.descriptor.id
+            adapter.descriptor.id for adapter in adapters if adapter.session_manager.harness_id != adapter.descriptor.id
         ]
         if mismatched:
+            raise ValueError(f"Provider session manager harness ID mismatch: {', '.join(mismatched)}")
+
+        missing_cancel = []
+        for adapter in adapters:
+            descriptor = adapter.descriptor
+            capabilities = [
+                descriptor.capabilities,
+                *({**descriptor.capabilities, **profile.capabilities} for profile in descriptor.profiles),
+            ]
+            if any(
+                values.get("cancellation") is not None
+                and values["cancellation"].level in {CapabilityLevel.NATIVE, CapabilityLevel.EMULATED}
+                for values in capabilities
+            ) and not callable(getattr(adapter, "cancel", None)):
+                missing_cancel.append(descriptor.id)
+        if missing_cancel:
             raise ValueError(
-                f"Provider session manager harness ID mismatch: {', '.join(mismatched)}"
+                "A declared cancellation capability requires a provider cancel implementation: "
+                + ", ".join(missing_cancel)
             )
 
     @property
@@ -57,11 +72,7 @@ class HarnessRegistry:
 
     def profile(self, harness_id: str, profile_id: str) -> HarnessProfile | None:
         return next(
-            (
-                profile
-                for profile in self.adapter(harness_id).descriptor.profiles
-                if profile.id == profile_id
-            ),
+            (profile for profile in self.adapter(harness_id).descriptor.profiles if profile.id == profile_id),
             None,
         )
 
@@ -124,13 +135,10 @@ class HarnessRegistry:
 
         evaluation = adapter.evaluate(blueprint)
         normalized = blueprint.model_copy(
-            update={
-                "harness": blueprint.harness.model_copy(
-                    update={"options": evaluation.normalized_options}
-                )
-            }
+            update={"harness": blueprint.harness.model_copy(update={"options": evaluation.normalized_options})}
         )
         issues.extend(evaluation.issues)
+        capabilities = {**descriptor.capabilities, **(profile.capabilities if profile is not None else {})}
         requirements = (
             ("thread.persistence", "thread.persistence", normalized.thread.persistence == "durable"),
             ("memory.long_term", "memory", normalized.memory.enabled),
@@ -148,18 +156,16 @@ class HarnessRegistry:
             ("stream.replay", "streaming.replay", normalized.streaming.replay == "required"),
         )
         for capability, path, required in requirements:
-            issue = self._capability_issue(capability, path, required, descriptor.capabilities)
+            issue = self._capability_issue(capability, path, required, capabilities)
             if issue:
                 issues.append(issue)
 
-        encoded = json.dumps(
-            normalized.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
-        ).encode()
+        encoded = json.dumps(normalized.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode()
         return HarnessDraftValidation(
             valid=not any(issue.severity == "error" for issue in issues),
             catalog_revision=self.catalog_revision,
             config_fingerprint=hashlib.sha256(encoded).hexdigest(),
             normalized_blueprint=normalized,
             issues=issues,
-            capabilities=descriptor.capabilities,
+            capabilities=capabilities,
         )

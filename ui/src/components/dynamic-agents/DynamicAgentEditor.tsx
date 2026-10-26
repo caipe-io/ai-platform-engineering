@@ -593,18 +593,26 @@ export function DynamicAgentEditor({
   const selectedHarnessStatus = isDeepAgents
     ? HARNESS_STATUS_PRESENTATION.certified
     : selectedHarness && HARNESS_STATUS_PRESENTATION[selectedHarness.certification];
-  const toolCapability = selectedHarness?.capabilities["tools.broker"];
+  const capabilities = { ...selectedHarness?.capabilities,
+    ...selectedHarness?.profiles.find(profile => profile.id === harnessProfileId)?.capabilities };
+  const supportsCapability = (name: string) => ["native", "emulated"].includes(capabilities[name]?.level ?? "");
+  const supportsPlatformDefinition = isDeepAgents || supportsCapability("tools.platform");
+  const supportsKnowledge = isDeepAgents || supportsCapability("knowledge.platform");
+  const supportsSkills = isDeepAgents || supportsCapability("skills.files");
+  const supportsDelegation = isDeepAgents || supportsCapability("multi_agent.delegation");
+  const toolCapability = capabilities["tools.broker"];
   const supportsTools =
     isDeepAgents || toolCapability?.level === "native" || toolCapability?.level === "emulated";
   const hasHarnessOptions =
     Object.keys(selectedHarness?.options_schema.properties ?? {}).length > 0;
   const steps = STEPS.filter((step) => {
     if (step.id === "tools") return supportsTools;
-    if (step.id === "knowledge" || step.id === "skills") return isDeepAgents;
-    if (step.id === "advanced") return isDeepAgents || hasHarnessOptions;
+    if (step.id === "knowledge") return supportsKnowledge;
+    if (step.id === "skills") return supportsSkills;
+    if (step.id === "advanced") return supportsPlatformDefinition || hasHarnessOptions;
     return true;
   }).map((step) =>
-    step.id === "advanced" && !isDeepAgents
+    step.id === "advanced" && !supportsPlatformDefinition
       ? { ...step, hint: "Configure options supported by this harness" }
       : step,
   );
@@ -1370,7 +1378,7 @@ export function DynamicAgentEditor({
       // Restricted: send the real (possibly empty) arrays. Unrestricted with
       // nothing to clear: omit both fields entirely. Unrestricted after
       // having been restricted: explicitly clear both back to unset.
-      const knowledgeFields = !isDeepAgents ? {} : restrictKnowledge
+      const knowledgeFields = !supportsKnowledge ? {} : restrictKnowledge
         ? { datasource_ids: datasourceIds, rag_collection_ids: ragCollectionIds }
         : hadExplicitKnowledgeScope
           ? { datasource_ids: null, rag_collection_ids: null }
@@ -1386,7 +1394,7 @@ export function DynamicAgentEditor({
 
       // Keep saved Deep Agents settings intact while another harness is active.
       // Only supported settings are published into its execution blueprint.
-      const runtimeFields = isDeepAgents ? {
+      const runtimeFields = supportsPlatformDefinition ? {
         allowed_tools: allowedTools,
         allowed_remote_agents: allowedRemoteAgents,
         remote_agent_timeouts: Object.fromEntries(Object.entries(remoteAgentTimeouts).filter(([id]) => allowedRemoteAgents.includes(id))),
@@ -1394,7 +1402,7 @@ export function DynamicAgentEditor({
         subagents: subagents.length > 0 ? subagents : undefined,
         skills,
         ...knowledgeFields,
-        model: { id: modelId, provider: modelProvider, reasoning_effort: reasoningEffort },
+        ...(isDeepAgents && { model: { id: modelId, provider: modelProvider, reasoning_effort: reasoningEffort } }),
         features,
         interrupt_on: interruptOn,
       } : supportsTools ? { allowed_tools: allowedTools } : {};
@@ -1413,6 +1421,7 @@ export function DynamicAgentEditor({
         const toolBindings = Object.entries(supportsTools ? allowedTools : {}).flatMap(
           ([serverId, tools]) => {
             if (tools === true) {
+              if (supportsPlatformDefinition) return [{ tool_id: `${serverId}.*` }];
               throw new Error("Select individual tools for this harness instead of all tools on a server");
             }
             return Array.isArray(tools)
@@ -1436,11 +1445,11 @@ export function DynamicAgentEditor({
           tools: { bindings: toolBindings, approval_policy: "sensitive_only" },
           thread: { persistence: "durable" },
           memory: { enabled: false },
-          workspace: { persistence: "none" },
+          workspace: { persistence: supportsCapability("sandbox.workspace") ? "thread" : "none" },
           streaming: { protocol: "canonical", replay: "required" },
           delegation: {
-            agents: [],
-            max_depth: 0,
+            agents: supportsDelegation ? subagents.map(subagent => subagent.agent_id) : [],
+            max_depth: supportsDelegation && subagents.length > 0 ? 1 : 0,
             max_parallel: 1,
           },
         };
@@ -1688,7 +1697,7 @@ export function DynamicAgentEditor({
       // already had an explicit scope may still be intentionally cleared
       // to opt out - only gate the "just enabled, nothing picked" case.
       if (
-        isDeepAgents && restrictKnowledge &&
+        supportsKnowledge && restrictKnowledge &&
         !hadExplicitKnowledgeScope &&
         datasourceIds.length === 0 &&
         ragCollectionIds.length === 0
@@ -1707,6 +1716,7 @@ export function DynamicAgentEditor({
       modelProvider,
       availableModels.length,
       isDeepAgents,
+      supportsKnowledge,
       harnessLoading,
       harnessLoadError,
       selectedHarness,
@@ -1924,8 +1934,10 @@ export function DynamicAgentEditor({
                       <div className="space-y-1 text-xs text-muted-foreground">
                         <p>The operator profile selects the execution model and runtime settings.</p>
                         {!supportsTools && <p>Tool configuration is unavailable for this harness.</p>}
-                        <p>Knowledge, skills, subagents, approval rules, and middleware are not configurable for this harness.</p>
-                        {isEditing && <p>Saved Deep Agents settings are retained and apply when Deep Agents is selected.</p>}
+                        {supportsPlatformDefinition
+                          ? <p>Selected platform tools, specialists, skills and policies are retained and checked against this profile before execution.</p>
+                          : <p>Knowledge, skills, subagents, approval rules, and middleware are not configurable for this harness.</p>}
+                        {isEditing && !supportsPlatformDefinition && <p>Saved Deep Agents settings are retained and apply when Deep Agents is selected.</p>}
                       </div>
                     )}
                     {!isDeepAgents && harnessLoadError && (
@@ -2841,7 +2853,7 @@ export function DynamicAgentEditor({
             {activeStep === "tools" && (
               <div className="space-y-6 pt-2">
                 {/* Built-in Tools */}
-                {isDeepAgents && <BuiltinToolsPicker
+                {supportsPlatformDefinition && <BuiltinToolsPicker
                   value={builtinTools}
                   onChange={setBuiltinTools}
                   disabled={loading || !!readOnly}
@@ -2950,7 +2962,8 @@ export function DynamicAgentEditor({
             )}
 
             {/* Advanced Step */}
-            {activeStep === "advanced" && (isDeepAgents ? (
+            {activeStep === "advanced" && (supportsPlatformDefinition ? (
+              <div className="space-y-6">
               <AdvancedStep
                 agent={agent}
                 subagents={subagents}
@@ -2971,6 +2984,9 @@ export function DynamicAgentEditor({
                 loading={loading || !!readOnly}
                 visibility={visibility}
               />
+              {!isDeepAgents && selectedHarness && <HarnessOptionsForm schema={selectedHarness.options_schema}
+                value={harnessOptions} onChange={setHarnessOptions} disabled={loading || !!readOnly} />}
+              </div>
             ) : (
               <div className="space-y-4 pt-2">
                 <div>

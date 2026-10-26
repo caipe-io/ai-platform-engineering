@@ -1,3 +1,4 @@
+import { proxyHarnessConversationOperation } from "@/lib/harness-gateway";
 /**
  * API proxy route for restarting Dynamic Agent runtime.
  *
@@ -21,12 +22,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   const config = getServerConfig();
 
   const dynamicAgentsUrl = config.dynamicAgentsUrl;
-  if (!dynamicAgentsUrl) {
-    return NextResponse.json(
-      { success: false, error: "Dynamic agents URL not configured" },
-      { status: 500 }
-    );
-  }
+
 
   // Authenticate the request
   let accessToken: string | undefined;
@@ -93,6 +89,17 @@ export async function POST(request: NextRequest): Promise<Response> {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
       { status: 401 }
+    );
+  }
+
+  const harness = await proxyHarnessConversationOperation({ subject: sessionForAuthz!.sub ?? "",
+    email: sessionForAuthz!.user?.email ?? "", bearerToken: accessToken,
+    isServiceAccount: sessionForAuthz!.isServiceAccount }, body.conversation_id, body.agent_id, "restart");
+  if (harness) return harness;
+  if (!dynamicAgentsUrl) {
+    return NextResponse.json(
+      { success: false, error: "Dynamic agents URL not configured" },
+      { status: 500 }
     );
   }
 

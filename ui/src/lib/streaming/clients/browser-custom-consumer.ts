@@ -13,6 +13,7 @@
 
 import { parseContextUsageData,type InputFieldDefinition } from "@/lib/streaming/types";
 import type { StreamAdapter } from "../adapter";
+import { serverHistoryFromHeaders } from "../server-history";
 import type { RawStreamEvent,StreamCallbacks,StreamParams } from "../callbacks";
 import { parseSSEStream,type RawSSEEvent } from "../parse-sse";
 import { buildStreamErrorFromResponse } from "../stream-error";
@@ -35,8 +36,8 @@ export class CustomStreamAdapter implements StreamAdapter {
     }
   }
 
-  async cancelStream(conversationId: string, agentId: string): Promise<boolean> {
-    this.abort();
+  async cancelStream(conversationId: string, agentId: string, options?: { keepSubscription?: boolean }): Promise<boolean> {
+    if (!options?.keepSubscription) this.abort();
 
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -87,6 +88,7 @@ export class CustomStreamAdapter implements StreamAdapter {
       agent_id: params.agentId,
       ...(params.reasoningEffort && { reasoning_effort: params.reasoningEffort }),
       resume_data: params.resumeData,
+      ...(params.turnId && { turn_id: params.turnId }),
       protocol: "custom",
       ...(params.clientContext && { client_context: params.clientContext }),
     });
@@ -94,9 +96,16 @@ export class CustomStreamAdapter implements StreamAdapter {
     await this._stream(url, body, callbacks);
   }
 
+  async reconnectStream(params: StreamParams, callbacks: StreamCallbacks): Promise<void> {
+    await this._stream(`${STREAM_BASE}/status`, JSON.stringify({
+      conversation_id: params.conversationId, agent_id: params.agentId,
+      protocol: "custom", replay: true,
+    }), callbacks, true);
+  }
+
   // ── Private: shared stream loop ────────────────────────────
 
-  private async _stream(url: string, body: string, callbacks: StreamCallbacks): Promise<void> {
+  private async _stream(url: string, body: string, callbacks: StreamCallbacks, reconnect = false): Promise<void> {
     if (this.abortController) {
       this.abortController.abort();
     }
@@ -115,6 +124,18 @@ export class CustomStreamAdapter implements StreamAdapter {
         body,
         signal: this.abortController.signal,
       });
+
+      const admission = serverHistoryFromHeaders(response.headers);
+      if (admission) {
+        if (admission.conversationId !== JSON.parse(body).conversation_id) {
+          throw new Error("The runtime returned another conversation's history");
+        }
+        callbacks.onRunAdmission?.(admission);
+      }
+      if (!admission && ((!reconnect && (response.ok || (response.status >= 400 && response.status < 500 && response.status !== 499))) ||
+          response.headers.get("X-Harness-History-Owner") === "client")) callbacks.onClientHistory?.();
+      if (reconnect && (response.status === 404 || response.status === 501 ||
+          (response.ok && !admission))) return;
 
       if (!response.ok) {
         // Build a structured StreamError so the chat panel can distinguish
@@ -227,7 +248,9 @@ export class CustomStreamAdapter implements StreamAdapter {
         }
 
         case "done": {
-          callbacks.onDone?.();
+          const parsed = data ? JSON.parse(data) : {};
+          if (parsed.outcome === "cancelled") callbacks.onDone?.("cancelled");
+          else callbacks.onDone?.();
           return true;
         }
 
