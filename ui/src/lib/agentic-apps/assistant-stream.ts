@@ -42,22 +42,21 @@ export function findAgenticAppAssistantStream(
     ...(assistant.webexGroupChat !== undefined ? { webexGroupChat: assistant.webexGroupChat } : {}) };
 }
 
-/** Stored app labels constrain routing but never grant access to an app or agent. */
+/** Only the server-managed binding identifies an app execution owner. */
 export function resolveConversationAppAssistant(
   conversation: Conversation,
   requestedAgentId: unknown,
   operation: AssistantStreamOperation = "start",
   retainedRuntime = false,
 ): AgenticAppAssistantStream | NextResponse | null {
-  const metadata = conversation.metadata;
   const binding = conversation.app_binding;
-  const storedApp = binding !== undefined || metadata?.conversation_surface === "agentic-app" ||
-    metadata?.agentic_app_id !== undefined || metadata?.agentic_app_agent_id !== undefined;
   const conflict = () => NextResponse.json(
     { success: false, error: "The conversation's app binding changed; an explicit migration or new conversation is required", code: "APP_BINDING_CONFLICT" },
     { status: 409 },
   );
-  if (retainedRuntime) return storedApp ? conflict() : null;
+  // Overlay labels also decorate Managed/SDK conversations. They are UI context,
+  // not evidence that an app owns execution or may replace a retained backend.
+  if (retainedRuntime) return binding !== undefined ? conflict() : null;
   if (binding !== undefined && (!binding || typeof binding.app_id !== "string" || !binding.app_id ||
       typeof binding.agent_id !== "string" || !binding.agent_id)) return conflict();
 
@@ -75,12 +74,6 @@ export function resolveConversationAppAssistant(
   }
   if (binding && (!target || binding.app_id !== target.appId ||
       binding.agent_id !== savedAgentId || requestedAgentId !== savedAgentId)) return conflict();
-  const legacyApp = metadata?.conversation_surface === "agentic-app" ||
-    metadata?.agentic_app_id !== undefined || metadata?.agentic_app_agent_id !== undefined;
-  if (legacyApp && (!target || metadata?.conversation_surface !== "agentic-app" ||
-      typeof metadata.agentic_app_id !== "string" || !metadata.agentic_app_id ||
-      metadata.agentic_app_id !== target.appId || metadata.agentic_app_agent_id !== savedAgentId ||
-      requestedAgentId !== savedAgentId)) return conflict();
   if (target && requestedAgentId !== savedAgentId) {
     return NextResponse.json({ success: false, error: "Agent does not match this conversation" }, { status: 409 });
   }
@@ -105,10 +98,6 @@ export async function admitConversationApp(
     participants: { $elemMatch: { type: "agent", id: agentId } },
     app_binding: conversation.app_binding ? { $eq: conversation.app_binding } : { $exists: false },
   };
-  for (const name of ["conversation_surface", "agentic_app_id", "agentic_app_agent_id"]) {
-    const observed = conversation.metadata?.[name];
-    query[`metadata.${name}`] = observed === undefined ? { $exists: false } : { $eq: observed };
-  }
   try {
     const conversations = await getCollection<Conversation>("conversations");
     const admitted = await conversations.findOneAndUpdate(query, {

@@ -1,6 +1,6 @@
 /** @jest-environment node */
 import { createHash, createHmac } from "node:crypto";
-import { proxyAgenticAppAssistantStream } from "../assistant-stream";
+import { proxyAgenticAppAssistantStream, resolveConversationAppAssistant } from "../assistant-stream";
 import { getAgenticAppRoutingSnapshot } from "../config";
 import { proxyAgenticAppRequest } from "../proxy";
 import type { AuthResult } from "@/lib/da-proxy";
@@ -55,4 +55,23 @@ it("preserves the browser caller and rejects a non-SSE native response", async (
   const chat = { ...conversation, client_type: "webui" } as Conversation;
   jest.mocked(proxyAgenticAppRequest).mockResolvedValue(new Response("{}", { headers: { "content-type": "application/json" } }));
   expect((await proxyAgenticAppAssistantStream(request(), browser, chat, JSON.parse(body), "start"))!.status).toBe(502);
+});
+
+it.each(["start", "resume", "cancel", "status"] as const)(
+  "leaves a metadata-only Managed or SDK overlay on its ordinary %s path", async (operation) => {
+    delete app.manifest.ui.assistant!.streamPath;
+    const overlay = { ...conversation, client_type: "webui", metadata: {
+      conversation_surface: "agentic-app", agentic_app_id: "example-app", agentic_app_agent_id: "example-agent",
+    } } as Conversation;
+    expect(await proxyAgenticAppAssistantStream(request(), auth, overlay, JSON.parse(body), operation)).toBeNull();
+    expect(proxyAgenticAppRequest).not.toHaveBeenCalled();
+  },
+);
+
+it.each([false, true])("does not interpret overlay labels as retained execution authority (retained=%s)", (retained) => {
+  delete app.manifest.ui.assistant!.streamPath;
+  const overlay = { ...conversation, metadata: {
+    conversation_surface: "agentic-app", agentic_app_id: "removed-app", agentic_app_agent_id: "old-label",
+  } } as Conversation;
+  expect(resolveConversationAppAssistant(overlay, "example-agent", "start", retained)).toBeNull();
 });
