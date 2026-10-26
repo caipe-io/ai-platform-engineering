@@ -148,6 +148,8 @@ jobs:
       pull-requests: write
 
     strategy:
+      # Bound simultaneous per-architecture image pushes to GHCR.
+      max-parallel: 8
       matrix:
         agent: ${{ fromJson(needs.determine-agents.outputs.agents) }}
         platform: [linux/amd64, linux/arm64]
@@ -166,7 +168,7 @@ jobs:
 
     steps:
       - name: 🔒 harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25  # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
           egress-policy: audit
 
@@ -292,6 +294,8 @@ jobs:
       packages: write
       pull-requests: write
     strategy:
+      # Publish multi-architecture manifest lists in smaller batches.
+      max-parallel: 4
       matrix:
         agent: ${{ fromJson(needs.determine-agents.outputs.agents) }}
       fail-fast: false
@@ -300,7 +304,7 @@ jobs:
       IMAGE_NAME: ${{ github.repository_owner }}/mcp-${{ matrix.agent }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
 

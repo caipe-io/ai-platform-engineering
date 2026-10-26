@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -12,6 +13,7 @@ from typing import Annotated
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
+from pymongo.errors import PyMongoError
 
 from harness_engine.adapters import AgentCoreAdapter, ClaudeSDKAdapter
 from harness_engine.adapters.base import HarnessAdapter
@@ -22,8 +24,10 @@ from harness_engine.models import (
     TERMINAL_RUN_STATUSES,
     CancelActiveRunRequest,
     ClearAgentSessionRequest,
+    ConnectAgentCoreRequest,
     CreateRunRequest,
     EventPage,
+    RegisteredAgentCoreProfile,
     RunRecord,
     SaveAgentRequest,
     ValidateAgentDraftRequest,
@@ -43,6 +47,8 @@ from harness_engine.repository import (
     RunRepository,
 )
 from harness_engine.sessions import CAIPEAgentSessionManager
+
+logger = logging.getLogger(__name__)
 
 
 def _repository(settings: Settings) -> RunRepository:
@@ -78,9 +84,18 @@ def create_app(
         DefaultPromptCompiler(),
     )
 
+    async def refresh_agentcore_profiles() -> None:
+        profiles = await resolved_repository.list_agentcore_profiles()
+        targets = {profile.profile_id: profile.target for profile in profiles}
+        for adapter in resolved_adapters:
+            if isinstance(adapter, AgentCoreAdapter):
+                adapter.set_registered_profiles(targets)
+        resolved_agentcore_provisioner.set_registered_profiles(targets)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await resolved_repository.initialize()
+        await refresh_agentcore_profiles()
         yield
         await coordinator.shutdown()
         await resolved_repository.close()
@@ -98,6 +113,7 @@ def create_app(
         return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
 
     async def caller_subject(
+        request: Request,
         authorization: Annotated[str | None, Header()] = None,
         x_harness_engine_subject: Annotated[str | None, Header()] = None,
         x_harness_engine_storage_binding: Annotated[str | None, Header()] = None,
@@ -117,7 +133,43 @@ def create_app(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "Harness Engine and CAIPE must use the same canonical MongoDB",
             )
+        # Each replica reads immutable connections before accepting new work.
+        # Event replay does not depend on refreshing the provider catalog.
+        if request.url.path in {
+            "/api/v1/harnesses", "/api/v1/agent-drafts/validate",
+            "/api/v1/runs", "/api/v1/admin/agentcore-connections",
+        } or (request.method == "PUT" and request.url.path.startswith("/api/v1/agents/")):
+            try:
+                await refresh_agentcore_profiles()
+            except (PyMongoError, ValueError) as exc:
+                logger.error("AgentCore connection registry could not be loaded (%s)", type(exc).__name__)
+                raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "AgentCore connections could not be loaded") from exc
         return x_harness_engine_subject
+
+    @app.post("/api/v1/admin/agentcore-connections", status_code=status.HTTP_201_CREATED)
+    async def connect_agentcore(
+        body: ConnectAgentCoreRequest,
+        subject: str = Depends(caller_subject),
+        x_harness_engine_admin: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        # The BFF supplies this marker only after both admin capability and
+        # platform system_config authorization; public proxies never forward it.
+        if x_harness_engine_admin != "true":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Platform administrator required")
+        if body.profile_id in resolved_settings.agentcore_targets():
+            raise HTTPException(status.HTTP_409_CONFLICT, "This profile ID is configured by the operator")
+        profile = RegisteredAgentCoreProfile(profile_id=body.profile_id, target=body.target(), created_by=subject)
+        try:
+            await resolved_repository.create_agentcore_profile(profile)
+        except RevisionConflictError as exc:
+            existing = next((item for item in await resolved_repository.list_agentcore_profiles() if item.profile_id == body.profile_id), None)
+            if existing is None or existing.target != profile.target:
+                raise HTTPException(status.HTTP_409_CONFLICT, "This connection ID already points to another target; use another ID") from exc
+        except PyMongoError as exc:
+            logger.error("AgentCore connection %s could not be saved (%s)", body.profile_id, type(exc).__name__)
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Connection could not be saved; retry with the same connection ID") from exc
+        await refresh_agentcore_profiles()
+        return {"success": True, "data": {"profile_id": profile.profile_id, "provisioning": "shared", "persistence": resolved_settings.storage_backend}}
 
     def ensure_owner(run: RunRecord | None, subject: str) -> RunRecord:
         if run is None or run.owner_subject != subject:

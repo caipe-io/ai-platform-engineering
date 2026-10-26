@@ -5,6 +5,7 @@
  * The gateway owns all config writes — DA is a pure runtime reader.
  */
 
+import { projectAgentAppIdentity } from "@/lib/agentic-apps/agent-catalog";
 import {
   ApiError,
   getAuthFromBearerOrSession,
@@ -54,6 +55,7 @@ import type {
   DynamicAgentConfig,
   DynamicAgentConfigWithPermissions,
   LegacyVisibilityType,
+  ModelConfig,
   SubAgentRef,
   VisibilityType,
 } from "@/types/dynamic-agent";
@@ -335,6 +337,32 @@ function normalizeExecutionHarnessId(value: unknown): string {
     throw new ApiError("Invalid execution harness ID", 400, "INVALID_HARNESS_ID");
   }
   return harnessId;
+}
+
+function normalizeAgentModel(
+  value: unknown,
+  required: boolean,
+): ModelConfig | undefined {
+  if (value === undefined && !required) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ApiError("Model selection is required for Deep Agents (model.id and model.provider)", 400);
+  }
+  const model = value as Record<string, unknown>;
+  if (typeof model.id !== "string" || !model.id.trim()) {
+    throw new ApiError("Model ID is required (model.id)", 400);
+  }
+  if (typeof model.provider !== "string" || !model.provider.trim()) {
+    throw new ApiError("Model provider is required (model.provider)", 400);
+  }
+  const reasoningEffort = model.reasoning_effort ?? "medium";
+  if (typeof reasoningEffort !== "string" || !["low", "medium", "high", "max"].includes(reasoningEffort)) {
+    throw new ApiError("Invalid model.reasoning_effort", 400);
+  }
+  return {
+    id: model.id,
+    provider: model.provider,
+    reasoning_effort: reasoningEffort as ModelConfig["reasoning_effort"],
+  };
 }
 
 function normalizeDatasourceIds(value: unknown): string[] | undefined {
@@ -673,7 +701,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     scopedItems,
     listTarget,
   );
-  const pageItems = visibleItems.slice(skip, skip + pageSize);
+  const projectedItems = projectAgentAppIdentity(visibleItems, session, { availableOnly: enabledOnly });
+  const pageItems = projectedItems.slice(skip, skip + pageSize);
   const { rows } = await resolveAgentListPermissions(
     session,
     pageItems.map((agent) => String(agent._id)),
@@ -684,7 +713,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     permissions: agentRowPermissionsOrDefault(rows, String(agent._id)),
   }));
 
-  return paginatedResponse(items, visibleItems.length, page, pageSize);
+  return paginatedResponse(items, projectedItems.length, page, pageSize);
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -722,20 +751,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     throw new ApiError("Select one execution harness and its admitted profile", 400, "CONFLICTING_EXECUTION_SELECTION");
   }
   const nativeModelRequired = executionHarnessId === "dynamic_agents" && execution.kind === "native";
-  if (nativeModelRequired && (!body.model?.id || typeof body.model.id !== "string")) {
-    throw new ApiError("Model ID is required (model.id)", 400);
-  }
-  if (nativeModelRequired && (!body.model?.provider || typeof body.model.provider !== "string")) {
-    throw new ApiError("Model provider is required (model.provider)", 400);
-  }
-  if (body.model !== undefined) {
-    if (!body.model || typeof body.model !== "object" || Array.isArray(body.model)) throw new ApiError("model must be an object", 400);
-    if (typeof body.model.id !== "string" || !body.model.id || typeof body.model.provider !== "string" || !body.model.provider) throw new ApiError("Model ID and provider are required when model is supplied", 400);
-    body.model.reasoning_effort ??= "medium";
-    if (!["low", "medium", "high", "max"].includes(body.model.reasoning_effort)) {
-      throw new ApiError("Invalid model.reasoning_effort", 400);
-    }
-  }
+  body.model = normalizeAgentModel(body.model, nativeModelRequired);
   const requestedOwnerTeamSlug = normalizeString(body.owner_team_slug);
   const requestedOwnerTeamId = normalizeString(body.owner_team_id);
   // Coerce any legacy 'private' on the wire to 'team' (private visibility was
@@ -791,6 +807,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // Generate slug from name with agent- prefix
   const agentId = `agent-${slugify(body.name)}`;
+  // Agent IDs must fit the persisted chat-history group keys.
+  if (agentId.length > 230) {
+    throw new ApiError(
+      "Agent name is too long: generated ID must be at most 230 characters",
+      400,
+    );
+  }
   if (!agentId) {
     throw new ApiError(
       "Agent name must contain at least one alphanumeric character",
@@ -867,7 +890,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const allowedRemoteAgents = await validateRemoteAgentIds(body.allowed_remote_agents);
   const doc: DynamicAgentConfig = {
     _id: agentId,
-    execution_harness_id: normalizeExecutionHarnessId(body.execution_harness_id),
+    execution_harness_id: executionHarnessId,
     name: body.name as string,
     description: (body.description as string) ?? "",
     system_prompt: body.system_prompt as string,
@@ -877,7 +900,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     remote_agent_timeouts: normalizeRemoteAgentTimeouts(body.remote_agent_timeouts, allowedRemoteAgents),
     builtin_tools: body.builtin_tools ?? undefined,
     execution,
-    model: body.model as DynamicAgentConfig["model"],
+    ...(body.model ? { model: body.model as ModelConfig } : {}),
     visibility,
     shared_with_teams: sharedTeamSlugs,
     owner_team_slug: ownerTeamSlug ?? undefined,
@@ -1022,6 +1045,13 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     updateData.execution_harness_id = normalizeExecutionHarnessId(
       body.execution_harness_id,
     );
+  }
+  const previousHarnessId = normalizeExecutionHarnessId(agent.execution_harness_id);
+  const nextHarnessId = normalizeExecutionHarnessId(updateData.execution_harness_id ?? agent.execution_harness_id);
+  if (body.model !== undefined) {
+    updateData.model = normalizeAgentModel(body.model, nextHarnessId === "dynamic_agents" && execution.kind === "native");
+  } else if (nextHarnessId === "dynamic_agents" && execution.kind === "native" && previousHarnessId !== "dynamic_agents") {
+    normalizeAgentModel(agent.model, true);
   }
   const datasourceSelectionChanged = Object.prototype.hasOwnProperty.call(
     body,

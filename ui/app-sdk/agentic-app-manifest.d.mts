@@ -35,7 +35,7 @@ export interface AgenticAppManifest {
       placement: "after-chat";
       icon?: "book-open" | "layout-grid";
     };
-    assistant?: { agentId: string; label: string; name: string };
+    assistant?: { agentId: string; label: string; name: string; streamPath?: string; resumePath?: string; cancelPath?: string; statusPath?: string; overlay?: "host" | "app"; supportedClients?: Array<"webui" | "webex">; webexGroupChat?: boolean };
   };
   api: { mounts: string[] };
   auth: { mode: AgenticAppAuthMode };
@@ -67,10 +67,17 @@ export interface AgenticAppManifest {
   catalog?: {
     categories?: string[];
     capabilities?: string[];
+    /** Same-origin /app-icons/<app-id>/<filename> asset; legacy names use a generic icon. */
     icon?: string;
     supportUrl?: string;
   };
 }
+export function resolveAgenticAppIcon(appId: string, icon?: string): string | undefined;
+export function resolveAgenticAppHttpPolicyAction(
+  manifest: AgenticAppManifest,
+  method: string,
+  path: string,
+): AgenticAppPolicyAction | undefined;
 export function validateAgenticAppManifest(value: unknown): AgenticAppManifest;
 export function normalizeLegacyAgenticAppManifest(
   value: unknown,

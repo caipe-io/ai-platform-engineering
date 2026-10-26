@@ -80,6 +80,16 @@ describe("External Apps security contracts", () => {
     );
   });
 
+  it("binds native assistant proofs to one app, human and short-lived invocation", async () => {
+    const context = { client: "webex", kind: "direct", conversationId: "example-chat", bodyHash: "example-digest" };
+    const { token } = await mintAgenticAppToken({ appId: "example-app", subject: "example-user", scopes: ["example-app:run"],
+      decisionId: "example-decision", correlationId: "example-correlation", ttlSeconds: 60, assistantContext: context });
+    const proof = await verifyAgenticAppToken(token, "example-app");
+    expect(proof).toMatchObject({ sub: "example-user", purpose: "assistant-stream", assistant_context: context });
+    expect(proof.exp - Number(proof.iat)).toBe(60);
+    await expect(verifyAgenticAppToken(token, "other-app")).rejects.toThrow();
+  });
+
   it("mints a token accepted by the independent Weather example verifier", async () => {
     const minted = await mintAgenticAppToken({
       appId: "weather",
@@ -155,6 +165,9 @@ describe("External Apps security contracts", () => {
       "x-caipe-user",
       "x-auth-request-email",
       "x-forwarded-user",
+      "x-caipe-assistant-context",
+      "x-caipe-webex-context",
+      "x-caipe-webex-signature",
       "x-remote-user",
       "x-example-app-subject",
       "x-example-app-name",

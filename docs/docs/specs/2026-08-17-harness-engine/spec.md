@@ -1,5 +1,7 @@
 # Feature Specification: Harness Engine
 
+> **Delivery alignment (2026-10-21):** [Delivery phases](delivery-phases.md) is the canonical release sequence: Phase 1 independent engine/gateway (PR 2401), Phase 2 Deep Agents integration and pluggable builder, Phase 3 external sandbox execution, Phase 4 cross-harness composition. These boundaries are proposed for review; current-path correctness remains a Phase 1 merge gate.
+
 > **Implementation amendment (2026-08-18):** Harness Engine is an independent
 > service deployed beside Dynamic Agents. It does not import, replace, or modify
 > Dynamic Agents. It owns complete portable agent blueprints, immutable versions,
@@ -22,11 +24,24 @@
 
 ## Overview
 
-Harness Engine replaces the Dynamic Agents runtime without forcing users, clients, stored agents, or operators to migrate in lockstep. It preserves the existing service boundary, configuration ownership, security model, conversation behavior, streaming protocols, and operational interfaces while allowing each agent to select a certified execution harness.
+Harness Engine first adds an opt-in execution path beside Dynamic Agents. PR 2401 preserves the existing default runtime, configuration ownership, security model, conversation behavior and client protocols. A separately reviewed Phase 2 integrates `DeepAgentsAdapter` by reusing the existing runtime, with parity, migration and rollback gates before cutover.
 
 The current Dynamic Agents behavior is the compatibility baseline. A harness is considered supported only when it passes the same baseline behavior suite or the engine supplies the missing behavior outside the harness. Provider-specific features may be exposed as optional extensions, but they cannot alter existing behavior unless an agent explicitly opts in.
 
 ## User Scenarios & Testing *(mandatory)*
+
+The stories describe the full target architecture, not the scope of one PR. Priorities below rank requirements within their selected release; they do not require all P1 stories in PR 2401.
+
+| Story | Delivery scope |
+|---|---|
+| US1: Deep Agents compatibility/replacement | Phase 2; deployment retirement requires its own parity and cutover evidence |
+| US2: Per-agent harness selection | Phase 1 opt-in experimental selection; later certification follows applicable Phase 2–4 gates |
+| US3: Consistent chat experience | Phase 1 declared stream capabilities; Phase 2 Deep Agents parity; Phase 4 cross-harness child visibility |
+| US4: Add harnesses through contracts | Phase 1 adapter foundation; Phase 2 reusable builder panels; later adapters qualify independently |
+| US5: Operations and rollback | Phase 1 current engine controls; Phase 2 adoption/rollback; Phase 3 worker operations |
+| US6: Isolated local harness workers | Phase 3 |
+| US7: Durable state across workers | Phase 2 native-state preservation and Phase 3 worker recovery; memory extensions are separately scoped |
+| US8: Harness-aware builder | Phase 1 truthful capability controls; Phase 2 full descriptor/panel architecture |
 
 ### User Story 1 - Replace Dynamic Agents Without Disruption (Priority: P1)
 
@@ -207,6 +222,8 @@ As an agent builder, I want the existing agent-creation wizard to adapt to the s
   never silently runs the same agent through Dynamic Agents.
 
 ## Requirements *(mandatory)*
+
+Requirements cover the target architecture. Apply them through the [delivery scope](delivery-phases.md); sandbox, migration and cross-harness requirements are not claims of Phase 1 implementation. Authentication, authorization, retained execution ownership and fail-closed current-path behavior apply in every phase.
 
 ### Functional Requirements
 

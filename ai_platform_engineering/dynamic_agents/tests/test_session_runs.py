@@ -1,7 +1,7 @@
 """Cross-worker cooperative admission and cancellation for native agent turns."""
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import aclosing
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -240,8 +240,9 @@ async def test_lost_lease_cancels_old_worker_on_next_heartbeat(monkeypatch: pyte
     assert collection.rows[("primary", "shared-thread")]["lease_id"] == "new-worker-lease"
 
 
-async def test_heartbeat_extends_lease_and_database_loss_stops_owner(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_heartbeat_extends_lease_and_database_loss_stops_owner_at_confirmed_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(session_runs, "HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(session_runs, "LEASE_SECONDS", 0.08)
     collection = _LeaseCollection()
     entered, release = asyncio.Event(), asyncio.Event()
     owner = asyncio.create_task(_worker(_mongo(collection), entered, release))
@@ -253,9 +254,88 @@ async def test_heartbeat_extends_lease_and_database_loss_stops_owner(monkeypatch
         await asyncio.sleep(0.01)
     assert collection.rows[("primary", "shared-thread")]["lease_expires_at"] > initial_expiry
     collection.fail_heartbeat = True
-
+    await asyncio.sleep(0.02)
+    assert not owner.done()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(owner, timeout=2)
+    assert collection.rows == {}
+
+
+async def test_transient_heartbeat_failure_keeps_confirmed_authority_and_recovers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session_runs, "HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(session_runs, "LEASE_SECONDS", 0.3)
+    collection = _LeaseCollection()
+    entered, release = asyncio.Event(), asyncio.Event()
+    owner = asyncio.create_task(_worker(_mongo(collection), entered, release))
+    await entered.wait()
+    collection.fail_heartbeat = True
+    initial = deepcopy(collection.rows[("primary", "shared-thread")])
+    try:
+        await asyncio.sleep(0.04)
+        assert not owner.done()
+        assert collection.rows[("primary", "shared-thread")] == initial
+        collection.fail_heartbeat = False
+        async with asyncio.timeout(2):
+            while collection.rows[("primary", "shared-thread")]["lease_expires_at"] <= initial["lease_expires_at"]:
+                await asyncio.sleep(0.01)
+        assert not owner.done()
+    finally:
+        release.set()
+        await owner
+    assert collection.rows == {}
+
+
+async def test_blocked_heartbeat_expires_execution_before_its_driver_call_drains(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session_runs, "HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(session_runs, "LEASE_SECONDS", 0.08)
+    heartbeat_entered, heartbeat_release = Event(), Event()
+    producer_stopped = asyncio.Event()
+    collection = _LeaseCollection()
+    original = collection.find_one_and_update
+
+    def blocked(query: dict, update: dict, **kwargs: object) -> dict | None:
+        if "lease_id" in query:
+            heartbeat_entered.set()
+            assert heartbeat_release.wait(timeout=3)
+        return original(query, update, **kwargs)
+
+    monkeypatch.setattr(collection, "find_one_and_update", blocked)
+
+    async def execute() -> None:
+        async with native_session_run(_mongo(collection), "primary", "shared-thread"):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                producer_stopped.set()
+
+    owner = asyncio.create_task(execute())
+    try:
+        assert await asyncio.to_thread(heartbeat_entered.wait, 2)
+        await asyncio.wait_for(producer_stopped.wait(), 1)
+        assert not owner.done()
+        assert ("primary", "shared-thread") in collection.rows
+    finally:
+        heartbeat_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(owner, 2)
+    assert collection.rows == {}
+
+
+async def test_admission_acknowledged_after_lease_budget_cannot_start_execution(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session_runs, "LEASE_SECONDS", 0.02)
+    collection = _LeaseCollection()
+    original = session_runs._reserve
+
+    async def delayed(operation: Callable[..., object], *args: object, **kwargs: object) -> object:
+        result = await asyncio.to_thread(operation, *args, **kwargs)
+        if operation is original:
+            await asyncio.sleep(0.04)
+        return result
+
+    monkeypatch.setattr(session_runs, "await_session_operation", delayed)
+    with pytest.raises(SessionRunError, match="expired before execution"):
+        async with native_session_run(_mongo(collection), "primary", "shared-thread"):
+            pytest.fail("an expired admission must not dispatch a producer")
     assert collection.rows == {}
 
 

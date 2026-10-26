@@ -30,6 +30,7 @@ jest.mock("@/components/ui/toast", () => ({
 }));
 
 jest.mock("lucide-react", () => ({
+  ...jest.requireActual("lucide-react"),
   Plus: () => <span data-testid="plus-icon" />,
   ChevronDown: () => <span data-testid="chevron-icon" />,
   Bot: () => <span data-testid="bot-icon" />,

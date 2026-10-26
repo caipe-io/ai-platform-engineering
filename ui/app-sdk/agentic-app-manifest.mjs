@@ -19,6 +19,8 @@ const HOST_APIS = new Set([
   "host.breadcrumbs",
   "host.theme",
   "host.session",
+  "host.chat",
+  "host.notifications",
   "app.gateway",
 ]);
 
@@ -70,6 +72,16 @@ function emptyCapabilities() {
     consumes: { platformApis: [] },
     requestedPermissions: [],
   };
+}
+
+/** Only reviewed, same-origin assets in the owning app's namespace are rendered. */
+export function resolveAgenticAppIcon(appId, icon) {
+  if (typeof appId !== "string" || !ID.test(appId) || typeof icon !== "string" || icon.length > 200) return undefined;
+  const prefix = `/app-icons/${appId}/`;
+  if (!icon.startsWith(prefix)) return undefined;
+  const filename = icon.slice(prefix.length);
+  return /^[a-zA-Z0-9_-][a-zA-Z0-9._-]*\.(?:svg|png|webp|jpe?g)$/.test(filename) && !filename.includes("..")
+    ? icon : undefined;
 }
 
 /** Validate publisher declarations. Permission requests never become grants here. */
@@ -203,15 +215,34 @@ export function validateAgenticAppManifest(value) {
   if (ui.assistant !== undefined) {
     const assistant = record(
       ui.assistant,
-      ["agentId", "label", "name"],
+      ["agentId", "label", "name", "streamPath", "resumePath", "cancelPath", "statusPath", "overlay", "supportedClients", "webexGroupChat"],
       "ui.assistant",
     );
     identifier(assistant.agentId, "ui.assistant.agentId");
+    if (assistant.supportedClients !== undefined) {
+      const clients = strings(assistant.supportedClients, "ui.assistant.supportedClients");
+      if (!assistant.streamPath || !clients.length || new Set(clients).size !== clients.length ||
+          clients.some(client => !["webui", "webex"].includes(client)))
+        throw new Error("assistant supportedClients requires a stream and distinct webui/webex clients");
+    }
+    if (assistant.webexGroupChat !== undefined &&
+        (typeof assistant.webexGroupChat !== "boolean" || !assistant.supportedClients?.includes("webex")))
+      throw new Error("assistant webexGroupChat requires explicit Webex support");
+    if (assistant.overlay !== undefined && !["host", "app"].includes(assistant.overlay))
+      throw new Error("assistant overlay must be host or app");
     if (
       string(assistant.label, "ui.assistant.label").length > 48 ||
       string(assistant.name, "ui.assistant.name").length > 80
     )
       throw new Error("assistant label/name is too long");
+    for (const field of ["streamPath", "resumePath", "cancelPath", "statusPath"]) {
+      if (assistant[field] === undefined) continue;
+      pathValue(assistant[field], `ui.assistant.${field}`);
+      if (!assistant[field].startsWith("/api/") || !app.runtime)
+        throw new Error(`assistant ${field} requires an app runtime API path`);
+      if (field !== "streamPath" && !assistant.streamPath)
+        throw new Error(`assistant ${field} requires streamPath`);
+    }
   }
   record(app.auth, ["mode"], "auth");
   if (
@@ -323,6 +354,13 @@ export function validateAgenticAppManifest(value) {
   }
   if (app.runtime && !policies.length)
     throw new Error("runtime must declare at least one policy action");
+  for (const field of ["streamPath", "resumePath", "cancelPath", "statusPath"]) {
+    const path = ui.assistant?.[field];
+    if (!path) continue;
+    const policy = resolveAgenticAppHttpPolicyAction(app, "POST", path);
+    if (!policy || policy.defaultEffect !== "allow")
+      throw new Error(`assistant ${field} requires an allowed POST policy`);
+  }
   record(app.provides, ["mcp", "agents", "workflows"], "provides");
   for (const kind of ["mcp", "agents", "workflows"])
     strings(app.provides[kind], `provides.${kind}`);
@@ -336,7 +374,7 @@ export function validateAgenticAppManifest(value) {
       api.required &&
       (!HOST_APIS.has(api.id) ||
         api.version !== "1.0" ||
-        (api.id !== "app.gateway" && !modes.has("native-package")))
+        (api.id !== "app.gateway" && api.id !== "host.notifications" && !modes.has("native-package")))
     )
       throw new Error(
         `unsupported required platform capability: ${api.id}@${api.version}`,
@@ -378,8 +416,12 @@ export function validateAgenticAppManifest(value) {
     for (const field of ["categories", "capabilities"])
       if (app.catalog[field] !== undefined)
         strings(app.catalog[field], `catalog.${field}`);
-    if (app.catalog.icon !== undefined)
-      string(app.catalog.icon, "catalog.icon");
+    if (app.catalog.icon !== undefined) {
+      const icon = string(app.catalog.icon, "catalog.icon");
+      // Legacy symbolic icons remain valid and render the generic app mark.
+      if (!resolveAgenticAppIcon(app.id, icon) && !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(icon))
+        throw new Error("catalog.icon must be an asset under /app-icons/<app-id>/ or a legacy icon name");
+    }
     if (app.catalog.supportUrl !== undefined) {
       const url = new URL(string(app.catalog.supportUrl, "catalog.supportUrl"));
       if (
@@ -394,6 +436,27 @@ export function validateAgenticAppManifest(value) {
 }
 
 /** Existing deployment manifests have already passed the legacy config parser. */
+/** Shared publisher/runtime policy matching, including first-match denial. */
+export function resolveAgenticAppHttpPolicyAction(manifest, method, path) {
+  const normalize = (value) => {
+    const absolute = value.startsWith("/") ? value : `/${value}`;
+    return absolute.length > 1 ? absolute.replace(/\/+$/, "") : absolute;
+  };
+  const normalizedMethod = method.toUpperCase();
+  const actual = normalize(path).split("/").filter(Boolean);
+  const policies = manifest.access.policyActions;
+  const route = policies.find((candidate) => {
+    if (candidate.method !== normalizedMethod || typeof candidate.path !== "string") return false;
+    const expected = normalize(candidate.path).split("/").filter(Boolean);
+    return expected.length === actual.length && expected.every(
+      (segment, index) => segment.startsWith(":") || segment === actual[index],
+    );
+  });
+  if (route) return route;
+  if (policies.some((candidate) => candidate.method === normalizedMethod)) return undefined;
+  return policies.find((candidate) => candidate.action === `proxy:${normalizedMethod}`);
+}
+
 export function normalizeLegacyAgenticAppManifest(legacy) {
   return {
     ...legacy,

@@ -43,6 +43,11 @@ test("validates an optional native assistant claim", () => {
   assert.throws(() => validateManifest("assistant", { ...example, assistant: { ...assistant, route: "/chat" } }), /assistant/);
 });
 
+test("rejects runtime assistant paths in legacy descriptors", () => {
+  const assistant = { agentId: "agent-example", label: "Ask Example", name: "Example Assistant", streamPath: "/api/example/chat" };
+  for (const contractVersion of ["1.1", "2.0"]) assert.throws(() => validateManifest("example", { ...example, contractVersion, assistant }), /apiVersion 2.0/);
+});
+
 test("accepts a route-less app in a declared slot", () => {
   const internal = { ...example, navigation: undefined };
   assert.equal(validateManifest("slot", { ...internal, hostPaths: [], slots: ["home"] }).id, "example-app");

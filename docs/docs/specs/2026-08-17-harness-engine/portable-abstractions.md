@@ -1,8 +1,10 @@
 # Portable Harness Engine Abstractions
 
+> **Pending integration design:** [Deep Agents Adapter and Pluggable Agent Builder](deep-agents-integration-pending.md) proposes a future runtime extraction and capability-driven editor. It does not change the implemented independent-service boundary below.
+
 ## Decision
 
-Harness Engine is an independent control plane beside Dynamic Agents.
+In [delivery Phase 1](delivery-phases.md), Harness Engine is an independent control plane beside Dynamic Agents. Phase 2 separately adds `DeepAgentsAdapter`; Phase 3 adds external sandbox execution; Phase 4 adds cross-harness delegation.
 
 - It does not import or change `ai_platform_engineering/dynamic_agents/`.
 - It owns complete portable agent blueprints and immutable versions.
@@ -10,7 +12,7 @@ Harness Engine is an independent control plane beside Dynamic Agents.
 - The Next.js BFF stays horizontally stateless.
 - Harness Engine owns provider runs and durable session bindings.
 - Local SDK harnesses must move from in-process execution to one exclusive
-  sandbox pod per binding before production certification.
+  sandbox pod per binding before production certification (Phase 3). `SandboxManager` remains inside the engine container and calls a pluggable external backend.
 
 ## Separate lifecycle concepts
 

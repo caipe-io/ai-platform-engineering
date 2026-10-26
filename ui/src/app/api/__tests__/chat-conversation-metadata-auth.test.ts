@@ -127,4 +127,22 @@ describe("PATCH /api/chat/conversations/[id]/metadata auth", () => {
       }),
     );
   });
+  it("cannot replace server-owned app routing through public metadata edits", async () => {
+    const conversation = {
+      _id: "conversation-example", owner_id: "primary@example.test",
+      app_binding: { app_id: "app-primary", agent_id: "agent-primary" }, metadata: {},
+    };
+    const conversations = { findOne: jest.fn().mockResolvedValue(conversation), updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }) };
+    mockGetCollection.mockResolvedValue(conversations);
+    const { PATCH } = await import("../chat/conversations/[id]/metadata/route");
+    const result = await PATCH(request({
+      app_binding: { app_id: "app-secondary", agent_id: "agent-secondary" },
+      metadata: { app_binding: { app_id: "app-secondary" }, agentic_app_id: "app-secondary" },
+    }), { params: Promise.resolve({ id: "conversation-example" }) });
+    expect(result.status).toBe(200);
+    const update = conversations.updateOne.mock.calls[0][1].$set;
+    expect(update).not.toHaveProperty("app_binding");
+    expect(Object.keys(update).every(key => key === "updated_at" || key.startsWith("metadata."))).toBe(true);
+    expect((await result.json()).data.app_binding).toEqual(conversation.app_binding);
+  });
 });

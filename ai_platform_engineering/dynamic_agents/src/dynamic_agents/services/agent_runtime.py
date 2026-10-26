@@ -29,6 +29,7 @@ from deepagents.middleware.skills import SkillsMiddleware
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
 from jinja2 import ChainableUndefined, TemplateSyntaxError
 from jinja2.sandbox import ImmutableSandboxedEnvironment, SecurityError
+from langchain.agents.middleware.pii import PIIMiddleware
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.mongodb.saver import MongoDBSaver
 from langgraph.store.memory import InMemoryStore
@@ -50,6 +51,7 @@ from dynamic_agents.models import (
     SubAgentRef,
     UserContext,
 )
+from dynamic_agents.services.app_context_prompt import AppContextPromptMiddleware
 from dynamic_agents.services.attachment_store import (
     AttachmentStore,
     build_attachment_store,
@@ -94,6 +96,7 @@ from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.runtime_storage import resolve_runtime_storage
 from dynamic_agents.services.sandbox_client import SandboxError
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
+from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryMiddleware
 from dynamic_agents.services.tracing import TracingManager
 
 if TYPE_CHECKING:
@@ -157,7 +160,7 @@ def _with_general_purpose_tool_result_recovery(
         "tools": tools,
         "model": model,
         "interrupt_on": interrupt_on,
-        "middleware": [ToolResultInvariantMiddleware()],
+        "middleware": [ToolCallRecoveryMiddleware(), ToolResultInvariantMiddleware()],
     }
     configured_subagents = [
         subagent
@@ -1195,6 +1198,11 @@ class AgentRuntime:
             attachment_store=self._get_attachment_store(),
             enable_prompt_cache=self._prompt_cache_enabled(),
         )
+        # Request-only app data cannot bypass configured PII handling.
+        if self.config.app_context_prompt is not None and not any(
+            isinstance(middleware, PIIMiddleware) for middleware in middleware_stack
+        ):
+            middleware_stack.insert(0, AppContextPromptMiddleware())
         # Prepend skills middleware so it runs before other middleware
         if skills_middleware:
             middleware_stack = [skills_middleware] + middleware_stack
@@ -1333,14 +1341,14 @@ class AgentRuntime:
         # fetch_url tool (disabled by default)
         fetch_url_config = config.builtin_tools.fetch_url
         if fetch_url_config and fetch_url_config.enabled:
-            allowed_domains = fetch_url_config.allowed_domains or "*"
+            allowed_domains = fetch_url_config.allowed_domains
             tools.append(create_fetch_url_tool(allowed_domains=allowed_domains))
             config_summary["fetch_url"] = {"allowed_domains": allowed_domains}
 
         # curl tool (disabled by default) — supports PUT/POST/PATCH/DELETE
         curl_config = config.builtin_tools.curl
         if curl_config and curl_config.enabled:
-            allowed_domains = curl_config.allowed_domains or "*"
+            allowed_domains = curl_config.allowed_domains
             https_only = curl_config.https_only if curl_config.https_only is not None else True
             allow_non_public_urls = curl_config.allow_non_public_urls if curl_config.allow_non_public_urls is not None else False
             tools.append(create_curl_tool(allowed_domains=allowed_domains, https_only=https_only, allow_non_public_urls=allow_non_public_urls))

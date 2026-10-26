@@ -62,7 +62,7 @@ it("checks agent use and conversation read before exposing run metadata", async 
     "read",
   );
   expect(mockProxy).toHaveBeenCalledWith(
-    "http://example.test:8000/api/v1/chat/runs?agent_id=agent-1&conversation_id=conversation-1",
+    "http://example.test:8000/api/v1/chat/runs?agent_id=agent-1&conversation_id=conversation-1&authorized_conversation_id=conversation-1",
     "GET", expect.anything(), "[runs/latest]",
   );
 });
@@ -76,7 +76,7 @@ it("denies replay when the caller cannot read the conversation", async () => {
 
 it("does not proxy a mismatched agent or missing agent grant", async () => {
   const response = await latestRun(request("/api/v1/chat/runs?conversation_id=conversation-1&agent_id=agent-2"));
-  expect(response.status).toBe(403);
+  expect(response.status).toBe(409);
   expect(mockProxy).not.toHaveBeenCalled();
   mockAgentPermission.mockResolvedValue(NextResponse.json({ error: "Denied" }, { status: 403 }));
   await latestRun(request(`/api/v1/chat/runs?${query}`));
@@ -88,9 +88,9 @@ it("uses the server-owned autonomous execution binding and GET cursor replay", a
     _id: "conversation-1", source: "autonomous", execution_context_id: "context-persisted",
     participants: [{ type: "agent", id: "agent-1" }],
   });
-  await replayRun(request(`/api/v1/chat/runs/run-1/stream?${query}&after=7&execution_context_id=forged`), { params: Promise.resolve({ runId: "run-1" }) });
+  await replayRun(request(`/api/v1/chat/runs/run-1/stream?${query}&after=7&execution_context_id=forged&authorized_conversation_id=forged`), { params: Promise.resolve({ runId: "run-1" }) });
   expect(mockStreamProxy).toHaveBeenCalledWith(
-    "http://example.test:8000/api/v1/chat/runs/run-1/stream?agent_id=agent-1&conversation_id=context-persisted&after=7",
+    "http://example.test:8000/api/v1/chat/runs/run-1/stream?agent_id=agent-1&conversation_id=context-persisted&authorized_conversation_id=conversation-1&after=7",
     undefined, expect.anything(), "[runs/stream]", "GET",
   );
 });

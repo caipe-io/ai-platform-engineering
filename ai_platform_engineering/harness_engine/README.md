@@ -31,6 +31,77 @@ wrap that detached producer or duplicate its journal.
   agent/context and preserve existing native/provider bindings. An unavailable
   explicitly selected provider fails rather than substituting another runtime.
 
+## Agent Builder harness status
+
+- LangChain Deep Agents is the **Stable** default.
+- Claude SDK and AgentCore are **Experimental** CAIPE integrations. Agent Builder
+  shows the catalog's certification status in the harness dropdown and beside
+  the selected harness. `certified` is labeled **Stable**; `blocked` is labeled
+  **Blocked** and remains disabled.
+
+## Connect an existing AgentCore deployment
+
+- In **Agent Builder → Execution harness**, a platform administrator chooses
+  **Add existing AgentCore agent**, enters a connection ID beginning with `existing-`, a Harness or
+  Runtime ARN, its matching AWS Region, and a qualifier.
+- Registration saves an immutable `shared` operator profile in
+  `harness_agentcore_profiles`. MongoDB preserves it across restarts; the
+  development memory backend does not. Identical retries reuse the connection;
+  an existing ID cannot be pointed at a different target.
+- The current Builder selects AgentCore and the connection, preserving the
+  draft's instructions, owner-team and sharing choices. Save the agent to apply it.
+  The connection also remains available in the operator profile picker.
+- Registration checks ARN syntax and Region consistency. The Engine uses its
+  existing AWS credentials; IAM invocation permission is checked when chatting.
+  Registering does not discover AWS resources or import configuration/history.
+- Managed Harness calls use CAIPE instructions. Custom Runtimes must accept
+  the adapter's request/response contract. Native provider tools keep their AWS
+  permissions; CAIPE tool grants do not automatically constrain them.
+- Registration requires both `admin_ui#admin` and CAS management permission on
+  `system_config:platform` in the BFF. The internal endpoint additionally
+  requires the service credential and an admin marker set only by that route.
+  The normal catalog exposes profile aliases, never ARNs or credentials.
+- Connections extend the operator allowlist for agent builders. Chat/run access
+  still requires current CAIPE agent and conversation permissions. Each caller,
+  agent and conversation keeps its own Engine binding/provider session.
+- Shared connections never create, update or delete the AWS deployment. Removing
+  a CAIPE agent removes its CAIPE records; the imported target remains external.
+
+## App-owned chat streams
+
+- The BFF's start, resume, cancel and status routes share one dispatcher after
+  agent-use and conversation-write authorization.
+- Installed apps use their server-declared assistant paths through the shared
+  app proxy, preserving the resolved caller and canonical conversation ID.
+  App errors, denials and unsupported operations return directly.
+- Other start/resume/cancel requests resolve their runtime conversation ID and
+  pinned Harness Gateway backend. Provider dispatch does not require the
+  Dynamic Agents service configuration.
+- App-owned assistants require streaming; non-streaming invoke returns `501`
+  before creating a native/provider binding. Status is available only when an
+  app declares it, with `501` for unsupported runtimes.
+- Host chat panels, overlays and cross-window app status use the existing
+  shared UI/store contracts. Provider runs retain Engine-owned detached
+  execution and replay; app streams keep their app-owned session lifecycle.
+
+## Authorization boundary
+
+- The BFF checks current agent use and conversation write before execution,
+  resume, Stop or clear. A saved agent participant must match the requested
+  agent; an authorized request cannot substitute another agent's runtime.
+- Direct Engine admission also verifies the pinned gateway target is a
+  provider runtime, preserving native session ownership.
+- Run detail, polling and replay subscriptions retain Engine owner checks and
+  recheck current agent use plus conversation read in the BFF. Cancellation by
+  run ID requires conversation write. Keeping a run ID does not retain revoked
+  access.
+- Service accounts retain their principal classification in platform checks.
+  Engine uses internal credentials plus the verified caller subject; app-owned
+  streams use the exact authenticated interactive user.
+- Grants are checked per request/subscription. Existing streams are not
+  continuously reauthorized; downstream app/tool resource checks remain
+  authoritative for their own operations.
+
 ## Session flow
 
 ```mermaid

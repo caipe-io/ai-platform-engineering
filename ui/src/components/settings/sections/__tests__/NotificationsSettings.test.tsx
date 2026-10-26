@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 
-import { fireEvent,render,screen,waitFor } from "@testing-library/react";
+import { act,fireEvent,render,screen,waitFor } from "@testing-library/react";
 
 import { NotificationsSettings } from "../NotificationsSettings";
 import { PlatformAnnouncementsSettings } from "../PlatformAnnouncementsSettings";
@@ -214,12 +214,12 @@ describe("PlatformAnnouncementsSettings",() => {
     jest.clearAllMocks();
   });
 
-  it("auto-saves only the platform release announcement flag",async () => {
+  it("auto-saves only the platform flag, not the editable compare draft",async () => {
     const fetchMock = jest.fn(async (_input: RequestInfo | URL,init?: RequestInit) => {
       if (init?.method === "PATCH") return jsonResponse({ success: true,data: {} });
       return jsonResponse({
         success: true,
-        data: { release_notes: { enabled: true } },
+        data: { release_notes: { enabled: true }, release_notes_allowed_repositories: ["https://github.com/example/repository"] },
       });
     });
     global.fetch = fetchMock;
@@ -234,16 +234,83 @@ describe("PlatformAnnouncementsSettings",() => {
         "/api/admin/platform-config",
         expect.objectContaining({
           method: "PATCH",
-          body: JSON.stringify({ release_notes: { enabled: false } }),
+          body: JSON.stringify({
+            release_notes: {
+              enabled: false,
+            },
+          }),
         }),
       );
     });
   });
 
+  it("saves the optional GitHub commit range",async () => {
+    const fetchMock = jest.fn(async (_input: RequestInfo | URL,init?: RequestInit) => {
+      if (init?.method === "PATCH") return jsonResponse({ success: true,data: {} });
+      return jsonResponse({
+        success: true,
+        data: { release_notes: { enabled: true }, release_notes_allowed_repositories: ["https://github.com/example/repository"] },
+      });
+    });
+    global.fetch = fetchMock;
+    render(<PlatformAnnouncementsSettings />);
+
+    fireEvent.change(await screen.findByLabelText("Repository URL"), {
+      target: { value: "https://github.com/example/repository" },
+    });
+    fireEvent.change(screen.getByLabelText("Previous upgraded commit"), {
+      target: { value: "1111111" },
+    });
+    fireEvent.change(screen.getByLabelText("Latest commit"), {
+      target: { value: "2222222" },
+    });
+    fireEvent.click(screen.getByRole("button",{ name: "Save release notes configuration" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/admin/platform-config",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({
+            release_notes: {
+              repository_url: "https://github.com/example/repository",
+              previous_commit: "1111111",
+              latest_commit: "2222222",
+            },
+          }),
+        }),
+      );
+    });
+  });
+
+  it("keeps edits made during a pending save dirty and submits them on the next save", async () => {
+    let finish!: (response: Response) => void;
+    const writes: unknown[] = [];
+    global.fetch = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method !== "PATCH") return jsonResponse({ success: true, data: { release_notes: { enabled: true }, release_notes_allowed_repositories: ["https://github.com/example/repository"] } });
+      writes.push(JSON.parse(init.body as string));
+      if (writes.length === 1) return new Promise<Response>((resolve) => { finish = resolve; });
+      return jsonResponse({ success: true });
+    });
+    render(<PlatformAnnouncementsSettings />);
+    fireEvent.change(await screen.findByLabelText("Repository URL"), { target: { value: "https://github.com/example/repository" } });
+    fireEvent.change(screen.getByLabelText("Previous upgraded commit"), { target: { value: "1111111" } });
+    fireEvent.change(screen.getByLabelText("Latest commit"), { target: { value: "2222222" } });
+    const save = screen.getByRole("button", { name: "Save release notes configuration" });
+    fireEvent.click(save);
+    fireEvent.change(screen.getByLabelText("Latest commit"), { target: { value: "3333333" } });
+    await act(async () => { finish(jsonResponse({ success: true })); });
+    expect(writes[0]).toMatchObject({ release_notes: { latest_commit: "2222222" } });
+    expect(save).toBeEnabled();
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+    fireEvent.click(save);
+    await waitFor(() => expect(writes[1]).toMatchObject({ release_notes: { latest_commit: "3333333" } }));
+  });
+
   it("disables the platform control in read-only simulation",async () => {
     global.fetch = jest.fn(async () => jsonResponse({
       success: true,
-      data: { release_notes: { enabled: true } },
+      data: { release_notes: { enabled: true }, release_notes_allowed_repositories: ["https://github.com/example/repository"] },
     }));
 
     render(<PlatformAnnouncementsSettings readOnly />);
@@ -253,6 +320,45 @@ describe("PlatformAnnouncementsSettings",() => {
     })).toBeDisabled();
   });
 
+  it("does not offer arbitrary repositories and lets admins replace a stale choice", async () => {
+    global.fetch = jest.fn(async () => jsonResponse({ success: true, data: {
+      release_notes: { repository_url: "https://github.com/example/removed", previous_commit: "primary", latest_commit: "secondary" },
+      release_notes_allowed_repositories: ["https://github.com/example/repository"],
+    } }));
+    render(<PlatformAnnouncementsSettings />);
+    const repository = await screen.findByRole("combobox", { name: "Repository URL" });
+    expect(screen.queryByRole("textbox", { name: "Repository URL" })).not.toBeInTheDocument();
+    expect(repository).toHaveValue("https://github.com/example/removed");
+    expect(screen.getByRole("option", { name: /not approved/ })).toBeDisabled();
+    fireEvent.change(repository, { target: { value: "https://github.com/example/repository" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save release notes configuration" }));
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith("/api/admin/platform-config", expect.objectContaining({
+      method: "PATCH", body: JSON.stringify({ release_notes: {
+        repository_url: "https://github.com/example/repository", previous_commit: "primary", latest_commit: "secondary",
+      } }),
+    })));
+  });
+
+  it("marks padded refs saved while still trimming the submitted values", async () => {
+    const writes: unknown[] = [];
+    global.fetch = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PATCH") writes.push(JSON.parse(init.body as string));
+      return jsonResponse({ success: true, data: {
+        release_notes_allowed_repositories: ["https://github.com/example/repository"],
+      } });
+    });
+    render(<PlatformAnnouncementsSettings />);
+    fireEvent.change(await screen.findByLabelText("Repository URL"), { target: { value: "https://github.com/example/repository" } });
+    fireEvent.change(screen.getByLabelText("Previous upgraded commit"), { target: { value: " primary " } });
+    fireEvent.change(screen.getByLabelText("Latest commit"), { target: { value: " secondary " } });
+    const save = screen.getByRole("button", { name: "Save release notes configuration" });
+    fireEvent.click(save);
+    await waitFor(() => expect(save).toBeDisabled());
+    expect(writes[0]).toMatchObject({ release_notes: { previous_commit: "primary", latest_commit: "secondary" } });
+    expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+  });
+
   it("rolls back and offers retry when the platform write fails",async () => {
     global.fetch = jest.fn(async (_input: RequestInfo | URL,init?: RequestInit) => {
       if (init?.method === "PATCH") {
@@ -260,7 +366,7 @@ describe("PlatformAnnouncementsSettings",() => {
       }
       return jsonResponse({
         success: true,
-        data: { release_notes: { enabled: true } },
+        data: { release_notes: { enabled: true }, release_notes_allowed_repositories: ["https://github.com/example/repository"] },
       });
     });
     render(<PlatformAnnouncementsSettings />);
@@ -288,7 +394,7 @@ describe("PlatformAnnouncementsSettings",() => {
       }
       return jsonResponse({
         success: true,
-        data: { release_notes: { enabled: true } },
+        data: { release_notes: { enabled: true }, release_notes_allowed_repositories: ["https://github.com/example/repository"] },
       });
     });
     render(<PlatformAnnouncementsSettings />);

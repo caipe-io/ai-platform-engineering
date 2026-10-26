@@ -14,6 +14,8 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, 
 from contextlib import aclosing, contextmanager, suppress
 from contextvars import ContextVar
 
+from pymongo.errors import PyMongoError
+
 from dynamic_agents.services.harness_inputs import HarnessInputs
 from dynamic_agents.services.native_run_repository import (
     TERMINAL_STATUSES,
@@ -152,6 +154,16 @@ class NativeRunCoordinator:
             await asyncio.sleep(POLL_SECONDS)
             try:
                 current = await self.repository.get(run.run_id, owner_subject=run.owner_subject)
+            except (NativeRunStorageError, PyMongoError) as exc:
+                if isinstance(exc, PyMongoError) or isinstance(exc.__cause__, PyMongoError):
+                    # Cancellation observation is separate from execution
+                    # authority. The native lease watcher stops the producer
+                    # when its last confirmed lease expires or is revoked.
+                    logger.warning("Native detached cancellation observation unavailable for run %s", run.run_id, exc_info=True)
+                    continue
+                logger.exception("Native detached cancellation observation failed for run %s", run.run_id)
+                owner.cancel()
+                return
             except Exception:
                 logger.exception("Native detached cancellation observation failed for run %s", run.run_id)
                 owner.cancel()

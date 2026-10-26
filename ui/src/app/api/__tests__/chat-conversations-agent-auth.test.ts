@@ -109,6 +109,17 @@ describe("POST /api/chat/conversations agent authorization", () => {
     );
   });
 
+  it("does not accept a client-supplied server app binding during conversation creation", async () => {
+    const insertOne = jest.fn().mockResolvedValue({ insertedId: "conversation-example" });
+    mockGetCollection.mockResolvedValue(conversationCollection(insertOne));
+    const { POST } = await import("../chat/conversations/route");
+    const result = await POST(request({ title: "Example", client_type: "webui", agent_id: "agent-primary",
+      app_binding: { app_id: "app-secondary", agent_id: "agent-secondary" },
+    }));
+    expect(result.status).toBe(201);
+    expect(insertOne.mock.calls[0][0]).not.toHaveProperty("app_binding");
+  });
+
   it("lists bounded conversation candidates before OpenFGA filtering", async () => {
     const candidate = {
       _id: "conv-openfga-only",

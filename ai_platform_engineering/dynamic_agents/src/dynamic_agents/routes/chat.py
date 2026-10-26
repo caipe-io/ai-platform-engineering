@@ -36,6 +36,7 @@ from dynamic_agents.services.session_bindings import ExecutionOwnerConflictError
 from dynamic_agents.services.session_runs import SessionRunBusyError
 from dynamic_agents.services.stream_encoders import StreamEncoder
 from dynamic_agents.services.stream_encoders.events import RunError
+from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryError
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ async def _enforce_chat_authz(*, agent_id: str, user_sub: str | None, autonomous
 _REJECTED_OVERRIDE_FIELDS: set[str] = {
     "execution",
     "execution_harness_id",
+    "app_context_prompt",
     "ui",
     "name",
     "description",
@@ -284,6 +286,10 @@ async def _generate_sse_events(
             )
             for frame in encoder.encode_event(RunError(message=GENERIC_AGENT_ERROR)):
                 yield frame
+    except ToolCallRecoveryError as exc:
+        logger.warning("Model output recovery exhausted for agent %s", agent_config.id)
+        for frame in encoder.encode_event(RunError(message=str(exc))):
+            yield frame
     except Exception:
         logger.exception(f"Error streaming from agent '{agent_config.name}'")
         for frame in encoder.encode_event(RunError(message=GENERIC_AGENT_ERROR)):
@@ -447,13 +453,16 @@ async def chat_resume_stream(
 @router.get("/runs")
 async def latest_chat_run(
     agent_id: str, conversation_id: str,
+    authorized_conversation_id: str | None = None,
     user: UserContext = Depends(get_user_context),
     mongo: MongoDBService = Depends(get_mongo_service),
 ) -> dict:
     """Discover an authorized session's latest run, including detached completion."""
     await require_agent_use_permission(agent_id)
     try:
-        run = await AgentExecutionService(mongo).get_run_status(agent_id, conversation_id, user)
+        run = await AgentExecutionService(mongo).get_run_status(
+            agent_id, conversation_id, user, authorized_conversation_id=authorized_conversation_id,
+        )
     except (NativeRunStorageError, NativeReplayUnavailableError) as exc:
         raise _run_http_error(exc) from exc
     return {"run": run.public() if run is not None else None}
@@ -462,12 +471,15 @@ async def latest_chat_run(
 @router.get("/runs/{run_id}")
 async def chat_run_status(
     run_id: str, agent_id: str, conversation_id: str,
+    authorized_conversation_id: str | None = None,
     user: UserContext = Depends(get_user_context),
     mongo: MongoDBService = Depends(get_mongo_service),
 ) -> dict:
     await require_agent_use_permission(agent_id)
     try:
-        run = await AgentExecutionService(mongo).get_run_status(agent_id, conversation_id, user, run_id=run_id)
+        run = await AgentExecutionService(mongo).get_run_status(
+            agent_id, conversation_id, user, run_id=run_id, authorized_conversation_id=authorized_conversation_id,
+        )
     except (NativeRunStorageError, NativeReplayUnavailableError) as exc:
         raise _run_http_error(exc) from exc
     if run is None:
@@ -478,6 +490,7 @@ async def chat_run_status(
 @router.get("/runs/{run_id}/stream")
 async def replay_chat_run(
     run_id: str, agent_id: str, conversation_id: str, after: int = Query(0, ge=0),
+    authorized_conversation_id: str | None = None,
     user: UserContext = Depends(get_user_context),
     mongo: MongoDBService = Depends(get_mongo_service),
 ) -> StreamingResponse:
@@ -485,7 +498,9 @@ async def replay_chat_run(
     await require_agent_use_permission(agent_id)
     service = AgentExecutionService(mongo)
     try:
-        run = await service.get_run_status(agent_id, conversation_id, user, run_id=run_id)
+        run = await service.get_run_status(
+            agent_id, conversation_id, user, run_id=run_id, authorized_conversation_id=authorized_conversation_id,
+        )
         if run is None:
             raise HTTPException(status_code=404, detail="Run not found for this agent session")
         # Validate the cursor before committing an SSE success response. A gap
@@ -556,6 +571,18 @@ async def chat_invoke(
             content={
                 "success": False,
                 "error": "This agent is at capacity right now. Please try again in a moment.",
+                "agent_id": agent.id,
+                "conversation_id": request.conversation_id,
+                "trace_id": request.trace_id,
+            },
+        )
+    except ToolCallRecoveryError as exc:
+        logger.warning("Model output recovery exhausted for agent %s", agent.id)
+        return JSONResponse(
+            status_code=422,
+            content={
+                "success": False,
+                "error": str(exc),
                 "agent_id": agent.id,
                 "conversation_id": request.conversation_id,
                 "trace_id": request.trace_id,

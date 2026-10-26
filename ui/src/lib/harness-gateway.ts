@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 
+import { findAgenticAppAssistantStream } from "@/lib/agentic-apps/assistant-stream";
 import type { AuthResult } from "@/lib/da-proxy";
 import { harnessRunCursor, parseHarnessRunCursor, type HarnessRunCursor } from "@/lib/harness-run-cursor";
 import { normalizeHarnessId } from "@/lib/agent-presentation";
@@ -69,10 +70,24 @@ const SSE_HEADERS = {
  * Saved provider bindings take precedence over mutable agent configuration.
  * The gateway reads identity coordinates only; each provider owns its state.
  */
+interface GatewayResolutionContext {
+  conversationId: string;
+  admit?: boolean;
+  retainedOnly?: boolean;
+}
+
+export function resolveHarnessGatewayTarget(
+  agentId: string,
+  context: GatewayResolutionContext & { retainedOnly: true; admit?: false },
+): Promise<HarnessGatewayTarget | NextResponse | null>;
+export function resolveHarnessGatewayTarget(
+  agentId: string,
+  context?: GatewayResolutionContext & { retainedOnly?: false },
+): Promise<HarnessGatewayTarget | NextResponse>;
 export async function resolveHarnessGatewayTarget(
   agentId: string,
-  context?: { conversationId: string; admit?: boolean },
-): Promise<HarnessGatewayTarget | NextResponse> {
+  context?: GatewayResolutionContext,
+): Promise<HarnessGatewayTarget | NextResponse | null> {
   try {
     const claimId = context ? createHash("sha256").update(`${agentId}\0${context.conversationId}`).digest("hex") : "";
     const claims = context ? await getCollection<GatewayBinding>("harness_gateway_bindings") : null;
@@ -113,7 +128,7 @@ export async function resolveHarnessGatewayTarget(
         const config = getHarnessEngineConfig();
         if (config instanceof NextResponse) return config;
       }
-      if (claims && context?.admit && !claim) {
+      if (claims && context?.admit && !context.retainedOnly && !claim) {
         let stored;
         try {
           stored = await claims.findOneAndUpdate(
@@ -166,7 +181,6 @@ export async function resolveHarnessGatewayTarget(
     }
     const agents = await getCollection<AgentRuntimeRecord>("dynamic_agents");
     const agent = await agents.findOne({ _id: agentId }, { projection: { _id: 1, execution_harness_id: 1, execution: 1, backend: 1 } });
-    if (!agent && !claim && legacyHarnessId === undefined) return NextResponse.json({ success: false, error: "Agent not found" }, { status: 404 });
     // Existing legacy custom-checkpointer threads remain native before ACP admission.
     const legacyCollection = agent?.backend?.config?.checkpoint_collection;
     if (context && legacyCollection && legacyCollection !== (process.env.CHECKPOINT_COLLECTION || "checkpoints_conversation")) {
@@ -175,6 +189,14 @@ export async function resolveHarnessGatewayTarget(
     }
     if (claim) return selected(normalizeHarnessId(claim.harness_id));
     if (legacyHarnessId !== undefined) return selected(legacyHarnessId, true);
+    // A current app claim cannot migrate a retained native/provider session.
+    // Discovery is read-only so an app-owned chat never acquires a native pin.
+    if (context?.retainedOnly) return null;
+    if (findAgenticAppAssistantStream(agentId)) return NextResponse.json(
+      { success: false, code: "APP_STREAM_REQUIRED", error: "This app assistant requires its declared chat stream endpoints" },
+      { status: 501 },
+    );
+    if (!agent) return NextResponse.json({ success: false, error: "Agent not found" }, { status: 404 });
     const harnessId = normalizeHarnessId(agent?.execution_harness_id);
     if (harnessId !== DEFAULT_HARNESS_ID && agent?.execution?.kind === "sandbox") return NextResponse.json(
       { success: false, error: "Choose one execution provider; SDK and ACP sandbox selections cannot be combined", code: "RUNTIME_SELECTION_CONFLICT" }, { status: 409 },

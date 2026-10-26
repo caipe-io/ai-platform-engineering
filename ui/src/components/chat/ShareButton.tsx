@@ -8,6 +8,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { Conversation } from "@/types/a2a";
+import { cn } from "@/lib/utils";
 import { Check, Share2, Users2 } from "lucide-react";
 import React, { useState } from "react";
 import { ShareDialog } from "./ShareDialog";
@@ -20,6 +21,7 @@ interface ShareButtonProps {
   sharedBy?: string;
   sharing?: Conversation["sharing"];
   accessLevel?: Conversation["accessLevel"];
+  className?: string;
 }
 
 export function ShareButton({
@@ -30,6 +32,7 @@ export function ShareButton({
   sharedBy,
   sharing,
   accessLevel,
+  className,
 }: ShareButtonProps) {
   const [showDialog, setShowDialog] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -80,7 +83,7 @@ export function ShareButton({
                 variant="ghost"
                 size="icon"
                 onClick={shouldOpenDialog ? handleOpenDialog : handleQuickCopy}
-                className="h-6 w-6"
+                className={cn("h-6 w-6", className)}
                 aria-label={isOwner ? "Share conversation" : sharedByText}
               >
                 {copied ? (

@@ -1,5 +1,5 @@
-import { authorizeEngineRun } from "../../_authorization";
 import { proxyHarnessEngine } from "@/lib/harness-engine-proxy";
+import { authorizeHarnessRunAccess } from "../../../_run-authz";
 import { NextRequest } from "next/server";
 
 export const runtime = "nodejs";
@@ -9,9 +9,8 @@ export async function GET(
   context: { params: Promise<{ runId: string }> },
 ): Promise<Response> {
   const { runId } = await context.params;
-  const authorized = await authorizeEngineRun(request, runId);
-  if (authorized instanceof Response) return authorized;
-  const { auth, config } = authorized;
+  const access = await authorizeHarnessRunAccess(request, runId, "read");
+  if (access instanceof Response) return access;
   const query = new URLSearchParams();
   for (const key of ["after", "wait"]) {
     const value = request.nextUrl.searchParams.get(key);
@@ -19,8 +18,8 @@ export async function GET(
   }
   const suffix = query.size ? `?${query}` : "";
   return proxyHarnessEngine(
-    config,
-    auth,
+    access.config,
+    access.auth,
     `/api/v1/runs/${encodeURIComponent(runId)}/events${suffix}`,
   );
 }

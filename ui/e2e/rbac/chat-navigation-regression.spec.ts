@@ -96,7 +96,9 @@ test.describe("mocked RBAC e2e — chat navigation regression", () => {
     await page.goto(`/chat/${conversationId}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
-    const sidebarConversationTitle = page.getByTitle(conversationTitle);
+    const sidebarConversationTitle = page
+      .getByTestId("conversation-history-scroll")
+      .getByTitle(conversationTitle);
     await expect(sidebarConversationTitle).toBeVisible();
 
     const recipientShareButton = page.getByRole("button", { name: sharedByText });
@@ -132,7 +134,9 @@ test.describe("mocked RBAC e2e — chat navigation regression", () => {
     await page.goto(`/chat/${conversationId}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
-    const sidebarConversationTitle = page.getByTitle(conversationTitle);
+    const sidebarConversationTitle = page
+      .getByTestId("conversation-history-scroll")
+      .getByTitle(conversationTitle);
     await expect(sidebarConversationTitle).toBeVisible();
 
     const recipientShareButton = page.getByRole("button", { name: sharedByText });

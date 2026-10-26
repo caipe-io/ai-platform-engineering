@@ -18,6 +18,9 @@ from enum import Enum
 from typing import Any
 from uuid import uuid4
 
+from fastapi import HTTPException
+from pymongo.errors import PyMongoError
+
 from dynamic_agents.auth.authz import (
     current_subject_reference,
     require_agent_use_permission,
@@ -26,6 +29,7 @@ from dynamic_agents.auth.authz import (
 from dynamic_agents.config import Settings, get_settings
 from dynamic_agents.models import ClientContext, DynamicAgentConfig, InputFile, UserContext
 from dynamic_agents.services.agent_runtime import AgentRuntime
+from dynamic_agents.services.app_context_prompt import app_context_scope
 from dynamic_agents.services.gridfs_store import MongoDBGridFSStore
 from dynamic_agents.services.harness_admission import inline_harness_admission, require_harness_workspace
 from dynamic_agents.services.harness_checkpoints import CheckpointIdentity, CheckpointStore
@@ -191,22 +195,50 @@ class AgentExecutionService:
         )
 
     async def get_run_status(
-        self,
-        agent_id: str,
-        session_id: str,
-        user: UserContext,
-        *,
-        run_id: str | None = None,
+        self, agent_id: str, session_id: str, user: UserContext, *, run_id: str | None = None,
+        authorized_conversation_id: str | None = None,
     ) -> NativeExecutionRun | None:
         """Authorize the original owner or a CAS-authorized conversation reader."""
+        conversation_id = session_id
+        if authorized_conversation_id is not None:
+            await asyncio.to_thread(
+                self._validate_conversation_runtime, agent_id, session_id, authorized_conversation_id,
+            )
+            conversation_id = authorized_conversation_id
         repository = self.coordinator.repository
         if run_id is None:
             run = await repository.latest(owner_subject=None, agent_id=agent_id, session_id=session_id)
         else:
             run = await repository.get(run_id, owner_subject=None, agent_id=agent_id, session_id=session_id)
         if run is not None and run.owner_subject != self._owner(user):
-            await require_conversation_read_permission(session_id)
+            await require_conversation_read_permission(conversation_id)
         return run
+
+    def _validate_conversation_runtime(self, agent_id: str, session_id: str, conversation_id: str) -> None:
+        """An authorized visible conversation cannot alias an unrelated run."""
+        if self.mongo is None or self.mongo._db is None:
+            raise NativeRunStorageError("Canonical conversation storage is unavailable")
+        try:
+            conversation = self.mongo._db["conversations"].find_one({"_id": conversation_id})
+            if not conversation:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+            saved_agent_id = conversation.get("agent_id") or next((
+                item.get("id") for item in conversation.get("participants", []) if item.get("type") == "agent"
+            ), None)
+            runtime_id = conversation_id
+            if conversation.get("source") == "autonomous":
+                runtime_id = conversation.get("execution_context_id")
+                if not isinstance(runtime_id, str) or not runtime_id.strip():
+                    metadata = conversation.get("metadata") or {}
+                    task_id = conversation.get("task_id") or metadata.get("task_id")
+                    latest = self.mongo._db[self.settings.autonomous_runs_collection].find_one(
+                        {"task_id": task_id, "execution_context_id": {"$ne": None}}, sort=[("started_at", -1)],
+                    ) if task_id else None
+                    runtime_id = (latest or {}).get("execution_context_id") or conversation_id
+            if saved_agent_id != agent_id or runtime_id != session_id:
+                raise HTTPException(status_code=403, detail="Run does not belong to this conversation")
+        except PyMongoError as exc:
+            raise NativeRunStorageError("Canonical conversation storage is unavailable") from exc
 
     async def run_events(
         self,
@@ -337,21 +369,17 @@ class AgentExecutionService:
                 async for frame in frames:
                     yield frame
             return
-        async with aclosing(
-            native_acp_stream(
-                runtime,
-                message=turn.message,
-                session_id=turn.session_id,
-                user_email=turn.user.email,
-                encoder=encoder,
-                trace_id=turn.trace_id,
-                files=turn.files,
-                turn_id=turn.turn_id,
+        # Use the admitted configuration, including on pending-input resumes.
+        policy = getattr(runtime, "config", turn.agent).app_context_prompt
+        context = turn.client_context.model_dump() if turn.client_context else None
+        with app_context_scope(policy, context):
+            async with aclosing(native_acp_stream(
+                runtime, message=turn.message, session_id=turn.session_id, user_email=turn.user.email,
+                encoder=encoder, trace_id=turn.trace_id, files=turn.files, turn_id=turn.turn_id,
                 resume_data=turn.resume_data,
-            )
-        ) as frames:
-            async for frame in frames:
-                yield frame
+            )) as frames:
+                async for frame in frames:
+                    yield frame
 
     async def stream(self, turn: ExecutionTurn, encoder: StreamEncoder[str]) -> AsyncGenerator[str, None]:
         async with self._runtime(turn, _RuntimeMode.CACHED) as runtime:

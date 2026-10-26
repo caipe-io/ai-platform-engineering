@@ -1,5 +1,7 @@
 # Tasks: Harness Engine
 
+> **Canonical delivery phases (2026-10-21):** See [Delivery phases](delivery-phases.md): Phase 1 independent engine/gateway (PR 2401); Phase 2 separate Deep Agents integration and pluggable builder; Phase 3 external sandbox execution; Phase 4 cross-harness composition. The numbered **workstreams** below preserve old task IDs and implementation history; they are not release phases or a reviewer approval record.
+
 **Input**: Design documents in `docs/docs/specs/2026-08-17-harness-engine/`
 **Prerequisites**: [spec.md](./spec.md), [plan.md](./plan.md), [research.md](./research.md), [data-model.md](./data-model.md), [mongodb-migration.md](./mongodb-migration.md), [quickstart.md](./quickstart.md), and the contracts beginning with [rest-api-v1.md](./contracts/rest-api-v1.md)
 
@@ -64,7 +66,7 @@ This amendment supersedes any task below that edits `ai_platform_engineering/dyn
 
 **Current gate**: `git diff main...HEAD --name-only | rg '^ai_platform_engineering/dynamic_agents/'` produces no output; Harness Engine pytest/ruff, BFF Jest, editor Jest, ESLint, and TypeScript checks pass.
 
-## Phase 1: Setup and Compatibility Freeze
+## Workstream 1: Setup and Compatibility Freeze
 
 **Purpose**: Establish a measurable Dynamic Agents oracle before changing runtime behavior.
 
@@ -80,11 +82,11 @@ This amendment supersedes any task below that edits `ai_platform_engineering/dyn
 
 ---
 
-## Phase 2: Foundational Contracts and Persistence
+## Workstream 2: Foundational Contracts and Persistence
 
 **Purpose**: Add provider-neutral types, validation, persistence, and routes that block every execution story.
 
-**Critical**: All remaining user-story phases depend on this phase.
+**Critical**: Runtime migration workstreams depend on these contracts. The independently implemented Phase 1 engine/gateway uses its own completed contract workstream and current-path release gates.
 
 - [ ] T008 [P] Add failing Pydantic compatibility tests for absent, valid, unknown, oversized, and unsafe `harness`/`memory` fields in `ai_platform_engineering/dynamic_agents/tests/contract/test_harness_models.py` — FR-005, FR-012–FR-015, FR-055–FR-057.
 - [ ] T009 Implement `HarnessConfig`, `MemoryPolicy`, descriptor, capability, validation-report, session-binding, lease, and canonical-interrupt models in `ai_platform_engineering/dynamic_agents/src/dynamic_agents/models.py` — FR-005, FR-009–FR-015, FR-044, FR-051–FR-057; done when T008 passes and legacy documents serialize unchanged.
@@ -101,13 +103,13 @@ This amendment supersedes any task below that edits `ai_platform_engineering/dyn
 - [ ] T020 Register additive harness routes and partial readiness in `ai_platform_engineering/dynamic_agents/src/dynamic_agents/main.py` and `ai_platform_engineering/dynamic_agents/src/dynamic_agents/routes/health.py` — FR-006, FR-035; done when existing route snapshots remain unchanged.
 - [ ] T021 [P] Add harness feature flags, default resolution, adapter capacity, and compatibility aliases to `ai_platform_engineering/dynamic_agents/src/dynamic_agents/config.py` and `ai_platform_engineering/dynamic_agents/src/dynamic_agents/services/config.yaml` with tests in `ai_platform_engineering/dynamic_agents/tests/test_harness_config.py` — FR-005, FR-034–FR-037.
 - [ ] T022 [P] Add stable harness/adapter/execution-mode labels and redaction guards to `ai_platform_engineering/dynamic_agents/src/dynamic_agents/metrics/agent_metrics.py` with tests in `ai_platform_engineering/dynamic_agents/tests/test_metrics_observability.py` — FR-033, FR-058–FR-060, NFR-007.
-- [ ] T023 Run `.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks`, `uv run ruff check`, and the Phase 1–2 pytest targets from `ai_platform_engineering/dynamic_agents/` — all foundational requirements; done when the new contracts pass and the existing suite has no regression.
+- [ ] T023 Run `.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks`, `uv run ruff check`, and the Workstream 1–2 pytest targets from `ai_platform_engineering/dynamic_agents/` — all foundational requirements; done when the new contracts pass and the existing suite has no regression.
 
 **Checkpoint**: Provider-neutral contracts and additive data/routes exist, but execution still uses the current runtime.
 
 ---
 
-## Phase 3: User Story 1 — Replace Dynamic Agents Without Disruption (P1 MVP)
+## Workstream 3: User Story 1 — Deep Agents Compatibility (Delivery Phase 2)
 
 **Goal**: Execute existing agents through a `deepagents` compatibility adapter without changing clients, stored documents, streams, cache behavior, or rollback.
 
@@ -126,11 +128,11 @@ This amendment supersedes any task below that edits `ai_platform_engineering/dyn
 - [ ] T034 [US1] Run the unchanged Dynamic Agents pytest suite plus contract and conformance suites from `ai_platform_engineering/dynamic_agents/` — SC-001, SC-002, SC-004; done with zero removed or weakened assertions.
 - [ ] T035 [US1] Run `ai_platform_engineering/dynamic_agents/tests/performance/benchmark_compatibility.py` against baseline and adapter — NFR-001, NFR-002, NFR-005; done when p95 and memory gates pass.
 
-**Checkpoint**: This is the first releasable MVP. Only Deep Agents is enabled, and external behavior is unchanged.
+**Checkpoint**: This is the Deep Agents compatibility milestone in delivery Phase 2. It is not a prerequisite for the independent Phase 1 engine/gateway slice.
 
 ---
 
-## Phase 4: User Story 4 — Add a Harness Without Rebuilding the Platform (P2)
+## Workstream 4: User Story 4 — Add a Harness Without Rebuilding the Platform (P2)
 
 **Goal**: Make adapter certification repeatable without changing common routes, persistence, security, or encoders.
 
@@ -149,7 +151,7 @@ This amendment supersedes any task below that edits `ai_platform_engineering/dyn
 
 ---
 
-## Phase 5: User Story 3 — Same Chat Experience Across Harnesses (P1)
+## Workstream 5: User Story 3 — Same Chat Experience Across Harnesses (P1)
 
 **Goal**: Centralize tools, delegation, approvals, skills, files, and policy so every adapter produces the existing client experience.
 
@@ -172,7 +174,7 @@ This amendment supersedes any task below that edits `ai_platform_engineering/dyn
 
 ---
 
-## Phase 6: User Story 7 — Preserve Threads, Memory, and Traces (P1)
+## Workstream 6: User Story 7 — Preserve Threads, Memory, and Traces (P1)
 
 **Goal**: Make pods disposable without losing thread continuity, governed cross-thread memory, or causal observability.
 
@@ -198,7 +200,7 @@ This amendment supersedes any task below that edits `ai_platform_engineering/dyn
 
 ---
 
-## Phase 7: User Story 6 — Unique Sandbox Pods for Local Harness Sessions (P1)
+## Workstream 7: User Story 6 — Unique Sandbox Pods for Local Harness Sessions (P1)
 
 **Goal**: Run each local harness conversation epoch in its own claim-exclusive Agent Sandbox pod with no raw credentials and generation fencing.
 
@@ -223,7 +225,7 @@ This amendment supersedes any task below that edits `ai_platform_engineering/dyn
 
 ---
 
-## Phase 8: User Story 2 — Select and Run Certified Harnesses Per Agent (P1)
+## Workstream 8: User Story 2 — Select and Run Certified Harnesses Per Agent (P1)
 
 **Goal**: Add Claude Agent SDK, Strands Agents, and AgentCore behind the same contracts and certify each independently.
 
@@ -247,9 +249,9 @@ This amendment supersedes any task below that edits `ai_platform_engineering/dyn
 
 ---
 
-## Phase 9: User Story 8 — Harness-Aware Agent Creation UI (P1)
+## Workstream 9: User Story 8 — Harness-Aware Agent Creation UI (P1)
 
-**Goal**: Preserve the five-step editor while adapting models and fields to the selected harness without silent loss or unsafe browser authority.
+**Goal**: Preserve the existing editor steps while adapting models and fields to the selected harness without silent loss or unsafe browser authority.
 
 **Independent Test**: Create, edit, and clone across every harness/catalog state; switch incompatible drafts; race catalog changes; and verify accessible blockers plus no partial writes.
 
@@ -277,7 +279,7 @@ This amendment supersedes any task below that edits `ai_platform_engineering/dyn
 
 ---
 
-## Phase 10: User Story 5 — Operate, Compare, and Roll Back Harnesses (P2)
+## Workstream 10: User Story 5 — Operate, Compare, and Roll Back Harnesses (P2)
 
 **Goal**: Expose harness-aware health, telemetry, capacity, rollout, and containment without leaking sensitive data.
 
@@ -296,7 +298,7 @@ This amendment supersedes any task below that edits `ai_platform_engineering/dyn
 
 ---
 
-## Phase 11: Rollout, Hardening, and Release Gates
+## Workstream 11: Rollout, Hardening, and Release Gates
 
 **Purpose**: Prove the complete design, rehearse rollback, and update living documentation before production cutover.
 
@@ -318,66 +320,32 @@ This amendment supersedes any task below that edits `ai_platform_engineering/dyn
 
 ## Dependencies and Execution Order
 
-### Phase dependencies
+[Delivery phases](delivery-phases.md) governs release order. Workstream numbers and task IDs below retain their historical identity and are not another phase sequence.
 
-```mermaid
-flowchart TD
-    P1["Phase 1: freeze oracle"] --> P2["Phase 2: foundations"]
-    P2 --> P3["US1: Deep Agents compatibility MVP"]
-    P2 --> P4["US4: conformance kit"]
-    P3 --> P5["US3: portable behavior"]
-    P4 --> P5
-    P5 --> P6["US7: state, memory, tracing"]
-    P6 --> P7["US6: sandbox execution"]
-    P7 --> P8["US2: additional harnesses"]
-    P2 --> P9["US8: builder UI foundations"]
-    P8 --> P9
-    P7 --> P10["US5: operations"]
-    P8 --> P10
-    P9 --> P11["Release gates"]
-    P10 --> P11
-```
+| Technical dependency | Delivery meaning |
+|---|---|
+| Independent package/gateway/portable-contract/provider-lifecycle workstreams | Phase 1 foundation, with current-path review and release gates still required |
+| Compatibility freeze and runtime/event/lifecycle workstreams | Prepare Phase 2 integration and preserve native behavior |
+| UI catalog/validation foundations | Phase 1 capability truthfulness; Phase 2 reusable feature panels and switching |
+| Native state, scoped credentials, worker protocol, sandbox lifecycle | Phase 3 depends on proven state and identity boundaries; it does not block the existing experimental provider slice |
+| Delegation contracts and child-run lifecycle | Phase 4 builds on engine admission and authorized execution; native Deep Agents subagents remain a Phase 2 parity obligation |
+| Operations, rollout and certification | Apply to each selected delivery phase; certify only implemented capabilities |
 
-- Phase 1 has no implementation dependency and must finish before runtime refactoring.
-- Phase 2 blocks all user stories.
-- US1 and US4 may begin in parallel after Phase 2, but portable-policy extraction requires both.
-- US7 precedes US6 because disposable pods require external durable state and trace boundaries.
-- US2 requires the worker/conformance paths from US4, US6, and US7.
-- US8 type/catalog/BFF tasks can start after Phase 2; final per-harness UI/E2E certification waits for US2.
-- US5 requires real worker and adapter signals from US6/US2.
-- Phase 11 waits for every story selected for the release.
+### Stable backlog
 
-### Critical path
-
-`T001–T023 → T024–T035 → T044–T055 → T056–T070 → T071–T084 → T085–T097 → T114–T116 → T125–T135`
-
-### Safe parallel workstreams
-
-- Contract snapshots, performance baseline, and supply-chain research: T001, T002, T004, T006.
-- Canonical events, adapter protocols, registry tests, and persistence tests: T008, T010, T012, T014, T016, T018, T021, T022.
-- Thread state, memory, and tracing test-first work: T056, T057, T058.
-- Chart profiles/security and worker images: T078, T079, T080, T081 after protocol/profile contracts are stable.
-- Adapter tests: T085, T086, T087; adapter implementations remain isolated by file.
-- UI hooks/components: T105–T113 after shared types and BFF response contracts are stable.
-- Final Python, UI, and deployment validation: T125, T126, T127.
+- Existing task IDs and checkboxes are retained; this update does not revalidate historical completion claims.
+- Some original tasks target an earlier in-service layout. Reconcile their paths and contracts with the current engine package and [Phase 2 sketches](deep-agents-integration-pending.md) before implementation.
+- Validation tasks remain gates for the phase that implements the corresponding behavior. Do not infer that all target-architecture tests must pass to merge Phase 1.
+- Do not shadow live tool execution to compare backends; use recorded events, controlled fixtures or side-effect-free validation.
 
 ## Implementation Strategy
 
-### MVP: compatibility adapter only
+1. **Phase 1:** complete the independent opt-in engine/gateway slice and its current-path correctness/review gates; preserve the Dynamic Agents default.
+2. **Phase 2:** integrate `DeepAgentsAdapter` and the pluggable builder through parity, identity, migration and rollback gates.
+3. **Phase 3:** implement external sandbox workers with `SandboxManager` retained inside Harness Engine.
+4. **Phase 4:** implement governed cross-harness delegation and child-run UI.
 
-1. Complete Phases 1 and 2.
-2. Complete US1 through T035.
-3. Ship behind the existing service alias with `deepagents` only and `in_process` rollback retained.
-4. Stop and verify SC-001, SC-002, SC-004, and SC-006 before adding execution-plane risk.
-
-### Incremental delivery
-
-1. **Compatibility**: Deep Agents adapter and canonical events with no wire/data change.
-2. **Portable policy**: Common tools, subagents, interrupts, inputs, state, memory, and tracing.
-3. **Isolation**: Deep Agents in claim-exclusive sandbox pods.
-4. **Harness expansion**: Claude SDK, Strands, and AgentCore land disabled/experimental and certify independently.
-5. **Builder and operations**: Harness-aware editor, health, capacity, dashboards, and rollout controls.
-6. **Replacement**: Canary, soak, rollback rehearsal, then production cutover under the existing alias.
+Service consolidation is a separate cutover after remaining APIs and operational responsibilities have replacements. Additional adapters and broker features qualify independently.
 
 ## Completion Rules
 
@@ -388,13 +356,13 @@ flowchart TD
 - Do not expose credentials, raw identities, arbitrary images/Kubernetes resources, or protected content to workers, agent configuration, UI, telemetry, or provider session IDs.
 - Do not acknowledge durable completion before native state and the binding head are committed.
 - Do not persist parked UI options, browser capability claims, or stale validation results.
-- Preserve the original Dynamic Agents rollback path until Phase 11 completes.
+- Preserve the original Dynamic Agents rollback path until Workstream 11 completes.
 
 ---
 
-## Phase 12: Independent Portable Abstraction Slice (Implemented)
+## Workstream 12: Independent Portable Abstraction Slice (Implemented)
 
-This phase supersedes the earlier AgentCore-only overlay. It intentionally does
+This workstream supersedes the earlier AgentCore-only overlay. It intentionally does
 not complete or modify tasks targeting `ai_platform_engineering/dynamic_agents/`.
 
 - [x] T136 Define provider-neutral `AgentBlueprint`, `HarnessDescriptor`, capability levels, validation results, sessions, runs, and canonical events in `ai_platform_engineering/harness_engine/src/harness_engine/models.py`.
@@ -419,7 +387,7 @@ not complete or modify tasks targeting `ai_platform_engineering/dynamic_agents/`
 - [x] T154 Add unit and component coverage for harness labels, deterministic themes, sidebar identity, and new-chat harness display.
 - [x] T155 Resolve chat identity through a use-authorized metadata fallback and include the friendly agent name in the browser tab title.
 
-## Phase 13: Per-agent AgentCore Harness Lifecycle
+## Workstream 13: Per-agent AgentCore Harness Lifecycle
 
 - [x] T156 Extend sanitized AgentCore profiles with backward-compatible `shared` and operator-controlled `per_agent` modes.
 - [x] T157 Add the private `harness_provider_resources` persistence contract for server-owned AgentCore identifiers and lifecycle state.

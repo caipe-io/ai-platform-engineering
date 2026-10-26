@@ -1,5 +1,7 @@
 # Quickstart: Validate Harness Engine
 
+> **Release scope:** Use [Delivery phases](delivery-phases.md) to select checks. The independent engine/gateway is Phase 1; Deep Agents integration is Phase 2; external workers and cross-harness composition are Phases 3 and 4. Future runbook sections are acceptance criteria, not completed functionality.
+
 ## Implemented independent slice
 
 The current code is validated without starting or modifying Dynamic Agents:

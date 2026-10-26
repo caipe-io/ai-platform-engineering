@@ -21,6 +21,10 @@ import { act, render, screen, waitFor, within, fireEvent } from '@testing-librar
 // Mocks
 // ============================================================================
 
+jest.mock('@/components/settings/ReleaseNotesPreview', () => ({
+  ReleaseNotesPreview: () => <button type="button">Show current release notes</button>,
+}));
+
 let mockIsAdmin = false;
 const pushMock = jest.fn();
 const replaceMock = jest.fn();

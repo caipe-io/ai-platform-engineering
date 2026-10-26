@@ -463,8 +463,17 @@ export interface AgentRuntimeProfile {
   capabilities: { mcp: boolean; skills: boolean; attachments: boolean };
 }
 
+/** Read-only catalog projection. Never persisted or used to select a runtime or grant access. */
+export interface AgentPresentation {
+  app: { id: string; name: string; icon?: string };
+  available: boolean;
+}
+
 export interface DynamicAgentConfig {
+  /** Deployment-owned, opt-in model-input projection. Not a permission grant. */
+  app_context_prompt?: { app_ids: string[]; fields: string[]; max_bytes?: number };
   _id: string;
+  readonly presentation?: AgentPresentation;
   /** Runtime selected by Harness Gateway. Missing legacy values mean Dynamic Agents. */
   execution_harness_id?: string;
   name: string;

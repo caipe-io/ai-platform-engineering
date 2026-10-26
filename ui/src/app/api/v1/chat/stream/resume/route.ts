@@ -1,36 +1,28 @@
 /**
- * POST /api/v1/chat/stream/resume — Harness Gateway resume entry point.
+ * POST /api/v1/chat/stream/resume — agent operation routed by server-owned bindings.
  *
  * Body: { conversation_id, agent_id, resume_data, protocol?, trace_id? }
  * Response: SSE stream (text/event-stream)
  */
 
+import { NextRequest, NextResponse } from "next/server";
+
+import { authenticateChatStreamRequest } from "../../_stream-auth";
 import { createAuthzTraceContext } from "@/lib/rbac/authz-tracing";
-import {
-resolveHarnessGatewayTarget,
-withHarnessGatewayTarget,
-unsupportedHarnessResume,
-} from "@/lib/harness-gateway";
 import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
-import { NextRequest,NextResponse } from "next/server";
-import {
-authorizeConversationWriteAccess,
-resolveConversationRuntimeId,
-} from "../../_conversation-authz";
-import {
-authenticateRequest,
-getDynamicAgentsConfig,
-proxySSEStream,
-} from "../../_helpers";
+
+import { authorizeConversationWriteAccess } from "../../_conversation-authz";
+import { dispatchChatStream } from "../../_stream-gateway";
 
 export const runtime = "nodejs";
-export const maxDuration = 300; // 5 minutes
+export const maxDuration = 960; // App deadlines may exceed the default agent deadline.
 
 export async function POST(request: NextRequest): Promise<Response> {
   // Authenticate caller (session cookie or Bearer token)
-  const authResult = await authenticateRequest(request);
+  const authResult = await authenticateChatStreamRequest(request);
   if (authResult instanceof NextResponse) return authResult;
 
+  const forwardedRequest = request.clone();
   // Parse body
   let body: Record<string, unknown>;
   try {
@@ -42,7 +34,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
-  if (!body.conversation_id || !body.agent_id || body.resume_data === undefined) {
+  if (!body || typeof body.conversation_id !== "string" || !body.conversation_id || typeof body.agent_id !== "string" || !body.agent_id || body.resume_data === undefined) {
     return NextResponse.json(
       { success: false, error: "Missing required fields: conversation_id, agent_id, resume_data" },
       { status: 400 },
@@ -65,29 +57,11 @@ export async function POST(request: NextRequest): Promise<Response> {
   const conversationAuthz = await authorizeConversationWriteAccess(
     authResult,
     String(body.conversation_id),
+    body.agent_id,
   );
   if (conversationAuthz.denial) return conversationAuthz.denial;
 
-  body = {
-    ...body,
-    conversation_id: await resolveConversationRuntimeId(
-      conversationAuthz.conversation,
-    ),
-  };
-
-  const target = await resolveHarnessGatewayTarget(String(body.agent_id), { conversationId: String(body.conversation_id), admit: true });
-  if (target instanceof NextResponse) return target;
-  if (target.kind === "harness_engine") return unsupportedHarnessResume();
-
-  // Preserve the existing Dynamic Agents resume path.
-  const daConfig = getDynamicAgentsConfig();
-  if (daConfig instanceof NextResponse) return daConfig;
-  const backendUrl = `${daConfig.dynamicAgentsUrl}/api/v1/chat/stream/resume`;
-
-  return withHarnessGatewayTarget(await proxySSEStream(
-    backendUrl,
-    JSON.stringify(body),
-    authResult,
-    "[stream/resume]",
-  ), target);
+  return dispatchChatStream(
+    forwardedRequest, authResult, conversationAuthz.conversation, body, "resume",
+  );
 }

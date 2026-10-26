@@ -1709,7 +1709,10 @@ describe("dynamic agents RBAC routes", () => {
     const { POST } = await import("../route");
     const response = await POST(request("/api/dynamic-agents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Example runtime", system_prompt: "Use permitted tools", owner_team_slug: "primary", execution }) }));
     expect(response.status).toBe(status);
-    if (status === 201) expect(insertOne).toHaveBeenCalledWith(expect.objectContaining({ execution, model: undefined }));
+    if (status === 201) {
+      expect(insertOne).toHaveBeenCalledWith(expect.objectContaining({ execution }));
+      expect(insertOne.mock.calls[0][0]).not.toHaveProperty("model");
+    }
     else expect(insertOne).not.toHaveBeenCalled();
   });
 

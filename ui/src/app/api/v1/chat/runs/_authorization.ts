@@ -46,5 +46,6 @@ export async function authorizeRunReadRequest(request: NextRequest): Promise<Nex
   const backendUrl = config ? new URL("/api/v1/chat/runs", config.dynamicAgentsUrl) : null;
   backendUrl?.searchParams.set("agent_id", agentId);
   backendUrl?.searchParams.set("conversation_id", runtimeId);
+  backendUrl?.searchParams.set("authorized_conversation_id", result.conversation._id);
   return { authResult, backendUrl, agentId, runtimeId, target };
 }

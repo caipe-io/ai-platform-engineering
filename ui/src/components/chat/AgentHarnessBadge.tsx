@@ -1,13 +1,16 @@
 "use client";
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { getHarnessPresentation } from "@/lib/agent-presentation";
+import { getAgentPresentation } from "@/lib/agent-presentation";
+import { AppIcon } from "@/components/shared/AppIcon";
+import type { AgentPresentation } from "@/types/dynamic-agent";
 import { cn } from "@/lib/utils";
 import { Cpu } from "lucide-react";
 import Image from "next/image";
 
 interface AgentHarnessBadgeProps {
   harnessId?: string | null;
+  presentation?: AgentPresentation;
   compact?: boolean;
   context?: "configured" | "execution";
   className?: string;
@@ -15,15 +18,22 @@ interface AgentHarnessBadgeProps {
 
 export function AgentHarnessBadge({
   harnessId,
+  presentation,
   compact = false,
   context = "execution",
   className,
 }: AgentHarnessBadgeProps) {
-  const harness = getHarnessPresentation(harnessId);
-  const label = `${context === "configured" ? "Configured harness" : "Execution harness"}: ${harness.label}`;
+  const identity = getAgentPresentation(harnessId, presentation);
+  const label = identity.isApp || context === "execution"
+    ? identity.label
+    : identity.label.replace(/^Execution harness:/, "Configured harness:");
 
   return (
-    <Tooltip className={cn("inline-flex shrink-0 align-middle", className)}>
+    <Tooltip className={cn(
+      "inline-flex shrink-0 align-middle",
+      className,
+      identity.logoSrc === "/provider-logos/agentcore.svg" && "rounded-full",
+    )}>
       <TooltipTrigger asChild>
         <span
           role="img"
@@ -33,9 +43,15 @@ export function AgentHarnessBadge({
             compact ? "h-4 w-4" : "h-5 w-5",
           )}
         >
-          {harness.logoSrc ? (
+          {presentation?.app ? (
+            <AppIcon
+              appId={presentation.app.id}
+              icon={presentation.app.icon}
+              className="h-full w-full object-contain"
+            />
+          ) : identity.logoSrc ? (
             <Image
-              src={harness.logoSrc}
+              src={identity.logoSrc}
               alt=""
               width={20}
               height={20}

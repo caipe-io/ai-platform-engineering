@@ -1,5 +1,6 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
 import type { HarnessOptionSchema } from "@/types/harness-engine";
 
 interface Props {
@@ -34,7 +35,7 @@ export function HarnessOptionsForm({ schema, value, onChange, disabled }: Props)
           <label className="space-y-1 text-sm" htmlFor={id} key={name}>
             <span className="font-medium">{option.title ?? name}</span>
             {option.enum ? (
-              <select
+              <Select
                 id={id}
                 value={String(current)}
                 onChange={(event) => update(name, option, event.target.value)}
@@ -43,7 +44,7 @@ export function HarnessOptionsForm({ schema, value, onChange, disabled }: Props)
               >
                 {!schema.required?.includes(name) && <option value="">Use profile default</option>}
                 {option.enum.map((choice) => <option key={String(choice)} value={String(choice)}>{choice}</option>)}
-              </select>
+              </Select>
             ) : option.type === "boolean" ? (
               <input
                 id={id}

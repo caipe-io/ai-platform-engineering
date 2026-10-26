@@ -127,4 +127,22 @@ describe("SkillWorkspacePage catalog fallback", () => {
     expect(workspace).toHaveAttribute("data-skill-id", "catalog-builtin-one");
     expect(workspace).toHaveAttribute("data-read-only", "true");
   });
+
+  it("loads the store once when it stays empty after loading", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ skills: [] }),
+    }) as jest.Mock;
+
+    const params = fulfilledParams("catalog-builtin-one");
+    const { rerender } = render(<SkillWorkspacePage params={params} />);
+    await waitFor(() => expect(mockLoadSkills).toHaveBeenCalledTimes(1));
+
+    mockIsLoading = true;
+    rerender(<SkillWorkspacePage params={params} />);
+    mockIsLoading = false;
+    rerender(<SkillWorkspacePage params={params} />);
+
+    expect(mockLoadSkills).toHaveBeenCalledTimes(1);
+  });
 });

@@ -8,6 +8,7 @@ import { POST as invokePost } from "../invoke/route";
 import { POST as cancelPost } from "../stream/cancel/route";
 import { POST as resumePost } from "../stream/resume/route";
 import { POST as startPost } from "../stream/start/route";
+import { POST as statusPost } from "../stream/status/route";
 
 const mockAuthenticateRequest = jest.fn();
 const mockGetDynamicAgentsConfig = jest.fn();
@@ -18,6 +19,10 @@ const mockRequireResourcePermission = jest.fn();
 const mockRequireConversationResourcePermission = jest.fn();
 const mockGetCollection = jest.fn();
 const mockFindGatewayBinding = jest.fn();
+let mockAppCatalog: unknown[] = [];
+jest.mock("@/lib/agentic-apps/config", () => ({
+  getAgenticAppRoutingSnapshot: () => mockAppCatalog,
+}));
 const mockIsSchedulerTokenConfigured = jest.fn();
 const mockIsSchedulerTokenValid = jest.fn();
 const mockResolveScheduledRunContext = jest.fn();
@@ -77,6 +82,7 @@ async function jsonBody(response: Response): Promise<Record<string, unknown>> {
 describe("Dynamic Agent chat Web UI backend routes", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAppCatalog = [];
     mockFindGatewayBinding.mockResolvedValue(null);
     mockAuthenticateRequest.mockResolvedValue({
       subject: "alice-sub",
@@ -111,6 +117,47 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
       scheduleTitle: "Persisted schedule title",
     });
     mockMintScheduledOwnerToken.mockResolvedValue("owner-bearer-token");
+  });
+
+  it.each(["removed", "rebound-agent", "different-app", "valid"] as const)(
+    "does not send a retained app conversation through invoke when its app is %s", async (change) => {
+      mockGetCollection.mockResolvedValue({ findOne: async () => ({
+        _id: "conv-1", owner_subject: "alice-sub", participants: [{ type: "agent", id: "agent-1" }],
+        metadata: { conversation_surface: "agentic-app", agentic_app_id: "app-primary", agentic_app_agent_id: "agent-1" },
+      }) });
+      mockAppCatalog = change === "removed" ? [] : [{
+        installation: { appId: change === "different-app" ? "app-secondary" : "app-primary", installed: true, enabled: true },
+        manifest: { ui: { assistant: { agentId: change === "rebound-agent" ? "agent-other" : "agent-1", streamPath: "/api/stream" } } },
+      }];
+      const upstream = jest.spyOn(global, "fetch");
+      const response = await invokePost(jsonRequest("/api/v1/chat/invoke", { message: "Inspect", conversation_id: "conv-1", agent_id: "agent-1" }));
+      expect(response.status).toBe(change === "valid" ? 501 : 409);
+      expect(await response.json()).toMatchObject({ code: change === "valid" ? "APP_STREAM_REQUIRED" : "APP_BINDING_CONFLICT" });
+      expect(mockProxyJSONRequest).not.toHaveBeenCalled();
+      expect(upstream).not.toHaveBeenCalled();
+      upstream.mockRestore();
+    },
+  );
+
+  it.each([
+    ["start", startPost], ["resume", resumePost], ["cancel", cancelPost],
+    ["status", statusPost], ["invoke", invokePost],
+  ])("rejects a different saved agent before %s dispatch", async (operation, handler) => {
+    mockAuthenticateRequest.mockResolvedValue({ subject: "test-user", email: "test-user@example.test" });
+    mockGetCollection.mockResolvedValue({ findOne: async () => ({
+      _id: "conversation-example", owner_id: "test-user@example.test",
+      participants: [{ type: "agent", id: "agent-primary" }],
+    }) });
+    const upstream = jest.spyOn(global, "fetch");
+    const response = await handler(jsonRequest(`/api/v1/chat/${operation === "invoke" ? operation : `stream/${operation}`}`, {
+      message: "Hello", conversation_id: "conversation-example", agent_id: "agent-secondary", resume_data: {},
+    }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "CONVERSATION_AGENT_MISMATCH" });
+    expect(mockProxySSEStream).not.toHaveBeenCalled();
+    expect(mockProxyJSONRequest).not.toHaveBeenCalled();
+    expect(upstream).not.toHaveBeenCalled();
+    upstream.mockRestore();
   });
 
   it.each([
@@ -839,8 +886,13 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
   });
 
   it("mints an owner bearer and enforces agent#use as the owner for scheduler-token invoke runs", async () => {
-    const findOne = jest.fn(async () => null);
-    const updateOne = jest.fn(async () => ({ acknowledged: true }));
+    let persisted: Record<string, unknown> | null = null;
+    const findOne = jest.fn(async (query: { _id?: string }) =>
+      query._id && query._id === persisted?._id ? persisted : null);
+    const updateOne = jest.fn(async (_query, update) => {
+      if (update.$setOnInsert?.participants) persisted = { ...update.$setOnInsert, ...update.$set };
+      return { acknowledged: true };
+    });
     const updateMany = jest.fn(async () => ({ modifiedCount: 1 }));
     const countDocuments = jest.fn(async () => 1);
     mockGetCollection.mockImplementation(async (name: string) => name === "dynamic_agents"

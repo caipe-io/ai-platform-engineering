@@ -2,6 +2,32 @@ import importlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
+import pytest
+
+from dynamic_agents.models import BuiltinToolsConfig
+from dynamic_agents.services.agent_runtime import AgentRuntime
+
+
+@pytest.mark.parametrize("name,arguments", [
+    ("fetch_url", {"url": "https://example.test/data"}),
+    ("curl", {"command": "curl https://example.test/data"}),
+])
+def test_runtime_preserves_explicit_empty_domain_policy(name: str, arguments: dict) -> None:
+    config = SimpleNamespace(name="Example agent", builtin_tools=BuiltinToolsConfig.model_validate({
+        name: {"enabled": True, "allowed_domains": ""},
+    }))
+    runtime = SimpleNamespace(config=config, _resolve_backend_type=lambda: "state")
+    tools = AgentRuntime._build_builtin_tools(runtime)
+    assert len(tools) == 1
+    public_ip_records = [(2, 1, 6, "", ("93.184.216.34", 0))]
+    with patch("dynamic_agents.services.builtin_tools.socket.getaddrinfo", return_value=public_ip_records), \
+         patch("dynamic_agents.services.builtin_tools.requests.get") as fetch, \
+         patch("dynamic_agents.services.builtin_tools.subprocess.run") as execute:
+        result = tools[0].invoke(arguments)
+    assert result == "ERROR: No domains are allowed (allowed_domains is empty)"
+    fetch.assert_not_called()
+    execute.assert_not_called()
+
 
 def test_self_identity_returns_agent_id() -> None:
     create_self_identity_tool = getattr(

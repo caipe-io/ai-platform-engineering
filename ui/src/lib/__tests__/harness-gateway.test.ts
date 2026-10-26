@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 import { resolveHarnessGatewayTarget, replayHarnessGatewayRun, getHarnessGatewayRun, invokeHarnessGatewayRun } from "../harness-gateway";
 import type { HarnessRun } from "@/types/harness-engine";
 
+const findApp = jest.fn();
+jest.mock("@/lib/agentic-apps/assistant-stream", () => ({
+  findAgenticAppAssistantStream: (...args: unknown[]) => findApp(...args),
+}));
+
 const findAgent = jest.fn();
 const findNative = jest.fn();
 const findEngine = jest.fn();
@@ -24,6 +29,7 @@ const run: HarnessRun = {
 };
 beforeEach(() => {
   jest.clearAllMocks();
+  findApp.mockReturnValue(null);
   process.env.HARNESS_ENGINE_URL = "http://engine.example.test";
   process.env.HARNESS_ENGINE_INTERNAL_TOKEN = "internal-test-token";
   findAgent.mockResolvedValue({ _id: "agent-example" });
@@ -153,4 +159,33 @@ it("rejects unsupported invoke attachments before accepting an external run", as
   const response = await invokeHarnessGatewayRun({ agent_id: run.agent_id, conversation_id: run.conversation_id, message: "read this", files: [{ name: "example.txt" }] }, auth);
   expect(response.status).toBe(409);
   expect(fetchMock).not.toHaveBeenCalled();
+});
+
+
+describe("app claims and retained execution owners", () => {
+  it.each(["dynamic_agents", "agentcore"])("keeps a retained %s owner before a new app claim", async (harnessId) => {
+    findApp.mockReturnValue({ appId: "example-app", path: ["api", "stream"] });
+    findClaim.mockResolvedValue({ agent_id: "agent-example", session_id: context.conversationId, harness_id: harnessId });
+    expect(await resolveHarnessGatewayTarget("agent-example", context)).toEqual({
+      kind: harnessId === "dynamic_agents" ? "dynamic_agents" : "harness_engine", harnessId,
+    });
+    expect(findApp).not.toHaveBeenCalled();
+    expect(claimOwner).not.toHaveBeenCalled();
+  });
+
+  it("returns no retained owner without admitting a native binding for an app", async () => {
+    findAgent.mockResolvedValue(null);
+    expect(await resolveHarnessGatewayTarget("agent-example", { ...context, retainedOnly: true })).toBeNull();
+    expect(claimOwner).not.toHaveBeenCalled();
+    expect(findApp).not.toHaveBeenCalled();
+  });
+
+  it("rejects invoke for an unbound app before creating a provider binding", async () => {
+    findApp.mockReturnValue({ appId: "example-app", path: ["api", "stream"] });
+    const response = await resolveHarnessGatewayTarget("agent-example", { ...context, admit: true });
+    expect(response).toBeInstanceOf(NextResponse);
+    expect((response as NextResponse).status).toBe(501);
+    expect(await (response as NextResponse).json()).toMatchObject({ code: "APP_STREAM_REQUIRED" });
+    expect(claimOwner).not.toHaveBeenCalled();
+  });
 });

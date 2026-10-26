@@ -56,6 +56,8 @@ export interface AgenticAppInstallation {
   bindings?: {
     runtimeOrigin?: string;
     resources?: Record<string, string>;
+    /** Client id of the service account this app uses to call the host. */
+    serviceAccountClientId?: string;
   };
   runtimeMountPath?: string;
   runtimeOriginOverride?: string;
@@ -71,6 +73,7 @@ export interface ConfiguredAgenticApp {
 
 export interface PublicAgenticApp {
   appId: string;
+  icon?: string;
   displayName: string;
   description: string;
   href: string;
@@ -80,4 +83,26 @@ export interface PublicAgenticApp {
   capabilities: string[];
   uiMode?: "native-package" | "iframe";
   hostPaths?: string[];
+  assistantEnabled?: boolean;
+  assistantAgentId?: string;
+  assistantLabel?: string;
+  assistantAgentName?: string;
+}
+
+export interface AgenticAppAssistantContextRecord {
+  contextId: string;
+  appId: string;
+  sessionId: string;
+  schemaVersion: string;
+  route: string;
+  payloadSizeBytes: number;
+  validationStatus: "accepted" | "ignored" | "rejected";
+  createdAt: string;
+  expiresAt: string;
+  title?: string;
+  summary?: string;
+  selection?: string;
+  resourceRefs?: Array<Record<string, string>>;
+  suggestedPrompts?: string[];
+  reasonCode?: string;
 }

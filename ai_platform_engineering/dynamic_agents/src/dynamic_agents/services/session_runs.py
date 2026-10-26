@@ -118,17 +118,41 @@ def _heartbeat(mongo: MongoDBService, agent_id: str, session_id: str, lease_id: 
 
 async def _watch_owner(
     mongo: MongoDBService, agent_id: str, session_id: str, lease_id: str, owner: asyncio.Task,
+    lease_deadline: float,
 ) -> None:
-    while True:
-        await asyncio.sleep(HEARTBEAT_SECONDS)
-        try:
-            keep_running = await await_session_operation(_heartbeat, mongo, agent_id, session_id, lease_id)
-        except (PyMongoError, RuntimeError):
-            logger.exception("Native turn lease heartbeat failed for agent %s", agent_id)
-            keep_running = False
-        if not keep_running:
-            owner.cancel()
-            return
+    loop = asyncio.get_running_loop()
+    expiry = loop.call_at(lease_deadline, owner.cancel)
+    try:
+        while True:
+            remaining = lease_deadline - loop.time()
+            if remaining <= 0:
+                owner.cancel()
+                return
+            await asyncio.sleep(min(HEARTBEAT_SECONDS, remaining))
+            heartbeat_started = loop.time()
+            if heartbeat_started >= lease_deadline:
+                owner.cancel()
+                return
+            try:
+                keep_running = await await_session_operation(_heartbeat, mongo, agent_id, session_id, lease_id)
+            except PyMongoError:
+                # A failed acknowledgement does not prove ownership was lost,
+                # nor extend it. Retry only within the last confirmed budget.
+                logger.warning("Native turn lease heartbeat unavailable for agent %s", agent_id, exc_info=True)
+                continue
+            except RuntimeError:
+                logger.exception("Native turn lease heartbeat failed for agent %s", agent_id)
+                keep_running = False
+            if not keep_running or loop.time() >= lease_deadline:
+                owner.cancel()
+                return
+            # A separate timer also expires authority while a driver call is
+            # blocked. Cleanup still drains that call before releasing its lease.
+            expiry.cancel()
+            lease_deadline = heartbeat_started + LEASE_SECONDS
+            expiry = loop.call_at(lease_deadline, owner.cancel)
+    finally:
+        expiry.cancel()
 
 
 async def _release_owned_lease(mongo: MongoDBService, agent_id: str, session_id: str, lease_id: str) -> None:
@@ -163,6 +187,7 @@ async def native_session_run(
     if owner is None:
         raise SessionRunError("Native turn admission requires an owning task")
     lease_id = str(uuid4())
+    lease_deadline = asyncio.get_running_loop().time() + LEASE_SECONDS
     try:
         await await_session_operation(_reserve, mongo, agent_id, session_id, lease_id)
     except asyncio.CancelledError:
@@ -170,7 +195,10 @@ async def native_session_run(
         # orphan admission after the caller is gone.
         await _release_owned_lease(mongo, agent_id, session_id, lease_id)
         raise
-    watcher = asyncio.create_task(_watch_owner(mongo, agent_id, session_id, lease_id, owner))
+    if asyncio.get_running_loop().time() >= lease_deadline:
+        await _release_owned_lease(mongo, agent_id, session_id, lease_id)
+        raise SessionRunError("Native turn admission expired before execution")
+    watcher = asyncio.create_task(_watch_owner(mongo, agent_id, session_id, lease_id, owner, lease_deadline))
     token = current_native_session_lease.set(lease_id)
     try:
         yield lease_id

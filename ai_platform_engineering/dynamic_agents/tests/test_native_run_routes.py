@@ -83,7 +83,7 @@ def test_run_status_omits_private_identity_payload_and_lease_authority(environme
     assert {"owner_subject", "fingerprint", "lease_id", "total_bytes", "frame_count", "cancel_requested"}.isdisjoint(public)
     assert "private" not in response.text
     environment.service.get_run_status.assert_awaited_once_with(
-        "example-agent", "original-thread", environment.user, run_id="original-run",
+        "example-agent", "original-thread", environment.user, run_id="original-run", authorized_conversation_id=None,
     )
 
 

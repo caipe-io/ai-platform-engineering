@@ -1,3 +1,68 @@
+## 1.3.0-rc.17 (2026-10-26)
+
+### Feat
+
+- **webex**: dispatch linked user chats to native app assistants (#3070)
+- **ui**: restrict release-note comparisons to deployment-approved repos (#2663)
+- **notifications**: let an installed app create a notification for named users (#3018)
+- **notifications**: let an installed app create a notification for named users
+
+### Fix
+
+- **auth**: reject tokens missing allowed client ID (#2583)
+- **deps**: update vulnerable dependencies and preserve trace redaction (#3048)
+- **helm**: remove duplicated rag-stack key in umbrella values.yaml (#3045)
+- **webex-bot**: retain thread context when parent is unavailable (#3023)
+- **workflows**: reject incomplete streams and expose step artifacts (#3075)
+- **dynamic-agents**: guard truncated and incomplete tool calls (#2875)
+- **notifications**: enforce safe links and unique app credentials
+
+## 1.3.0-rc.16 (2026-10-23)
+
+### Feat
+
+- **ui**: enable remote MCP providers by default (#3047)
+- **dynamic-agents**: add opt-in app context prompt adapter (#3008)
+
+### Fix
+
+- **chat**: preserve browser session authorization for streams (#3057)
+- **chat**: restore retry and regenerate next to edit (#3009)
+- **harness-engine**: update vulnerable dependencies (#3044)
+- **ui**: preserve nested markdown list structure (#3000)
+
+## 1.3.0-rc.15 (2026-10-22)
+
+### Feat
+
+- **harness-engine**: add portable runtime and BFF gateway (#2401)
+- **ui**: restyle CAIPE chat composer (#3036)
+
+### Fix
+
+- **setup**: initialize and recover fresh local workspaces (#3028)
+- **ui**: stop skill workspace refetching store in a loop for catalog skills (#2991)
+- **deps**: upgrade uv to 0.13.4 to remove compromised CA trust (#3041)
+
+## 1.3.0-rc.14 (2026-10-22)
+
+### Feat
+
+- **chat**: expose native feedback and opt-in chat excerpts (#3038)
+- **app-sdk**: expose authorized native conversation controls (#3037)
+- **helm**: select shared database credentials (#3024)
+
+### Fix
+
+- **ci**: limit MCP registry publishing concurrency (#3027)
+
+## 1.3.0-rc.13 (2026-10-21)
+
+### Feat
+
+- **chat**: add personal folders and agent grouping (#3019)
+- **agentic-apps**: unify assistant overlay and app-owned chat routing (#2693)
+
 ## 1.3.0-rc.12 (2026-10-19)
 
 ### Feat
