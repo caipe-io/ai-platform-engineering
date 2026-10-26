@@ -50,10 +50,18 @@ get_admin_token() {
   json_field "${TOKEN_RESP}" "access_token"
 }
 
-echo "${TAG} Obtaining admin access token ..."
-ACCESS_TOKEN=$(get_admin_token) || exit 1
+echo "${TAG} Waiting for Keycloak admin API and obtaining access token ..."
+ACCESS_TOKEN=""
+_i=0
+while [ "${_i}" -lt 72 ]; do
+  ACCESS_TOKEN=$(get_admin_token || true)
+  [ -n "${ACCESS_TOKEN}" ] && break
+  _i=$((_i + 1))
+  echo "${TAG}   Keycloak not ready (${_i}/72) — retrying in 5s ..." >&2
+  sleep 5
+done
 if [ -z "${ACCESS_TOKEN}" ]; then
-  echo "${TAG} ERROR: empty access_token" >&2
+  echo "${TAG} ERROR: could not obtain admin access_token after ~6 min — is Keycloak up?" >&2
   exit 1
 fi
 AUTH="Authorization: Bearer ${ACCESS_TOKEN}"
