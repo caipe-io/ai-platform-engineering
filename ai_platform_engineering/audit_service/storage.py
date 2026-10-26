@@ -22,6 +22,7 @@ _PARQUET_INDEX_FIELDS = (
     "component",
     "correlation_id",
     "decision_id",
+    "delegation_id",
     "tenant_id",
     "source",
     "action",
@@ -143,6 +144,7 @@ def _record_matches(record: dict[str, Any], query: "AuditQuery") -> bool:
         "component",
         "correlation_id",
         "decision_id",
+        "delegation_id",
         "subject_ref",
         "tenant_id",
         "source",
@@ -176,6 +178,7 @@ class AuditQuery:
     component: str | None = None
     correlation_id: str | None = None
     decision_id: str | None = None
+    delegation_id: str | None = None
     subject_ref: str | None = None
     tenant_id: str | None = None
     source: str | None = None

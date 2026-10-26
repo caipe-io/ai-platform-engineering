@@ -58,7 +58,7 @@ class MongoAuditStore:
     def initialize(self) -> None:
         self.readiness_check()
         self.events.create_index([("ts", DESCENDING), ("_id", DESCENDING)])
-        for field in ("tenant_id", "type", "outcome", "subject_ref", "resource_ref", "correlation_id", "decision_id"):
+        for field in ("tenant_id", "type", "outcome", "subject_ref", "resource_ref", "correlation_id", "decision_id", "delegation_id"):
             keys = [(f"event.{field}", 1), ("ts", DESCENDING), ("_id", DESCENDING)]
             self.events.create_index(keys)
         self.events.create_index([("archived", 1), ("ingested_at", 1), ("_id", 1)])

@@ -8,6 +8,7 @@
 // assisted-by Codex Codex-sonnet-4-6
 
 import type { GatewayCheck } from "@/lib/authz";
+import type { DelegationCheck, DelegationEvidence, DelegationSnapshot } from "@/lib/authz/delegation-contract";
 
 /** Protected components from the 098 permission matrix (FR-008, FR-014) */
 export type RbacResource =
@@ -131,6 +132,7 @@ export type AuditEventType =
   | "openfga_rebac"
   | "cas_decision"
   | "cas_grant"
+  | "cas_delegation"
   | "cas_reconcile"
   | "credential_action";
 
@@ -181,6 +183,12 @@ export interface UnifiedAuditEvent {
   /** Ordered executed checks, never a representative allow-rollup chain. */
   gateway_checks?: GatewayCheck[];
   gateway_policy?: string;
+  delegation_id?: string;
+  delegation_operation?: "create" | "revoke" | "check";
+  delegation?: DelegationSnapshot;
+  delegation_evidence?: DelegationEvidence;
+  delegation_checks?: DelegationCheck[];
+  delegation_policy?: string;
   pdp?: string;
   source: AuditEventSource;
   trace_id?: string;

@@ -45,6 +45,10 @@ type AuditRecord = {
   count?: number;
   gateway_policy?: string;
   gateway_checks?: UnifiedAuditEvent["gateway_checks"];
+  delegation_id?: string;
+  delegation?: UnifiedAuditEvent["delegation"];
+  delegation_checks?: UnifiedAuditEvent["delegation_checks"];
+  delegation_policy?: string;
 };
 
 function baseAuditRecords(): AuditRecord[] {
@@ -127,7 +131,7 @@ function filterAuditRecords(records: AuditRecord[], url: URL): AuditRecord[] {
   if (outcome) filtered = filtered.filter((record) => record.outcome === outcome);
   if (userEmail) filtered = filtered.filter((record) => record.user_email === userEmail);
   if (agentName) filtered = filtered.filter((record) => record.agent_name === agentName);
-  for (const field of ["subject_ref", "decision_id", "correlation_id", "resource_ref"] as const) {
+  for (const field of ["subject_ref", "decision_id", "correlation_id", "resource_ref", "delegation_id"] as const) {
     const expected = url.searchParams.get(field);
     if (expected) filtered = filtered.filter((record) => record[field] === expected);
   }
@@ -163,6 +167,38 @@ function makeAuditConfigHandler(
 test.describe("audit log — mocked regression", () => {
   test.beforeEach(() => {
     test.skip(!mockedRbacEnabled(), "Set RUN_RBAC_REGRESSION=1");
+  });
+
+  test("delegated decisions show actor, approval and denial chain and filter by delegation", async ({ page }, testInfo) => {
+    const queries: URL[] = [];
+    const record: AuditRecord = {
+      ts: new Date().toISOString(), type: "cas_decision", tenant_id: "primary", subject_hash: "sha256:test-user",
+      subject_ref: "user:test-user", actor_ref: "service_account:test-service", action: "use", outcome: "deny", source: "cas", component: "cas",
+      resource_ref: "agent:example", correlation_id: "request-1", reason_code: "USER_NOT_ALLOWED", decision_id: "decision-1",
+      delegation_id: "approval-1", delegation_policy: "cas-delegation/v1",
+      delegation: { user_ref: "user:test-user", service_ref: "service_account:test-service", issuer: "https://identity.example.test",
+        service: { id: "test-service", client_id: "example-service" }, job_id: "test-job", version: 1,
+        created_at: "2026-10-21T11:00:00Z", expires_at: "2026-10-22T11:00:00Z", revoked_at: null,
+        scope: [{ resource: { type: "agent", id: "example" }, action: "use" }] },
+      delegation_checks: [{ gate: "binding", decision: "ALLOW", reason: "OK" },
+        { gate: "user_permission", decision: "DENY", reason: "USER_NOT_ALLOWED" }],
+    };
+    await installMockedRbacApp(page, { isAdmin: true, handlers: [makeAuditConfigHandler(), makeAuditEventsHandler([
+      record, { ...record, delegation_id: "approval-2", decision_id: "decision-2", correlation_id: "request-2" },
+    ], queries)] });
+    await page.goto("/admin/security/audit?auditTab=decisions");
+    await expect(page.getByText("2 events on this page")).toBeVisible();
+    await page.getByLabel("Delegation ID", { exact: true }).fill("approval-1");
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await expect(page.getByText("1 event on this page")).toBeVisible();
+    expect(queries.at(-1)?.searchParams.get("delegation_id")).toBe("approval-1");
+    await page.getByText("Delegation denied: use agent example").click();
+    const chain = page.getByRole("region", { name: "Recorded delegation chain" });
+    await expect(chain).toContainText("service_account:test-service → on behalf of user:test-user → agent:example");
+    await expect(chain).toContainText("expires: 2026-10-22T11:00:00Z");
+    await expect(chain.getByText(/User still has access/)).toHaveClass(/bg-red-500\/10/);
+    await expect(chain.getByText(/Service, issuer/)).toHaveClass(/bg-green-500\/10/);
+    await chain.screenshot({ path: testInfo.outputPath("delegation-chain.png") });
   });
 
   test("sign-in flow completes normally regardless of audit backend", async ({ page }) => {

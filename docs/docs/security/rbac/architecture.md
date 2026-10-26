@@ -7,6 +7,38 @@ Component-by-component reference. Each section describes **what it owns**, **wha
 
 ---
 
+## CAS job delegation — new-service API
+
+The `/api/access/delegations` API keeps the authenticated service and effective
+user separate. This is a new-service foundation, not a migration of existing
+scheduler, bot, Dynamic Agents or gateway paths.
+
+- **Keycloak owns identity tokens.** Service bearers require the primary issuer,
+  `caipe-access` audience, canonical subject, explicit signed principal type,
+  authorized client and expiry. New BFF-managed service clients receive the
+  corresponding mappers; existing clients are not silently rewritten.
+- **CAS owns approvals inside the BFF.** A same-origin signed-in browser user
+  approves one job, exact resources/actions and an expiry of at most seven days.
+  MongoDB stores the immutable approval; idempotent creation cannot extend it
+  or undo revocation. No user token is stored or new OpenFGA grant created.
+- **A reference is not authority by itself.** CAS requires the matching service
+  subject/client/issuer/job, an active approval, and fresh OpenFGA permissions
+  for both service and user. It rechecks approval after graph checks. Logout
+  alone does not revoke it; expiry, revocation or lost permission blocks use.
+- **Audit preserves both identities.** Individual delegated decisions link to
+  approval scope/version/expiry and ordered checks. Admin audit can filter the
+  chain by delegation ID. Delivery remains best-effort and unsigned, not proof
+  that downstream work executed. Applications still enforce the decision.
+- **Evidence adapters do not own resource policy.** The current adapter binds a
+  service token and stored job approval into a server-only actor/effective-user
+  context. Policy and audit consume that context, with the evidence source
+  recorded separately. A future verified Keycloak delegation adapter can reuse
+  this boundary; it must prove consent semantics, job binding and background
+  lifetime/revocation first. Native `act` tokens are not accepted today.
+
+See [Access API](./access-api.md) and its linked component contract for endpoint
+details, onboarding prerequisites and the remaining migration boundaries.
+
 ## Helm Runtime Packaging
 
 The `0.5.0` umbrella chart can own the RBAC runtime stack for demo and managed environments:
@@ -37,8 +69,8 @@ Production installs must still supply ExternalSecrets and persistent datastore s
 
 ### New-service identity foundation
 
-- `validatePlatformBearerJWT()` defines the strict profile for forthcoming CAS
-  consumer APIs: the configured primary issuer, `caipe-access` audience,
+- `validatePlatformBearerJWT()` verifies service bearer identity for the CAS
+  delegation API: the configured primary issuer, `caipe-access` audience,
   canonical `sub`, explicit signed `caipe_principal_type`, authorized client
   (`azp`) and issuance/expiry are required. It does not infer identity type from
   email or username, use secondary-keyset fallback, or flatten `act` tokens.
@@ -47,8 +79,9 @@ Production installs must still supply ExternalSecrets and persistent datastore s
 - Newly created BFF-managed service clients receive access-token-only mappers
   for the audience and `service_account` principal type. Existing clients and
   ordinary bearer/session authentication are unchanged.
-- This slice is an identity foundation, not permission or delegation proof.
-  No route uses the new verifier yet; it does not authorize acting for a user.
+- Identity alone is not delegation proof. The delegation API additionally
+  requires a durable approval and current user/service permissions; ordinary
+  Access API authentication remains unchanged.
   See [Access API](./access-api.md) for the consumer boundary and remaining work.
 
 ### Realm Roles (configured realm, default `caipe`)

@@ -401,6 +401,26 @@ describe("GET /api/admin/audit-events", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it("preserves an allowlisted delegation snapshot and forwards its indexed filter", async () => {
+    global.fetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({ records: [{
+      ts: "2026-10-21T12:00:00Z", type: "cas_decision", outcome: "deny", tenant_id: "primary", correlation_id: "request-1",
+      actor_ref: "service_account:test-service", subject_ref: "user:test-user", delegation_id: "approval-1", delegation_policy: "cas-delegation/v1",
+      delegation_evidence: { kind: "cas_approval", reference: "approval-1", access_token: "must-not-be-returned" },
+      delegation_operation: "check", delegation: { user_ref: "user:test-user", service_ref: "service_account:test-service", issuer: "https://identity.example.test",
+        service: { id: "test-service", client_id: "example-service", secret: "must-not-be-returned" }, job_id: "test-job", version: 1,
+        created_at: "2026-10-21T11:00:00Z", expires_at: "2026-10-22T11:00:00Z", revoked_at: null,
+        scope: [{ resource: { type: "agent", id: "example" }, action: "use" }], access_token: "must-not-be-returned" },
+      delegation_checks: [{ gate: "user_permission", decision: "DENY", reason: "USER_NOT_ALLOWED", token: "must-not-be-returned" }],
+    }], limit: 50, cursor: "first", next_cursor: null, since: "2026-10-21T00:00:00Z", until: "2026-10-22T00:00:00Z", as_of: "2026-10-22T00:00:00Z" })));
+    const { GET } = await import("../route");
+    const response = await GET(request("/api/admin/audit-events?delegation_id=approval-1"));
+    const result = await response.json();
+    expect(result.records[0]).toMatchObject({ delegation_id: "approval-1", delegation: { user_ref: "user:test-user", version: 1 },
+      delegation_evidence: { kind: "cas_approval", reference: "approval-1" } });
+    expect(JSON.stringify(result)).not.toContain("must-not-be-returned");
+    expect(new URL((global.fetch as jest.Mock).mock.calls[0][0]).searchParams.get("delegation_id")).toBe("approval-1");
+  });
+
   it.each([{ value: "invalid" }, { value: [null] }, { value: [{ gate: "unexpected", subject_ref: "user:test-user", decision: "ALLOW", reason: "OK" }] }])("does not render malformed chain evidence %j", async ({ value: gateway_checks }) => {
     global.fetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({ records: [{ ts: "2026-10-14T12:00:00Z", type: "cas_decision", outcome: "deny", tenant_id: "default", correlation_id: "request-1", gateway_checks }], limit: 50, cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z', })));
     const { GET } = await import("../route");

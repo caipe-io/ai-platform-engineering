@@ -74,6 +74,19 @@ def test_cursor_pages_ties_without_skip_or_count(store: MongoAuditStore) -> None
     assert page(store, cursor=first["cursor"])["records"] == first["records"]
 
 
+def test_delegation_filter_links_lifecycle_and_decisions(store: MongoAuditStore) -> None:
+    store.insert([
+        event("created", type="cas_delegation", delegation_id="approval-1"),
+        event("allowed", delegation_id="approval-1", outcome="allow"),
+        event("other", delegation_id="approval-2"),
+    ])
+    visible(store)
+    query = AuditQuery(NOW - timedelta(days=1), NOW, 10, delegation_id="approval-1")
+    result = store.page(query, cursor=None, scope="delegation-filter")
+    assert {row["audit_event_id"] for row in result["records"]} == {"created", "allowed"}
+    assert any(key[0] == "event.delegation_id" for index in store.events.index_information().values() for key in index["key"])
+
+
 def test_real_mongo_can_read_one_page_without_scanning_all_records(store: MongoAuditStore) -> None:
     if not isinstance(store.client, MongoClient):
         pytest.skip("MongoDB query planner assertion requires the real server")

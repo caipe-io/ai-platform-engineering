@@ -59,12 +59,16 @@ CAS owns the decisions and changes to relationships.
   Single agent-use checks are fresh; other decision and query caches still apply.
   HTTP `no-store` does not disable those caches.
 
-New-service onboarding starts with an explicit signed identity profile for the
-upcoming delegated API. It does not replace existing caller authentication yet.
+New-service onboarding includes a strict signed service identity profile and a
+job-scoped delegation API. It does not replace existing caller authentication.
 See the [identity profile](./architecture.md#new-service-identity-foundation).
-Trusted background delegation is required for this MVP, not supplied by ordinary
-self-checks. Explicit job authorization may outlive browser logout; permission
-revocation and delegation expiry/revocation must still block subsequent operations.
+Ordinary self-checks do not authorize acting for someone else. The user approves
+bounded work in a browser session; CAS stores the approval in MongoDB. The service
+keeps its own identity, and CAS requires the approval **and** current user/service
+permissions. Audit shows both identities and the approval, including denied uses.
+See the [delegation architecture](./architecture.md#cas-job-delegation--new-service-api).
+Existing background consumers are not migrated. Explicit authorization may outlive
+browser logout, but not its expiry, revocation or loss of required permissions.
 
 ## BFF agent execution
 

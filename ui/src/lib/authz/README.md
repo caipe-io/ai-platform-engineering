@@ -74,9 +74,9 @@ permanent aliases. The gateway-only contract below is separate from this self-ch
 
 ## New-service identity profile — foundation
 
-`validatePlatformBearerJWT()` verifies the identity that the forthcoming
-delegated Access API will use. **No route uses this profile yet; it does not
-authorize on-behalf-of execution.** Existing bearer/session callers are unchanged.
+`validatePlatformBearerJWT()` verifies bearer identity for the delegation API
+below. Ordinary Access API callers retain their existing authentication.
+**Identity claims alone do not authorize on-behalf-of execution.**
 
 | Signed claim | Required meaning |
 | --- | --- |
@@ -105,11 +105,127 @@ authorize on-behalf-of execution.** Existing bearer/session callers are unchange
 - The profile does not change which audiences existing APIs accept, prove user
   consent, or make legacy impersonation safe. The OBO review remains #2890.
 
-For the new-service MVP, trusted on-behalf-of/background access is required
-(#2891). Explicit job authorization may survive browser logout, but expiry,
-revocation and current user/service permissions must still stop the next
-protected operation. A durable, scoped service/user/execution binding is the
-next slice; no user-token storage, delegation endpoint or renewal is implemented here.
+## Job delegation API
+
+First new-service slice for #2891/#3031. Existing scheduler, bot, Dynamic Agents
+and gateway paths are **not** migrated by these endpoints.
+
+```text
+User's signed-in browser -> CAS: approve exact scope for Service S / Job J
+                              -> Mongo: immutable, expiring approval
+
+Service S -> Keycloak: get its own access token (not an owner token)
+Service S -> CAS: token + approval reference + Job J + resource/action
+             -> Mongo: matching, unexpired, unrevoked approval?
+             -> OpenFGA: service AND user still permitted?
+             -> Mongo: approval still active? -> decision + audit receipt
+```
+
+### Identity and approval boundary
+
+- `delegation-authority.ts` binds verified identity to the stored approval and
+  produces a server-only `DelegationAuthority`: actor, effective user, client,
+  credential expiry, approval boundaries and evidence source stay separate.
+- `delegation-policy.ts` evaluates normalized authority, not JWT claims or Mongo
+  documents. Fresh service **AND** user checks remain the common policy.
+- `delegations.ts` orchestrates evidence resolution, the common policy and final
+  approval revalidation. Audit consumes the same normalized approval context;
+  Admin displays the recorded authority-evidence source. No raw token is stored.
+- HTTP bodies cannot select an actor, effective user or evidence source. The
+  current adapter is `cas_approval`; no Keycloak preview feature is enabled.
+
+For later [Keycloak delegation](https://www.keycloak.org/securing-apps/token-exchange#_token-exchange-delegation),
+add a reviewed verifier/resolver at this boundary, retaining both JWT subject
+and current actor rather than flattening them. Validate issuer, audience, client
+binding, lifetime and the permitted issuance flow; `act` alone is not consent.
+Bind the verified pair to the approved job before invoking the shared policy and
+revalidate authority after graph checks. Existing job approvals are not silently
+converted into Keycloak permissions. Prove background renewal, logout, expiry
+and revocation before cutover; a token-format change does not replace job policy.
+Until then, actor-bearing tokens remain rejected. See [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1).
+
+| Method/path | Caller | Result |
+| --- | --- | --- |
+| `POST /api/access/delegations` | Signed-in user's same-origin browser session | Approval snapshot, HTTP 201 |
+| `GET /api/access/delegations/:id` | Approving user or exact bound service | Current snapshot; otherwise 404 |
+| `DELETE /api/access/delegations/:id` | Approving user's same-origin browser session | Revoked snapshot; repeat is safe |
+| `POST /api/access/delegations/:id/check` | Strict service bearer only | Individual ALLOW/DENY receipt |
+
+Creation requires JSON and an `Idempotency-Key` header containing a fresh UUID v4.
+The key becomes the public approval reference, **not a bearer credential**. Retry
+the same intent/key after a lost response; changed intent/owner returns 409 and
+cannot modify the original approval or undo revocation. Never retry with a new
+key merely because an acknowledgement was lost. Unknown writes return 500,
+`DELEGATION_WRITE_UNKNOWN`, and the reference to inspect.
+
+Creation body:
+
+```json
+{
+  "service": {"id": "test-service-subject", "client_id": "example-service"},
+  "job_id": "report-job",
+  "scope": [{"resource": {"type": "agent", "id": "example"}, "action": "use"}],
+  "expires_at": "2026-10-25T12:00:00Z"
+}
+```
+
+- The user comes from the authenticated browser session, never the body.
+  Bearer tokens cannot create/revoke approvals: legacy owner impersonation
+  tokens do not prove the user's approval. A trusted UI must present the scope
+  and explicitly submit the user's choice; there is no new approval screen yet.
+- Supply a future UTC expiry, at most seven days away. This conservative v1
+  limit is not a token lifetime. No renewal, recurring-schedule authorization,
+  child delegation, wildcard scope, arbitrary subject or trusted-context input.
+  Up to 16 exact supported resource/action pairs use existing Access ID rules.
+- The service's signed subject **and** authorized client must match the approval.
+  Both user and service must already have every approved permission at creation;
+  both are checked again at use. Delegation never writes OpenFGA grants.
+- A job ID is an application-supplied scope label, not proof of execution or an
+  exactly-once mechanism. The application binds it to actual work and owns retries.
+  Finishing a job does not automatically revoke its approval in this slice.
+
+Service check body (no user ID or user token):
+
+```json
+{"job_id":"report-job","resource":{"type":"agent","id":"example"},"action":"use"}
+```
+
+- HTTP 200 can contain **DENY**: enforce `decision === "ALLOW"` server-side before
+  the operation. Receipts include `decision_id`, `delegation_id`, `reason`,
+  `retriable` and `ttl_seconds: 0`; `Cache-Control: no-store` applies everywhere.
+  Bad authentication is 401/403, malformed input 400, unavailable checks 503.
+- MongoDB is required. Approvals use primary/majority reads and majority writes;
+  no process-local permission/approval cache or in-memory fallback. Scope/expiry
+  are immutable, revocation is atomic, and expired records remain inspectable.
+- Graph checks bypass CAS product overrides and caches, use higher consistency
+  and share a five-second deadline. Re-read the approval after graph checks to
+  detect concurrent revocation/expiry. This is a point-in-time decision, not a
+  distributed transaction, execution lease or cancellation of in-flight work.
+- Explicit approval survives browser logout. Renewing a service token never
+  extends it. User/service resource permission revocation blocks the next check.
+  Keycloak account-disable propagation and graph-model pinning remain broader
+  platform work; this endpoint does not introspect account state on every call.
+
+### Delegation evidence
+
+- CAS emits `cas_delegation` creation/revocation attempts and individual
+  `cas_decision` use receipts. Delegated allows **never** enter allow rollups.
+- Actor and effective user remain separate. Each bound decision captures the
+  approval version/scope/expiry, job label, policy `cas-delegation/v1`, ordered
+  checks, exact failure reason and server-generated decision/correlation IDs.
+  An unmatched service/job reference does not acquire an invented user chain.
+- Admin audit renders the chain and filters by indexed `delegation_id` across
+  lifecycle and decision rows. Expiry is recorded in the approval and denied
+  uses, not by a timer emitting synthetic expiry events. No raw tokens are stored.
+- These are recorded CAS assertions, **not signed, tamper-proof or lossless
+  provenance**. Audit delivery remains best-effort; ingestion authentication,
+  reliable delivery, OpenFGA grant-path evidence and execution attestations are
+  separate work. The audit-service must be upgraded for the new query filter;
+  no data migration is needed for this additive feature.
+
+Tests: `npm test -- --runInBand src/lib/authz/__tests__/delegation src/app/api/access/__tests__/delegation-routes.test.ts`.
+Set `CAS_DELEGATION_TEST_MONGODB_URI` to a disposable MongoDB server to enable
+real persistence/concurrency tests; they create and drop only a random test database.
 
 ## Gateway authorization foundation
 

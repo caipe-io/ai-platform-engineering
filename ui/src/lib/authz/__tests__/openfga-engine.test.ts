@@ -8,6 +8,7 @@ import {
   getEngineStats,
   invalidateDecisionCache,
   __resetAdapterStateForTests,
+  checkDelegationPermission,
 } from "../engines/openfga";
 import type { AuthorizeRequest } from "../contract";
 
@@ -71,6 +72,15 @@ describe("OpenFGA engine adapter", () => {
     await engine.check({ ...req, action: "read" });
     await engine.check({ ...req, action: "read" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("delegation checks never reuse cached read permissions", async () => {
+    const request = { ...req, action: "read" as const };
+    fetchMock.mockResolvedValueOnce(checkResponse(true)).mockResolvedValueOnce(checkResponse(false));
+    await createOpenFgaEngine().check(request);
+    expect(await checkDelegationPermission(request, AbortSignal.timeout(5000))).toMatchObject({ decision: "DENY", ttl_seconds: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).consistency).toBe("HIGHER_CONSISTENCY");
   });
 
   it("never caches AUTHZ_UNAVAILABLE (retries on next call)", async () => {

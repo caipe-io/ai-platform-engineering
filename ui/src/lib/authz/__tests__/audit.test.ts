@@ -16,6 +16,7 @@ import {
   buildListObjectsDecisionEvent,
   emitBatchDecisionAudit,
   emitDecisionAudit,
+  emitDelegationAudit,
   emitGrantAudit,
   emitListObjectsDecisionAudit,
   emitReconcileAudit,
@@ -172,6 +173,28 @@ const grantIntent = {
   capability: "use" as const,
 };
 const caller = { type: "user" as const, id: "alice" };
+
+it("keeps each delegated allow receipt and both identities even when normal allows are rolled up", () => {
+  const identity = { issuer: "https://identity.example.test", subject: { type: "service_account" as const, id: "test-service" }, clientId: "example-service", expiresAt: 10 ** 10 };
+  const approval = { _id: "approval-1", issuer: identity.issuer, user_id: "test-user", service: { id: "test-service", client_id: "example-service" },
+    scope: [{ resource: { type: "agent" as const, id: "example" }, action: "use" as const }], job_id: "test-job",
+    expires_at: "2026-10-25T12:00:00Z", created_at: "2026-10-21T12:00:00Z", revoked_at: null, version: 1 };
+  for (const decisionId of ["decision-1", "decision-2"]) {
+    emitDelegationAudit("check", identity, { effectiveSubject: { type: "user", id: "test-user" },
+      evidence: { kind: "cas_approval", reference: approval._id },
+      approval: { issuer: approval.issuer, service: approval.service, scope: approval.scope,
+      job_id: approval.job_id, expires_at: approval.expires_at, created_at: approval.created_at,
+      revoked_at: approval.revoked_at, version: approval.version, user_ref: "user:test-user", service_ref: "service_account:test-service" } },
+    approval._id, "OK", { correlationId: "request-1" }, [], approval.scope[0], decisionId);
+  }
+  flushAllowRollups();
+  expect(mockWrite).toHaveBeenCalledTimes(2);
+  expect(mockWrite.mock.calls[0][0]).toMatchObject({ type: "cas_decision", actor_ref: "service_account:test-service", subject_ref: "user:test-user",
+    delegation_id: "approval-1", decision_id: "decision-1", delegation_policy: "cas-delegation/v1", delegation: { version: 1, job_id: "test-job" },
+    delegation_evidence: { kind: "cas_approval", reference: "approval-1" } });
+  expect(mockWrite.mock.calls[0][0]).not.toHaveProperty("count");
+  expect(JSON.stringify(mockWrite.mock.calls)).not.toContain("Bearer");
+});
 
 describe("buildGrantEvent — policy-change audit conformance", () => {
   it("records caller, grantee, resource, capability, operation, outcome, and context", () => {

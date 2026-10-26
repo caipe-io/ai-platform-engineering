@@ -390,11 +390,15 @@ jobs:
           tail -n 200 /tmp/caipe-ui-dev.log || true
           exit 1
 
-      - name: Validate shared-session MongoDB coordination
+      - name: Validate session and delegation MongoDB coordination
         working-directory: ui
         env:
           AUTH_SESSION_TEST_MONGODB_URI: 'mongodb://mongodb:27017'
-        run: npx jest --runInBand src/lib/__tests__/auth-session-mongo.test.ts
+          CAS_DELEGATION_TEST_MONGODB_URI: 'mongodb://mongodb:27017'
+        run: >-
+          npx jest --runInBand
+          src/lib/__tests__/auth-session-mongo.test.ts
+          src/lib/authz/__tests__/delegation-mongo.test.ts
 
       - name: Run mocked RBAC Playwright regression
         id: playwright

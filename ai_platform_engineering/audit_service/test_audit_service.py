@@ -109,6 +109,8 @@ def test_ingests_batches_and_reads_filtered_events(tmp_path: Path) -> None:
     ("filters", "expected"),
     [
         ({"decision_id": "decision-1"}, 1),
+        ({"delegation_id": "approval-1"}, 1),
+        ({"delegation_id": "approval-1", "subject_ref": "user:other-user"}, 0),
         ({"subject_ref": "user:test-user", "resource_ref": "tool:example/list"}, 1),
         ({"decision_id": "decision-1", "subject_ref": "user:other-user"}, 0),
     ],
@@ -123,6 +125,7 @@ def test_filters_cas_evidence_by_exact_reference(tmp_path: Path, filters: dict[s
                 "subject_ref": f"user:{subject}",
                 "resource_ref": "tool:example/list",
                 "decision_id": f"decision-{index}",
+                "delegation_id": f"approval-{index}",
                 "failed_gate": "caller_tool",
                 "gateway_policy": "Caller must can_call the tool.",
                 "gateway_checks": [
@@ -569,13 +572,13 @@ def test_verbosity_endpoint_verbose(tmp_path: Path) -> None:
 
 def test_verbosity_allowed_types_minimal() -> None:
     types = allowed_types("minimal")
-    assert types == frozenset({"cas_grant", "cas_reconcile"})
+    assert types == frozenset({"cas_grant", "cas_reconcile", "cas_delegation"})
 
 
 def test_verbosity_allowed_types_standard() -> None:
     types = allowed_types("standard")
     assert types == frozenset(
-        {"auth", "cas_grant", "cas_reconcile", "cas_decision", "credential_action", "openfga_rebac"}
+        {"auth", "cas_grant", "cas_reconcile", "cas_delegation", "cas_decision", "credential_action", "openfga_rebac"}
     )
 
 

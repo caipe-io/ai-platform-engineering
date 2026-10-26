@@ -2,8 +2,10 @@ import { Badge } from "@/components/ui/badge";
 import type { UnifiedAuditEvent } from "@/lib/rbac/types";
 import { ACCESS_DECISION_COLOURS, ACCESS_GATE_LABELS } from "./access-decision-description";
 import { AuditReference } from "./AuditReference";
+import { DelegationDecisionChain } from "./DelegationDecisionChain";
 
 export function AccessDecisionChain({ event }: { event: UnifiedAuditEvent }) {
+  if (event.delegation_id) return <DelegationDecisionChain event={event} />;
   const aggregate = event.count !== undefined || event.batch || event.list_objects;
   const checks = aggregate ? undefined : event.gateway_checks;
   return (

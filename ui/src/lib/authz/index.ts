@@ -39,6 +39,8 @@ export async function authorizeGateway(req: GatewayRequest, ctx: DecisionContext
 export { signGatewayContext, gatewayCasEnabled } from "./gateway-context";
 export type { GatewayRequest, GatewayResult, GatewayCheck } from "./gateway-contract";
 
+export { createDelegation, inspectDelegation, revokeDelegation, authorizeDelegated } from "./delegations";
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**

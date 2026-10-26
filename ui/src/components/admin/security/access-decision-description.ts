@@ -42,6 +42,17 @@ export function describeAccessDecision(event: UnifiedAuditEvent): { label: strin
   if (event.outcome !== "deny") {
     return { label: "Check failed", explanation: "The recorded check failed without a permission verdict. Inspect the recorded reason; do not infer a missing grant.", tone: "warning" };
   }
+  if (event.delegation_id) {
+    const reasons: Record<string, string> = {
+      DELEGATION_NOT_FOUND: "No approval was found for this reference.",
+      DELEGATION_BINDING_MISMATCH: "The service, issuer, client or job did not match the approval.",
+      DELEGATION_EXPIRED: "The approval expired.", DELEGATION_REVOKED: "The approval was revoked.",
+      DELEGATION_SCOPE_MISMATCH: "The requested resource/action was not approved.",
+      SERVICE_NOT_ALLOWED: "The service did not have the required permission.",
+      USER_NOT_ALLOWED: "The user did not have the required permission.",
+    };
+    return { label: "Delegation denied", explanation: reasons[event.reason_code ?? ""] ?? "CAS did not authorize this delegated request.", tone: "negative" };
+  }
   if (event.failed_gate === "context") {
     return { label: "Execution context rejected", explanation: "The execution context was missing, expired or incorrectly bound. The record does not identify which condition occurred.", tone: "negative" };
   }

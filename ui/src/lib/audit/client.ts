@@ -14,6 +14,7 @@ export interface AuditQuery {
   resource_ref?: string;
   correlation_id?: string;
   decision_id?: string;
+  delegation_id?: string;
   component?: string;
   source?: string;
   action?: string;

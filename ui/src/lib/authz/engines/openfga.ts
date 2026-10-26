@@ -216,7 +216,7 @@ function deny(reason: AuthorizeResult["reason"] = "NO_CAPABILITY"): AuthorizeRes
   return { decision: "DENY", reason, retriable: getReasonMeta(reason).retriable };
 }
 
-async function runCheck(req: AuthorizeRequest, fresh = false): Promise<AuthorizeResult> {
+async function runCheck(req: AuthorizeRequest, fresh = false, deadline?: AbortSignal): Promise<AuthorizeResult> {
   if (!circuitAllows()) return deny("AUTHZ_UNAVAILABLE");
 
   const relation = openFgaCheckRelation(req.action);
@@ -225,7 +225,7 @@ async function runCheck(req: AuthorizeRequest, fresh = false): Promise<Authorize
 
   try {
     // Start before discovery so it consumes the same execution-check budget.
-    const signal = fresh ? AbortSignal.timeout(OPENFGA_READ_TIMEOUT_MS) : undefined;
+    const signal = deadline ?? (fresh ? AbortSignal.timeout(OPENFGA_READ_TIMEOUT_MS) : undefined);
     const storeId = await getOpenFgaStoreId();
     signal?.throwIfAborted();
     const allowed = await fgaCheck(storeId, user, relation, object,
@@ -238,6 +238,11 @@ async function runCheck(req: AuthorizeRequest, fresh = false): Promise<Authorize
     console.warn("[cas/openfga] check error:", err instanceof Error ? err.message : String(err));
     return deny("AUTHZ_UNAVAILABLE");
   }
+}
+
+/** Delegation only narrows existing graph authority; no product-policy override. */
+export function checkDelegationPermission(req: AuthorizeRequest, signal: AbortSignal): Promise<AuthorizeResult> {
+  return runCheck(req, true, signal);
 }
 
 /** Private gateway adapter: agents are allowed here, never as public API subjects. */

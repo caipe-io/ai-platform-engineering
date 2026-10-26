@@ -2,6 +2,7 @@ import { ApiError, requireRbacPermission, withErrorHandler } from "@/lib/api-mid
 import { authOptions } from "@/lib/auth-config";
 import { AuditServiceError, getAuditClient, type AuditQuery } from "@/lib/audit";
 import type { GatewayCheck } from "@/lib/authz";
+import { safeDelegationChecks, safeDelegationEvidence, safeDelegationSnapshot } from "@/lib/authz/delegation-contract";
 import type {
   AuditEventType,
   UnifiedAuditEvent,
@@ -21,6 +22,7 @@ const VALID_TYPES: string[] = [
   "openfga_rebac",
   "cas_decision",
   "cas_grant",
+  "cas_delegation",
   "cas_reconcile",
   "credential_action",
 ];
@@ -67,6 +69,12 @@ interface AuditEventDocument {
   agent_ref?: string;
   gateway_checks?: unknown;
   gateway_policy?: string;
+  delegation_id?: string;
+  delegation_operation?: "create" | "revoke" | "check";
+  delegation?: unknown;
+  delegation_evidence?: unknown;
+  delegation_checks?: unknown;
+  delegation_policy?: string;
   pdp?: string;
   source?: string;
   source_system?: string;
@@ -409,6 +417,12 @@ function documentToEvent(doc: AuditEventDocument): UnifiedAuditEvent {
     agent_ref: doc.agent_ref,
     gateway_checks: safeGatewayChecks(doc.gateway_checks),
     gateway_policy: typeof doc.gateway_policy === "string" ? doc.gateway_policy : undefined,
+    delegation_id: typeof doc.delegation_id === "string" ? doc.delegation_id : undefined,
+    delegation_operation: ["create", "revoke", "check"].includes(doc.delegation_operation ?? "") ? doc.delegation_operation : undefined,
+    delegation: safeDelegationSnapshot(doc.delegation),
+    delegation_evidence: safeDelegationEvidence(doc.delegation_evidence),
+    delegation_checks: safeDelegationChecks(doc.delegation_checks),
+    delegation_policy: typeof doc.delegation_policy === "string" ? doc.delegation_policy : undefined,
     pdp: doc.pdp,
     source: normalizeAuditSource(doc.source, doc.source_system),
     actor_hash: doc.actor_hash,
@@ -481,7 +495,7 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
   );
 
   const url = new URL(request.url);
-  const supportedParams = new Set(["from", "to", "window", "cursor", "limit", "type", "outcome", "agent_name", "tool_name", "user_email", "component", "correlation_id", "decision_id", "subject_ref", "resource_ref"]);
+  const supportedParams = new Set(["from", "to", "window", "cursor", "limit", "type", "outcome", "agent_name", "tool_name", "user_email", "component", "correlation_id", "decision_id", "delegation_id", "subject_ref", "resource_ref"]);
   for (const key of url.searchParams.keys()) {
     if (!supportedParams.has(key) || url.searchParams.getAll(key).length !== 1) {
       throw new ApiError("Unsupported or repeated audit query parameter", 400, "VALIDATION_ERROR");
@@ -551,6 +565,8 @@ export const GET = withErrorHandler(async (request: NextRequest): Promise<NextRe
   if (component) query.component = component;
   if (correlationId) query.correlation_id = correlationId;
   if (decisionId) query.decision_id = decisionId;
+  const delegationId = url.searchParams.get("delegation_id")?.trim();
+  if (delegationId) query.delegation_id = delegationId;
   if (subjectRef) query.subject_ref = subjectRef;
   if (resourceRef) query.resource_ref = resourceRef;
 

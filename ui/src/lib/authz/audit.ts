@@ -28,6 +28,8 @@ import type {
   TrustedAuthorizeContext,
 } from "./contract";
 import type { GatewayCheck, GatewayRequest, GatewayResult } from "./gateway-contract";
+import { DELEGATION_POLICY, type DelegatedPermission, type DelegationApproval, type DelegationCheck,
+  type DelegationIdentity, type DelegationReason } from "./delegation-contract";
 
 const SUBJECT_SALT = process.env.AUDIT_SUBJECT_SALT ?? "caipe-098-audit";
 
@@ -291,6 +293,32 @@ export function emitGatewayDecisionAudit(req: GatewayRequest, result: GatewayRes
   };
   if (event.outcome === "allow" && !fullFidelityAllows()) recordAllow(event);
   else writeAuditEvent(event);
+}
+
+/** Delegated decisions retain individual receipts, including allows. Delivery
+ * remains best-effort; neither this ID nor a job label is signed provenance. */
+export function emitDelegationAudit(
+  operation: "create" | "revoke" | "check", identity: DelegationIdentity,
+  authority: DelegationApproval | undefined, id: string, reason: DelegationReason,
+  ctx: DecisionContext, checks: DelegationCheck[] = [], permission?: DelegatedPermission, decisionId = randomUUID(),
+): void {
+  const subject = authority?.effectiveSubject ?? identity.subject;
+  try {
+    getAuditClient().append({
+      audit_event_id: randomUUID(), ts: new Date(), type: operation === "check" ? "cas_decision" : "cas_delegation",
+      tenant_id: process.env.TENANT_ID ?? "default", component: "cas", source: "cas",
+      actor_ref: principalRef(identity.subject.type, identity.subject.id),
+      subject_ref: principalRef(subject.type, subject.id), subject_hash: hashSubject(subject.id),
+      action: permission?.action ?? operation, resource_ref: permission ? `${permission.resource.type}:${permission.resource.id}` : `delegation:${id}`,
+      outcome: operation === "check" ? reason === "OK" ? "allow" : "deny" : reason === "OK" ? "success" : "error",
+      reason_code: reason, correlation_id: ctx.correlationId ?? randomUUID(), decision_id: decisionId,
+      delegation_id: id, delegation_operation: operation, delegation_policy: DELEGATION_POLICY,
+      delegation_checks: checks, ...(authority ? { delegation: authority.approval, delegation_evidence: authority.evidence } : {}),
+      pdp: checks.some((item) => item.gate.endsWith("_permission")) ? "openfga" : "local",
+    });
+  } catch (error) {
+    console.warn("[cas/audit] Could not enqueue delegation evidence", { name: error instanceof Error ? error.name : "UnknownError" });
+  }
 }
 
 export function buildBatchDecisionEvent(

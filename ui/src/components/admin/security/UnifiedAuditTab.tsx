@@ -36,6 +36,7 @@ import {
 import React,{ useCallback,useEffect,useMemo,useRef,useState } from "react";
 import { ACCESS_DECISION_COLOURS, ACCESS_GATE_LABELS, describeAccessDecision } from "./access-decision-description";
 import { AccessDecisionChain } from "./AccessDecisionChain";
+import { DelegationDecisionChain } from "./DelegationDecisionChain";
 import { AuditReference, type AuditReferenceKind } from "./AuditReference";
 
 interface UnifiedAuditTabProps {
@@ -140,6 +141,7 @@ const TYPE_FILTER_GROUPS: {
         description:
           "Grant and revoke attempts written by CAS (who changed access, for which grantee and resource, success or failure).",
       },
+      { value: "cas_delegation", label: "Delegation approvals", description: "CAS approval creation and revocation; linked to individual delegated access decisions." },
       {
         value: "cas_decision",
         label: "Access decisions",
@@ -325,6 +327,7 @@ function TypeBadge({ type }: { type: AuditEventType }) {
         </Badge>
       );
       break;
+    case "cas_delegation":
     case "agent_delegation":
       badge = (
         <Badge variant="outline" className="text-purple-600 border-purple-300 bg-purple-50 dark:bg-purple-950 dark:text-purple-400 dark:border-purple-800 gap-1">
@@ -649,9 +652,10 @@ export function UnifiedAuditTab({ isAdmin, view = "audit", initialSubjectRef = "
   const [resourceRef, setResourceRef] = useState("");
   const [decisionId, setDecisionId] = useState("");
   const [correlationId, setCorrelationId] = useState("");
+  const [delegationId, setDelegationId] = useState("");
   const [appliedTextFilters, setAppliedTextFilters] = useState({
     subject_ref: initialSubjectRef, resource_ref: "", decision_id: "", correlation_id: "",
-    user_email: "", agent_name: "",
+    user_email: "", agent_name: "", delegation_id: "",
   });
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -880,7 +884,8 @@ export function UnifiedAuditTab({ isAdmin, view = "audit", initialSubjectRef = "
     setResourceRef("");
     setDecisionId("");
     setCorrelationId("");
-    setAppliedTextFilters({ subject_ref: "", resource_ref: "", decision_id: "", correlation_id: "", user_email: "", agent_name: "" });
+    setDelegationId("");
+    setAppliedTextFilters({ subject_ref: "", resource_ref: "", decision_id: "", correlation_id: "", user_email: "", agent_name: "", delegation_id: "" });
     setDateFrom("");
     setDateTo("");
     setTimeWindow(view === "decisions" ? "1h" : "5m");
@@ -1212,6 +1217,7 @@ export function UnifiedAuditTab({ isAdmin, view = "audit", initialSubjectRef = "
           <Input aria-label="Caller principal" placeholder="user:ID or service_account:ID" value={subjectRef} onChange={(e) => setSubjectRef(e.target.value)} className="h-9 w-64" />
           <Input aria-label="Resource reference" placeholder="tool:server/tool or agent:ID" value={resourceRef} onChange={(e) => setResourceRef(e.target.value)} className="h-9 w-64" />
           <Input aria-label="Decision ID" placeholder="Decision ID" value={decisionId} onChange={(e) => setDecisionId(e.target.value)} className="h-9 w-64" />
+          <Input aria-label="Delegation ID" placeholder="Delegation ID" value={delegationId} onChange={(e) => setDelegationId(e.target.value)} className="h-9 w-64" />
           <Input aria-label="Correlation ID" placeholder="Correlation ID" value={correlationId} onChange={(e) => setCorrelationId(e.target.value)} className="h-9 w-64" />
           <Input placeholder="User email..." value={userEmail} onChange={(e) => setUserEmail(e.target.value)} className="h-9 w-48" />
           <Input placeholder="Agent name..." value={agentName} onChange={(e) => setAgentName(e.target.value)} className="h-9 w-40" />
@@ -1244,7 +1250,7 @@ export function UnifiedAuditTab({ isAdmin, view = "audit", initialSubjectRef = "
           <Button variant="default" size="sm" onClick={() => {
             setAppliedTextFilters({
               subject_ref: subjectRef.trim(), resource_ref: resourceRef.trim(), decision_id: decisionId.trim(), correlation_id: correlationId.trim(),
-              user_email: userEmail.trim(), agent_name: agentName.trim(),
+              user_email: userEmail.trim(), agent_name: agentName.trim(), delegation_id: delegationId.trim(),
             });
           }} className="gap-1 h-9">
             <Search className="h-3.5 w-3.5" />
@@ -1373,6 +1379,7 @@ export function UnifiedAuditTab({ isAdmin, view = "audit", initialSubjectRef = "
 	                                <div className="text-xs text-muted-foreground mt-1">{description?.explanation ?? reasonPhrase(evt)}</div>
 	                              </div>
 	                              {evt.type === "cas_decision" && <AccessDecisionChain event={evt} />}
+                                {evt.type === "cas_delegation" && <DelegationDecisionChain event={evt} />}
 	                              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
 	                                <DetailField label={decisionsView ? "Checking workload / actor" : "Actor"} value={decisionsView ? evt.actor_ref || evt.actor_display || "Not recorded" : actor} referenceKind={decisionsView ? "workload" : undefined} />
 	                                <DetailField
