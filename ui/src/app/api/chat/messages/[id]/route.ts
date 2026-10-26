@@ -44,6 +44,9 @@ export const PUT = withErrorHandler(async (
       id: message.conversation_id,
       action: 'write',
     });
+    if (message.metadata?.history_owner === 'harness_engine') {
+      throw new ApiError('This transcript is managed by its runtime', 409, 'SERVER_OWNED_HISTORY');
+    }
 
     // Build update
     const update: Document = {};
@@ -71,7 +74,7 @@ export const PUT = withErrorHandler(async (
       return successResponse(message);
     }
 
-    await messages.updateOne(filter, { $set: update });
+    await messages.updateOne({ ...filter, 'metadata.history_owner': { $ne: 'harness_engine' } }, { $set: update });
 
     const updated = await messages.findOne(filter);
 

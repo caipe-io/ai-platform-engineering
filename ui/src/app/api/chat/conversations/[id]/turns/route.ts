@@ -115,6 +115,10 @@ export const POST = withErrorHandler(
         );
       }
 
+      const messages = await getCollection("messages");
+      const serverTurn = await messages.findOne({ conversation_id: conversationId,
+        "metadata.history_owner": "harness_engine", $or: [{ "metadata.turn_id": body.turn_id }, { "metadata.client_request_id": body.turn_id }] });
+      if (serverTurn?.metadata?.history_owner === "harness_engine") throw new ApiError("This transcript is managed by its runtime", 409, "SERVER_OWNED_HISTORY");
       const turns = await getCollection<Turn>("turns");
       const now = new Date();
 

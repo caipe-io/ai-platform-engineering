@@ -1,3 +1,4 @@
+import { proxyHarnessConversationOperation } from "@/lib/harness-gateway";
 /**
  * Proxy route for clearing conversation checkpoint data (admin only).
  *
@@ -37,6 +38,11 @@ export async function POST(
     scope: "invoke",
   });
   if (authResult instanceof NextResponse) return authResult;
+
+  const body = await request.clone().json().catch(() => null);
+  const requestedAgent = new URL(request.url).searchParams.get("agent_id") ?? (typeof body?.agent_id === "string" ? body.agent_id : undefined);
+  const harness = await proxyHarnessConversationOperation(authResult, conversationId, requestedAgent, "clear");
+  if (harness) return harness;
 
   // Check DA config
   const daConfig = getDynamicAgentsConfig();

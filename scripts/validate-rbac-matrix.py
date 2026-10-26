@@ -13,6 +13,8 @@ What it checks:
      (Python surface) is represented by a route entry.
   4. Every Dynamic Agent execution route that calls the OpenFGA agent-use helper is
      represented by an OpenFGA matrix entry.
+     Engine and DA resource routes are also inventoried by exact HTTP method,
+     path, surface and internal/run-capability/OpenFGA authorization boundary.
   5. Each entry has expectations for ALL six personas (the JSON schema enforces this,
      but we double-check after parse for nicer errors).
   6. The set of Keycloak resources referenced by the matrix is a subset of the resources we can
@@ -30,6 +32,7 @@ hand-rolled checker that mirrors the schema. T012 validates this script with fix
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import sys
@@ -148,7 +151,58 @@ _ALLOWED_ROUTE_KEYS = frozenset({
     "relation", "object_type",
 })
 _VALID_MIGRATION_STATUSES = frozenset({"migrated", "pending"})
-_VALID_AUTHORIZATION_SYSTEMS = frozenset({"keycloak", "openfga"})
+_VALID_AUTHORIZATION_SYSTEMS = frozenset({"keycloak", "openfga", "internal", "run_capability"})
+_VALID_SURFACES = frozenset({"ui_bff", "mcp", "dynamic_agents", "rag", "slack_bot", "webex_bot", "harness_engine"})
+_HARNESS_ROUTE_FILES = (
+    ("harness_engine", "ai_platform_engineering/harness_engine/src/harness_engine/main.py", ""),
+    ("harness_engine", "ai_platform_engineering/harness_engine/src/harness_engine/coding/routes.py", ""),
+    ("dynamic_agents", "ai_platform_engineering/dynamic_agents/src/dynamic_agents/routes/harness_resources.py", "/api/v1"),
+)
+_CAPABILITY_HANDLERS = frozenset({"mcp", "git_capability", "git_proxy"})
+
+
+def find_harness_route_sites() -> dict[tuple[str, str, str], tuple[str, str]]:
+    """Inventory literal Engine and DA resource routes, including GET/POST api_route."""
+    sites: dict[tuple[str, str, str], tuple[str, str]] = {}
+    for surface, relative, prefix in _HARNESS_ROUTE_FILES:
+        path = REPO_ROOT / relative
+        if not path.is_file():
+            continue
+        tree = ast.parse(path.read_text())
+        router_prefix = ""
+        if surface == "dynamic_agents":
+            for item in tree.body:
+                if isinstance(item, ast.Assign) and isinstance(item.value, ast.Call) and any(
+                    isinstance(target, ast.Name) and target.id == "router" for target in item.targets
+                ):
+                    router_prefix = next(
+                        (ast.literal_eval(keyword.value) for keyword in item.value.keywords if keyword.arg == "prefix"), ""
+                    )
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for decorator in node.decorator_list:
+                if not (
+                    isinstance(decorator, ast.Call)
+                    and isinstance(decorator.func, ast.Attribute)
+                    and isinstance(decorator.func.value, ast.Name)
+                    and decorator.func.value.id in {"app", "router"}
+                    and decorator.func.attr in {"get", "post", "put", "patch", "delete", "api_route"}
+                    and decorator.args
+                    and isinstance(decorator.args[0], ast.Constant)
+                    and isinstance(decorator.args[0].value, str)
+                ):
+                    continue
+                route = prefix + router_prefix + decorator.args[0].value
+                if route == "/healthz":
+                    continue
+                methods = [decorator.func.attr.upper()]
+                if decorator.func.attr == "api_route":
+                    methods = next(ast.literal_eval(item.value) for item in decorator.keywords if item.arg == "methods")
+                authz = "openfga" if surface == "dynamic_agents" else "run_capability" if node.name in _CAPABILITY_HANDLERS else "internal"
+                for method in methods:
+                    sites[(surface, method, route)] = (authz, f"{relative}:{decorator.lineno}")
+    return sites
 
 
 def route_path_from_ui_file(path: Path) -> str:
@@ -191,6 +245,8 @@ def validate_schema_shape(matrix: dict) -> list[Violation]:
         for required in ("id", "surface", "method", "path", "resource", "scope", "expectations"):
             if required not in entry:
                 violations.append(Violation("schema", rid, f"missing required field {required!r}"))
+        if entry.get("surface") not in _VALID_SURFACES:
+            violations.append(Violation("schema", rid, f"unknown surface {entry.get('surface')!r}"))
         unknown = set(entry.keys()) - _ALLOWED_ROUTE_KEYS
         for key in sorted(unknown):
             violations.append(Violation("schema", rid, f"unknown field {key!r}"))
@@ -218,6 +274,14 @@ def validate_schema_shape(matrix: dict) -> list[Violation]:
             if entry.get("object_type") != "agent":
                 violations.append(Violation("schema", rid, "OpenFGA agent-use entries must set object_type: agent"))
         expectations = entry.get("expectations") or {}
+        if authz in {"internal", "run_capability"}:
+            if entry.get("surface") != "harness_engine":
+                violations.append(Violation("schema", rid, f"{authz} entries require surface: harness_engine"))
+            if "relation" in entry or "object_type" in entry:
+                violations.append(Violation("schema", rid, f"{authz} entries must not declare an OpenFGA relation"))
+            for persona, expectation in expectations.items():
+                if expectation.get("status") not in {401, 403}:
+                    violations.append(Violation("schema", rid, f"bearer-only {persona} must be denied by {authz}"))
         missing = REQUIRED_PERSONAS - set(expectations.keys())
         if missing:
             violations.append(
@@ -236,12 +300,13 @@ def main() -> int:
     schema_violations = validate_schema_shape(matrix)
 
     declared_pairs: set[tuple[str, str]] = {
-        (e["resource"], e["scope"]) for e in matrix.get("routes", []) if "resource" in e and "scope" in e
+        (e["resource"], e["scope"]) for e in matrix.get("routes", [])
+        if "resource" in e and "scope" in e and e.get("authorization_system", "keycloak") == "keycloak"
     }
     declared_keycloak_resources: set[str] = {
         e["resource"]
         for e in matrix.get("routes", [])
-        if "resource" in e and e.get("authorization_system", "keycloak") != "openfga"
+        if "resource" in e and e.get("authorization_system", "keycloak") == "keycloak"
     }
     declared_openfga_routes: set[tuple[str, str]] = {
         (e["method"], e["path"])
@@ -260,6 +325,8 @@ def main() -> int:
     print("[validate-rbac-matrix] scanning OpenFGA agent-use route gates…")
     openfga_sites = find_openfga_agent_use_route_sites()
     print(f"[validate-rbac-matrix]   found {len(openfga_sites)} OpenFGA-gated BFF route(s)")
+    harness_sites = find_harness_route_sites()
+    print(f"[validate-rbac-matrix]   found {len(harness_sites)} Engine/DA resource route gate(s)")
 
     if args.print:
         for (res, scope), wheres in sorted({**ts_sites, **py_sites}.items()):
@@ -268,6 +335,17 @@ def main() -> int:
             print(f"  - (openfga, POST {route_path}, agent#use): {wheres[0]}{' (+%d more)' % (len(wheres)-1) if len(wheres) > 1 else ''}")
 
     matrix_violations: list[Violation] = []
+    declared_harness_routes = {
+        (e["surface"], e["method"], e["path"]): e.get("authorization_system", "keycloak")
+        for e in matrix.get("routes", [])
+        if all(key in e for key in ("surface", "method", "path"))
+    }
+    for gate, (authz, where) in harness_sites.items():
+        if declared_harness_routes.get(gate) != authz:
+            matrix_violations.append(Violation(
+                "missing_in_matrix", where,
+                f"{gate[0]} {gate[1]} {gate[2]} requires authorization_system={authz}",
+            ))
     for pair, wheres in {**ts_sites, **py_sites}.items():
         if pair not in declared_pairs:
             matrix_violations.append(

@@ -174,7 +174,7 @@ async function persistInvokeMessages(
   response: Response,
   source: "api" | "scheduler",
 ): Promise<void> {
-  if (!isMongoDBConfigured) return;
+  if (!isMongoDBConfigured || response.headers.get("X-Harness-History-Owner") === "server") return;
 
   const conversationId = stringValue(body.conversation_id);
   const userContent = String(body.message || "").trim();
@@ -464,7 +464,7 @@ async function handleScheduledInvoke(
   if (target instanceof NextResponse) return target;
   let response: Response;
   if (target.kind === "harness_engine") {
-    response = await invokeHarnessGatewayRun(body, authResult, request.signal);
+    response = await invokeHarnessGatewayRun({ ...body, visible_conversation_id: body.conversation_id, expected_harness_id: target.harnessId }, authResult, request.signal);
   } else {
     const daConfig = getDynamicAgentsConfig();
     if (daConfig instanceof NextResponse) return daConfig;
@@ -553,7 +553,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (target instanceof NextResponse) return target;
   let response: Response;
   if (target.kind === "harness_engine") {
-    response = await invokeHarnessGatewayRun(body, authResult, request.signal);
+    response = await invokeHarnessGatewayRun({ ...body, visible_conversation_id: conversationAuthz.conversation._id, expected_harness_id: target.harnessId }, authResult, request.signal);
   } else {
     const daConfig = getDynamicAgentsConfig();
     if (daConfig instanceof NextResponse) return daConfig;

@@ -31,7 +31,7 @@
         },
         "surface": {
           "type": "string",
-          "enum": ["ui_bff", "mcp", "dynamic_agents", "rag", "slack_bot", "webex_bot"],
+          "enum": ["ui_bff", "mcp", "dynamic_agents", "rag", "slack_bot", "webex_bot", "harness_engine"],
           "description": "Which trust boundary the gate lives on. 'mcp' covers all <agent>_mcp servers; the specific server is identified via the 'resource' field."
         },
         "method": {
@@ -46,11 +46,11 @@
         "resource": {
           "type": "string",
           "pattern": "^[a-z0-9_]+(:[A-Za-z0-9_-]+)?$",
-          "description": "Keycloak resource name; must exist in deploy/keycloak/realm-config.json. Cross-validated by scripts/validate-realm-config.py."
+          "description": "Protected resource. Keycloak entries must name a realm resource; OpenFGA entries identify an agent; internal and run_capability entries identify an Engine resource."
         },
         "scope": {
           "type": "string",
-          "pattern": "^[a-z_]+$",
+          "pattern": "^[a-z_]+(?:\\.[a-z_]+)*$",
           "description": "Keycloak scope name; must exist on the named resource."
         },
         "expectations": {
@@ -78,13 +78,47 @@
           "type": "string",
           "description": "Free-form note for reviewers. Optional."
         },
+        "authorization_system": {
+          "type": "string",
+          "enum": ["keycloak", "openfga", "internal", "run_capability"],
+          "default": "keycloak",
+          "description": "Internal and run_capability rows test denial of persona bearer tokens alone; notes describe the additional service or run credentials."
+        },
+        "relation": { "const": "can_use" },
+        "object_type": { "const": "agent" },
         "migration_status": {
           "type": "string",
           "enum": ["migrated", "pending"],
           "default": "migrated",
           "description": "If 'pending', the call site has not yet been migrated to requireRbacPermission. The Jest matrix-driver and pytest matrix-driver will skip these rows (with the route id surfaced) until the corresponding migration task lands. The matrix linter still requires every gated route to appear in the matrix; the flag only controls runtime test execution. Phase 11 (T127) verifies that no `pending` rows remain before the spec exits."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["authorization_system"],
+            "properties": { "authorization_system": { "const": "openfga" } }
+          },
+          "then": { "required": ["relation", "object_type"] }
+        },
+        {
+          "if": {
+            "required": ["authorization_system"],
+            "properties": { "authorization_system": { "enum": ["internal", "run_capability"] } }
+          },
+          "then": {
+            "properties": {
+              "surface": { "const": "harness_engine" },
+              "expectations": {
+                "additionalProperties": {
+                  "properties": { "status": { "enum": [401, 403] } }
+                }
+              }
+            },
+            "not": { "anyOf": [{ "required": ["relation"] }, { "required": ["object_type"] }] }
+          }
+        }
+      ]
     },
     "Expectation": {
       "type": "object",
@@ -106,7 +140,8 @@
             "DENY_NO_CAPABILITY",
             "DENY_PDP_UNAVAILABLE",
             "DENY_INVALID_TOKEN",
-            "DENY_RESOURCE_UNKNOWN"
+            "DENY_RESOURCE_UNKNOWN",
+            "pdp_denied"
           ],
           "description": "Required when status >= 400. Asserted against the audit log entry for this decision."
         },

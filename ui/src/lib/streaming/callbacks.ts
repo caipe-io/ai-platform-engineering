@@ -9,6 +9,7 @@
  */
 
 import type { ContextUsageEventData,InputFieldDefinition } from "@/lib/streaming/types";
+import type { ServerHistoryAdmission } from "./server-history";
 
 // ═══════════════════════════════════════════════════════════════
 // Raw event type for persistence / replay
@@ -67,6 +68,10 @@ export interface StreamParams {
 // ═══════════════════════════════════════════════════════════════
 
 export interface StreamCallbacks {
+  /** A successful response or retained status confirms the established browser writer. */
+  onClientHistory?(): void;
+  /** The server durably reserved canonical rows before starting this run. */
+  onRunAdmission?(admission: ServerHistoryAdmission): void;
   /** Streaming text content arrived */
   onContent?(text: string, namespace: string[]): void;
 
@@ -122,7 +127,7 @@ export interface StreamCallbacks {
   onContextUsage?(usage: ContextUsageEventData, namespace: string[]): void;
 
   /** Stream completed successfully */
-  onDone?(): void;
+  onDone?(outcome?: "cancelled"): void;
 
   /** Unrecoverable error */
   onError?(message: string): void;

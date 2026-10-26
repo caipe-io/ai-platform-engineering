@@ -132,6 +132,21 @@ export const POST = withErrorHandler(async (
 
   const now = new Date();
 
+  // Run-owned IDs and turns are reserved before provider dispatch. A client
+  // cannot replace their projection or create a second transcript for the turn.
+  if (typeof body.message_id === 'string' && /^(?:user|message)-run-[a-f0-9]{64}$/.test(body.message_id)) {
+    throw new ApiError('This transcript is managed by its runtime', 409, 'SERVER_OWNED_HISTORY');
+  }
+  const existingHistory = await messages.findOne({
+    conversation_id: conversationId,
+    $or: [
+      { message_id: body.message_id, 'metadata.history_owner': 'harness_engine' },
+      ...(body.metadata?.turn_id ? [{ 'metadata.turn_id': body.metadata.turn_id, 'metadata.history_owner': 'harness_engine' },
+        { 'metadata.client_request_id': body.metadata.turn_id, 'metadata.history_owner': 'harness_engine' }] : []),
+    ],
+  });
+  if (existingHistory?.metadata?.history_owner === 'harness_engine') throw new ApiError('This transcript is managed by its runtime', 409, 'SERVER_OWNED_HISTORY');
+
   // Store the agent display name on assistant messages, resolved from the
   // conversation's agent participant — the authoritative record of the agent
   // a conversation targets. The client's agent_name is unreliable (dropped

@@ -10,10 +10,11 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from harness_engine.models import (
     AgentVersion,
     CanonicalEventDraft,
+    CapabilityLevel,
     ClearAgentSessionResult,
     SessionBinding,
 )
-from harness_engine.repository import RevisionConflictError, RunRepository
+from harness_engine.repository import RevisionConflictError, RunAdmissionConflict, RunRepository
 
 if TYPE_CHECKING:
     from harness_engine.registry import HarnessRegistry
@@ -165,19 +166,25 @@ class CAIPEAgentSessionManager:
         )
 
     async def resolve(
-        self, owner_subject: str, agent_id: str, conversation_id: str
+        self, owner_subject: str, agent_id: str, conversation_id: str,
+        *, expected_harness_id: str | None = None, required_capabilities: tuple[str, ...] = (),
     ) -> tuple[SessionBinding, AgentVersion]:
         record = await self._repository.get_agent(agent_id)
         if record is None or not record.enabled:
             raise AgentSessionNotRunnableError(agent_id)
 
         latest = await self.current(owner_subject, agent_id, conversation_id)
+        if latest is not None and latest.status == "degraded":
+            raise AgentSessionNotRunnableError("The interrupted provider binding requires an explicit clear")
         if latest is not None and latest.status == "active":
+            if expected_harness_id is not None and latest.harness_id != expected_harness_id:
+                raise AgentSessionNotRunnableError("The saved provider does not match the gateway binding")
             version = await self._repository.get_agent_version(
                 agent_id, latest.agent_version
             )
             if version is None:
                 raise AgentSessionNotRunnableError(agent_id)
+            self._require_capabilities(version, required_capabilities)
             return latest, version
 
         epoch = latest.epoch + 1 if latest else 0
@@ -186,6 +193,9 @@ class CAIPEAgentSessionManager:
         )
         if version is None:
             raise AgentSessionNotRunnableError(agent_id)
+        if expected_harness_id is not None and version.blueprint.harness.id != expected_harness_id:
+            raise AgentSessionNotRunnableError("The selected provider changed; create a new execution context")
+        self._require_capabilities(version, required_capabilities)
         try:
             adapter = self._registry.adapter(version.blueprint.harness.id)
         except KeyError as exc:
@@ -216,6 +226,17 @@ class CAIPEAgentSessionManager:
             )
         )
         return binding, version
+
+    def _require_capabilities(self, version: AgentVersion, required: tuple[str, ...]) -> None:
+        if not required:
+            return
+        descriptor = self._registry.adapter(version.blueprint.harness.id).descriptor
+        profile = next((item for item in descriptor.profiles if item.id == version.blueprint.harness.profile_id), None)
+        capabilities = {**descriptor.capabilities, **(profile.capabilities if profile else {})}
+        for name in required:
+            capability = capabilities.get(name)
+            if capability is None or capability.level not in {CapabilityLevel.NATIVE, CapabilityLevel.EMULATED}:
+                raise RunAdmissionConflict(f"The selected harness does not support {name}")
 
     async def observe_provider_event(
         self, binding: SessionBinding, event: CanonicalEventDraft

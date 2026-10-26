@@ -18,7 +18,7 @@ import { getDeterministicAgentThemeId } from "@/lib/agent-theme";
 import { interruptedAuthReason,interruptedTurnFallbackText } from "@/lib/chat-interrupt";
 import { getConfig } from "@/lib/config";
 import { captureChatFeedbackContext } from "@/lib/chat-feedback";
-import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
+import { fetchEphemeralFileContent, fileContentBlob } from "@/lib/ephemeral-files";
 import { ACCEPT_ATTRIBUTE,fileToInputFile,type InputFile,validateFiles } from "@/lib/file-attachments";
 import { getGradientColors } from "@/lib/gradient-themes";
 import { takePendingFirstMessage } from "@/lib/pending-first-message";
@@ -241,10 +241,14 @@ export function ChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // User input form state (HITL - Human-in-the-Loop)
+  const [recoveryEpoch, setRecoveryEpoch] = useState(0);
+  const [filesNotice, setFilesNotice] = useState<string | null>(null);
+  const recoveredRunsRef = useRef(new Set<string>());
   const [pendingUserInput, setPendingUserInput] = useState<{
     messageId: string;
     metadata: UserInputMetadata;
     contextId?: string;
+    interruptId?: string;
     // SSE/Dynamic Agent specific fields
     isSSE?: boolean;
     agentId?: string;
@@ -585,6 +589,7 @@ export function ChatPanel({
     : false;
   const externalActivity = useChatStore(state => activeConversationId ? state.externalActivity[activeConversationId] : undefined);
   const isRemoteResponse = !!externalActivity && !isThisConversationStreaming;
+  const isAdmissionPending = conversation?.messages.some(message => message.admissionPending) ?? false;
   useEffect(() => {
     if (isRemoteResponse) setIsRewindConfirmationOpen(false);
   }, [isRemoteResponse]);
@@ -813,6 +818,7 @@ export function ChatPanel({
                     input_fields: inputFields,
                   },
                   contextId: conversationId,
+                  interruptId: idata.interrupt_id,
                   isSSE: true,
                   agentId: agentId,
                 });
@@ -855,6 +861,9 @@ export function ChatPanel({
     
     filesFetchedForRef.current = currentFetchState;
 
+    let cancelled = false;
+    setFilesNotice(null);
+    setTimelineFiles([]);
     const fetchFiles = async () => {
       try {
         // No Authorization header — session cookie handles auth for same-origin requests.
@@ -865,7 +874,13 @@ export function ChatPanel({
         );
         if (response.ok) {
           const data = await response.json();
-          setTimelineFiles(data.files || []);
+          if (!cancelled && useChatStore.getState().activeConversationId === conversationId) {
+            setTimelineFiles(data.files || []);
+            if (data.snapshot === "acknowledged") setFilesNotice(["Files show the last saved workspace snapshot.", ...(Array.isArray(data.warnings) ? data.warnings.filter((w: unknown) => typeof w === "string") : [])].join(" "));
+          }
+        } else if (response.status === 501) {
+          const data = await response.json();
+          if (!cancelled && useChatStore.getState().activeConversationId === conversationId) setFilesNotice(data.error || "Workspace file browsing is unavailable for this runtime");
         }
       } catch {
         // Silently ignore fetch errors - files are optional
@@ -873,6 +888,7 @@ export function ChatPanel({
     };
 
     fetchFiles();
+    return () => { cancelled = true; };
   }, [conversationId, agentId, filesFetchKey]);
 
   // Handle file download
@@ -894,7 +910,7 @@ export function ChatPanel({
           const content = data.content || "";
 
           // Create blob and download
-          const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+          const blob = fileContentBlob({ content, encoding: data.encoding });
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
@@ -961,6 +977,7 @@ export function ChatPanel({
     // Clear dismissed-form tracking when switching conversations
     dismissedInputForMessageRef.current.clear();
     setPendingUserInput(null);
+    setPendingToolApproval(null);
   }, [activeConversationId]);
 
   // Track last message SSE events length to re-trigger restoration when events load
@@ -1024,6 +1041,7 @@ export function ChatPanel({
             input_fields: inputFields,
           },
           contextId: activeConversationId,
+          interruptId: inputEvent.inputRequiredData.interrupt_id,
           isSSE: true,
           agentId: agentId,
        });
@@ -1042,6 +1060,13 @@ export function ChatPanel({
   // Streaming state & helpers
   // ═══════════════════════════════════════════════════════════════
   interface StreamLoopState {
+    messageId?: string;
+    turnId?: string;
+    userContent?: string;
+    serverOwned?: boolean;
+    admissionResolved?: boolean;
+    terminal?: boolean;
+    cancelled?: boolean;
     accumulatedText: string;
     rawStreamContent: string;
     hitlFormRequested: boolean;
@@ -1075,7 +1100,7 @@ export function ChatPanel({
             status: (todo.status as TaskItem["status"]) || "pending",
           })
         );
-        if (todos.length > 0) {
+        if (todos.length > 0 && useChatStore.getState().activeConversationId === convId) {
           setTimelineTasks(todos);
         }
       } catch {
@@ -1084,6 +1109,24 @@ export function ChatPanel({
     };
 
     return {
+    onClientHistory() {
+      loopState.admissionResolved = true;
+      const store = useChatStore.getState();
+      for (const message of store.conversations.find(c => c.id === convId)?.messages ?? []) {
+        if ((loopState.turnId && message.turnId === loopState.turnId) || message.id === assistantMsgId) {
+          store.updateMessage(convId, message.id, { admissionPending: false });
+        }
+      }
+    },
+    onRunAdmission(admission) {
+      loopState.admissionResolved = true;
+      loopState.serverOwned = true;
+      loopState.messageId = admission.assistantMessageId;
+      useChatStore.getState().adoptServerHistory(convId, admission, {
+        turnId: loopState.turnId, assistantMessageId: assistantMsgId || undefined,
+        userContent: loopState.userContent,
+      });
+    },
     onContent(text, namespace) {
       loopState.accumulatedText += text;
       loopState.rawStreamContent += text;
@@ -1093,7 +1136,7 @@ export function ChatPanel({
       addStreamEvent(streamEvent, convId);
 
       // Update message content immediately for progressive rendering
-      updateMessage(convId, assistantMsgId, {
+      updateMessage(convId, (loopState.messageId ?? assistantMsgId), {
         content: loopState.accumulatedText,
         rawStreamContent: loopState.rawStreamContent,
       });
@@ -1143,7 +1186,7 @@ export function ChatPanel({
       addStreamEvent(streamEvent, convId);
 
       // Trigger file fetches when file tools complete
-      if (resolvedName) {
+      if (resolvedName && useChatStore.getState().activeConversationId === convId) {
         if (FILE_TOOL_NAMES.includes(resolvedName as typeof FILE_TOOL_NAMES[number])) {
           setFilesFetchKey((k) => k + 1);
         } else if (resolvedName === TODO_TOOL_NAME && args) {
@@ -1176,8 +1219,9 @@ export function ChatPanel({
         placeholder: f.placeholder,
       }));
 
+      if (useChatStore.getState().activeConversationId !== convId) return;
       setPendingUserInput({
-        messageId: assistantMsgId,
+        messageId: (loopState.messageId ?? assistantMsgId),
         metadata: {
           user_input: true,
           input_title: "Input Required",
@@ -1185,13 +1229,14 @@ export function ChatPanel({
           input_fields: inputFields,
         },
         contextId: convId,
+        interruptId,
         isSSE: true,
         agentId,
       });
 
       if (prompt) {
         loopState.accumulatedText = prompt;
-        updateMessage(convId, assistantMsgId, { content: loopState.accumulatedText });
+        updateMessage(convId, (loopState.messageId ?? assistantMsgId), { content: loopState.accumulatedText });
       }
     },
 
@@ -1218,8 +1263,9 @@ export function ChatPanel({
           }))
         : [{ toolName, toolArgs, allowedDecisions }];
 
+      if (useChatStore.getState().activeConversationId !== convId) return;
       setPendingToolApproval({
-        messageId: assistantMsgId,
+        messageId: (loopState.messageId ?? assistantMsgId),
         interruptId,
         agentId,
         tools,
@@ -1228,7 +1274,7 @@ export function ChatPanel({
       });
 
       const toolCount = tools.length;
-      updateMessage(convId, assistantMsgId, {
+      updateMessage(convId, (loopState.messageId ?? assistantMsgId), {
         content: toolCount > 1
           ? `Requesting approval for ${toolCount} tool calls...`
           : `Requesting approval to run \`${toolName}\`...`,
@@ -1247,12 +1293,15 @@ export function ChatPanel({
       if ((namespace?.length ?? 0) === 0) setContextUsage(convId,usage);
     },
 
-    onDone() {
+    onDone(outcome) {
+      loopState.terminal = true;
+      loopState.cancelled = outcome === "cancelled";
       // Finalization handled after adapter.streamMessage resolves
     },
 
     onError(message) {
       console.error("[DynamicAgent] Stream error event:", message);
+      loopState.terminal = true;
       loopState.hasError = true;
       loopState.errorMessage = message;
     },
@@ -1267,6 +1316,7 @@ export function ChatPanel({
     assistantMsgId: string,
     state: StreamLoopState,
   ) => {
+    assistantMsgId = state.messageId ?? assistantMsgId;
     // Check if the message was already finalized (e.g., by cancelConversationRequest)
     const currentConv = useChatStore.getState().conversations.find((c: Conversation) => c.id === conversationId);
     const currentMsg = currentConv?.messages.find((m: ChatMessageType) => m.id === assistantMsgId);
@@ -1280,10 +1330,17 @@ export function ChatPanel({
       return;
     }
 
+    if (state.serverOwned && !state.terminal && !state.hitlFormRequested) {
+      updateMessage(conversationId, assistantMsgId, { error: "Connection lost. The run continues on the server; reconnecting." });
+      setConversationStreaming(conversationId, null);
+      setRecoveryEpoch(epoch => epoch + 1);
+      return;
+    }
+
     const isFinal = !state.hitlFormRequested;
     const turnStatus: TurnStatus = state.hitlFormRequested
       ? "waiting_for_input"
-      : state.hasError
+      : state.hasError || state.cancelled
         ? "interrupted"
         : "done";
 
@@ -1305,7 +1362,8 @@ export function ChatPanel({
       rawStreamContent: state.rawStreamContent,
       isFinal,
       turnStatus,
-      ...(state.errorMessage ? { error: state.errorMessage } : {}),
+      cancellationRequested: false,
+      ...(state.serverOwned ? { error: state.errorMessage } : state.errorMessage ? { error: state.errorMessage } : {}),
       streamEvents: turnStreamEvents.length > 0 ? turnStreamEvents : undefined,
       // Persisted to metadata.agent_name / metadata.latency_ms for Insights.
       ...(agentName && { agentName }),
@@ -1315,6 +1373,58 @@ export function ChatPanel({
     // Store's setConversationStreaming(null) hook auto-saves after 500ms.
   }, [updateMessage, setConversationStreaming, agentName]);
 
+  useEffect(() => {
+    const convId = activeConversationId;
+    if (!convId || !agentId || panelReadOnly || isLoadingMessages || isAutonomousHistory ||
+        useChatStore.getState().isConversationStreaming(convId)) return;
+    const key = `${convId}:${agentId}:${recoveryEpoch}`;
+    if (recoveredRunsRef.current.has(key)) return;
+    recoveredRunsRef.current.add(key);
+    const adapter = createStreamAdapter({ protocol: agentProtocol as "custom" | "agui" });
+    if (!adapter.reconnectStream) return;
+    const held = useChatStore.getState().conversations.find(c => c.id === convId)?.messages.findLast(message => message.role === "assistant" && message.admissionPending);
+    const loopState: StreamLoopState = { accumulatedText: "", rawStreamContent: "", hitlFormRequested: false, hasError: false, turnId: held?.turnId };
+    const callbacks = buildStreamCallbacks(convId, held?.id ?? "", loopState, new Map());
+    const onClientHistory = callbacks.onClientHistory;
+    callbacks.onClientHistory = () => {
+      onClientHistory?.();
+      if (held) {
+        useChatStore.getState().updateMessage(convId, held.id, { error: "The connection was interrupted. Retry when ready.", turnStatus: "interrupted" });
+        void useChatStore.getState().saveMessagesToServer(convId);
+      }
+    };
+    const onAdmission = callbacks.onRunAdmission;
+    callbacks.onRunAdmission = admission => {
+      const store = useChatStore.getState();
+      if (store.activeConversationId !== convId || !store.conversations.some(c => c.id === convId) || store.isConversationStreaming(convId)) {
+        adapter.abort();
+        return;
+      }
+      store.clearStreamEvents(convId);
+      store.setConversationStreaming(convId, { conversationId: convId, messageId: admission.assistantMessageId,
+        client: { abort: () => adapter.abort() }, streamAdapter: adapter });
+      onAdmission?.(admission);
+    };
+    const timer = window.setTimeout(() => {
+      void adapter.reconnectStream!({ conversationId: convId, agentId }, callbacks).then(() => {
+        if (loopState.serverOwned) finalizeStreamLoop(convId, loopState.messageId!, loopState);
+        else if (held && !loopState.admissionResolved) useChatStore.getState().updateMessage(convId, held.id,
+          { error: "Admission is not confirmed. Reconnect to check the existing run; the prompt has not been resent." });
+      }).catch(error => {
+        if (loopState.serverOwned) {
+          useChatStore.getState().setConversationStreaming(convId, null);
+          setRecoveryEpoch(epoch => epoch + 1);
+        } else {
+          if (held) useChatStore.getState().updateMessage(convId, held.id,
+            { error: "Admission could not be checked. Reconnect when the service is available; the prompt has not been resent." });
+          console.warn("[ChatPanel] Could not check retained execution", error);
+        }
+      });
+    }, recoveryEpoch > 0 ? 1500 : 0);
+    return () => window.clearTimeout(timer);
+  }, [activeConversationId, agentId, agentProtocol, panelReadOnly, isLoadingMessages, isAutonomousHistory,
+    recoveryEpoch, buildStreamCallbacks, finalizeStreamLoop]);
+
   // A queued batch renders as separate user bubbles but is sent as one prompt,
   // producing one coherent assistant response for the whole batch.
   const submitMessageBatch = useCallback(async (messagesToSend: QueuedMessage[]) => {
@@ -1322,7 +1432,7 @@ export function ChatPanel({
     const validMessages = messagesToSend.filter(
       (message) => message.text.trim() || message.files.length > 0,
     );
-    if (validMessages.length === 0 || isThisConversationStreaming || isRemoteResponse) return;
+    if (validMessages.length === 0 || isThisConversationStreaming || isRemoteResponse || isAdmissionPending) return;
     const messageToSend = buildQueuedBatchPrompt(validMessages);
     const filesToSend = validMessages.flatMap((message) => message.files);
 
@@ -1380,6 +1490,7 @@ export function ChatPanel({
       }));
       addMessage(convId, {
         role: "user",
+        admissionPending: true,
         content: queuedMessage.text,
         senderEmail: session?.user?.email ?? undefined,
         senderName: session?.user?.name ?? undefined,
@@ -1389,7 +1500,7 @@ export function ChatPanel({
     });
 
     // Add assistant message placeholder with same turnId
-    const assistantMsgId = addMessage(convId, { role: "assistant", content: "" }, turnId);
+    const assistantMsgId = addMessage(convId, { role: "assistant", content: "", admissionPending: true }, turnId);
 
     // Create protocol-agnostic adapter
     const adapter = createStreamAdapter({
@@ -1402,6 +1513,8 @@ export function ChatPanel({
       hitlFormRequested: false,
       hasError: false,
       startedAt: Date.now(),
+      turnId,
+      userContent: messageToSend,
     };
     const toolCallIdToName = new Map<string, string>();
 
@@ -1435,6 +1548,23 @@ export function ChatPanel({
 
     } catch (error) {
       console.error("[DynamicAgent] Stream error:", error);
+      if (!loopState.admissionResolved && error instanceof StreamError &&
+          (error.isAuthError() || (error.status >= 400 && error.status < 500 && error.status !== 499))) {
+        buildStreamCallbacks(convId, assistantMsgId, loopState, toolCallIdToName).onClientHistory?.();
+      }
+      if (!loopState.admissionResolved) {
+        updateMessage(convId, assistantMsgId, { error: "Connection lost before admission was confirmed. Checking the existing run.", turnStatus: "interrupted" });
+        setConversationStreaming(convId, null);
+        setRecoveryEpoch(epoch => epoch + 1);
+        return;
+      }
+      if (loopState.serverOwned) {
+        updateMessage(convId, loopState.messageId!, { error: "Connection lost. The run continues on the server; reconnecting." });
+        setConversationStreaming(convId, null);
+        setRecoveryEpoch(epoch => epoch + 1);
+        return;
+      }
+
 
       // Auth failures (401/403/503-pdp_unavailable) come through as
       // StreamError with structured fields populated by the Web UI backend. Surface
@@ -1463,7 +1593,7 @@ export function ChatPanel({
       });
       setConversationStreaming(convId, null);
     }
-  }, [isAutonomousHistory, isThisConversationStreaming, activeConversationId, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, requestReasoningEffort, session?.user, showAuthErrorToast, suppliedClientContext, toast, requestOptions, isRemoteResponse]);
+  }, [isAutonomousHistory, isThisConversationStreaming, activeConversationId, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, requestReasoningEffort, session?.user, showAuthErrorToast, suppliedClientContext, toast, requestOptions, isRemoteResponse, isAdmissionPending]);
 
   const submitMessage = useCallback(
     (messageToSend: string, filesToSend: InputFile[] = []) => submitMessageBatch([{
@@ -1638,6 +1768,7 @@ export function ChatPanel({
       isThisConversationStreaming ||
       isRemoteResponse ||
       queuedMessages.length === 0 ||
+      isAdmissionPending ||
       queueFlushInProgressRef.current ||
       pendingUserInput ||
       pendingToolApproval
@@ -1655,6 +1786,7 @@ export function ChatPanel({
     pendingToolApproval,
     pendingUserInput,
     queuedMessages,
+    isAdmissionPending,
     submitMessageBatch,
   ]);
 
@@ -1891,6 +2023,11 @@ export function ChatPanel({
       }
     }
 
+    if (isAdmissionPending) {
+      toast("Reconnect to confirm the existing run before sending another prompt.", "error", 6000);
+      return;
+    }
+
     // Encode staged attachments once, up front, so both the queue and the
     // direct-send path carry the same InputFile[] shape the backend expects.
     const encodedFiles: InputFile[] = attachments.length
@@ -1931,7 +2068,7 @@ export function ChatPanel({
     setAttachments([]);
 
     await submitMessage(message, encodedFiles);
-  }, [input, attachments, submitMessage, isThisConversationStreaming, pendingUserInput, slashCommands, executeSlashCommand, handleEffortCommand, handleStop]);
+  }, [input, attachments, submitMessage, isThisConversationStreaming, pendingUserInput, slashCommands, executeSlashCommand, handleEffortCommand, handleStop, isAdmissionPending, toast]);
 
   // Auto-submit pending message from use case selection
   useEffect(() => {
@@ -1949,15 +2086,17 @@ export function ChatPanel({
   }, [activeConversationId, updateMessageFeedback]);
 
   // Handle user input form submission via SSE/Dynamic Agents resume
-  const handleUserInputSubmitSSE = useCallback(async (formData: Record<string, string>) => {
+  const handleUserInputSubmitSSE = useCallback(async (formData: Record<string, string>, dismissed = false) => {
     if (!pendingUserInput || !activeConversationId || !pendingUserInput.agentId) return;
 
     const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const selectionSummary = Object.entries(formData)
       .map(([key, value]) => `${key}: ${value}`)
       .join("\n");
-    addMessage(activeConversationId, { role: "user", content: selectionSummary || "Form submitted." }, turnId);
-    const assistantMsgId = addMessage(activeConversationId, { role: "assistant", content: "" }, turnId);
+    const continuedMessage = getActiveConversation()?.messages.find(m => m.id === pendingUserInput.messageId);
+    const serverOwned = continuedMessage?.historyOwner === "server";
+    if (!serverOwned) addMessage(activeConversationId, { role: "user", content: selectionSummary || "Form submitted." }, turnId);
+    const assistantMsgId = serverOwned ? continuedMessage.id : addMessage(activeConversationId, { role: "assistant", content: "" }, turnId);
 
     dismissedInputForMessageRef.current.add(pendingUserInput.messageId);
     const resumeAgentId = pendingUserInput.agentId;
@@ -1988,7 +2127,7 @@ export function ChatPanel({
     };
 
     // Send form data as discriminated resume payload
-    const formDataJson = JSON.stringify({ type: "form_input", values: formData });
+    const formDataJson = JSON.stringify({ type: "form_input", ...(dismissed ? { dismissed: true } : { values: formData }), ...(pendingUserInput.interruptId && { interrupt_id: pendingUserInput.interruptId }) });
 
     setConversationStreaming(activeConversationId, {
       conversationId: activeConversationId,
@@ -1998,8 +2137,10 @@ export function ChatPanel({
     });
 
     const loopState: StreamLoopState = {
-      accumulatedText: "",
-      rawStreamContent: "",
+      accumulatedText: serverOwned ? continuedMessage.content : "",
+      rawStreamContent: serverOwned ? continuedMessage.content : "",
+      serverOwned,
+      messageId: assistantMsgId,
       hitlFormRequested: false,
       hasError: false,
       startedAt: Date.now(),
@@ -2010,7 +2151,7 @@ export function ChatPanel({
       const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName);
 
       await adapter.resumeStream(
-        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData: formDataJson, reasoningEffort: requestReasoningEffort, clientContext },
+        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData: formDataJson, turnId, reasoningEffort: requestReasoningEffort, clientContext },
         callbacks,
       );
 
@@ -2019,6 +2160,12 @@ export function ChatPanel({
 
     } catch (error) {
       console.error("[DynamicAgent] HITL resume error:", error);
+      if (serverOwned) {
+        updateMessage(activeConversationId, assistantMsgId, { error: "The decision acknowledgement was interrupted. Checking the existing run without resending the decision." });
+        setConversationStreaming(activeConversationId, null);
+        setRecoveryEpoch(epoch => epoch + 1);
+        return;
+      }
       appendToMessage(activeConversationId, assistantMsgId,
         `\n\n**Error:** ${(error as Error).message || "Failed to resume"}`);
       updateMessage(activeConversationId, assistantMsgId, { turnStatus: "interrupted" as TurnStatus });
@@ -2062,11 +2209,10 @@ export function ChatPanel({
       const label = d.decision === "approve" ? "Approved" : d.decision === "reject" ? "Rejected" : "Edited & approved";
       return `${label} \`${d.toolName}\``;
     });
-    addMessage(activeConversationId, {
-      role: "user",
-      content: summaryParts.join("\n"),
-    }, turnId);
-    const assistantMsgId = addMessage(activeConversationId, { role: "assistant", content: "" }, turnId);
+    const continuedMessage = getActiveConversation()?.messages.find(m => m.id === pendingToolApproval.messageId);
+    const serverOwned = continuedMessage?.historyOwner === "server";
+    if (!serverOwned) addMessage(activeConversationId, { role: "user", content: summaryParts.join("\n") }, turnId);
+    const assistantMsgId = serverOwned ? continuedMessage.id : addMessage(activeConversationId, { role: "assistant", content: "" }, turnId);
 
     const resumeAgentId = pendingToolApproval.agentId;
     setPendingToolApproval(null);
@@ -2110,6 +2256,7 @@ export function ChatPanel({
         }),
       };
     }
+    if (serverOwned) resumePayload.interrupt_id = pendingToolApproval.interruptId;
     const resumeData = JSON.stringify(resumePayload);
 
     setConversationStreaming(activeConversationId, {
@@ -2120,8 +2267,10 @@ export function ChatPanel({
     });
 
     const loopState: StreamLoopState = {
-      accumulatedText: "",
-      rawStreamContent: "",
+      accumulatedText: serverOwned ? continuedMessage.content : "",
+      rawStreamContent: serverOwned ? continuedMessage.content : "",
+      serverOwned,
+      messageId: assistantMsgId,
       hitlFormRequested: false,
       hasError: false,
       startedAt: Date.now(),
@@ -2131,12 +2280,18 @@ export function ChatPanel({
     try {
       const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName);
       await adapter.resumeStream(
-        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData, reasoningEffort: requestReasoningEffort, clientContext },
+        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData, turnId, reasoningEffort: requestReasoningEffort, clientContext },
         callbacks,
       );
       finalizeStreamLoop(activeConversationId, assistantMsgId, loopState);
     } catch (error) {
       console.error("[DynamicAgent] Tool approval resume error:", error);
+      if (serverOwned) {
+        updateMessage(activeConversationId, assistantMsgId, { error: "The decision acknowledgement was interrupted. Checking the existing run without resending the decision." });
+        setConversationStreaming(activeConversationId, null);
+        setRecoveryEpoch(epoch => epoch + 1);
+        return;
+      }
       updateMessage(activeConversationId, assistantMsgId, {
         error: (error as Error).message || "Failed to resume",
         turnStatus: "interrupted" as TurnStatus,
@@ -2320,6 +2475,16 @@ export function ChatPanel({
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
         <ScrollArea className="flex-1" viewportRef={scrollViewportRef}>
           <div className="max-w-7xl mx-auto pl-1 pr-1 py-4 space-y-6">
+            {isAdmissionPending && !isThisConversationStreaming && (
+              <div role="status" className="mx-3 rounded-md border border-border p-3 text-sm">
+                Admission is not confirmed. Reconnect to check the existing run without resending your prompt.
+                <Button variant="outline" size="sm" className="ml-2" onClick={() => setRecoveryEpoch(epoch => epoch + 1)}>Reconnect</Button>
+              </div>
+            )}
+            {conversation?.messages.some(message => message.historyOwner === "server") && (
+              <p className="mx-3 text-xs text-muted-foreground">This runtime manages its transcript. Edit and rewind are unavailable.</p>
+            )}
+            {filesNotice && <p className="mx-3 text-xs text-muted-foreground">{filesNotice}</p>}
             {conversation?.source === "autonomous" && (
               <div className="mx-3 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm text-foreground">
                 This chat contains automated runs and is read-only. Select
@@ -2399,6 +2564,8 @@ export function ChatPanel({
                       const isLocalCommand = msg.content.trim() === "/skills" ||
                         msg.content.trim() === "/help";
                       const canEditMessage = msg.role === "user" &&
+                        !isAdmissionPending &&
+                        !arr.slice(index).some(message => message.historyOwner === "server") &&
                         isOwnMessage &&
                         isConversationOwner &&
                         !isLocalCommand &&
@@ -2412,6 +2579,7 @@ export function ChatPanel({
                       // Queued user bubbles share one turnId and produce one response.
                       // Regenerate the whole batch; older messages may lack that binding.
                       const canRetryMessage = !panelReadOnly &&
+                        !isAdmissionPending &&
                         !isAutonomousHistory &&
                         !isThisConversationStreaming &&
                         !isRemoteResponse &&
@@ -2533,6 +2701,10 @@ export function ChatPanel({
                 onSubmit={handleUserInputSubmitSSE}
                 onCancel={() => {
                   if (pendingUserInput) {
+                    if (getActiveConversation()?.messages.find(m => m.id === pendingUserInput.messageId)?.historyOwner === "server") {
+                      void handleUserInputSubmitSSE({}, true);
+                      return;
+                    }
                     dismissedInputForMessageRef.current.add(pendingUserInput.messageId);
                     // For SSE, send dismissal message to resume the agent
                     if (pendingUserInput.isSSE && pendingUserInput.agentId && activeConversationId) {
@@ -3049,7 +3221,7 @@ export function ChatPanel({
                     <Button
                       size="icon"
                       onClick={() => handleSubmit(false)}
-                      disabled={isRemoteResponse || (!input.trim() && attachments.length === 0)}
+                      disabled={isRemoteResponse || isAdmissionPending || (!input.trim() && attachments.length === 0)}
                       className="h-8 w-8 rounded-full border-0 bg-blue-600 text-white hover:bg-blue-700 disabled:bg-muted disabled:text-muted-foreground"
                       title="Send message"
                       aria-label="Send message"
@@ -3464,6 +3636,9 @@ const ChatMessage = React.memo(function ChatMessage({
         ) : (
           // ── Assistant message ──
           <>
+            {message.cancellationRequested && !message.isFinal && (
+              <p role="status" className="text-xs text-muted-foreground mb-2">Cancellation requested. Waiting for the agent to acknowledge its final status.</p>
+            )}
             {/* Recovery / interrupted banner */}
             {(isRecovering || message.isInterrupted) && (
               <motion.div

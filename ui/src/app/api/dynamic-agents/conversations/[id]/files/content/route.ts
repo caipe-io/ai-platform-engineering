@@ -1,3 +1,4 @@
+import { proxyHarnessConversationOperation } from "@/lib/harness-gateway";
 /**
  * Conversation-scoped Dynamic Agents file content proxy.
  *
@@ -55,6 +56,8 @@ async function proxyFileContent(
     scope: "invoke",
   });
   if (authResult instanceof NextResponse) return authResult;
+  const harness = await proxyHarnessConversationOperation(authResult, conversationId, agentId, method === "DELETE" ? "delete-file" : "file", filePath);
+  if (harness) return harness;
 
   const daConfig = getDynamicAgentsConfig();
   if (daConfig instanceof NextResponse) return daConfig;

@@ -26,6 +26,7 @@ on:
           - scheduler
           - skill-scanner
           - dynamic-agents
+          - harness-engine
           - slack-bot
           - webex-bot
           - rag
@@ -53,6 +54,7 @@ jobs:
       scheduler_changed: ${{ steps.pr.outputs.scheduler_changed }}
       skill_scanner_changed: ${{ steps.pr.outputs.skill_scanner_changed }}
       dynamic_agents_changed: ${{ steps.pr.outputs.dynamic_agents_changed }}
+      harness_engine_changed: ${{ steps.pr.outputs.harness_engine_changed }}
       slack_bot_changed: ${{ steps.pr.outputs.slack_bot_changed }}
       webex_bot_changed: ${{ steps.pr.outputs.webex_bot_changed }}
       rag_changed: ${{ steps.pr.outputs.rag_changed }}
@@ -157,6 +159,10 @@ jobs:
               skill_scanner: [
                 'build/Dockerfile.skill-scanner',
                 'docker-compose.dev.yaml',
+              ],
+              harness_engine: [
+                'ai_platform_engineering/harness_engine/**',
+                '.github/workflows/prebuild-harness-engine.yml',
               ],
               dynamic_agents: [
                 'ai_platform_engineering/dynamic_agents/**',
@@ -285,6 +291,23 @@ jobs:
       packages: write
       pull-requests: write
     uses: ./.github/workflows/prebuild-dynamic-agents.yml
+    with:
+      pr_number: ${{ fromJSON(needs.resolve-pr.outputs.pr_number) }}
+      head_ref: ${{ needs.resolve-pr.outputs.head_ref }}
+      head_sha: ${{ needs.resolve-pr.outputs.head_sha }}
+      base_ref: ${{ needs.resolve-pr.outputs.base_ref }}
+      base_sha: ${{ needs.resolve-pr.outputs.base_sha }}
+    secrets: inherit
+
+  prebuild-harness-engine:
+    name: Harness Engine Image
+    needs: resolve-pr
+    if: ${{ needs.resolve-pr.outputs.target == 'harness-engine' || ((needs.resolve-pr.outputs.target == 'all' || needs.resolve-pr.outputs.target == 'docker') && needs.resolve-pr.outputs.harness_engine_changed == 'true') }}
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: write
+    uses: ./.github/workflows/prebuild-harness-engine.yml
     with:
       pr_number: ${{ fromJSON(needs.resolve-pr.outputs.pr_number) }}
       head_ref: ${{ needs.resolve-pr.outputs.head_ref }}

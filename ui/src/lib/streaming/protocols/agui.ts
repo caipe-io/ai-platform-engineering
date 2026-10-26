@@ -239,7 +239,8 @@ function handleRunFinished(
     return true;
   }
 
-  callbacks.onDone?.();
+  if (outcome === "cancelled") callbacks.onDone?.("cancelled");
+  else callbacks.onDone?.();
   return true;
 }
 

@@ -98,6 +98,7 @@ function createMockCollection() {
     deleteOne: jest.fn().mockResolvedValue({ deletedCount: 1 }),
     deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
     countDocuments: jest.fn().mockResolvedValue(0),
+    bulkWrite: jest.fn().mockResolvedValue({ acknowledged: true }),
   };
 }
 

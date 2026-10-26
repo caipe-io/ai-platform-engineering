@@ -49,7 +49,11 @@ def _load_matrix_routes() -> list[dict[str, Any]]:
         data = yaml.safe_load(text) or {}
     except Exception:
         return []
-    return data.get("routes") or []
+    # Service and run capability credentials have no Keycloak helper equivalent.
+    return [
+        route for route in data.get("routes") or []
+        if route.get("authorization_system") not in {"internal", "run_capability"}
+    ]
 
 
 def _ts_check_permission(token: str, resource: str, scope: str) -> dict[str, Any]:

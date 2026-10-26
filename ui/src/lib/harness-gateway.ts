@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { getAgentId } from "@/types/a2a";
+import { authorizeConversationReadAccess, authorizeConversationWriteAccess, resolveConversationRuntimeId } from "@/app/api/v1/chat/_conversation-authz";
+import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
 import { NextResponse } from "next/server";
 
 import { findAgenticAppAssistantStream } from "@/lib/agentic-apps/assistant-stream";
@@ -31,6 +34,7 @@ interface Envelope<T> {
   data?: T;
   error?: string;
   detail?: string | { message?: string };
+  history?: { owner: "server"; user_message_id: string; assistant_message_id: string };
 }
 
 interface HarnessEventPage {
@@ -78,24 +82,46 @@ export async function clearHarnessGatewayBinding(agentId: string, subject: strin
   await bindings.deleteOne({ _id: gatewayBindingId(agentId, subject, conversationId) });
 }
 
+/** Read-only pin lookup; app registration changes cannot steal an existing runtime. */
+export async function lookupPinnedHarnessGatewayTarget(
+  agentId: string, context: { subject: string; conversationId: string },
+): Promise<HarnessGatewayTarget | NextResponse | null> {
+  try {
+    const bindings = await getCollection<GatewayBinding>("harness_gateway_bindings");
+    const id = gatewayBindingId(agentId, context.subject, context.conversationId);
+    const binding = await bindings.findOne({ _id: id });
+    if (!binding) return null;
+    if (binding._id !== id || binding.owner_subject !== context.subject || binding.agent_id !== agentId ||
+        binding.conversation_id !== context.conversationId || typeof binding.harness_id !== "string" || !binding.harness_id.trim()) {
+      return NextResponse.json({ error: "The retained runtime binding is invalid" }, { status: 409 });
+    }
+    if (binding.harness_id !== DEFAULT_HARNESS_ID) {
+      const config = getHarnessEngineConfig();
+      if (config instanceof NextResponse) return config;
+    }
+    return { kind: binding.harness_id === DEFAULT_HARNESS_ID ? "dynamic_agents" : "harness_engine", harnessId: binding.harness_id };
+  } catch {
+    return NextResponse.json({ error: "Agent runtime could not be resolved" }, { status: 503 });
+  }
+}
+
 /** Resolve the owner/conversation's pinned backend before an agent default. */
 export async function resolveHarnessGatewayTarget(
   agentId: string,
   context: { subject: string; conversationId: string; traceparent?: string },
+  options: { readOnly?: boolean } = {},
 ): Promise<HarnessGatewayTarget | NextResponse> {
   try {
-    // App-owned assistants execute through their declared stream endpoints.
-    // Reject entry points without an app operation before creating a provider binding.
-    if (findAgenticAppAssistantStream(agentId)) {
-      return NextResponse.json(
-        { success: false, code: "APP_STREAM_REQUIRED", error: "This app assistant requires its declared chat stream endpoints" },
-        { status: 501 },
-      );
-    }
     const bindings = await getCollection<GatewayBinding>("harness_gateway_bindings");
     const key = { _id: gatewayBindingId(agentId, context.subject, context.conversationId) };
     let binding = await bindings.findOne(key);
     if (!binding) {
+      // Apps without a retained runtime use their declared operation endpoints.
+      if (findAgenticAppAssistantStream(agentId)) {
+        return NextResponse.json({ success: false, code: "APP_STREAM_REQUIRED",
+          error: "This app assistant requires its declared chat stream endpoints" }, { status: 501 });
+      }
+
       const agents = await getCollection<AgentRuntimeRecord>("dynamic_agents");
       const agent = await agents.findOne({ _id: agentId }, { projection: { _id: 1, execution_harness_id: 1, backend: 1 } });
       if (!agent) return NextResponse.json({ success: false, error: "Agent not found" }, { status: 404 });
@@ -123,11 +149,16 @@ export async function resolveHarnessGatewayTarget(
       } else if (harnessId !== DEFAULT_HARNESS_ID && config instanceof NextResponse) {
         return config;
       }
-      binding = await bindings.findOneAndUpdate(key, { $setOnInsert: {
-        ...key, owner_subject: context.subject, agent_id: agentId,
-        conversation_id: context.conversationId, harness_id: harnessId,
-      } }, { upsert: true, returnDocument: "after" });
+      const selected = { ...key, owner_subject: context.subject, agent_id: agentId,
+        conversation_id: context.conversationId, harness_id: harnessId };
+      binding = options.readOnly ? selected : await bindings.findOneAndUpdate(key,
+        { $setOnInsert: selected }, { upsert: true, returnDocument: "after" });
       if (!binding) throw new Error("Backend binding could not be saved");
+    }
+    if (binding._id !== key._id || binding.owner_subject !== context.subject ||
+        binding.agent_id !== agentId || binding.conversation_id !== context.conversationId ||
+        typeof binding.harness_id !== "string" || !binding.harness_id.trim()) {
+      return NextResponse.json({ error: "The retained runtime binding is invalid" }, { status: 409 });
     }
     const harnessId = normalizedHarnessId(binding.harness_id);
     if (harnessId !== DEFAULT_HARNESS_ID) {
@@ -181,12 +212,91 @@ async function engineRequest(
   }
 }
 
+interface StartedRun {
+  config: HarnessEngineConfig;
+  run: HarnessRun;
+  history?: { owner: "server"; user_message_id: string; assistant_message_id: string };
+}
+
+function matchingRun(run: HarnessRun, body: Record<string, unknown>, subject: string): boolean {
+  return (run.owner_subject === undefined || run.owner_subject === subject) &&
+    run.agent_id === body.agent_id && run.conversation_id === body.conversation_id &&
+    (body.expected_harness_id === undefined || run.harness_id === body.expected_harness_id);
+}
+
+function invalidRun(): NextResponse {
+  return NextResponse.json({ success: false, error: "Harness run identity or history contract does not match this conversation" }, { status: 502 });
+}
+
+function validatedHistory(history: Envelope<unknown>["history"], run: HarnessRun, visibleId?: unknown): StartedRun["history"] | false {
+  if (history === undefined) return undefined;
+  if (history?.owner !== "server" || history.user_message_id !== `user-${run.run_id}` ||
+      history.assistant_message_id !== `message-${run.run_id}` ||
+      !run.visible_conversation_id || (visibleId !== undefined && run.visible_conversation_id !== visibleId)) return false;
+  return history;
+}
+
+function runHeaders(started: StartedRun): Record<string, string> {
+  return {
+    "X-Harness-Run-ID": started.run.run_id, "X-Harness-ID": started.run.harness_id,
+    ...(started.history && {
+      "X-Harness-History-Owner": "server",
+      "X-Harness-User-Message-ID": started.history.user_message_id,
+      "X-Harness-Assistant-Message-ID": started.history.assistant_message_id,
+      "X-Harness-Conversation-ID": started.run.visible_conversation_id!,
+    }),
+  };
+}
+
+interface HarnessAttachment { id: string; name: string; media_type: string; size_bytes: number; sha256?: string }
+
+async function prepareAttachments(
+  body: Record<string, unknown>, config: HarnessEngineConfig,
+  auth: Pick<AuthResult, "subject" | "traceparent">,
+): Promise<HarnessAttachment[] | NextResponse> {
+  const files = body.files;
+  if (!Array.isArray(files) || !files.length) return Array.isArray(body.attachments) ? body.attachments as HarnessAttachment[] : [];
+  if (files.length > 20 || (Array.isArray(body.attachments) && body.attachments.length)) {
+    return NextResponse.json({ error: "Use at most 20 attachments in one format" }, { status: 400 });
+  }
+  const refs: HarnessAttachment[] = [];
+  for (const file of files) {
+    if (!file || typeof file !== "object" || typeof file.name !== "string" || !file.name || file.name.length > 255 ||
+        typeof file.mime_type !== "string" || file.mime_type.length > 128 ||
+        typeof file.data !== "string" || !file.data || file.data.length > 4 * Math.ceil(10 * 1024 * 1024 / 3)) {
+      return NextResponse.json({ error: "Each attachment must be a named file no larger than 10 MiB" }, { status: 400 });
+    }
+    // Engine validates the retained provider/profile and stores scoped, deduplicated
+    // bytes. Only its opaque reference enters the provider's admitted prompt.
+    const response = await engineRequest(config, auth, "/api/v1/attachments", {
+      method: "POST", body: JSON.stringify({ agent_id: body.agent_id, conversation_id: body.conversation_id,
+        ...(body.expected_harness_id && { expected_harness_id: body.expected_harness_id }),
+        ...(typeof body.visible_conversation_id === "string" && { visible_conversation_id: body.visible_conversation_id }),
+        name: file.name, media_type: file.mime_type, data: file.data }),
+    });
+    if (response instanceof NextResponse) return response;
+    const envelope = await readEnvelope<HarnessAttachment>(response);
+    if (!response.ok || !envelope.success || !envelope.data) {
+      return NextResponse.json({ code: "HARNESS_CAPABILITY_UNSUPPORTED", error: engineErrorMessage(envelope, "The selected profile does not support these attachments") }, { status: response.status || 502 });
+    }
+    const ref = envelope.data;
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(ref.id) || ref.name !== file.name || ref.media_type !== file.mime_type ||
+        !Number.isSafeInteger(ref.size_bytes) || ref.size_bytes < 0 || ref.size_bytes > 10 * 1024 * 1024 ||
+        (ref.sha256 !== undefined && !/^[a-f0-9]{64}$/.test(ref.sha256))) return invalidRun();
+    refs.push({ id: ref.id, name: ref.name, media_type: ref.media_type, size_bytes: ref.size_bytes, ...(ref.sha256 && { sha256: ref.sha256 }) });
+  }
+  return refs;
+}
+
 async function startRun(
   body: Record<string, unknown>,
   auth: Pick<AuthResult, "subject" | "traceparent">,
-): Promise<{ config: HarnessEngineConfig; run: HarnessRun } | NextResponse> {
+): Promise<StartedRun | NextResponse> {
   const config = getHarnessEngineConfig();
   if (config instanceof NextResponse) return config;
+
+  const attachments = await prepareAttachments(body, config, auth);
+  if (attachments instanceof NextResponse) return attachments;
 
   const response = await engineRequest(config, auth, "/api/v1/runs", {
     method: "POST",
@@ -194,11 +304,15 @@ async function startRun(
       agent_id: body.agent_id,
       conversation_id: body.conversation_id,
       message: body.message,
+      protocol: body.protocol === "custom" ? "custom" : "agui",
+      ...(typeof body.expected_harness_id === "string" && { expected_harness_id: body.expected_harness_id }),
+      ...(typeof body.visible_conversation_id === "string" && { visible_conversation_id: body.visible_conversation_id }),
+      ...(attachments.length && { attachments }),
       ...(typeof body.context === "string" && body.context.trim() && {
         context: body.context,
       }),
-      ...(typeof body.client_request_id === "string" && {
-        client_request_id: body.client_request_id,
+      ...(typeof (body.turn_id ?? body.client_request_id) === "string" && {
+        client_request_id: body.turn_id ?? body.client_request_id,
       }),
     }),
   });
@@ -213,7 +327,10 @@ async function startRun(
       { status: response.status || 502 },
     );
   }
-  return { config, run: envelope.data };
+  if (!matchingRun(envelope.data, body, auth.subject)) return invalidRun();
+  const history = validatedHistory(envelope.history, envelope.data, body.visible_conversation_id);
+  if (history === false || (history && envelope.data.owner_subject !== auth.subject)) return invalidRun();
+  return { config, run: envelope.data, history: history || undefined };
 }
 
 function sseFrame(event: string, data: Record<string, unknown>, id?: number): string {
@@ -315,6 +432,8 @@ function aguiFrames(
       ];
     }
     case "interrupt.requested": {
+      if (run.contract_version === 2 && sequence <= run.last_sequence &&
+          stringField(data, "interrupt_id", "id") !== run.pending_interrupt_id) return [];
       state.terminalSent = true;
       return [
         ...closeMessage("agui", state, sequence),
@@ -342,6 +461,7 @@ function aguiFrames(
           outcome: "success",
         }, sequence),
       ];
+    case "run.interrupted":
     case "run.failed":
       state.terminalSent = true;
       return [
@@ -370,6 +490,7 @@ function aguiFrames(
 
 function customFrames(
   event: HarnessRunEvent,
+  run: HarnessRun,
   state: GatewayStreamState,
 ): string[] {
   const { data, event_type: eventType, sequence } = event;
@@ -393,11 +514,14 @@ function customFrames(
         namespace: [],
       }, sequence)];
     case "interrupt.requested":
+      if (run.contract_version === 2 && sequence <= run.last_sequence &&
+          stringField(data, "interrupt_id", "id") !== run.pending_interrupt_id) return [];
       state.terminalSent = true;
       return [sseFrame("input_required", data, sequence)];
     case "run.completed":
       state.terminalSent = true;
       return [sseFrame("done", {}, sequence)];
+    case "run.interrupted":
     case "run.failed":
       state.terminalSent = true;
       return [sseFrame("error", {
@@ -420,7 +544,7 @@ export function encodeHarnessGatewayEvent(
 ): string[] {
   return protocol === "agui"
     ? aguiFrames(event, run, state)
-    : customFrames(event, state);
+    : customFrames(event, run, state);
 }
 
 function parseCanonicalFrame(frame: string): { event: string; data: Record<string, unknown>; id: number } | null {
@@ -511,15 +635,16 @@ export async function streamHarnessGatewayRun(
   auth: Pick<AuthResult, "subject" | "traceparent">,
   signal?: AbortSignal,
 ): Promise<Response> {
-  if (body.files && Array.isArray(body.files) && body.files.length > 0) {
-    return NextResponse.json(
-      { success: false, code: "HARNESS_CAPABILITY_UNSUPPORTED", error: "The selected harness does not support file attachments" },
-      { status: 409 },
-    );
-  }
   const started = await startRun(body, auth);
   if (started instanceof NextResponse) return started;
-  const protocol: GatewayProtocol = body.protocol === "agui" ? "agui" : "custom";
+  return subscribeRun(started, auth, body.protocol === "agui" ? "agui" : "custom", signal);
+}
+
+async function subscribeRun(
+  started: StartedRun, auth: Pick<AuthResult, "subject" | "traceparent">,
+  protocol: GatewayProtocol, signal?: AbortSignal, after = 0,
+): Promise<Response> {
+
   const headers = buildHarnessEngineHeaders(started.config, auth);
   if (headers instanceof NextResponse) return headers;
   headers.Accept = "text/event-stream";
@@ -527,7 +652,7 @@ export async function streamHarnessGatewayRun(
   let upstream: Response;
   try {
     upstream = await fetch(
-      `${started.config.url}/api/v1/runs/${encodeURIComponent(started.run.run_id)}/events/stream?after=0`,
+      `${started.config.url}/api/v1/runs/${encodeURIComponent(started.run.run_id)}/events/stream?after=${after}`,
       { method: "GET", headers, cache: "no-store", signal },
     );
   } catch (error) {
@@ -538,7 +663,7 @@ export async function streamHarnessGatewayRun(
     });
     return NextResponse.json(
       { success: false, error: "Harness run started but its event stream is unavailable", run_id: started.run.run_id },
-      { status: 503, headers: { "X-Harness-Run-ID": started.run.run_id } },
+      { status: 503, headers: runHeaders(started) },
     );
   }
   if (!upstream.ok || !upstream.body) {
@@ -546,7 +671,7 @@ export async function streamHarnessGatewayRun(
       status: upstream.status,
       headers: {
         "Content-Type": upstream.headers.get("Content-Type") ?? "application/json",
-        "X-Harness-Run-ID": started.run.run_id,
+        ...runHeaders(started),
       },
     });
   }
@@ -554,8 +679,7 @@ export async function streamHarnessGatewayRun(
     status: 200,
     headers: {
       ...SSE_HEADERS,
-      "X-Harness-Run-ID": started.run.run_id,
-      "X-Harness-ID": started.run.harness_id,
+      ...runHeaders(started),
     },
   });
 }
@@ -586,7 +710,7 @@ export async function invokeHarnessGatewayRun(
     if (!response.ok || !envelope.success || !envelope.data) {
       return NextResponse.json(
         { success: false, error: engineErrorMessage(envelope, "Harness run events are unavailable"), run_id: started.run.run_id },
-        { status: response.status || 502 },
+        { status: response.status || 502, headers: runHeaders(started) },
       );
     }
     if (!Number.isInteger(envelope.data.run.last_sequence) || envelope.data.run.last_sequence < 0 ||
@@ -600,7 +724,7 @@ export async function invokeHarnessGatewayRun(
     }
     cursor = envelope.data.next_cursor;
     const status = envelope.data.run.status;
-    if (["completed", "failed", "cancelled"].includes(status) && cursor >= envelope.data.run.last_sequence) {
+    if (["completed", "failed", "cancelled", "interrupted"].includes(status) && cursor >= envelope.data.run.last_sequence) {
       if (status === "completed") {
         return NextResponse.json({
           success: true,
@@ -610,7 +734,7 @@ export async function invokeHarnessGatewayRun(
           conversation_id: body.conversation_id,
           trace_id: body.trace_id,
           run_id: started.run.run_id,
-        });
+        }, { headers: runHeaders(started) });
       }
       return NextResponse.json(
         {
@@ -621,13 +745,13 @@ export async function invokeHarnessGatewayRun(
           conversation_id: body.conversation_id,
           run_id: started.run.run_id,
         },
-        { status: status === "cancelled" ? 409 : 502 },
+        { status: status === "cancelled" ? 409 : 502, headers: runHeaders(started) },
       );
     }
   }
   return NextResponse.json(
     { success: false, error: "Harness run is still active", code: "HARNESS_RUN_TIMEOUT", run_id: started.run.run_id },
-    { status: 504 },
+    { status: 504, headers: runHeaders(started) },
   );
 }
 
@@ -662,6 +786,58 @@ export async function cancelHarnessGatewayRun(
   });
 }
 
+async function latestRun(body: Record<string, unknown>, auth: Pick<AuthResult, "subject" | "traceparent">): Promise<StartedRun | NextResponse> {
+  const config = getHarnessEngineConfig();
+  if (config instanceof NextResponse) return config;
+  const query = new URLSearchParams({ agent_id: String(body.agent_id), conversation_id: String(body.conversation_id) });
+  const response = await engineRequest(config, auth, `/api/v1/runs/latest?${query}`, { method: "GET" });
+  if (response instanceof NextResponse) return response;
+  const envelope = await readEnvelope<HarnessRun | null>(response);
+  if (!response.ok || !envelope.success) return NextResponse.json({ error: engineErrorMessage(envelope, "Harness status is unavailable") }, { status: response.status || 502 });
+  if (!envelope.data) return NextResponse.json({ success: true, data: null });
+  if (!matchingRun(envelope.data, body, auth.subject)) return invalidRun();
+  const history = validatedHistory(envelope.history, envelope.data, body.visible_conversation_id);
+  if (history === false || (history && envelope.data.owner_subject !== auth.subject)) return invalidRun();
+  return { config, run: envelope.data, history: history || undefined };
+}
+
+export async function statusHarnessGatewayRun(body: Record<string, unknown>, auth: Pick<AuthResult, "subject" | "traceparent">, signal?: AbortSignal): Promise<Response> {
+  const latest = await latestRun(body, auth);
+  if (latest instanceof NextResponse) return latest;
+  if (body.replay === true && latest.history) {
+    return subscribeRun(latest, auth, body.protocol === "agui" ? "agui" : "custom", signal);
+  }
+  if (!latest.history && (latest.run.contract_version ?? 1) >= 2 && !latest.run.capabilities?.["history.server_owned"]) return invalidRun();
+  const retainedServerHistory = ["native", "emulated"].includes(latest.run.capabilities?.["history.server_owned"]?.level ?? "");
+  return NextResponse.json({ success: true, data: { run: latest.run, history: latest.history,
+    history_owner: latest.history ? "server" : retainedServerHistory ? "pending" : "client" } }, {
+    headers: !latest.history && !retainedServerHistory ? { "X-Harness-History-Owner": "client" } : {},
+  });
+}
+
+export async function resumeHarnessGatewayRun(body: Record<string, unknown>, auth: Pick<AuthResult, "subject" | "traceparent">, signal?: AbortSignal): Promise<Response> {
+  const latest = await latestRun(body, auth);
+  if (latest instanceof NextResponse) return latest;
+  if (!latest.history) return unsupportedHarnessResume();
+  let decision: unknown;
+  try { decision = typeof body.resume_data === "string" ? JSON.parse(body.resume_data) : body.resume_data; }
+  catch { return NextResponse.json({ error: "Invalid resume decision" }, { status: 400 }); }
+  if (!decision || typeof decision !== "object" || Array.isArray(decision) || typeof (decision as Record<string, unknown>).interrupt_id !== "string" || typeof body.turn_id !== "string") {
+    return NextResponse.json({ error: "A decision identifier and interrupt_id are required" }, { status: 400 });
+  }
+  const response = await engineRequest(latest.config, auth, `/api/v1/runs/${encodeURIComponent(latest.run.run_id)}/input`, {
+    method: "POST", body: JSON.stringify({ client_request_id: body.turn_id, decision }),
+  });
+  if (response instanceof NextResponse) return response;
+  const envelope = await readEnvelope<{ run: HarnessRun; after_cursor: number; history: StartedRun["history"] }>(response);
+  if (!response.ok || !envelope.success || !envelope.data) return NextResponse.json({ error: engineErrorMessage(envelope, "The input could not be submitted") }, { status: response.status || 502 });
+  const accepted = envelope.data;
+  if (!matchingRun(accepted.run, body, auth.subject) || accepted.run.run_id !== latest.run.run_id ||
+      !Number.isSafeInteger(accepted.after_cursor) || accepted.after_cursor < 0 ||
+      (!validatedHistory(accepted.history, accepted.run, body.visible_conversation_id) || accepted.run.owner_subject !== auth.subject)) return invalidRun();
+  return subscribeRun({ ...latest, run: accepted.run }, auth, body.protocol === "agui" ? "agui" : "custom", signal, accepted.after_cursor);
+}
+
 export function unsupportedHarnessResume(): NextResponse {
   return NextResponse.json(
     {
@@ -671,4 +847,98 @@ export function unsupportedHarnessResume(): NextResponse {
     },
     { status: 409 },
   );
+}
+
+
+/** A single owner/conversation boundary for controls beside the shared chat stream. */
+export async function proxyHarnessConversationOperation(
+  auth: AuthResult, conversationId: string, requestedAgentId: string | undefined,
+  operation: "interrupt" | "files" | "file" | "delete-file" | "write-file" | "clear" | "restart" | "cancel",
+  filePath?: string,
+): Promise<Response | null> {
+  const access = operation === "interrupt" || operation === "files" || operation === "file"
+    ? await authorizeConversationReadAccess(auth, conversationId, requestedAgentId)
+    : await authorizeConversationWriteAccess(auth, conversationId, requestedAgentId);
+  if (access.denial) return access.denial;
+  const agentId = requestedAgentId ?? getAgentId(access.conversation);
+  if (!agentId) return NextResponse.json({ error: "Conversation has no agent" }, { status: 409 });
+  const denied = await requireAgentUsePermission({ subject: auth.subject, email: auth.email,
+    tenantId: auth.tenantId, isServiceAccount: auth.isServiceAccount, agentId });
+  if (denied) return denied;
+  const runtimeId = await resolveConversationRuntimeId(access.conversation);
+  const context = { subject: auth.subject, conversationId: runtimeId };
+  let target = await lookupPinnedHarnessGatewayTarget(agentId, context);
+  if (target instanceof NextResponse) return target;
+  if (!target) {
+    const agents = await getCollection<AgentRuntimeRecord>("dynamic_agents");
+    const agent = await agents.findOne({ _id: agentId }, { projection: { execution_harness_id: 1 } });
+    if (normalizedHarnessId(agent?.execution_harness_id) === DEFAULT_HARNESS_ID) return null;
+    target = await resolveHarnessGatewayTarget(agentId, context, { readOnly: true });
+    if (target instanceof NextResponse) return target;
+  }
+  if (target.kind !== "harness_engine") return null;
+  const body = { agent_id: agentId, conversation_id: runtimeId, visible_conversation_id: conversationId, expected_harness_id: target.harnessId };
+  const latest = await latestRun(body, auth);
+  let registered: StartedRun | undefined;
+  let serverOwned = false;
+  if (latest instanceof NextResponse) {
+    if (!latest.ok) return latest;
+  } else {
+    registered = latest;
+    serverOwned = !!latest.history || ["native", "emulated"].includes(latest.run.capabilities?.["history.server_owned"]?.level ?? "");
+    // Retained runs own their capability snapshot even after the catalog changes.
+    if (!serverOwned) return null;
+  }
+  const config = getHarnessEngineConfig();
+  if (config instanceof NextResponse) return config;
+  if (!registered) {
+    const response = await engineRequest(config, auth, "/api/v1/harnesses", { method: "GET" });
+    if (response instanceof NextResponse) return response;
+    const envelope = await readEnvelope<{ harnesses: Array<{ id: string; capabilities: Record<string, { level: string }> }> }>(response);
+    if (!response.ok || !envelope.success || !envelope.data) return NextResponse.json({ error: "Runtime capabilities are unavailable" }, { status: 503 });
+    const descriptor = envelope.data.harnesses.find(item => item.id === target.harnessId);
+    serverOwned = !!descriptor && ["native", "emulated"].includes(descriptor.capabilities["history.server_owned"]?.level);
+    if (!serverOwned) return null;
+  }
+  if (operation === "interrupt") {
+    if (!registered) return NextResponse.json({ has_pending_interrupt: false });
+    const response = await engineRequest(config, auth, `/api/v1/runs/${encodeURIComponent(registered.run.run_id)}/input`, { method: "GET" });
+    if (response instanceof NextResponse) return response;
+    const envelope = await readEnvelope<Record<string, unknown> | null>(response);
+    if (!response.ok || !envelope.success) return NextResponse.json({ error: engineErrorMessage(envelope, "Pending input is unavailable") }, { status: response.status || 502 });
+    return NextResponse.json({ has_pending_interrupt: !!envelope.data, interrupt_data: envelope.data });
+  }
+  if (operation === "files" || operation === "file") {
+    const capability = registered?.run.capabilities?.[operation === "files" ? "files.list" : "files.read"];
+    if (registered && !["native", "emulated"].includes(capability?.level ?? "")) {
+      return NextResponse.json({ code: "HARNESS_CAPABILITY_UNAVAILABLE", error: "Workspace artifacts are unavailable for this retained profile" }, { status: 501 });
+    }
+    if (operation === "file" && (!filePath || filePath.length > 1024)) return NextResponse.json({ error: "A valid workspace artifact path is required" }, { status: 400 });
+    const query = new URLSearchParams({ agent_id: agentId, conversation_id: runtimeId, visible_conversation_id: conversationId });
+    if (filePath) query.set("path", filePath);
+    const response = await engineRequest(config, auth, `/api/v1/files/${operation === "files" ? "list" : "content"}?${query}`, { method: "GET" });
+    if (response instanceof NextResponse) return response;
+    const envelope = await readEnvelope<Record<string, unknown>>(response);
+    if (!response.ok || !envelope.success || !envelope.data) return NextResponse.json({ error: engineErrorMessage(envelope, "Workspace snapshot is unavailable") }, { status: response.status || 502 });
+    return NextResponse.json(envelope.data, { headers: { "X-Harness-File-Snapshot": "acknowledged" } });
+  }
+  if (operation === "cancel") return cancelHarnessGatewayRun(body, auth);
+  if (operation === "clear") {
+    const response = await engineRequest(config, auth, "/api/v1/sessions/clear", { method: "POST", body: JSON.stringify({ agent_id: agentId, conversation_id: runtimeId }) });
+    if (response.ok) await clearHarnessGatewayBinding(agentId, auth.subject, runtimeId);
+    return response;
+  }
+  return NextResponse.json({ success: false, code: "HARNESS_CAPABILITY_UNAVAILABLE",
+    error: operation === "restart" ? "This runtime cannot restart in place. Start a new conversation to reset it."
+      : "Workspace file browsing is not available for this runtime profile" }, { status: 501 });
+}
+
+/** Interpret only the canonical conversation filesystem namespace. */
+export function conversationFileNamespace(value: unknown): { agentId: string; conversationId: string } | null {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    return Array.isArray(parsed) && parsed.length === 3 && parsed[2] === "filesystem" &&
+      typeof parsed[0] === "string" && !!parsed[0] && typeof parsed[1] === "string" && !!parsed[1]
+      ? { agentId: parsed[0], conversationId: parsed[1] } : null;
+  } catch { return null; }
 }

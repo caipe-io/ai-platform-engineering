@@ -27,8 +27,11 @@ export interface StreamAdapter {
   /** Resume streaming after HITL form submission */
   resumeStream(params: StreamParams, callbacks: StreamCallbacks): Promise<void>;
 
+  /** Reattach to existing server-owned execution; never dispatches a prompt. */
+  reconnectStream?(params: StreamParams, callbacks: StreamCallbacks): Promise<void>;
+
   /** Cancel the stream on the backend */
-  cancelStream(conversationId: string, agentId: string): Promise<boolean>;
+  cancelStream(conversationId: string, agentId: string, options?: { keepSubscription?: boolean }): Promise<boolean>;
 
   /** Abort the client-side HTTP connection */
   abort(): void;

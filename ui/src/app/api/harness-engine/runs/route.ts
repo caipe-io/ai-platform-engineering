@@ -63,6 +63,8 @@ export async function POST(request: NextRequest): Promise<Response> {
     body: JSON.stringify({
       ...body,
       conversation_id: conversationId,
+      visible_conversation_id: conversationAuthz.conversation._id,
+      expected_harness_id: target.harnessId,
     }),
   });
 }

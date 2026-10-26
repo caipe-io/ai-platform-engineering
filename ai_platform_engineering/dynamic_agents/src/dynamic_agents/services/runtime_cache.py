@@ -28,6 +28,7 @@ from dynamic_agents.models import (
 )
 from dynamic_agents.services.agent_runtime import AgentRuntime
 from dynamic_agents.services.llm_clients import close_all as close_llm_clients
+from dynamic_agents.services.native_admission import require_native_execution
 
 if TYPE_CHECKING:
     from dynamic_agents.services.mongo import MongoDBService
@@ -164,6 +165,7 @@ class AgentRuntimeCache:
             RuntimeCapacityError: If the cache is full and all runtimes are streaming.
             RuntimeInitError: If the new runtime fails to initialize.
         """
+        await require_native_execution(self._mongo_service, agent_config, session_id, user)
         key = self._make_key(agent_config.id, session_id)
 
         # Someone else is already initializing this key — wait for their result

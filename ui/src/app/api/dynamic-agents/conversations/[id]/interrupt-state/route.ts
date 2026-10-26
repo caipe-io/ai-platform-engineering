@@ -1,3 +1,4 @@
+import { proxyHarnessConversationOperation } from "@/lib/harness-gateway";
 /**
  * Proxy route for fetching dynamic agent HITL interrupt state.
  *
@@ -48,6 +49,8 @@ export async function GET(
     scope: "invoke",
   });
   if (authResult instanceof NextResponse) return authResult;
+  const harness = await proxyHarnessConversationOperation(authResult, conversationId, agentId, "interrupt");
+  if (harness) return harness;
 
   // Check DA config
   const daConfig = getDynamicAgentsConfig();

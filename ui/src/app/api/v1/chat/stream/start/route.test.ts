@@ -14,6 +14,8 @@ const mockLoadApps = jest.fn();
 const mockGetApp = jest.fn();
 const mockDynamicStream = jest.fn();
 const mockResolveHarness = jest.fn();
+const mockPinnedHarness = jest.fn();
+const mockEngineStream = jest.fn();
 
 jest.mock("@/lib/da-proxy", () => ({
   authenticateRequest: (...args: unknown[]) => mockAuthenticate(...args),
@@ -22,6 +24,11 @@ jest.mock("@/lib/da-proxy", () => ({
 }));
 jest.mock("@/lib/harness-gateway", () => ({
   resolveHarnessGatewayTarget: (...args: unknown[]) => mockResolveHarness(...args),
+  lookupPinnedHarnessGatewayTarget: (...args: unknown[]) => mockPinnedHarness(...args),
+  streamHarnessGatewayRun: (...args: unknown[]) => mockEngineStream(...args),
+  cancelHarnessGatewayRun: (...args: unknown[]) => mockEngineStream(...args),
+  resumeHarnessGatewayRun: (...args: unknown[]) => mockEngineStream(...args),
+  statusHarnessGatewayRun: (...args: unknown[]) => mockEngineStream(...args),
 }));
 jest.mock("@/lib/api-middleware", () => ({
   ApiError: class extends Error {},
@@ -73,6 +80,8 @@ beforeEach(() => {
   mockLoadApps.mockReturnValue([app]);
   mockGetApp.mockReturnValue(app);
   mockDynamicStream.mockResolvedValue(new Response("data: fallback\n\n"));
+  mockPinnedHarness.mockResolvedValue(null);
+  mockEngineStream.mockImplementation(async () => new Response("engine-result"));
   mockResolveHarness.mockResolvedValue({ kind: "dynamic_agents", harnessId: "dynamic_agents" });
 });
 afterEach(() => jest.restoreAllMocks());
@@ -215,4 +224,14 @@ describe("app session status", () => {
     mockAgentPermission.mockResolvedValue(NextResponse.json({ error: "Denied" }, { status: 403 }));
     expect((await STATUS(request())).status).toBe(403); expect(mockConversationAccess).not.toHaveBeenCalled();
   });
+});
+it.each([['start', POST], ['resume', RESUME], ['cancel', CANCEL], ['status', STATUS]] as const)('keeps a retained Engine pin ahead of a later app claim for %s', async (_operation, handler) => {
+  mockPinnedHarness.mockResolvedValue({ kind: 'harness_engine', harnessId: 'example-harness' });
+  const input = _operation === 'resume' ? new NextRequest('https://host.example.test/api/v1/chat/stream/resume', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ conversation_id: 'example-conversation', agent_id: 'example-agent', resume_data: '{}' }) }) : request();
+  expect((await handler(input)).status).toBe(200);
+  expect(mockLoadApps).not.toHaveBeenCalled(); expect(mockDynamicStream).not.toHaveBeenCalled(); expect(mockEngineStream).toHaveBeenCalledTimes(1);
+});
+it('keeps a retained native pin ahead of a later app claim', async () => {
+  mockPinnedHarness.mockResolvedValue({ kind: 'dynamic_agents', harnessId: 'dynamic_agents' });
+  expect((await POST(request())).status).toBe(200); expect(mockLoadApps).not.toHaveBeenCalled(); expect(mockDynamicStream).toHaveBeenCalledTimes(1);
 });

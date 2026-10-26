@@ -68,6 +68,9 @@ async function authorizeConversationAccess(
       ),
     };
   }
+  if (conversation.deleted_at) {
+    return { conversation, denial: NextResponse.json({ error: "Conversation was deleted" }, { status: 410 }) };
+  }
 
   // Slack threads are inherently multi-participant — anyone in the channel
   // should be able to invoke the agent within a thread, not just the user who

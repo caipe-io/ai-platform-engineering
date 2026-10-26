@@ -1,3 +1,5 @@
+import { proxyHarnessConversationOperation } from "@/lib/harness-gateway";
+import { getAgentId } from "@/types/a2a";
 // GET /api/chat/conversations/[id] - Get conversation details
 // PUT /api/chat/conversations/[id] - Update conversation
 // DELETE /api/chat/conversations/[id] - Delete conversation
@@ -154,6 +156,13 @@ export const DELETE = withErrorHandler(async (
       await deleteConversationsPermanently([conversation]);
       return successResponse({ deleted: true, permanent: true });
     } else {
+      const messages = await getCollection('messages');
+      const ownedHistory = await messages.findOne({ conversation_id: conversationId, 'metadata.history_owner': 'harness_engine' });
+      if (ownedHistory?.metadata?.history_owner === 'harness_engine') {
+        const cancelled = await proxyHarnessConversationOperation({ subject: session.sub ?? '', email: user.email,
+          isServiceAccount: session.isServiceAccount }, conversationId, getAgentId(conversation), 'cancel');
+        if (cancelled && !cancelled.ok) return cancelled;
+      }
       // Soft delete: move to archive by setting deleted_at timestamp
       await conversations.updateOne(
         { _id: conversationId },

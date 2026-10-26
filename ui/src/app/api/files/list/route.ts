@@ -1,3 +1,4 @@
+import { conversationFileNamespace, proxyHarnessConversationOperation } from "@/lib/harness-gateway";
 /**
  * Generic file list endpoint.
  *
@@ -26,6 +27,11 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   const authResult = await authenticateRequest(request);
   if (authResult instanceof NextResponse) return authResult;
+  const context = conversationFileNamespace(fsNamespace);
+  if (context) {
+    const harness = await proxyHarnessConversationOperation(authResult, context.conversationId, context.agentId, "files");
+    if (harness) return harness;
+  }
 
   const daConfig = getDynamicAgentsConfig();
   if (daConfig instanceof NextResponse) return daConfig;

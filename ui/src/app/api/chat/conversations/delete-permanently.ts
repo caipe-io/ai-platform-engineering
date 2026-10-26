@@ -6,11 +6,19 @@ import type { Conversation } from '@/types/mongodb';
  * (messages + Dynamic Agent checkpoint records).
  */
 export async function deleteConversationsPermanently(
-  items: Pick<Conversation, '_id' | 'participants'>[]
+  items: (Pick<Conversation, '_id' | 'participants'> & Partial<Pick<Conversation, 'execution_context_id'>>)[]
 ): Promise<void> {
   if (items.length === 0) return;
 
   const ids = items.map((c) => c._id);
+
+  // Fence admitted producers before removing their visible history. Engine
+  // lease renewal, admission and projection all consult this durable tombstone.
+  const contexts = [...new Set(items.flatMap(c => [c._id, ...(c.execution_context_id ? [c.execution_context_id] : [])]))];
+  const deletedContexts = await getCollection<{ _id: string; deleted_at: Date }>('harness_deleted_contexts');
+  await deletedContexts.bulkWrite(contexts.map(id => ({ updateOne: {
+    filter: { _id: id }, update: { $setOnInsert: { deleted_at: new Date() } }, upsert: true,
+  } })));
 
   const conversations = await getCollection<Conversation>('conversations');
   await conversations.deleteMany({ _id: { $in: ids } });

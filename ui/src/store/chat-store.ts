@@ -5,6 +5,7 @@ import { Conversation, ChatMessage, MessageFeedback, TurnStatus, getAgentId, bui
 import { StreamEvent,type ContextUsageEventData } from "@/lib/streaming/types";
 import { generateId } from "@/lib/utils";
 import type { StreamAdapter } from "@/lib/streaming";
+import type { ServerHistoryAdmission } from "@/lib/streaming/server-history";
 import { apiClient, type ConversationListFilter } from "@/lib/api-client";
 import { getStorageMode, shouldUseLocalStorage } from "@/lib/storage-config";
 import type { Artifact, Message as StoredMessage, StoredStreamEvent } from "@/types/mongodb";
@@ -115,6 +116,7 @@ interface ChatState {
   ) => Promise<string>;
   setActiveConversation: (id: string | null) => void;
   addMessage: (conversationId: string, message: Omit<ChatMessage, "id" | "timestamp">, turnId?: string, messageId?: string) => string;
+  adoptServerHistory: (conversationId: string, admission: ServerHistoryAdmission, provisional?: { turnId?: string; assistantMessageId?: string; userContent?: string }) => void;
   updateMessage: (conversationId: string, messageId: string, updates: Partial<ChatMessage>) => void;
   appendToMessage: (conversationId: string, messageId: string, content: string) => void;
   truncateConversationFromMessage: (conversationId: string, messageId: string) => void;
@@ -262,7 +264,9 @@ function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
       isFinal,
       turnId: msg.metadata?.turn_id,
       taskId: msg.metadata?.task_id,
-      autonomousRunId: msg.metadata?.run_id,
+      historyOwner: msg.metadata?.history_owner === "harness_engine" ? "server" : undefined,
+      serverRunId: msg.metadata?.history_owner === "harness_engine" ? msg.metadata.run_id : undefined,
+      autonomousRunId: msg.metadata?.history_owner === "harness_engine" ? undefined : msg.metadata?.run_id,
       autonomousMessageKind: msg.metadata?.kind,
       autonomousExecutionContextId: msg.metadata?.execution_context_id,
       turnStatus: msg.metadata?.turn_status as TurnStatus | undefined,
@@ -445,6 +449,36 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         return msgId;
       },
 
+      adoptServerHistory: (conversationId, admission, provisional) => {
+        if (admission.conversationId !== conversationId) throw new Error("History admission belongs to another conversation");
+        set((state: ChatState) => {
+          const streaming = new Map(state.streamingConversations);
+          const active = streaming.get(conversationId);
+          if (active && (!provisional?.assistantMessageId || active.messageId === provisional.assistantMessageId)) {
+            streaming.set(conversationId, { ...active, messageId: admission.assistantMessageId });
+          }
+          return { streamingConversations: streaming, conversations: state.conversations.map(conv => {
+            if (conv.id !== conversationId) return conv;
+            const turnRows = provisional?.turnId ? conv.messages.filter(m => m.turnId === provisional.turnId) : [];
+            const existingUser = conv.messages.find(m => m.id === admission.userMessageId) ?? turnRows.find(m => m.role === "user");
+            const existingAssistant = conv.messages.find(m => m.id === admission.assistantMessageId) ?? conv.messages.find(m => m.id === provisional?.assistantMessageId);
+            const turnId = existingAssistant?.turnId ?? existingUser?.turnId ?? provisional?.turnId;
+            const rows: ChatMessage[] = [];
+            if (existingUser) rows.push({ ...existingUser, id: admission.userMessageId,
+              content: provisional?.userContent ?? existingUser.content, turnId,
+              historyOwner: "server", admissionPending: false, serverRunId: admission.runId });
+            rows.push({ ...(existingAssistant ?? { role: "assistant", content: "", timestamp: new Date() }),
+              id: admission.assistantMessageId, turnId, historyOwner: "server", admissionPending: false, serverRunId: admission.runId });
+            const removed = new Set([...turnRows.map(m => m.id), admission.userMessageId, admission.assistantMessageId]);
+            if (provisional?.assistantMessageId) removed.add(provisional.assistantMessageId);
+            const at = conv.messages.findIndex(m => removed.has(m.id));
+            const retained = conv.messages.filter(m => !removed.has(m.id));
+            retained.splice(at < 0 ? retained.length : Math.min(at, retained.length), 0, ...rows);
+            return { ...conv, messages: retained };
+          }) };
+        });
+      },
+
       updateMessage: (conversationId: string, messageId: string, updates: Partial<ChatMessage>) => {
         set((state: ChatState) => ({
           conversations: state.conversations.map((conv: Conversation) =>
@@ -536,6 +570,14 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             console.log(`[Store] Marked conversation as unviewed: ${conversationId.substring(0, 8)}`);
           }
 
+          const lastAssistant = current.conversations.find(c => c.id === conversationId)?.messages.filter(m => m.role === "assistant").at(-1);
+          if (lastAssistant?.historyOwner === "server") {
+            eventCountSinceLastSave.delete(conversationId);
+            pendingSaveTimestamps.delete(conversationId);
+            setTimeout(() => { void get().loadMessagesFromServer(conversationId, { force: true }); }, 500);
+            return;
+          }
+
           // Reset periodic save counter for this conversation
           eventCountSinceLastSave.delete(conversationId);
           // Mark save as pending — prevents loadMessagesFromServer from
@@ -568,6 +610,23 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           // Get conversation to check if it's a Dynamic Agent
           const conv = state.conversations.find((c: Conversation) => c.id === conversationId);
           
+          const currentMessage = conv?.messages.find((message: ChatMessage) => message.id === streamingState.messageId);
+          if (currentMessage?.historyOwner === 'server') {
+            const agentId = conv ? getAgentId(conv) : undefined;
+            state.updateMessage(conversationId, currentMessage.id, { cancellationRequested: true });
+            if (!agentId || !streamingState.streamAdapter) {
+              state.updateMessage(conversationId, currentMessage.id, { error: 'Cancellation is not confirmed. Reconnect to check the running agent.' });
+              return;
+            }
+            // The request only asks the durable owner to stop. Keep observing its
+            // journal until it acknowledges cancellation or another final result.
+            void streamingState.streamAdapter.cancelStream(conversationId, agentId, { keepSubscription: true })
+              .catch(() => state.updateMessage(conversationId, currentMessage.id, {
+                error: 'Cancellation is not confirmed. The server may still be running.',
+              }));
+            return;
+          }
+
           // For Dynamic Agents, send backend cancel request before aborting client
           if (streamingState.streamAdapter) {
             const agentId = conv ? getAgentId(conv) : undefined;
@@ -713,6 +772,9 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         const removedIndex = previousState.conversations.findIndex((c: Conversation) => c.id === id);
         const previousActiveId = previousState.activeConversationId;
 
+        const removedStream = previousState.streamingConversations.get(id);
+        removedStream?.client.abort();
+
         // Delete from local state first (instant UI update)
         set((state: ChatState) => {
           const wasActiveConversation = state.activeConversationId === id;
@@ -739,6 +801,8 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
           return {
             conversations: newConversations,
+            streamingConversations: new Map([...state.streamingConversations].filter(([key]) => key !== id)),
+            isStreaming: [...state.streamingConversations.keys()].some(key => key !== id),
             externalActivity: Object.fromEntries(Object.entries(state.externalActivity).filter(([key]) => key !== id)),
             activeConversationId: newActiveId,
             contextUsageByConversation: Object.fromEntries(
@@ -1148,6 +1212,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         if (lastAssistantMsg) messagesToSave.push({ msg: lastAssistantMsg, idx: lastAssistantIdx });
 
         for (const { msg, idx } of messagesToSave) {
+          if (msg.historyOwner === "server" || msg.admissionPending) continue;
           // PERIODIC SAVE GUARD: Skip non-final assistant messages during
           // periodic saves. These messages contain intermediate streaming
           // content that would overwrite (poison) MongoDB. The correct final

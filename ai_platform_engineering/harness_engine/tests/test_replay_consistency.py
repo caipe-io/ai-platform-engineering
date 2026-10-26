@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from harness_engine.main import create_app
 from harness_engine.models import RunRecord, RunStatus
-from harness_engine.repository import InMemoryRunRepository, MongoRunRepository, ReplayGapError
+from harness_engine.repository import InMemoryRunRepository, MongoRunRepository, ReplayUnavailableError
 from tests.conftest import FakeHarnessAdapter, auth_headers, blueprint
 
 
@@ -59,13 +59,13 @@ async def test_terminal_append_recovers_after_either_materialization_write(
     assert [(event.sequence, event.event_type) for event in events] == [(1, "run.completed")]
     assert await reader.list_events("run-example", 1) == []
     assert collection.count_documents({"run_id": "run-example"}) == 1
-    assert "pending_event" not in reader._db.harness_runs.find_one({"run_id": "run-example"})
+    assert "_pending_event" not in reader._db.harness_runs.find_one({"run_id": "run-example"})
 
 
 async def test_expired_terminal_tail_is_bounded(mongo_repository: MongoRunRepository) -> None:
     await mongo_repository.append_event("run-example", "run.completed", {}, RunStatus.COMPLETED)
     mongo_repository._db.harness_events.delete_many({"run_id": "run-example"})
-    with pytest.raises(ReplayGapError):
+    with pytest.raises(ReplayUnavailableError):
         await mongo_repository.wait_for_events("run-example", 0, 0.01)
 
 
@@ -86,15 +86,15 @@ def test_missing_terminal_tail_returns_an_error_for_polling_and_sse(settings) ->
         )
         run_id = started.json()["data"]["run_id"]
         for _ in range(100):
-            if repository._runs[run_id].status == RunStatus.COMPLETED:
+            if repository._runs[run_id]["status"] == RunStatus.COMPLETED:
                 break
             time.sleep(0.01)
-        assert repository._runs[run_id].status == RunStatus.COMPLETED
+        assert repository._runs[run_id]["status"] == RunStatus.COMPLETED
         repository._events[run_id].pop()
         for suffix in ["events", "events/stream"]:
             response = client.get(f"/api/v1/runs/{run_id}/{suffix}", headers=auth_headers())
-            assert response.status_code == 409
-            assert response.json()["code"] == "replay_unavailable"
+            assert response.status_code == 410
+            assert "expired" in response.json()["detail"] or "incomplete" in response.json()["detail"]
 
 
 def test_session_lookup_uses_the_authenticated_owner_and_clear_releases_the_backend(settings) -> None:

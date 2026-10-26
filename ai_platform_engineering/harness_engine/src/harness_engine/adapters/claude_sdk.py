@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
+from contextlib import aclosing
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    MirrorErrorMessage,
     ResultMessage,
-    SessionStore,
+    SystemMessage,
     TextBlock,
     query,
 )
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from harness_engine.claude_session_store import MongoClaudeSessionStore
+from harness_engine.claude_session_store import ClaudeTranscriptStore, MongoClaudeSessionStore
 from harness_engine.config import ClaudeSDKProfile, Settings
 from harness_engine.models import (
     AdapterEvaluation,
@@ -27,6 +30,7 @@ from harness_engine.models import (
     HarnessDescriptor,
     HarnessProfile,
     RunContext,
+    SessionBinding,
     ValidationIssue,
 )
 from harness_engine.sessions import EventAssignedProviderSessionManager, ProviderSessionManager
@@ -36,9 +40,7 @@ class ClaudeHarnessOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_turns: int = Field(20, ge=1, le=100)
-    permission_mode: str | None = Field(
-        None, pattern=r"^(default|acceptEdits|plan|dontAsk)$"
-    )
+    permission_mode: str | None = Field(None, pattern=r"^(default|acceptEdits|plan|dontAsk)$")
 
 
 ClaudeQuery = Callable[..., AsyncIterator[Any]]
@@ -50,7 +52,7 @@ class ClaudeSDKAdapter:
         settings: Settings,
         *,
         query_fn: ClaudeQuery = query,
-        transcript_store: SessionStore | None = None,
+        transcript_store: ClaudeTranscriptStore | None = None,
     ) -> None:
         self._profiles = settings.claude_sdk_profiles()
         self._query = query_fn
@@ -113,14 +115,18 @@ class ClaudeSDKAdapter:
                     explanation="Harness Engine persists the canonical event log",
                 ),
                 "thread.persistence": CapabilityResult(
-                    level=CapabilityLevel.NATIVE,
-                    explanation="Claude session IDs are persisted and supplied through resume",
+                    level=(
+                        CapabilityLevel.NATIVE if self._transcript_store is not None else CapabilityLevel.UNAVAILABLE
+                    ),
+                    explanation=(
+                        "Owned Claude transcripts and provider session IDs are persisted for resume"
+                        if self._transcript_store is not None
+                        else "A shared Claude transcript store is required for resume"
+                    ),
                 ),
                 "session.cross_replica": CapabilityResult(
                     level=(
-                        CapabilityLevel.NATIVE
-                        if self._transcript_store is not None
-                        else CapabilityLevel.UNAVAILABLE
+                        CapabilityLevel.NATIVE if self._transcript_store is not None else CapabilityLevel.UNAVAILABLE
                     ),
                     explanation=(
                         "Claude transcripts and the provider session ID are stored in shared MongoDB"
@@ -195,38 +201,66 @@ class ClaudeSDKAdapter:
     async def stream(self, context: RunContext) -> AsyncIterator[CanonicalEventDraft]:
         profile = self._profile(context.binding.profile_id)
         options = ClaudeHarnessOptions.model_validate(context.blueprint.harness.options)
-        sdk_options = ClaudeAgentOptions(
-            system_prompt=context.prompt.system,
-            model=profile.model,
-            cwd=profile.cwd,
-            max_turns=options.max_turns,
-            permission_mode=profile.permission_mode,  # type: ignore[arg-type]
-            resume=context.binding.provider_session_id,
-            setting_sources=[],
-            # No tool/filesystem broker is admitted for this adapter yet.
-            tools=[],
-            # Claude Code writes a local working copy before mirroring it to
-            # SessionStore. /tmp is writable even in the non-root image.
-            env={"CLAUDE_CONFIG_DIR": "/tmp/claude-agent-sdk"},
-            session_store=self._transcript_store,
-            session_store_flush="eager",
-        )
-        async for message in self._query(prompt=context.turn.message, options=sdk_options):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock) and block.text:
-                        yield CanonicalEventDraft(
-                            event_type="content.delta", data={"text": block.text}
-                        )
-            elif isinstance(message, ResultMessage):
-                if message.is_error:
-                    raise RuntimeError("Claude Agent SDK run failed")
-                if message.session_id != context.binding.provider_session_id:
-                    yield CanonicalEventDraft(
-                        event_type="session.updated",
-                        data={"provider_session_id": message.session_id},
-                    )
-                if message.usage:
-                    yield CanonicalEventDraft(
-                        event_type="usage.updated", data={"usage": message.usage}
-                    )
+        if context.binding.provider_session_id and self._transcript_store is None:
+            raise RuntimeError("A shared Claude transcript store is required to resume this session")
+        scoped_store = self._transcript_store.for_run(context) if self._transcript_store else None
+        try:
+            if scoped_store is not None:
+                await scoped_store.ready()
+            # SessionStore is a mirror: the CLI always writes a local copy.
+            # A per-run disposable config directory prevents a later caller
+            # from falling back to a prior run's local transcript or config.
+            with TemporaryDirectory(prefix="caipe-claude-") as config_dir:
+                sdk_options = ClaudeAgentOptions(
+                    system_prompt=context.prompt.system,
+                    model=profile.model,
+                    cwd=profile.cwd,
+                    max_turns=options.max_turns,
+                    permission_mode=profile.permission_mode,  # type: ignore[arg-type]
+                    resume=context.binding.provider_session_id,
+                    setting_sources=[],
+                    # No qualified logical filesystem/tool broker is wired
+                    # here. Permission mode does not disable CLI built-ins.
+                    tools=[],
+                    env={"CLAUDE_CONFIG_DIR": config_dir},
+                    session_store=scoped_store,
+                    session_store_flush="eager",
+                )
+                provider_session_id = context.binding.provider_session_id
+                async with aclosing(self._query(prompt=context.turn.message, options=sdk_options)) as messages:
+                    async for message in messages:
+                        # Init/assistant metadata can identify partial sessions
+                        # before ResultMessage. This records identity only; an
+                        # interrupted run is never replayed automatically.
+                        session_id = None
+                        if isinstance(message, SystemMessage) and message.subtype == "init":
+                            session_id = message.data.get("session_id")
+                        elif isinstance(message, (AssistantMessage, ResultMessage)):
+                            session_id = message.session_id
+                        if isinstance(session_id, str) and session_id and session_id != provider_session_id:
+                            provider_session_id = session_id
+                            yield CanonicalEventDraft(
+                                event_type="session.updated", data={"provider_session_id": session_id}
+                            )
+                        if isinstance(message, MirrorErrorMessage):
+                            raise RuntimeError(
+                                "Claude transcript mirroring failed; the session requires reconciliation"
+                            )
+                        if isinstance(message, AssistantMessage):
+                            for block in message.content:
+                                if isinstance(block, TextBlock) and block.text:
+                                    yield CanonicalEventDraft(event_type="content.delta", data={"text": block.text})
+                        elif isinstance(message, ResultMessage):
+                            if message.is_error:
+                                raise RuntimeError("Claude Agent SDK run failed")
+                            if message.usage:
+                                yield CanonicalEventDraft(event_type="usage.updated", data={"usage": message.usage})
+        finally:
+            # Explicitly drain blocking mirror writes before the coordinator
+            # can acknowledge producer shutdown and purge the binding.
+            if scoped_store is not None:
+                await scoped_store.close()
+
+    async def delete_session(self, binding: SessionBinding) -> None:
+        if self._transcript_store is not None:
+            await self._transcript_store.purge_for_binding(binding)

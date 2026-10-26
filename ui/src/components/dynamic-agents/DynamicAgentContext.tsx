@@ -8,7 +8,7 @@ import { FileTree } from "@/components/dynamic-agents/FileTree";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
+import { fetchEphemeralFileContent, fileContentBlob } from "@/lib/ephemeral-files";
 import type { ContextUsageEventData } from "@/lib/streaming/types";
 import { useChatStore } from "@/store/chat-store";
 import { useFeatureFlagStore } from "@/store/feature-flag-store";
@@ -79,6 +79,8 @@ export function DynamicAgentContext({
   // Restart runtime handler
   const [isRestarting, setIsRestarting] = useState(false);
   const [runtimeRestarted, setRuntimeRestarted] = useState(false);
+  const [runtimeRestartError, setRuntimeRestartError] = useState<string | null>(null);
+  const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
 
   // Fetch subagent configs to display their MCP servers
   const [subagentTools, setSubagentTools] = useState<Record<string, Record<string, string[]>>>({});
@@ -138,6 +140,10 @@ export function DynamicAgentContext({
       if (res.ok) {
         const data = await res.json();
         setFiles(data.files || []);
+        setWorkspaceNotice(data.snapshot === "acknowledged"
+          ? ["Files show the last saved workspace snapshot.", ...(Array.isArray(data.warnings) ? data.warnings : [])].join(" ") : null);
+      } else if (res.status === 501) {
+        const data = await res.json(); setWorkspaceNotice(data.error || "Workspace browsing is unavailable");
       }
     } catch {
       // ignore
@@ -153,7 +159,7 @@ export function DynamicAgentContext({
       const res = await fetch(`/api/files/content?fs_namespace=${encodeURIComponent(fsNamespace)}&path=${encodeURIComponent(path)}`);
       if (res.ok) {
         const data = await res.json();
-        const blob = new Blob([data.content || ""], { type: "text/plain;charset=utf-8" });
+        const blob = fileContentBlob(data);
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -220,6 +226,7 @@ export function DynamicAgentContext({
     if (!agentId || !conversationId || isRestarting) return;
     
     setIsRestarting(true);
+    setRuntimeRestartError(null);
     try {
       const response = await fetch("/api/dynamic-agents/chat/restart-runtime", {
         method: "POST",
@@ -241,10 +248,12 @@ export function DynamicAgentContext({
         // Clear notification after a few seconds
         setTimeout(() => setRuntimeRestarted(false), 5000);
       } else {
-        console.error("Failed to restart runtime:", await response.text());
+        const result = await response.json().catch(() => null);
+        setRuntimeRestartError(result?.error || "The runtime could not be refreshed");
       }
     } catch (error) {
       console.error("Failed to restart runtime:", error);
+      setRuntimeRestartError("The runtime could not be refreshed");
     } finally {
       setIsRestarting(false);
     }
@@ -304,6 +313,8 @@ export function DynamicAgentContext({
               </motion.div>
             )}
 
+            {workspaceNotice && <p className="text-xs text-muted-foreground">{workspaceNotice}</p>}
+            {runtimeRestartError && <p role="alert" className="text-sm text-muted-foreground">{runtimeRestartError}</p>}
             {/* Runtime Restarted Notification */}
             {runtimeRestarted && (
               <motion.div

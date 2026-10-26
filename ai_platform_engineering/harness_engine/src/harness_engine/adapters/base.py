@@ -10,6 +10,7 @@ from harness_engine.models import (
     AgentBlueprint,
     CanonicalEventDraft,
     HarnessDescriptor,
+    ProviderTurnOutcome,
     RunContext,
 )
 
@@ -26,4 +27,10 @@ class HarnessAdapter(Protocol):
 
     def evaluate(self, blueprint: AgentBlueprint) -> AdapterEvaluation: ...
 
-    def stream(self, context: RunContext) -> AsyncIterator[CanonicalEventDraft]: ...
+    def stream(self, context: RunContext) -> AsyncIterator[CanonicalEventDraft | ProviderTurnOutcome]: ...
+
+
+class CancellableHarnessAdapter(Protocol):
+    """Optional provider stop capability, separate from stream ownership."""
+
+    async def cancel(self, context: RunContext) -> None: ...

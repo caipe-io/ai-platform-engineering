@@ -1,3 +1,4 @@
+import { conversationFileNamespace, proxyHarnessConversationOperation } from "@/lib/harness-gateway";
 /**
  * Generic file content endpoint.
  *
@@ -36,6 +37,11 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   const authResult = await authenticateRequest(request);
   if (authResult instanceof NextResponse) return authResult;
+  const context = conversationFileNamespace(fsNamespace);
+  if (context) {
+    const harness = await proxyHarnessConversationOperation(authResult, context.conversationId, context.agentId, "file", path);
+    if (harness) return harness;
+  }
 
   const daConfig = getDynamicAgentsConfig();
   if (daConfig instanceof NextResponse) return daConfig;
@@ -50,13 +56,19 @@ export async function GET(request: NextRequest): Promise<Response> {
 export async function PUT(request: NextRequest): Promise<Response> {
   const authResult = await authenticateRequest(request);
   if (authResult instanceof NextResponse) return authResult;
+  const body = await request.json();
+  const context = conversationFileNamespace(body.fs_namespace);
+  if (context) {
+    const harness = await proxyHarnessConversationOperation(authResult, context.conversationId, context.agentId, "write-file", typeof body.path === "string" ? body.path : undefined);
+    if (harness) return harness;
+  }
 
   const daConfig = getDynamicAgentsConfig();
   if (daConfig instanceof NextResponse) return daConfig;
 
   const backendUrl = new URL("/api/v1/files/content", daConfig.dynamicAgentsUrl);
 
-  const body = await request.json();
+
 
   return proxyRequest(backendUrl.toString(), "PUT", authResult, "[files/content]", JSON.stringify(body));
 }
@@ -82,6 +94,11 @@ export async function DELETE(request: NextRequest): Promise<Response> {
 
   const authResult = await authenticateRequest(request);
   if (authResult instanceof NextResponse) return authResult;
+  const context = conversationFileNamespace(fsNamespace);
+  if (context) {
+    const harness = await proxyHarnessConversationOperation(authResult, context.conversationId, context.agentId, "delete-file", path);
+    if (harness) return harness;
+  }
 
   const daConfig = getDynamicAgentsConfig();
   if (daConfig instanceof NextResponse) return daConfig;
