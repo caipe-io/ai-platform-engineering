@@ -80,6 +80,13 @@ spec:
           {{- $schedulerRunnerSecretName = printf "%s-scheduler-runner" $schedulerRunnerBase }}
           {{- end }}
           env:
+            {{- if .Values.cacheRedis.enabled }}
+            - name: CAIPE_CACHE_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "cacheRedis.existingSecret.name is required" .Values.cacheRedis.existingSecret.name | quote }}
+                  key: {{ required "cacheRedis.existingSecret.key is required" .Values.cacheRedis.existingSecret.key | quote }}
+            {{- end }}
             - name: CAIPE_RELEASE_VERSION
               value: {{ index .Values.config "CAIPE_RELEASE_VERSION" | default (.Values.image.tag | default (include "caipe-ui.appVersion" .)) | quote }}
             {{- if $hasAppConfig }}

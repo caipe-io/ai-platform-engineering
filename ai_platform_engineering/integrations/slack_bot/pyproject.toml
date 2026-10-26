@@ -17,6 +17,7 @@ dependencies = [
   "pyyaml==6.0.3",
   "pymongo==4.19.0",
   "pyjwt[crypto]==2.15.1",
+  "redis==8.1.0",
 ]
 
 [dependency-groups]

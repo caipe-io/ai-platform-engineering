@@ -365,6 +365,7 @@ services:
     container_name: caipe-ui
     ports: ["3000:3000"]
     environment:
+      - CAIPE_CACHE_REDIS_URL=${CAIPE_CACHE_REDIS_URL:-}
       - NODE_ENV=production
       # Safe release metadata shown by System Health. A specific
       # PLATFORM_COMPONENT_VERSION_* value may override this shared tag.
@@ -1276,12 +1277,28 @@ services:
   ####################################################################################################
   #                                 Slack Bot Integration                                            #
   ####################################################################################################
+  caipe-redis:
+    image: redis:7.2-alpine
+    container_name: caipe-redis
+    command: [redis-server, --save, "60 1", --appendonly, "yes", --maxmemory, 512mb, --maxmemory-policy, allkeys-lru]
+    volumes:
+      - caipe_cache_data:/data
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    profiles: [caipe-cache]
+
   slack-bot:
     image: ghcr.io/cnoe-io/caipe-slack-bot:${IMAGE_TAG:-0.5.66}
     container_name: slack-bot
     env_file: [.env]
     ports: ["8030:3000"]
     environment:
+      - CAIPE_CACHE_REDIS_URL=${CAIPE_CACHE_REDIS_URL:-}
       - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
       - MONGODB_URI=${MONGODB_URI:-}
       - CAIPE_UI_BASE_URL=${CAIPE_UI_BASE_URL:-http://localhost:3000}
@@ -1823,6 +1840,8 @@ volumes:
   langfuse_minio_data:
     driver: local
   langfuse_redis_data:
+    driver: local
+  caipe_cache_data:
     driver: local
   milvus_etcd:
     driver: local

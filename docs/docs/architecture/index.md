@@ -49,4 +49,6 @@ Editable source: [Harness Engine source graph](https://github.com/cnoe-io/ai-pla
 
 ## CAIPE Supporting Services
 
+See [application caching](caching.md) for scoped read policies and platform Redis deployment.
+
 ![](images/supporting-services.svg)

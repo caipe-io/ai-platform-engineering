@@ -16,8 +16,11 @@ from ai_platform_engineering.integrations.slack_bot.utils.slack_admin_api import
     SlackAdminTokenValidator,
     _SlackAdminRequestHandler,
 )
+from ai_platform_engineering.integrations.slack_bot.utils.cache import CacheLeaseLostError, ServerCache
 
 from ai_platform_engineering.integrations.slack_bot.utils.slack_directory import (
+  DIRECTORY_HARD_TTL_SECONDS,
+  DirectorySnapshot,
   SlackDirectoryError,
   SlackDirectoryService,
 )
@@ -79,6 +82,68 @@ def test_users_preserve_complete_snapshot_progress_and_private_search_fields() -
   assert status["members_seen"] == 2
   assert status["users_indexed"] == 1
   settled(service, "emoji")
+
+
+def test_users_hydrate_complete_snapshot_from_persistent_cache() -> None:
+  cache = ServerCache(redis_url=None)
+  service = SlackDirectoryService(
+    request_get=lambda *_args, **_kwargs: pytest.fail("persistent snapshot should avoid Slack"),
+    cache=cache,
+  )
+  token = service._token()
+  cache.get_or_load(
+    service._cache_policy("users"),
+    service._key("users", token)[1],
+    lambda: [{"id": "U1", "label": "Example User", "name": "example", "search_terms": ["Example User", "example"]}],
+  )
+
+  result = service.users({"q": "example"})
+
+  assert result["users"] == [{"id": "U1", "label": "Example User", "name": "example"}]
+  assert result["cached"] is True
+
+
+def test_hard_expired_snapshot_is_not_served_after_refresh_failure() -> None:
+  service = SlackDirectoryService(request_get=lambda *_args, **_kwargs: Response({"ok": False, "error": "unavailable"}))
+  key = service._key("users", service._token())
+  service._entries[key] = DirectorySnapshot(
+    rows=[{"id": "U1", "label": "Old User", "search_terms": ["Old User"]}],
+    fetched_at=int((time.time() - DIRECTORY_HARD_TTL_SECONDS - 1) * 1000),
+  )
+
+  service.users({"q": "old"})
+  settled(service)
+  result = service.users({"q": "old"})
+
+  assert result["users"] == []
+  assert result["fetched_at"] == 0
+
+
+def test_lost_cache_lease_retains_prior_directory_snapshot() -> None:
+  class LeaseLostCache:
+    def get(self, *_args: object) -> None:
+      return None
+
+    def get_or_load(self, *_args: object) -> None:
+      raise CacheLeaseLostError("Cache refresh lease was lost before publish")
+
+  service = SlackDirectoryService(
+    request_get=lambda *_args, **_kwargs: pytest.fail("lost owner must not call Slack"),
+    cache=LeaseLostCache(),  # type: ignore[arg-type]
+  )
+  key = service._key("users", service._token())
+  fetched_at = int(time.time() * 1000)
+  service._entries[key] = DirectorySnapshot(
+    rows=[{"id": "U1", "label": "Prior User", "search_terms": ["Prior User"]}],
+    fetched_at=fetched_at,
+  )
+
+  service.users({"q": "prior", "refresh": "1"})
+  settled(service)
+  result = service.users({"q": "prior"})
+
+  assert result["users"][0]["id"] == "U1"
+  assert result["fetched_at"] == fetched_at
 
 
 def test_partial_failure_retains_last_complete_snapshot() -> None:
