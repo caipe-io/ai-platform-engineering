@@ -2080,3 +2080,22 @@ In Helm and GitOps installs, `charts/ai-platform-engineering/charts/slack-bot/te
   replies with the `default_agent_id` selection UI.
 - **DA receives a request without a user JWT** → middleware logs
   WARNING, MCP call goes out without `Authorization`, AGW 401s.
+
+## Private personal conversation context
+
+A user-owned browser chat can reserve `personal_context: "private"` before an app
+retrieves personal evidence. The BFF validates the authenticated owner, agent-use
+and conversation-write access. Ordinary create and metadata APIs cannot set or
+remove this server-owned field.
+
+Personal admission and sharing/CAS grants atomically reserve the same canonical
+conversation field. Sharing reserves `shareable`; the two states cannot replace
+one another. Private history remains readable only by its owner or through
+existing administrator audit access. Service accounts, old grants, idempotency
+keys, message IDs and trash routes do not bypass this boundary. A normalized
+owner subject takes precedence over an email match.
+
+The [app contract](../../features/agentic-apps.md#private-personal-context-in-shared-chat)
+describes HTTP admission and trusted-server database integration. Publisher draft,
+evidence and publication policy remains app-owned. Existing private records must
+be migrated before activating the new reservation field.
