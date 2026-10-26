@@ -572,6 +572,9 @@ def test_minimal_retains_queryable_delegated_allow_and_deny_receipts(tmp_path: P
         response = client.post("/v1/audit/events", json={"events": [
             {**delegated, "outcome": "allow", "decision_id": "decision-1"},
             {**delegated, "outcome": "deny", "decision_id": "decision-2"},
+            {**delegated, "outcome": "success"},
+            {**delegated, "outcome": "error"},
+            {**delegated, "outcome": None},
             {"type": "cas_decision", "outcome": "allow"},
             {"type": "cas_decision", "outcome": "deny"},
         ]})
@@ -671,7 +674,26 @@ def test_filter_records_verbose_passes_all() -> None:
 def test_minimal_does_not_treat_missing_or_invalid_reference_as_a_delegated_receipt(reference: object) -> None:
     assert filter_records([{
         "type": "cas_decision", "delegation_operation": "check", "delegation_id": reference,
+        "outcome": "allow",
     }], "minimal") == []
+
+
+@pytest.mark.parametrize("outcome", [None, "", "success", "error", "unexpected"])
+def test_minimal_excludes_delegated_checks_without_a_decision_outcome(outcome: str | None) -> None:
+    records = [{
+        "type": "cas_decision", "delegation_operation": "check", "delegation_id": "approval-1", "outcome": outcome,
+    }]
+    assert filter_records(records, "minimal") == []
+    for preset in ("standard", "verbose", "il2", "il5", "soc2"):
+        assert filter_records(records, preset) == records
+
+
+def test_minimal_preserves_delegation_lifecycle_outcomes() -> None:
+    records = [
+        {"type": "cas_delegation", "delegation_operation": "create", "outcome": "success"},
+        {"type": "cas_delegation", "delegation_operation": "revoke", "outcome": "error"},
+    ]
+    assert filter_records(records, "minimal") == records
 
 
 # ---------------------------------------------------------------------------

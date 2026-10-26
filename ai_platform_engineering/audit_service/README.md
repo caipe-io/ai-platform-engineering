@@ -28,9 +28,9 @@ CAS ──append──► BFF audit client ◄──queryPage── BFF audit AP
 - `AUDIT_SERVICE_READ_MAX_DAYS=31`: maximum span per query, independent of archive/query retention.
 - The default `minimal` verbosity retains policy changes and individual delegated
   `cas_decision` receipts (`delegation_operation=check` with a non-empty
-  `delegation_id`), but omits routine access decisions. These fields control
-  retention, not ingestion authentication. A time window such as `48h` selects
-  records; it does not delete them.
+  `delegation_id` and an `allow` or `deny` outcome), but omits routine access
+  decisions. These fields control retention, not ingestion authentication. A time
+  window such as `48h` selects records; it does not delete them.
 
 Compose inherits the bundled/external MongoDB connection. Include the `caipe-mongodb` profile unless using an external database.
 Helm uses the bundled `<release>-mongodb` credentials by default. For an external database or a dedicated audit account, set `audit-service.mongodb.uriSecret.name/key`. An existing `audit-service.existingSecret` may instead supply `MONGODB_URI` through envFrom. Custom bundled service/Secret names require `mongodb.host` and `mongodb.credentialsSecret.name` overrides.

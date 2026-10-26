@@ -65,5 +65,6 @@ def filter_records(records: list[dict], verbosity: str) -> list[dict]:
             and r.get("delegation_operation") == "check"
             and isinstance(r.get("delegation_id"), str)
             and bool(r["delegation_id"].strip())
+            and r.get("outcome") in {"allow", "deny"}
         )
     ]
