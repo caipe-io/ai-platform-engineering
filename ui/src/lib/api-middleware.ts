@@ -1,7 +1,6 @@
 // API middleware for Next.js API routes
 // Provides authentication, error handling, and validation
 
-import { createHash } from 'crypto';
 import type { Collection, Document } from 'mongodb';
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
@@ -182,37 +181,6 @@ type SessionAuthPayload = {
   session: SessionAuthSession;
 };
 
-type SessionAuthCacheEntry = SessionAuthPayload & {
-  expiresAt: number;
-};
-
-const DEFAULT_SESSION_AUTH_CACHE_TTL_MS = 10_000;
-const MAX_SESSION_AUTH_CACHE_ENTRIES = 500;
-const sessionAuthCache = new Map<string, SessionAuthCacheEntry>();
-
-function getSessionAuthCacheTtlMs(): number {
-  const raw = process.env.CAIPE_SESSION_AUTH_CACHE_TTL_MS;
-  if (!raw) {
-    return DEFAULT_SESSION_AUTH_CACHE_TTL_MS;
-  }
-
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return DEFAULT_SESSION_AUTH_CACHE_TTL_MS;
-  }
-
-  return Math.min(parsed, 60_000);
-}
-
-function getSessionAuthCacheKey(request: NextRequest): string | null {
-  const cookie = request.headers.get('cookie')?.trim();
-  if (!cookie) {
-    return null;
-  }
-
-  return createHash('sha256').update(cookie).digest('hex');
-}
-
 function cloneSessionAuthPayload(value: SessionAuthPayload): SessionAuthPayload {
   const sessionUser = value.session.user;
   return {
@@ -224,61 +192,12 @@ function cloneSessionAuthPayload(value: SessionAuthPayload): SessionAuthPayload 
   };
 }
 
-// assisted-by Codex Codex-sonnet-4-6
-function readCachedSessionAuth(request: NextRequest): SessionAuthPayload | null {
-  const key = getSessionAuthCacheKey(request);
-  if (!key) {
-    return null;
-  }
-
-  const entry = sessionAuthCache.get(key);
-  if (!entry) {
-    return null;
-  }
-
-  if (entry.expiresAt <= Date.now()) {
-    sessionAuthCache.delete(key);
-    return null;
-  }
-
-  sessionAuthCache.delete(key);
-  sessionAuthCache.set(key, entry);
-  return cloneSessionAuthPayload(entry);
-}
-
-function writeCachedSessionAuth(request: NextRequest, value: SessionAuthPayload): void {
-  const ttlMs = getSessionAuthCacheTtlMs();
-  if (ttlMs === 0) {
-    return;
-  }
-
-  const key = getSessionAuthCacheKey(request);
-  if (!key) {
-    return;
-  }
-
-  while (sessionAuthCache.size >= MAX_SESSION_AUTH_CACHE_ENTRIES) {
-    const oldestKey = sessionAuthCache.keys().next().value;
-    if (!oldestKey) {
-      break;
-    }
-    sessionAuthCache.delete(oldestKey);
-  }
-
-  sessionAuthCache.set(key, {
-    ...cloneSessionAuthPayload(value),
-    expiresAt: Date.now() + ttlMs,
-  });
-}
-
-export function clearSessionAuthCacheForTests(): void {
-  sessionAuthCache.clear();
-}
+/** Authentication is resolved per request; retained for existing test callers. */
+export function clearSessionAuthCacheForTests(): void {}
 
 // Keycloak subject mapping + conversation-owner-identity reconciliation is
-// idempotent bookkeeping, not per-request state, so it doesn't need to run on
-// every call. The cookie-session path already gets this for free via
-// `sessionAuthCache` (10s TTL keyed by cookie), but the Bearer-token path
+// idempotent bookkeeping, not authentication, so it doesn't need to run on
+// every call. The Bearer-token path
 // (service accounts: smoke tests, Slack bot, etc.) authenticates the same
 // static token on every request with no equivalent cache, so it re-ran the
 // full write path — including the `conversations.updateMany` in
@@ -293,7 +212,7 @@ export function clearSessionAuthCacheForTests(): void {
 // `auth-config.ts`, but unlike that map (which deletes its entry as soon as
 // the exchange settles) this one deliberately keeps entries around for the
 // TTL to also debounce non-concurrent repeat calls, so it needs its own
-// bound — mirrors `sessionAuthCache`'s LRU eviction above instead.
+// bound to prevent unbounded identity-bookkeeping entries.
 //
 // This is a per-pod in-memory cache: it fully covers today's deployment
 // (`replicaCount: 1` in both dev and prod values), but a burst spread across
@@ -415,10 +334,7 @@ export async function getAuthenticatedUser(
   request: NextRequest,
   options: GetAuthenticatedUserOptions = {}
 ) {
-  const cached = readCachedSessionAuth(request);
-  if (cached) {
-    return cached;
-  }
+  void request;
 
   const session = await getServerSession(authOptions);
 
@@ -437,6 +353,11 @@ export async function getAuthenticatedUser(
       'not_signed_in',
       'sign_in'
     );
+  }
+
+  if (session.error || (typeof session.expiresAt === 'number' && session.expiresAt <= Date.now() / 1000)) {
+    throw new ApiError('Your session has expired. Please sign in again.',
+      401, 'SESSION_EXPIRED', 'session_expired', 'sign_in');
   }
 
   if (getConfig('ssoEnabled') && session.isAuthorized === false) {
@@ -466,7 +387,6 @@ export async function getAuthenticatedUser(
     user,
     session: { ...session, role, principalType: 'oidc_user' as const },
   };
-  writeCachedSessionAuth(request, authenticated);
   return cloneSessionAuthPayload(authenticated);
 }
 

@@ -38,6 +38,21 @@ Browser chat traffic goes through the BFF routes under
 `/api/v1/chat/stream/*`; the browser does not call the Dynamic Agents service
 directly.
 
+Multi-replica SSO requires shared MongoDB and the same `NEXTAUTH_SECRET` on every
+UI replica. The existing encrypted `auth_token_cache` stores credentials and
+expiry together. Login waits for publication, refresh uses a fenced MongoDB
+lease, and encoding a cookie never writes credentials. Authentication reads the
+shared record on each request; identity bookkeeping may still be deduplicated.
+
+The cookie format and collection remain compatible. Legacy JWT token records
+derive expiry from the token; opaque records with unknown expiry must refresh or
+sign in again. Complete the UI rollout before validating login and refresh
+across replicas: an older replica can still write stale credentials. Already
+lost or expired OAuth credentials require a fresh sign-in.
+
+Run the real MongoDB race tests with
+`AUTH_TOKEN_STORE_TEST_MONGODB_URI=mongodb://127.0.0.1:27017 npm test -- --runInBand src/lib/__tests__/auth-token-store-mongo.test.ts`.
+
 ### Agent Builder harness controls
 
 - Deep Agents retains its model, tools, knowledge, skills, and Advanced controls.

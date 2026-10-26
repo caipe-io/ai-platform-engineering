@@ -1149,7 +1149,7 @@ describe('getAuthenticatedUser', () => {
     expect(result.user.role).toBe('user');
   });
 
-  it('caches valid cookie sessions for repeated API calls', async () => {
+  it('resolves credentials on every cookie request while deduplicating identity writes', async () => {
     process.env.CAIPE_SESSION_AUTH_CACHE_TTL_MS = '10000';
     const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });
     mockGetServerSession.mockResolvedValue({
@@ -1168,7 +1168,7 @@ describe('getAuthenticatedUser', () => {
     const second = await getAuthenticatedUser(makeRequest());
 
     expect(first.user).toEqual(second.user);
-    expect(mockGetServerSession).toHaveBeenCalledTimes(1);
+    expect(mockGetServerSession).toHaveBeenCalledTimes(2);
     expect(updateOne).toHaveBeenCalledTimes(1);
   });
 
@@ -1247,7 +1247,7 @@ describe('getAuthenticatedUser', () => {
     nowSpy.mockRestore();
   });
 
-  it('refreshes session auth after the cache ttl expires', async () => {
+  it('rereads session auth without waiting for the former cache TTL', async () => {
     process.env.CAIPE_SESSION_AUTH_CACHE_TTL_MS = '50';
     const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1000);
     mockGetServerSession.mockResolvedValue({
@@ -1266,8 +1266,31 @@ describe('getAuthenticatedUser', () => {
     nowSpy.mockReturnValue(1051);
     await getAuthenticatedUser(makeRequest());
 
-    expect(mockGetServerSession).toHaveBeenCalledTimes(2);
+    expect(mockGetServerSession).toHaveBeenCalledTimes(3);
     nowSpy.mockRestore();
+  });
+
+  it('sees fresh credentials immediately for the same browser cookie', async () => {
+    const session = { user: { email: 'test-user@example.test' }, sub: 'test-user',
+      expiresAt: Math.floor(Date.now() / 1000) + 600 };
+    mockGetServerSession.mockResolvedValueOnce({ ...session, accessToken: 'old' })
+      .mockResolvedValueOnce({ ...session, accessToken: 'fresh' });
+    const request = () => new Request('https://host.example.test/api/projects', {
+      headers: { cookie: 'next-auth.session-token=example-session' },
+    }) as unknown as NextRequest;
+    expect((await getAuthenticatedUser(request())).session.accessToken).toBe('old');
+    expect((await getAuthenticatedUser(request())).session.accessToken).toBe('fresh');
+  });
+
+  it('rejects an expired session even when its previous request authenticated', async () => {
+    const session = { user: { email: 'test-user@example.test' }, sub: 'test-user' };
+    mockGetServerSession.mockResolvedValueOnce({ ...session, expiresAt: Date.now() / 1000 + 600 })
+      .mockResolvedValueOnce({ ...session, expiresAt: 1 });
+    const request = () => new Request('https://host.example.test/api/projects', {
+      headers: { cookie: 'next-auth.session-token=example-session' },
+    }) as unknown as NextRequest;
+    await getAuthenticatedUser(request());
+    await expect(getAuthenticatedUser(request())).rejects.toMatchObject({ statusCode: 401, code: 'SESSION_EXPIRED' });
   });
 
   it('does not cache sessions denied by the Web UI admission gate', async () => {

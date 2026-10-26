@@ -29,6 +29,14 @@ jobs:
   test:
     if: github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]'
     runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 5s --health-timeout 5s --health-retries 12
     permissions:
       contents: read
       pull-requests: write
@@ -68,6 +76,8 @@ jobs:
         id: jest
         working-directory: ui
         continue-on-error: true
+        env:
+          AUTH_TOKEN_STORE_TEST_MONGODB_URI: mongodb://127.0.0.1:27017
         run: npm test -- --coverage --coverageReporters=text --coverageReporters=json-summary --forceExit
 
       - name: Set test results
