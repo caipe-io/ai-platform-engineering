@@ -49,7 +49,7 @@ it("requires a stable idempotency key and rejects bearer-created approvals, incl
   expect((await create(request(intent, { authorization: "Bearer test" }))).status).toBe(403);
   expect(mockCreate).not.toHaveBeenCalled();
 });
-it.each(["subject", "user_id", "context", "trustedContext", "parent_delegation_id", "actor", "effectiveSubject", "evidence", "approval"])("rejects caller-selected %s", async (field) => {
+it.each(["subject", "user_id", "context", "trustedContext", "parent_delegation_id", "actor", "effectiveSubject", "evidence", "approval", "tenant_id"])("rejects caller-selected %s", async (field) => {
   expect((await create(request({ ...intent, [field]: "forged" }))).status).toBe(400);
   expect(mockCreate).not.toHaveBeenCalled();
 });
@@ -120,6 +120,14 @@ it("returns completed DENY as 200, unavailable as 503, and never caches either",
 it("uses a server-generated correlation ID, not caller provenance claims", async () => {
   await check(request(input, { authorization: "Bearer test", "x-correlation-id": "forged-chain" }), context);
   expect(mockCheck.mock.calls[0][3].correlationId).not.toBe("forged-chain");
+});
+it("takes the approval audit tenant from the authenticated session, not headers or deployment fallback", async () => {
+  mockSession.mockResolvedValue({ session: { principalType: "oidc_user", sub: "test-user",
+    expiresAt: Date.now() / 1000 + 600, org: "primary" } });
+  process.env.TENANT_ID = "secondary";
+  await create(request(intent, { "x-tenant-id": "forged", "x-caipe-tenant-id": "forged" }));
+  expect(mockCreate.mock.calls[0][2]).toMatchObject({ tenantId: "primary" });
+  delete process.env.TENANT_ID;
 });
 it("inspects and revokes the reference through owner-bound domain calls", async () => {
   expect((await inspect(request(undefined, {}, "GET"), context)).status).toBe(200);

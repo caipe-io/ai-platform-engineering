@@ -16,9 +16,13 @@ export async function checkDelegationPermissions(
     ["user_permission", effectiveSubject, "USER_NOT_ALLOWED"],
   ];
   for (const [gate, subject, denied] of principals) {
+    if (signal.aborted) {
+      checks.push({ gate, decision: "DENY", reason: "AUTHZ_UNAVAILABLE" });
+      return "AUTHZ_UNAVAILABLE";
+    }
     const result = await checkDelegationPermission({ subject, resource: request.resource, action: request.action }, signal);
-    const reason = result.reason === "AUTHZ_UNAVAILABLE" ? result.reason : result.decision === "ALLOW" ? "OK" : denied;
-    checks.push({ gate, decision: result.decision, reason });
+    const reason = signal.aborted || result.reason === "AUTHZ_UNAVAILABLE" ? "AUTHZ_UNAVAILABLE" : result.decision === "ALLOW" ? "OK" : denied;
+    checks.push({ gate, decision: reason === "OK" ? "ALLOW" : "DENY", reason });
     if (reason !== "OK") return reason;
   }
   return "OK";

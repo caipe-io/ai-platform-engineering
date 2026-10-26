@@ -27,8 +27,13 @@ scheduler, bot, Dynamic Agents or gateway paths.
   alone does not revoke it; expiry, revocation or lost permission blocks use.
 - **Audit preserves both identities.** Individual delegated decisions link to
   approval scope/version/expiry and ordered checks. Admin audit can filter the
-  chain by delegation ID. Delivery remains best-effort and unsigned, not proof
+  chain by delegation ID. New approvals retain the approving session's audit
+  tenant for later background decisions; the default minimal preset keeps their
+  individual allow/deny receipts. Delivery remains best-effort and unsigned, not proof
   that downstream work executed. Applications still enforce the decision.
+- **Approval validation is bounded.** Up to four scope entries are checked
+  concurrently within one five-second graph budget. Exhausted caller budgets
+  deny the request without counting as dependency failures in the shared breaker.
 - **Evidence adapters do not own resource policy.** The current adapter binds a
   service token and stored job approval into a server-only actor/effective-user
   context. Policy and audit consume that context, with the evidence source

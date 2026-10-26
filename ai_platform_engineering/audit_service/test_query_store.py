@@ -76,12 +76,13 @@ def test_cursor_pages_ties_without_skip_or_count(store: MongoAuditStore) -> None
 
 def test_delegation_filter_links_lifecycle_and_decisions(store: MongoAuditStore) -> None:
     store.insert([
-        event("created", type="cas_delegation", delegation_id="approval-1"),
-        event("allowed", delegation_id="approval-1", outcome="allow"),
+        event("created", type="cas_delegation", delegation_id="approval-1", tenant_id="primary"),
+        event("allowed", delegation_id="approval-1", outcome="allow", tenant_id="primary"),
+        event("other-tenant", delegation_id="approval-1", tenant_id="secondary"),
         event("other", delegation_id="approval-2"),
     ])
     visible(store)
-    query = AuditQuery(NOW - timedelta(days=1), NOW, 10, delegation_id="approval-1")
+    query = AuditQuery(NOW - timedelta(days=1), NOW, 10, delegation_id="approval-1", tenant_id="primary")
     result = store.page(query, cursor=None, scope="delegation-filter")
     assert {row["audit_event_id"] for row in result["records"]} == {"created", "allowed"}
     assert any(key[0] == "event.delegation_id" for index in store.events.index_information().values() for key in index["key"])

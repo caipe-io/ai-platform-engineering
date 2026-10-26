@@ -22,6 +22,7 @@ import {
   emitReconcileAudit,
   flushAllowRollups,
 } from "../audit";
+import { storedApproval } from "../delegation-authority";
 
 const subject = { type: "user" as const, id: "alice" };
 const resource = { type: "agent" as const, id: "platform-engineer" };
@@ -194,6 +195,27 @@ it("keeps each delegated allow receipt and both identities even when normal allo
     delegation_evidence: { kind: "cas_approval", reference: "approval-1" } });
   expect(mockWrite.mock.calls[0][0]).not.toHaveProperty("count");
   expect(JSON.stringify(mockWrite.mock.calls)).not.toContain("Bearer");
+});
+
+it.each(["create", "revoke", "check"] as const)("keeps %s audit attribution bound to the approval after logout", (operation) => {
+  const identity = { issuer: "https://identity.example.test", subject: { type: "service_account" as const, id: "test-service" },
+    clientId: "example-service", expiresAt: 10 ** 10 };
+  const authority = storedApproval({ _id: "approval-1", issuer: identity.issuer, user_id: "test-user", tenant_id: "primary",
+    service: { id: "test-service", client_id: "example-service" }, job_id: "test-job", scope: [], version: 1,
+    created_at: new Date().toISOString(), expires_at: new Date().toISOString(), revoked_at: null });
+  emitDelegationAudit(operation, identity, authority, "approval-1", "OK", { tenantId: "secondary" });
+  expect(mockWrite.mock.calls[0][0]).toMatchObject({ tenant_id: "primary", actor_ref: "service_account:test-service",
+    subject_ref: "user:test-user", delegation_id: "approval-1" });
+  // The stored audit tenant is internal attribution, not an added public job claim.
+  expect(authority.approval).not.toHaveProperty("tenant_id");
+});
+
+it("attributes unbound delegation attempts to trusted request context, never another approval's tenant", () => {
+  const identity = { issuer: "https://identity.example.test", subject: { type: "service_account" as const, id: "test-service" },
+    clientId: "example-service", expiresAt: 10 ** 10 };
+  emitDelegationAudit("check", identity, undefined, "approval-1", "DELEGATION_BINDING_MISMATCH", { tenantId: "primary" });
+  expect(mockWrite.mock.calls[0][0]).toMatchObject({ tenant_id: "primary", subject_ref: "service_account:test-service" });
+  expect(mockWrite.mock.calls[0][0]).not.toHaveProperty("delegation");
 });
 
 describe("buildGrantEvent — policy-change audit conformance", () => {

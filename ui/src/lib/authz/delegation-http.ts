@@ -10,7 +10,7 @@ import {
   DELEGATION_MAX_LIFETIME_MS, DELEGATION_MAX_SCOPE, delegationSnapshot,
   type DelegatedPermission, type DelegationIdentity, type DelegationIntent,
 } from "./delegation-contract";
-import { HttpAuthzError, isValidId, metaErrorResponse, parseAction, parseResource } from "./http";
+import { HttpAuthzError, decisionContext, isValidId, metaErrorResponse, parseAction, parseResource } from "./http";
 
 const INVALID_TOKEN_CODES = new Set([
   "ERR_JWT_EXPIRED", "ERR_JWT_CLAIM_VALIDATION_FAILED", "ERR_JWS_SIGNATURE_VERIFICATION_FAILED",
@@ -52,11 +52,14 @@ async function body(request: NextRequest): Promise<unknown> {
   try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); }
   catch { return invalid("Invalid JSON"); }
 }
-async function authenticate(request: NextRequest, serviceOnly: boolean, approvalOnly: boolean): Promise<DelegationIdentity> {
+async function authenticate(request: NextRequest, serviceOnly: boolean, approvalOnly: boolean): Promise<{
+  identity: DelegationIdentity; tenantId?: string;
+}> {
   const issuer = process.env.OIDC_ISSUER?.trim();
   if (!issuer) throw new HttpAuthzError(503, "AUTHZ_UNAVAILABLE", "Platform issuer is not configured");
   const authorization = request.headers.get("authorization");
   let identity: DelegationIdentity;
+  let tenantId: string | undefined;
   if (authorization !== null) {
     const token = /^Bearer (\S+)$/.exec(authorization)?.[1];
     if (!token || token.length > 16384) throw new HttpAuthzError(401, "NOT_AUTHENTICATED", "A valid platform bearer is required");
@@ -76,6 +79,7 @@ async function authenticate(request: NextRequest, serviceOnly: boolean, approval
       throw new HttpAuthzError(403, "FORBIDDEN", "Same-origin session requests are required");
     }
     const { session } = await getAuthenticatedUser(request);
+    tenantId = decisionContext(session).tenantId;
     if (!("principalType" in session) || session.principalType !== "oidc_user" ||
       ("isServiceAccount" in session && session.isServiceAccount) || !isValidId(session.sub)) {
       throw new HttpAuthzError(401, "NOT_AUTHENTICATED", "A canonical signed-in user is required");
@@ -88,15 +92,15 @@ async function authenticate(request: NextRequest, serviceOnly: boolean, approval
   }
   if (identity.expiresAt * 1000 <= Date.now()) throw new HttpAuthzError(401, "NOT_AUTHENTICATED", "Identity expired");
   if (serviceOnly && identity.subject.type !== "service_account") throw new HttpAuthzError(403, "FORBIDDEN", "A service identity is required");
-  return identity;
+  return { identity, tenantId };
 }
 
 export async function handleDelegation(request: NextRequest, operation: "create" | "inspect" | "revoke" | "check", id?: string): Promise<NextResponse> {
   const correlationId = randomUUID(); // Caller-supplied trace IDs are not provenance.
   let response: NextResponse;
   try {
-    const identity = await authenticate(request, operation === "check", operation === "create" || operation === "revoke");
-    const ctx = { caller: identity.subject, correlationId };
+    const { identity, tenantId } = await authenticate(request, operation === "check", operation === "create" || operation === "revoke");
+    const ctx = { caller: identity.subject, correlationId, tenantId };
     if (operation !== "create" && (!id || !REFERENCE_PATTERN.test(id))) {
       return invalid("Invalid delegation reference");
     }

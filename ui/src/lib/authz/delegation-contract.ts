@@ -19,6 +19,8 @@ export interface DelegationRecord extends DelegationIntent {
   created_at: string;
   revoked_at: string | null;
   version: number;
+  /** Audit attribution captured at approval; absent on pre-attribution records. */
+  tenant_id?: string;
 }
 /** Safe approval snapshot, not a token or proof that a job actually executed. */
 export interface DelegationSnapshot extends DelegationIntent {
@@ -55,6 +57,8 @@ export interface DelegationApproval {
   effectiveSubject: { type: "user"; id: string };
   evidence: DelegationEvidence;
   approval: DelegationSnapshot;
+  /** Persisted approval attribution, not a caller-supplied permission claim. */
+  auditTenantId?: string;
 }
 export interface DelegationAuthority extends DelegationApproval {
   issuer: string;

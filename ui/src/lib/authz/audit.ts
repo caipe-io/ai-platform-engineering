@@ -306,7 +306,7 @@ export function emitDelegationAudit(
   try {
     getAuditClient().append({
       audit_event_id: randomUUID(), ts: new Date(), type: operation === "check" ? "cas_decision" : "cas_delegation",
-      tenant_id: process.env.TENANT_ID ?? "default", component: "cas", source: "cas",
+      tenant_id: authority?.auditTenantId ?? ctx.tenantId ?? process.env.TENANT_ID ?? "default", component: "cas", source: "cas",
       actor_ref: principalRef(identity.subject.type, identity.subject.id),
       subject_ref: principalRef(subject.type, subject.id), subject_hash: hashSubject(subject.id),
       action: permission?.action ?? operation, resource_ref: permission ? `${permission.resource.type}:${permission.resource.id}` : `delegation:${id}`,
