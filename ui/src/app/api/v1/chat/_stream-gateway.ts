@@ -54,8 +54,17 @@ export async function dispatchChatStream(
 
   if (operation === "status") return NextResponse.json({ error: "Status is not available for this runtime" }, { status: 501, headers: { "X-Harness-History-Owner": "client" } });
   const config = getDynamicAgentsConfig();
-  if (config instanceof NextResponse) return config;
+  if (config instanceof NextResponse) {
+    config.headers.set("X-Harness-History-Owner", "client");
+    return config;
+  }
   const url = `${config.dynamicAgentsUrl}/api/v1/chat/stream/${operation}`;
   const proxy = operation === "cancel" ? proxyJSONRequest : proxySSEStream;
-  return proxy(url, JSON.stringify(runtimeBody), auth, `[stream/${operation}]`);
+  const response = await proxy(url, JSON.stringify(runtimeBody), auth, `[stream/${operation}]`);
+  const headers = new Headers(response.headers);
+  // The retained native target establishes writer ownership even when its
+  // upstream fails before returning SSE. Do not turn a native error into an
+  // ambiguous Engine admission that blocks the user's next prompt.
+  headers.set("X-Harness-History-Owner", "client");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }

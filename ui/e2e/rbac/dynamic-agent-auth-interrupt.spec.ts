@@ -188,10 +188,14 @@ test.describe("mocked Dynamic Agent auth interruption UX", () => {
 
     await dismissReleaseUpgradeDialog(page);
 
-    await expect(page.getByText("Session expired - signing you in again...")).toBeVisible();
+    const interruptedTurnHint = page.getByText("Session expired - signing you in again...", { exact: true });
+    await expect(interruptedTurnHint).toHaveCount(1);
+    await expect(interruptedTurnHint).toBeVisible();
     await expect(
       page.getByText("This response failed to complete. No content was generated."),
     ).toHaveCount(0);
-    await expect(page.getByText("Session expired")).toBeVisible();
+    const signInToast = page.getByText(/^Session expired\s+Your session has expired\. Please sign in again\.$/);
+    await expect(signInToast).toHaveCount(1);
+    await expect(signInToast).toBeVisible();
   });
 });

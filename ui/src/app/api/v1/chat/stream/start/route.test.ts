@@ -129,6 +129,16 @@ it("uses Dynamic Agents when no installed app claims the assistant", async () =>
   expect(mockDynamicStream).toHaveBeenCalledTimes(1);
 });
 
+it.each([500, 503])("retains native writer ownership and backend error detail on HTTP %s", async status => {
+  mockLoadApps.mockReturnValue([]);
+  mockDynamicStream.mockResolvedValue(new Response("ValidationException: invalid tool input schema", { status }));
+  const response = await POST(request());
+  expect(response.status).toBe(status);
+  expect(response.headers.get("X-Harness-History-Owner")).toBe("client");
+  expect(await response.text()).toBe("ValidationException: invalid tool input schema");
+  expect(mockEngineStream).not.toHaveBeenCalled();
+});
+
 const operations = [["start", POST], ["resume", RESUME], ["cancel", CANCEL], ["status", STATUS]] as const;
 
 it.each(operations)("requires signed Webex context for app %s", async (operation, handler) => {

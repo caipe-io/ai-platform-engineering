@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { apiClient } from "@/lib/api-client";
+import { StreamError } from "@/lib/streaming";
 import type { ExternalChatActivity } from "@/store/chat-store";
 import type { ChatMessage, Conversation } from "@/types/a2a";
 import { ChatPanel } from "../DynamicAgentChatPanel";
@@ -337,6 +338,19 @@ describe("durable execution handoff", () => {
     expect(mockStreamMessage).toHaveBeenCalledTimes(1);
     expect(mockConversation.messages.filter(m => m.admissionPending)).toHaveLength(0);
     expect(mockConversation.messages.at(-1)?.id).toBe(admission.assistantMessageId);
+  });
+
+  it("keeps an unconfirmed backend error visible while holding its writer, then releases only after native confirmation", async () => {
+    const backendError = "ValidationException: input_schema does not support oneOf";
+    mockStreamMessage.mockImplementationOnce(async () => { mockRecovery = true; throw new StreamError(backendError, 500); });
+    mockReconnect.mockImplementationOnce(async (_params, callbacks) => { callbacks.onClientHistory(); });
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Retry this prompt" })[0]);
+    await waitFor(() => expect(mockConversation.messages.at(-1)).toEqual(expect.objectContaining({ error: backendError, admissionPending: true })));
+    expect(mockChatState.saveMessagesToServer).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockConversation.messages.at(-1)).toEqual(expect.objectContaining({ error: backendError, admissionPending: false })), { timeout: 5000 });
+    expect(mockChatState.saveMessagesToServer).toHaveBeenCalledWith("chat-1");
+    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
   });
 
   it.each(["form", "tool"])("reattaches a consumed %s decision after an acknowledgement transport failure", async kind => {

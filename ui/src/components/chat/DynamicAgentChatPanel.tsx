@@ -1389,7 +1389,7 @@ export function ChatPanel({
     callbacks.onClientHistory = () => {
       onClientHistory?.();
       if (held) {
-        useChatStore.getState().updateMessage(convId, held.id, { error: "The connection was interrupted. Retry when ready.", turnStatus: "interrupted" });
+        useChatStore.getState().updateMessage(convId, held.id, { error: held.error || "The connection was interrupted. Retry when ready.", turnStatus: "interrupted" });
         void useChatStore.getState().saveMessagesToServer(convId);
       }
     };
@@ -1409,14 +1409,14 @@ export function ChatPanel({
       void adapter.reconnectStream!({ conversationId: convId, agentId }, callbacks).then(() => {
         if (loopState.serverOwned) finalizeStreamLoop(convId, loopState.messageId!, loopState);
         else if (held && !loopState.admissionResolved) useChatStore.getState().updateMessage(convId, held.id,
-          { error: "Admission is not confirmed. Reconnect to check the existing run; the prompt has not been resent." });
+          { error: held.error || "Admission is not confirmed. Reconnect to check the existing run; the prompt has not been resent." });
       }).catch(error => {
         if (loopState.serverOwned) {
           useChatStore.getState().setConversationStreaming(convId, null);
           setRecoveryEpoch(epoch => epoch + 1);
         } else {
           if (held) useChatStore.getState().updateMessage(convId, held.id,
-            { error: "Admission could not be checked. Reconnect when the service is available; the prompt has not been resent." });
+            { error: held.error || "Admission could not be checked. Reconnect when the service is available; the prompt has not been resent." });
           console.warn("[ChatPanel] Could not check retained execution", error);
         }
       });
@@ -1553,7 +1553,10 @@ export function ChatPanel({
         buildStreamCallbacks(convId, assistantMsgId, loopState, toolCallIdToName).onClientHistory?.();
       }
       if (!loopState.admissionResolved) {
-        updateMessage(convId, assistantMsgId, { error: "Connection lost before admission was confirmed. Checking the existing run.", turnStatus: "interrupted" });
+        updateMessage(convId, assistantMsgId, {
+          error: error instanceof StreamError ? error.message : "Connection lost before admission was confirmed. Checking the existing run.",
+          turnStatus: "interrupted",
+        });
         setConversationStreaming(convId, null);
         setRecoveryEpoch(epoch => epoch + 1);
         return;

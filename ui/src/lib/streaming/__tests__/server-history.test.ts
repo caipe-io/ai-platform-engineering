@@ -53,6 +53,14 @@ describe.each([['agui', () => new AGUIStreamAdapter()], ['custom', () => new Cus
     await expect(make().streamMessage(params, { onRunAdmission: admitted })).rejects.toThrow();
     expect(admitted).toHaveBeenCalledTimes(1);
   });
+  it('surfaces a native backend failure with client ownership before rejecting', async () => {
+    const confirmed = jest.fn();
+    jest.spyOn(global, 'fetch').mockResolvedValue(new Response('ValidationException: invalid tool schema', {
+      status: 500, headers: { 'X-Harness-History-Owner': 'client' },
+    }));
+    await expect(make().streamMessage(params, { onClientHistory: confirmed })).rejects.toThrow('ValidationException: invalid tool schema');
+    expect(confirmed).toHaveBeenCalledTimes(1);
+  });
   it('leaves legacy ownership unchanged and forwards input idempotency', async () => {
     const fetcher = jest.spyOn(global, 'fetch').mockResolvedValue(new Response(''));
     const admitted = jest.fn();
