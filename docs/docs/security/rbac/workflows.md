@@ -1617,9 +1617,15 @@ sequenceDiagram
 
 Dynamic Agents no longer perform in-process OpenFGA checks for agent invocation. `require_agent_use_permission()` in `ai_platform_engineering/dynamic_agents/src/dynamic_agents/auth/authz.py` is a thin PEP:
 
-1. Read `sub` from the already-validated bearer (signature verified upstream).
-2. `POST {AUTHZ_SERVICE_URL}/api/authz/v1/decisions` with `{ subject, resource: agent:<id>, action: use }`, forwarding the same OBO bearer so CAS **subject-binding** (`caller == subject`) holds.
-3. **Allow** on `decision: ALLOW`; **403** on deny; **same 4xx status** when CAS returns a definitive 4xx (e.g. `403` subject-binding mismatch, `400` bad request, `401` — `reason: pdp_rejected`, `action: contact_admin`); **503** when CAS returns a 5xx, is unreachable, or `AUTHZ_SERVICE_URL` is unset (fail closed, `reason: pdp_unavailable`, `action: retry`). This ensures a misconfigured subject binding surfaces as a real denial signal rather than a misleading "temporarily unavailable".
+1. Validate the bearer locally; forward it unchanged to the BFF.
+2. For self-access, `POST {AUTHZ_SERVICE_URL}/api/access/check` with `{ resource: {type: agent, id}, action: use }`. CAS authenticates the bearer and resolves the subject; no client-asserted subject or admin flag is sent.
+3. **Allow** only on a completed `decision: ALLOW`; **403** on a completed denial; **401 / sign_in** for invalid authentication; **400 / fix_request** for invalid input. CAS credential/binding rejection remains **403 / contact_admin**. Network errors, incompatible/malformed responses, rate limiting and upstream failures become **503 / retry**, never an invented permission denial.
+
+Service-account execution with an explicit owner retains `/api/authz/v1/decisions`
+and the existing CAS `can_audit` cross-subject gate. This includes chat
+start/resume/invoke owner context and autonomous entitlement checks. The
+self-check API gains no delegation power; retiring the older endpoint depends
+on [trusted delegation #2891](https://github.com/caipe-io/ai-platform-engineering/issues/2891).
 
 Workflow step execution in the BFF orchestrates agents in-process (`/api/v1/chat/stream/start` per step), so per-step agent-use checks run through the BFF CAS path rather than this DA HTTP client.
 

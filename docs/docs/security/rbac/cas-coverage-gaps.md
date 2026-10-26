@@ -39,7 +39,7 @@ intentional exception below.
 | Surface | CAS entry point | Notes |
 |---|---|---|
 | BFF resource decisions | `ui/src/lib/rbac/resource-authz.ts` | `requireResourcePermission`, `filterResourcesByPermission`, and related helpers use CAS by default. A test-injected `check` function deliberately bypasses CAS. |
-| Dynamic Agents chat execution | `ai_platform_engineering/dynamic_agents/src/dynamic_agents/auth/authz.py` | Sends the caller-bound decision to `/api/authz/v1/decisions` and fails closed if CAS is unavailable. |
+| Dynamic Agents chat execution | `ai_platform_engineering/dynamic_agents/src/dynamic_agents/auth/authz.py` | Self-access uses `/api/access/check`; CAS resolves the caller from its bearer. Explicit service-account/owner delegation retains `/api/authz/v1/decisions` pending #2891. Both paths fail closed. |
 | Workflow authorization | `ui/src/lib/server/workflow-cas-authz.ts` | Uses in-process `authorize` and `authorizeMany`. |
 | Shareable-resource reconciliation | `ui/src/lib/rbac/openfga-owned-resources-reconcile.ts` | Agent, MCP server, credential, and other migrated lifecycles call `reconcileTupleDiff`. |
 | CAS tuple reconciliation | `ui/src/lib/authz/reconcile.ts` | Writes the OpenFGA diff, invalidates the CAS decision cache, and emits a reconciliation audit event. |

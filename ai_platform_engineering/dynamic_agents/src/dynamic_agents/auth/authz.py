@@ -9,9 +9,9 @@ checks and writes no audit of its own.
 Config:
     AUTHZ_SERVICE_URL   base URL of the authz service (the BFF/CAS), e.g.
                         http://caipe-ui:3000. DA POSTs to
-                        {AUTHZ_SERVICE_URL}/api/authz/v1/decisions.
-
-assisted-by claude code claude-sonnet-4-6
+                        {AUTHZ_SERVICE_URL}/api/access/check for self-access.
+                        Delegated owner checks retain /api/authz/v1/decisions
+                        temporarily; delete it before CAS migration is complete.
 """
 
 from __future__ import annotations
@@ -34,7 +34,10 @@ logger = logging.getLogger(__name__)
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 # CAS decision endpoint, relative to AUTHZ_SERVICE_URL.
-_DECISIONS_PATH = "/api/authz/v1/decisions"
+_CHECK_PATH = "/api/access/check"
+# Remove this path and its BFF route under #2891 before CAS epic #2487 is complete.
+# No new consumers, compatibility aliases or fallback to this endpoint.
+_LEGACY_DELEGATED_DECISIONS_PATH = "/api/authz/v1/decisions"
 
 
 def _error_detail(error: str, code: str, reason: str, action: str) -> dict[str, Any]:
@@ -54,11 +57,10 @@ def _subject_from_token(token: str) -> tuple[str, str] | None:
     signature is verified upstream (gateway / middleware); here we only decode the
     claims.
 
-    A token is a service account iff its `preferred_username` starts with
-    `service-account-`. This MUST match the BFF (`jwt-validation.ts`) and the
-    bridge so the subject is namespaced consistently — CAS's
-    subject-binding compares this against its own caller resolution, so sending
-    `user` for a service-account token fails the bind and 403s."""
+    The service-account classification is needed for existing delegated-owner
+    routing and signed gateway context. Self-access decisions send no subject;
+    the BFF independently validates the bearer and resolves its identity.
+    """
     parts = token.split(".")
     if len(parts) < 2:
         return None
@@ -91,9 +93,11 @@ def _organization_key() -> str:
 
 
 class _CasMetaError(Exception):
-    """A CAS non-200 response. Carries the upstream status so the caller can
-    distinguish a definitive 4xx (not-retriable — bad request / unauthorized /
-    forbidden binding) from a transient 5xx or network failure (retriable)."""
+    """Preserve the upstream status for authentication/request rejections.
+
+    Other statuses indicate an unavailable or incompatible decision endpoint,
+    not evidence that the requested permission was denied.
+    """
 
     def __init__(self, status_code: int) -> None:
         super().__init__(f"CAS decision endpoint returned HTTP {status_code}")
@@ -101,21 +105,20 @@ class _CasMetaError(Exception):
 
 
 async def _decide_action(
-    subject_type: str,
-    subject: str,
     resource_type: str,
     resource_id: str,
     bearer: str,
     action: str,
+    delegated_user_sub: str | None = None,
 ) -> bool:
-    """Ask CAS whether ``subject`` may perform ``action`` on a resource.
+    """Ask CAS whether the bearer may perform ``action`` on a resource.
 
-    ``action`` is a CAS verb (for example ``use`` or ``automate``). Forwards
-    the caller's bearer (OBO) so CAS's
-    subject-binding (caller == subject) is satisfied; CAS evaluates the capability
-    and the org-admin bypass. A DENY is a 200 with ``decision: DENY``; any non-200
-    raises ``_CasMetaError`` (carrying the upstream status) and missing config
-    raises ``RuntimeError`` — either way the caller fails closed."""
+    Self-checks send no subject: CAS resolves it from the original bearer.
+    Explicit owner delegation stays on the existing subject-bound endpoint;
+    it must not gain cross-subject power through the self-check API.
+    Only a completed ALLOW/DENY is a decision; transport/protocol failures
+    fail closed as unavailable rather than inventing a policy denial.
+    """
     base = _authz_service_url()
     if not base:
         raise RuntimeError("AUTHZ_SERVICE_URL is not configured")
@@ -124,20 +127,23 @@ async def _decide_action(
     if traceparent:
         headers["traceparent"] = traceparent
     body = {
-        "subject": {"type": subject_type, "id": subject},
         "resource": {"type": resource_type, "id": resource_id},
         "action": action,
     }
+    path = _CHECK_PATH
+    if delegated_user_sub is not None:
+        path = _LEGACY_DELEGATED_DECISIONS_PATH
+        body["subject"] = {"type": "user", "id": delegated_user_sub}
     async with httpx.AsyncClient(timeout=5.0) as client:
-        response = await client.post(f"{base}{_DECISIONS_PATH}", headers=headers, json=body)
+        response = await client.post(f"{base}{path}", headers=headers, json=body)
     if response.status_code != 200:
         raise _CasMetaError(response.status_code)
-    return response.json().get("decision") == "ALLOW"
-
-
-async def _decide_agent_use(subject_type: str, subject: str, agent_id: str, bearer: str) -> bool:
-    """Back-compat thin alias for the ``use`` action."""
-    return await _decide_action(subject_type, subject, "agent", agent_id, bearer, "use")
+    result = response.json()
+    if not isinstance(result, dict) or result.get("decision") not in ("ALLOW", "DENY"):
+        raise ValueError("CAS returned an invalid decision response")
+    if result.get("reason") == "AUTHZ_UNAVAILABLE":
+        raise ValueError("CAS did not complete the authorization decision")
+    return result["decision"] == "ALLOW"
 
 
 async def _require_action(
@@ -173,12 +179,12 @@ async def _require_action(
     decoded = _subject_from_token(token)
     if not decoded or not _is_valid_id(decoded[1]):
         _raise_authz(401, "Bearer token subject could not be verified", "bearer_invalid", "bearer_invalid", "sign_in")
-    subject_type, subject = decoded
+    delegated_subject = None
 
     # On-behalf-of delegation (autonomous / unattended runs). Only a service
     # principal may assert the owner subject; a user bearer is always evaluated
     # as itself so it cannot impersonate another user.
-    if subject_type == "service_account" and delegated_user_sub:
+    if decoded[0] == "service_account" and delegated_user_sub:
         if not _is_valid_id(delegated_user_sub):
             _raise_authz(
                 400,
@@ -187,23 +193,22 @@ async def _require_action(
                 "invalid_request",
                 "fix_request",
             )
-        subject_type, subject = "user", delegated_user_sub
+        delegated_subject = delegated_user_sub
 
     try:
         allowed = await _decide_action(
-            subject_type,
-            subject,
             resource_type,
             resource_id,
             token,
             action,
+            delegated_subject,
         )
     except _CasMetaError as exc:
-        # A definitive 4xx from CAS (e.g. 403 subject-binding, 400 bad request, 401)
-        # is not transient — surface it as the same status so the caller sees a
-        # real "denied / misconfigured" signal instead of a misleading
-        # "retry later". Transient 5xx (and anything else below) stays 503/retry.
-        if 400 <= exc.status_code < 500:
+        if exc.status_code == 401:
+            _raise_authz(401, "Bearer token is invalid or expired", "bearer_invalid", "bearer_invalid", "sign_in")
+        if exc.status_code == 400:
+            _raise_authz(400, "Authorization request is invalid", "CAS_REJECTED", "invalid_request", "fix_request")
+        if exc.status_code == 403:
             logger.warning(
                 "CAS %s-%s rejected request for resource=%s: HTTP %s",
                 resource_type,

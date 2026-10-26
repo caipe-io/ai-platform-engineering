@@ -17,6 +17,10 @@ Small change PRs -> prebuild/feat/cas-authz -> draft integration PR -> main
 - Merge `main` into the integration branch periodically; do not rebase or force-push
   the shared branch. Refresh child branches when needed.
 - Keep deployment-specific configuration and identities out of this repository.
+- CAS completion requires deleting deprecated `POST /api/authz/v1/decisions`,
+  its client path and obsolete cross-subject delegation gate after migrating
+  remaining callers under #2891. Track removal in release validation #2895;
+  no new consumers, aliases, redirects, fallback or compatibility flag.
 
 ## Builds and testing
 

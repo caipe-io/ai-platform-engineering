@@ -139,6 +139,29 @@ The API documentation is available at:
 - Swagger UI: http://localhost:8001/docs
 - ReDoc: http://localhost:8001/redoc
 
+### Runtime authorization
+
+Set `AUTHZ_SERVICE_URL` to the BFF origin. Start, resume and invoke validate the
+bearer locally, then ask CAS before loading the agent or starting runtime work:
+
+```text
+Caller bearer → Dynamic Agents → BFF /api/access/check → CAS → OpenFGA
+                 validates       resolves identity      decides + audits
+                 and enforces
+```
+
+- Self-check body: `{"resource":{"type":"agent","id":"example"},"action":"use"}`.
+  The original bearer is forwarded; no user ID, admin flag or grants are asserted.
+- `401`: sign in; permission denial `403`: contact an admin; unavailable/malformed
+  decisions `503`: retry. No local authorization fallback or decision cache.
+- Service-account runs with an explicit owner still use `/api/authz/v1/decisions`
+  and its existing cross-subject permission gate temporarily. **This deprecated
+  endpoint must be deleted before CAS migration is complete**, after trusted
+  delegation work ([#2891](https://github.com/caipe-io/ai-platform-engineering/issues/2891)).
+  No new consumers or compatibility aliases; the self-check API cannot impersonate another user.
+- Conversation ownership, lifecycle checks and downstream tool enforcement remain
+  separate boundaries. `DEBUG=true` does not bypass the execution permission gate.
+
 ## Configuration Reference
 
 ### Environment Variables

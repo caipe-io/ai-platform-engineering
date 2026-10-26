@@ -55,10 +55,11 @@ def secured_app(monkeypatch: pytest.MonkeyPatch, signing_key: rsa.RSAPrivateKey)
 
     def cas(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
-        # CAS sees the same signed bearer and subject, never the identity header.
+        # CAS resolves identity from the signed bearer, never the identity header.
         bearer = request.headers["authorization"][7:]
         claims = jwks_validate.validate_bearer_jwt(bearer)
-        assert body["subject"] == {"type": "user", "id": claims["sub"]}
+        assert request.url.path == "/api/access/check"
+        assert "subject" not in body
         state.decisions.append(body)
         allowed = body["action"] not in state.deny and (body["action"] != "manage" or claims["sub"] == "admin")
         return httpx.Response(state.cas_status.get(body["action"], 200), json={"decision": "ALLOW" if allowed else "DENY"})

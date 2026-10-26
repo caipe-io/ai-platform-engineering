@@ -59,9 +59,9 @@ async def test_autonomous_allowed_checks_organization_capability(monkeypatch):
         current_user_token.reset(token_ref)
 
     assert posts
-    _url, _headers, body = posts[-1]
+    url, _headers, body = posts[-1]
+    assert url.endswith("/api/access/check")
     assert body == {
-        "subject": {"type": "user", "id": "alice-sub"},
         "resource": {"type": "organization", "id": "caipe"},
         "action": "automate",
     }
@@ -101,7 +101,8 @@ async def test_autonomous_delegates_to_owner_subject_for_service_account(monkeyp
         current_user_token.reset(token_ref)
 
     assert posts
-    _url, _headers, body = posts[-1]
+    url, _headers, body = posts[-1]
+    assert url.endswith("/api/authz/v1/decisions")
     assert body["subject"] == {"type": "user", "id": "owner-uuid"}
     assert body["resource"] == {"type": "organization", "id": "caipe"}
     assert body["action"] == "automate"

@@ -22,6 +22,7 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
       - 'Makefile'
+      - '.github/workflows/tests-unit-tests.yml'
 
 permissions:
   contents: read
@@ -32,6 +33,27 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  run-dynamic-agents-authz-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+      - name: Dynamic Agents authorization boundaries
+        run: |
+          uv sync --project ai_platform_engineering/dynamic_agents --extra dev --frozen
+          uv run --project ai_platform_engineering/dynamic_agents --no-sync pytest -q \
+            ai_platform_engineering/dynamic_agents/tests/test_authz.py \
+            ai_platform_engineering/dynamic_agents/tests/test_authz_schedule.py \
+            ai_platform_engineering/dynamic_agents/tests/test_chat_access_boundary.py \
+            ai_platform_engineering/dynamic_agents/tests/test_chat_pdp_gate.py \
+            ai_platform_engineering/dynamic_agents/tests/test_chat_schedule_gate.py \
+            ai_platform_engineering/dynamic_agents/tests/test_autonomous_follow_up_security.py \
+            ai_platform_engineering/dynamic_agents/tests/test_mcp_client_token_forwarding.py
+
   run-tests:
     if: github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]'
     runs-on: ubuntu-latest

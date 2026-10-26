@@ -260,7 +260,7 @@ request → policy plan → publication_requests(pending)
 
 Slack and Webex bot channel/space team resolution uses Mongo mappings (`channel_team_mappings`, `webex_space_team_mappings`) to find the owning CAIPE team. Membership prechecks are OpenFGA-first: the bot checks `user:<sub> member team:<slug>` and only falls back to legacy `teams.members` when the PDP is not configured or unavailable. A negative OpenFGA decision denies the bot interaction before OBO so users get the friendly "not a member" response. (Phase 3 of spec 2026-05-24-derive-team-from-channel removed the per-team OBO scope mint — the bot now mints a team-agnostic OBO token and the channel→team mapping is the sole source of team identity downstream.)
 
-When a Slack channel route runs **as a service account** (the route's `execution_identity.mode = service_account`), the bot mints a service-account OBO token (`preferred_username = service-account-<clientId>`) and dispatches the agent under it. Dynamic Agents' CAS agent-use check (`require_agent_use_permission`) must namespace that caller as `service_account:<sub>` — not `user:<sub>` — when it POSTs to `/api/authz/v1/decisions`, because the BFF's subject-binding compares the decision `subject` against its own caller resolution (`service-account-` prefix ⇒ `service_account`). Sending `user` for a service-account token fails the bind, returning a meta `403` that the PEP fails closed into a `503`. The subject type is therefore derived from the token's `preferred_username` consistently across the BFF (`jwt-validation.ts`), the Dynamic Agents CAS client (`auth/authz.py`), and the bridge.
+When a Slack channel route runs **as a service account** (the route's `execution_identity.mode = service_account`), the bot mints a service-account OBO token (`preferred_username = service-account-<clientId>`) and dispatches the agent under it. For self-access, Dynamic Agents forwards that bearer to `/api/access/check` without asserting a subject. The BFF validates and classifies the caller as `service_account:<sub>`; Dynamic Agents does not repeat that mapping in its decision request. Explicit service-account/owner delegation still uses `/api/authz/v1/decisions` and its existing cross-subject gate, pending the trusted-delegation migration.
 
 RAG accepts both browser user tokens and ingestor client-credentials tokens from Keycloak. For local Docker Compose, `OIDC_DISCOVERY_URL` and `INGESTOR_OIDC_DISCOVERY_URL` may be either the realm base URL (`http://keycloak:7080/realms/caipe`) or the full `.well-known/openid-configuration` URL; the server normalizes both forms before fetching metadata. Keycloak service-account tokens use `preferred_username=service-account-<client>`, so RAG treats that token shape as machine-to-machine and assigns `RBAC_CLIENT_CREDENTIALS_ROLE`; human tokens are identity-only and use OpenFGA for authorization.
 
@@ -1782,22 +1782,26 @@ Inside `get_current_user()`:
 8. Return UserContext { email, name, groups, access_token, obo_jwt }
 ```
 
-### Agent-Level Authorization (OpenFGA Execution Gate)
+### Agent-Level Authorization (CAS Execution Gate)
 
-After the bearer token is validated by `JwtAuthMiddleware`, Dynamic Agents
-decodes the already-validated JWT payload only to extract `sub` and repeats the
-same OpenFGA check used by the Web UI backend:
+After `JwtAuthMiddleware` validates the bearer, Dynamic Agents forwards it to
+the BFF's `/api/access/check`. CAS resolves the caller and makes the decision
+using the shared OpenFGA adapter. The runtime makes no direct OpenFGA call:
 
 ```text
-user:<sub> can_use agent:<agent_id>
+Dynamic Agents → /api/access/check → CAS → OpenFGA
+  enforces       resolves caller    decides + audits
 ```
 
 The runtime check runs before agent lookup, MCP server lookup, runtime cache
 creation, non-streaming invocation, or stream resume work. This second layer is
 required because the runtime must not trust the Web UI backend as the only enforcement
-point. Denials return `403 / pdp_denied`; OpenFGA outages return
+point. Denials return `403 / pdp_denied`; decision dependency failures return
 `503 / pdp_unavailable`; missing or malformed bearer context returns a
-structured `401`.
+structured `401` with a sign-in action. No runtime decision cache or legacy
+endpoint fallback is used. Scheduled service-account runs with an explicit
+owner keep the existing subject-bound endpoint until trusted delegation is
+migrated; the self-check API cannot request another user's permissions.
 
 The older visibility-rule and CEL authorization paths are no longer the
 authoritative execution gate for start, invoke, and resume. Downstream tool

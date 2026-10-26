@@ -1,4 +1,6 @@
-// assisted-by Codex Codex-sonnet-4-6
+// Deprecated migration-only API: delete this route under #2891 before CAS #2487
+// is complete. Migrate remaining delegated callers; do not add new consumers,
+// compatibility aliases or redirects to preserve this endpoint.
 //
 // POST /api/authz/v1/decisions — single authorization decision.
 // Verifies the caller JWT, enforces subject-binding, evaluates via CAS.

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import base64
 import json
+from typing import Any
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
+from dynamic_agents.auth import authz
 from dynamic_agents.auth.token_context import current_traceparent, current_user_token
 
 
@@ -60,20 +63,17 @@ async def test_allows_when_cas_allows(monkeypatch):
 
     assert posts
     url, headers, body = posts[-1]
-    assert url == "http://caipe-ui:3000/api/authz/v1/decisions"
+    assert url == "http://caipe-ui:3000/api/access/check"
     assert headers["Authorization"].startswith("Bearer ")
     assert body == {
-        "subject": {"type": "user", "id": "alice-sub"},
         "resource": {"type": "agent", "id": "agent-1"},
         "action": "use",
     }
 
 
 @pytest.mark.asyncio
-async def test_service_account_token_sends_service_account_subject(monkeypatch):
-    """A service-account OBO token (preferred_username starting with
-    `service-account-`) must be sent to CAS as a `service_account` subject so its
-    subject-binding (caller == subject) holds; sending `user` 403s the call."""
+async def test_service_account_self_check_leaves_subject_resolution_to_cas(monkeypatch):
+    """Forward the original bearer without duplicating CAS subject resolution."""
     from dynamic_agents.auth import authz
 
     monkeypatch.setenv("AUTHZ_SERVICE_URL", "http://caipe-ui:3000")
@@ -88,8 +88,10 @@ async def test_service_account_token_sends_service_account_subject(monkeypatch):
         current_user_token.reset(token_ref)
 
     assert posts
-    _url, _headers, body = posts[-1]
-    assert body["subject"] == {"type": "service_account", "id": "sa-sub"}
+    url, headers, body = posts[-1]
+    assert url.endswith("/api/access/check")
+    assert headers["Authorization"] == f"Bearer {token}"
+    assert "subject" not in body
 
 
 @pytest.mark.asyncio
@@ -113,7 +115,9 @@ async def test_service_account_delegates_decision_to_owner_subject(monkeypatch):
         current_user_token.reset(token_ref)
 
     assert posts
-    _url, _headers, body = posts[-1]
+    url, headers, body = posts[-1]
+    assert url.endswith("/api/authz/v1/decisions")
+    assert headers["Authorization"] == f"Bearer {token}"
     assert body["subject"] == {"type": "user", "id": "owner-uuid"}
 
 
@@ -135,7 +139,8 @@ async def test_user_bearer_cannot_delegate_to_another_subject(monkeypatch):
     finally:
         current_user_token.reset(token_ref)
 
-    assert posts[-1][2]["subject"] == {"type": "user", "id": "alice-sub"}
+    assert posts[-1][0].endswith("/api/access/check")
+    assert "subject" not in posts[-1][2]
 
 
 @pytest.mark.asyncio
@@ -177,7 +182,8 @@ async def test_service_account_without_delegated_sub_stays_service_account(monke
     finally:
         current_user_token.reset(token_ref)
 
-    assert posts[-1][2]["subject"] == {"type": "service_account", "id": "sa-sub"}
+    assert posts[-1][0].endswith("/api/access/check")
+    assert "subject" not in posts[-1][2]
 
 
 @pytest.mark.asyncio
@@ -194,7 +200,7 @@ async def test_strips_trailing_slash_from_service_url(monkeypatch):
     finally:
         current_user_token.reset(token_ref)
 
-    assert posts[-1][0] == "http://caipe-ui:3000/api/authz/v1/decisions"
+    assert posts[-1][0] == "http://caipe-ui:3000/api/access/check"
 
 
 @pytest.mark.asyncio
@@ -235,8 +241,12 @@ async def test_fails_closed_on_5xx(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cas_status", [400, 401, 403])
-async def test_cas_4xx_surfaces_as_same_status_not_503(monkeypatch, cas_status):
+@pytest.mark.parametrize(("cas_status", "reason", "action"), [
+    (400, "invalid_request", "fix_request"),
+    (401, "bearer_invalid", "sign_in"),
+    (403, "pdp_rejected", "contact_admin"),
+])
+async def test_cas_4xx_surfaces_as_same_status_not_503(monkeypatch, cas_status, reason, action):
     """A definitive 4xx from CAS (e.g. 403 subject-binding) is not transient, so
     it surfaces as the same status with a non-retriable reason — not 503/retry."""
     from dynamic_agents.auth import authz
@@ -252,7 +262,8 @@ async def test_cas_4xx_surfaces_as_same_status_not_503(monkeypatch, cas_status):
         current_user_token.reset(token_ref)
 
     assert exc.value.status_code == cas_status
-    assert exc.value.detail["reason"] == "pdp_rejected"
+    assert exc.value.detail["reason"] == reason
+    assert exc.value.detail["action"] == action
 
 
 @pytest.mark.asyncio
@@ -333,4 +344,78 @@ async def test_invalid_agent_id_returns_400_without_calling_cas(monkeypatch):
     finally:
         current_user_token.reset(token_ref)
     assert exc.value.status_code == 400
-    assert exc.value.detail["code"] == "invalid_agent_id"
+    assert exc.value.detail["code"] == "invalid_resource_id"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [None, [{"decision": "ALLOW"}], {}, {"decision": "PERMIT"},
+    {"decision": "DENY", "reason": "AUTHZ_UNAVAILABLE"}])
+async def test_incomplete_decision_is_unavailable_not_a_policy_denial(
+    monkeypatch: pytest.MonkeyPatch, payload: Any,
+) -> None:
+    monkeypatch.setenv("AUTHZ_SERVICE_URL", "https://authz.example.test")
+    posts: list = []
+    monkeypatch.setattr(authz.httpx, "AsyncClient", _client(posts, _Resp(200, payload)))
+    ref = current_user_token.set(_fake_jwt({"sub": "test-user"}))
+    try:
+        with pytest.raises(HTTPException) as exc:
+            await authz.require_agent_use_permission("example")
+    finally:
+        current_user_token.reset(ref)
+    assert exc.value.status_code == 503
+    assert exc.value.detail["action"] == "retry"
+    assert len(posts) == 1  # No fallback to the old endpoint.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [404, 405, 408, 429, 500, 502])
+async def test_transport_or_contract_failure_is_unavailable(monkeypatch: pytest.MonkeyPatch, status: int) -> None:
+    monkeypatch.setenv("AUTHZ_SERVICE_URL", "https://authz.example.test")
+    monkeypatch.setattr(authz.httpx, "AsyncClient", _client([], _Resp(status)))
+    ref = current_user_token.set(_fake_jwt({"sub": "test-user"}))
+    try:
+        with pytest.raises(HTTPException) as exc:
+            await authz.require_agent_use_permission("example")
+    finally:
+        current_user_token.reset(ref)
+    assert exc.value.status_code == 503
+    assert exc.value.detail["reason"] == "pdp_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_each_execution_gets_a_fresh_decision(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AUTHZ_SERVICE_URL", "https://authz.example.test")
+    posts: list = []
+    response = _Resp(200, {"decision": "ALLOW"})
+    monkeypatch.setattr(authz.httpx, "AsyncClient", _client(posts, response))
+    ref = current_user_token.set(_fake_jwt({"sub": "test-user"}))
+    try:
+        await authz.require_agent_use_permission("example")
+        response._payload = {"decision": "DENY"}
+        with pytest.raises(HTTPException) as exc:
+            await authz.require_agent_use_permission("example")
+    finally:
+        current_user_token.reset(ref)
+    assert exc.value.status_code == 403
+    assert len(posts) == 2
+
+
+@pytest.mark.asyncio
+async def test_timeout_fails_closed_without_logging_the_bearer(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    class TimeoutClient(_client([], _Resp(200))):
+        async def post(self, url: str, **kwargs: Any) -> None:
+            raise httpx.ReadTimeout("CAS deadline exceeded")
+
+    monkeypatch.setenv("AUTHZ_SERVICE_URL", "https://authz.example.test")
+    monkeypatch.setattr(authz.httpx, "AsyncClient", TimeoutClient)
+    token = _fake_jwt({"sub": "test-user"})
+    ref = current_user_token.set(token)
+    try:
+        with pytest.raises(HTTPException) as exc:
+            await authz.require_agent_use_permission("example")
+    finally:
+        current_user_token.reset(ref)
+    assert exc.value.status_code == 503
+    assert token not in caplog.text
