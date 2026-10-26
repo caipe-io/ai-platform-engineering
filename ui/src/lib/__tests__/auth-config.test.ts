@@ -418,6 +418,7 @@ describe('auth-config', () => {
       expect(result.idToken).toBeUndefined()
       expect(result.refreshToken).toBe('rt')
       expect(result.expiresAt).toBe(now + 3600)
+      expect(result.email).toBe('user@example.com')
       expect(result.isAuthorized).toBe(true)
       expect(result.role).toBe('user')
       expect(result.groupsCheckedAt).toBeGreaterThanOrEqual(now)
@@ -757,6 +758,40 @@ describe('auth-config', () => {
     afterEach(() => {
       process.env = originalEnv
       fetchSpy.mockRestore()
+    })
+
+    it('preserves bootstrap-admin authorization when the refreshed ID token has no email claim', async () => {
+      process.env.BOOTSTRAP_ADMIN_EMAILS = 'bootstrap@example.com'
+      const now = Math.floor(Date.now() / 1000)
+      mockDecodeJwt.mockReturnValue({ groups: [] })
+
+      const result = await withRequiredGroup('required-group', async ({ authOptions }) => {
+        const jwt = authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>
+        const initial = await jwt({
+          token: {},
+          account: {
+            access_token: 'at',
+            refresh_token: 'rt',
+            expires_at: now + 3600,
+          },
+          profile: {
+            sub: 'bootstrap-sub',
+            email: 'bootstrap@example.com',
+            groups: [],
+          },
+        }) as Record<string, unknown>
+
+        return jwt({
+          token: {
+            ...initial,
+            expiresAt: now + 60,
+            groupsCheckedAt: now - 5 * 60 * 60,
+          },
+        })
+      }) as Record<string, unknown>
+
+      expect(result.email).toBe('bootstrap@example.com')
+      expect(result.isAuthorized).toBe(true)
     })
 
     it('should re-evaluate groups when 4+ hours have passed since last check', async () => {

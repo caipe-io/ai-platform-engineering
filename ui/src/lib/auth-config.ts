@@ -664,7 +664,19 @@ export const authOptions: NextAuthOptions = {
         token.canAccessDynamicAgents = canAccessDynamicAgents(groups);
         token.groupsCheckedAt = Math.floor(Date.now() / 1000);
 
-        const email = profileData.email as string | undefined;
+        const email =
+          typeof profileData.email === "string"
+            ? profileData.email
+            : typeof profileData.preferred_username === "string"
+              ? profileData.preferred_username
+              : typeof profileData.username === "string"
+                ? profileData.username
+                : undefined;
+        // Keep the identity used for bootstrap-admin evaluation in the JWT.
+        // Refreshed ID tokens do not always contain an email claim, so omitting
+        // it here could turn a bootstrap admin into an unauthorized session at
+        // the next four-hour group re-check.
+        if (email) token.email = email;
         const adminViaBootstrap = isBootstrapAdmin(email);
         const adminViaGroup = isAdminUser(groups);
         token.role = adminViaBootstrap || adminViaGroup ? 'admin' : 'user';
@@ -775,9 +787,14 @@ export const authOptions: NextAuthOptions = {
                 const groups = extractGroups(claims as Record<string, unknown>);
                 cacheOidcClaimGroups(token.sub as string | undefined, groups);
                 console.log(`[Auth] Re-evaluating groups from refreshed id_token (last checked ${Math.round((now - lastGroupCheck) / 3600)}h ago), count: ${groups.length}`);
+                const email =
+                  typeof claims.email === "string"
+                    ? claims.email
+                    : (refreshedToken.email as string | undefined) ??
+                      (token.email as string | undefined);
                 return {
                   ...refreshedToken,
-                  isAuthorized: hasRequiredGroup(groups),
+                  isAuthorized: hasRequiredGroup(groups) || isBootstrapAdmin(email),
                   role: refreshedToken.role === 'admin' ? 'admin' : 'user',
                   canViewAdmin: canViewAdminDashboard(groups),
                   groupsCheckedAt: now,
