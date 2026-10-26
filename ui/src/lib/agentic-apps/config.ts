@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { load as loadYaml } from "js-yaml";
 import {
   normalizeLegacyAgenticAppManifest,
+  resolveAgenticAppHttpPolicyAction,
   validateAgenticAppManifest,
   validateAgenticAppOwnership,
 } from "../../../app-sdk/agentic-app-manifest.mjs";
@@ -17,8 +18,10 @@ import type {
   LegacyAgenticAppManifest,
   AgenticAppPolicyAction,
   ConfiguredAgenticApp,
+  AgenticAppAgentStream,
 } from "@/types/agentic-app";
 import { MAX_AGENTIC_APP_REQUEST_BODY_BYTES } from "@/types/agentic-app";
+import { PLATFORM_AGENT_ID_PATTERN } from "@/lib/platform-default-agent";
 
 const APP_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const routingState = globalThis as typeof globalThis & {
@@ -27,10 +30,12 @@ const routingState = globalThis as typeof globalThis & {
 
 /** Latest successful validation at this deployment path; refresh by loading the catalog. */
 export function getAgenticAppRoutingSnapshot(): ConfiguredAgenticApp[] {
-  if (!isAgenticAppsEnabled()) return [];
+  const enabled = isAgenticAppsEnabled();
   const path = process.env.AGENTIC_APPS_CONFIG_PATH?.trim();
+  // Disabling launch must not turn a declared app agent into a native run.
+  if (!enabled && !path) return [];
   const snapshot = routingState.__caipeAgenticAppRoutingSnapshot;
-  if (!snapshot || snapshot.path !== path) return loadConfiguredAgenticApps();
+  if (!snapshot || snapshot.path !== path) return loadConfiguredAgenticApps(undefined, { includeDisabledIdentity: !enabled });
   return snapshot.apps;
 }
 
@@ -72,8 +77,10 @@ export function isAgenticAppsEnabled(): boolean {
  */
 export function loadConfiguredAgenticApps(
   configPath = process.env.AGENTIC_APPS_CONFIG_PATH?.trim(),
+  options: { includeDisabledIdentity?: boolean } = {},
 ): ConfiguredAgenticApp[] {
-  if (!isAgenticAppsEnabled()) return [];
+  if (!isAgenticAppsEnabled() && !options.includeDisabledIdentity) return [];
+  if (!isAgenticAppsEnabled() && !configPath) return [];
   if (!configPath) {
     throw new Error(
       "AGENTIC_APPS_CONFIG_PATH is required when AGENTIC_APPS_INSTALL_ENABLED=true",
@@ -88,6 +95,21 @@ export function loadConfiguredAgenticApps(
     "config",
   );
   const section = asRecord(root.agentic_apps, "agentic_apps");
+  const gatewayPolicies = new Map<string, NonNullable<ConfiguredAgenticApp["gatewayPolicy"]>>();
+  if (section.gateway_policies !== undefined) {
+    for (const [appId, value] of Object.entries(asRecord(section.gateway_policies, "agentic_apps.gateway_policies"))) {
+      const path = `agentic_apps.gateway_policies.${appId}`;
+      requiredAppId(appId, path);
+      const policy = asRecord(value, path);
+      assertKnownKeys(policy, ["browserContextPaths"], path);
+      const paths = policy.browserContextPaths === undefined ? []
+        : requiredStringArray(policy.browserContextPaths, `${path}.browserContextPaths`, true);
+      if (paths.length > 32 || new Set(paths).size !== paths.length || paths.some((route) => !isCanonicalApiPath(route))) {
+        throw new Error(`${path}.browserContextPaths requires at most 32 distinct canonical API paths`);
+      }
+      gatewayPolicies.set(appId, { browserContextPaths: paths });
+    }
+  }
   const rawPackages = asArray(section.packages ?? [], "agentic_apps.packages");
   const rawInstallations = asArray(
     section.installations,
@@ -263,15 +285,28 @@ export function loadConfiguredAgenticApps(
       );
     // Resource identities belong to the installation, not the publisher artifact.
     const assistantId = installation.bindings?.resources?.assistant;
-    if (assistantId && !APP_ID_PATTERN.test(assistantId)) throw new Error(`${path}: invalid assistant agent ID`);
+    if (assistantId && !PLATFORM_AGENT_ID_PATTERN.test(assistantId)) throw new Error(`${path}: invalid assistant agent ID`);
     if (assistantId && !manifest.ui.assistant) {
       throw new Error(`${path}: assistant binding requires a declared assistant`);
+    }
+    for (const stream of installation.bindings?.agentStreams ?? []) {
+      if (!manifest.runtime) throw new Error(`${path}: agent streams require an app runtime`);
+      for (const field of ["streamPath", "resumePath", "cancelPath", "statusPath"] as const) {
+        const route = stream[field];
+        if (!route) continue;
+        const policy = resolveAgenticAppHttpPolicyAction(manifest, "POST", route);
+        if (!manifest.api.mounts.some((mount) => route === mount || route.startsWith(`${mount}/`)) ||
+            !policy || policy.defaultEffect !== "allow") {
+          throw new Error(`${path}: agent ${field} requires a publisher-declared API mount and allowed POST policy`);
+        }
+      }
     }
     const boundManifest = assistantId ? {
       ...manifest,
       ui: { ...manifest.ui, assistant: { ...manifest.ui.assistant!, agentId: assistantId } },
     } : manifest;
-    return { manifest: boundManifest, installation };
+    return { manifest: boundManifest, installation,
+      ...(gatewayPolicies.has(appId) ? { gatewayPolicy: gatewayPolicies.get(appId) } : {}) };
   });
 
   const assistantIds = new Set<string>();
@@ -289,9 +324,13 @@ export function loadConfiguredAgenticApps(
       }
       serviceAccountClients.set(clientId, app.installation.appId);
     }
-    const assistantId = app.manifest.ui.assistant?.agentId;
-    if (assistantId && assistantIds.has(assistantId)) throw new Error("Multiple installed apps claim the assistant");
-    if (assistantId) assistantIds.add(assistantId);
+    const primaryId = app.manifest.ui.assistant?.agentId;
+    const ids = [...(primaryId ? [primaryId] : []),
+      ...(app.installation.bindings?.agentStreams ?? []).map((stream) => stream.agentId)];
+    for (const id of ids) {
+      if (assistantIds.has(id)) throw new Error("Multiple installed apps claim the assistant");
+      assistantIds.add(id);
+    }
     if (appIds.has(app.installation.appId)) {
       throw new Error(
         `Duplicate External App installation: ${app.installation.appId}`,
@@ -327,6 +366,10 @@ export function loadConfiguredAgenticApps(
         `External App "${app.installation.appId}" requires a runtime origin when enabled`,
       );
     }
+  }
+
+  for (const appId of gatewayPolicies.keys()) {
+    if (!appIds.has(appId)) throw new Error(`Gateway policy references an absent installation: ${appId}`);
   }
 
   validateAgenticAppOwnership(
@@ -371,6 +414,16 @@ export function getConfiguredAgenticApp(
       (app) => app.installation.appId === appId,
     ) ?? null
   );
+}
+
+/** One dispatch table for the primary assistant and additional operator bindings. */
+export { getAgenticAppAgentStreams } from "./agent-stream-bindings";
+
+/** Only an exact operator-admitted API path receives signed browser provenance. */
+export function isAgenticAppBrowserContextPath(app: ConfiguredAgenticApp, segments: string[]): boolean {
+  const path = `/${segments.join("/")}`;
+  return segments.every((segment) => /^[A-Za-z0-9._~-]+$/.test(segment) && segment !== "." && segment !== "..")
+    && (app.gatewayPolicy?.browserContextPaths?.includes(path) ?? false);
 }
 
 function parseManifest(value: unknown, path: string): AgenticAppManifest {
@@ -695,12 +748,13 @@ function parseBindings(
   path: string,
 ): NonNullable<AgenticAppInstallation["bindings"]> {
   const raw = asRecord(value, path);
-  assertKnownKeys(raw, ["runtimeOrigin", "resources", "serviceAccountClientId"], path);
+  assertKnownKeys(raw, ["runtimeOrigin", "resources", "agentStreams", "serviceAccountClientId"], path);
   const resources =
     raw.resources === undefined
       ? undefined
       : asRecord(raw.resources, `${path}.resources`);
   return {
+    ...(raw.agentStreams !== undefined ? { agentStreams: parseAgentStreams(raw.agentStreams, `${path}.agentStreams`) } : {}),
     ...(raw.runtimeOrigin !== undefined
       ? {
           runtimeOrigin: requiredHttpOrigin(
@@ -728,6 +782,53 @@ function parseBindings(
         }
       : {}),
   };
+}
+
+function parseAgentStreams(value: unknown, path: string): AgenticAppAgentStream[] {
+  const entries = asArray(value, path);
+  if (entries.length > 20) throw new Error(`${path} must contain at most 20 agents`);
+  const ids = new Set<string>();
+  return entries.map((value, index) => {
+    const itemPath = `${path}[${index}]`;
+    const raw = asRecord(value, itemPath);
+    assertKnownKeys(raw, ["id", "agentId", "streamPath", "resumePath", "cancelPath", "statusPath", "supportedClients", "webexGroupChat"], itemPath);
+    const id = requiredAppId(raw.id, `${itemPath}.id`);
+    if (id === "assistant" || ids.has(id)) throw new Error(`${itemPath}: duplicate or reserved agent binding`);
+    ids.add(id);
+    const agentId = requiredString(raw.agentId, `${itemPath}.agentId`);
+    if (!PLATFORM_AGENT_ID_PATTERN.test(agentId)) throw new Error(`${itemPath}: invalid registered agent ID`);
+    const routes: Record<string, string> = {};
+    for (const field of ["streamPath", "resumePath", "cancelPath", "statusPath"] as const) {
+      if (raw[field] === undefined && field !== "streamPath") continue;
+      const route = requiredString(raw[field], `${itemPath}.${field}`);
+      if (!isCanonicalApiPath(route)) {
+        throw new Error(`${itemPath}.${field} must be a canonical API path`);
+      }
+      routes[field] = route;
+    }
+    const clients = raw.supportedClients === undefined ? undefined
+      : requiredStringArray(raw.supportedClients, `${itemPath}.supportedClients`);
+    if (clients && (!clients.length || new Set(clients).size !== clients.length ||
+        clients.some((client) => client !== "webui" && client !== "webex"))) {
+      throw new Error(`${itemPath}.supportedClients must contain distinct webui/webex clients`);
+    }
+    if (raw.webexGroupChat !== undefined &&
+        (typeof raw.webexGroupChat !== "boolean" || !clients?.includes("webex"))) {
+      throw new Error(`${itemPath}.webexGroupChat requires explicit Webex support`);
+    }
+    return { id, agentId, streamPath: routes.streamPath,
+      ...(routes.resumePath ? { resumePath: routes.resumePath } : {}),
+      ...(routes.cancelPath ? { cancelPath: routes.cancelPath } : {}),
+      ...(routes.statusPath ? { statusPath: routes.statusPath } : {}),
+      ...(clients ? { supportedClients: clients as AgenticAppAgentStream["supportedClients"] } : {}),
+      ...(raw.webexGroupChat !== undefined ? { webexGroupChat: raw.webexGroupChat as boolean } : {}),
+    };
+  });
+}
+
+function isCanonicalApiPath(route: string): boolean {
+  return route.startsWith("/api/") && route.slice(1).split("/").every((segment) =>
+    /^[A-Za-z0-9._~-]+$/.test(segment) && segment !== "." && segment !== "..");
 }
 
 function asRecord(value: unknown, path: string): Record<string, unknown> {

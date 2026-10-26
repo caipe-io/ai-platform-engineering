@@ -110,6 +110,22 @@ token mode. Service accounts cannot substitute for an interactive user.
 Declaring a stream grants no access. A conflicting/unavailable app configuration,
 a denial, or an upstream failure does not invoke a different agent runtime.
 
+### Additional registered agents
+
+An operator can bind several existing CAIPE agents to one app through
+`installations[].bindings.agentStreams`. Each entry supplies a unique `id`, a
+registered `agentId`, `streamPath` and optional `resumePath`, `cancelPath` and
+`statusPath`. Paths must be canonical `/api/` routes within the publisher's API
+mounts and allowed POST policy. This installation setting grants no agent access
+and does not register an agent automatically.
+
+Each entry declares its own optional `supportedClients` and `webexGroupChat`;
+absent client support defaults to `webui`. Primary-assistant Webex capabilities
+never propagate to another agent. Native `props.chat.Panel` can render an
+additional agent using the same app, agent and canonical conversation checks as
+the primary assistant. The public catalog exposes agent references, never runtime
+URLs or operation paths.
+
 ### Webex native streams
 
 `ui.assistant.supportedClients` defaults to `["webui"]`. Apps explicitly enable

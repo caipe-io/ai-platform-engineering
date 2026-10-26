@@ -12,6 +12,7 @@ withAuth,
 withErrorHandler
 } from '@/lib/api-middleware';
 import { getCollection } from '@/lib/mongodb';
+import { claimConversationShareable } from '@/lib/conversation-evidence-privacy';
 import { requireConversationResourcePermission } from '@/lib/rbac/conversation-implicit-authz';
 import { writeOpenFgaTuples, type OpenFgaTupleKey } from '@/lib/rbac/openfga';
 import type { Conversation,ShareConversationRequest,SharingAccess } from '@/types/mongodb';
@@ -265,8 +266,11 @@ export const POST = withErrorHandler(async (
     const hasUsers = body.user_emails && body.user_emails.length > 0;
     const hasTeams = body.team_ids && body.team_ids.length > 0;
     const disablesPublicSharing = body.is_public === false;
-    if (!hasUsers && !hasTeams && !disablesPublicSharing) {
-      throw new ApiError('At least one of user_emails, team_ids, or is_public=false must be provided', 400);
+    if (body.enable_link !== undefined && typeof body.enable_link !== 'boolean') {
+      throw new ApiError('enable_link must be a boolean', 400);
+    }
+    if (!hasUsers && !hasTeams && !disablesPublicSharing && body.enable_link === undefined) {
+      throw new ApiError('At least one sharing action must be provided', 400);
     }
 
     if ((hasUsers || hasTeams) && !body.permission) {
@@ -284,6 +288,15 @@ export const POST = withErrorHandler(async (
     }
 
     await requireConversationResourcePermission(session, user.email, conversation, 'share');
+
+    for (const email of body.user_emails ?? []) {
+      if (!validateEmail(email)) throw new ApiError(`Invalid email format: ${email}`, 400);
+    }
+    const resolvedTeams = hasTeams ? await resolveTeamShares(body.team_ids!) : [];
+    // Every BFF must reserve the same canonical field before sharing side effects.
+    if (hasUsers || hasTeams || body.enable_link === true) {
+      await claimConversationShareable(conversationId);
+    }
 
     const now = new Date();
     const sharingAccess = await getCollection<SharingAccess>('sharing_access');
@@ -326,7 +339,6 @@ export const POST = withErrorHandler(async (
 
     // Handle team sharing
     if (body.team_ids && body.team_ids.length > 0) {
-      const resolvedTeams = await resolveTeamShares(body.team_ids);
       const permission = body.permission as SharePermission;
 
       // Initialize sharing object if it doesn't exist
@@ -407,6 +419,9 @@ export const PATCH = withErrorHandler(async (
     }
 
     await requireConversationResourcePermission(session, user.email, conversation, 'share');
+
+    if (email && !validateEmail(email)) throw new ApiError(`Invalid email format: ${email}`, 400);
+    await claimConversationShareable(conversationId);
 
     if (email) {
       if (!validateEmail(email)) {

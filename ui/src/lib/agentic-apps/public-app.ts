@@ -3,6 +3,7 @@ import type {
   PublicAgenticApp,
 } from "@/types/agentic-app";
 import { resolveAgenticAppIcon } from "../../../app-sdk/agentic-app-manifest.mjs";
+import { getAgenticAppAgentStreams } from "./agent-stream-bindings";
 
 /** Build the browser-safe catalog record. Runtime origins never cross the BFF. */
 export function buildPublicAgenticApp(
@@ -13,6 +14,8 @@ export function buildPublicAgenticApp(
   return {
     appId: app.installation.appId,
     assistantEnabled: Boolean(app.manifest.ui.assistant),
+    assistantUsesAppRuntime: Boolean(app.manifest.ui.assistant?.streamPath),
+    chatAgentIds: getAgenticAppAgentStreams(app).map((stream) => stream.agentId),
     ...(app.manifest.ui.assistant ? {
       assistantAgentId: app.manifest.ui.assistant.agentId,
       assistantLabel: app.manifest.ui.assistant.label,

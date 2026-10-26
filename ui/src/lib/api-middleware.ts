@@ -9,6 +9,7 @@ import { authOptions, isBootstrapAdmin } from '@/lib/auth-config';
 import { getConfig } from '@/lib/config';
 import { reconcileConversationOwnerIdentity } from '@/lib/conversation-owner-identity';
 import { getCollection } from '@/lib/mongodb';
+import { ownsPersonalEvidenceConversation } from '@/lib/conversation-evidence-privacy';
 import type { Conversation, User } from '@/types/mongodb';
 import type { TeamMembershipSource } from '@/types/identity-group-sync';
 import {
@@ -1610,11 +1611,14 @@ function sessionSubject(session: { sub?: unknown } | undefined): string {
 }
 
 function isConversationOwnerForAccess(
-  conversation: { owner_id?: unknown; owner_subject?: unknown },
+  conversation: ConversationAccessDocument,
   userId: string,
-  session?: { sub?: unknown },
+  session?: { sub?: unknown; isServiceAccount?: boolean },
 ): boolean {
   const subject = sessionSubject(session);
+  if (conversation.personal_context === 'private') {
+    return session?.isServiceAccount !== true && ownsPersonalEvidenceConversation(conversation, subject, userId);
+  }
   if (subject && conversation.owner_subject === subject) return true;
   return Boolean(normalizedIdentity(userId) && normalizedIdentity(conversation.owner_id) === normalizedIdentity(userId));
 }
@@ -1630,7 +1634,7 @@ export async function requireConversationAccess(
   conversationId: string,
   userId: string,
   getCollectionFn: (name: string) => Promise<Collection<ConversationAccessDocument>>,
-  session?: { role?: string; sub?: string; canViewAdmin?: boolean }
+  session?: { role?: string; sub?: string; canViewAdmin?: boolean; isServiceAccount?: boolean }
 ): Promise<ConversationAccessResult> {
   const conversations = await getCollectionFn('conversations');
   const conversation = await conversations.findOne({ _id: conversationId });
@@ -1644,6 +1648,14 @@ export async function requireConversationAccess(
   // assisted-by Codex Codex-sonnet-4-6
   if (isConversationOwnerForAccess(conversation, userId, session)) {
     return { conversation, access_level: 'owner' };
+  }
+
+  // Personal context remains owner-only even when legacy grants still exist.
+  if (conversation.personal_context === 'private') {
+    if (session?.isServiceAccount !== true && (session?.role === 'admin' || session?.canViewAdmin === true)) {
+      return { conversation, access_level: 'admin_audit' };
+    }
+    throw new ApiError('Private personal research can only be accessed by its owner.', 403, 'PRIVATE_CONVERSATION_OWNER_REQUIRED');
   }
 
   // Check if conversation is shared with user directly

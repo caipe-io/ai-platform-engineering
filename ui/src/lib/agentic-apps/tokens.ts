@@ -1,16 +1,20 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import type { AgenticAppBrowserContext } from "./browser-context";
 
 export type MintAgenticAppTokenInput = {
   appId: string;
   subject: string;
   name?: string;
   email?: string;
+  roles?: string[];
   scopes: string[];
   decisionId: string;
   correlationId: string;
   ttlSeconds?: number;
   /** Host-validated assistant invocation, never populated from public request fields. */
   assistantContext?: Record<string, unknown>;
+  /** Added only for a gateway-authenticated browser request on an approved path. */
+  browserContext?: AgenticAppBrowserContext;
 };
 
 export type VerifiedAgenticAppToken = Record<string, unknown> & {
@@ -38,19 +42,22 @@ export async function mintAgenticAppToken(
   input: MintAgenticAppTokenInput,
 ): Promise<{ token: string; expiresAt: string }> {
   const issuedAt = Math.floor(Date.now() / 1000);
-  const expiresAt = issuedAt + (input.ttlSeconds ?? DEFAULT_TTL_SECONDS);
+  const ttl = input.browserContext ? Math.min(input.ttlSeconds ?? 60, 60) : input.ttlSeconds ?? DEFAULT_TTL_SECONDS;
+  const expiresAt = issuedAt + ttl;
   const payload = {
     iss: tokenIssuer(),
     aud: getAgenticAppTokenAudience(input.appId),
     sub: input.subject,
     ...(input.name?.trim() ? { name: input.name.trim() } : {}),
     ...(input.email?.trim() ? { email: input.email.trim() } : {}),
+    ...(input.roles ? { roles: input.roles } : {}),
     app_id: input.appId,
     scp: input.scopes,
     scope: input.scopes.join(" "),
     decision_id: input.decisionId,
     correlation_id: input.correlationId,
     ...(input.assistantContext ? { purpose: "assistant-stream", assistant_context: input.assistantContext } : {}),
+    ...(input.browserContext ? { purpose: "browser-request", browser_context: input.browserContext } : {}),
     jti: randomUUID(),
     iat: issuedAt,
     exp: expiresAt,

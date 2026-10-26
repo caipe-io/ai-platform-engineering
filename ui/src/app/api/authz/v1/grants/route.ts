@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
+import { ApiError } from "@/lib/api-error";
 import { getAuthFromBearerOrSession } from "@/lib/api-middleware";
 import { grant, revoke } from "@/lib/authz";
 import {
@@ -60,6 +61,10 @@ async function handle(request: NextRequest, op: "grant" | "revoke"): Promise<Nex
     );
   } catch (err) {
     if (err instanceof HttpAuthzError) return metaErrorResponse(err);
+    if (err instanceof ApiError && err.code === "PERSONAL_CONTEXT_PRIVATE") {
+      return NextResponse.json({ error: err.message, code: err.code, retriable: false },
+        { status: err.statusCode, headers: { "Cache-Control": "no-store" } });
+    }
     throw err;
   }
 }

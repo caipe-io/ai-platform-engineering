@@ -1,3 +1,4 @@
+import type { Conversation } from "@/types/mongodb";
 import {
   annotateConversationsWithViewerSharing,
   conversationVisibilityCandidateQuery,
@@ -6,6 +7,8 @@ import {
   isImplicitConversationOwner,
   requireConversationResourcePermission,
 } from "../conversation-implicit-authz";
+
+jest.mock("@/lib/mongodb", () => ({ getCollection: jest.fn() }));
 
 jest.mock("../resource-authz", () => ({
   filterResourcesByPermission: jest.fn(async (_session, resources) =>
@@ -158,5 +161,67 @@ describe("conversation implicit authorization", () => {
       { type: "conversation", id: "shared", action: "write" },
       { bypassForOrgAdmin: true },
     );
+  });
+});
+
+
+describe("private personal evidence authorization", () => {
+  const privateChat = {
+    _id: "private-chat", owner_id: "owner@example.com", owner_subject: "owner-sub", owner_identity_version: 2,
+    personal_context: "private",
+    sharing: { shared_with: ["owner@example.com"], shared_with_teams: [] },
+  } as Conversation;
+
+  beforeEach(() => { jest.clearAllMocks(); });
+
+  it("requires the authoritative human subject even when email matches", async () => {
+    expect(isImplicitConversationOwner({ sub: "other-sub" }, "owner@example.com", privateChat)).toBe(false);
+    await expect(requireConversationResourcePermission({ sub: "other-sub" }, "owner@example.com", privateChat, "read"))
+      .rejects.toMatchObject({ statusCode: 403, code: "PRIVATE_CONVERSATION_OWNER_REQUIRED" });
+    expect(requireResourcePermission).not.toHaveBeenCalled();
+  });
+
+  it.each(["read", "write"] as const)("denies service-account %s even with matching subject and email", async (action) => {
+    await expect(requireConversationResourcePermission(
+      { sub: "owner-sub", isServiceAccount: true, role: "admin" }, "owner@example.com", privateChat, action,
+    )).rejects.toMatchObject({ statusCode: 403 });
+    expect(requireResourcePermission).not.toHaveBeenCalled();
+  });
+
+  it("allows exact owners and preserves only unnormalized legacy email fallback", async () => {
+    await expect(requireConversationResourcePermission({ sub: "owner-sub" }, "old@example.com", privateChat, "write")).resolves.toBeUndefined();
+    expect(isImplicitConversationOwner({ sub: "new-sub" }, "Owner@Example.com", {
+      ...privateChat, owner_subject: undefined, owner_identity_version: undefined,
+    })).toBe(true);
+    expect(isImplicitConversationOwner({ sub: "new-sub" }, "owner@example.com", {
+      ...privateChat, owner_subject: undefined,
+    })).toBe(false);
+    expect(requireResourcePermission).not.toHaveBeenCalled();
+  });
+
+  it("keeps normal conversations on their existing ownership rules", async () => {
+    const ordinary = { ...privateChat, personal_context: undefined } as Conversation;
+    await expect(requireConversationResourcePermission({ sub: "other-sub" }, "owner@example.com", ordinary, "write")).resolves.toBeUndefined();
+    expect(requireResourcePermission).not.toHaveBeenCalled();
+  });
+
+  it("removes private rows from lists before stale shares or CAS grants are considered", async () => {
+    const owned = { ...privateChat, _id: "owned", owner_subject: "caller-sub" };
+    const visible = await filterConversationsByImplicitOrExplicitPermission(
+      { sub: "caller-sub" }, "owner@example.com", [privateChat, owned], "discover", [privateChat._id],
+    );
+    expect(visible.map((row) => row._id)).toEqual(["owned"]);
+    expect(filterResourcesByPermission).toHaveBeenCalledWith(
+      { sub: "caller-sub" }, [], expect.any(Object), { bypassForOrgAdmin: true },
+    );
+  });
+
+  it("retains explicit admin audit reads while blocking admin writes", async () => {
+    await expect(requireConversationResourcePermission({ sub: "auditor-sub", role: "admin" }, "audit@example.com", privateChat, "read")).resolves.toBeUndefined();
+    expect(requireResourcePermission).toHaveBeenCalledWith(
+      { sub: "auditor-sub", role: "admin" }, { type: "conversation", id: privateChat._id, action: "read" }, { bypassForOrgAdmin: true },
+    );
+    await expect(requireConversationResourcePermission({ sub: "auditor-sub", canViewAdmin: true }, "audit@example.com", privateChat, "write"))
+      .rejects.toMatchObject({ statusCode: 403 });
   });
 });

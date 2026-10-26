@@ -8,6 +8,7 @@ withAuth,
 withErrorHandler,
 } from '@/lib/api-middleware';
 import { getCollection,isMongoDBConfigured } from '@/lib/mongodb';
+import { ownsPersonalEvidenceConversation } from '@/lib/conversation-evidence-privacy';
 import {
   conversationVisibilityCandidateQuery,
   filterConversationsByImplicitOrExplicitPermission,
@@ -49,9 +50,13 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       deleted_at: { $exists: true, $ne: null, $lte: purgeThreshold },
     }).toArray();
 
-    if (expired.length > 0) {
-      await deleteConversationsPermanently(expired);
-      console.log(`[Trash] Auto-purged ${expired.length} conversations older than ${ARCHIVE_RETENTION_DAYS} days for ${user.email}`);
+    const purgeableExpired = expired.filter((conversation) =>
+      conversation.personal_context !== 'private' ||
+      (session.isServiceAccount !== true && ownsPersonalEvidenceConversation(conversation, session.sub ?? '', user.email)),
+    );
+    if (purgeableExpired.length > 0) {
+      await deleteConversationsPermanently(purgeableExpired);
+      console.log(`[Trash] Auto-purged ${purgeableExpired.length} conversations older than ${ARCHIVE_RETENTION_DAYS} days for ${user.email}`);
     }
 
     // Query for soft-deleted conversation candidates, then filter by ReBAC.

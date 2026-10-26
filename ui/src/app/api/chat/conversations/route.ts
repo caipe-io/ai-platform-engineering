@@ -16,6 +16,7 @@ import {
   reconcileConversationOwnerIdentity,
 } from '@/lib/conversation-owner-identity';
 import { getCollection, isMongoDBConfigured } from '@/lib/mongodb';
+import { assertPrivateConversationIdempotencyAccess, claimConversationShareable } from '@/lib/conversation-evidence-privacy';
 import {
   annotateConversationsWithViewerSharing,
   conversationVisibilityCandidateQuery,
@@ -462,9 +463,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       idempotency_key: body.idempotency_key,
     });
     if (existing) {
+      assertPrivateConversationIdempotencyAccess(existing, session, user.email);
       // If the returning caller is a service account, ensure the writer grant exists
       // (write-if-missing). This heals conversations created before this fix was deployed.
       if (saSub) {
+        await claimConversationShareable(existing._id);
         try {
           await writeOpenFgaTuples({
             writes: [{

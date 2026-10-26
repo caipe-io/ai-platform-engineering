@@ -59,7 +59,14 @@ export function ChatView({
     setTimeout(() => setIsAnimating(false), 300);
   }, [contextPanelRef]);
 
-  const isDisabled = agentNotFound || agent?.enabled === false;
+  const isDisabled = agentNotFound || agent?.enabled === false || agent?.presentation?.available === false;
+  const appOwnedRuntime = agent?.presentation?.app?.ownsRuntime === true;
+
+  if (appOwnedRuntime) {
+    return <ChatPanel conversationId={conversationId} agentId={selectedAgentId} agent={agent}
+      readOnly={readOnly || isDisabled} readOnlyReason={readOnlyReason} apiConversation={apiConversation}
+      isLoadingMessages={isLoadingMessages} onAgentRelinked={onAgentRelinked} appOwnedRuntime />;
+  }
 
   return (
     <ResizablePanelGroup
@@ -83,6 +90,7 @@ export function ChatView({
         </div>
       </ResizablePanel>
 
+      {agent && <>
       <ResizableHandle className="bg-transparent hover:bg-primary/40 focus-visible:bg-primary/40" />
 
       {/* Context Panel - Dynamic Agent variant */}
@@ -106,6 +114,7 @@ export function ChatView({
           onCollapse={handleCollapse}
         />
       </ResizablePanel>
+      </>}
     </ResizablePanelGroup>
   );
 }

@@ -23,6 +23,12 @@ jest.mock("../engines/openfga", () => {
 // Audit is a no-op in tests (Mongo unconfigured).
 jest.mock("@/lib/mongodb", () => ({ getCollection: jest.fn(), isMongoDBConfigured: false }));
 
+const mockClaimConversationShareable = jest.fn();
+jest.mock("@/lib/conversation-evidence-privacy", () => ({
+  ...jest.requireActual("@/lib/conversation-evidence-privacy"),
+  claimConversationShareable: (...args: unknown[]) => mockClaimConversationShareable(...args),
+}));
+
 const mockEmitGrantAudit = jest.fn();
 const mockEmitDecisionAudit = jest.fn();
 const mockEmitBatchDecisionAudit = jest.fn();
@@ -288,5 +294,36 @@ describe("re-exports", () => {
     expect(describeFgaCheck).toBeDefined();
     expect(getEngineStats).toBeDefined();
     expect(getEngineStats()).toMatchObject({ circuitState: "closed" });
+  });
+});
+
+describe("canonical conversation grant visibility", () => {
+  beforeEach(() => { mockClaimConversationShareable.mockReset().mockResolvedValue(undefined); });
+
+  it.each(["discover", "read", "write", "share", "delete"] as const)("reserves shareable before a conversation %s grant", async (capability) => {
+    const intent = { resource: { type: "conversation" as const, id: "conversation-primary" },
+      grantee: { type: "user" as const, id: "subject-secondary" }, capability };
+    await grant(intent);
+    expect(mockClaimConversationShareable).toHaveBeenCalledWith("conversation-primary");
+    expect(mockClaimConversationShareable.mock.invocationCallOrder[0]).toBeLessThan(mockGrant.mock.invocationCallOrder[0]);
+    expect(mockGrant).toHaveBeenCalledWith(intent);
+  });
+
+  it.each(["discover", "read", "write", "share", "delete"] as const)("blocks a private conversation %s grant before the admin engine", async (capability) => {
+    mockClaimConversationShareable.mockRejectedValueOnce(Object.assign(new Error("Private evidence"), {
+      statusCode: 409, code: "PERSONAL_CONTEXT_PRIVATE",
+    }));
+    await expect(grant({ resource: { type: "conversation", id: "conversation-primary" },
+      grantee: { type: "team", id: "team-primary" }, capability })).rejects.toMatchObject({ statusCode: 409 });
+    expect(mockGrant).not.toHaveBeenCalled();
+    expect(mockEmitGrantAudit).not.toHaveBeenCalled();
+  });
+
+  it("does not reserve unrelated resources, administrative audit grants, or revocations", async () => {
+    await grant({ resource: { type: "agent", id: "agent-primary" }, grantee: { type: "user", id: "subject-primary" }, capability: "use" });
+    await grant({ resource: { type: "conversation", id: "conversation-primary" }, grantee: { type: "user", id: "subject-primary" }, capability: "audit" });
+    await revoke({ resource: { type: "conversation", id: "conversation-primary" }, grantee: { type: "user", id: "subject-primary" }, capability: "read" });
+    expect(mockClaimConversationShareable).not.toHaveBeenCalled();
+    expect(mockRevoke).toHaveBeenCalledTimes(1);
   });
 });

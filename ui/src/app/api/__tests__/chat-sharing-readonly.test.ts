@@ -114,7 +114,7 @@ function createMockCollection() {
     }),
     insertOne: jest.fn().mockResolvedValue({ insertedId: new ObjectId() }),
     insertMany: jest.fn().mockResolvedValue({ insertedCount: 0 }),
-    updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
+    updateOne: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
     countDocuments: jest.fn().mockResolvedValue(0),
   };
 }
@@ -752,8 +752,10 @@ describe('POST /api/chat/conversations/[id]/share — permission storage', () =>
     const res = await POST(req, { params: Promise.resolve({ id: conv._id }) });
 
     expect(res.status).toBe(200);
-    const updateCall = convsCol.updateOne.mock.calls[0][1];
-    expect(updateCall.$set['sharing.team_permissions']).toEqual({ [teamIdStr]: 'view' });
+    expect(convsCol.updateOne).toHaveBeenCalledWith(
+      { _id: conv._id },
+      { $set: expect.objectContaining({ 'sharing.team_permissions': { [teamIdStr]: 'view' } }) },
+    );
   });
 
   it('stores canonical team slugs and writes team conversation grants', async () => {
@@ -793,9 +795,13 @@ describe('POST /api/chat/conversations/[id]/share — permission storage', () =>
     const res = await POST(req, { params: Promise.resolve({ id: conv._id }) });
 
     expect(res.status).toBe(200);
-    const updateCall = convsCol.updateOne.mock.calls[0][1];
-    expect(updateCall.$set['sharing.shared_with_teams']).toEqual(['platform']);
-    expect(updateCall.$set['sharing.team_permissions']).toEqual({ platform: 'comment' });
+    expect(convsCol.updateOne).toHaveBeenCalledWith(
+      { _id: conv._id },
+      { $set: expect.objectContaining({
+        'sharing.shared_with_teams': ['platform'],
+        'sharing.team_permissions': { platform: 'comment' },
+      }) },
+    );
     expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
       writes: expect.arrayContaining([
         { user: 'team:platform#member', relation: 'reader', object: `conversation:${conv._id}` },

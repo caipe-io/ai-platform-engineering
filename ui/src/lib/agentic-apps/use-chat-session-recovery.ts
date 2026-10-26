@@ -54,13 +54,13 @@ export function useChatSessionRecovery(): void {
           watch.turnId = data.turnId;
           watch.savingSince = undefined;
           useChatStore.getState().setExternalActivity(id, { agentId: watch.agentId, state: "running", turnId: watch.turnId });
-          await useChatStore.getState().loadMessagesFromServer(id, { force: true });
+          await useChatStore.getState().loadMessagesFromServer(id);
           watch.next = Date.now() + 2000;
         } else {
           if (watch.running) {
             watch.savingSince ??= Date.now();
             useChatStore.getState().setExternalActivity(id, { agentId: watch.agentId, state: "saving", turnId: watch.turnId });
-            await useChatStore.getState().loadMessagesFromServer(id, { force: true });
+            await useChatStore.getState().loadMessagesFromServer(id);
             if (!currentWatch()) return;
             const messages = useChatStore.getState().conversations.find(c => c.id === id)?.messages ?? [];
             const answer = watch.turnId ? messages.find(m => m.role === "assistant" && m.turnId === watch.turnId) : messages.at(-1);

@@ -1,3 +1,4 @@
+/** @jest-environment node */
 import { findNotificationProducer, NOTIFICATIONS_CAPABILITY } from "@/lib/agentic-apps/notification-producer";
 import type { ConfiguredAgenticApp } from "@/types/agentic-app";
 

@@ -72,6 +72,10 @@ export interface Participant {
 }
 
 export interface Conversation {
+  /** Server-owned app route; ordinary create/metadata APIs cannot set it. */
+  app_binding?: { app_id: string; agent_id: string };
+  /** Server-owned personal evidence admission; only the owner can admit it. */
+  personal_context?: "private" | "shareable";
   _id: string; // UUID for shareable links (server-generated)
   title: string;
   client_type: ClientType; // Top-level: 'webui' | 'slack' (promoted from metadata)

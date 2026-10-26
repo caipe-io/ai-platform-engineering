@@ -1,3 +1,4 @@
+import { claimConversationShareable } from "@/lib/conversation-evidence-privacy";
 // assisted-by Codex Codex-sonnet-4-6
 //
 // Public API for the Centralized Authorization Service (CAS).
@@ -154,6 +155,9 @@ export async function listAccessible(
 // ─── Grant / Revoke (PAP) ─────────────────────────────────────────────────────
 
 export async function grant(intent: GrantIntent, ctx: DecisionContext = {}): Promise<void> {
+  if (intent.resource.type === "conversation" && intent.capability !== "audit") {
+    await claimConversationShareable(intent.resource.id);
+  }
   try {
     await admin.grant(intent);
     await emitGrantAudit("grant", intent, ctx, { outcome: "success" });

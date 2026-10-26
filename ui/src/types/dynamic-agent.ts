@@ -430,7 +430,7 @@ export type ResumeData =
 
 /** Read-only catalog projection. Never persisted or used to select a runtime or grant access. */
 export interface AgentPresentation {
-  app: { id: string; name: string; icon?: string };
+  app: { id: string; name: string; icon?: string; ownsRuntime?: boolean };
   available: boolean;
 }
 

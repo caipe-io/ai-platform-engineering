@@ -10,6 +10,11 @@ import { POST as resumePost } from "../stream/resume/route";
 import { POST as startPost } from "../stream/start/route";
 import { POST as statusPost } from "../stream/status/route";
 
+const mockFindAppStream = jest.fn();
+jest.mock("@/lib/agentic-apps/assistant-stream", () => ({
+  ...jest.requireActual("@/lib/agentic-apps/assistant-stream"),
+  findAgenticAppAssistantStream: (...args: unknown[]) => mockFindAppStream(...args),
+}));
 const mockAuthenticateRequest = jest.fn();
 const mockGetDynamicAgentsConfig = jest.fn();
 const mockProxySSEStream = jest.fn();
@@ -88,6 +93,7 @@ async function jsonBody(response: Response): Promise<Record<string, unknown>> {
 describe("Dynamic Agent chat Web UI backend routes", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockFindAppStream.mockReturnValue(null);
     mockFindGatewayBinding.mockResolvedValue(null);
     mockLookupHarnessSession.mockResolvedValue({ harness_id: null });
     mockAuthenticateRequest.mockResolvedValue({
@@ -363,7 +369,7 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
     ["cancel", cancelPost, mockProxyJSONRequest],
   ])("keeps %s on the pinned Engine backend after the agent default changes", async (operation, handler, nativeProxy) => {
     mockAuthenticateRequest.mockResolvedValue({ subject: "test-user", email: "test-user@example.com", tenantId: "primary", bearerToken: "test-token" });
-    mockFindGatewayBinding.mockResolvedValue({ harness_id: "agentcore" });
+    mockFindGatewayBinding.mockResolvedValue({ harness_id: "agentcore", owner_subject: "test-user", agent_id: "agent-1", conversation_id: "conv-1" });
     mockGetCollection.mockImplementation(async (name: string) => ({
       findOne: jest.fn(async () => name === "dynamic_agents"
         ? { _id: "agent-1", execution_harness_id: "dynamic_agents" }
@@ -390,6 +396,30 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
     } finally {
       fetchMock.mockRestore();
     }
+  });
+
+  it.each(["new-app", "removed-app", "rebound-app", "conflicting-native"])("guards invoke %s before runtime or history mutation", async (variant) => {
+    const mutate = jest.fn();
+    const conversation = { _id: "conv-1", owner_id: "alice@example.com", owner_subject: "alice-sub",
+      participants: [{ type: "agent", id: "agent-1" }],
+      ...(variant === "new-app" ? {} : { app_binding: { app_id: "original-app", agent_id: "agent-1" } }) };
+    mockGetCollection.mockResolvedValue({ findOne: async () => conversation, updateOne: mutate });
+    mockFindAppStream.mockReturnValue(variant === "removed-app" ? null : { appId: "example-app", path: ["api", "example", "start"] });
+    if (variant === "conflicting-native") mockFindGatewayBinding.mockResolvedValue({ harness_id: "dynamic_agents",
+      owner_subject: "alice-sub", agent_id: "agent-1", conversation_id: "conv-1" });
+    const response = await invokePost(jsonRequest("/api/v1/chat/invoke", { message: "hello", agent_id: "agent-1", conversation_id: "conv-1" }));
+    expect(response.status).toBe(variant === "new-app" ? 501 : 409);
+    expect(mockProxyJSONRequest).not.toHaveBeenCalled(); expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("rejects a scheduled app-only invoke before creating canonical metadata", async () => {
+    const mutate = jest.fn();
+    mockGetCollection.mockResolvedValue({ findOne: async () => null, updateOne: mutate, updateMany: mutate });
+    mockFindAppStream.mockReturnValue({ appId: "example-app", path: ["api", "example", "start"] });
+    const response = await invokePost(jsonRequest("/api/v1/chat/invoke", { message: "hello", agent_id: "untrusted-agent",
+      conversation_id: "scheduled-run", client_context: { schedule_id: "schedule-primary" } }, { "X-Scheduler-Token": "service-token" }));
+    expect(response.status).toBe(501); expect(mutate).not.toHaveBeenCalled(); expect(mockProxyJSONRequest).not.toHaveBeenCalled();
+    expect(mockFindAppStream).toHaveBeenCalledWith("agent-persisted", "start");
   });
 
   it("threads isServiceAccount into the conversation write check so SA callers graph as service_account:<sub>", async () => {
@@ -1025,7 +1055,7 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
       ),
     );
 
-    expect(response.status).toBe(502);
+    expect(response.status).toBe(403);
     expect(mockRequireAgentUsePermission).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: "agent-persisted" }),
     );

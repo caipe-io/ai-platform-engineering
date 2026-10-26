@@ -11,6 +11,7 @@ import exampleManifest from "../../../../../../../examples/agentic-apps/shared/m
 
 const mockGetAuthenticatedUser = jest.fn();
 const mockGetConfiguredAgenticApp = jest.fn();
+const mockBrowserContextPath = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => ({
   ApiError: class ApiError extends Error {
@@ -22,6 +23,7 @@ jest.mock("@/lib/api-middleware", () => ({
 jest.mock("@/lib/agentic-apps/config", () => ({
   isAgenticAppsEnabled: () => true,
   getConfiguredAgenticApp: (...args: unknown[]) => mockGetConfiguredAgenticApp(...args),
+  isAgenticAppBrowserContextPath: (...args: unknown[]) => mockBrowserContextPath(...args),
 }));
 
 import { GET, POST } from "./route";
@@ -79,6 +81,57 @@ describe("External App runtime route", () => {
       session: { sub: "stable-subject", role: "user" },
     });
     mockGetConfiguredAgenticApp.mockReturnValue(configuredApp);
+    mockBrowserContextPath.mockReturnValue(false);
+  });
+
+  it("adds bounded browser provenance only on an operator-approved path", async () => {
+    mockBrowserContextPath.mockReturnValue(true);
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response("{}"));
+    await GET(new NextRequest("https://host.example/api/agentic-apps/runtime/example-app/api/research"),
+      { params: Promise.resolve({ appId: "example-app", path: ["api", "research"] }) });
+    const headers = new Headers(fetchMock.mock.calls[0][1]?.headers);
+    const proof = await verifyAgenticAppToken(headers.get("x-caipe-browser-context")!, "example-app");
+    expect(proof).toMatchObject({ sub: "stable-subject", purpose: "browser-request",
+      browser_context: { kind: "browser-session", method: "GET", path: "/api/research" } });
+    expect(proof.exp - Number(proof.iat)).toBe(60);
+    fetchMock.mockRestore();
+  });
+
+  it("does not give an explicit bearer request browser provenance from a secondary cookie", async () => {
+    mockBrowserContextPath.mockReturnValue(true);
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response("{}"));
+    await GET(new NextRequest("https://host.example/api/agentic-apps/runtime/example-app", {
+      headers: { authorization: "Bearer example-token", cookie: "secondary=session", "x-caipe-browser-context": "forged" },
+    }), { params: Promise.resolve({ appId: "example-app", path: [] }) });
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).has("x-caipe-browser-context")).toBe(false);
+    fetchMock.mockRestore();
+  });
+
+  it("rejects cross-site browser provenance before forwarding", async () => {
+    mockBrowserContextPath.mockReturnValue(true);
+    const fetchMock = jest.spyOn(global, "fetch");
+    const response = await GET(new NextRequest("https://host.example/api/agentic-apps/runtime/example-app", {
+      headers: { "sec-fetch-site": "cross-site" },
+    }), { params: Promise.resolve({ appId: "example-app", path: [] }) });
+    expect(response.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("runs server admission after app validation and before forwarding", async () => {
+    const fetchMock = jest.spyOn(global, "fetch");
+    const admission = jest.fn().mockResolvedValue(Response.json({ error: "Already bound" }, { status: 409 }));
+    const response = await proxyAgenticAppRequest(new Request("https://host.example/api/agentic-apps/runtime/example-app"),
+      { params: Promise.resolve({ appId: "example-app", path: [] }) }, undefined, undefined, admission);
+    expect(response.status).toBe(409);
+    expect(admission).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    mockGetConfiguredAgenticApp.mockReturnValue(null);
+    admission.mockClear();
+    expect((await proxyAgenticAppRequest(new Request("https://host.example/"),
+      { params: Promise.resolve({ appId: "example-app" }) }, undefined, undefined, admission)).status).toBe(404);
+    expect(admission).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
   });
 
   afterAll(() => {

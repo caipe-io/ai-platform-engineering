@@ -29,6 +29,22 @@ describe("External Apps deployment config", () => {
     }); } finally { if (previous === undefined) delete process.env.AGENTIC_APPS_CONFIG_PATH; else process.env.AGENTIC_APPS_CONFIG_PATH = previous; }
   });
 
+  it("retains declared routing identity when global app launch is disabled", () => {
+    const previous = process.env.AGENTIC_APPS_CONFIG_PATH;
+    try { withConfig(validConfig(), path => {
+      process.env.AGENTIC_APPS_CONFIG_PATH = path;
+      process.env.AGENTIC_APPS_INSTALL_ENABLED = "false";
+      expect(loadConfiguredAgenticApps()).toEqual([]);
+      expect(getAgenticAppRoutingSnapshot()).toEqual([
+        expect.objectContaining({ installation: expect.objectContaining({ appId: "example-app" }) }),
+      ]);
+    }); } finally {
+      if (previous === undefined) delete process.env.AGENTIC_APPS_CONFIG_PATH;
+      else process.env.AGENTIC_APPS_CONFIG_PATH = previous;
+      process.env.AGENTIC_APPS_INSTALL_ENABLED = "true";
+    }
+  });
+
   it("loads and joins generic packages and installations", () => {
     withConfig(validConfig(), (path) => {
       expect(loadConfiguredAgenticApps(path)).toEqual([

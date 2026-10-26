@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { resolveAppConversationDestination } from "@/lib/agentic-apps/app-assistant-binding";
 
 import {
+  findAgenticAppAssistantStream,
   proxyAgenticAppAssistantStream,
   type AssistantStreamOperation,
 } from "@/lib/agentic-apps/assistant-stream";
@@ -28,12 +30,17 @@ export async function dispatchChatStream(
   body: Record<string, unknown>,
   operation: AssistantStreamOperation,
 ): Promise<Response> {
-  // Apps own their native sessions and receive the canonical conversation ID.
-  // Every claimed operation returns here, including denials and unsupported operations.
-  const appResponse = await proxyAgenticAppAssistantStream(
-    request, auth, conversation, body, operation,
-  );
-  if (appResponse) return appResponse;
+  const runtimeBody = { ...body, conversation_id: await resolveConversationRuntimeId(conversation) };
+  const context = { subject: auth.subject, conversationId: runtimeBody.conversation_id, traceparent: auth.traceparent };
+  let target = await resolveHarnessGatewayTarget(String(body.agent_id), { ...context, retainedOnly: true });
+  if (target instanceof NextResponse) return target;
+  if (target) {
+    const conflict = resolveAppConversationDestination(conversation, body.agent_id, operation, findAgenticAppAssistantStream, true);
+    if (conflict instanceof NextResponse) return conflict;
+  } else {
+    const appResponse = await proxyAgenticAppAssistantStream(request, auth, conversation, body, operation);
+    if (appResponse) return appResponse;
+  }
 
   if (operation === "status") {
     return NextResponse.json(
@@ -42,15 +49,7 @@ export async function dispatchChatStream(
     );
   }
 
-  const runtimeBody = {
-    ...body,
-    conversation_id: await resolveConversationRuntimeId(conversation),
-  };
-  const target = await resolveHarnessGatewayTarget(String(body.agent_id), {
-    subject: auth.subject,
-    conversationId: runtimeBody.conversation_id,
-    traceparent: auth.traceparent,
-  });
+  target ??= await resolveHarnessGatewayTarget(String(body.agent_id), context);
   if (target instanceof NextResponse) return target;
   if (target.kind === "harness_engine") {
     if (operation === "start") return streamHarnessGatewayRun(runtimeBody, auth, request.signal);

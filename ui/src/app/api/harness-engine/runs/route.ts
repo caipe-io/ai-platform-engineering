@@ -1,3 +1,5 @@
+import { findAgenticAppAssistantStream } from "@/lib/agentic-apps/assistant-stream";
+import { resolveAppConversationDestination } from "@/lib/agentic-apps/app-assistant-binding";
 import { authorizeConversationWriteAccess, resolveConversationRuntimeId } from "@/app/api/v1/chat/_conversation-authz";
 import { authenticateRequest } from "@/lib/da-proxy";
 import { resolveHarnessGatewayTarget } from "@/lib/harness-gateway";
@@ -46,9 +48,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (conversationAuthz.denial) return conversationAuthz.denial;
 
   const conversationId = await resolveConversationRuntimeId(conversationAuthz.conversation);
-  const target = await resolveHarnessGatewayTarget(body.agent_id, {
-    subject: auth.subject, conversationId, traceparent: auth.traceparent,
-  });
+  const context = { subject: auth.subject, conversationId: conversationId, traceparent: auth.traceparent };
+  let target = await resolveHarnessGatewayTarget(body.agent_id, { ...context, retainedOnly: true });
+  if (target instanceof NextResponse) return target;
+  const app = resolveAppConversationDestination(conversationAuthz.conversation, body.agent_id, "start", findAgenticAppAssistantStream, Boolean(target));
+  if (app instanceof NextResponse) return app;
+  if (app) return NextResponse.json({ success: false, code: "APP_STREAM_REQUIRED",
+    error: "This app assistant requires its declared chat stream endpoints" }, { status: 501 });
+  target ??= await resolveHarnessGatewayTarget(body.agent_id, context);
   if (target instanceof NextResponse) return target;
   if (target.kind !== "harness_engine") {
     return NextResponse.json(

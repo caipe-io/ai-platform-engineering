@@ -9,7 +9,9 @@ withErrorHandler,
 } from '@/lib/api-middleware';
 import { getCollection } from '@/lib/mongodb';
 import { requireResourcePermission } from '@/lib/rbac/resource-authz';
-import type { Message,UpdateMessageRequest } from '@/types/mongodb';
+import { requireConversationResourcePermission } from '@/lib/rbac/conversation-implicit-authz';
+import { CONVERSATION_EVIDENCE_VISIBILITY_PATH } from '@/lib/conversation-evidence-privacy';
+import type { Conversation,Message,UpdateMessageRequest } from '@/types/mongodb';
 import { ObjectId,type Document,type Filter } from 'mongodb';
 import { NextRequest } from 'next/server';
 
@@ -44,6 +46,15 @@ export const PUT = withErrorHandler(async (
       id: message.conversation_id,
       action: 'write',
     });
+
+    // Private evidence remains owner-only even if an old writer tuple exists.
+    const privateConversation = await (await getCollection<Conversation>('conversations')).findOne({
+      _id: message.conversation_id,
+      [CONVERSATION_EVIDENCE_VISIBILITY_PATH]: 'private',
+    });
+    if (privateConversation) {
+      await requireConversationResourcePermission(session, user.email, privateConversation, 'write');
+    }
 
     // Build update
     const update: Document = {};

@@ -114,6 +114,8 @@ interface ChatPanelProps {
   /** Bounded, host-validated metadata attached to each app-assistant turn. */
   clientContext?: Record<string, unknown>;
   requestOptions?: Record<string, unknown>;
+  /** The installed app owns execution; do not inspect Dynamic Agents state. */
+  appOwnedRuntime?: boolean;
   composerHeader?: React.ReactNode;
   placeholder?: string;
   emptyStateTitle?: string;
@@ -134,8 +136,9 @@ export function ChatPanel({
   isLoadingMessages,
   onAgentRelinked,
   clientContext: suppliedClientContext,
-  requestOptions, composerHeader, placeholder, emptyStateTitle, showAgentHeader = true, showAuditNotice = true, feedbackPrompt,
+  requestOptions, composerHeader, placeholder, emptyStateTitle, showAgentHeader = true, showAuditNotice = true, feedbackPrompt, appOwnedRuntime: suppliedAppOwnedRuntime = false,
 }: ChatPanelProps) {
+  const appOwnedRuntime = suppliedAppOwnedRuntime || agent?.presentation?.app?.ownsRuntime === true;
   // Derive display values from agent object
   const agentGradient = agent?.ui?.gradient_theme ?? null;
   const agentCustomTheme = agent?.ui?.custom_theme_config ?? null;
@@ -400,7 +403,7 @@ export function ChatPanel({
   }, [conversation?.id, conversation?.metadata?.reasoning_effort, configuredReasoningEffort]);
 
   useEffect(() => {
-    if (!agent?.model?.id || !agent.model.provider) {
+    if (appOwnedRuntime || !agent?.model?.id || !agent.model.provider) {
       setSupportedReasoningEfforts([]);
       return;
     }
@@ -421,7 +424,7 @@ export function ChatPanel({
     return () => {
       cancelled = true;
     };
-  }, [agent?.model]);
+  }, [agent?.model, appOwnedRuntime]);
 
   const persistReasoningEffort = useCallback(async (
     effort: ReasoningEffort,
@@ -543,7 +546,7 @@ export function ChatPanel({
 
   // Fetch all available agents once for subagent lookup
   useEffect(() => {
-    if (subagentCacheFetchedRef.current) return;
+    if (!agent || appOwnedRuntime || subagentCacheFetchedRef.current) return;
     subagentCacheFetchedRef.current = true;
 
     const fetchAgents = async () => {
@@ -571,7 +574,7 @@ export function ChatPanel({
     };
 
     fetchAgents();
-  }, []);
+  }, [agent, appOwnedRuntime]);
 
   // Callback to look up subagent info by name
   const getSubagentInfo = useCallback((subagentName: string): SubagentLookupInfo | undefined => {
@@ -730,7 +733,7 @@ export function ChatPanel({
   // ═══════════════════════════════════════════════════════════════
   useEffect(() => {
     // Skip if no conversationId (new conversation) or agentId
-    if (!conversationId || !agentId || isAutonomousHistory) return;
+    if (!agent || !conversationId || !agentId || isAutonomousHistory || appOwnedRuntime) return;
     
     // Wait for messages to be loaded (race condition on page refresh:
     // this effect can fire before ChatContainer finishes loading messages
@@ -830,7 +833,7 @@ export function ChatPanel({
     };
 
     checkInterruptState();
-  }, [conversationId, agentId, isLoadingMessages, isThisConversationStreaming, hasAssistantMessageForInterruptCheck, isAutonomousHistory, isRemoteResponse]);
+  }, [conversationId, agentId, isLoadingMessages, isThisConversationStreaming, hasAssistantMessageForInterruptCheck, isAutonomousHistory, isRemoteResponse, appOwnedRuntime, agent]);
 
   // ═══════════════════════════════════════════════════════════════
   // FILES & TASKS FETCH (for timeline display in latest message)
@@ -838,7 +841,7 @@ export function ChatPanel({
 
   // Fetch files from API
   useEffect(() => {
-    if (!conversationId || !agentId) {
+    if (!agent || appOwnedRuntime || !conversationId || !agentId) {
       setTimelineFiles([]);
       filesFetchedForRef.current = null;
       return;
@@ -873,12 +876,12 @@ export function ChatPanel({
     };
 
     fetchFiles();
-  }, [conversationId, agentId, filesFetchKey]);
+  }, [conversationId, agentId, filesFetchKey, appOwnedRuntime, agent]);
 
   // Handle file download
   const handleTimelineFileDownload = useCallback(
     async (path: string) => {
-      if (!conversationId || !agentId || isDownloadingFile) return;
+      if (appOwnedRuntime || !conversationId || !agentId || isDownloadingFile) return;
 
       setIsDownloadingFile(true);
       setDownloadingFilePath(path);
@@ -912,22 +915,22 @@ export function ChatPanel({
         setDownloadingFilePath(undefined);
       }
     },
-    [conversationId, agentId, isDownloadingFile]
+    [conversationId, agentId, isDownloadingFile, appOwnedRuntime]
   );
 
   const handleGetFileContent = useCallback(
     async (path: string): Promise<string | null> => {
-      if (!conversationId || !agentId) return null;
+      if (appOwnedRuntime || !conversationId || !agentId) return null;
       const fsNamespace = JSON.stringify([agentId, conversationId, "filesystem"]);
       return fetchEphemeralFileContent(fsNamespace, path);
     },
-    [conversationId, agentId],
+    [conversationId, agentId, appOwnedRuntime],
   );
 
   // Handle file delete
   const handleTimelineFileDelete = useCallback(
     async (path: string) => {
-      if (!conversationId || !agentId || isDeletingFile) return;
+      if (appOwnedRuntime || !conversationId || !agentId || isDeletingFile) return;
 
       setIsDeletingFile(true);
       setDeletingFilePath(path);
@@ -951,7 +954,7 @@ export function ChatPanel({
         setDeletingFilePath(undefined);
       }
     },
-    [conversationId, agentId, isDeletingFile]
+    [conversationId, agentId, isDeletingFile, appOwnedRuntime]
   );
 
   // ═══════════════════════════════════════════════════════════════
@@ -1052,7 +1055,9 @@ export function ChatPanel({
   }
 
   // Get the protocol-agnostic adapter config
-  const agentProtocol = getConfig('agentProtocol');
+  // Installed app stream endpoints declare AG-UI independently of the legacy
+  // Dynamic Agents protocol configured for other chats.
+  const agentProtocol = appOwnedRuntime ? "agui" : getConfig('agentProtocol');
 
   /**
    * Build StreamCallbacks that wire adapter events into the Zustand store,

@@ -311,3 +311,125 @@ Every reverse proxy or ingress in front of the UI must also admit the configured
 per-app limit plus that transport headroom. For example, an app configured for
 64 MiB requests needs an upstream allowance of at least 65 MiB; otherwise the
 upstream proxy will reject the request before the app-specific limit is applied.
+
+## App-owned chat agents
+
+An installed app can expose several agents through the existing CAIPE agent picker
+and shared Chat UI. The publisher declares the primary assistant in its manifest;
+the operator can bind additional enabled registry agents through
+`installation.bindings.agentStreams`. This does not provision agents or grant
+agent-use permission. Catalog discovery and every turn retain the existing agent,
+conversation and app authorization checks.
+
+```mermaid
+flowchart LR
+  Chat[CAIPE Chat or native app panel] --> Auth[Agent-use and conversation access]
+  Auth --> Owner{Retained execution owner}
+  Owner -->|Native or SDK binding| Gateway[Existing Harness Gateway]
+  Owner -->|App binding or new app agent| Proxy[Authorized app proxy]
+  Proxy --> App[Publisher AG-UI endpoint]
+  Chat --> History[Canonical CAIPE conversation history]
+```
+
+```yaml
+agentic_apps:
+  gateway_policies:
+    example-app:
+      browserContextPaths: [/api/example/research/start]
+  installations:
+    - app_id: example-app
+      package_id: example-app
+      installed: true
+      enabled: true
+      bindings:
+        agentStreams:
+          - id: research
+            agentId: example-research-agent
+            streamPath: /api/example/research/start
+            cancelPath: /api/example/research/cancel
+            statusPath: /api/example/research/status
+            supportedClients: [webui]
+```
+
+Each bound operation must fall inside a publisher API mount and an allowed POST
+policy. Routes are canonical API paths; duplicate claims and reserved platform
+agent IDs are rejected. Additional agents default to the browser client and must
+explicitly opt into Webex and group-space support. Missing operations return 501;
+failed or disabled app operations never fall back to Dynamic Agents. Disabling
+launch retains the declared routing identity so it cannot accidentally activate a
+native agent under the same ID.
+
+The normal chat panel uses the app's AG-UI stream without querying the native
+runtime's file or approval APIs. App registration does not create durable
+execution, replay or cancellation semantics: the publisher must implement its
+declared lifecycle endpoints. CAIPE still owns its visible transcript.
+
+On the first authorized app start/resume, the BFF atomically records a server-owned
+`app_binding` on the canonical conversation before contacting the app. The binding
+fences removed or reassigned app agents. Existing native/SDK gateway bindings and
+legacy native checkpoints retain their execution owner before an app declaration
+is considered. App display metadata is context only; a Managed/SDK overlay with
+no app stream continues through its existing runtime. Neither client metadata nor
+an app display label grants execution access.
+
+Changing an execution owner requires a quiescent migration or a new conversation.
+Unmarked legacy app histories and raw pre-gateway SDK sessions whose agent default
+has since changed cannot reliably identify their former owner. Adopt those
+sessions explicitly before changing declarations; this contract does not claim an
+atomic migration between the app binding and provider journals.
+
+## Browser-only delegated actions
+
+An operator can enable `gateway_policies.<appId>.browserContextPaths` for exact app
+API paths that need evidence of a current browser login. The gateway authenticates
+its existing session, applies same-origin checks, and sends
+`X-CAIPE-Browser-Context`, a signed assertion valid for at most 60 seconds. It binds
+the app audience, authenticated subject, forwarded access token, HTTP method,
+upstream path **including query**, and exact request body. An explicit Bearer
+request or service account never receives browser provenance from a secondary
+cookie. Incoming assertions are discarded before forwarding.
+
+The app must independently validate its normal authentication and route scopes,
+then validate this assertion before using browser-only credentials. The host reference helper
+`verifyAgenticAppBrowserContext(request, appId, authenticatedSubject)` shows
+the required verification and is covered by request-substitution tests. No CAIPE cookie is forwarded. Paths
+without this operator policy keep their existing authentication behavior; a
+requested assertion fails closed if signing is unavailable.
+
+This uses the current CAIPE login mechanism. It does not introduce a durable
+per-login session identifier, immediate assertion revocation, or a replacement
+identity store. Stronger logout/revocation semantics require separate coordinated
+identity work. Existing signed Webex client context remains a separate contract.
+
+## Private personal context in shared chat
+
+Before retrieving personal evidence, an app calls
+`POST /api/chat/conversations/{id}/personal-context` with
+`{"agent_id":"example-research-agent"}` and the caller's normal CAIPE credential.
+The endpoint requires user identity, agent-use and conversation-write access,
+then verifies the canonical owner and atomically reserves owner-only history.
+A successful response sets the server-owned `personal_context: "private"` field.
+There is no unmark operation and ordinary create/metadata requests cannot set it.
+
+| Operation | Contract |
+| --- | --- |
+| Personal admission | Only an unshared browser conversation owned by the caller; idempotent for that owner. |
+| Sharing or CAS grants | Reserve the same field as `shareable` before any grant side effect. Exactly one admission can win. |
+| Reading | Owner or existing administrator audit access; service identities and previous shares do not grant personal-history access. |
+| Idempotent creation, messages and trash | Apply the same personal-history boundary; alternate routes cannot reveal the transcript. |
+| Publisher behavior | Wait for successful admission before retrieving or persisting personal evidence; keep project artifacts and their publication policy in the app. |
+
+A chat previously reserved for sharing cannot later admit personal evidence, even
+if its shares were removed. Use a separate private chat instead. The host guards
+canonical conversation history; publishers remain responsible for their own
+private evidence, drafts, logs and explicitly reviewed publication flows.
+
+A trusted app server already sharing the canonical MongoDB can use the same
+atomic reservation contract directly, as an explicit deployment integration.
+It must validate its authenticated owner and turn capability, preserve the
+owner/agent/client predicates, compete with sharing on the same top-level field,
+and recheck the private reservation before releasing evidence. This is a trusted
+server adapter, not authority granted by a manifest or a browser. The protected
+HTTP endpoint is the integration path for apps without database access. Migrate
+existing private-history markers before activating a host that enforces the new
+field; do not dual-write independent privacy state.

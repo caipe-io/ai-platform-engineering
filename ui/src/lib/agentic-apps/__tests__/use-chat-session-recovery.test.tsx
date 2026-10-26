@@ -38,6 +38,7 @@ describe("app chat session recovery", () => {
     await tick(3000);
     expect(mockSetActivity).toHaveBeenLastCalledWith("example-conversation", null);
     expect(mockLoad).toHaveBeenCalledTimes(2);
+    expect(mockLoad.mock.calls).toEqual([["example-conversation"], ["example-conversation"]]);
     expect((fetch as jest.Mock).mock.calls.every(([url]) => url === "/api/v1/chat/stream/status")).toBe(true);
     view.unmount();
   });
@@ -45,6 +46,23 @@ describe("app chat session recovery", () => {
     mockState.streamingConversations.set("example-conversation", {});
     const view = renderHook(useChatSessionRecovery); await tick(4000);
     expect(fetch).not.toHaveBeenCalled(); expect(mockLoad).not.toHaveBeenCalled(); view.unmount();
+  });
+  it("preserves a completed local answer while its final database save is pending", async () => {
+    (fetch as jest.Mock).mockResolvedValueOnce({ ok: true, json: async () => ({ running: true, turnId: "example-turn" }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ running: false }) });
+    const message = mockState.conversations[0].messages[0];
+    let savePending = false;
+    mockLoad.mockImplementation(async (_id, options) => {
+      // The shared store permits forced manual reloads to bypass the save guard.
+      if (savePending && options?.force) message.isFinal = false;
+    });
+    const view = renderHook(useChatSessionRecovery); await tick();
+    message.isFinal = true; savePending = true;
+    await tick(3000);
+    expect(message.isFinal).toBe(true);
+    expect(mockSetActivity).toHaveBeenLastCalledWith("example-conversation", null);
+    expect(mockLoad).toHaveBeenCalledTimes(2);
+    view.unmount();
   });
   it("stops on denied access without reading messages", async () => {
     (fetch as jest.Mock).mockResolvedValue({ ok: false, status: 403 });
