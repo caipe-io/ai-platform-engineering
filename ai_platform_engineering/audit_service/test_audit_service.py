@@ -559,6 +559,39 @@ def test_verbosity_endpoint_verbose(tmp_path: Path) -> None:
     assert data["allowed_types"] == []
 
 
+def test_minimal_retains_queryable_delegated_allow_and_deny_receipts(tmp_path: Path) -> None:
+    now = datetime.now(timezone.utc)
+    delegated = {
+        "ts": now.isoformat(), "type": "cas_decision", "component": "cas",
+        "tenant_id": "primary", "delegation_id": "approval-1",
+        "delegation_operation": "check", "delegation_policy": "cas-delegation/v1",
+        "actor_ref": "service_account:test-service", "subject_ref": "user:test-user",
+    }
+    app = create_app(_settings(tmp_path, verbosity="minimal"))
+    with TestClient(app) as client:
+        response = client.post("/v1/audit/events", json={"events": [
+            {**delegated, "outcome": "allow", "decision_id": "decision-1"},
+            {**delegated, "outcome": "deny", "decision_id": "decision-2"},
+            {**delegated, "outcome": "success"},
+            {**delegated, "outcome": "error"},
+            {**delegated, "outcome": None},
+            {"type": "cas_decision", "outcome": "allow"},
+            {"type": "cas_decision", "outcome": "deny"},
+        ]})
+        assert response.status_code == 202
+        assert response.json()["accepted"] == 2
+        query = client.get("/v1/audit/events", params={
+            "since": (now - timedelta(minutes=1)).isoformat(),
+            "until": (now + timedelta(minutes=1)).isoformat(),
+            "tenant_id": "primary", "delegation_id": "approval-1",
+        })
+        assert query.status_code == 200
+        records = query.json()["records"]
+        assert {record["decision_id"] for record in records} == {"decision-1", "decision-2"}
+        assert {record["outcome"] for record in records} == {"allow", "deny"}
+        assert all(record["subject_ref"] == "user:test-user" for record in records)
+
+
 # ============================================================
 # New tests — verbosity, storage, S3 retention, main endpoints
 # assisted-by claude code claude-sonnet-4-6
@@ -635,6 +668,32 @@ def test_filter_records_verbose_passes_all() -> None:
     ]
     result = filter_records(records, "verbose")
     assert len(result) == 3
+
+
+@pytest.mark.parametrize("reference", [None, "", "   ", 123])
+def test_minimal_does_not_treat_missing_or_invalid_reference_as_a_delegated_receipt(reference: object) -> None:
+    assert filter_records([{
+        "type": "cas_decision", "delegation_operation": "check", "delegation_id": reference,
+        "outcome": "allow",
+    }], "minimal") == []
+
+
+@pytest.mark.parametrize("outcome", [None, "", "success", "error", "unexpected"])
+def test_minimal_excludes_delegated_checks_without_a_decision_outcome(outcome: str | None) -> None:
+    records = [{
+        "type": "cas_decision", "delegation_operation": "check", "delegation_id": "approval-1", "outcome": outcome,
+    }]
+    assert filter_records(records, "minimal") == []
+    for preset in ("standard", "verbose", "il2", "il5", "soc2"):
+        assert filter_records(records, preset) == records
+
+
+def test_minimal_preserves_delegation_lifecycle_outcomes() -> None:
+    records = [
+        {"type": "cas_delegation", "delegation_operation": "create", "outcome": "success"},
+        {"type": "cas_delegation", "delegation_operation": "revoke", "outcome": "error"},
+    ]
+    assert filter_records(records, "minimal") == records
 
 
 # ---------------------------------------------------------------------------

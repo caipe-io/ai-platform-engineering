@@ -14,21 +14,30 @@ export async function createDelegation(
   identity: DelegationIdentity, intent: DelegationIntent, ctx: DecisionContext, id: string,
 ): Promise<DelegationRecord> {
   if (identity.subject.type !== "user") throw new HttpAuthzError(403, "FORBIDDEN", "Only a user may approve delegation");
+  // A maximum-size scope needs 32 fresh graph checks. Four bounded workers
+  // share one request budget; do not multiply that budget by scope size.
   const signal = AbortSignal.timeout(5000);
-  for (const permission of intent.scope) {
-    const checks: DelegationCheck[] = [];
-    const reason = await checkDelegationPermissions({ type: "service_account", id: intent.service.id }, identity.subject,
-      { ...permission, job_id: intent.job_id }, signal, checks);
-    if (reason !== "OK") {
-      emitDelegationAudit("create", identity, undefined, id, reason, ctx, checks, permission);
-      throw new HttpAuthzError(reason === "AUTHZ_UNAVAILABLE" ? 503 : 403,
-        reason === "AUTHZ_UNAVAILABLE" ? "AUTHZ_UNAVAILABLE" : "FORBIDDEN", `Cannot approve delegation: ${reason}`);
+  let next = 0;
+  let failure: { reason: DelegationReason; checks: DelegationCheck[]; permission: DelegationIntent["scope"][number] } | undefined;
+  await Promise.all(Array.from({ length: Math.min(4, intent.scope.length) }, async () => {
+    while (!failure && next < intent.scope.length) {
+      const permission = intent.scope[next++];
+      const checks: DelegationCheck[] = [];
+      const reason = await checkDelegationPermissions({ type: "service_account", id: intent.service.id }, identity.subject,
+        { ...permission, job_id: intent.job_id }, signal, checks);
+      if (reason !== "OK") failure ??= { reason, checks, permission };
     }
+  }));
+  if (failure) {
+    const { reason, checks, permission } = failure;
+    emitDelegationAudit("create", identity, undefined, id, reason, ctx, checks, permission);
+    throw new HttpAuthzError(reason === "AUTHZ_UNAVAILABLE" ? 503 : 403,
+      reason === "AUTHZ_UNAVAILABLE" ? "AUTHZ_UNAVAILABLE" : "FORBIDDEN", `Cannot approve delegation: ${reason}`);
   }
   if (identity.expiresAt * 1000 <= Date.now() || Date.parse(intent.expires_at) <= Date.now()) {
     throw new HttpAuthzError(401, "NOT_AUTHENTICATED", "Identity or approval expired during validation");
   }
-  const record = await insertDelegation(identity, intent, id);
+  const record = await insertDelegation(identity, intent, id, ctx.tenantId ?? process.env.TENANT_ID ?? "default");
   emitDelegationAudit("create", identity, storedApproval(record), record._id, "OK", ctx);
   return record;
 }

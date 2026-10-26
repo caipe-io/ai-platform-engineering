@@ -198,7 +198,10 @@ Service check body (no user ID or user token):
   no process-local permission/approval cache or in-memory fallback. Scope/expiry
   are immutable, revocation is atomic, and expired records remain inspectable.
 - Graph checks bypass CAS product overrides and caches, use higher consistency
-  and share a five-second deadline. Re-read the approval after graph checks to
+  and share a five-second deadline. Approval creation validates up to four scope
+  entries concurrently within that budget, not 32 serial graph calls. Exhausted
+  caller budgets fail closed without counting as OpenFGA circuit-breaker failures.
+  Re-read the approval after graph checks to
   detect concurrent revocation/expiry. This is a point-in-time decision, not a
   distributed transaction, execution lease or cancellation of in-flight work.
 - Explicit approval survives browser logout. Renewing a service token never
@@ -210,6 +213,15 @@ Service check body (no user ID or user token):
 
 - CAS emits `cas_delegation` creation/revocation attempts and individual
   `cas_decision` use receipts. Delegated allows **never** enter allow rollups.
+- Audit-service's default `minimal` preset retains delegated allow/deny receipts,
+  without retaining routine access decisions.
+- New approvals capture the authenticated approving session's audit tenant
+  (otherwise the configured `TENANT_ID`/`default`). Bound checks and revocations
+  reuse that stored attribution after logout; services cannot select it in JSON
+  or headers. This is audit scoping, not a new tenant authorization boundary.
+  Pre-attribution approvals keep the trusted-context/configured fallback; their
+  original tenant cannot be reconstructed automatically. Previously dropped
+  receipts cannot be recovered by upgrading.
 - Actor and effective user remain separate. Each bound decision captures the
   approval version/scope/expiry, job label, policy `cas-delegation/v1`, ordered
   checks, exact failure reason and server-generated decision/correlation IDs.

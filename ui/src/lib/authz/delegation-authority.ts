@@ -3,7 +3,8 @@ import { delegationSnapshot } from "./delegation-contract";
 
 export function storedApproval(record: DelegationRecord): DelegationApproval {
   return { effectiveSubject: { type: "user", id: record.user_id },
-    evidence: { kind: "cas_approval", reference: record._id }, approval: delegationSnapshot(record) };
+    evidence: { kind: "cas_approval", reference: record._id }, approval: delegationSnapshot(record),
+    ...(record.tenant_id ? { auditTenantId: record.tenant_id } : {}) };
 }
 
 /** Current evidence adapter: bind a verified service identity to a stored approval.

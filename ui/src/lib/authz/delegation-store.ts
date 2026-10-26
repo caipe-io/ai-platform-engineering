@@ -15,10 +15,13 @@ export async function readDelegation(id: string): Promise<DelegationRecord | nul
   });
 }
 
-export async function insertDelegation(identity: DelegationIdentity, intent: DelegationIntent, id: string): Promise<DelegationRecord> {
+export async function insertDelegation(
+  identity: DelegationIdentity, intent: DelegationIntent, id: string, tenantId: string,
+): Promise<DelegationRecord> {
   const record: DelegationRecord = {
     ...intent, _id: id, issuer: identity.issuer, user_id: identity.subject.id,
     created_at: new Date().toISOString(), revoked_at: null, version: 1,
+    tenant_id: tenantId,
   };
   const stored = await (await collection()).findOneAndUpdate({ _id: id }, { $setOnInsert: record }, {
     upsert: true, returnDocument: "after", writeConcern: { w: "majority" }, timeoutMS: 5000,
@@ -26,7 +29,8 @@ export async function insertDelegation(identity: DelegationIdentity, intent: Del
   if (!stored) throw new Error("Approval write returned no record");
   // A retry can inspect the same immutable approval, never overwrite its owner,
   // scope, expiry or revocation. A reused key with different intent conflicts.
-  if (stored.issuer !== identity.issuer || stored.user_id !== identity.subject.id || stored.job_id !== intent.job_id ||
+  if ((stored.tenant_id !== undefined && stored.tenant_id !== tenantId) ||
+    stored.issuer !== identity.issuer || stored.user_id !== identity.subject.id || stored.job_id !== intent.job_id ||
     stored.service.id !== intent.service.id || stored.service.client_id !== intent.service.client_id ||
     stored.expires_at !== intent.expires_at || JSON.stringify(stored.scope) !== JSON.stringify(intent.scope)) {
     throw new HttpAuthzError(409, "INVALID_REQUEST", "Idempotency key already belongs to a different approval");

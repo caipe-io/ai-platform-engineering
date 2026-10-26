@@ -26,7 +26,11 @@ CAS ──append──► BFF audit client ◄──queryPage── BFF audit AP
 - `AUDIT_SERVICE_QUERY_RETENTION_DAYS=7`: newly archived/imported MongoDB records expire seven days after archival/import, not after the event timestamp. Set `0` to disable query expiry. Pending archives never receive an expiry. Changing the setting does not rewrite existing records or expiry dates.
 - S3 archive retention is independent: `AUDIT_SERVICE_S3_RETENTION_DAYS=0` leaves lifecycle management to the operator. Existing bucket rules still apply; keep them longer than the query window. MongoDB expiry never deletes archive objects. S3-only history needs an explicit backfill, not an automatic query fallback. Local archive retention remains one day by default.
 - `AUDIT_SERVICE_READ_MAX_DAYS=31`: maximum span per query, independent of archive/query retention.
-- Verbosity filtering is unchanged. A time window such as `48h` selects records; it does not delete them.
+- The default `minimal` verbosity retains policy changes and individual delegated
+  `cas_decision` receipts (`delegation_operation=check` with a non-empty
+  `delegation_id` and an `allow` or `deny` outcome), but omits routine access
+  decisions. These fields control retention, not ingestion authentication. A time
+  window such as `48h` selects records; it does not delete them.
 
 Compose inherits the bundled/external MongoDB connection. Include the `caipe-mongodb` profile unless using an external database.
 Helm uses the bundled `<release>-mongodb` credentials by default. For an external database or a dedicated audit account, set `audit-service.mongodb.uriSecret.name/key`. An existing `audit-service.existingSecret` may instead supply `MONGODB_URI` through envFrom. Custom bundled service/Secret names require `mongodb.host` and `mongodb.credentialsSecret.name` overrides.

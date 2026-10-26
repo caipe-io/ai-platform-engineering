@@ -11,7 +11,7 @@ jest.mock("@/lib/jwt-validation", () => { throw new Error("Normalized policy mus
 const id = "approval-1";
 const identity: DelegationIdentity = { issuer: "https://identity.example.test", subject: { type: "service_account", id: "test-service" },
   clientId: "example-service", expiresAt: 10 ** 10 };
-const record: DelegationRecord = { _id: id, issuer: identity.issuer, user_id: "test-user",
+const record: DelegationRecord = { _id: id, issuer: identity.issuer, user_id: "test-user", tenant_id: "primary",
   service: { id: "test-service", client_id: "example-service" }, job_id: "test-job", version: 1,
   created_at: "2026-10-21T11:00:00Z", expires_at: "2026-10-22T11:00:00Z", revoked_at: null,
   scope: [{ resource: { type: "agent", id: "example" }, action: "use" }] };
@@ -26,7 +26,8 @@ it("keeps actor, effective user, credential lifetime and approval evidence separ
   const authority = bindStoredDelegation(id, identity, record)!;
   expect(authority).toMatchObject({ actor: identity.subject, effectiveSubject: { type: "user", id: "test-user" },
     issuer: identity.issuer, clientId: identity.clientId, credentialExpiresAt: identity.expiresAt,
-    evidence: { kind: "cas_approval", reference: id }, approval: { job_id: "test-job", version: 1, expires_at: record.expires_at } });
+    evidence: { kind: "cas_approval", reference: id }, auditTenantId: "primary",
+    approval: { job_id: "test-job", version: 1, expires_at: record.expires_at } });
   expect(authority).not.toHaveProperty("_id");
   expect(authority).not.toHaveProperty("user_id");
 });

@@ -112,12 +112,61 @@ it.each(["read", "graph", "final read"])("fails closed and audits on %s outage",
 
 it("derives the owner from authentication, not a supplied owner, and checks both permissions before insert", async () => {
   await createDelegation(user, intent, ctx, id);
-  expect(mockInsert).toHaveBeenCalledWith(user, intent, id);
+  expect(mockInsert).toHaveBeenCalledWith(user, intent, id, "default");
   expect(mockPermission).toHaveBeenCalledTimes(2);
 });
 it("does not create child delegations as a service", async () => {
   await expect(createDelegation(service, intent, ctx, id)).rejects.toMatchObject({ status: 403 });
   expect(mockInsert).not.toHaveBeenCalled();
+});
+it("persists the authenticated approval tenant for later sessionless execution", async () => {
+  await createDelegation(user, intent, { ...ctx, tenantId: "primary" }, id);
+  expect(mockInsert).toHaveBeenCalledWith(user, intent, id, "primary");
+  mockRead.mockResolvedValue({ ...record, tenant_id: "primary" });
+  await authorizeDelegated(id, service, request, ctx);
+  expect(mockAudit.mock.calls.at(-1)[2]).toMatchObject({ auditTenantId: "primary" });
+});
+
+describe("bounded approval validation", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new Error("Request budget exhausted")), ms);
+      return controller.signal;
+    });
+  });
+  afterEach(() => { jest.restoreAllMocks(); jest.useRealTimers(); });
+
+  it("validates all 16 entries within the total budget with at most four graph requests in flight", async () => {
+    let active = 0; let peak = 0;
+    mockPermission.mockImplementation(async () => {
+      active++; peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      active--; return allow;
+    });
+    const scoped = { ...intent, scope: Array.from({ length: 16 }, (_, index) => ({ ...intent.scope[0],
+      resource: { type: "agent" as const, id: `example-${index}` } })) };
+    const pending = createDelegation(user, scoped, ctx, id);
+    await jest.advanceTimersByTimeAsync(3200);
+    await pending;
+    expect(mockPermission).toHaveBeenCalledTimes(32);
+    expect(peak).toBe(4);
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops queued entries and never persists an approval when its total budget expires", async () => {
+    mockPermission.mockImplementation((_request, signal: AbortSignal) => new Promise((resolve) => {
+      signal.addEventListener("abort", () => resolve({ decision: "DENY", reason: "AUTHZ_UNAVAILABLE" }), { once: true });
+    }));
+    const pending = createDelegation(user, { ...intent, scope: Array(16).fill(intent.scope[0]) }, ctx, id);
+    const rejected = expect(pending).rejects.toMatchObject({ status: 503 });
+    await jest.advanceTimersByTimeAsync(5000);
+    await rejected;
+    expect(mockPermission).toHaveBeenCalledTimes(4);
+    expect(mockInsert).not.toHaveBeenCalled();
+    expect(mockAudit).toHaveBeenCalledTimes(1);
+  });
 });
 it("refuses approval if the service or user has no authority", async () => {
   mockPermission.mockResolvedValueOnce({ decision: "DENY", reason: "NO_CAPABILITY" });

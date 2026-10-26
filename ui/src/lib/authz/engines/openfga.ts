@@ -217,7 +217,9 @@ function deny(reason: AuthorizeResult["reason"] = "NO_CAPABILITY"): AuthorizeRes
 }
 
 async function runCheck(req: AuthorizeRequest, fresh = false, deadline?: AbortSignal): Promise<AuthorizeResult> {
+  if (deadline?.aborted) return deny("AUTHZ_UNAVAILABLE");
   if (!circuitAllows()) return deny("AUTHZ_UNAVAILABLE");
+  const halfOpenProbe = circuitState === "half_open";
 
   const relation = openFgaCheckRelation(req.action);
   const user = `${req.subject.type}:${req.subject.id}`;
@@ -226,15 +228,21 @@ async function runCheck(req: AuthorizeRequest, fresh = false, deadline?: AbortSi
   try {
     // Start before discovery so it consumes the same execution-check budget.
     const signal = deadline ?? (fresh ? AbortSignal.timeout(OPENFGA_READ_TIMEOUT_MS) : undefined);
+    signal?.throwIfAborted();
     const storeId = await getOpenFgaStoreId();
     signal?.throwIfAborted();
     const allowed = await fgaCheck(storeId, user, relation, object,
       fresh ? { consistency: "HIGHER_CONSISTENCY", signal } : {});
+    signal?.throwIfAborted();
     recordSuccess();
     const result = allowed ? allow() : deny("NO_CAPABILITY");
     return fresh ? { ...result, ttl_seconds: 0 } : result;
   } catch (err) {
-    recordFailure();
+    // Exhausting a caller's total budget is not a failed dependency probe.
+    // Release a cancelled half-open probe without poisoning other requests.
+    if (deadline?.aborted) {
+      if (halfOpenProbe && circuitState === "half_open") probeInFlight = false;
+    } else recordFailure();
     console.warn("[cas/openfga] check error:", err instanceof Error ? err.message : String(err));
     return deny("AUTHZ_UNAVAILABLE");
   }

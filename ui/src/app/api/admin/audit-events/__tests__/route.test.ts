@@ -402,6 +402,8 @@ describe("GET /api/admin/audit-events", () => {
   });
 
   it("preserves an allowlisted delegation snapshot and forwards its indexed filter", async () => {
+    mockGetServerSession.mockResolvedValueOnce({ accessToken: "token", sub: "admin-sub", org: "primary",
+      user: { email: "admin@example.test" } });
     global.fetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({ records: [{
       ts: "2026-10-21T12:00:00Z", type: "cas_decision", outcome: "deny", tenant_id: "primary", correlation_id: "request-1",
       actor_ref: "service_account:test-service", subject_ref: "user:test-user", delegation_id: "approval-1", delegation_policy: "cas-delegation/v1",
@@ -419,6 +421,7 @@ describe("GET /api/admin/audit-events", () => {
       delegation_evidence: { kind: "cas_approval", reference: "approval-1" } });
     expect(JSON.stringify(result)).not.toContain("must-not-be-returned");
     expect(new URL((global.fetch as jest.Mock).mock.calls[0][0]).searchParams.get("delegation_id")).toBe("approval-1");
+    expect(new URL((global.fetch as jest.Mock).mock.calls[0][0]).searchParams.get("tenant_id")).toBe("primary");
   });
 
   it.each([{ value: "invalid" }, { value: [null] }, { value: [{ gate: "unexpected", subject_ref: "user:test-user", decision: "ALLOW", reason: "OK" }] }])("does not render malformed chain evidence %j", async ({ value: gateway_checks }) => {
