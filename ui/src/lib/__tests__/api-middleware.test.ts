@@ -1149,6 +1149,16 @@ describe('getAuthenticatedUser', () => {
     expect(result.user.role).toBe('user');
   });
 
+  it.each([
+    ['SessionExpired', 401, 'session_expired', 'sign_in'],
+    ['SessionUnavailable', 503, 'session_unavailable', 'retry'],
+  ])('rejects %s before identity bookkeeping or anonymous fallback', async (error, statusCode, reason, action) => {
+    mockGetServerSession.mockResolvedValue({ error, expires: 'later' });
+    await expect(getAuthenticatedUser(new Request('http://example.test/api/chat') as unknown as NextRequest, { allowAnonymous: true }))
+      .rejects.toMatchObject({ statusCode, reason, action });
+    expect(mockGetCollection).not.toHaveBeenCalled();
+  });
+
   it('resolves credentials on every cookie request while deduplicating identity writes', async () => {
     process.env.CAIPE_SESSION_AUTH_CACHE_TTL_MS = '10000';
     const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });

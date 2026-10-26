@@ -44,6 +44,21 @@ jest.mock("../layout-client", () => ({
 }));
 
 describe("AppLayout", () => {
+  it('renders a retryable outage without redirecting or exposing page content', async () => {
+    mockGetConfig.mockReturnValue(true);
+    (getServerSession as jest.Mock).mockResolvedValue({ error: 'SessionUnavailable', expires: 'later' });
+    render(await AppLayout({ children: <span>Protected page</span> }));
+    expect(screen.getByRole('alert')).toHaveTextContent('temporarily unavailable');
+    expect(screen.queryByText('Protected page')).not.toBeInTheDocument();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it('rejects an old or revoked session even though the error object is non-null', async () => {
+    mockGetConfig.mockReturnValue(true);
+    (getServerSession as jest.Mock).mockResolvedValue({ error: 'SessionExpired', expires: 'later' });
+    await expect(AppLayout({ children: <span>Protected page</span> })).rejects.toThrow('redirect');
+    expect(redirect).toHaveBeenCalledWith('/login');
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetConfig.mockReturnValue(true);

@@ -479,34 +479,29 @@ The collection, env, and naming details are in the BFF library README at
 
 ## Component 2: CAIPE UI — The Reception Desk
 
-> **Badge analogy:** The reception desk at each department entrance. When you badge in, it reads your chip (JWT), checks your clearance level for this department, and either waves you through or says "sorry, you don't have access here." It doesn't phone HR — the badge chip already carries everything needed to make the decision.
+> **Badge analogy:** Any reception desk can look up your current login in the same register. Your badge identifies you; a separate permission check decides which doors you can open.
 
-**Technically:** Next.js App Router with NextAuth (Auth.js v5) for OIDC session management. Every API route handler runs `requireRbacPermission()` which validates the server-side session and enforces role requirements before proxying to backend services.
-
-Cookie authentication reads credentials and their matching expiry from the
-shared encrypted `auth_token_cache` record on each request. Login waits for
-durable publication; refresh uses a fenced MongoDB lease. Cookie encoding never
-writes credentials back. The BFF does not cache authenticated credentials;
-`CAIPE_SESSION_AUTH_CACHE_TTL_MS` no longer enables that cache. Identity-write
-deduplication remains separate from authentication and permission decisions.
+**Technically:** Next.js App Router with NextAuth for OIDC session management. The BFF session module owns shared login credentials; authorization helpers enforce permissions before protected operations.
 
 ### Authentication Flow
 
 ```
 1. Browser visits http://localhost:3000
 2. NextAuth detects no session → 302 to Keycloak (OIDC auth code flow)
-3. Keycloak → Duo SSO (kc_idp_hint=duo-sso auto-redirects, user never sees KC)
-4. Duo SSO login → auth code returned to Keycloak
+3. Keycloak optionally redirects to a configured upstream identity provider
+4. Upstream login completes through Keycloak
 5. Keycloak issues JWT → NextAuth exchanges code for tokens
-6. NextAuth stores small session metadata in the encrypted httpOnly cookie
-7. OAuth credentials are read from the shared encrypted auth_token_cache record in MongoDB on each request; standalone mode without MongoDB uses the UI server's in-process token cache
+6. The BFF persists encrypted credentials, expiry and version in MongoDB auth_sessions
+7. NextAuth issues an encrypted httpOnly cookie identifying that login
+8. Any BFF replica reads the same record; refresh is coordinated through a MongoDB lease
 ```
 
-**Security note:** The session cookie is httpOnly, Secure, SameSite=Lax, and encrypted with `NEXTAUTH_SECRET`. Large OAuth tokens are kept out of the browser cookie to avoid oversized request headers when Keycloak emits RBAC scopes, groups, or relationship-derived claims.
-
-- Multi-replica deployments require shared MongoDB and a common `NEXTAUTH_SECRET`. Sticky sessions are not needed for credential consistency.
-- In standalone mode, losing the in-process token cache on restart marks an existing slim session cookie `AccessTokenMissing`. The token-expiry guard sends the user through login instead of allowing tokenless backend proxy calls.
-- A shared-store read failure withholds credentials for that request and reports `SharedStoreUnavailable`. This transient error is not written into the cookie, so a later successful read can recover the same credential version. Actual refresh failures remain sticky until newer credentials are published.
+- There is no per-replica credential/session cache and no sticky-session requirement.
+- SSO requires MongoDB and a common `NEXTAUTH_SECRET`. Each login has its own record; the user subject and grants are unchanged.
+- Missing/revoked/expired sessions require sign-in. Store outages return retryable errors, without exposing a usable identity or clearing the cookie.
+- Logout durably revokes that login after CSRF validation. Fenced refresh writes cannot restore it.
+- Definitely retryable refresh rejections use a shared retry delay and may retain an unexpired token after rereading the session. Database outages and ambiguous provider failures do not use that fallback.
+- Existing cookies require a fresh login at coordinated cutover. See [browser sessions](../browser-sessions.md) for failure handling and rollout details.
 
 ### Server-Side Authorization (`api-middleware.ts`)
 

@@ -28,6 +28,7 @@
 export type AuthFailureReason =
   | "not_signed_in"
   | "session_expired"
+  | "session_unavailable"
   | "bearer_invalid"
   | "audience_mismatch"
   | "missing_role"
@@ -53,6 +54,7 @@ export interface AuthError {
 const KNOWN_REASONS: ReadonlySet<string> = new Set([
   "not_signed_in",
   "session_expired",
+  "session_unavailable",
   "bearer_invalid",
   "audience_mismatch",
   "missing_role",
@@ -105,10 +107,9 @@ export async function parseAuthError(res: Response): Promise<AuthError | null> {
       ? (body.reason as AuthFailureReason)
       : undefined;
 
-  // 503 only counts as an auth error when the Web UI backend tells us it's the PDP
-  // (Keycloak Authorization Services) being unreachable; other 503s are
-  // backend errors and should fall through to the inline error path.
-  if (res.status === 503 && explicitReason !== "pdp_unavailable") {
+  // Auth infrastructure outages need a retry hint, not a sign-in redirect.
+  // Other 503s remain ordinary backend failures.
+  if (res.status === 503 && explicitReason !== "pdp_unavailable" && explicitReason !== "session_unavailable") {
     return null;
   }
 
@@ -143,6 +144,8 @@ export function authErrorToastTitle(err: AuthError): string {
       return "Access denied";
     case "pdp_unavailable":
       return "Authorization service unavailable";
+    case "session_unavailable":
+      return "Sign-in service unavailable";
     default:
       return err.status === 403 ? "Access denied" : "Authentication failed";
   }
@@ -176,6 +179,7 @@ function defaultActionForReason(reason: AuthFailureReason): AuthFailureAction {
     case "forbidden":
       return "contact_admin";
     case "pdp_unavailable":
+    case "session_unavailable":
       return "retry";
     default:
       return "none";

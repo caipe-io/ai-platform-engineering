@@ -188,6 +188,6 @@ describe("UnauthorizedPage", () => {
     const user = userEvent.setup();
     render(<UnauthorizedPage />);
     await user.click(screen.getByRole("button", { name: /try another account/i }));
-    expect(mockSignOut).toHaveBeenCalledWith({ callbackUrl: "/login" });
+    expect(mockSignOut).toHaveBeenCalledWith({ callbackUrl: "/login", redirect: false });
   });
 });

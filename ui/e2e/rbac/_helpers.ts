@@ -3,7 +3,7 @@
  * Shared helpers for the RBAC e2e suite.
  */
 
-import { encode } from "next-auth/jwt";
+import { encodeTestSession } from "./_session-cookie";
 import { expect, type Locator, type Page } from "@playwright/test";
 import type { RbacEnv } from "./_env";
 
@@ -584,7 +584,7 @@ export async function installTestSession(
 
   const nowSeconds = Math.floor(Date.now() / 1000);
   const tokenExpiresAt = input.expiresAt ?? nowSeconds + 60 * 60;
-  const token = await encode({
+  const token = await encodeTestSession({
     secret,
     maxAge: 60 * 60,
     token: {
@@ -604,9 +604,8 @@ export async function installTestSession(
     },
   });
 
-  // Keep the client-side session check deterministic when the production
-  // app is running with a deliberately unreachable MongoDB URI. The SSR
-  // guard still exercises the signed cookie above; this route only replaces
+  // Keep the client-side session check deterministic. The SSR guard exercises
+  // the shared MongoDB session above; this route only replaces
   // the browser's follow-up /api/auth/session request. Tests that need to
   // exercise that endpoint register their own route afterward, which wins
   // because Playwright evaluates routes in reverse registration order.
@@ -634,8 +633,8 @@ export async function installTestSession(
       url: env.baseUrl,
       httpOnly: true,
       sameSite: "Lax",
-      // Keep the browser-level cookie alive past the embedded token expiry so
-      // tests that start with an already-expired token still load authenticated.
+      // Cookie lifetime is independent of server-side token validity. Tests of
+      // client expiry must keep the stored session valid to pass the SSR gate.
       expires: Math.max(tokenExpiresAt, nowSeconds) + 60 * 60,
     },
   ]);
