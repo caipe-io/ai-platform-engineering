@@ -204,7 +204,9 @@ describe("AgenticAppAssistantOverlay", () => {
 
   it("clears a failed deep-link error when a valid history selection succeeds", async () => {
     window.history.replaceState(null, "", "/example?assistant_chat=denied-chat");
-    mockChatStoreState.conversations = [makeConversation("history-chat", "2026-01-01")];
+    const history = makeConversation("history-chat", "2026-01-01");
+    history.messages.push({ id: "example-message", role: "user", content: "Example question", timestamp: new Date("2026-01-01") });
+    mockChatStoreState.conversations = [history];
     mockRestoreConversation.mockRejectedValueOnce(new Error("Access denied"));
     renderExampleOverlay();
     await screen.findByRole("alert");
