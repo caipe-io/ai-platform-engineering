@@ -414,7 +414,10 @@ Declare `ui.assistant.overlay: "host"` to use CAIPE's popup. Optional
   `requireConfiguration`, the launcher stays hidden until configuration arrives.
   Hide it during settings loading/failure and release visibility on app unmount.
 - `presentation` declares placeholder, feedback wording, audit-notice visibility,
-  font scale, and bounded default width/height. Users can change text size,
+  font scale, and bounded default width/height. Suggestions are hidden unless
+  `showSuggestions: true`; `suggestedPrompts` supplies up to eight default chips,
+  and a page can replace them through its context (including `[]` to hide them).
+  Users can change text size,
   expand and reset size through the common display menu. Audit presentation
   does not disable logging. One remaining choice applies without a selector.
 - Choice values are scalar, publisher-declared `forwarded_props` entries.

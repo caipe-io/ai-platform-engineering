@@ -15,7 +15,6 @@ import {
   applyFontSize,
   applyGradientTheme,
   applyInterfaceShadows,
-  applyAssistantGlass,
   applyAssistantFontScale,
   isAssistantFontScale,
   getDefaultAppearancePreferences,
@@ -189,12 +188,6 @@ export function AppearanceSettings(): React.ReactElement {
     autoSave.enqueue("shadows_enabled",value);
   };
 
-  const changeAssistantGlass = (value: boolean) => {
-    markAppearanceInteraction("assistantGlassEnabled");
-    setPreferences(current => ({ ...current,assistantGlassEnabled: value }));
-    applyAssistantGlass(value);
-    autoSave.enqueue("assistant_glass_enabled",value);
-  };
   const changeAssistantFont = (value: string) => {
     if (!isAssistantFontScale(value)) return;
     markAppearanceInteraction("assistantFontScale");
@@ -317,7 +310,7 @@ export function AppearanceSettings(): React.ReactElement {
         />
       </SettingsCard>
 
-      <SettingsCard title="Interface shadows" description="Show decorative shadows and glow around panels, cards, and chat. Borders, keyboard focus, and glass transparency stay visible.">
+      <SettingsCard title="Interface shadows" description="Show decorative shadows and glow around panels, cards, and chat. Borders and keyboard focus remain visible.">
         <div className="flex items-center justify-between gap-4">
           <span className="text-sm">Show shadows</span>
           <SettingsSwitch checked={preferences.shadowsEnabled} label="Show interface shadows" onCheckedChange={changeShadows} />
@@ -326,11 +319,6 @@ export function AppearanceSettings(): React.ReactElement {
       </SettingsCard>
 
       <SettingsCard title="Assistant appearance" description="Your display preferences apply to the shared assistant across apps.">
-        <div className="flex items-center justify-between gap-4">
-          <div><p className="text-sm font-medium">Glass</p><p className="text-sm text-muted-foreground">Use a translucent, blurred chat panel. Enabled by default.</p></div>
-          <SettingsSwitch checked={preferences.assistantGlassEnabled} label="Glass assistant appearance" onCheckedChange={changeAssistantGlass} />
-        </div>
-        <AutoSaveStatus className="mt-3" onRetry={() => autoSave.retry("assistant_glass_enabled")} state={autoSave.stateFor("assistant_glass_enabled")} />
         <label className="mt-4 block text-sm font-medium">Chat text size
           <Select className="mt-2 max-w-xs" value={preferences.assistantFontScale} onChange={event => changeAssistantFont(event.target.value)}>
             <option value="auto">App default</option><option value="compact">Small</option><option value="default">Default</option><option value="large">Large</option>

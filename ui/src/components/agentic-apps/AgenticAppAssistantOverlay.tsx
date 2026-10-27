@@ -8,7 +8,6 @@ import { useAssistantComposerOptions } from "./AssistantComposerOptions";
 import { AssistantConversationToolbar } from "./AssistantConversationToolbar";
 import HostConversationActions from "@/native-extensions/HostConversationActions";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
 import { useSearchParams } from "next/navigation";
 import { readAssistantDeepLink } from "@/lib/agentic-apps/assistant-links";
 import Image from "next/image";
@@ -18,7 +17,6 @@ import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { ChatPanel } from "@/components/chat/DynamicAgentChatPanel";
 import { buildAssistantClientContext } from "@/lib/agentic-apps/assistant-context";
 import { useAssistantAppearance } from "@/hooks/use-assistant-appearance";
-import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import { findLatestAppConversation, matchesAssistantConversation, mergeAppConversation } from "@/lib/agentic-apps/assistant-conversations";
 import { getAgentId } from "@/types/a2a";
@@ -27,7 +25,6 @@ import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 
 const DEFAULT_PANEL_SIZE = { width: 720, height: 780 };
 const MIN_PANEL_SIZE = { width: 480, height: 560 };
-const MAX_PANEL_SIZE = { width: 1180, height: 940 };
 const AGENTIC_APP_CONVERSATION_KIND = "agentic-app";
 
 export interface AgenticAppAssistantOverlayProps {
@@ -56,7 +53,6 @@ export function AgenticAppAssistantOverlay({
   assistantIcon,
   assistantAgentName,
   activeContext,
-  onClearContext,
   assistantAgentId,
   assistantAgent,
   open,
@@ -77,7 +73,11 @@ export function AgenticAppAssistantOverlay({
   const [panelSize, setPanelSize] = useState(defaultSize);
   const [expanded, setExpanded] = useState(false);
   const [displayMenuOpen, setDisplayMenuOpen] = useState(false);
-  const { glassMode, fontScale } = useAssistantAppearance(options?.presentation?.fontScale);
+  const { fontScale } = useAssistantAppearance(options?.presentation?.fontScale);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const launcherRef = useRef<HTMLButtonElement>(null);
+  const resizeRef = useRef<{ pointerId: number; x: number; y: number; width: number; height: number; maxWidth: number; maxHeight: number } | null>(null);
   const [historyRevision, setHistoryRevision] = useState(0);
   const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration);
   const [assistantConversation, setAssistantConversation] = useState<{
@@ -91,14 +91,12 @@ export function AgenticAppAssistantOverlay({
   const [conversationActionPending, setConversationActionPending] = useState(false);
   const selectedTitle = useChatStore(state => state.conversations.find(c => c.id === assistantConversation?.id)?.title);
   const selectedAccess = useChatStore(state => state.conversations.find(c => c.id === assistantConversation?.id)?.accessLevel);
-  const canClear = !selectedAccess || selectedAccess === "owner";
   const selectionSessionRef = useRef<{ previous: string | null; owned: string | null } | null>(null);
   const conversationRequestRef = useRef<{
     key: string;
     promise: Promise<string>;
   } | null>(null);
   const createConversation = useChatStore((state) => state.createConversation);
-  const deleteConversation = useChatStore((state) => state.deleteConversation);
   const loadMessagesFromServer = useChatStore((state) => state.loadMessagesFromServer);
   const setActiveConversation = useChatStore((state) => state.setActiveConversation);
   const searchParams = useSearchParams();
@@ -121,6 +119,9 @@ export function AgenticAppAssistantOverlay({
     () => buildAssistantClientContext(activeContext),
     [activeContext],
   );
+  const suggestedPrompts = options?.presentation?.showSuggestions
+    ? (activeContext?.suggestedPrompts ?? options.presentation.suggestedPrompts ?? [])
+    : [];
 
   useEffect(() => {
     if (deepLink.requested) queueMicrotask(() => setView("chat"));
@@ -283,55 +284,6 @@ export function AgenticAppAssistantOverlay({
     view,
   ]);
 
-  const handleClearChat = useCallback(async (): Promise<void> => {
-    if (!hasSelectedConversation || !assistantConversation || conversationActionPending || !canClear) return;
-    if (
-      !window.confirm(
-        "Clear this chat? The current conversation will move to Trash and a new chat will start.",
-      )
-    ) {
-      return;
-    }
-
-    const session = selectionSessionRef.current;
-    setConversationActionPending(true);
-    setConversationError(null);
-    try {
-      const priorRequest = conversationRequestRef.current;
-      await deleteConversation(assistantConversation.id, { selectNext: false });
-      if (conversationRequestRef.current === priorRequest) conversationRequestRef.current = null;
-      setAssistantConversation(previous => previous?.id === assistantConversation.id ? null : previous);
-      if (selectionSessionRef.current !== session) return;
-      // Deletion leaves no active conversation; this operation owns that transition.
-      if (session && useChatStore.getState().activeConversationId === null) session.owned = null;
-      const id = await createAppConversation();
-      if (selectionSessionRef.current !== session) return;
-      conversationRequestRef.current = { key: requestKey, promise: Promise.resolve(id) };
-      if (activate(id, session)) {
-        setAssistantConversation({ key: conversationKey, id });
-        updateAssistantDeepLink(id, options?.legacyConversationQueryParams);
-      }
-    } catch (error: unknown) {
-      if (selectionSessionRef.current !== session) return;
-      setConversationError({
-        key: requestKey,
-        message: error instanceof Error ? error.message : "Could not clear this chat",
-      });
-    } finally {
-      setConversationActionPending(false);
-    }
-  }, [
-    assistantConversation,
-    conversationActionPending,
-    activate,
-    conversationKey,
-    requestKey,
-    hasSelectedConversation,
-    createAppConversation,
-    deleteConversation, canClear,
-    options?.legacyConversationQueryParams,
-  ]);
-
   async function selectHistory(id: string): Promise<void> {
     const session = selectionSessionRef.current;
     const restoredId = await restoreConversation(id, true);
@@ -365,56 +317,59 @@ export function AgenticAppAssistantOverlay({
 
   const handleResizeStart = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0 || !containerRef.current || !panelRef.current) return;
       event.preventDefault();
+      const panel = panelRef.current.getBoundingClientRect();
+      const container = containerRef.current.getBoundingClientRect();
+      resizeRef.current = {
+        pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+        width: panel.width, height: panel.height,
+        maxWidth: container.width,
+        maxHeight: container.height - (launcherRef.current?.offsetHeight ?? 0) - 12,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
       setExpanded(false);
-      const startPoint = { x: event.clientX, y: event.clientY };
-      const startSize = panelSize;
+      setPanelSize({ width: panel.width, height: panel.height });
       document.body.style.cursor = "nwse-resize";
       document.body.style.userSelect = "none";
-
-      function handlePointerMove(moveEvent: PointerEvent): void {
-        setPanelSize(
-          clampPanelSize({
-            width: startSize.width + (startPoint.x - moveEvent.clientX),
-            height: startSize.height + (startPoint.y - moveEvent.clientY),
-          }),
-        );
-      }
-
-      function handlePointerUp(): void {
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-        window.removeEventListener("pointermove", handlePointerMove);
-        window.removeEventListener("pointerup", handlePointerUp);
-      }
-
-      window.addEventListener("pointermove", handlePointerMove);
-      window.addEventListener("pointerup", handlePointerUp);
     },
-    [panelSize],
+    [],
   );
+  const handleResizeMove = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = resizeRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    setPanelSize(clampPanelSize({
+      width: drag.width + drag.x - event.clientX,
+      height: drag.height + drag.y - event.clientY,
+    }, { width: drag.maxWidth, height: drag.maxHeight }));
+  }, []);
+  const handleResizeEnd = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (resizeRef.current?.pointerId !== event.pointerId) return;
+    resizeRef.current = null;
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
 
   return (
-    <div className="pointer-events-none fixed inset-x-4 bottom-4 top-18 z-40 flex min-h-0 flex-col items-end justify-end gap-3 sm:inset-x-6 sm:bottom-6" style={{ bottom: configuration?.bottomInset }}>
+    <div ref={containerRef} className="pointer-events-none fixed inset-x-4 bottom-4 top-18 z-40 flex min-h-0 flex-col items-end justify-end gap-3 sm:inset-x-6 sm:bottom-6" style={{ bottom: configuration?.bottomInset }}>
       {open ? (
         <Tabs value={view} onValueChange={value => setView(value as typeof view)} asChild>
         <section
+          ref={panelRef}
           role="dialog"
           aria-label={headerTitle}
-          className={cn(
-            "pointer-events-auto relative flex min-h-0 flex-col overflow-hidden rounded-3xl border border-border bg-popover text-foreground shadow-2xl transition-colors",
-            glassMode
-              ? "bg-popover/80 ring-1 ring-cyan-500/25 backdrop-blur-3xl backdrop-saturate-200 dark:border-cyan-200/55 dark:bg-cyan-950/15 dark:shadow-[0_24px_120px_rgba(34,211,238,0.22),inset_0_1px_0_rgba(255,255,255,0.18),inset_0_0_64px_rgba(34,211,238,0.10)] dark:ring-cyan-200/45"
-              : "shadow-black/10 dark:border-cyan-300/20 dark:bg-slate-950/95 dark:shadow-cyan-950/40",
-          )}
+          className="pointer-events-auto relative flex min-h-0 flex-col overflow-hidden rounded-3xl border border-border bg-background text-foreground shadow-2xl dark:bg-slate-950"
           style={{
             width: expanded ? "100%" : `min(${panelSize.width}px, 100%)`,
             height: expanded ? "100%" : `min(${panelSize.height}px, 100%)`,
           }}
         >
           <button type="button" aria-label={`Resize ${bubbleLabel} assistant`} onPointerDown={handleResizeStart}
-            className="absolute left-0 top-0 z-10 h-3 w-3 cursor-nwse-resize touch-none" />
-          <header className="flex items-center justify-between gap-3 border-b border-border bg-popover/40 px-4 py-3 backdrop-blur-3xl dark:bg-white/[0.02]">
+            onPointerMove={handleResizeMove} onPointerUp={handleResizeEnd} onPointerCancel={handleResizeEnd} onLostPointerCapture={handleResizeEnd}
+            className="absolute left-1 top-1 z-10 flex h-6 w-6 cursor-nwse-resize touch-none items-center justify-center rounded-md text-muted-foreground hover:bg-accent"
+          ><span aria-hidden className="h-2 w-2 border-l border-t border-current" /></button>
+          <header className="flex items-center justify-between gap-3 border-b border-border bg-background py-3 pl-9 pr-4">
             {hasSelectedConversation && assistantConversation ? <HostConversationActions key={assistantConversation.id}
               appId={appId} agentId={assistantAgentId} conversationId={assistantConversation.id}
               variant="title" conversationTitle={selectedTitle} disabled={conversationActionPending}
@@ -428,16 +383,10 @@ export function AgenticAppAssistantOverlay({
               menuOpen={displayMenuOpen} onMenuOpenChange={setDisplayMenuOpen}
               expanded={expanded} pending={conversationActionPending}
               canStart={view === "history" || hasSelectedConversation}
-              canClear={hasSelectedConversation && canClear}
-              onNewChat={() => void handleNewChat()} onClear={() => void handleClearChat()}
+              onNewChat={() => void handleNewChat()}
               onExpand={() => setExpanded(true)} onResetSize={() => { setExpanded(false); setPanelSize(defaultSize); }}
               chatHref={hasSelectedConversation && assistantConversation ? `/chat/${encodeURIComponent(assistantConversation.id)}` : undefined}
-              onMinimize={() => onOpenChange(false)}
-              context={activeContext ? <div className="space-y-2 border-t border-border pt-2 text-xs text-muted-foreground">
-                <p className="font-medium text-foreground">{activeContext.title ?? "Current page"}</p>
-                {activeContext.summary ? <p className="line-clamp-2">{activeContext.summary}</p> : null}
-                <Button variant="outline" size="sm" onClick={onClearContext}>Clear context</Button>
-              </div> : undefined} />
+              onMinimize={() => onOpenChange(false)} />
           </header>
           <div className="flex min-h-0 flex-1 flex-col">
           <TabsContent value="history" className="m-0 min-h-0 flex-1">
@@ -445,7 +394,7 @@ export function AgenticAppAssistantOverlay({
               revision={historyRevision} disabled={conversationActionPending}
               selectedId={assistantConversation?.id} onSelect={selectHistory} onArchived={onArchived} />
           </TabsContent>
-          <TabsContent value="chat" forceMount className="m-0 min-h-0 flex-1 data-[state=inactive]:hidden [&>div]:bg-transparent" style={{
+          <TabsContent value="chat" forceMount className="m-0 min-h-0 flex-1 bg-background data-[state=inactive]:hidden [&>div]:bg-background" style={{
             "--text-sm": fontScale === "large" ? "1rem" : fontScale === "compact" ? "0.8125rem" : "0.875rem",
             "--text-base": fontScale === "large" ? "1.125rem" : fontScale === "compact" ? "0.875rem" : "1rem",
           } as React.CSSProperties}>
@@ -467,7 +416,7 @@ export function AgenticAppAssistantOverlay({
                 showAuditNotice={options?.presentation?.showAuditNotice}
                 feedbackPrompt={options?.presentation?.feedbackPrompt}
                 clientContext={clientContext}
-                suggestedPrompts={activeContext?.suggestedPrompts}
+                suggestedPrompts={suggestedPrompts}
                 composerDraft={composerDraft}
                 onComposerDraftApplied={onComposerDraftApplied}
               />
@@ -484,6 +433,7 @@ export function AgenticAppAssistantOverlay({
       ) : null}
 
       <button
+        ref={launcherRef}
         type="button"
         aria-label={`Open ${bubbleLabel}`}
         className="pointer-events-auto inline-flex shrink-0 items-center gap-2 rounded-full border border-cyan-200/30 bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-200"
@@ -496,13 +446,13 @@ export function AgenticAppAssistantOverlay({
   );
 }
 
-function clampPanelSize(size: { width: number; height: number }): {
+function clampPanelSize(size: { width: number; height: number }, maximum: { width: number; height: number }): {
   width: number;
   height: number;
 } {
   return {
-    width: Math.max(MIN_PANEL_SIZE.width, Math.min(MAX_PANEL_SIZE.width, size.width)),
-    height: Math.max(MIN_PANEL_SIZE.height, Math.min(MAX_PANEL_SIZE.height, size.height)),
+    width: Math.min(maximum.width, Math.max(MIN_PANEL_SIZE.width, size.width)),
+    height: Math.min(maximum.height, Math.max(MIN_PANEL_SIZE.height, size.height)),
   };
 }
 

@@ -14,6 +14,8 @@ export interface AssistantOptions {
     feedbackPrompt?: { message: string; actionLabel: string; trailingText?: string };
     fontScale?: "compact" | "default" | "large";
     width?: number; height?: number;
+    showSuggestions?: boolean;
+    suggestedPrompts?: string[];
   };
 }
 export interface AssistantConfiguration {

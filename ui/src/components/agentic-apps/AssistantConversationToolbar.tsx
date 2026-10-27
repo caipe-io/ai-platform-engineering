@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, Maximize2, MoreVertical, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { ExternalLink, Maximize2, MoreVertical, Plus, RotateCcw, X } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -13,15 +13,12 @@ interface Props {
   onMenuOpenChange: (open: boolean) => void;
   expanded: boolean;
   pending: boolean;
-  canClear: boolean;
   canStart: boolean;
   onExpand: () => void;
   onNewChat: () => void;
   onResetSize: () => void;
-  onClear: () => void;
   chatHref?: string;
   onMinimize: () => void;
-  context?: ReactNode;
 }
 
 /** The same conversation commands and presentation for every hosted app. */
@@ -43,9 +40,7 @@ export function AssistantConversationToolbar(props: Props) {
           <Button variant="ghost" className="justify-start gap-2" aria-label="Start new assistant chat" disabled={props.pending || !props.canStart} onClick={() => run(props.onNewChat)}><Plus className="h-4 w-4" aria-hidden />New chat</Button>
           <Button variant="ghost" className="justify-start gap-2" aria-label="Expand assistant" disabled={props.expanded} onClick={() => run(props.onExpand)}><Maximize2 className="h-4 w-4" aria-hidden />Expand chat</Button>
           <Button variant="ghost" className="justify-start gap-2" aria-label="Reset assistant size" onClick={() => run(props.onResetSize)}><RotateCcw className="h-4 w-4" aria-hidden />Reset size</Button>
-          <Button variant="ghost" className="justify-start gap-2 text-destructive hover:text-destructive" aria-label="Clear assistant chat" disabled={props.pending || !props.canClear} onClick={() => run(props.onClear)}><Trash2 className="h-4 w-4" aria-hidden />Clear chat</Button>
         </div>
-        {props.context}
       </PopoverContent>
     </Popover>
     <Tooltip><TooltipTrigger asChild>

@@ -2868,6 +2868,7 @@ export function ChatPanel({
             />
 
             <div
+              data-testid="message-composer"
               className={cn(
                 "relative flex flex-col gap-1 rounded-3xl border bg-card px-3 py-2.5 shadow-sm transition-all duration-200 focus-within:border-foreground/30",
                 isDraggingFiles
@@ -2877,6 +2878,11 @@ export function ChatPanel({
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
+              onClick={(event) => {
+                if (!(event.target as HTMLElement).closest("button, input, textarea, select, a, [role='button']")) {
+                  inputRef.current?.focus();
+                }
+              }}
             >
               {maxEffortAnimationKey > 0 && (
                 <div

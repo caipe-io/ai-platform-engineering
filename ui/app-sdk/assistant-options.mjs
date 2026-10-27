@@ -46,12 +46,17 @@ export function validateAssistantOptions(value) {
   }
   if (value.presentation !== undefined) {
     const p = value.presentation;
-    object(p, ["placeholder", "showAuditNotice", "feedbackPrompt", "fontScale", "width", "height"]);
+    object(p, ["placeholder", "showAuditNotice", "feedbackPrompt", "fontScale", "width", "height", "showSuggestions", "suggestedPrompts"]);
     if (p.placeholder !== undefined) text(p.placeholder, 120);
     if (p.showAuditNotice !== undefined && typeof p.showAuditNotice !== "boolean") throw new Error("Invalid audit presentation");
     if (p.fontScale !== undefined && !["compact", "default", "large"].includes(p.fontScale)) throw new Error("Invalid font scale");
     if (p.width !== undefined) bounded(p.width, 480, 1180);
     if (p.height !== undefined) bounded(p.height, 560, 940);
+    if (p.showSuggestions !== undefined && typeof p.showSuggestions !== "boolean") throw new Error("Invalid suggestions visibility");
+    if (p.suggestedPrompts !== undefined) {
+      if (!Array.isArray(p.suggestedPrompts) || p.suggestedPrompts.length > 8) throw new Error("Invalid suggested prompts");
+      p.suggestedPrompts.forEach(prompt => text(prompt, 160));
+    }
     if (p.feedbackPrompt !== undefined) {
       object(p.feedbackPrompt, ["message", "actionLabel", "trailingText"]);
       if (typeof p.feedbackPrompt.message !== "string" || p.feedbackPrompt.message.length > 240) throw new Error("Invalid feedback message");

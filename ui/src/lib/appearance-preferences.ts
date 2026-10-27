@@ -95,7 +95,7 @@ export function getDefaultAppearancePreferences(): AppearancePreferences {
     gradientTheme: getConfig("defaultGradientTheme") as GradientTheme,
     theme: isOption(configuredTheme,COLOR_THEMES) ? configuredTheme : "system",
     shadowsEnabled: false,
-    assistantGlassEnabled: true,
+    assistantGlassEnabled: false,
     assistantFontScale: "auto",
   };
 }

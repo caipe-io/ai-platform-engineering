@@ -32,7 +32,7 @@ describe("appearance preference hydration",() => {
   });
 
   it("defaults to glass on and shadows off", () => {
-    expect(getDefaultAppearancePreferences()).toMatchObject({ assistantGlassEnabled: true, shadowsEnabled: false, assistantFontScale: "auto" });
+    expect(getDefaultAppearancePreferences()).toMatchObject({ assistantGlassEnabled: false, shadowsEnabled: false, assistantFontScale: "auto" });
   });
 
   it("applies explicit themes to the root and clears stale native color schemes",() => {

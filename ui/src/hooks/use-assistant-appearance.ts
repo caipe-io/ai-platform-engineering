@@ -6,7 +6,7 @@ import { ASSISTANT_APPEARANCE_EVENT, isAssistantFontScale } from "@/lib/appearan
 
 function subscribe(onChange: () => void): () => void {
   const onStorage = (event: StorageEvent) => {
-    if (event.key === null || event.key === "agentic-app-assistant-glass" || event.key === "agentic-app-assistant-font-scale") onChange();
+    if (event.key === null || event.key === "agentic-app-assistant-font-scale") onChange();
   };
   window.addEventListener(ASSISTANT_APPEARANCE_EVENT, onChange);
   window.addEventListener("storage", onStorage);
@@ -16,14 +16,12 @@ function subscribe(onChange: () => void): () => void {
   };
 }
 
-function readGlass(): boolean { return localStorage.getItem("agentic-app-assistant-glass") !== "false"; }
 function readScale() {
   const value = localStorage.getItem("agentic-app-assistant-font-scale");
   return isAssistantFontScale(value) ? value : "auto";
 }
 
 export function useAssistantAppearance(appDefault: "compact" | "default" | "large" = "compact") {
-  const glassMode = useSyncExternalStore(subscribe, readGlass, () => true);
   const savedScale = useSyncExternalStore(subscribe, readScale, () => "auto");
-  return { glassMode, fontScale: savedScale === "auto" ? appDefault : savedScale };
+  return { fontScale: savedScale === "auto" ? appDefault : savedScale };
 }

@@ -114,6 +114,14 @@ it("keeps normal streaming available in the independent manual chat", async () =
   expect(mockOpenChat).not.toHaveBeenCalled();
 });
 
+it("focuses the message field when the lower composer area is clicked", () => {
+  mockConversation = { ...mockConversation, source: "web", task_id: undefined, messages: [] };
+  render(<ChatPanel agentId="example-agent" conversationId="task-chat" />);
+  const input = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.click(screen.getByTestId("composer-model-effort"));
+  expect(input).toHaveFocus();
+});
+
 it("does not offer continuation in a conversation shared as read-only", () => {
   render(<ChatPanel agentId="example-agent" conversationId="task-chat" readOnly readOnlyReason="shared_readonly" />);
   expect(screen.queryByRole("button", { name: "Continue this run" })).toBeNull();
