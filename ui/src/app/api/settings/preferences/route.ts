@@ -16,6 +16,9 @@ import { NextRequest } from 'next/server';
 export const PATCH = withErrorHandler(async (request: NextRequest) => {
   return withAuth(request, async (req, user) => {
     const body: Partial<UserSettings['preferences']> = await request.json();
+    if (body.shadows_enabled !== undefined && typeof body.shadows_enabled !== 'boolean') {
+      throw new ApiError('shadows_enabled must be a boolean', 400, 'BAD_REQUEST');
+    }
 
     if (body.chat_history !== undefined) {
       try { body.chat_history = parseChatHistoryOrganization(body.chat_history); }

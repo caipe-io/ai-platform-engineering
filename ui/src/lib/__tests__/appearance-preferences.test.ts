@@ -4,6 +4,8 @@
 
 import {
   applyColorTheme,
+  applyInterfaceShadows,
+  normalizeServerAppearancePreferences,
   markAppearanceInteraction,
   mergeUnchangedServerAppearance,
   readCachedAppearancePreferences,
@@ -16,6 +18,7 @@ const CURRENT: AppearancePreferences = {
   fontSize: "large",
   gradientTheme: "default",
   theme: "dark",
+  shadowsEnabled: true,
 };
 
 describe("appearance preference hydration",() => {
@@ -65,6 +68,21 @@ describe("appearance preference hydration",() => {
       fontSize: "large",
       gradientTheme: "ocean",
       theme: "light",
+      shadowsEnabled: true,
     });
+  });
+
+  it("persists an explicit shadow opt-out and hydrates false from the account", () => {
+    applyInterfaceShadows(false);
+    expect(document.documentElement).toHaveAttribute("data-interface-shadows", "off");
+    expect(readCachedAppearancePreferences()).toMatchObject({ shadowsEnabled: false });
+    expect(mergeUnchangedServerAppearance(CURRENT, normalizeServerAppearancePreferences({ shadows_enabled: false }), snapshotAppearanceInteractions())).toMatchObject({ shadowsEnabled: false });
+    expect(normalizeServerAppearancePreferences({ shadows_enabled: "false" })).not.toHaveProperty("shadowsEnabled");
+  });
+
+  it("does not overwrite a shadow toggle made while account preferences are loading", () => {
+    const snapshot = snapshotAppearanceInteractions();
+    markAppearanceInteraction("shadowsEnabled");
+    expect(mergeUnchangedServerAppearance({ ...CURRENT, shadowsEnabled: false }, { shadowsEnabled: true }, snapshot)).toMatchObject({ shadowsEnabled: false });
   });
 });

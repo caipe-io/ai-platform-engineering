@@ -298,6 +298,13 @@ using installation `host_route_claims`:
 
 ## Shared host assistant
 
+- The iframe bridge accepts the host's boolean
+  `caipe.microfrontend.initialize.v1.context.preferences.shadows_enabled`
+  presentation preference after checking origin, parent window, version and app
+  ID. It removes decorative box/text shadows while preserving focus rings.
+  Missing preferences leave the app's appearance unchanged. Native apps inherit
+  the host setting directly.
+
 - Iframes can publish the same host breadcrumb row as native packages when
   `bridge.getCapabilities()?.breadcrumbs` is true. Call
   `bridge.setBreadcrumbs([{ label: "Home", href: "/" }, { label: "Example" }], "/example")`

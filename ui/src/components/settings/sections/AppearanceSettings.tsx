@@ -2,6 +2,7 @@
 
 import { AutoSaveStatus } from "@/components/settings/shared/AutoSaveStatus";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
+import { SettingsSwitch } from "@/components/settings/shared/SettingsSwitch";
 import { apiClient } from "@/lib/api-client";
 import {
   COLOR_THEMES,
@@ -12,6 +13,7 @@ import {
   applyFontFamily,
   applyFontSize,
   applyGradientTheme,
+  applyInterfaceShadows,
   getDefaultAppearancePreferences,
   markAppearanceInteraction,
   mergeUnchangedServerAppearance,
@@ -83,7 +85,7 @@ export function AppearanceSettings(): React.ReactElement {
   const [loading,setLoading] = useState(true);
   const [loadError,setLoadError] = useState<string | null>(null);
 
-  const autoSave = useKeyedAutoSave<AppearancePreferenceKey,string>({
+  const autoSave = useKeyedAutoSave<AppearancePreferenceKey,string | boolean>({
     persist: async (key,value) => {
       await apiClient.updatePreferences({ [key]: value });
     },
@@ -169,6 +171,13 @@ export function AppearanceSettings(): React.ReactElement {
     setPreferences((current) => ({ ...current,gradientTheme: value }));
     applyGradientTheme(value);
     autoSave.enqueue("gradient_theme",value);
+  };
+
+  const changeShadows = (value: boolean) => {
+    markAppearanceInteraction("shadowsEnabled");
+    setPreferences(current => ({ ...current,shadowsEnabled: value }));
+    applyInterfaceShadows(value);
+    autoSave.enqueue("shadows_enabled",value);
   };
 
   return (
@@ -283,6 +292,14 @@ export function AppearanceSettings(): React.ReactElement {
           onRetry={() => autoSave.retry("gradient_theme")}
           state={autoSave.stateFor("gradient_theme")}
         />
+      </SettingsCard>
+
+      <SettingsCard title="Interface shadows" description="Show decorative shadows and glow around panels, cards, and chat. Borders, keyboard focus, and glass transparency stay visible.">
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-sm">Show shadows</span>
+          <SettingsSwitch checked={preferences.shadowsEnabled} label="Show interface shadows" onCheckedChange={changeShadows} />
+        </div>
+        <AutoSaveStatus className="mt-3" onRetry={() => autoSave.retry("shadows_enabled")} state={autoSave.stateFor("shadows_enabled")} />
       </SettingsCard>
 
       <SettingsCard

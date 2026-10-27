@@ -26,6 +26,11 @@ Open http://localhost:3000.
 
 ## Runtime Configuration
 
+Settings > Appearance > Interface shadows lets each user turn decorative box
+and text shadows off. Shadows stay enabled by default; the preference saves to
+the account and applies immediately, including shared chat and SDK-connected
+iframe apps. Borders, focus rings, theme colors, and glass transparency remain.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `DYNAMIC_AGENTS_URL` | `http://localhost:8100` in local dev, `http://dynamic-agents:8100` in production | Server-side Dynamic Agents runtime URL |

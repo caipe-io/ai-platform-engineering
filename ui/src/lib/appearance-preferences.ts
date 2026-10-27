@@ -36,6 +36,7 @@ export type AppearancePreferenceKey =
   | "font_size"
   | "font_family"
   | "gradient_theme"
+  | "shadows_enabled"
   | "theme";
 
 export interface AppearancePreferences {
@@ -43,6 +44,7 @@ export interface AppearancePreferences {
   fontSize: FontSize;
   gradientTheme: GradientTheme;
   theme: ColorTheme;
+  shadowsEnabled: boolean;
 }
 
 export type AppearanceInteractionSnapshot = Record<keyof AppearancePreferences,number>;
@@ -52,12 +54,14 @@ const appearanceInteractionVersions: AppearanceInteractionSnapshot = {
   fontSize: 0,
   gradientTheme: 0,
   theme: 0,
+  shadowsEnabled: 0,
 };
 
 const STORAGE_KEYS = {
   fontFamily: "caipe-font-family",
   fontSize: "caipe-font-size",
   gradientTheme: "caipe-gradient-theme",
+  shadowsEnabled: "caipe-shadows-enabled",
 } as const;
 
 function isOption<Value extends string>(
@@ -81,6 +85,7 @@ export function getDefaultAppearancePreferences(): AppearancePreferences {
     fontSize: getConfig("defaultFontSize") as FontSize,
     gradientTheme: getConfig("defaultGradientTheme") as GradientTheme,
     theme: isOption(configuredTheme,COLOR_THEMES) ? configuredTheme : "system",
+    shadowsEnabled: true,
   };
 }
 
@@ -91,11 +96,13 @@ export function readCachedAppearancePreferences(): Partial<AppearancePreferences
   const fontSize = localStorage.getItem(STORAGE_KEYS.fontSize);
   const gradientTheme = localStorage.getItem(STORAGE_KEYS.gradientTheme);
   const theme = localStorage.getItem("theme");
+  const shadowsEnabled = localStorage.getItem(STORAGE_KEYS.shadowsEnabled);
   return {
     ...(isOption(fontFamily,FONT_FAMILIES) ? { fontFamily } : {}),
     ...(isOption(fontSize,FONT_SIZES) ? { fontSize } : {}),
     ...(isOption(gradientTheme,gradientThemes) ? { gradientTheme } : {}),
     ...(isOption(theme,COLOR_THEMES) ? { theme } : {}),
+    ...(shadowsEnabled === "true" || shadowsEnabled === "false" ? { shadowsEnabled: shadowsEnabled === "true" } : {}),
   };
 }
 
@@ -130,6 +137,10 @@ export function mergeUnchangedServerAppearance(
       appearanceInteractionVersions.theme === snapshot.theme && server.theme
         ? server.theme
         : current.theme,
+    shadowsEnabled:
+      appearanceInteractionVersions.shadowsEnabled === snapshot.shadowsEnabled && typeof server.shadowsEnabled === "boolean"
+        ? server.shadowsEnabled
+        : current.shadowsEnabled,
   };
 }
 
@@ -150,6 +161,7 @@ export function normalizeServerAppearancePreferences(
     ...(isOption(preferences.theme,COLOR_THEMES)
       ? { theme: preferences.theme }
       : {}),
+    ...(typeof preferences.shadows_enabled === "boolean" ? { shadowsEnabled: preferences.shadows_enabled } : {}),
   };
 }
 
@@ -203,4 +215,13 @@ export function applyCachedAppearance(preferences: AppearancePreferences): void 
   applyFontSize(preferences.fontSize);
   applyGradientTheme(preferences.gradientTheme);
   applyColorTheme(preferences.theme);
+  applyInterfaceShadows(preferences.shadowsEnabled);
+}
+
+export const INTERFACE_SHADOWS_EVENT = "caipe:interface-shadows-change";
+
+export function applyInterfaceShadows(enabled: boolean): void {
+  document.documentElement.setAttribute("data-interface-shadows",enabled ? "on" : "off");
+  localStorage.setItem(STORAGE_KEYS.shadowsEnabled,String(enabled));
+  window.dispatchEvent(new Event(INTERFACE_SHADOWS_EVENT));
 }

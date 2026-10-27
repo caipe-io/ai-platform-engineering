@@ -1,10 +1,11 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { createRef } from "react";
 import { HostedAgenticAppFrame } from "../HostedAgenticAppFrame";
+import { applyInterfaceShadows } from "@/lib/appearance-preferences";
 
 let mockTheme = "dark";
 jest.mock("@/components/theme-provider", () => ({ useTheme: () => ({ resolvedTheme: mockTheme }) }));
-afterEach(() => { jest.restoreAllMocks(); mockTheme = "dark"; });
+afterEach(() => { jest.restoreAllMocks(); mockTheme = "dark"; localStorage.clear(); document.documentElement.removeAttribute("data-interface-shadows"); });
 
 it("preserves the assistant iframe ref and load callback", () => {
   const ref = createRef<HTMLIFrameElement>();
@@ -22,13 +23,23 @@ it("sends live presentation context on load and host theme changes, without iden
   const post = jest.spyOn(frame.contentWindow!, "postMessage");
   fireEvent.load(frame);
   expect(post).toHaveBeenLastCalledWith(expect.objectContaining({
-    appId: "example", context: expect.objectContaining({ theme: "dark", preferences: {} }),
+    appId: "example", context: expect.objectContaining({ theme: "dark", preferences: { shadows_enabled: true } }),
   }), window.location.origin);
   mockTheme = "legacy-light";
   rerender(<HostedAgenticAppFrame appId="example" title="Example" src="/apps/example" />);
   const message = post.mock.calls.at(-1)?.[0];
   expect(message.context.theme).toBe("light");
   expect(JSON.stringify(message)).not.toMatch(/token|cookie|session|email|authorization/i);
+});
+
+it("publishes a shadow change without changing the iframe document", () => {
+  render(<HostedAgenticAppFrame appId="example" title="Example" src="/apps/example" />);
+  const frame = screen.getByTitle("Example") as HTMLIFrameElement;
+  const post = jest.spyOn(frame.contentWindow!, "postMessage");
+  act(() => applyInterfaceShadows(false));
+  expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ context: expect.objectContaining({ preferences: { shadows_enabled: false } }) }), window.location.origin);
+  expect(screen.getByTitle("Example")).toBe(frame);
+  expect(frame.getAttribute("src")).toBe("/apps/example");
 });
 
 it("validates ready-message origin, source and app and prevents acknowledgement loops", () => {

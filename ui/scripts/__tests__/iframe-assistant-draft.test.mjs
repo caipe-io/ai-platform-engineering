@@ -32,3 +32,30 @@ test('bridge publishes a draft only on an explicit call and compatible host', ()
     assert.equal(messages.some(({ message }) => /submit|send|invoke/.test(message.type)), false);
   } finally { bridge?.dispose(); globalThis.window = previous; }
 });
+
+test('host presentation accepts only a boolean shadow preference from the verified parent', () => {
+  const previousWindow = globalThis.window, previousDocument = globalThis.document;
+  const listeners = new Map(), attributes = new Map(), styles = [];
+  const parent = { postMessage() {} };
+  globalThis.window = { location: { origin: 'https://example.test' }, parent,
+    addEventListener: (name, listener) => listeners.set(name, listener), removeEventListener: name => listeners.delete(name) };
+  globalThis.document = { documentElement: { setAttribute: (key,value) => attributes.set(key,value) },
+    getElementById: id => styles.find(style => style.id === id), createElement: () => ({}), head: { appendChild: style => styles.push(style) } };
+  let bridge;
+  try {
+    bridge = createAgenticAppBridge({ appId: 'example' });
+    const data = { type: 'caipe.microfrontend.initialize.v1', appId: 'example', version: '1.0', context: { preferences: { shadows_enabled: false } } };
+    const receive = (overrides = {}) => listeners.get('message')({ origin: 'https://example.test', source: parent, data, ...overrides });
+    receive({ origin: 'https://other.example.test' });
+    receive({ source: {} });
+    receive({ data: { ...data, appId: 'secondary' } });
+    receive({ data: { ...data, context: { preferences: { shadows_enabled: 'false' } } } });
+    assert.equal(attributes.size, 0);
+    receive();
+    assert.equal(attributes.get('data-interface-shadows'), 'off');
+    assert.match(styles[0].textContent, /var\(--tw-ring-shadow/);
+    receive({ data: { ...data, context: { preferences: { shadows_enabled: true } } } });
+    assert.equal(attributes.get('data-interface-shadows'), 'on');
+    assert.equal(styles.length, 1);
+  } finally { bridge?.dispose(); globalThis.window = previousWindow; globalThis.document = previousDocument; }
+});

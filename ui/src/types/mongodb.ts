@@ -250,6 +250,7 @@ export interface UserSettings {
     gradient_theme: 'default' | 'minimal' | 'professional' | 'ocean' | 'sunset' | 'cyberpunk' | 'tron' | 'matrix';
     font_family: 'inter' | 'source-sans' | 'ibm-plex' | 'system';
     font_size: 'small' | 'medium' | 'large' | 'x-large';
+    shadows_enabled?: boolean;
     sidebar_collapsed: boolean;
     context_panel_visible: boolean;
     debug_mode: boolean;
@@ -307,6 +308,7 @@ export const DEFAULT_USER_SETTINGS: Omit<
     gradient_theme: "default",
     font_family: "inter",
     font_size: "medium",
+    shadows_enabled: true,
     sidebar_collapsed: false,
     context_panel_visible: true,
     debug_mode: false,

@@ -1,5 +1,16 @@
 import { validateAssistantConfiguration } from "./assistant-options.mjs";
 
+// Preserve keyboard focus rings when decorative shadows are disabled.
+export const INTERFACE_SHADOWS_CSS = `
+html[data-interface-shadows="off"] *,
+html[data-interface-shadows="off"] *::before,
+html[data-interface-shadows="off"] *::after {
+  --tw-shadow: 0 0 #0000 !important;
+  --tw-inset-shadow: 0 0 #0000 !important;
+  box-shadow: var(--tw-inset-ring-shadow, 0 0 #0000), var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000) !important;
+  text-shadow: none !important;
+}`;
+
 /** Standalone iframe client. No host stores, tokens, or singleton runtimes are imported. */
 export function createAgenticAppBridge({ appId, onNavigate, onStatus, onAssistantState, timeoutMs = 5000 }) {
   if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(appId)) throw new Error("Invalid application ID");
@@ -14,7 +25,18 @@ export function createAgenticAppBridge({ appId, onNavigate, onStatus, onAssistan
     if (event.origin !== origin || event.source !== window.parent || event.data?.appId !== appId) return;
     const message = event.data;
     if (message.version !== "1.0") { onStatus?.("unsupported_version"); return; }
-    if (message.type === "caipe.agenticApp.bridge.capabilities.v1") {
+    if (message.type === "caipe.microfrontend.initialize.v1") {
+      const enabled = message.context?.preferences?.shadows_enabled;
+      if (typeof enabled === "boolean") {
+        document.documentElement.setAttribute("data-interface-shadows", enabled ? "on" : "off");
+        if (!document.getElementById("caipe-interface-shadows")) {
+          const style = document.createElement("style");
+          style.id = "caipe-interface-shadows";
+          style.textContent = INTERFACE_SHADOWS_CSS;
+          document.head.appendChild(style);
+        }
+      }
+    } else if (message.type === "caipe.agenticApp.bridge.capabilities.v1") {
       clearTimeout(timer);
       capabilities = message.capabilities;
       onStatus?.("ready", capabilities);

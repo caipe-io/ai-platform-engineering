@@ -1,4 +1,5 @@
 import type { AppAssistantContext } from "./index.js";
+export const INTERFACE_SHADOWS_CSS: string;
 export interface AgenticAppBridgeCapabilities {
   assistantOptions?: import("./assistant-options.mjs").AssistantOptions;
   assistant: boolean;

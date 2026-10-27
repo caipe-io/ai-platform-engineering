@@ -3,6 +3,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, type IframeHTMLAttributes } from "react";
 import { useTheme } from "@/components/theme-provider";
 import { isLightColorTheme } from "@/lib/color-theme";
+import { useInterfaceShadows } from "@/hooks/use-interface-shadows";
 
 /** Presentation context only: never send sessions, credentials, or JWTs here. */
 export const HostedAgenticAppFrame = forwardRef<HTMLIFrameElement, IframeHTMLAttributes<HTMLIFrameElement> & { appId: string }>(
@@ -11,6 +12,7 @@ export const HostedAgenticAppFrame = forwardRef<HTMLIFrameElement, IframeHTMLAtt
     const readyReceived = useRef(false);
     const { resolvedTheme, systemTheme } = useTheme();
     const theme = isLightColorTheme(resolvedTheme ?? systemTheme) ? "light" : "dark";
+    const shadowsEnabled = useInterfaceShadows();
     useImperativeHandle(forwardedRef, () => frame.current!, []);
 
     const publish = useCallback(() => {
@@ -19,10 +21,10 @@ export const HostedAgenticAppFrame = forwardRef<HTMLIFrameElement, IframeHTMLAtt
         context: {
           surface: "hosted", route: window.location.pathname, theme,
           locale: navigator.language, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          preferences: {},
+          preferences: { shadows_enabled: shadowsEnabled },
         },
       }, window.location.origin);
-    }, [appId, theme]);
+    }, [appId, theme, shadowsEnabled]);
 
     useEffect(() => { publish(); }, [publish]);
     useEffect(() => {
@@ -31,7 +33,7 @@ export const HostedAgenticAppFrame = forwardRef<HTMLIFrameElement, IframeHTMLAtt
           event.source !== frame.current.contentWindow || event.origin !== window.location.origin) return;
         const data: unknown = event.data;
         if (!data || typeof data !== "object" || !("type" in data) || !("version" in data) || !("appId" in data) ||
-          data.type !== "caipe.microfrontend.ready.v1" || data.version !== "1.0" || data.appId !== appId) return;
+          (data.type !== "caipe.microfrontend.ready.v1" && data.type !== "caipe.agenticApp.bridge.connect.v1") || data.version !== "1.0" || data.appId !== appId) return;
         // Older children acknowledge every initialize message. Reply at most
         // once per document load so those clients cannot form a message loop.
         readyReceived.current = true;
