@@ -214,6 +214,24 @@ describe("AgenticAppAssistantOverlay", () => {
     expect(screen.queryByText("Access denied")).toBeNull();
   });
 
+  it("revalidates changed legacy aliases and hides the selected chat for conflicting links", async () => {
+    const overlay = () => <AgenticAppAssistantOverlay appId="example-app" appName="Example App"
+      assistantAgentId="agent-example" activeContext={null} onClearContext={jest.fn()} open onOpenChange={jest.fn()}
+      options={{ version: "1.0", legacyConversationQueryParams: ["legacy_chat"] }} />;
+    window.history.replaceState(null, "", "/example?legacy_chat=chat-a");
+    const view = render(overlay());
+    await waitFor(() => expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-conversation-id", "chat-a"));
+    expect(window.location.search).toBe("?assistant_chat=chat-a");
+    window.history.pushState(null, "", "/example?legacy_chat=chat-b");
+    view.rerender(overlay());
+    await waitFor(() => expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-conversation-id", "chat-b"));
+    window.history.pushState(null, "", "/example?assistant_chat=chat-a&legacy_chat=chat-b");
+    view.rerender(overlay());
+    expect(await screen.findByRole("alert")).toHaveTextContent("conflicting assistant conversation link");
+    expect(screen.queryByTestId("chat-panel")).toBeNull();
+    expect(mockCreateConversation).not.toHaveBeenCalled();
+  });
+
   it("passes validated app context into the chat panel and restores the prior chat", async () => {
     const { unmount } = render(
       <AgenticAppAssistantOverlay

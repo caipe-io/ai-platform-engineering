@@ -57,3 +57,11 @@ it("defers each row's validation and controls until its actions are requested", 
   expect(mockActions).toHaveBeenCalledTimes(1);
   expect(mockActions).toHaveBeenCalledWith(expect.objectContaining({ appId: "example-app", agentId: "example-agent", conversationId: "Allowed app chat" }));
 });
+
+it.each(["localStorage", "mongodb"])("includes unbound history only with legacy opt-in in %s mode", async mode => {
+  mockStorageMode.mockReturnValue(mode);
+  render(<AppAssistantHistory appId="example-app" agentId="example-agent" includeLegacy onSelect={jest.fn()} onArchived={jest.fn()} />);
+  expect(await screen.findByRole("button", { name: "Unbound chat" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Allowed app chat" })).toBeInTheDocument();
+  for (const item of mockConversations.slice(2)) expect(screen.queryByText(item.title)).toBeNull();
+});

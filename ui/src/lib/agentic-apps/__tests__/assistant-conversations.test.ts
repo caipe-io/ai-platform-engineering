@@ -1,5 +1,5 @@
 import { apiClient } from "@/lib/api-client";
-import { findLatestAppConversation, mergeAppConversation } from "../assistant-conversations";
+import { findLatestAppConversation, mergeAppConversation, matchesAssistantConversation } from "../assistant-conversations";
 import type { Conversation } from "@/types/a2a";
 
 jest.mock("@/lib/api-client", () => ({ apiClient: { getConversations: jest.fn() } }));
@@ -35,4 +35,14 @@ it("refreshes ownership and access for restored chats while preserving live loca
     expect(restored.updatedAt).toEqual(new Date("2026-01-02"));
     if (previous.length) expect(restored.messages).toBe(local.messages);
   }
+});
+
+it("allows unbound legacy history only by explicit opt-in without accepting another app or incomplete bindings", () => {
+  const matches = (metadata?: Record<string, unknown>, legacy = false) =>
+    matchesAssistantConversation("example-app", "example-agent", "example-agent", metadata, legacy);
+  expect(matches()).toBe(false);
+  expect(matches(undefined, true)).toBe(true);
+  expect(matches({ agentic_app_id: "secondary-app" }, true)).toBe(false);
+  expect(matches({ agentic_app_id: "example-app" }, true)).toBe(false);
+  expect(matches({ conversation_surface: "agentic-app" }, true)).toBe(false);
 });
