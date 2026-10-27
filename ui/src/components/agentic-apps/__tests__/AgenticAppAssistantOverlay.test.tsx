@@ -44,16 +44,19 @@ jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
     agentId,
     clientContext,
     readOnly,
+    composerDraft,
   }: {
     conversationId?: string;
     agentId: string;
     clientContext?: Record<string, unknown>;
     readOnly?: boolean;
+    composerDraft?: { text: string } | null;
   }) => (
     <div
       data-testid="chat-panel"
       data-conversation-id={conversationId}
       data-agent-id={agentId}
+      data-draft={composerDraft?.text ?? ""}
       data-context={JSON.stringify(clientContext ?? {})}
       data-read-only={String(Boolean(readOnly))}
     />
@@ -311,6 +314,18 @@ describe("AgenticAppAssistantOverlay", () => {
     await waitFor(() => {
       expect(mockSetActiveConversation).toHaveBeenCalledWith("previous-conversation");
     });
+  });
+
+  it("retains a requested draft while the assistant conversation loads", async () => {
+    let resolve!: (id: string) => void;
+    mockCreateConversation.mockImplementation(() => new Promise<string>((done) => { resolve = done; }));
+    render(<AgenticAppAssistantOverlay appId="example" appName="Example" activeContext={null}
+      onClearContext={jest.fn()} assistantAgentId="agent-example" open onOpenChange={jest.fn()}
+      composerDraft={{ id: "source-1", text: "Find the instance source" }} />);
+    await waitFor(() => expect(mockCreateConversation).toHaveBeenCalled());
+    expect(screen.queryByTestId("chat-panel")).not.toBeInTheDocument();
+    resolve("assistant-conversation");
+    expect(await screen.findByTestId("chat-panel")).toHaveAttribute("data-draft", "Find the instance source");
   });
 
   it("restores the latest matching app conversation from chat history", async () => {

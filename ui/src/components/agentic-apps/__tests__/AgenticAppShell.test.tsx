@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { AgenticAppShell } from "../AgenticAppShell";
 
@@ -23,18 +23,24 @@ jest.mock("../AgenticAppAssistantOverlay", () => ({
   AgenticAppAssistantOverlay: ({
     assistantLabel,
     activeContext,
+    composerDraft,
+    onComposerDraftApplied,
     open,
   }: {
     assistantLabel?: string;
     activeContext: { title?: string } | null;
+    composerDraft?: { id: string; text: string } | null;
+    onComposerDraftApplied?: (id: string) => void;
     open: boolean;
   }) => (
     <div
       data-testid="assistant-overlay"
       data-open={String(open)}
+      data-draft={composerDraft?.text ?? ""}
       data-context={activeContext?.title ?? ""}
     >
       {assistantLabel ?? "Ask CAIPE"}
+      <button onClick={() => composerDraft && onComposerDraftApplied?.(composerDraft.id)}>Apply draft</button>
     </div>
   ),
 }));
@@ -157,6 +163,29 @@ describe("AgenticAppShell", () => {
     send("bridge.connect", window.location.origin, window);
     expect(postMessage).not.toHaveBeenCalled();
     postMessage.mockRestore();
+  });
+
+  it("accepts a draft only from the same-origin app iframe", async () => {
+    render(<AgenticAppShell appId="example-app" path={[]} />);
+    const iframe = (await screen.findByTitle("Example App")) as HTMLIFrameElement;
+    const overlay = await screen.findByTestId("assistant-overlay");
+    const send = (origin: string, source: MessageEventSource | null, appId = "example-app", text = "Find source") => act(() => {
+      window.dispatchEvent(new MessageEvent("message", { origin, source, data: {
+        type: "caipe.agenticApp.assistant.open.v1", version: "1.0", appId, draft: { id: "request-1", text },
+      } }));
+    });
+    send("https://other.example.com", iframe.contentWindow);
+    send(window.location.origin, window);
+    send(window.location.origin, iframe.contentWindow, "other-app");
+    expect(overlay).toHaveAttribute("data-open", "false");
+    send(window.location.origin, iframe.contentWindow, "example-app", "x".repeat(12001));
+    expect(overlay).toHaveAttribute("data-draft", "");
+    send(window.location.origin, iframe.contentWindow);
+    expect(overlay).toHaveAttribute("data-draft", "Find source");
+    fireEvent.click(screen.getByRole("button", { name: "Apply draft" }));
+    expect(overlay).toHaveAttribute("data-draft", "");
+    send(window.location.origin, iframe.contentWindow);
+    expect(overlay).toHaveAttribute("data-draft", "");
   });
 
   it("uses an authorized default agent when the app does not specify one", async () => {

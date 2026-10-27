@@ -10,6 +10,7 @@ import { readAssistantDeepLink } from "@/lib/agentic-apps/assistant-links";
 import { ownsAppPath } from "@/lib/agentic-apps/host-routes";
 
 import { AgenticAppAssistantOverlay } from "@/components/agentic-apps/AgenticAppAssistantOverlay";
+import { parseAssistantDraft, type AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { validateAssistantContextMessage } from "@/lib/agentic-apps/assistant-context";
 import { buildAgenticAppPublicPath } from "@/lib/agentic-apps/runtime";
 import { nativeAgenticAppDestination } from "@/lib/agentic-apps/public-app";
@@ -59,6 +60,8 @@ export function AgenticAppShell({
   const [assistantContext, setAssistantContext] =
     useState<AgenticAppAssistantContextRecord | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantDraft, setAssistantDraft] = useState<(AssistantDraft & { appId: string }) | null>(null);
+  const consumedDrafts = useRef(new Set<string>());
   const [assistantBinding, setAssistantBinding] = useState<{
     bindingKey: string;
     agent: ResolvedChatAgent;
@@ -71,6 +74,8 @@ export function AgenticAppShell({
       setAssistantContext(null);
       setConfiguration(null);
       setAssistantOpen(false);
+      setAssistantDraft(null);
+      consumedDrafts.current.clear();
       setAssistantBinding(null);
       setBridgeError(null);
       setAssistantError(null);
@@ -178,7 +183,7 @@ export function AgenticAppShell({
     const target = iframeRef.current?.contentWindow;
     const envelope = { version: "1.0", appId };
     target?.postMessage({ ...envelope, type: "caipe.agenticApp.bridge.capabilities.v1",
-      capabilities: { assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, navigation: true, composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
+      capabilities: { assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured, navigation: true, composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
     target?.postMessage({ ...envelope, type: "caipe.agenticApp.navigation.v1",
       href: window.location.pathname + window.location.search + window.location.hash }, window.location.origin);
   }
@@ -194,7 +199,7 @@ export function AgenticAppShell({
       function reply(error?: string) {
         expectedSource.postMessage({ type: error ? "caipe.agenticApp.bridge.error.v1" : "caipe.agenticApp.bridge.capabilities.v1",
           version: "1.0", appId, ...(error ? { error } : { capabilities: {
-            assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, navigation: true, composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: app.assistantOptions,
+            assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured, navigation: true, composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: app.assistantOptions,
           } }) }, window.location.origin);
       }
       if (message.version !== "1.0") { reply("unsupported_version"); setBridgeError("This app uses an unsupported bridge version."); return; }
@@ -232,7 +237,14 @@ export function AgenticAppShell({
       }
       if (message.requestOptions || message.composerExtensions) { reply("unsupported_composer_extension"); return; }
       if (message.type === "caipe.agenticApp.assistant.close.v1") { setAssistantOpen(false); return; }
-      if (isAssistantOpenMessage(message, appId)) { setAssistantOpen(true); return; }
+      if (isAssistantOpenMessage(message, appId)) {
+        const draft = parseAssistantDraft(message.draft);
+        if (draft && !consumedDrafts.current.has(`${appId}:${draft.id}`)) {
+          setAssistantDraft({ ...draft, appId });
+        }
+        setAssistantOpen(true);
+        return;
+      }
       const result = validateAssistantContextMessage({ message, appId,
         origin: event.origin, expectedOrigin: window.location.origin,
         source: event.source, expectedSource });
@@ -247,7 +259,7 @@ export function AgenticAppShell({
     const target = iframeRef.current?.contentWindow;
     if (!target || state.status !== "ready") return;
     target.postMessage({ type: "caipe.agenticApp.bridge.capabilities.v1", version: "1.0", appId,
-      capabilities: { assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured,
+      capabilities: { assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured,
         navigation: true, composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
   }, [appId, assistantAgent, assistantConfigured, state]);
 
@@ -327,6 +339,16 @@ export function AgenticAppShell({
           activeContext={assistantContext}
           onClearContext={() => setAssistantContext(null)}
           assistantAgentId={assistantAgent.id}
+          composerDraft={assistantDraft?.appId === appId ? assistantDraft : null}
+          onComposerDraftApplied={(id) => {
+            const key = `${appId}:${id}`;
+            consumedDrafts.current.add(key);
+            if (consumedDrafts.current.size > 128) {
+              const oldest = consumedDrafts.current.values().next().value;
+              if (oldest !== undefined) consumedDrafts.current.delete(oldest);
+            }
+            setAssistantDraft((draft) => draft?.appId === appId && draft.id === id ? null : draft);
+          }}
           open={assistantOpen}
           onOpenChange={setAssistantOpen}
         />
