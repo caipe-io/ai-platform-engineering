@@ -74,7 +74,6 @@ jobs:
     env:
       NEXTAUTH_SECRET: compose-smoke-test-only
       COMPOSE_PARALLEL_LIMIT: '2'
-      DOCKER_VOLUME_DIRECTORY: ${{ runner.temp }}/compose-smoke-data
     steps:
       - name: 🔒 Harden runner
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -92,6 +91,8 @@ jobs:
         env:
           COMPOSE_FILE_UNDER_TEST: ${{ matrix.file }}
           SMOKE_LANE: ${{ matrix.lane }}
+          # The runner context is only available at step level.
+          DOCKER_VOLUME_DIRECTORY: ${{ runner.temp }}/compose-smoke-data
         run: python3 scripts/ci/compose-smoke/run.py "$COMPOSE_FILE_UNDER_TEST" "$SMOKE_LANE"
       - name: Collect diagnostics if the harness was interrupted
         if: always()
