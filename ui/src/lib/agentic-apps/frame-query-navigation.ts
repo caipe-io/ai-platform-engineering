@@ -4,6 +4,7 @@ type FrameQueryBridgeOptions = {
   publicPath: string;
   frame: () => HTMLIFrameElement | null;
   capabilities?: () => Record<string, unknown>;
+  publishCapabilities?: boolean;
   onConnect: () => void;
 };
 
@@ -21,9 +22,11 @@ export function connectFrameQueryNavigation(options: FrameQueryBridgeOptions): {
   };
   const sync = () => {
     if (!connected || host.location.pathname !== publicPath) return;
-    send("caipe.agenticApp.bridge.capabilities.v1", {
-      capabilities: { ...options.capabilities?.(), queryNavigation: true },
-    });
+    if (options.publishCapabilities !== false) {
+      send("caipe.agenticApp.bridge.capabilities.v1", {
+        capabilities: { ...options.capabilities?.(), queryNavigation: true },
+      });
+    }
     send("caipe.agenticApp.navigation.v1", {
       href: host.location.pathname + host.location.search + host.location.hash,
     });

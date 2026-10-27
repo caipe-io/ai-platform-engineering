@@ -138,7 +138,7 @@ describe("AgenticAppShell", () => {
       data: { type: "caipe.agenticApp.bridge.connect.v1", appId: "example-app", version: "1.0" },
     })));
     const replies = post.mock.calls.filter(([message]) => message.type === "caipe.agenticApp.bridge.capabilities.v1");
-    expect(replies.length).toBeGreaterThan(0);
+    expect(replies).toHaveLength(1);
     for (const [message] of replies) expect(message.capabilities).toMatchObject({
       assistant: true, queryNavigation: true, composerExtensions: expect.arrayContaining(["configuration.v1"]),
     });

@@ -71,7 +71,6 @@ export function AgenticAppShell({
   const publicPath = hostRoute ? `/${path.map(encodeURIComponent).join("/")}` : buildAgenticAppPublicPath(appId, path);
   const [managedFrame, setManagedFrame] = useState<{ identity: string; path: string; src: string } | null>(null);
   const queryBridge = useRef<ReturnType<typeof connectFrameQueryNavigation> | null>(null);
-  const bridgeCapabilities = useRef<Record<string, unknown>>({});
   const latestSearch = useRef(search);
   useEffect(() => { latestSearch.current = search; }, [search]);
 
@@ -97,18 +96,11 @@ export function AgenticAppShell({
     state.status === "ready" && state.app.assistantEnabled === true && state.app.assistantOverlay !== "app";
 
   useEffect(() => {
-    bridgeCapabilities.current = {
-      assistant: assistantConfigured && assistantAgent !== null, context: assistantConfigured,
-      navigation: true, queryNavigation: true, composerExtensions: [...ASSISTANT_EXTENSIONS],
-      assistantOptions: state.status === "ready" ? state.app.assistantOptions : undefined,
-    };
-    queryBridge.current?.sync();
-  }, [assistantConfigured, assistantAgent, state]);
-
-  useEffect(() => {
     const bridge = connectFrameQueryNavigation({
       host: window, appId, publicPath, frame: () => iframeRef.current,
-      capabilities: () => bridgeCapabilities.current,
+      // The shell publishes the complete assistant capabilities. This helper
+      // owns only history/state synchronization, so it cannot overwrite them.
+      publishCapabilities: false,
       onConnect: () => {
         const src = iframeRef.current?.getAttribute("src");
         if (src) setManagedFrame((previous) => previous?.identity === identity && previous.path === publicPath && previous.src === src ? previous : { identity, path: publicPath, src });
