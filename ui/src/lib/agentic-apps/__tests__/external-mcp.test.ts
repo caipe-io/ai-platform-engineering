@@ -145,6 +145,38 @@ it("forwards a streamed body at the limit without changing its bytes", async () 
   expect(stream.locked).toBe(false);
 });
 
+it("preserves many tiny chunks without retaining their reusable source buffer", async () => {
+  const configured = app();
+  configured.manifest.runtime!.maxRequestBodyBytes = 5000;
+  mockApp.mockReturnValue(configured);
+  const size = 4097;
+  const chunk = new Uint8Array(1);
+  let offset = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (offset === size) {
+        controller.close();
+        return;
+      }
+      chunk[0] = offset++ % 256;
+      controller.enqueue(chunk);
+    },
+  }, { highWaterMark: 0 });
+  const request = new Request("https://example.test/apps/example/api/example/mcp", {
+    method: "POST", body: stream, duplex: "half",
+  } as RequestInit & { duplex: "half" });
+
+  await proxyAgenticAppRequest(request, {
+    params: Promise.resolve({ appId: "example", path: ["api", "example", "mcp"] }),
+  });
+
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(new Uint8Array(fetchMock.mock.calls[0][1].body)).toEqual(
+    Uint8Array.from({ length: size }, (_, index) => index % 256),
+  );
+  expect(stream.locked).toBe(false);
+});
+
 it("routes only a known native or iframe resource to discovery", () => {
   const configured = app();
   expect(appForMcpResource([configured], "/apps/example/api/example/mcp")).toBe(configured);

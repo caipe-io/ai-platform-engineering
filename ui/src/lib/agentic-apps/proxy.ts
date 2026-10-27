@@ -269,7 +269,7 @@ async function proxyExternalMcpRequest(
 async function readBodyWithLimit(request: Request, limit: number): Promise<ArrayBuffer | null> {
   if (!request.body) return new ArrayBuffer(0);
   const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
+  let body = new Uint8Array(0);
   let total = 0;
   try {
     while (true) {
@@ -279,19 +279,21 @@ async function readBodyWithLimit(request: Request, limit: number): Promise<Array
         await reader.cancel();
         return null;
       }
-      total += value.byteLength;
-      chunks.push(value);
+      const nextTotal = total + value.byteLength;
+      if (nextTotal > body.byteLength) {
+        // Storage grows with payload bytes, independently of transport chunk count.
+        const capacity = Math.min(limit, Math.max(nextTotal, body.byteLength * 2, 1024));
+        const nextBody = new Uint8Array(capacity);
+        nextBody.set(body.subarray(0, total));
+        body = nextBody;
+      }
+      body.set(value, total);
+      total = nextTotal;
     }
   } finally {
     reader.releaseLock();
   }
-  const body = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body.buffer;
+  return total === body.byteLength ? body.buffer : body.buffer.slice(0, total);
 }
 
 function buildForwardHeaders(input: {
