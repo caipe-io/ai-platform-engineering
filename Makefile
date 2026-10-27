@@ -644,7 +644,7 @@ test-rbac-jest: ## Run RBAC Jest matrix-driver tests (TS helper parity + UI BFF)
 	   echo "[test-rbac-jest] running ui/ jest suite filtered to rbac…"; \
 	   mkdir -p ui/test-results; \
 	   cd ui && JEST_JUNIT_OUTPUT_DIR=test-results JEST_JUNIT_OUTPUT_NAME=junit.xml \
-	     npx jest \
+	     npm test -- \
 	       'src/__tests__/rbac-matrix-driver.test.ts' \
 	       'src/lib/rbac/__tests__/' \
 	       'src/app/api/__tests__/rag-rbac.test.ts' \
