@@ -1,11 +1,12 @@
 """Pydantic models for Dynamic Agents service."""
 
 import logging
+import re
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,26 @@ class MCPCredentialSource(BaseModel):
             "the caller's user JWT for per-user RBAC and a service token otherwise."
         ),
     )
+
+
+class RemoteAgentCredentialSource(BaseModel):
+    """Caller-scoped authentication injected into an A2A HTTP header."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    kind: Literal["caller_token", "secret_ref", "provider_connection"] = "caller_token"
+    target: Literal["header"] = "header"
+    name: str = Field(default="Authorization", min_length=1, max_length=256, pattern=r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+    secret_ref: str | None = None
+    provider: str | None = None
+
+    @model_validator(mode="after")
+    def require_credential_reference(self) -> "RemoteAgentCredentialSource":
+        if self.kind == "secret_ref" and not self.secret_ref:
+            raise ValueError("A saved secret reference is required")
+        if self.kind == "provider_connection" and not self.provider:
+            raise ValueError("A connected credential provider is required")
+        return self
 
 
 class MCPServerConfig(MCPServerConfigBase):
@@ -527,12 +548,39 @@ class InterruptConfig(BaseModel):
     )
 
 
+class AppContextPromptConfig(BaseModel):
+    """Deployment-owned opt-in projection of untrusted app data into model input."""
+
+    model_config = ConfigDict(extra="forbid")
+    app_ids: list[Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")]] = Field(min_length=1, max_length=16)
+    fields: list[
+        Annotated[str, Field(max_length=128, pattern=r"^(title|summary|route|selection\.[A-Za-z_][A-Za-z0-9_.-]*)$")]
+    ] = Field(min_length=1, max_length=12)
+    max_bytes: int = Field(default=4096, ge=512, le=8192, strict=True)
+
+    @field_validator("fields")
+    @classmethod
+    def validate_projection(cls, fields: list[str]) -> list[str]:
+        for path in fields:
+            if len(path.split(".")) > 8 or any(
+                part in {"__proto__", "prototype", "constructor"}
+                or not part
+                or re.search(r"api[_-]?key|authorization|cookie|password|secret|token", part, re.I)
+                for part in path.split(".")
+            ):
+                raise ValueError("app context fields must be bounded, non-sensitive data paths")
+        return list(dict.fromkeys(fields))
+
+
 class DynamicAgentConfigBase(BaseModel):
     """Base fields for dynamic agent configuration."""
 
     name: str = Field(..., description="Display name")
     description: str | None = Field(None, description="Optional description")
     system_prompt: str = Field(..., description="Main system prompt / instructions")
+    app_context_prompt: AppContextPromptConfig | None = Field(
+        None, description="Deployment-owned app context projection; off by default"
+    )
     allowed_tools: dict[str, list[str] | bool] = Field(
         default_factory=dict,
         description=(
@@ -540,6 +588,14 @@ class DynamicAgentConfigBase(BaseModel):
             "true = all tools from server, false = server disabled, "
             "list = specific tools only, [] = legacy (treated as true)"
         ),
+    )
+    allowed_remote_agents: list[str] = Field(
+        default_factory=list,
+        description="Remote A2A agent registry IDs available to this agent",
+    )
+    remote_agent_timeouts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Per-agent timeout overrides in seconds for selected A2A agents",
     )
     model: ModelConfig = Field(..., description="LLM model configuration (id + provider)")
     visibility: VisibilityType = Field(VisibilityType.PRIVATE, description="Visibility scope")

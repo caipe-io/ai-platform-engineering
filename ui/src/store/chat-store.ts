@@ -81,10 +81,18 @@ interface MessageHistoryState {
   isLoadingOlder: boolean;
 }
 
+export interface ExternalChatActivity {
+  agentId: string;
+  state: "checking" | "running" | "saving";
+  turnId?: string;
+}
+
 interface ChatState {
   conversations: Conversation[];
   activeConversationId: string | null;
   isStreaming: boolean;
+  externalActivity: Record<string, ExternalChatActivity>;
+  setExternalActivity: (id: string, activity: ExternalChatActivity | null) => void;
   streamingConversations: Map<string, StreamingState>;
   pendingMessage: string | null; // Message to auto-submit when the chat panel mounts
   contextUsageByConversation: Record<string,ContextUsageEventData>;
@@ -101,8 +109,11 @@ interface ChatState {
   inputRequiredConversations: Set<string>;
 
   // Actions
-  createConversation: (agentId: string) => Promise<string>;
-  setActiveConversation: (id: string) => void;
+  createConversation: (
+    agentId: string,
+    options?: { title?: string; metadata?: Record<string, unknown>; activate?: boolean },
+  ) => Promise<string>;
+  setActiveConversation: (id: string | null) => void;
   addMessage: (conversationId: string, message: Omit<ChatMessage, "id" | "timestamp">, turnId?: string, messageId?: string) => string;
   updateMessage: (conversationId: string, messageId: string, updates: Partial<ChatMessage>) => void;
   appendToMessage: (conversationId: string, messageId: string, content: string) => void;
@@ -116,7 +127,7 @@ interface ChatState {
   setContextUsage: (conversationId: string,usage: ContextUsageEventData) => void;
   clearStreamEvents: (conversationId?: string) => void;
   getConversationStreamEvents: (conversationId: string) => StreamEvent[];
-  deleteConversation: (id: string) => Promise<void>;
+  deleteConversation: (id: string, options?: { selectNext?: boolean }) => Promise<void>;
   clearAllConversations: () => void;
   getActiveConversation: () => Conversation | undefined;
   updateMessageFeedback: (conversationId: string, messageId: string, feedback: MessageFeedback) => void;
@@ -300,6 +311,13 @@ function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMe
 const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       conversations: [],
       activeConversationId: null,
+      externalActivity: {},
+      setExternalActivity: (id, activity) => set(state => {
+        const next = { ...state.externalActivity };
+        if (activity && state.conversations.some(c => c.id === id)) next[id] = activity;
+        else delete next[id];
+        return { externalActivity: next };
+      }),
       isStreaming: false,
       streamingConversations: new Map<string, StreamingState>(),
       pendingMessage: null,
@@ -312,9 +330,13 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       unviewedConversations: new Set<string>(),
       inputRequiredConversations: new Set<string>(),
 
-      createConversation: async (agentId: string) => {
+      createConversation: async (
+        agentId: string,
+        options?: { title?: string; metadata?: Record<string, unknown>; activate?: boolean },
+      ) => {
         const storageMode = getStorageMode();
         const normalizedAgentId = agentId.trim();
+        const title = options?.title?.trim() || "New Conversation";
         if (!normalizedAgentId) {
           throw new Error("agentId is required to create a chat conversation");
         }
@@ -324,9 +346,10 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         if (storageMode === 'mongodb') {
           // MongoDB mode: server owns ID generation
           const result = await apiClient.createConversation({
-            title: 'New Conversation',
+            title,
             client_type: 'webui',
             agent_id: normalizedAgentId,
+            ...(options?.metadata ? { metadata: options.metadata } : {}),
           });
           id = result.conversation._id;
         } else {
@@ -336,33 +359,34 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
         const newConversation: Conversation = {
           id,
-          title: "New Conversation",
+          title,
           createdAt: new Date(),
           updatedAt: new Date(),
           messages: [],
           streamEvents: [],
           participants: buildParticipants(normalizedAgentId),
+          ...(options?.metadata ? { metadata: options.metadata } : {}),
         };
 
         // Update local state
         set((state: ChatState) => ({
           conversations: [newConversation, ...state.conversations],
-          ...(state.conversationFilter === 'web' || state.conversationFilter === 'all'
+          ...(options?.activate === false || state.conversationFilter === 'web' || state.conversationFilter === 'all'
             ? {}
             : { conversationFilter: 'all' as const, conversationPage: 1 }),
-          activeConversationId: id,
+          ...(options?.activate === false ? {} : { activeConversationId: id }),
         }));
-        persistLastActiveConversationId(id);
+        if (options?.activate !== false) persistLastActiveConversationId(id);
 
         return id;
       },
 
-      setActiveConversation: (id: string) => {
+      setActiveConversation: (id: string | null) => {
         const prev = get();
         const newUnviewed = new Set(prev.unviewedConversations);
-        newUnviewed.delete(id);
+        if (id) newUnviewed.delete(id);
         const newInputRequired = new Set(prev.inputRequiredConversations);
-        newInputRequired.delete(id);
+        if (id) newInputRequired.delete(id);
         set({
           activeConversationId: id,
           unviewedConversations: newUnviewed,
@@ -391,7 +415,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         const state = get();
         const conversation = state.conversations.find((c: Conversation) => c.id === conversationId);
         const isFirstUserMessage = conversation && conversation.messages.length === 0 && message.role === "user";
-        const newTitle = isFirstUserMessage
+        const newTitle = isFirstUserMessage && conversation.title === "New Conversation"
           ? message.content.substring(0, 50).trim() || "New Conversation"
           : undefined;
 
@@ -676,7 +700,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         return conv?.streamEvents || [];
       },
 
-      deleteConversation: async (id: string) => {
+      deleteConversation: async (id: string, options?: { selectNext?: boolean }) => {
         const storageMode = await getStorageMode();
 
         // Snapshot for rollback. The removal below is optimistic, so a server
@@ -699,7 +723,8 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
           // If this was the active conversation, select the next one intelligently
           let newActiveId = state.activeConversationId;
-          if (wasActiveConversation) {
+          if (wasActiveConversation && options?.selectNext === false) newActiveId = null;
+          if (wasActiveConversation && options?.selectNext !== false) {
             if (newConversations.length === 0) {
               // No conversations left
               newActiveId = null;
@@ -714,6 +739,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
           return {
             conversations: newConversations,
+            externalActivity: Object.fromEntries(Object.entries(state.externalActivity).filter(([key]) => key !== id)),
             activeConversationId: newActiveId,
             contextUsageByConversation: Object.fromEntries(
               Object.entries(state.contextUsageByConversation).filter(([conversationId]) => conversationId !== id),
@@ -765,6 +791,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           conversations: [],
           activeConversationId: null,
           contextUsageByConversation: {},
+          externalActivity: {},
         });
         persistLastActiveConversationId(null);
       },

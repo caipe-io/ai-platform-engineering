@@ -6,6 +6,7 @@ import {
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
 import { publicPermissionDocument } from "@/lib/authz/permission-sync";
+import { projectAgentAppIdentity } from "@/lib/agentic-apps/agent-catalog";
 import { filterAgentsByOwnershipScopeForSession } from "@/lib/rbac/agent-ownership-scope";
 import { getPlatformDefaultAgentId } from "@/lib/rbac/platform-default";
 import { filterResourcesByPermission } from "@/lib/rbac/resource-authz";
@@ -39,7 +40,8 @@ async function getAvailableAgents(request: NextRequest) {
     id: (agent) => String(agent._id),
   });
 
-  const normalizedAgents = visibleAgents.map((agent) => {
+  // Normalize legacy model_id/model_provider → model
+  const normalizedAgents = projectAgentAppIdentity(visibleAgents, session, { availableOnly: true }).map((agent) => {
     const doc = agent as unknown as Record<string, unknown>;
     if (doc.model_id && !doc.model) {
       doc.model = { id: doc.model_id, provider: doc.model_provider || "unknown" };

@@ -188,6 +188,8 @@ helm show values oci://ghcr.io/caipe-io/charts/rag-stack --version 1.1.0
 | neo4j.serviceAccount.create | bool | `true` |  |
 | neo4j.serviceAccount.name | string | `"rag-neo4j"` |  |
 | neo4j.services.neo4j.enabled | bool | `false` |  |
+| neo4j.volumes.data.dynamic.accessModes[0] | string | `"ReadWriteOnce"` |  |
+| neo4j.volumes.data.dynamic.requests.storage | string | `"100Gi"` |  |
 | neo4j.volumes.data.dynamic.storageClassName | string | `"gp2"` |  |
 | neo4j.volumes.data.mode | string | `"dynamic"` |  |
 | rag-ingestors.enabled | bool | `true` |  |
@@ -255,6 +257,9 @@ helm show values oci://ghcr.io/caipe-io/charts/rag-stack --version 1.1.0
 | rag-server.service.port | int | `9446` |  |
 | rag-server.service.type | string | `"ClusterIP"` |  |
 | sunnyTesting | bool | `true` |  |
+
+Neo4j uses the existing `gp2` StorageClass by default. To use the cluster's
+default StorageClass instead, set `neo4j.volumes.data.mode=defaultStorageClass`.
 
 ## Dependencies
 

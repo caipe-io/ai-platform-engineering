@@ -5,6 +5,8 @@ import { getErrorMessage } from "@/lib/error-utils";
 import { ChatView } from "@/components/chat/DynamicAgentChatView";
 import { CAIPESpinner } from "@/components/ui/caipe-spinner";
 import { apiClient } from "@/lib/api-client";
+import { buildAgentChatTitle,fetchAgentInfoForChat } from "@/lib/chat-agent-metadata";
+import { getConfig } from "@/lib/config";
 import { getStorageMode } from "@/lib/storage-config";
 import { useChatStore } from "@/store/chat-store";
 import type { Conversation as LocalConversation, ConversationAccessLevel } from "@/types/a2a";
@@ -77,6 +79,15 @@ export function ChatContainer() {
 
   // Track which (uuid, agentId) combination we've already fetched
   const fetchedAgentRef = useRef<{ uuid: string; agentId: string } | null>(null);
+
+  useEffect(() => {
+    if (!agentInfo?.name) return;
+    const defaultTitle = `${getConfig("appName")} UI`;
+    document.title = buildAgentChatTitle(agentInfo.name, getConfig("appName"));
+    return () => {
+      document.title = defaultTitle;
+    };
+  }, [agentInfo?.name, uuid]);
 
   // Reset state when uuid changes (conversation switch)
   useEffect(() => {
@@ -304,30 +315,12 @@ export function ChatContainer() {
     let cancelled = false;
 
     async function fetchAgentInfo() {
-      try {
-        const response = await fetch(`/api/dynamic-agents/agents/${selectedAgentId}`);
-        if (response.ok) {
-          const data = await response.json();
-          const agent = data.data as DynamicAgentConfig;
-          if (cancelled) return;
-          setAgentInfo(agent);
-          setAgentNotFound(false);
-        } else if (response.status === 404) {
-          console.warn(`[ChatContainer] Agent ${selectedAgentId} not found (deleted)`);
-          if (cancelled) return;
-          setAgentInfo(null);
-          setAgentNotFound(true);
-        } else {
-          console.error(`[ChatContainer] Failed to fetch agent info: ${response.status}`);
-          if (cancelled) return;
-          setAgentInfo(null);
-          setAgentNotFound(false);
-        }
-      } catch (err) {
-        console.error("Failed to fetch agent info:", err);
-        if (cancelled) return;
-        setAgentInfo(null);
-        setAgentNotFound(false);
+      const result = await fetchAgentInfoForChat(selectedAgentId);
+      if (cancelled) return;
+      setAgentInfo(result.agent);
+      setAgentNotFound(result.notFound);
+      if (result.notFound) {
+        console.warn(`[ChatContainer] Agent ${selectedAgentId} not found (deleted)`);
       }
     }
 

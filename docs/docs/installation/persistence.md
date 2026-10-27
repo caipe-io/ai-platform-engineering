@@ -117,6 +117,50 @@ dynamic-agents:
     MONGODB_DATABASE: caipe
 ```
 
+### AWS DocumentDB with External Secrets Operator
+
+The optional `caipeDatabase` values let the parent chart manage the shared UI
+ExternalSecret. They select the URI source and health-check host; they do not
+deploy a database or migrate data. MongoDB remains the default backend.
+
+```yaml
+caipeDatabase:
+  manageExternalSecret: true
+  backend: documentdb
+  secretName: caipe-runtime-secrets
+  documentdb:
+    remoteKey: projects/example/test/documentdb
+    host: cluster.example.test
+
+caipe-ui:
+  existingSecret: caipe-runtime-secrets
+  externalSecrets:
+    enabled: false # The parent chart owns this ExternalSecret.
+    secretStoreRef:
+      name: example-store
+      kind: ClusterSecretStore
+    data:
+      - secretKey: MONGODB_URI
+        remoteRef:
+          key: projects/example/test/mongodb
+          property: MONGODB_URI
+      # Keep the other UI Secret entries here.
+
+dynamic-agents:
+  existingSecret: caipe-runtime-secrets
+```
+
+The chart uses the configured `secretStoreRef` and preserves the URI entry's
+`remoteRef.property`, so the store can be Vault, AWS Secrets Manager, or another
+External Secrets Operator provider. For MongoDB, set `backend: mongodb` and keep
+the existing URI key and `caipe-ui.config.MONGODB_HOST`.
+
+For AWS DocumentDB, use a URI with verified TLS, `authSource=admin`, and
+`retryWrites=false`. Distribute the required CA ConfigMap to the application
+namespace and mount its `global-bundle.pem` into every consumer at the path
+referenced by the URI. The chart does not create the CA ConfigMap. Restart
+consumers after the shared Secret or CA bundle changes.
+
 ## Runtime Notes
 
 - Browser chat uses persistent dynamic-agent sessions.

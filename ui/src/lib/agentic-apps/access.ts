@@ -8,12 +8,22 @@ export type AgenticAppUserContext = {
 export function canLaunchAgenticApp(
   app: ConfiguredAgenticApp,
   user: AgenticAppUserContext,
+  { requireVisible = false }: { requireVisible?: boolean } = {},
 ): boolean {
-  const { installation, manifest } = app;
-  if (!installation.installed || !installation.enabled || !installation.visible) {
+  const { installation } = app;
+  if (!installation.installed || !installation.enabled || (requireVisible && !installation.visible)) {
     return false;
   }
 
+  return canAccessAgenticApp(app, user);
+}
+
+/** Role policy independent of availability, for authorized historical app identity. */
+export function canAccessAgenticApp(
+  app: ConfiguredAgenticApp,
+  user: AgenticAppUserContext,
+): boolean {
+  const { installation, manifest } = app;
   const requiredRoles =
     installation.accessOverrides?.requiredRoles ?? manifest.access.requiredRoles ?? [];
   const roles = new Set(

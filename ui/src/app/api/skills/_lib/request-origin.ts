@@ -25,6 +25,8 @@
  *      and only fires when both (1) and (2) are missing.
  */
 
+import { originFromNextAuthUrl } from "@/lib/request-origin";
+
 const HOST_RE = /^[A-Za-z0-9.\-_]+(?::\d{1,5})?$/;
 
 function sanitizeProto(raw: string | null | undefined): "http" | "https" | null {
@@ -37,18 +39,6 @@ function sanitizeHost(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const v = raw.split(",")[0].trim();
   return v && HOST_RE.test(v) ? v : null;
-}
-
-function originFromNextAuthUrl(): string | null {
-  const raw = process.env.NEXTAUTH_URL?.trim();
-  if (!raw) return null;
-  try {
-    const u = new URL(raw);
-    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-    return u.origin;
-  } catch {
-    return null;
-  }
 }
 
 export function getRequestOrigin(request: Request): string {

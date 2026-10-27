@@ -1,4 +1,7 @@
 {{- if .Values.init.enabled }}
+{{- if eq (.Values.init.existingModelConfigMap | default "") (printf "%s-model" (include "openfga.fullname" .)) }}
+{{- fail "init.existingModelConfigMap must not refer to the chart-owned model ConfigMap" }}
+{{- end }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -65,6 +68,21 @@ spec:
             {{- toYaml .Values.init.resources | nindent 12 }}
       volumes:
         - name: openfga-model
+          {{- if .Values.init.existingModelConfigMap }}
+          projected:
+            sources:
+              - configMap:
+                  name: {{ include "openfga.fullname" . }}-model
+                  items:
+                    - key: seed.py
+                      path: seed.py
+              - configMap:
+                  name: {{ .Values.init.existingModelConfigMap | quote }}
+                  items:
+                    - key: authorization-model.json
+                      path: authorization-model.json
+          {{- else }}
           configMap:
             name: {{ include "openfga.fullname" . }}-model
+          {{- end }}
 {{- end }}

@@ -28,6 +28,8 @@ const mockGetPlatformDefaultAgentId = jest.fn();
 const mockFilterAgentsByOwnershipScopeForSession = jest.fn();
 const mockResolveUnlinkedServiceAccountSub = jest.fn();
 const mockResolveUnlinkedServiceAccountGrantState = jest.fn();
+const mockGetHarnessEngineConfig = jest.fn();
+const mockProxyHarnessEngine = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
@@ -154,6 +156,12 @@ jest.mock("@/lib/da-proxy", () => ({
   proxyRequest: (...args: unknown[]) => mockProxyRequest(...args),
 }));
 
+jest.mock("@/lib/harness-engine-proxy", () => ({
+  getHarnessEngineConfig: (...args: unknown[]) =>
+    mockGetHarnessEngineConfig(...args),
+  proxyHarnessEngine: (...args: unknown[]) => mockProxyHarnessEngine(...args),
+}));
+
 function request(path: string, init?: RequestInit): NextRequest {
   return new NextRequest(new URL(path, "http://localhost:3000"), init);
 }
@@ -225,6 +233,13 @@ describe("dynamic agents RBAC routes", () => {
       dynamicAgentsUrl: "http://dynamic-agents:8000",
     });
     mockProxyRequest.mockResolvedValue(Response.json({ tools: [] }));
+    mockGetHarnessEngineConfig.mockReturnValue({
+      url: "http://harness-engine:8010",
+      internalToken: "test-internal-token",
+    });
+    mockProxyHarnessEngine.mockResolvedValue(
+      Response.json({ success: true, data: { deleted: true } }),
+    );
   });
 
   it("filters agent listings through can_discover by default", async () => {
@@ -665,6 +680,24 @@ describe("dynamic agents RBAC routes", () => {
     if (failure === "policy") expect(insertOne).not.toHaveBeenCalled();
     // The compensating writer owns rollback; never sweep all grants for this ID.
     expect(mockDeleteAllAgentToolTuples).not.toHaveBeenCalled();
+  });
+
+  it("validates remote timeouts against the normalized, deduplicated registry selection", async () => {
+    const insertOne = jest.fn();
+    const registryFind = jest.fn().mockReturnValue({ toArray: async () => [{ _id: "remote-example" }] });
+    mockGetCollection.mockImplementation(async (name: string) => name === "remote_agents"
+      ? { find: registryFind } : { findOne: async () => null, insertOne });
+    const { POST } = await import("../route");
+    const response = await POST(request("/api/dynamic-agents", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        name: "Example Agent", system_prompt: "Help with the task", model: { id: "example-model", provider: "openai" },
+        visibility: "global", allowed_remote_agents: [" remote-example ", "remote-example"],
+        remote_agent_timeouts: { "remote-example": 90 },
+      }) }));
+    expect(response.status).toBe(201);
+    expect(registryFind).toHaveBeenCalledWith(expect.objectContaining({ _id: { $in: ["remote-example"] } }), expect.anything());
+    expect(insertOne).toHaveBeenCalledWith(expect.objectContaining({ allowed_remote_agents: ["remote-example"],
+      remote_agent_timeouts: { "remote-example": 90 } }));
   });
 
   it("creating a global agent resolves and grants the unlinked SA sub", async () => {
@@ -1955,6 +1988,36 @@ describe("dynamic agents RBAC routes", () => {
     });
     expect(mockDeleteAllAgentToolTuples).not.toHaveBeenCalled();
     expect(deleteOne).not.toHaveBeenCalled();
+  });
+
+  it("deletes a non-default harness provider resource before agent metadata", async () => {
+    const deleteOne = jest.fn().mockResolvedValue({ deletedCount: 1 });
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "agent-1",
+        owner_subject: "alice-sub",
+        execution_harness_id: "agentcore",
+        is_system: false,
+        config_driven: false,
+      }),
+      deleteOne,
+    });
+    const { DELETE } = await import("../route");
+
+    const response = await DELETE(
+      request("/api/dynamic-agents?id=agent-1", { method: "DELETE" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockProxyHarnessEngine).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "http://harness-engine:8010" }),
+      expect.objectContaining({ subject: "alice-sub" }),
+      "/api/v1/agents/agent-1",
+      { method: "DELETE" },
+    );
+    const providerDeleteOrder = mockProxyHarnessEngine.mock.invocationCallOrder[0];
+    const documentDeleteOrder = deleteOne.mock.invocationCallOrder[0];
+    expect(providerDeleteOrder).toBeLessThan(documentDeleteOrder);
   });
 
   // Platform-default agent invariant: an admin can pick an agent in

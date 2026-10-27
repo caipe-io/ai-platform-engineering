@@ -148,7 +148,7 @@ When the service starts, the following sequence occurs:
 2. _setup_logging()
    • Creates 'dynamic_agents' logger
    • Adds SessionContextFilter for request tracing
-   • Disables propagation to root logger (isolates from cnoe-agent-utils)
+   • Disables propagation to root logger (isolates from third-party root config)
         │
         ▼
 3. create_app()
@@ -256,7 +256,7 @@ Browser sends: POST /api/dynamic-agents/chat/stream
 │     → Only include tools in agent's allowed_tools config                     │
 │     → Missing tools tracked in self._missing_tools                           │
 │  4. Build system prompt from config + extension prompt                       │
-│  5. Create LLM via LLMFactory(provider).get_llm(model)                       │
+│  5. Create LLM via build_chat_model(provider, model)                         │
 │  6. Resolve subagents (load from MongoDB, recursively build tools)           │
 │  7. Create graph: create_deep_agent(model, tools, system_prompt, ...)        │
 │     → Uses deepagents library with InMemorySaver for checkpointing           │
@@ -471,7 +471,7 @@ When `AgentRuntime.initialize()` is called (automatically on first `stream()` ca
                               ▼
 5. CREATE LLM INSTANCE
    ┌─────────────────────────────────────────────────────────────────────┐
-   │  llm = LLMFactory(config.model_provider).get_llm(config.model_id)   │
+   │  llm = build_chat_model(config.model_provider, config.model_id)     │
    │                                                                     │
    │  Supported providers:                                               │
    │  • anthropic-claude    • azure-openai    • bedrock                  │

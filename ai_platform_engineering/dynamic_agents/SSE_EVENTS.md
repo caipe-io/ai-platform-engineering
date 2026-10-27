@@ -68,3 +68,13 @@ logging.getLogger("dynamic_agents.services.stream_events").setLevel(logging.DEBU
 ```
 
 Logs: `[sse:tasks] Mapped tools:abc → tooluse_XYZ`, `[sse:correlate] tools:abc → tooluse_XYZ`
+
+
+## Remote A2A output streaming
+
+- Enable **Stream responses** in the remote agent registry entry (default: off).
+- Runtime custom event: `{type: "tool_output", tool_call_id, result}`; `result` is the current text snapshot.
+- AG-UI encodes this as `CUSTOM` with name `TOOL_OUTPUT` and a value containing `tool_call_id`, `result`, and `namespace`.
+- The custom SSE protocol sends `event: tool_output` with the same payload.
+- Both consumers update the running tool's output. They preserve its running status until `tool_end` / `TOOL_CALL_END`.
+- Snapshots support A2A artifact replacement and append operations. Tool completion replaces the preview with the complete result.

@@ -138,7 +138,10 @@ def test_start_workflow_run_tool_includes_configured_workflow_name() -> None:
     assert payload["workflow_name"] == "SRI Custom workflow"
 
 
-def test_get_workflow_run_status_includes_step_output_summary() -> None:
+def test_get_workflow_run_status_includes_step_output_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Exercise the API-base fallback regardless of local UI configuration.
+    for key in ("CAIPE_UI_PUBLIC_URL", "CAIPE_UI_BASE_URL", "NEXTAUTH_URL"):
+        monkeypatch.delenv(key, raising=False)
     create_workflow_tools = getattr(_load_builtin_tools(), "create_workflow_tools")
     client = MagicMock()
     response = MagicMock()

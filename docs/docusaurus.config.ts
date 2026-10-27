@@ -290,10 +290,6 @@ const config: Config = {
               href: 'https://github.com/cnoe-io/openapi-mcp-codegen',
             },
             {
-              label: 'cnoe-agent-utils',
-              href: 'https://github.com/cnoe-io/cnoe-agent-utils',
-            },
-            {
               label: 'CAIPE.io',
               href: 'https://caipe.io',
             },

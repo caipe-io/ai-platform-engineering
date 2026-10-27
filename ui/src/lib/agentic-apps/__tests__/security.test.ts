@@ -11,13 +11,15 @@ import {
 import { mintAgenticAppToken, verifyAgenticAppToken } from "../tokens";
 import type { ConfiguredAgenticApp } from "@/types/agentic-app";
 import { createWeatherJwtVerifier } from "../../../../examples/external-apps/weather/auth.mjs";
+import { normalizeLegacyAgenticAppManifest } from "../../../../app-sdk/agentic-app-manifest.mjs";
 
 const app: ConfiguredAgenticApp = {
-  manifest: {
+  manifest: normalizeLegacyAgenticAppManifest({
     id: "example-app",
     displayName: "Example App",
     description: "Example",
     apiVersion: "1.0",
+    auth: { mode: "app-scoped-token" },
     runtime: {
       kind: "proxied-next-zone",
       origin: "http://example-app.example.svc",
@@ -32,7 +34,7 @@ const app: ConfiguredAgenticApp = {
         { action: "create", method: "POST", path: "/api/items", defaultEffect: "allow", requiredScopes: ["example-app:run"] },
       ],
     },
-  },
+  }),
   installation: {
     appId: "example-app",
     packageId: "example-app",
@@ -76,6 +78,16 @@ describe("External Apps security contracts", () => {
     await expect(verifyAgenticAppToken(minted.token, "other-app")).rejects.toThrow(
       /audience/,
     );
+  });
+
+  it("binds native assistant proofs to one app, human and short-lived invocation", async () => {
+    const context = { client: "webex", kind: "direct", conversationId: "example-chat", bodyHash: "example-digest" };
+    const { token } = await mintAgenticAppToken({ appId: "example-app", subject: "example-user", scopes: ["example-app:run"],
+      decisionId: "example-decision", correlationId: "example-correlation", ttlSeconds: 60, assistantContext: context });
+    const proof = await verifyAgenticAppToken(token, "example-app");
+    expect(proof).toMatchObject({ sub: "example-user", purpose: "assistant-stream", assistant_context: context });
+    expect(proof.exp - Number(proof.iat)).toBe(60);
+    await expect(verifyAgenticAppToken(token, "other-app")).rejects.toThrow();
   });
 
   it("mints a token accepted by the independent Weather example verifier", async () => {
@@ -153,6 +165,9 @@ describe("External Apps security contracts", () => {
       "x-caipe-user",
       "x-auth-request-email",
       "x-forwarded-user",
+      "x-caipe-assistant-context",
+      "x-caipe-webex-context",
+      "x-caipe-webex-signature",
       "x-remote-user",
       "x-example-app-subject",
       "x-example-app-name",
@@ -187,6 +202,13 @@ describe("External Apps security contracts", () => {
     expect(
       buildAgenticAppTargetUrl(app, ["api", "items", "with space"], "https://host.example/apps?limit=2").toString(),
     ).toBe("http://example-app.example.svc/api/items/with%20space?limit=2");
+  });
+
+  it("separates catalog visibility from launch authorization for every UI profile", () => {
+    const hiddenApp = { ...app, installation: { ...app.installation, visible: false } };
+    expect(canLaunchAgenticApp(hiddenApp, { role: "user" })).toBe(true);
+    expect(canLaunchAgenticApp(hiddenApp, { role: "user" }, { requireVisible: true })).toBe(false);
+    expect(canLaunchAgenticApp(hiddenApp, { role: "viewer" })).toBe(false);
   });
 
   it("preserves the mount path and trailing slash for apps using a base path", () => {

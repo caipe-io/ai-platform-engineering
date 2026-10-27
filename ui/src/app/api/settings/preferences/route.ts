@@ -1,10 +1,12 @@
 // PATCH /api/settings/preferences - Update preferences only
 
 import {
+ApiError,
 successResponse,
 withAuth,
 withErrorHandler,
 } from '@/lib/api-middleware';
+import { parseChatHistoryOrganization } from "@/lib/chat-history-organization";
 import { getCollection } from '@/lib/mongodb';
 import type { UserSettings } from '@/types/mongodb';
 import type { Document } from 'mongodb';
@@ -15,6 +17,10 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
   return withAuth(request, async (req, user) => {
     const body: Partial<UserSettings['preferences']> = await request.json();
 
+    if (body.chat_history !== undefined) {
+      try { body.chat_history = parseChatHistoryOrganization(body.chat_history); }
+      catch (error) { throw new ApiError(error instanceof Error ? error.message : "Invalid chat organization", 400, "BAD_REQUEST"); }
+    }
     const settings = await getCollection<UserSettings>('user_settings');
 
     const update: Document = {

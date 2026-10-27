@@ -1113,7 +1113,7 @@ def register_tools(server) -> None:
     @server.tool(name="webex_list_recordings")
     @_handle_errors
     async def list_recordings(args: ListRecordings) -> dict[str, Any]:
-        """List Webex meeting recordings."""
+        """List Webex meeting recordings without sensitive credential fields."""
         params: dict[str, Any] = {"max": args.max_results}
         if args.meeting_id:
             params["meetingId"] = args.meeting_id
@@ -1121,7 +1121,7 @@ def register_tools(server) -> None:
             params["from"] = args.from_iso
         if args.to_iso:
             params["to"] = args.to_iso
-        return await _request("GET", "/recordings", params=params)
+        return _sanitize_sensitive(await _request("GET", "/recordings", params=params))
 
     @server.tool(name="webex_list_transcripts")
     @_handle_errors

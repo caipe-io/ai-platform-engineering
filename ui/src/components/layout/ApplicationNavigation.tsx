@@ -45,15 +45,18 @@ import { useAdminTabGates } from "@/hooks/useAdminTabGates";
 import { KNOWLEDGE_NAV_ITEMS } from "@/components/rag/KnowledgeSidebar";
 import { PERSONAL_SETTINGS_ROUTES } from "@/components/settings/settings-routes";
 import { config,getLogoFilterClass } from "@/lib/config";
+import type { PublicAgenticApp } from "@/types/agentic-app";
 import { cn } from "@/lib/utils";
 import { resolveChatNavigationPath,useChatStore } from "@/store/chat-store";
 import { motion,useReducedMotion } from "framer-motion";
 import {
   Bot,
+  BookOpen,
   CalendarClock,
   ChevronDown,
   Database,
   FolderKanban,
+  Grip,
   Home,
   KeyRound,
   LayoutGrid,
@@ -82,9 +85,13 @@ interface ApplicationNavigationItem {
   utility?: boolean;
 }
 
-function activeAreaForPath(pathname: string | null): string | null {
+function activeAreaForPath(pathname: string | null, apps: PublicAgenticApp[]): string | null {
   if (pathname === "/") return "home";
   if (pathname?.startsWith("/chat")) return "chat";
+  const app = pathname ? apps.find(app =>
+    [...(app.hostPaths ?? []), `/apps/${app.appId}`].some(root => pathname === root || pathname.startsWith(`${root}/`)),
+  ) : undefined;
+  if (app) return `app-${app.appId}`;
   if (pathname?.startsWith("/projects")) return "projects";
   if (pathname?.startsWith("/knowledge-bases")) return "knowledge";
   if (pathname?.startsWith("/credentials")) return "credentials";
@@ -161,7 +168,12 @@ function ApplicationNavigationContents({
   const pathname = usePathname();
   const hydrated = useHydrated();
   const shouldReduceMotion = useReducedMotion();
-  const { data: session } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
+  const identity = session?.user?.email
+    ? JSON.stringify([session.sub ?? session.user.email, session.org ?? "", session.role ?? ""])
+    : undefined;
+  const [navigationCatalog, setNavigationCatalog] = React.useState<{ identity: string; apps: PublicAgenticApp[]; hostPaths: string[] } | null>(null);
+  const navigationApps = sessionStatus === "authenticated" && navigationCatalog?.identity === identity ? navigationCatalog.apps : [];
   const { isAdmin } = useAdminRole();
   const { canUseAutonomous } = useAutonomousCapability();
   const { gates: adminGates,loading: adminGatesLoading } = useAdminTabGates();
@@ -171,6 +183,23 @@ function ApplicationNavigationContents({
     orgAdminBypass: knowledgeAdminBypass,
   } = useKbTabGates();
   const applicationNavigation = useApplicationNavigation();
+
+  React.useEffect(() => {
+    if (sessionStatus !== "authenticated" || !identity) {
+      setNavigationCatalog(null);
+      return;
+    }
+    const controller = new AbortController();
+    fetch("/api/agentic-apps?surface=navigation", { signal: controller.signal, cache: "no-store" })
+      .then(async response => {
+        if (!response.ok) throw new Error("Could not load application navigation");
+        const payload: { items: PublicAgenticApp[]; hostPaths?: string[] } = await response.json();
+        if (!Array.isArray(payload.items)) throw new Error("Invalid application navigation");
+        if (!controller.signal.aborted) setNavigationCatalog({ identity, apps: payload.items.filter(app => app.canLaunch && app.navigation), hostPaths: payload.hostPaths ?? [] });
+      })
+      .catch(() => { if (!controller.signal.aborted) setNavigationCatalog(null); });
+    return () => controller.abort();
+  }, [sessionStatus, identity, pathname]);
   const {
     activeConversationId,
     conversations,
@@ -192,7 +221,15 @@ function ApplicationNavigationContents({
     !knowledgeAdminBypass &&
     knowledgeGates.has_any_kb === false &&
     !knowledgeHasExplicitCapability;
-  const activeArea = activeAreaForPath(pathname);
+  const activeArea = activeAreaForPath(pathname, navigationApps);
+  const appNavigationItems: ApplicationNavigationItem[] = navigationApps.map(app => ({
+    key: `app-${app.appId}`,
+    href: app.navigation!.href,
+    label: app.navigation!.label,
+    icon: app.navigation!.icon === "book-open" ? BookOpen : LayoutGrid,
+  }));
+  const projectsClaimedByExtension = sessionStatus === "authenticated" && navigationCatalog?.identity === identity &&
+    navigationCatalog.hostPaths.some(path => path === "/projects");
   const registeredContextualNavigation =
     applicationNavigation?.registration?.areaKey === activeArea
       ? applicationNavigation.registration.content
@@ -224,7 +261,8 @@ function ApplicationNavigationContents({
   const items = [
     { key: "home",href: "/",label: "Home",icon: Home },
     { key: "chat",href: chatHref,label: "Chat",icon: MessageCircle },
-    config.projectsEnabled && {
+    ...appNavigationItems,
+    config.projectsEnabled && !projectsClaimedByExtension && {
       key: "projects",
       href: "/projects",
       label: "Projects",
@@ -262,7 +300,7 @@ function ApplicationNavigationContents({
       key: "apps",
       href: "/apps",
       label: "Apps",
-      icon: LayoutGrid,
+      icon: Grip,
     },
     storageMode === "mongodb"
       && config.dynamicAgentsEnabled

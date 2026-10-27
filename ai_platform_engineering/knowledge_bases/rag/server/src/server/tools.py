@@ -351,7 +351,10 @@ class AgentTools:
           if len(result.document.page_content) > search_result_truncate_length:
             doc_id = result.document.metadata.get("document_id", "")
             if doc_id:
-              text += f"\n\n[Content truncated. Use fetch_document with document_id='{doc_id}' to get full content if needed.]"
+              # Tools are namespaced by the caller as f"{server_id}_{tool_name}" (see
+              # dynamic_agents/services/mcp_client.py), so a bare "fetch_document" is
+              # never callable. "knowledge-base" is this server's built-in platform id.
+              text += f"\n\n[Content truncated. Use knowledge-base_fetch_document with document_id='{doc_id}' to get full content if needed.]"
           output.append(
             {
               "text_content": text,

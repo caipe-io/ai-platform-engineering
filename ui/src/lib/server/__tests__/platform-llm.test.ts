@@ -17,6 +17,7 @@ import {
 
 const PLATFORM = { id: "platform-model", provider: "aws-bedrock" };
 const REGISTERED = { model_id: "registry-model", provider: "openai" };
+const TASK_FALLBACK = { id: "task-model", provider: "azure-openai" };
 
 function setPlatformLlm(value: unknown) {
   collections.set("platform_config", [{ platform_llm: value }]);
@@ -81,6 +82,21 @@ describe("resolveLlmModel precedence", () => {
   it("ends at the global default", async () => {
     setPlatformLlm(null);
     await expect(resolveLlmModel()).resolves.toEqual(GLOBAL_DEFAULT_MODEL);
+  });
+
+  it("uses a task fallback only after platform and registered models", async () => {
+    setPlatformLlm(PLATFORM);
+    await expect(resolveLlmModel(undefined, TASK_FALLBACK)).resolves.toEqual(PLATFORM);
+
+    setPlatformLlm(null);
+    collections.set("llm_models", [REGISTERED]);
+    await expect(resolveLlmModel(undefined, TASK_FALLBACK)).resolves.toEqual({
+      id: "registry-model",
+      provider: "openai",
+    });
+
+    collections.delete("llm_models");
+    await expect(resolveLlmModel(undefined, TASK_FALLBACK)).resolves.toEqual(TASK_FALLBACK);
   });
 
   it("ignores a half-configured pin rather than calling a broken model", async () => {

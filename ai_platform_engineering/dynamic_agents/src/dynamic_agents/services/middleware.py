@@ -22,7 +22,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from cnoe_agent_utils.llm_factory import resolve_bedrock_client
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain.agents.middleware.context_editing import (
     ClearToolUsesEdit,
@@ -38,6 +37,7 @@ from langchain.agents.middleware.tool_selection import LLMToolSelectorMiddleware
 from langchain_aws.middleware.prompt_caching import BedrockPromptCachingMiddleware
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langgraph.errors import GraphBubbleUp
+from llm_wrapper.bedrock_family import resolve_bedrock_client
 
 from dynamic_agents.services.llm import get_configured_llm
 
@@ -47,6 +47,7 @@ if TYPE_CHECKING:
 from dynamic_agents.metrics import MetricsAgentMiddleware
 from dynamic_agents.models import FeaturesConfig, MiddlewareEntry
 from dynamic_agents.services.context_usage import ContextUsageMiddleware
+from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryError, ToolCallRecoveryMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -330,14 +331,15 @@ class InterruptAwareToolRetryMiddleware(ToolRetryMiddleware):
     failures, relaunches the subagent, and eventually converts the interrupt
     into an error ``ToolMessage``. Raising from the retry predicate preserves
     LangGraph's checkpoint-and-resume behavior while retaining the configured
-    retry policy for real tool exceptions.
+    retry policy for real tool exceptions. Exhausted model-output recovery in a
+    child agent must also propagate, rather than relaunching that child.
     """
 
     def __init__(self, **kwargs: Any) -> None:
         retry_on = kwargs.pop("retry_on", (Exception,))
 
         def retry_non_control_flow(exc: Exception) -> bool:
-            if isinstance(exc, GraphBubbleUp):
+            if isinstance(exc, (GraphBubbleUp, ToolCallRecoveryError)):
                 raise exc
             if callable(retry_on):
                 return retry_on(exc)
@@ -507,7 +509,7 @@ def _instantiate_model(
     model_id: str,
     model_provider: str,
 ) -> Any:
-    """Instantiate an LLM via LLMFactory for middleware that need a model.
+    """Instantiate an LLM via `build_chat_model` for middleware that need a model.
 
     Args:
         model_id: LLM model identifier.
@@ -612,7 +614,7 @@ def _build_prompt_cache_middleware(model_id: str) -> AgentMiddleware | None:
     """Return the native prompt-caching middleware for the resolved Bedrock client.
 
     The Bedrock client adapter is selected by ``resolve_bedrock_client`` (the same
-    logic ``LLMFactory`` uses at instantiation time):
+    logic ``build_chat_model`` uses at instantiation time):
 
     - ``anthropic`` -> ``ChatAnthropicBedrock``: return None. ``create_deep_agent``
       already appends ``AnthropicPromptCachingMiddleware`` unconditionally to the
@@ -677,7 +679,7 @@ def build_middleware(
     else:
         entries = features.middleware
 
-    result: list[AgentMiddleware] = []
+    result: list[AgentMiddleware] = [ToolCallRecoveryMiddleware()]
     seen_singletons: set[str] = set()
 
     for entry in entries:

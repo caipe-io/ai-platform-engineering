@@ -1,5 +1,5 @@
 name: "[Prebuild] CAIPE UI Docker Build and Push"
-description: "Build and push CAIPE UI Docker image for prebuild branches"
+# description: "Build and push CAIPE UI Docker image for prebuild branches"
 
 on:
   pull_request:
@@ -10,6 +10,7 @@ on:
       - '.github/actions/publish-prebuild-manifest/**'
       - 'ui/**'
       - 'build/Dockerfile.caipe-ui'
+      - 'scripts/npm/**'
   workflow_call:
     inputs:
       pr_number:
@@ -49,6 +50,7 @@ jobs:
     if: |
       (github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]') &&
       startsWith(inputs.head_ref || github.head_ref, 'prebuild/') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
       github.event.action != 'closed'
     outputs:
       should_build: ${{ steps.eligibility.outputs.should_build }}
@@ -78,6 +80,7 @@ jobs:
               .github/actions/prebuild-status \
               .github/actions/publish-prebuild-manifest \
               ui \
+              scripts/npm \
               build/Dockerfile.caipe-ui | grep -q .; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           else
@@ -109,7 +112,7 @@ jobs:
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
           egress-policy: audit
 
@@ -222,7 +225,7 @@ jobs:
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: digests-caipe-ui--${{ matrix.arch }}
           path: /tmp/digests/*
@@ -245,7 +248,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
 

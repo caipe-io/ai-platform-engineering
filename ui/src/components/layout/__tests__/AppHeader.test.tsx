@@ -123,6 +123,7 @@ jest.mock('@/store/chat-store', () => ({
 let mockStorageMode = 'mongodb'
 let mockRagEnabled = false
 let mockEnvBadge = ''
+let mockAgenticAppsEnabled = false
 const mockReportProblemEnabled = true
 let mockProvideFeedbackEnabled = false
 
@@ -201,6 +202,7 @@ jest.mock('@/lib/config', () => ({
     get reportProblemEnabled() { return mockReportProblemEnabled },
     get provideFeedbackEnabled() { return mockProvideFeedbackEnabled },
     get autonomousAgentsEnabled() { return mockAutonomousAgentsEnabled },
+    get agenticAppsEnabled() { return mockAgenticAppsEnabled },
   },
   getConfig: jest.fn((key: string) => {
     const configs: Record<string, unknown> = {
@@ -392,6 +394,7 @@ function applicationButton(name: string): HTMLElement {
 // ============================================================================
 
 beforeEach(() => {
+  mockAgenticAppsEnabled = false
   mockMigrationStatus = {
     status: null,
     isLoading: false,
@@ -571,6 +574,13 @@ describe('AppHeader — application chrome', () => {
       render(<AppHeader />)
       expect(screen.getByText('Skills')).toBeInTheDocument()
       expect(applicationLink('Chat')).toHaveTextContent('Chat')
+    })
+
+    it('keeps the nine-dot Apps launcher in the sidebar', () => {
+      mockAgenticAppsEnabled = true
+      render(<AppHeader />)
+      expect(applicationLink('Apps').querySelectorAll('.lucide-grip circle')).toHaveLength(9)
+      expect(applicationLink('Apps').querySelector('.lucide-app-tile')).toBeNull()
     })
 
     it('keeps global destinations in the rail and discloses active section navigation', () => {

@@ -2,6 +2,7 @@ import {
   applyRagCollectionPublicationRequest,
   applyRagCollectionPublicationState,
   ragCollectionPublicationRevision,
+  ragCollectionPublicationRevisionBasis,
   ragCollectionPublicationState,
 } from "@/lib/rag-collection-publication-approval.server";
 import type { PublicationRequestDocument } from "@/types/publication-approval";
@@ -158,7 +159,7 @@ describe("RAG collection publication application", () => {
     ]);
   });
 
-  it("rejects approval when a referenced datasource changed after review", async () => {
+  it("requires confirmation (not a hard conflict) when a referenced datasource changed after review", async () => {
     mockGetCollection.mockImplementation(async (name: string) => {
       if (name === "rag_collections") {
         return { findOne: jest.fn().mockResolvedValue(currentCollection) };
@@ -180,12 +181,304 @@ describe("RAG collection publication application", () => {
       source_dependency_revisions: { "source-a": "revision-reviewed" },
     });
 
-    await expect(
-      applyRagCollectionPublicationRequest(request, {
-        sub: "approver-subject",
-      }),
-    ).rejects.toMatchObject({ code: "PUBLICATION_REVISION_CONFLICT" });
+    const error = await applyRagCollectionPublicationRequest(request, {
+      sub: "approver-subject",
+    }).catch((caught) => caught);
+
+    expect(error).toMatchObject({ code: "PUBLICATION_DRIFT" });
+    expect(error.drift).toEqual(
+      expect.arrayContaining([expect.objectContaining({ field: "dependency:source-a" })]),
+    );
     expect(mockReconcileCollectionRelationships).not.toHaveBeenCalled();
+  });
+
+  it("applies once the approver acknowledges a datasource dependency drift fingerprint", async () => {
+    const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 });
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "rag_collections") {
+        return {
+          findOne: jest.fn().mockResolvedValue(currentCollection),
+          updateOne,
+          replaceOne: jest.fn(),
+        };
+      }
+      if (name === "rag_ingestion_sources") {
+        return {
+          find: jest.fn().mockReturnValue({
+            toArray: jest
+              .fn()
+              .mockResolvedValue([{ source_id: "source-a", revision: "revision-new" }]),
+          }),
+        };
+      }
+      throw new Error(`unexpected collection ${name}`);
+    });
+
+    const request = requestFor({
+      ...ragCollectionPublicationState(currentCollection),
+      source_dependency_revisions: { "source-a": "revision-reviewed" },
+    });
+
+    const firstAttempt = await applyRagCollectionPublicationRequest(request, {
+      sub: "approver-subject",
+    }).catch((caught) => caught);
+    expect(firstAttempt).toMatchObject({ code: "PUBLICATION_DRIFT" });
+
+    await applyRagCollectionPublicationRequest(
+      request,
+      { sub: "approver-subject" },
+      { acknowledgedFingerprint: firstAttempt.fingerprint },
+    );
+
+    expect(mockReplaceCollectionSources).toHaveBeenCalled();
+  });
+
+  it("requires confirmation and warns before overwriting grown Search teams", async () => {
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "rag_collections") {
+        return {
+          findOne: jest.fn().mockResolvedValue({
+            ...currentCollection,
+            reader_team_slugs: ["search-team", "extra-team"],
+          }),
+        };
+      }
+      if (name === "rag_ingestion_sources") {
+        return {
+          find: jest.fn().mockReturnValue({
+            toArray: jest
+              .fn()
+              .mockResolvedValue([{ source_id: "source-a", revision: "revision-current" }]),
+          }),
+        };
+      }
+      throw new Error(`unexpected collection ${name}`);
+    });
+
+    const request = requestFor({
+      ...ragCollectionPublicationState(currentCollection),
+      source_dependency_revisions: { "source-a": "revision-current" },
+    });
+    request.revision_basis = ragCollectionPublicationRevisionBasis(
+      currentCollection,
+      ragCollectionPublicationState(currentCollection),
+    );
+
+    const error = await applyRagCollectionPublicationRequest(request, {
+      sub: "approver-subject",
+    }).catch((caught) => caught);
+
+    expect(error).toMatchObject({ code: "PUBLICATION_DRIFT" });
+    expect(error.drift).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: "reader_team_slugs",
+          will_apply: ["search-team"],
+        }),
+      ]),
+    );
+  });
+
+  it("re-drifts when the fingerprint was acknowledged but Search teams moved again", async () => {
+    function mockCollections(liveReaderTeamSlugs: string[]) {
+      mockGetCollection.mockImplementation(async (name: string) => {
+        if (name === "rag_collections") {
+          return {
+            findOne: jest.fn().mockResolvedValue({
+              ...currentCollection,
+              reader_team_slugs: liveReaderTeamSlugs,
+            }),
+          };
+        }
+        if (name === "rag_ingestion_sources") {
+          return {
+            find: jest.fn().mockReturnValue({
+              toArray: jest
+                .fn()
+                .mockResolvedValue([{ source_id: "source-a", revision: "revision-current" }]),
+            }),
+          };
+        }
+        throw new Error(`unexpected collection ${name}`);
+      });
+    }
+
+    const request = requestFor({
+      ...ragCollectionPublicationState(currentCollection),
+      source_dependency_revisions: { "source-a": "revision-current" },
+    });
+    request.revision_basis = ragCollectionPublicationRevisionBasis(
+      currentCollection,
+      ragCollectionPublicationState(currentCollection),
+    );
+
+    mockCollections(["search-team", "extra-team"]);
+    const stale = await applyRagCollectionPublicationRequest(
+      request,
+      { sub: "approver-subject" },
+    ).catch((caught) => caught);
+    expect(stale).toMatchObject({ code: "PUBLICATION_DRIFT" });
+
+    mockCollections(["search-team", "extra-team", "another-team"]);
+    const error = await applyRagCollectionPublicationRequest(
+      request,
+      { sub: "approver-subject" },
+      { acknowledgedFingerprint: stale.fingerprint },
+    ).catch((caught) => caught);
+
+    expect(error).toMatchObject({ code: "PUBLICATION_DRIFT" });
+    expect(error.fingerprint).not.toBe(stale.fingerprint);
+    expect(mockEnsureReaderTeamsCanSearch).not.toHaveBeenCalled();
+  });
+
+  it("does not treat a reordered reader team list as drift", async () => {
+    const snapshotCollection = {
+      ...currentCollection,
+      reader_team_slugs: ["search-team", "extra-team"],
+    };
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "rag_collections") {
+        return {
+          findOne: jest.fn().mockResolvedValue({
+            ...currentCollection,
+            reader_team_slugs: ["extra-team", "search-team"],
+          }),
+        };
+      }
+      if (name === "rag_ingestion_sources") {
+        return {
+          find: jest.fn().mockReturnValue({
+            toArray: jest
+              .fn()
+              .mockResolvedValue([{ source_id: "source-a", revision: "revision-current" }]),
+          }),
+        };
+      }
+      throw new Error(`unexpected collection ${name}`);
+    });
+
+    const request = requestFor({
+      ...ragCollectionPublicationState(snapshotCollection),
+      source_dependency_revisions: { "source-a": "revision-current" },
+    });
+    request.revision_basis = ragCollectionPublicationRevisionBasis(
+      snapshotCollection,
+      ragCollectionPublicationState(snapshotCollection),
+    );
+
+    await expect(
+      applyRagCollectionPublicationRequest(request, { sub: "approver-subject" }),
+    ).resolves.toEqual([]);
+  });
+
+  it("treats a live Owner change as a hard conflict, not a confirmable drift", async () => {
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "rag_collections") {
+        return {
+          findOne: jest.fn().mockResolvedValue({
+            ...currentCollection,
+            owner_subject: "different-owner",
+          }),
+        };
+      }
+      if (name === "rag_ingestion_sources") {
+        return {
+          find: jest.fn().mockReturnValue({
+            toArray: jest
+              .fn()
+              .mockResolvedValue([{ source_id: "source-a", revision: "revision-current" }]),
+          }),
+        };
+      }
+      throw new Error(`unexpected collection ${name}`);
+    });
+
+    const request = requestFor({
+      ...ragCollectionPublicationState(currentCollection),
+      maintainer_team_slugs: ["new-owner"],
+      source_dependency_revisions: { "source-a": "revision-current" },
+    });
+    request.revision_basis = ragCollectionPublicationRevisionBasis(
+      currentCollection,
+      ragCollectionPublicationState(currentCollection),
+    );
+
+    await expect(
+      applyRagCollectionPublicationRequest(request, { sub: "approver-subject" }),
+    ).rejects.toMatchObject({ code: "PUBLICATION_REVISION_CONFLICT" });
+  });
+
+  it("treats a live Owner change as a hard conflict even when every other field still matches the request", async () => {
+    // Regression: the owner check must not be skippable via the
+    // already-matches shortcut just because maintainer/reader/global_read/
+    // source_ids happen to still equal what was requested.
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "rag_collections") {
+        return {
+          findOne: jest.fn().mockResolvedValue({
+            ...currentCollection,
+            owner_subject: "different-owner",
+          }),
+        };
+      }
+      if (name === "rag_ingestion_sources") {
+        return {
+          find: jest.fn().mockReturnValue({
+            toArray: jest
+              .fn()
+              .mockResolvedValue([{ source_id: "source-a", revision: "revision-current" }]),
+          }),
+        };
+      }
+      throw new Error(`unexpected collection ${name}`);
+    });
+
+    const request = requestFor({
+      ...ragCollectionPublicationState(currentCollection),
+      source_dependency_revisions: { "source-a": "revision-current" },
+    });
+    request.revision_basis = ragCollectionPublicationRevisionBasis(
+      currentCollection,
+      ragCollectionPublicationState(currentCollection),
+    );
+
+    await expect(
+      applyRagCollectionPublicationRequest(request, { sub: "approver-subject" }),
+    ).rejects.toMatchObject({ code: "PUBLICATION_REVISION_CONFLICT" });
+    expect(mockEnsureReaderTeamsCanSearch).not.toHaveBeenCalled();
+  });
+
+  it("treats a pre-migration request with no revision snapshot as a hard conflict", async () => {
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "rag_collections") {
+        return {
+          findOne: jest.fn().mockResolvedValue({
+            ...currentCollection,
+            maintainer_team_slugs: ["someone-else"],
+          }),
+        };
+      }
+      if (name === "rag_ingestion_sources") {
+        return {
+          find: jest.fn().mockReturnValue({
+            toArray: jest
+              .fn()
+              .mockResolvedValue([{ source_id: "source-a", revision: "revision-current" }]),
+          }),
+        };
+      }
+      throw new Error(`unexpected collection ${name}`);
+    });
+
+    const request = requestFor({
+      ...ragCollectionPublicationState(currentCollection),
+      maintainer_team_slugs: ["new-owner"],
+      source_dependency_revisions: { "source-a": "revision-current" },
+    });
+
+    await expect(
+      applyRagCollectionPublicationRequest(request, { sub: "approver-subject" }),
+    ).rejects.toMatchObject({ code: "PUBLICATION_REVISION_CONFLICT" });
   });
 
   it("applies an Owner change when collection and source revisions still match", async () => {

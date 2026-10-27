@@ -221,6 +221,210 @@ routes:
         status: 403
         reason: pdp_denied
 
+  # Status reads require agent use and write access to the conversation.
+  - id: ui-bff-post-api-v1-chat-stream-status-openfga-agent-use
+    surface: ui_bff
+    method: POST
+    path: /api/v1/chat/stream/status
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: OpenFGA user:<sub> can_use agent:<agent_id> plus implicit-owner-or-explicit conversation write gate before app-owned read-only turn status.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+
+  - id: ui-bff-post-api-harness-engine-runs-openfga-agent-use
+    surface: ui_bff
+    method: POST
+    path: /api/harness-engine/runs
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: OpenFGA user:<sub> can_use agent:<agent_id> plus implicit-owner-or-explicit conversation write gate before starting a detached Harness Engine run.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+
+  - id: ui-bff-post-api-harness-engine-sessions-clear-openfga-agent-use
+    surface: ui_bff
+    method: POST
+    path: /api/harness-engine/sessions/clear
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: OpenFGA user:<sub> can_use agent:<agent_id> plus implicit-owner-or-explicit conversation write gate before clearing the caller's Harness Engine session binding.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+
+  - id: ui-bff-get-api-harness-engine-run-openfga-agent-use
+    surface: ui_bff
+    method: GET
+    path: /api/harness-engine/runs/[runId]
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: Engine verifies run ownership; BFF rechecks current agent use, conversation read access and saved agent binding through authorizeHarnessRunAccess.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+
+  - id: ui-bff-get-api-harness-engine-run-events-openfga-agent-use
+    surface: ui_bff
+    method: GET
+    path: /api/harness-engine/runs/[runId]/events
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: Engine verifies run ownership; BFF rechecks current agent use, conversation read access and saved agent binding through authorizeHarnessRunAccess.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+
+  - id: ui-bff-get-api-harness-engine-run-events-stream-openfga-agent-use
+    surface: ui_bff
+    method: GET
+    path: /api/harness-engine/runs/[runId]/events/stream
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: Engine verifies run ownership; BFF rechecks current agent use, conversation read access and saved agent binding through authorizeHarnessRunAccess.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+
+  - id: ui-bff-delete-api-harness-engine-run-openfga-agent-use
+    surface: ui_bff
+    method: DELETE
+    path: /api/harness-engine/runs/[runId]
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: Engine verifies run ownership; BFF rechecks current agent use, conversation write access and saved agent binding through authorizeHarnessRunAccess.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+
   # Spec 2026-05-11 identity-group ReBAC foundation entries. These routes are
   # added as pending until the corresponding user-story endpoints land.
   - id: ui-bff-get-api-admin-identity-group-sync-directory-sync-status

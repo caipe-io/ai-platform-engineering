@@ -26,12 +26,7 @@ const CANCEL_URL = `${STREAM_BASE}/cancel`;
 // ═══════════════════════════════════════════════════════════════
 
 export class CustomStreamAdapter implements StreamAdapter {
-  private accessToken?: string;
   private abortController: AbortController | null = null;
-
-  constructor(accessToken?: string) {
-    this.accessToken = accessToken;
-  }
 
   abort(): void {
     if (this.abortController) {
@@ -45,12 +40,10 @@ export class CustomStreamAdapter implements StreamAdapter {
 
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (this.accessToken) {
-        headers["Authorization"] = `Bearer ${this.accessToken}`;
-      }
 
       const response = await fetch(CANCEL_URL, {
         method: "POST",
+        credentials: "same-origin",
         headers,
         body: JSON.stringify({
           conversation_id: conversationId,
@@ -80,6 +73,7 @@ export class CustomStreamAdapter implements StreamAdapter {
       ...(params.reasoningEffort && { reasoning_effort: params.reasoningEffort }),
       ...(params.turnId && { turn_id: params.turnId }),
       protocol: "custom",
+      ...(params.forwardedProps && { forwarded_props: params.forwardedProps }),
       ...(params.clientContext && { client_context: params.clientContext }),
       ...(params.files?.length && { files: params.files }),
     });
@@ -95,6 +89,7 @@ export class CustomStreamAdapter implements StreamAdapter {
       ...(params.reasoningEffort && { reasoning_effort: params.reasoningEffort }),
       resume_data: params.resumeData,
       protocol: "custom",
+      ...(params.forwardedProps && { forwarded_props: params.forwardedProps }),
       ...(params.clientContext && { client_context: params.clientContext }),
     });
 
@@ -113,13 +108,11 @@ export class CustomStreamAdapter implements StreamAdapter {
       "Content-Type": "application/json",
       "Accept": "text/event-stream",
     };
-    if (this.accessToken) {
-      headers["Authorization"] = `Bearer ${this.accessToken}`;
-    }
 
     try {
       const response = await fetch(url, {
         method: "POST",
+        credentials: "same-origin",
         headers,
         body,
         signal: this.abortController.signal,
@@ -173,6 +166,12 @@ export class CustomStreamAdapter implements StreamAdapter {
             parsed.args,
             parsed.namespace ?? [],
           );
+          return false;
+        }
+
+        case "tool_output": {
+          const parsed = JSON.parse(data);
+          callbacks.onToolOutput?.(parsed.tool_call_id, parsed.result, parsed.namespace ?? []);
           return false;
         }
 

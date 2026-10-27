@@ -682,7 +682,7 @@ def test_e2e_install_idempotent_via_repeat_calls(_real_otel) -> None:
 def test_e2e_install_after_existing_processors_does_not_disturb_them(
     _real_otel,
 ) -> None:
-    """The cnoe-agent-utils TracingManager registers its own
+    """The TracingManager registers its own
     BatchSpanProcessor. We attach ours alongside; both must run.
     The fixture already has a SimpleSpanProcessor attached — verify
     it still receives spans after our install."""
@@ -723,8 +723,8 @@ def test_dynamic_agents_lifespan_eagerly_installs_scrubber(_real_otel) -> None:
     contract changes (e.g. install moves elsewhere), this test
     fails loudly."""
     provider, _ = _real_otel
-    pytest.importorskip("cnoe_agent_utils.tracing")
-    from cnoe_agent_utils.tracing import TracingManager
+    pytest.importorskip("dynamic_agents.services.tracing")
+    from dynamic_agents.services.tracing import TracingManager
 
     with mock.patch.dict(
         os.environ,

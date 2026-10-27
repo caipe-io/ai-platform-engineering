@@ -1059,9 +1059,9 @@ export function TeamDetailsDialog({
                     <span className="text-sm text-muted-foreground">Name</span>
                     <span className="text-sm font-medium">{currentTeam.name}</span>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Description</span>
-                    <span className="text-sm">{currentTeam.description || "—"}</span>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm text-muted-foreground shrink-0">Description</span>
+                    <span className="text-sm text-right">{currentTeam.description || "—"}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-muted-foreground">Created by</span>
@@ -1208,15 +1208,17 @@ export function TeamDetailsDialog({
                   </div>
                 )}
                 </div>
-                <Select
-                  value={newMemberRole}
-                  onChange={(e) => setNewMemberRole(e.target.value as "member" | "admin")}
-                  disabled={addingMember}
-                  className="h-9 rounded-md border bg-background px-3 text-sm"
-                >
-                  <option value="member">Member</option>
-                  <option value="admin">Admin</option>
-                </Select>
+                <div className="w-28 shrink-0">
+                  <Select
+                    value={newMemberRole}
+                    onChange={(e) => setNewMemberRole(e.target.value as "member" | "admin")}
+                    disabled={addingMember}
+                    className="h-9 rounded-md border bg-background px-3 text-sm"
+                  >
+                    <option value="member">Member</option>
+                    <option value="admin">Admin</option>
+                  </Select>
+                </div>
                 <Button
                   type="submit"
                   size="sm"
@@ -1233,17 +1235,18 @@ export function TeamDetailsDialog({
               </form>
             )}
 
-            {/* Filter the roster by email. Debounced into a server-side
-                query so it works regardless of how large the team is. */}
+            {/* Filter the roster by name or email. Debounced into a
+                server-side query so it works regardless of how large the
+                team is. */}
             <div className="relative">
               <Search className="h-3.5 w-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <Input
-                placeholder="Filter members by email…"
+                placeholder="Filter members by name or email…"
                 value={memberSearch}
                 onChange={(e) => setMemberSearch(e.target.value)}
                 className="pl-8 h-9"
                 type="search"
-                aria-label="Filter members by email"
+                aria-label="Filter members by name or email"
               />
             </div>
 

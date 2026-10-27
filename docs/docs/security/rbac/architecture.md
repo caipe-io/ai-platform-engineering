@@ -137,6 +137,52 @@ Keycloak realm roles are **not created for CAIPE permissions**. New deployments 
 
 Rule of thumb: **Keycloak owns identity and JWT claims; OpenFGA owns who is related to which organization, team, or resource.**
 
+### Native app assistants from Webex
+
+Native dispatch keeps the linked human's identity and the stored `webex` client
+type. It does not convert bot credentials into a browser session or admin role.
+
+```mermaid
+flowchart LR
+    Event[Verified Webex event] --> Bot[Existing identity and room gates]
+    Bot --> OBO[Linked human OBO token]
+    OBO --> CAS[Agent use and conversation write]
+    CAS --> Context[Verify signed request and stored thread]
+    Context --> App[App role and HTTP policy]
+    App --> Runtime[Native app verifies host proof and data access]
+```
+
+- Apps opt in with `ui.assistant.supportedClients`; the default is `webui` only.
+  Webex groups additionally require `webexGroupChat: true` and app-side enforcement
+  of which data may be disclosed to that room. Declaring either capability
+  grants no access. Unsupported clients fail closed without runtime fallback.
+- OIDC validation retains the signature-verified `azp` claim as `authorizedParty`.
+  Native Webex calls require the configured bot OAuth client and a human bearer,
+  never a service-account principal or a caller-supplied identity header.
+- The bot signs the exact request bytes, bearer hash, room, space, thread,
+  conversation, agent, method, path and timestamp using `WEBEX_LINK_HMAC_SECRET`.
+  The BFF verifies that proof against the authenticated request and stored thread
+  after the existing CAS/conversation gates. A public `client_context` field or
+  `X-Client-Source` value cannot establish a trusted room or direct-message status.
+- The app gateway still enforces installation availability, required roles,
+  declared HTTP actions and the configured token mode. Bearer users retain the
+  normal user role; the native assistant path adds no admin bypass or user grants.
+- The private runtime receives a 60-second, app-audience JWT in
+  `X-CAIPE-Assistant-Context`. The JWT's assistant-purpose claim binds the human,
+  actual upstream bearer, body, target path and stored conversation/room. The
+  proxy strips caller-provided CAIPE identity/context headers before adding its
+  own proof. Apps must independently verify it and enforce their project/tool
+  permissions and room-data policy; the proof is provenance, not a data grant.
+- Operators configure a shared bot/host HMAC key and the existing host/app token
+  key. Missing, stale, mismatched or unavailable verification fails closed.
+  Existing Dynamic Agents calls do not require this native-specific handshake.
+- Existing MCP-backed threads remain pinned until an explicit migration preserves
+  IDs, transcripts and permissions, updates the stored agent/thread owner, and
+  clears the bot's ownership cache. Do not copy provider-specific checkpoints
+  into another runtime; load recent authorized transcript context instead.
+
+The request and app-verification contract is documented in `ui/app-sdk/README.md`.
+
 ### Web UI BFF RBAC Caches
 
 The Web UI backend uses short-lived in-process caches to keep repeated navigation from turning into repeated OpenFGA, MongoDB, and platform-health probes:
@@ -491,6 +537,13 @@ The collection, env, and naming details are in the BFF library README at
 
 **Technically:** Next.js App Router with NextAuth for OIDC session management. The BFF session module owns shared login credentials; authorization helpers enforce permissions before protected operations.
 
+Cookie authentication reads credentials and their matching expiry from the
+shared encrypted `auth_token_cache` record on each request. Login waits for
+durable publication; refresh uses a fenced MongoDB lease. Cookie encoding never
+writes credentials back. The BFF does not cache authenticated credentials;
+`CAIPE_SESSION_AUTH_CACHE_TTL_MS` no longer enables that cache. Identity-write
+deduplication remains separate from authentication and permission decisions.
+
 ### Authentication Flow
 
 ```
@@ -577,11 +630,12 @@ starves the event loop long enough to time out unrelated PDP decision calls.
 For browser sessions, the Web UI backend forwards the Keycloak access token to
 Dynamic Agents when it is present so the runtime can bind
 `current_user_token` and pass the same bearer to AgentGateway-backed MCP calls.
-If the slim NextAuth cookie survives a UI restart but the server-side token
-cache is gone, Dynamic Agents proxy routes still forward the signed-in
-`X-User-Context` fallback instead of blocking configuration reads, AI review,
-or agent save flows. Token-backed AgentGateway tool calls may still require the
-user to sign in again before they can be probed or invoked.
+Existing gateway context supplies identity metadata; it does not grant A2A
+registry management or agent execution permissions. Those checks use CAS with
+the validated bearer subject. If the slim NextAuth cookie survives a UI restart
+but the server-side token cache is gone, these operations require signing in
+again to obtain a bearer. The explicitly enabled local dev provider remains
+available; A2A probes still require a bearer and a CAS decision.
 
 `POST /api/v1/chat/stream/start`, `POST /api/v1/chat/invoke`,
 `POST /api/v1/chat/stream/resume`, and `POST /api/v1/chat/stream/cancel`
@@ -825,6 +879,24 @@ still gets a useful response. Both surfaces are rate-limited per user
 `WEBEX_COMMAND_RATE_LIMIT`) and reply ephemerally (Slack
 `response_type=ephemeral`; Webex DMs the issuer in group spaces, replies
 inline in 1:1).
+
+### Ingestion Credential Retrieval
+
+`POST /api/credentials/retrieve` verifies the bearer JWT and checks credential
+`use` permission before decrypting. Requests carrying browser metadata or cookies
+are rejected. Ingestion's `internal_service` fallback requires all of:
+
+- A verified service-account session with a nonempty subject.
+- A signed `azp` claim matching both Keycloak's `service-account-<clientId>`
+  username and the existing `KEYCLOAK_RESOURCE_SERVER_ID` platform client.
+- A saved ingestion source referencing the credential, or an unexpired preview
+  grant recorded after the initiating caller passed credential `use` authorization.
+
+The bearer middleware preserves this verified client identity as
+`session.serviceAccountClientId`. Request headers and `intended_use` cannot grant
+access. Other service accounts require direct credential permission, and policy
+service failures deny retrieval. `RAG_INGESTOR_SERVICE_ACCOUNTS` scopes source
+polling/status APIs; credential retrieval requires no subject allow-list.
 
 ### Credential Exchange Authorization
 
@@ -1255,8 +1327,10 @@ and before Dynamic Agent dispatch, the bot may fetch bounded prior thread contex
 from the Webex Messages API: the root message plus recent replies filtered by the
 same `parentId` and capped by `WEBEX_THREAD_CONTEXT_MAX_MESSAGES` /
 `WEBEX_THREAD_CONTEXT_MAX_CHARS`. The context is sent only to the already selected
-and authorized Dynamic Agent under the user's OBO token; fetch failures do not
-weaken authorization and fall back to sending only the current message. Bot replies
+and authorized Dynamic Agent under the user's OBO token. Parent and reply fetches
+handle HTTP failures independently, retaining any available context. If neither
+fetch provides context, only the current message is sent. Fetch failures do not
+weaken authorization. Bot replies
 include the selected `agent_id` and tell users to continue in the same Webex
 thread. Whether the bot processes follow-up posts still depends on route listen
 mode: `mention`, `message`, or `all`.
@@ -1754,7 +1828,17 @@ logic in OpenFGA tuples and audited ReBAC change sets.
 
 > **Badge analogy:** A workshop where employees build and operate their own machines. The workshop checks your badge at the door (JWT validation on every request). Once inside, each machine has its own access tag — some are personal (Private), some are shared with your team (Team), some anyone can use (Global). Your badge level determines which machines you can touch. When a machine makes a tool call, it presents your badge — not its own — so the security checkpoint still sees *you*, not the machine.
 
-**Technically:** A FastAPI service where every route handler uses `get_current_user()` as a FastAPI `Depends()`, validating the JWT on every request at the route level for precise control per endpoint. This is the component that carries the user's identity to the MCP layer: it validates the incoming JWT and forwards the same bearer token (or OBO token) to AgentGateway, so per-user enforcement at the PEP is preserved end-to-end.
+**Technically:** A FastAPI service with two request checks:
+
+- `JwtAuthMiddleware` validates supplied bearer tokens and binds the current
+  request token for downstream tools. `DA_REQUIRE_BEARER` controls rejection of
+  requests without a bearer; health, metrics and CORS preflight remain public.
+- `get_current_user` (an alias of `get_user_context`) requires the gateway's
+  `X-User-Context` header and an `email` field, including in debug mode.
+  Authorization fields are optional pass-through values or use their model
+  defaults. It does not fetch userinfo or derive product admin from Keycloak roles.
+
+Agent execution also requires the CAS agent-use decision described below.
 
 ### JWT Validation Chain
 
@@ -1763,30 +1847,32 @@ logic in OpenFGA tuples and audited ReBAC change sets.
 user: UserContext = Depends(get_current_user)
 ```
 
-Inside `get_current_user()`:
+The middleware validates signature, expiry, issuer and configured audience
+against Keycloak JWKS. The gateway resolves the session or bearer identity and
+product permissions before forwarding the context.
 
-```
-1. Extract Bearer token from Authorization header
-2. Fetch JWKS from Keycloak (cached in-process)
-3. Validate:
-   - Signature (RS256 against JWKS public key)
-   - expiry (exp)
-   - issuer (iss == OIDC_ISSUER)
-   - audience (aud == OIDC_CLIENT_ID, if set)
-4. Call OIDC userinfo endpoint (cached 10 min by token hash)
-   → authoritative email, name, groups (OIDC tokens often omit these)
-5. Extract realm_access.roles from JWT claims
-   (Keycloak puts roles here; also checked in userinfo)
-6. Evaluate the configured required-access group (if set) — 403 if missing
-7. Preserve group claims as identity context only; product admin is decided by OpenFGA organization relationships
-8. Return UserContext { email, name, groups, access_token, obo_jwt }
-```
+### A2A Probe Authorization Through CAS
 
-### Agent-Level Authorization (OpenFGA Execution Gate)
+`POST /api/v1/remote-agents/probe` uses the existing CAS adapter in
+`dynamic_agents/auth/authz.py`. The adapter sends the validated caller bearer
+and its subject to `/api/authz/v1/decisions` for `manage` on
+`organization:<CAIPE_ORG_KEY>` (default organization key: `caipe`).
+
+- CAS binds the subject to the authenticated caller and evaluates policy.
+- `ALLOW` permits discovery; `DENY` returns **403**; an unavailable decision
+  service returns **503**. Missing or malformed bearer context returns **401**.
+- `X-User-Context.is_admin` and `DEBUG=true` do not bypass this gate.
+- The BFF registry mutation and probe routes use the same CAS permission.
+  Authenticated authors can list names and capabilities; endpoint and credential
+  references are returned only with management permission.
+- No additional shared secret or context signature is required for A2A.
+- `DEBUG=true` does not create a developer identity or grant administrator access.
+
+### Agent-Level Authorization (CAS Execution Gate)
 
 After the bearer token is validated by `JwtAuthMiddleware`, Dynamic Agents
 decodes the already-validated JWT payload only to extract `sub` and repeats the
-same OpenFGA check used by the Web UI backend:
+same CAS agent-use decision used by the Web UI backend, evaluated through OpenFGA:
 
 ```text
 user:<sub> can_use agent:<agent_id>
@@ -1795,7 +1881,7 @@ user:<sub> can_use agent:<agent_id>
 The runtime check runs before agent lookup, MCP server lookup, runtime cache
 creation, non-streaming invocation, or stream resume work. This second layer is
 required because the runtime must not trust the Web UI backend as the only enforcement
-point. Denials return `403 / pdp_denied`; OpenFGA outages return
+point. Denials return `403 / pdp_denied`; authorization service outages return
 `503 / pdp_unavailable`; missing or malformed bearer context returns a
 structured `401`.
 
@@ -1839,19 +1925,50 @@ The Web UI backend reconciles the second tuple family from each agent's
 per-server tool lists are represented as `tool:<server_id>/*` so the runtime
 allowlist and the enforcement graph use the same wildcard semantics.
 
+### Remote A2A Authorization and Credentials
+
+- Registry writes and card probes require CAS organization `manage` permission.
+  The Dynamic Agents probe repeats this decision with the validated bearer.
+- Parent agents and subagents select registered endpoints in **Advanced >
+  Remote A2A Agents**. Each selected entry becomes a callable tool; changing,
+  disabling or deleting an entry invalidates cached tools on the next request.
+- Authentication resolves for the invoking caller on every tool call:
+  **User JWT** forwards the current request token; **Saved secret** requires
+  caller permission to use that secret; **Connected credential** resolves the
+  caller's own provider connection. Registry documents persist references only.
+- The configured header receives the credential. `Authorization` uses a Bearer
+  value; other allowed headers receive the value directly. Gateway
+  user-context metadata is not sent to the remote agent.
+- A2A uses the registered endpoint. Register an AgentGateway URL to apply its
+  JWT policy; `AGENT_GATEWAY_URL` controls MCP routing, not A2A routing. A2A does
+  not reuse MCP-specific `agent can_call tool` relationships. The local Weather
+  gateway validates JWTs; it has no `ext_authz` policy configured. Deployments
+  that need external policy enforcement must configure it on that gateway.
+- HTTPS is required by default. `REMOTE_A2A_ALLOWED_HTTP_ORIGINS` permits exact
+  local/private origins. Discovery and transport attach credentials only after
+  origin validation; foreign Agent Card interfaces and redirects are rejected.
+- Timeout is an overall deadline covering credential resolution, discovery and
+  execution. Stream activity does not reset it. Deployment-owned response and
+  accumulated-text caps apply to both streaming and complete responses; limit
+  failures close the local stream without returning successful partial results.
+- Timeout and streaming settings do not grant permissions. Mandatory gateway
+  routing and verified caller/agent/remote delegation decisions are follow-up
+  work in [#2914](https://github.com/caipe-io/ai-platform-engineering/issues/2914).
+
 ### Key Environment Variables
 
 
 | Variable                          | Default                                         | Security note                                                                                                                                                                                  |
 | --------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AUTH_ENABLED`                    | `false`                                         | **Must be `true` in production.** `false` returns a hardcoded `dev@localhost` admin — never deploy with `false`.                                                                               |
+| `DEBUG` | `false` | Controls diagnostics and reload; `get_user_context` still requires gateway identity metadata, and bearer enforcement is configured separately. |
+| `REMOTE_A2A_ALLOWED_HTTP_ORIGINS` | `[]` | Exact trusted HTTP origins for local/private A2A deployments; other endpoints require HTTPS. |
 | `OIDC_ISSUER`                     | —                                               | Validated against `iss` claim; tokens from other issuers are rejected                                                                                                                          |
 | `OIDC_CLIENT_ID`                  | —                                               | Identifies the Web UI client used by browser-facing flows. Dynamic Agents audience validation uses `KEYCLOAK_AUDIENCE` / `OIDC_AUDIENCE`.                                                      |
 | `KEYCLOAK_URL` / `KEYCLOAK_REALM` | —                                               | Cluster-internal Keycloak base URL and realm used to fetch JWKS. Required when `OIDC_ISSUER` is a public hostname that is not reachable through the pod's localhost.                           |
 | `KEYCLOAK_AUDIENCE` / `OIDC_AUDIENCE` | `caipe-platform,agentgateway`               | Comma-separated audiences accepted for Dynamic Agents bearer validation. Include `caipe-ui` when browser session tokens carry that audience.                                                     |
 | `OIDC_REQUIRED_GROUP`             | —                                               | Optional deployment-specific Web UI admission gate; users missing this upstream group are denied before product authorization runs                                                              |
 | `OIDC_REQUIRED_ADMIN_GROUP`       | —                                               | Deprecated for CAIPE product admin. Map enterprise admin groups to CAIPE teams through Identity Group Sync, then grant OpenFGA `admin` on `organization:<org>`.                                 |
-| `DA_REQUIRE_BEARER`               | `false`                                         | Set to `true` to require validated bearer identity for runtime OpenFGA enforcement                                                                                                             |
+| `DA_REQUIRE_BEARER` | `false` | JWT middleware rejects missing bearer tokens when enabled. CAS execution and A2A probe checks independently require a bearer. |
 | `OPENFGA_HTTP`                    | — (`http://openfga:8080` in Docker Compose dev) | OpenFGA API base URL used for runtime `can_use` checks                                                                                                                                         |
 | `OPENFGA_STORE_ID`                | —                                               | Optional explicit OpenFGA store id; takes precedence over store-name discovery                                                                                                                 |
 | `OPENFGA_STORE_NAME`              | `caipe-openfga`                                 | Store name used when discovering the OpenFGA store id; Docker Compose dev wires this into Dynamic Agents alongside the Web UI backend                                                          |

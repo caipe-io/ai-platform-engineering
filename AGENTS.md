@@ -33,6 +33,7 @@ until you have checked the shared locations below.
 | UI component | `ui/src/components/` | `ui/src/components/ui/` and `ui/src/components/shared/`, then an existing component in the same feature area |
 | UI selection control | `ui/src/components/ui/{select,searchable-picker}.tsx` | Follow `docs/docs/ui/selection-controls.md`; reuse a domain picker before adding a base or custom listbox |
 | UI state or browser data | `ui/src/store/` | Existing store and `ui/src/lib/` helpers |
+| Application manifest or native UI package | `ui/app-sdk/agentic-app-manifest.mjs` | CAIPE App Contract: shared `AgenticAppManifest` types/validation, `ui/src/lib/agentic-apps/` installation adapters, and the native component interface |
 | MCP integration | `ai_platform_engineering/mcp/<provider>/` | `ai_platform_engineering/mcp/common/` |
 | Slack or Webex behavior | `ai_platform_engineering/integrations/{slack_bot,webex_bot}/` | The BFF/API contract and shared auth utilities |
 | Dynamic/custom-agent runtime | `ai_platform_engineering/dynamic_agents/` | Its `src/` modules and tests |
@@ -140,3 +141,8 @@ Do not add Slack/Webex bots to that default path.
 - Python + Slack Bolt, Slack SDK, httpx (SSE streaming), Pydantic (config models), requests, loguru, PyYAML — no new dependencies (100-slack-agui-migration)
 - MongoDB (LangGraph checkpointer on dynamic agents side; Slack bot is stateless beyond in-memory TTL caches) (100-slack-agui-migration)
 - Service accounts: dynamic Keycloak confidential clients + OpenFGA `service_account` tuples + Mongo `service_accounts` collection; BFF (Next.js) orchestrates create/rotate/revoke/scope; caller-keyed tool authz added to the OpenFGA ext_authz bridge (2026-06-05-service-accounts)
+- Independent Python 3.13 Harness Engine with a managed AgentCore adapter; Dynamic Agents remains unchanged and additional local/sandbox harnesses are future adapters (2026-08-17-harness-engine)
+- Separate MongoDB `harness_agent_configs`, `harness_runs`, and `harness_events` collections provide overlays and cursor replay; stable AgentCore session IDs preserve thread context while scoped long-term memory remains future work (2026-08-17-harness-engine)
+
+## Recent Changes
+- 2026-08-17-harness-engine: Added an independent AgentCore Harness Engine with detached runs, replayable sessions, and W3C trace propagation

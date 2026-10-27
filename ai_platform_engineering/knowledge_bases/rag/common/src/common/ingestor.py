@@ -331,7 +331,7 @@ class Client:
     the datasource owner must have granted it access to the referenced secret.
     """
     if not self.credential_api_url:
-      raise RuntimeError("CREDENTIAL_API_URL must be configured to ingest sources that use stored credentials")
+      raise RuntimeError("CAIPE_API_URL (or CREDENTIAL_API_URL) must be configured to ingest sources that use stored credentials")
 
     token = await self._get_access_token()
     url = f"{self.credential_api_url.rstrip('/')}/retrieve"

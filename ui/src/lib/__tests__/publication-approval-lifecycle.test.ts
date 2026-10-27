@@ -2,10 +2,12 @@ import {
   acquirePublicationRequestForApproval,
   cancelPublicationRequest,
   canApprovePublicationRequest,
+  completePublicationApproval,
   createPublicationRequest,
   failPublicationApproval,
   invalidatePublicationRequests,
   listPublicationRequestsPageForActor,
+  releasePublicationApprovalForDrift,
   replacePendingConnectorPublicationRequest,
 } from "@/lib/publication-approval.server";
 import {
@@ -13,6 +15,7 @@ import {
 } from "@/lib/publication-approval-settings";
 import type {
   PublicationActor,
+  PublicationDriftItem,
   PublicationRequestDocument,
 } from "@/types/publication-approval";
 
@@ -548,5 +551,136 @@ describe("publication request lifecycle", () => {
     );
     expect(collection.updateOne.mock.calls[0][1]).not.toHaveProperty("$unset");
     consoleError.mockRestore();
+  });
+});
+
+describe("publication drift confirmation", () => {
+  const DRIFT: PublicationDriftItem[] = [
+    { field: "member_count", label: "Members", before: 24, after: 25, overridable: true },
+  ];
+
+  it("releases an applying request to pending with a drift_detected entry and revokes the capability", async () => {
+    const applying = request({
+      status: "applying",
+      apply_started_at: "2026-01-01T00:01:00.000Z",
+    });
+    const released = { ...applying, status: "pending" as const };
+    const collection = {
+      findOne: jest.fn().mockResolvedValue(applying),
+      findOneAndUpdate: jest.fn().mockResolvedValue(released),
+    };
+    mockGetCollection.mockResolvedValue(collection);
+
+    await expect(
+      releasePublicationApprovalForDrift(applying._id, APPROVER, DRIFT),
+    ).resolves.toEqual(released);
+
+    expect(mockReconcileTupleDiff).toHaveBeenCalledWith(
+      {
+        writes: [],
+        deletes: [
+          {
+            user: `user:${APPROVER.subject}`,
+            relation: "approver",
+            object: `policy:${applying.authorization_policy_id}`,
+          },
+        ],
+      },
+      expect.objectContaining({ caller: { type: "user", id: APPROVER.subject } }),
+    );
+    expect(collection.findOneAndUpdate).toHaveBeenCalledWith(
+      { _id: applying._id, status: "applying" },
+      expect.objectContaining({
+        $set: expect.objectContaining({ status: "pending" }),
+        $unset: { apply_started_at: "", last_error: "" },
+        $push: {
+          history: expect.objectContaining({
+            action: "drift_detected",
+            from_status: "applying",
+            to_status: "pending",
+            drift: DRIFT,
+          }),
+        },
+      }),
+      { returnDocument: "after" },
+    );
+    expect(collection.findOneAndUpdate.mock.calls[0][1].$set).not.toHaveProperty(
+      "last_error",
+    );
+  });
+
+  it("keeps a drift release locked in applying when capability cleanup fails", async () => {
+    const applying = request({
+      status: "applying",
+      apply_started_at: "2026-01-01T00:01:00.000Z",
+    });
+    const collection = {
+      findOne: jest.fn().mockResolvedValue(applying),
+      updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
+    };
+    mockGetCollection.mockResolvedValue(collection);
+    mockReconcileTupleDiff.mockRejectedValueOnce(
+      new Error("authorization service unavailable"),
+    );
+    const consoleError = jest
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    await expect(
+      releasePublicationApprovalForDrift(applying._id, APPROVER, DRIFT),
+    ).rejects.toMatchObject({ statusCode: 409 });
+
+    expect(collection.updateOne).toHaveBeenCalledWith(
+      { _id: applying._id, status: "applying" },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          last_error: expect.stringContaining("apply-capability cleanup failed"),
+        }),
+        $push: {
+          history: expect.objectContaining({
+            action: "drift_detected",
+            to_status: "applying",
+          }),
+        },
+      }),
+    );
+    consoleError.mockRestore();
+  });
+
+  it("stores the acknowledged drift and the live member_count when completing with a confirmed diff", async () => {
+    const applying = request({
+      status: "applying",
+      apply_started_at: "2026-01-01T00:01:00.000Z",
+      risk_facts: {
+        organization_wide: false,
+        target_team_slugs: ["target-team"],
+        member_count: 24,
+        reasons: [],
+      },
+    });
+    const approved = { ...applying, status: "approved" as const };
+    const collection = {
+      findOne: jest.fn().mockResolvedValue(applying),
+      findOneAndUpdate: jest.fn().mockResolvedValue(approved),
+    };
+    mockGetCollection.mockResolvedValue(collection);
+
+    await expect(
+      completePublicationApproval(applying._id, APPROVER, undefined, DRIFT),
+    ).resolves.toEqual(approved);
+
+    expect(collection.findOneAndUpdate).toHaveBeenCalledWith(
+      { _id: applying._id, status: "applying" },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: "approved",
+          "risk_facts.member_count": 25,
+        }),
+        $push: {
+          history: expect.objectContaining({ action: "approved", drift: DRIFT }),
+        },
+      }),
+      { returnDocument: "after" },
+    );
   });
 });

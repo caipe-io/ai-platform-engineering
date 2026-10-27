@@ -39,6 +39,8 @@ export interface ResourceAuthzSession {
    * matches the relationships those callers are granted in OpenFGA.
    */
   isServiceAccount?: boolean;
+  /** OAuth client identity supplied by the verified bearer-auth path. */
+  serviceAccountClientId?: string;
   principalType?: 'oidc_user' | 'service_account' | 'catalog_api_key' | 'skills_api_key';
 }
 

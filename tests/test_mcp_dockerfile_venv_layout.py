@@ -15,6 +15,7 @@ EXPECTED_SHARED_DOCKERFILE_MCPS = {
   "mcp-komodor": "komodor",
   "mcp-netutils": "netutils",
   "mcp-pagerduty": "pagerduty",
+  "mcp-sharepoint": "sharepoint",
   "mcp-splunk": "splunk",
   "mcp-victorops": "victorops",
   "mcp-webex": "webex",

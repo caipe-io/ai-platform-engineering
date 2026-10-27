@@ -827,6 +827,242 @@ def test_local_agent_context_bypasses_agent_use_and_tool_checks(
     assert local_allow[0]["resource_ref"] == "user:user-sub-123 can_call tool:jira/search"
 
 
+def _assert_single_tool_call_log(capsys: pytest.CaptureFixture[str], **expected: object) -> None:
+    """Parse the one mcp_tool_call_authz JSON line emitted to stderr and
+    assert it matches `expected` exactly."""
+    log_lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("{")]
+    assert len(log_lines) == 1
+    assert json.loads(log_lines[0]) == {"event": "mcp_tool_call_authz", **expected}
+
+
+def test_logs_tool_call_authz_for_local_agent_context(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The per-request companion log line carries agent_context_kind, which
+    log_authz_decision's own (rollup-aggregated for allows) event schema does
+    not expose at all — see _log_mcp_tool_call_authz's docstring."""
+    bridge = _load_bridge_module()
+
+    monkeypatch.setattr(bridge, "_decode_verified_bearer_subject", lambda _auth_header: "user-sub-123")
+    monkeypatch.setattr(
+        bridge,
+        "_check_openfga",
+        lambda user, relation, obj: (user, relation, obj) == ("user:user-sub-123", "can_call", "mcp_gateway:list"),
+    )
+    monkeypatch.setattr(bridge, "log_authz_decision", lambda **_event: None, raising=False)
+    monkeypatch.setattr(bridge, "BYPASS_SUBS", frozenset())
+    monkeypatch.setattr(bridge, "AGENT_CONTEXT_HMAC_SECRET", "test-secret")
+    monkeypatch.setattr(bridge, "CALLER_TOOL_CHECK_ENABLED", False)
+
+    context_header, signature = bridge.build_agent_context_header(
+        "mcp-local-agent-abc123",
+        secret="test-secret",
+        kind=bridge.AGENT_CONTEXT_KIND_LOCAL,
+    )
+    request = bridge.build_check_request(
+        headers={
+            "authorization": "Bearer valid-token",
+            "x-caipe-agent-context": context_header,
+            "x-caipe-agent-context-signature": signature,
+        },
+        path="/mcp/jira",
+        method="POST",
+        body='{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search"}}',
+    )
+    request.attributes.request.http.id = "request-local-ctx"
+
+    response = bridge.OpenFgaAuthorizationService().Check(request, None)
+
+    assert response.status.code == bridge.OK
+    _assert_single_tool_call_log(
+        capsys,
+        agent_context_kind="local",
+        tool="jira/search",
+        outcome="allow",
+        reason_code="OK_LOCAL_AGENT_CONTEXT",
+        correlation_id="request-local-ctx",
+        subject_hash=bridge._hash_subject("user-sub-123"),
+    )
+
+
+def test_logs_tool_call_authz_for_dynamic_agent_use_deny(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """DENY_AGENT_USE (site 1) — the caller lacks the agent-use grant itself,
+    before any per-tool check runs."""
+    bridge = _load_bridge_module()
+
+    monkeypatch.setattr(bridge, "_decode_verified_bearer_subject", lambda _auth_header: "user-sub-123")
+    monkeypatch.setattr(
+        bridge,
+        "_check_openfga",
+        lambda user, relation, obj: (user, relation, obj) == ("user:user-sub-123", "can_call", "mcp_gateway:list"),
+    )
+    monkeypatch.setattr(bridge, "log_authz_decision", lambda **_event: None, raising=False)
+    monkeypatch.setattr(bridge, "BYPASS_SUBS", frozenset())
+    monkeypatch.setattr(bridge, "AGENT_CONTEXT_HMAC_SECRET", "test-secret")
+    context_header, signature = bridge.build_agent_context_header(
+        "agent-test-april-2025",
+        secret="test-secret",
+    )
+    request = bridge.build_check_request(
+        headers={
+            "authorization": "Bearer valid-token",
+            "x-caipe-agent-context": context_header,
+            "x-caipe-agent-context-signature": signature,
+        },
+        path="/mcp/jira",
+        method="POST",
+        body='{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search"}}',
+    )
+    request.attributes.request.http.id = "request-agent-use-deny"
+
+    response = bridge.OpenFgaAuthorizationService().Check(request, None)
+
+    assert response.status.code == bridge.PERMISSION_DENIED
+    _assert_single_tool_call_log(
+        capsys,
+        agent_context_kind="dynamic",
+        tool="jira/search",
+        outcome="deny",
+        reason_code="DENY_AGENT_USE",
+        correlation_id="request-agent-use-deny",
+        subject_hash=bridge._hash_subject("user-sub-123"),
+    )
+
+
+def test_logs_tool_call_authz_for_dynamic_agent_tool_deny(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bridge = _load_bridge_module()
+
+    monkeypatch.setattr(bridge, "_decode_verified_bearer_subject", lambda _auth_header: "user-sub-123")
+    monkeypatch.setattr(
+        bridge,
+        "_check_openfga",
+        lambda user, relation, obj: (user, relation, obj) in {
+            ("user:user-sub-123", "can_call", "mcp_gateway:list"),
+            ("user:user-sub-123", "can_use", "agent:agent-test-april-2025"),
+        },
+    )
+    monkeypatch.setattr(bridge, "log_authz_decision", lambda **_event: None, raising=False)
+    monkeypatch.setattr(bridge, "BYPASS_SUBS", frozenset())
+    monkeypatch.setattr(bridge, "AGENT_CONTEXT_HMAC_SECRET", "test-secret")
+    context_header, signature = bridge.build_agent_context_header(
+        "agent-test-april-2025",
+        secret="test-secret",
+    )
+    request = bridge.build_check_request(
+        headers={
+            "authorization": "Bearer valid-token",
+            "x-caipe-agent-context": context_header,
+            "x-caipe-agent-context-signature": signature,
+        },
+        path="/mcp/jira",
+        method="POST",
+        body='{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search"}}',
+    )
+    request.attributes.request.http.id = "request-dynamic-deny"
+
+    response = bridge.OpenFgaAuthorizationService().Check(request, None)
+
+    assert response.status.code == bridge.PERMISSION_DENIED
+    _assert_single_tool_call_log(
+        capsys,
+        agent_context_kind="dynamic",
+        tool="jira/search",
+        outcome="deny",
+        reason_code="DENY_AGENT_TOOL",
+        correlation_id="request-dynamic-deny",
+        subject_hash=bridge._hash_subject("user-sub-123"),
+    )
+
+
+def test_logs_tool_call_authz_for_caller_keyed_deny(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """DENY_CALLER_TOOL (site 4) — the agent can call the tool and the user
+    can use the agent, but the caller lacks their own tool grant."""
+    bridge = _load_bridge_module()
+
+    monkeypatch.setattr(bridge, "_decode_verified_bearer_subject", lambda _auth_header: "user-sub-123")
+    monkeypatch.setattr(
+        bridge,
+        "_check_openfga",
+        lambda user, relation, obj: (user, relation, obj) in {
+            ("user:user-sub-123", "can_call", "mcp_gateway:list"),
+            ("user:user-sub-123", "can_use", "agent:agent-test-april-2025"),
+            ("agent:agent-test-april-2025", "can_call", "tool:jira/search"),
+        },
+    )
+    monkeypatch.setattr(bridge, "log_authz_decision", lambda **_event: None, raising=False)
+    monkeypatch.setattr(bridge, "BYPASS_SUBS", frozenset())
+    monkeypatch.setattr(bridge, "AGENT_CONTEXT_HMAC_SECRET", "test-secret")
+    monkeypatch.setattr(bridge, "CALLER_TOOL_CHECK_ENABLED", True)
+
+    request = _tools_call_request(bridge, tool_name="search")
+    request.attributes.request.http.id = "request-caller-deny"
+
+    response = bridge.OpenFgaAuthorizationService().Check(request, None)
+
+    assert response.status.code == bridge.PERMISSION_DENIED
+    _assert_single_tool_call_log(
+        capsys,
+        agent_context_kind="dynamic",
+        tool="jira/search",
+        outcome="deny",
+        reason_code="DENY_CALLER_TOOL",
+        correlation_id="request-caller-deny",
+        subject_hash=bridge._hash_subject("user-sub-123"),
+    )
+
+
+def test_logs_tool_call_authz_for_caller_keyed_allow_dynamic_kind(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """OK_CALLER_TOOL (site 5) with a dynamic (non-local) agent context —
+    confirms agent_context_kind is reported correctly at the caller-keyed
+    sites, not just for the local-kind path covered elsewhere."""
+    bridge = _load_bridge_module()
+
+    monkeypatch.setattr(bridge, "_decode_verified_bearer_subject", lambda _auth_header: "user-sub-123")
+    monkeypatch.setattr(
+        bridge,
+        "_check_openfga",
+        lambda user, relation, obj: (user, relation, obj) in {
+            ("user:user-sub-123", "can_call", "mcp_gateway:list"),
+            ("user:user-sub-123", "can_use", "agent:agent-test-april-2025"),
+            ("agent:agent-test-april-2025", "can_call", "tool:jira/search"),
+            ("user:user-sub-123", "can_call", "tool:jira/search"),
+        },
+    )
+    monkeypatch.setattr(bridge, "log_authz_decision", lambda **_event: None, raising=False)
+    monkeypatch.setattr(bridge, "BYPASS_SUBS", frozenset())
+    monkeypatch.setattr(bridge, "AGENT_CONTEXT_HMAC_SECRET", "test-secret")
+    monkeypatch.setattr(bridge, "CALLER_TOOL_CHECK_ENABLED", True)
+
+    request = _tools_call_request(bridge, tool_name="search")
+    request.attributes.request.http.id = "request-caller-allow"
+
+    response = bridge.OpenFgaAuthorizationService().Check(request, None)
+
+    assert response.status.code == bridge.OK
+    _assert_single_tool_call_log(
+        capsys,
+        agent_context_kind="dynamic",
+        tool="jira/search",
+        outcome="allow",
+        reason_code="OK_CALLER_TOOL",
+        correlation_id="request-caller-allow",
+        subject_hash=bridge._hash_subject("user-sub-123"),
+    )
+
+
 def test_local_agent_context_with_caller_check_denies_without_caller_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -893,6 +1129,47 @@ def test_local_agent_context_with_caller_check_allows_with_exact_tool_grant(
     ]
     assert len(caller_tool_allow) == 1
     assert caller_tool_allow[0]["outcome"] == "allow"
+
+
+def test_logs_tool_call_authz_share_one_correlation_id_across_both_sites(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """kind="local" with CALLER_TOOL_CHECK_ENABLED=True hits two log sites per
+    request (OK_LOCAL_AGENT_CONTEXT, then OK_CALLER_TOOL). The request's
+    http.id is left unset (the production case where Envoy ever fails to
+    populate it), so _request_correlation_id falls back to a fresh uuid4 —
+    this confirms both lines still share the ONE id computed once per
+    request, rather than each site generating its own and silently
+    diverging."""
+    bridge = _load_bridge_module()
+
+    def _fake_check_openfga(user: str, relation: str, obj: str):
+        return (user, relation, obj) in {
+            ("user:user-sub-123", "can_call", "mcp_gateway:list"),
+            ("user:user-sub-123", "can_call", "tool:jira/search"),
+        }
+
+    monkeypatch.setattr(bridge, "_decode_verified_bearer_subject", lambda _auth_header: "user-sub-123")
+    monkeypatch.setattr(bridge, "_decode_verified_bearer_claims", lambda _auth_header: {"sub": "user-sub-123"})
+    monkeypatch.setattr(bridge, "_check_openfga", _fake_check_openfga)
+    monkeypatch.setattr(bridge, "log_authz_decision", lambda **_event: None, raising=False)
+    monkeypatch.setattr(bridge, "BYPASS_SUBS", frozenset())
+    monkeypatch.setattr(bridge, "AGENT_CONTEXT_HMAC_SECRET", "test-secret")
+    monkeypatch.setattr(bridge, "CALLER_TOOL_CHECK_ENABLED", True)
+
+    request = _local_tools_call_request(bridge, tool_name="search")
+    assert not request.attributes.request.http.id
+
+    response = bridge.OpenFgaAuthorizationService().Check(request, None)
+
+    assert response.status.code == bridge.OK
+    log_lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("{")]
+    assert len(log_lines) == 2
+    logged = [json.loads(line) for line in log_lines]
+    assert [e["reason_code"] for e in logged] == ["OK_LOCAL_AGENT_CONTEXT", "OK_CALLER_TOOL"]
+    assert logged[0]["correlation_id"] == logged[1]["correlation_id"]
+    assert logged[0]["correlation_id"]
 
 
 def test_local_agent_context_with_caller_check_allows_with_wildcard_tool_grant(

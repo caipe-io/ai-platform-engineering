@@ -39,7 +39,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: "3.14"
           enable-cache: true
@@ -65,7 +65,7 @@ jobs:
 
       - name: Upload coverage reports
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage-reports-main
           path: |
@@ -79,7 +79,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: "3.14"
           enable-cache: true
@@ -111,11 +111,64 @@ jobs:
 
   #     - name: Upload RAG coverage reports
   #       if: github.event_name == 'pull_request'
-  #       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+  #       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
   #         name: coverage-reports-rag
   #         path: |
   #           ai_platform_engineering/knowledge_bases/rag/server/coverage.xml
   #           ai_platform_engineering/knowledge_bases/rag/server/htmlcov/
+
+  run-llm-wrapper-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v6
+        with:
+          python-version: "3.14"
+      - name: Install UV
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Run llm-wrapper tests
+        run: |
+          cd ai_platform_engineering/llm_wrapper
+          /home/runner/.local/bin/uv venv
+          /home/runner/.local/bin/uv sync --group dev
+          /home/runner/.local/bin/uv run pytest -v
+
+      # llm_wrapper declares no dependencies so that a consumer can take a
+      # subset -- a sandboxed harness worker needs the provider map, the Bedrock
+      # classifier and the reasoning translation, but not `build`, which is the
+      # only module that imports LangChain. That property is only real if it is
+      # tested, so these two suites run against a bare interpreter.
+      - name: Verify the dependency-free modules import without LangChain
+        run: |
+          cd ai_platform_engineering/llm_wrapper
+          python -m pip install --quiet pytest
+          PYTHONPATH=src python -m pytest \
+            tests/test_providers.py \
+            tests/test_bedrock_family.py -q
+
+  run-dynamic-agents-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v6
+        with:
+          python-version: "3.14"
+      - name: Install UV
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Run dynamic-agents tests
+        run: |
+          cd ai_platform_engineering/dynamic_agents
+          /home/runner/.local/bin/uv venv
+          /home/runner/.local/bin/uv sync --extra dev
+          /home/runner/.local/bin/uv run pytest -v
 
   run-autonomous-agents-tests:
     runs-on: ubuntu-latest
@@ -139,7 +192,7 @@ jobs:
 
       - name: Upload coverage reports
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage-reports-autonomous-agents
           path: |

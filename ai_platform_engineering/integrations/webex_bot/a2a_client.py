@@ -13,6 +13,8 @@ from typing import Any, Dict, Iterator, Optional
 
 import httpx
 
+from .utils.native_assistant_context import native_assistant_headers
+
 logger = logging.getLogger("caipe.webex_bot.a2a_client")
 
 _SSE_ERROR_BODY_MAX_LEN = 200
@@ -374,6 +376,10 @@ class WebexSSEClient:
         payload: Dict[str, Any],
         bearer_token: Optional[str] = None,
     ) -> Iterator[SSEEvent]:
+        headers = self._get_headers(bearer_token=bearer_token)
+        body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
+        headers.update(native_assistant_headers(url=url, payload=payload, body=body,
+            bearer_token=headers.get("Authorization", "").removeprefix("Bearer ")))
         client = self._http_client
         owns_client = client is None
         if owns_client:
@@ -383,8 +389,8 @@ class WebexSSEClient:
             with client.stream(
                 "POST",
                 url,
-                json=payload,
-                headers=self._get_headers(bearer_token=bearer_token),
+                content=body,
+                headers=headers,
             ) as response:
                 if not response.is_success:
                     error_text = response.read().decode(errors="replace")

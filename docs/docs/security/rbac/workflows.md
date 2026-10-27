@@ -6,6 +6,52 @@ Sequence diagrams and flow narratives for "what happens when X". Pair this with 
 
 ---
 
+## Installed app assistant streams
+
+- Browser chat, app overlays and linked-user bot chats use the same start,
+  resume and cancel routes. The saved conversation's agent selects a
+  deployment-configured app; browser context and runtime hints grant no access.
+- Existing agent-use and conversation-write checks run before dispatch. The app
+  gateway then checks launch access and the declared POST policy using the exact
+  resolved caller. A second cookie lookup cannot replace a bearer identity.
+- Private origins stay server-side. The gateway uses the app's declared token
+  mode; service accounts cannot impersonate an interactive user for this path.
+- Disabled/conflicting app bindings fail closed. An app denial, unsupported
+  operation or upstream failure never falls back to another execution runtime.
+  Unclaimed agents use their pinned native/provider Harness Gateway path.
+- Apps remain responsible for resource authorization and runtime sessions. The
+  host forwards the authorized visible conversation ID without assigning a
+  Dynamic Agents checkpoint ID to the app.
+
+## Shared chat and Harness Gateway authorization
+
+| Operation | Required checks |
+|---|---|
+| Start, resume, Stop and app status | Authenticated principal, current agent use, conversation write, and a matching saved agent participant |
+| App-owned operation | The checks above, interactive-user identity, installed/enabled app, app launch access and declared HTTP policy |
+| Engine run detail, event polling and replay subscription | Engine run ownership, current agent use, conversation read and matching saved agent |
+| Engine cancellation by run ID | Engine run ownership, current agent use, conversation write and matching saved agent |
+| Direct Engine run admission | Current agent use and conversation write, matching saved agent and a provider-owned Harness Gateway binding |
+
+- Agent selection in a request cannot override a saved conversation participant.
+  Legacy conversations without an agent participant retain their existing
+  agent-use and conversation-access checks.
+- Service-account classification comes from authentication and remains
+  `service_account:<sub>` in CAS/OpenFGA checks. App-owned streams require an
+  interactive user. Engine requests carry an internal service credential and
+  the verified caller subject; provider SDKs receive no user bearer token.
+- The existing Slack write exception applies only to stored Slack conversations
+  and still requires agent use and a matching saved agent. History and replay
+  reads require conversation read permission; the write exception grants no
+  read access.
+- Engine ownership is checked before the BFF exposes run metadata or opens an
+  event subscription. The BFF rechecks current grants on each request and
+  reconnect, so retaining a run ID cannot bypass revoked access.
+- Existing open streams are not continuously reauthorized. Downstream app and
+  tool services retain their own resource authorization responsibilities.
+
+---
+
 ## Login + First-Time Broker Login
 
 This is the **once-per-session** flow. After it completes, the user holds a Keycloak-backed UI session and usually never sees Keycloak (or the upstream IdP — Okta / Duo SSO / etc.) again until the Keycloak SSO session can no longer be refreshed.
@@ -198,13 +244,20 @@ sequenceDiagram
 ```
 
 The same sequence applies to `POST /api/v1/chat/invoke`,
-`POST /api/v1/chat/stream/resume`, and `POST /api/v1/chat/stream/cancel` (cancel
+`POST /api/v1/chat/stream/resume`, `POST /api/v1/chat/stream/status`, and `POST /api/v1/chat/stream/cancel` (cancel
 does not start runtime work, but it still requires agent use and conversation write authorization). The RBAC Audit tab
 surfaces Web UI backend and Dynamic Agents OpenFGA decisions as `OpenFGA ReBAC` rows with
 `pdp=openfga` and the checked tuple in `resource_ref`. audit-service
 is authoritative for compliance and history; Jaeger/OTel can still be enabled
 for request-flow debugging, but the Admin UI does not need it to show authz
 decisions.
+
+After these checks, start/resume/cancel/status share the chat stream dispatcher.
+An installed app's declared operation uses the already authenticated caller in
+the shared app proxy; app errors and unsupported operations cannot dispatch to
+Dynamic Agents or Harness Engine. Native/provider operations retain their pinned
+Harness Gateway binding. App-owned assistants return 501 from non-streaming
+invoke, which has no declared app operation.
 
 Slack follow-up bookkeeping uses `PATCH /api/chat/conversations/[id]/metadata`
 after a response is posted. That endpoint uses the same implicit-owner-or-explicit

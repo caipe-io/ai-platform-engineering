@@ -1,15 +1,19 @@
 ---
 name: oncall-handoff
-description: Generate a comprehensive on-call handoff document by aggregating open incidents, ongoing issues, recent deployments, and systems to watch. Orchestrates PagerDuty, Jira, and ArgoCD agents. Use during on-call rotation changes or shift handoffs.
+description: Generate a comprehensive on-call handoff document by aggregating open incidents, ongoing issues, recent deployments, and systems to watch. Orchestrates Splunk On-Call (VictorOps), Jira, and ArgoCD agents. Use during on-call rotation changes or shift handoffs.
 ---
 
 # On-Call Handoff
 
-Build a structured handoff document for the incoming on-call engineer by collecting data from PagerDuty, Jira, and ArgoCD.
+Build a structured handoff document for the incoming on-call engineer by collecting data from Splunk On-Call (VictorOps), Jira, and ArgoCD.
+
+### Source of Truth
+
+Splunk On-Call (VictorOps) is the authoritative source for live on-call and alerting data. Use the VictorOps tools for current incidents, resolved incidents, schedules, rotations, escalation policies, teams, users, services, and routing keys. Do not use PagerDuty or a Backstage roster for live on-call state; PagerDuty is historical migration context only. If a VictorOps call fails, report the actual tool error instead of claiming that PagerDuty access is required.
 
 ## Instructions
 
-### Phase 1: Current Incident State (PagerDuty Agent)
+### Phase 1: Current Incident State (Splunk On-Call/VictorOps Agent)
 1. **Active incidents** - all triggered and acknowledged incidents
 2. **Recently resolved incidents** - resolved in the last 24 hours (may recur)
 3. **Current on-call schedule** - who is on-call now, who is taking over

@@ -19,6 +19,8 @@ Use MongoDB-backed envelope encryption for the initial credential store:
 - Wrap data encryption keys through AWS KMS CMKs in production.
 - Keep a `local-cmk` key-wrapper option for non-production testing only, with `dev-local` retained as a compatibility alias.
 - Restrict raw credential retrieval to server-to-server bearer callers with the configured credential-service audience.
+- For ingestion's `internal_service` fallback, require a verified service account whose signed `azp` claim matches the existing `KEYCLOAK_RESOURCE_SERVER_ID` platform client. Other service accounts need an explicit credential `use` grant.
+- Limit that fallback to credentials referenced by a saved ingestion source or covered by an active preview grant. No Keycloak subject allow-list is required; authorization-service failures deny retrieval.
 - Preserve clean store/key-wrapper interfaces so OpenBao can replace the storage backend later without changing browser/API contracts.
 
 ## Consequences

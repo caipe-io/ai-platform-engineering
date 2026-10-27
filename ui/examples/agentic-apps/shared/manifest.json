@@ -1,0 +1,27 @@
+{
+  "id": "example-app",
+  "displayName": "Example App",
+  "description": "One application with native and hosted UI profiles.",
+  "apiVersion": "2.0",
+  "version": "1.0.0",
+  "ui": {
+    "profiles": [
+      { "id": "native", "mode": "native-package", "package": "@example/native-app", "contractVersion": "2.0" },
+      { "id": "hosted", "mode": "iframe" }
+    ],
+    "routes": [{ "id": "home", "path": "/example" }],
+    "navigation": { "label": "Example", "routeRef": "home", "placement": "after-chat", "icon": "layout-grid" }
+  },
+  "api": { "mounts": ["/api/example"] },
+  "auth": { "mode": "app-scoped-token" },
+  "runtime": { "kind": "proxied-next-zone", "mountPath": "/apps/example-app" },
+  "surfaces": { "showInHub": true },
+  "access": {
+    "requiredRoles": ["user"],
+    "tokenScopes": ["example-app:read"],
+    "policyActions": [{ "action": "proxy:GET", "defaultEffect": "allow", "requiredScopes": ["example-app:read"] }]
+  },
+  "provides": { "mcp": ["example-mcp"], "agents": [], "workflows": [] },
+  "consumes": { "platformApis": [{ "id": "agents.invocation", "version": "1.0", "required": false }] },
+  "requestedPermissions": [{ "resourceType": "agent", "resourceRef": "assistant", "actions": ["use"] }]
+}

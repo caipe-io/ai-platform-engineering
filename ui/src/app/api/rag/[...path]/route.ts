@@ -663,20 +663,15 @@ async function prepareLocalFilePublication(
   form.set("ownership_preprovisioned", "true");
   form.set("preprovisioned_datasource_id", sourceId);
 
-  const resourceRevision = publicationResourceRevision({
-    source_id: sourceId,
-    owner_team_slug: ownerTeamSlug,
-    owner_subject: ownerTeamSlug ? null : subject,
-    creator_subject: subject,
-    search_team_slugs: effectiveSearch.search_team_slugs,
-    search_user_subjects: effectiveSearch.search_user_subjects,
-  });
+  const revisionBasis = publication.resourceRevisionBasis;
+  const resourceRevision = publicationResourceRevision(revisionBasis);
   let publicationRequest: PublicationRequestDocument | null = null;
   try {
     if (publication.plan.requires_approval) {
       publicationRequest = await createPublicationRequest({
         resource: publication.resource,
         resourceRevision,
+        revisionBasis,
         requestedState: publication.requestedState as unknown as Record<
           string,
           unknown
@@ -695,6 +690,7 @@ async function prepareLocalFilePublication(
       await recordAutoApprovedPublication({
         resource: publication.resource,
         resourceRevision,
+        revisionBasis,
         requestedState: publication.requestedState as unknown as Record<
           string,
           unknown

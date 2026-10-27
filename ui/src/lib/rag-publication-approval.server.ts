@@ -1,9 +1,11 @@
-import { ApiError } from "@/lib/api-error";
+import { ApiError, PublicationDriftError, withDrift } from "@/lib/api-error";
 import { getCollection } from "@/lib/mongodb";
 import {
   listPublicationActorTeamSlugs,
   planRagPublication,
   publicationActorFromSession,
+  publicationDriftDisplayValue,
+  publicationDriftValuesEqual,
   publicationResourceRevision,
   type PublicationSession,
   type RagPublicationState,
@@ -19,10 +21,59 @@ import {
 import type { IngestionSourceConfig } from "@/types/ingestion-source";
 import type {
   PublicationActor,
+  PublicationDriftItem,
   PublicationPolicyPlan,
   PublicationRequestDocument,
   PublicationResourceRef,
 } from "@/types/publication-approval";
+
+const FIELD_LABELS: Record<string, string> = {
+  jql: "JQL",
+  url: "URL",
+  channel_id: "Channel",
+  confluence_url: "Confluence URL",
+  space_key: "Space key",
+  start_page_url: "Start page URL",
+  content_kind: "Content kind",
+  whole_space: "Whole space",
+  page_configs: "Page configs",
+  project_key: "Project key",
+  source_slug: "Source slug",
+  space_id: "Space ID",
+  default_chunk_size: "Default chunk size",
+  default_chunk_overlap: "Default chunk overlap",
+  reload_interval: "Reload interval",
+  lookback_days: "Lookback days",
+  include_bots: "Include bots",
+  include_comments: "Include comments",
+  include_links: "Include links",
+  custom_fields: "Custom fields",
+  get_child_pages: "Get child pages",
+  allowed_title_patterns: "Allowed title patterns",
+  denied_title_patterns: "Denied title patterns",
+  settings: "Settings",
+  name: "Name",
+  description: "Description",
+};
+
+function fieldLabel(field: string): string {
+  return FIELD_LABELS[field] ?? field;
+}
+
+function diffProjectionField(
+  field: string,
+  before: unknown,
+  after: unknown,
+): PublicationDriftItem | null {
+  if (publicationDriftValuesEqual(before, after)) return null;
+  return {
+    field,
+    label: fieldLabel(field),
+    before: publicationDriftDisplayValue(before),
+    after: publicationDriftDisplayValue(after),
+    overridable: true,
+  };
+}
 
 const SOURCE_COLLECTION = "rag_ingestion_sources";
 const OPENFGA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}$/;
@@ -56,6 +107,7 @@ export interface PreparedRagPublication {
   plan: PublicationPolicyPlan;
   resource: PublicationResourceRef;
   resourceRevision: string;
+  resourceRevisionBasis: Record<string, unknown>;
 }
 
 interface PrepareRagPublicationInput {
@@ -155,15 +207,22 @@ export function ragDatasourcePublicationDependencyRevision(
   return publicationResourceRevision(revisionSourceProjection(source));
 }
 
+export function ragPublicationRevisionBasis(
+  source: IngestionSourceConfig,
+  effectiveState: RagPublicationState,
+): Record<string, unknown> {
+  return {
+    source: revisionSourceProjection(source),
+    search_team_slugs: strings(effectiveState.search_team_slugs),
+    search_user_subjects: strings(effectiveState.search_user_subjects),
+  };
+}
+
 export function ragPublicationRevision(
   source: IngestionSourceConfig,
   effectiveState: RagPublicationState,
 ): string {
-  return publicationResourceRevision({
-    source: revisionSourceProjection(source),
-    search_team_slugs: strings(effectiveState.search_team_slugs),
-    search_user_subjects: strings(effectiveState.search_user_subjects),
-  });
+  return publicationResourceRevision(ragPublicationRevisionBasis(source, effectiveState));
 }
 
 export function hasApprovalGatedSourceChange(update: Record<string, unknown>): boolean {
@@ -304,6 +363,10 @@ export async function prepareRagPublication(
       label: input.source.name || input.source.source_id,
     },
     resourceRevision: ragPublicationRevision(
+      input.source,
+      plan.effective_state as unknown as RagPublicationState,
+    ),
+    resourceRevisionBasis: ragPublicationRevisionBasis(
       input.source,
       plan.effective_state as unknown as RagPublicationState,
     ),
@@ -527,7 +590,9 @@ function ragPublicationAlreadyApplied(
 export async function applyRagPublicationRequest(
   request: PublicationRequestDocument,
   accessToken: string | undefined,
-): Promise<void> {
+  options: { acknowledgedFingerprint?: string } = {},
+): Promise<PublicationDriftItem[]> {
+  let appliedDrift: PublicationDriftItem[] = [];
   if (request.resource.kind !== "rag_datasource") {
     throw new ApiError("The request is not a RAG datasource publication", 400);
   }
@@ -545,10 +610,13 @@ export async function applyRagPublicationRequest(
         request.authorization_policy_id,
       );
   if (!source && !ownership) {
-    throw new ApiError(
-      "This datasource no longer exists.",
-      409,
-      "PUBLICATION_REVISION_CONFLICT",
+    throw withDrift(
+      new ApiError(
+        "This datasource no longer exists.",
+        409,
+        "PUBLICATION_REVISION_CONFLICT",
+      ),
+      [],
     );
   }
   const currentState = source
@@ -592,21 +660,134 @@ export async function applyRagPublicationRequest(
   const ownerChanged =
     nextOwnerTeamSlug !== ownerTeamSlug || nextPersonalOwner !== personalOwner;
   if (currentRevision !== request.resource_revision) {
-    if (ragPublicationAlreadyApplied(
+    const alreadyApplied = ragPublicationAlreadyApplied(
       source,
       currentState,
       requested,
       sourceUpdate,
       { owner_team_slug: ownerTeamSlug, owner_subject: personalOwner },
       ownerUpdate,
-    )) {
-      return;
-    }
-    throw new ApiError(
-      "This datasource changed after approval was requested. Review the newer request instead.",
-      409,
-      "PUBLICATION_REVISION_CONFLICT",
     );
+    const previousBasis = request.revision_basis;
+    if (!previousBasis) {
+      if (alreadyApplied) return appliedDrift;
+      throw withDrift(
+        new ApiError(
+          "This datasource changed after approval was requested. Review the newer request instead.",
+          409,
+          "PUBLICATION_REVISION_CONFLICT",
+        ),
+        [],
+      );
+    }
+    const previousSource = (previousBasis.source ?? {}) as Record<string, unknown>;
+    const previousSearchTeams = strings(
+      (previousBasis as { search_team_slugs?: unknown }).search_team_slugs,
+    );
+    const previousSearchUsers = strings(
+      (previousBasis as { search_user_subjects?: unknown }).search_user_subjects,
+    );
+    const softItems: PublicationDriftItem[] = [];
+    if (source) {
+      const liveSourceProjection = revisionSourceProjection(source);
+      if (
+        String(previousSource.owner_team_slug ?? null) !==
+          String(liveSourceProjection.owner_team_slug ?? null) ||
+        String(previousSource.owner_subject ?? null) !==
+          String(liveSourceProjection.owner_subject ?? null)
+      ) {
+        throw withDrift(
+          new ApiError(
+            "This datasource's owner changed after approval was requested. Review the newer request instead.",
+            409,
+            "PUBLICATION_REVISION_CONFLICT",
+          ),
+          [],
+        );
+      }
+      const sourceUpdateFields = new Set(Object.keys(sourceUpdate));
+      const fields = new Set([
+        ...Object.keys(previousSource),
+        ...Object.keys(liveSourceProjection),
+      ]);
+      for (const field of fields) {
+        if (
+          field === "source_id" ||
+          field === "source_type" ||
+          field === "owner_team_slug" ||
+          field === "owner_subject"
+        ) {
+          continue;
+        }
+        const item = diffProjectionField(field, previousSource[field], liveSourceProjection[field]);
+        if (!item) continue;
+        softItems.push(
+          sourceUpdateFields.has(field)
+            ? { ...item, will_apply: publicationDriftDisplayValue(sourceUpdate[field]) }
+            : item,
+        );
+      }
+    } else {
+      // No Mongo row yet (e.g. a local-file upload still ingesting). Content
+      // fields aren't knowable until a row exists, so only ownership and the
+      // search audience — the fields the RAG server's ownership snapshot can
+      // actually report — are comparable here. Treating a missing row as a
+      // full-content mismatch would hard-conflict every such approval
+      // regardless of whether anything meaningful actually changed.
+      const liveOwnerTeamSlug = ownership?.owner_team_slug ?? null;
+      const liveOwnerSubject = ownership?.owner_subject ?? ownership?.creator_subject ?? null;
+      if (
+        String(previousSource.owner_team_slug ?? null) !== String(liveOwnerTeamSlug) ||
+        String(previousSource.owner_subject ?? null) !== String(liveOwnerSubject)
+      ) {
+        throw withDrift(
+          new ApiError(
+            "This datasource's owner changed after approval was requested. Review the newer request instead.",
+            409,
+            "PUBLICATION_REVISION_CONFLICT",
+          ),
+          [],
+        );
+      }
+    }
+    if (
+      publicationResourceRevision(previousSearchTeams) !==
+      publicationResourceRevision(currentState.search_team_slugs)
+    ) {
+      softItems.push({
+        field: "search_team_slugs",
+        label: "Search teams",
+        before: previousSearchTeams,
+        after: currentState.search_team_slugs,
+        will_apply: requested.search_team_slugs,
+        overridable: true,
+      });
+    }
+    if (
+      publicationResourceRevision(previousSearchUsers) !==
+      publicationResourceRevision(currentState.search_user_subjects)
+    ) {
+      softItems.push({
+        field: "search_user_subjects",
+        label: "Search people",
+        before: previousSearchUsers,
+        after: currentState.search_user_subjects,
+        will_apply: requested.search_user_subjects,
+        overridable: true,
+      });
+    }
+    if (softItems.length > 0) {
+      const fingerprint = publicationResourceRevision(softItems);
+      if (options.acknowledgedFingerprint !== fingerprint) {
+        throw new PublicationDriftError(
+          "This datasource changed after approval was requested.",
+          softItems,
+          fingerprint,
+        );
+      }
+      appliedDrift = softItems;
+    }
+    if (alreadyApplied) return appliedDrift;
   }
   const creatorSubject = source?.creator_subject ?? ownership?.creator_subject ?? null;
   let configPatched = false;
@@ -705,6 +886,7 @@ export async function applyRagPublicationRequest(
       );
       if (!updated) throw new Error("Datasource config disappeared while applying approval");
     }
+    return appliedDrift;
   } catch (error) {
     if (searchPolicyWriteStarted) {
       await reconcileKnowledgeBaseRelationships({

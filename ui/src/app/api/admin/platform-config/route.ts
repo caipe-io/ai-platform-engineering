@@ -7,6 +7,8 @@ import { ApiError,requireRbacPermission,withAuth,withErrorHandler } from '@/lib/
 import { persistPermissionChange, permissionSyncStatus, type PermissionPersistence } from '@/lib/authz/permission-sync';
 import type { PermissionSyncStatus } from '@/lib/authz/permission-sync-contract';
 import { getCollection } from '@/lib/mongodb';
+import { isValidReleaseNotesRef, parseReleaseNotesRepository } from '@/lib/release-notes-ref';
+import { approvedReleaseNotesRepository, getReleaseNotesAllowedRepositories } from '@/lib/release-notes-config';
 import {
 normalizePlatformDefaultAgentId,
 PLATFORM_AGENT_ID_PATTERN,
@@ -213,14 +215,71 @@ async function reconcileDefaultAgentGrant(previousAgentId: string | null, nextAg
   return persistPermissionChange(persistence, { writes, deletes }, { ...context, source: 'platform_default_agent' });
 }
 
-// Release notes is a single platform-wide on/off switch. The announcement
-// always targets the currently deployed version, and dismissal is permanent
-// per-version, so there is no version/revision/toast/CTA config to store.
-function normalizeReleaseNotesConfig(input: unknown = {}) {
+export interface ReleaseNotesNotificationConfig {
+  enabled: boolean;
+  repository_url: string | null;
+  previous_commit: string | null;
+  latest_commit: string | null;
+}
+
+function optionalTrimmedString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function normalizeReleaseNotesConfig(input: unknown = {}): ReleaseNotesNotificationConfig {
   const source = isRecord(input) ? input : {};
   return {
     enabled: source.enabled !== false,
+    repository_url: optionalTrimmedString(source.repository_url),
+    previous_commit: optionalTrimmedString(source.previous_commit),
+    latest_commit: optionalTrimmedString(source.latest_commit),
   };
+}
+
+function validateReleaseNotesConfig(config: ReleaseNotesNotificationConfig): void {
+  const rangeValues = [config.repository_url, config.previous_commit, config.latest_commit];
+  const configuredValues = rangeValues.filter(Boolean).length;
+  if (configuredValues !== 0 && configuredValues !== rangeValues.length) {
+    throw new ApiError(
+      'repository_url, previous_commit, and latest_commit must all be set or all be empty',
+      400,
+      'INCOMPLETE_RELEASE_NOTES_COMPARE',
+    );
+  }
+  if (configuredValues === 0) return;
+
+  if (!parseReleaseNotesRepository(config.repository_url as string)) {
+    throw new ApiError(
+      'release notes repository_url must be an https://github.com/<owner>/<repository> URL',
+      400,
+      'INVALID_RELEASE_NOTES_REPOSITORY',
+    );
+  }
+
+  const repository = approvedReleaseNotesRepository(config.repository_url as string);
+  if (!repository) {
+    throw new ApiError(
+      'Choose a release notes repository approved by the deployment configuration',
+      400,
+      'RELEASE_NOTES_REPOSITORY_NOT_ALLOWED',
+    );
+  }
+  config.repository_url = repository;
+
+  if (!isValidReleaseNotesRef(config.previous_commit as string)) {
+    throw new ApiError(
+      'release notes previous_commit must be a valid Git ref',
+      400,
+      'INVALID_RELEASE_NOTES_PREVIOUS_COMMIT',
+    );
+  }
+  if (!isValidReleaseNotesRef(config.latest_commit as string)) {
+    throw new ApiError(
+      'release notes latest_commit must be a valid Git ref',
+      400,
+      'INVALID_RELEASE_NOTES_LATEST_COMMIT',
+    );
+  }
 }
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
@@ -276,11 +335,12 @@ async function getPlatformConfig(request: NextRequest) {
         slack_victorops_escalation_agent_id: victoropsAgentId ?? victoropsEnvFallback,
         slack_victorops_escalation_agent_source: victoropsAgentId ? 'db' : (victoropsEnvFallback ? 'env' : 'fallback'),
         release_notes: normalizeReleaseNotesConfig(doc?.release_notes),
+        release_notes_allowed_repositories: getReleaseNotesAllowedRepositories(),
         slack_discovery_cache_ttl_minutes: slackDiscoveryTtlMinutes,
         webex_discovery_cache_ttl_minutes: webexDiscoveryTtlMinutes,
-        // Default (no config saved yet) is "disable all" — operators opt in
-        // per provider rather than every built-in showing up unconfigured.
-        remote_mcp_catalog: normalizeRemoteMCPCatalog(doc?.remote_mcp_catalog, []),
+        // Default (no config saved yet) is "enable all" so built-in providers
+        // appear in the Add Server catalog without requiring admin setup.
+        remote_mcp_catalog: normalizeRemoteMCPCatalog(doc?.remote_mcp_catalog),
         rag_default_search_team_slug:
           ragIngestorLimits.shared.max_search_teams > 0
             ? normalizeRagDefaultSearchTeamSlug(doc?.rag_default_search_team_slug)
@@ -306,6 +366,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       updated_at: new Date(),
       updated_by: user.email,
     };
+    let releaseNotesUpdate: Partial<ReleaseNotesNotificationConfig> | undefined;
 
     const hasDefaultAgentUpdate = Object.prototype.hasOwnProperty.call(body, 'default_agent_id');
     const nextDefaultAgentId = hasDefaultAgentUpdate ? normalizePlatformDefaultAgentId(body.default_agent_id) : null;
@@ -340,8 +401,27 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       : null;
     if (hasVictoropsUpdate) update.slack_victorops_escalation_agent_id = nextVictoropsAgentId;
 
-    if (body.release_notes) {
-      update.release_notes = normalizeReleaseNotesConfig(body.release_notes);
+    if (Object.prototype.hasOwnProperty.call(body, 'release_notes')) {
+      if (!isRecord(body.release_notes)) throw new ApiError('release_notes must be an object', 400);
+      const input = body.release_notes;
+      releaseNotesUpdate = {};
+      if (Object.prototype.hasOwnProperty.call(input, 'enabled')) {
+        if (typeof input.enabled !== 'boolean') throw new ApiError('release_notes.enabled must be a boolean', 400);
+        releaseNotesUpdate.enabled = input.enabled;
+      }
+      const rangeKeys = ['repository_url', 'previous_commit', 'latest_commit'] as const;
+      if (rangeKeys.some((key) => Object.prototype.hasOwnProperty.call(input, key))) {
+        if (rangeKeys.some((key) => input[key] !== null && typeof input[key] !== 'string')) {
+          throw new ApiError('Set all compare fields to strings or null', 400, 'INCOMPLETE_RELEASE_NOTES_COMPARE');
+        }
+        const config = normalizeReleaseNotesConfig(input);
+        validateReleaseNotesConfig(config);
+        for (const key of rangeKeys) releaseNotesUpdate[key] = config[key];
+      }
+      // Independent toggle/range writes cannot overwrite each other's values.
+      for (const [key, value] of Object.entries(releaseNotesUpdate)) {
+        update[`release_notes.${key}`] = value;
+      }
     }
 
     // Slack and Webex discovery caches are configured independently.
@@ -499,7 +579,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
         ...(Object.prototype.hasOwnProperty.call(update, 'slack_victorops_escalation_agent_id')
           ? { slack_victorops_escalation_agent_id: update.slack_victorops_escalation_agent_id }
           : {}),
-        ...(update.release_notes ? { release_notes: update.release_notes } : {}),
+        ...(releaseNotesUpdate ? { release_notes: releaseNotesUpdate } : {}),
         ...(Object.prototype.hasOwnProperty.call(update, 'slack_discovery_cache_ttl_minutes')
           ? { slack_discovery_cache_ttl_minutes: update.slack_discovery_cache_ttl_minutes }
           : {}),

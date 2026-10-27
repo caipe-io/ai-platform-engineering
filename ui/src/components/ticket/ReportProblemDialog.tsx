@@ -45,6 +45,8 @@ interface ReportProblemDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Pre-populated feedback context for the combo flow */
   feedbackContext?: FeedbackContext;
+  /** Optional visible chat excerpt; sent only after the reporter opts in. */
+  chatContext?: string;
 }
 
 interface ImageCaptureConstructor {
@@ -57,11 +59,14 @@ export function ReportProblemDialog({
   open,
   onOpenChange,
   feedbackContext,
+  chatContext,
 }: ReportProblemDialogProps) {
   const { data: session } = useSession();
   const pathname = usePathname();
 
   const [description, setDescription] = useState("");
+  const [includeChatContext, setIncludeChatContext] = useState(false);
+  const [chatContextDraft, setChatContextDraft] = useState("");
   const [status, setStatus] = useState<DialogStatus>("idle");
   const [ticketResult, setTicketResult] = useState<TicketResult | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
@@ -92,6 +97,8 @@ export function ReportProblemDialog({
 
   const resetState = useCallback(() => {
     setDescription("");
+    setIncludeChatContext(false);
+    setChatContextDraft("");
     setStatus("idle");
     setTicketResult(null);
     setErrorMessage("");
@@ -213,8 +220,9 @@ export function ReportProblemDialog({
           contextUrl,
           feedbackContext,
           screenshotDataUrl: screenshotDataUrl ?? undefined,
+          ...(includeChatContext && chatContext && chatContextDraft.trim()
+            ? { chatContext: chatContextDraft.trim() } : {}),
         },
-        accessToken: session?.accessToken,
         signal: controller.signal,
         onEvent: (_event, logLine) => {
           appendLog(logLine);
@@ -250,6 +258,9 @@ export function ReportProblemDialog({
     contextUrl,
     providerLabel,
     screenshotDataUrl,
+    includeChatContext,
+    chatContext,
+    chatContextDraft,
     appendLog,
     resetState,
   ]);
@@ -269,7 +280,7 @@ export function ReportProblemDialog({
   return (
     <>
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-md overflow-hidden">
+      <DialogContent className="max-w-md max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {status === "success"
@@ -312,6 +323,25 @@ export function ReportProblemDialog({
               className="w-full h-24 px-3 py-2 text-sm bg-muted/50 border border-border rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
               autoFocus
             />
+
+            {chatContext && (
+              <div className="space-y-2 rounded-lg border border-border p-3">
+                <label className="flex cursor-pointer items-start gap-2 text-sm">
+                  <input type="checkbox" checked={includeChatContext}
+                    onChange={event => {
+                      setIncludeChatContext(event.target.checked);
+                      if (event.target.checked && !chatContextDraft) setChatContextDraft(chatContext);
+                    }}
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-border accent-primary focus:ring-2 focus:ring-primary/50" />
+                  <span>Include your chat</span>
+                </label>
+                {includeChatContext && (
+                  <textarea aria-label="Chat context to include" value={chatContextDraft} maxLength={14000}
+                    onChange={event => setChatContextDraft(event.target.value)}
+                    className="h-40 w-full resize-y rounded-md border border-border bg-muted/50 p-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/50" />
+                )}
+              </div>
+            )}
 
             {/* Screenshot attachment */}
             {screenshotDataUrl ? (

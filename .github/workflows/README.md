@@ -6,6 +6,16 @@ This directory contains automated workflows for the AI Platform Engineering proj
 
 See the `.github/workflows/` directory for the full list of CI/CD workflows.
 
+### MCP registry concurrency
+
+- `ci-mcp-servers.yml` and `prebuild-mcp-servers.yml` each allow at most
+  **8 image-build jobs** and **4 manifest-publishing jobs** at a time.
+- Both architectures and every selected MCP server still build; excess matrix
+  jobs queue instead of starting together. Failure reporting remains unchanged.
+- These are per-matrix limits within each workflow run. Separate runs and other
+  component workflows can publish concurrently, so this reduces bursts without
+  imposing a release-wide registry rate limit.
+
 ### PR size labels
 
 - **[Review] PR Size Label** (`pr-size-label.yml`): advisory `size/XS`–`size/XXL`

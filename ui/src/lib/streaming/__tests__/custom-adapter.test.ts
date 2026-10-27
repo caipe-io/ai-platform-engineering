@@ -34,6 +34,7 @@ function callbacks(): Required<StreamCallbacks> {
   return {
     onContent: jest.fn(),
     onToolStart: jest.fn(),
+    onToolOutput: jest.fn(),
     onToolEnd: jest.fn(),
     onInputRequired: jest.fn(),
     onToolApprovalRequired: jest.fn(),
@@ -70,6 +71,7 @@ describe("CustomStreamAdapter", () => {
       sseResponse([
         'event: content\ndata: {"text":"hello","namespace":["agent"]}\n\n',
         'event: tool_start\ndata: {"tool_call_id":"call-1","tool_name":"search","args":{"q":"rbac"},"namespace":[]}\n\n',
+        'event: tool_output\ndata: {"tool_call_id":"call-1","result":"partial","namespace":[]}\n\n',
         'event: tool_end\ndata: {"tool_call_id":"call-1","result":"ok","namespace":[]}\n\n',
         'event: warning\ndata: {"message":"careful","namespace":["agent"]}\n\n',
         'event: context_usage\ndata: {"used_tokens":25,"compaction_threshold":100,"remaining_tokens":75,"remaining_percent":75,"namespace":[]}\n\n',
@@ -78,7 +80,7 @@ describe("CustomStreamAdapter", () => {
       ]),
     );
     const cb = callbacks();
-    const adapter = new CustomStreamAdapter("token-1");
+    const adapter = new CustomStreamAdapter();
 
     await adapter.streamMessage(
       {
@@ -97,7 +99,6 @@ describe("CustomStreamAdapter", () => {
         headers: {
           "Content-Type": "application/json",
           Accept: "text/event-stream",
-          Authorization: "Bearer token-1",
         },
         body: JSON.stringify({
           message: "hello",
@@ -115,6 +116,7 @@ describe("CustomStreamAdapter", () => {
       { q: "rbac" },
       [],
     );
+    expect(cb.onToolOutput).toHaveBeenCalledWith("call-1", "partial", []);
     expect(cb.onToolEnd).toHaveBeenCalledWith(
       "call-1",
       undefined,
@@ -226,7 +228,7 @@ describe("CustomStreamAdapter", () => {
   });
 
   it("cancels streams with bearer auth and handles failed cancellation", async () => {
-    const adapter = new CustomStreamAdapter("token-1");
+    const adapter = new CustomStreamAdapter();
 
     mockFetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ cancelled: true }), { status: 200 }),
@@ -238,7 +240,6 @@ describe("CustomStreamAdapter", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: "Bearer token-1",
         },
         body: JSON.stringify({
           conversation_id: "conversation-1",
