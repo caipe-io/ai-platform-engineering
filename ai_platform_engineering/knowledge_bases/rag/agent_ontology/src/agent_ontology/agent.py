@@ -109,11 +109,13 @@ class OntologyAgent:
 
     self.agent_status_msg = "Syncing relations..."
     self.is_processing = True
-    await self.sync_all_relations(rc_manager_new_version)  # sync all relations with the graph database, just in case some relations were not updated
-    await rc_manager_new_version.cleanup()  # Clear all previous ontology
-
-    self.agent_status_msg = "Idle"
-    self.is_processing = False
+    try:
+      await self.sync_all_relations(rc_manager_new_version)  # sync all relations with the graph database, just in case some relations were not updated
+      await rc_manager_new_version.cleanup()  # Clear all previous ontology
+    finally:
+      # Release the guard so a failed sync or cleanup does not block later runs.
+      self.agent_status_msg = "Idle"
+      self.is_processing = False
 
     # invoke the garbage collector to free up memory
     gc.collect()

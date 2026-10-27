@@ -160,3 +160,19 @@ async def test_successful_evaluation_publishes_before_cleanup(agent: OntologyAge
   new_manager.cleanup.assert_awaited_once()
   assert agent.is_processing is False
   assert agent.is_evaluating is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing_step", ["sync", "cleanup"])
+async def test_failed_post_publish_step_releases_processing_guard(agent: OntologyAgent, new_manager: Mock, worker: Mock, failing_step: str) -> None:
+  error = RuntimeError(f"{failing_step} failed")
+  if failing_step == "sync":
+    agent.sync_all_relations.side_effect = error
+  else:
+    new_manager.cleanup.side_effect = error
+
+  with pytest.raises(RuntimeError, match=f"{failing_step} failed"):
+    await agent.process_and_evaluate_all()
+
+  assert agent.is_processing is False
+  assert agent.agent_status_msg == "Idle"
