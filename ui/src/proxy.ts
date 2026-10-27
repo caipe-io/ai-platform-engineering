@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { RESERVED_HOST_PATHS } from "../app-sdk/reserved-paths.mjs";
 import { isAgenticAppsEnabled, loadConfiguredAgenticApps } from "@/lib/agentic-apps/config";
 import { agenticAppForHostPath } from "@/lib/agentic-apps/host-routes";
 
@@ -30,7 +31,10 @@ export function proxy(request: NextRequest): NextResponse {
 
   // Runtime selection takes precedence over compiled native page claims.
   // Admission remains in the destination page and authenticated app gateway.
-  if (!pathname.startsWith("/api/") && isAgenticAppsEnabled()) {
+  // Reserved host routes never depend on optional app configuration.
+  const isReservedHostPath = RESERVED_HOST_PATHS.some(root =>
+    pathname === root || (root !== "/" && pathname.startsWith(`${root}/`)));
+  if (!isReservedHostPath && isAgenticAppsEnabled()) {
     try {
       const owner = agenticAppForHostPath(loadConfiguredAgenticApps(), pathname);
       if (owner) {

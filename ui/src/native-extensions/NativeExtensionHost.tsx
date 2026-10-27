@@ -34,7 +34,7 @@ export function NativeExtensionHost({
     [extensionId],
   );
   const chat = useMemo(() => createHostChatCapability(extensionId,
-    Boolean(extension?.manifest.assistant && extension.manifest.assistant.overlay !== "app")), [extensionId, extension]);
+    !slot && Boolean(extension?.manifest.assistant && extension.manifest.assistant.overlay !== "app")), [extensionId, extension, slot]);
   const [breadcrumbs, setBreadcrumbs] = useState<
     NativeExtensionBreadcrumb[]
   >(() =>
