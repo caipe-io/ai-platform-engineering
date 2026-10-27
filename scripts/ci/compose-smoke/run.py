@@ -38,6 +38,10 @@ def command(args: list[str], *, check: bool = True) -> str:
     return result.stdout
 
 
+class OOMKilledError(RuntimeError):
+    """A container was OOM-killed; retrying cannot recover it."""
+
+
 def eventually(check: Callable[[], object], label: str, timeout: int = 300) -> object:
     deadline = time.monotonic() + timeout
     error = None
@@ -47,6 +51,8 @@ def eventually(check: Callable[[], object], label: str, timeout: int = 300) -> o
             if result:
                 print(f"PASS: {label}", flush=True)
                 return result
+        except OOMKilledError:
+            raise
         # A starting service can return HTML or a partial payload; keep polling.
         except (RuntimeError, urllib.error.URLError, TimeoutError, ConnectionError, ValueError, KeyError) as exc:
             error = exc
@@ -122,13 +128,13 @@ class Smoke:
             return False
         for name, item in states.items():
             state = item["State"]
+            if state.get("OOMKilled"):
+                raise OOMKilledError(f"{name} was OOM-killed")
             if name in ONESHOTS:
                 if state["Status"] != "exited" or state["ExitCode"] != 0:
                     return False
             elif state["Status"] != "running" or state.get("Health", {}).get("Status", "healthy") != "healthy":
                 return False
-            if state.get("OOMKilled"):
-                raise RuntimeError(f"{name} was OOM-killed")
         return True
 
     def storage(self, service: str, user: str, password: str, persisted: bool) -> None:

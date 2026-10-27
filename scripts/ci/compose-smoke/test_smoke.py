@@ -8,7 +8,7 @@ from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
 from embeddings import Handler, embedding
-from run import Smoke, eventually
+from run import OOMKilledError, Smoke, eventually
 
 
 def container(status: str = "running", health: str = "healthy", exit_code: int = 0) -> dict:
@@ -43,9 +43,18 @@ class ReadinessTests(unittest.TestCase):
             self.assertFalse(self.ready())
 
     def test_oom_is_reported(self) -> None:
+        for state in [container(), container("exited", exit_code=137)]:
+            state["State"]["OOMKilled"] = True
+            self.states["caipe-mongodb"] = state
+            with self.assertRaisesRegex(OOMKilledError, "OOM-killed"):
+                self.ready()
+
+    def test_oom_stops_polling_immediately(self) -> None:
         self.states["caipe-mongodb"]["State"]["OOMKilled"] = True
-        with self.assertRaisesRegex(RuntimeError, "OOM-killed"):
-            self.ready()
+        with patch.object(self.smoke, "states", return_value=self.states), patch("run.time.sleep") as sleep:
+            with self.assertRaises(OOMKilledError):
+                eventually(self.smoke.healthy, "startup")
+        sleep.assert_not_called()
 
     def test_recreation_reads_data_without_reseeding_it(self) -> None:
         for state in self.states.values():
