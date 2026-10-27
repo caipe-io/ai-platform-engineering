@@ -86,6 +86,24 @@ describe("External App runtime route", () => {
     else process.env.AGENTIC_APP_TOKEN_SECRET = previousSecret;
   });
 
+  it("restores the embedded app's Next-Url after host route normalization", async () => {
+    const upstream = jest.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response("0:[]\n", { headers: { "content-type": "text/x-component" } }),
+    );
+    try {
+      const response = await GET(new NextRequest("https://host.example/apps/example-app/report?_rsc=example", {
+        headers: { rsc: "1", "next-router-state-tree": "example-tree", "x-caipe-runtime-next-url": "/apps/example-app/items" },
+      }), { params: Promise.resolve({ appId: "example-app", path: ["report"] }) });
+      const headers = new Headers(upstream.mock.calls[0][1]?.headers);
+      expect(headers.get("next-url")).toBe("/apps/example-app/items");
+      expect(headers.get("rsc")).toBe("1");
+      expect(headers.get("next-router-state-tree")).toBe("example-tree");
+      expect(headers.get("x-caipe-runtime-next-url")).toBeNull();
+      expect(String(upstream.mock.calls[0][0])).toContain("?_rsc=example");
+      expect(response.headers.get("content-type")).toBe("text/x-component");
+    } finally { upstream.mockRestore(); }
+  });
+
   it("proxies iframe traffic with a new token and no caller identity headers", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(
       new Response("<html>app</html>", {

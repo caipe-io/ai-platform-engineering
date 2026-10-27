@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { AgenticAppShell } from "../AgenticAppShell";
+import AppRouteLayout from "../../../app/(app)/agentic-app-routes/[appId]/layout";
 
 jest.mock("next-auth/react", () => ({
   useSession: () => ({ status: "authenticated", data: { user: { email: "test-user@example.test" } } }),
@@ -13,6 +14,7 @@ const mockRouter = { push: jest.fn() };
 
 jest.mock("next/navigation", () => ({
   useRouter: () => mockRouter,
+  usePathname: () => window.location.pathname,
   useSearchParams: () => new URLSearchParams(mockSearch),
 }));
 
@@ -104,7 +106,7 @@ describe("AgenticAppShell", () => {
     const publicPath = hostRoute ? "/example" : "/apps/example-app";
     const runtimePath = hostRoute ? "/apps/example-app/example" : publicPath;
     window.history.replaceState(null, "", publicPath);
-    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, status: 200, json: async () => ({ item: app({ assistantEnabled: false }) }) });
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, status: 200, json: async () => ({ item: app({ assistantEnabled: false, hostPaths: hostRoute ? ["/example"] : [] }) }) });
     const { rerender } = render(<AgenticAppShell appId="example-app" path={path} hostRoute={hostRoute} />);
     const iframe = await screen.findByTitle("Example App") as HTMLIFrameElement;
     act(() => {
@@ -143,6 +145,58 @@ describe("AgenticAppShell", () => {
       assistant: true, queryNavigation: true, composerExtensions: expect.arrayContaining(["configuration.v1"]),
     });
     post.mockRestore();
+  });
+
+  it("keeps the connected iframe document across app paths and continues syncing queries", async () => {
+    const view = render(<AgenticAppShell appId="example-app" path={[]} />);
+    const iframe = await screen.findByTitle("Example App") as HTMLIFrameElement;
+    const send = (data: object) => act(() => window.dispatchEvent(new MessageEvent("message", {
+      origin: window.location.origin, source: iframe.contentWindow,
+      data: { version: "1.0", appId: "example-app", ...data },
+    })));
+    send({ type: "caipe.agenticApp.bridge.connect.v1" });
+    send({ type: "caipe.agenticApp.navigate.v1", href: "/apps/example-app/details" });
+    expect(window.location.pathname).toBe("/apps/example-app/details");
+    expect(mockRouter.push).not.toHaveBeenCalled();
+    window.history.replaceState(null, "", "/apps/example-app/details");
+    view.rerender(<AgenticAppShell appId="example-app" path={["details"]} />);
+    expect(screen.getByTitle("Example App")).toBe(iframe);
+    expect(iframe).toHaveAttribute("src", "/apps/example-app");
+    send({ type: "caipe.agenticApp.navigate.v1", href: "/apps/example-app/details?tab=overview", history: "replace" });
+    expect(window.location.search).toBe("?tab=overview");
+    window.history.replaceState(null, "", "/apps/example-app");
+    mockSearch = "";
+    view.rerender(<AgenticAppShell appId="example-app" path={[]} />);
+    expect(screen.getByTitle("Example App")).toBe(iframe);
+    expect(iframe).toHaveAttribute("src", "/apps/example-app");
+  });
+
+  it("renders app breadcrumbs in the host independently of assistant availability", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, status: 200, json: async () => ({ item: app({ assistantEnabled: false }) }) });
+    render(<AgenticAppShell appId="example-app" path={[]} />);
+    const iframe = await screen.findByTitle("Example App") as HTMLIFrameElement;
+    const message = { type: "caipe.agenticApp.breadcrumbs.v1", version: "1.0", appId: "example-app", route: "/apps/example-app",
+      breadcrumbs: [{ label: "Home", href: "/" }, { label: "Example page" }] };
+    act(() => window.dispatchEvent(new MessageEvent("message", { origin: window.location.origin, source: window, data: message })));
+    expect(screen.queryByText("Example page")).toBeNull();
+    act(() => window.dispatchEvent(new MessageEvent("message", { origin: window.location.origin, source: iframe.contentWindow, data: message })));
+    expect(screen.getByText("Example page")).toBeInTheDocument();
+    expect(screen.queryByTestId("assistant-overlay")).toBeNull();
+  });
+
+  it("retains the iframe when Next replaces the catch-all page at a different app route", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, status: 200, json: async () => ({ item: app({ hostPaths: ["/example"] }) }) });
+    window.history.replaceState(null, "", "/example/wiki");
+    const params = Promise.resolve({ appId: "example-app" });
+    const view = render(await AppRouteLayout({ params, children: <span key="wiki">Wiki route</span> }));
+    const iframe = await screen.findByTitle("Example App") as HTMLIFrameElement;
+    act(() => window.dispatchEvent(new MessageEvent("message", { origin: window.location.origin, source: iframe.contentWindow,
+      data: { type: "caipe.agenticApp.bridge.connect.v1", version: "1.0", appId: "example-app" } })));
+    window.history.replaceState(null, "", "/example");
+    view.rerender(await AppRouteLayout({ params, children: <span key="hub">Hub route</span> }));
+    expect(screen.getByTitle("Example App")).toBe(iframe);
+    expect(iframe).toHaveAttribute("src", "/apps/example-app/example/wiki");
+    expect(screen.getByText("Hub route")).toBeInTheDocument();
   });
 
   it("opens the assistant and accepts context from its own iframe", async () => {

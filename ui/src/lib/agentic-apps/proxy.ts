@@ -11,7 +11,7 @@ import {
 } from "@/lib/agentic-apps/config";
 import { deriveAgenticAppSubjectId } from "@/lib/agentic-apps/identity";
 import { resolveAgenticAppHttpPolicyAction } from "@/lib/agentic-apps/policy-routing";
-import { isHostControlledAgenticAppRequestHeader } from "@/lib/agentic-apps/request-headers";
+import { isHostControlledAgenticAppRequestHeader, RUNTIME_NEXT_URL_HEADER } from "@/lib/agentic-apps/request-headers";
 import {
   buildAgenticAppPublicPath,
   buildAgenticAppTargetUrl,
@@ -241,6 +241,11 @@ function buildForwardHeaders(input: {
       headers.set(key, value);
     }
   });
+  // Next removes Next-Url when resolving the host's non-intercepting API
+  // route. Restore the child's original value so its _rsc hash still matches.
+  // The transport header itself is excluded by the host-controlled filter.
+  const nextUrl = input.request.headers.get(RUNTIME_NEXT_URL_HEADER);
+  if (nextUrl !== null) headers.set("next-url", nextUrl);
   headers.set("authorization", `Bearer ${input.bearerToken}`);
   headers.set("x-caipe-app-id", input.appId);
   headers.set("x-caipe-auth-mode", input.authMode);

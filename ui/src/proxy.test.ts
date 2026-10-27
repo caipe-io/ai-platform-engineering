@@ -16,6 +16,22 @@ beforeEach(() => {
 });
 
 describe("External Apps request routing", () => {
+  it("preserves the child's Next-Url through the host route without trusting a caller transport header", () => {
+    const response = proxy(new NextRequest("https://host.example/apps/example-app/report?_rsc=example", {
+      headers: { rsc: "1", "next-url": "/apps/example-app/items", "x-caipe-runtime-next-url": "/forged" },
+    }));
+    expect(response.headers.get("x-middleware-request-x-caipe-runtime-next-url")).toBe("/apps/example-app/items");
+    expect(response.headers.get("x-middleware-rewrite")).toContain("?_rsc=example");
+  });
+
+  it("strips a caller transport header on direct runtime requests", () => {
+    const response = proxy(new NextRequest("https://host.example/api/agentic-apps/runtime/example-app/report", {
+      headers: { "x-caipe-runtime-next-url": "/forged" },
+    }));
+    expect(response.headers.get("x-middleware-request-x-caipe-runtime-next-url")).toBeNull();
+    expect(response.headers.get("x-middleware-override-headers")).not.toContain("x-caipe-runtime-next-url");
+  });
+
   it("keeps a top-level document request on the canonical host page", () => {
     const response = proxy(
       new NextRequest("https://host.example/apps/example-app/report?range=week", {

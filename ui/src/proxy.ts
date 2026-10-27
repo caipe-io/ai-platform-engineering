@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { RESERVED_HOST_PATHS } from "../app-sdk/reserved-paths.mjs";
 import { isAgenticAppsEnabled, loadConfiguredAgenticApps } from "@/lib/agentic-apps/config";
 import { agenticAppForHostPath } from "@/lib/agentic-apps/host-routes";
+import { RUNTIME_NEXT_URL_HEADER } from "@/lib/agentic-apps/request-headers";
 
 import { AGENTIC_APP_PUBLIC_BASE, AGENTIC_APP_RUNTIME_BASE } from "@/lib/agentic-apps/runtime";
 import {
@@ -22,6 +23,13 @@ const APP_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
  */
 export function proxy(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
+  // Only the public app rewrite may supply this transport header. In
+  // particular, direct callers of the authenticated runtime route cannot.
+  if (pathname.startsWith(`${AGENTIC_APP_RUNTIME_BASE}/`)) {
+    const headers = new Headers(request.headers);
+    headers.delete(RUNTIME_NEXT_URL_HEADER);
+    return NextResponse.next({ request: { headers } });
+  }
   const nativeApiExtension = nativeExtensionForApiPath(pathname);
   if (nativeApiExtension) {
     const runtimeUrl = request.nextUrl.clone();
@@ -58,7 +66,11 @@ export function proxy(request: NextRequest): NextResponse {
   const runtimeUrl = request.nextUrl.clone();
   runtimeUrl.pathname = `${AGENTIC_APP_RUNTIME_BASE}${appPath}`;
 
-  const response = NextResponse.rewrite(runtimeUrl);
+  const headers = new Headers(request.headers);
+  headers.delete(RUNTIME_NEXT_URL_HEADER);
+  const nextUrl = headers.get("next-url");
+  if (nextUrl !== null) headers.set(RUNTIME_NEXT_URL_HEADER, nextUrl);
+  const response = NextResponse.rewrite(runtimeUrl, { request: { headers } });
   // The original request URL is /apps/*, whose host page is DENY-framed by
   // default. Replace that value only for traffic routed into the app iframe.
   response.headers.set("x-frame-options", "SAMEORIGIN");

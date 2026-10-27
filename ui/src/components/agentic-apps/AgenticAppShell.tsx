@@ -2,12 +2,13 @@
 
 import { ArrowLeft, LoaderCircle } from "lucide-react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { ASSISTANT_EXTENSIONS, validateAssistantConfiguration, type AssistantConfiguration } from "../../../app-sdk/assistant-options.mjs";
 import { readAssistantDeepLink } from "@/lib/agentic-apps/assistant-links";
 import { rememberAssistantPresentation } from "@/lib/agentic-apps/assistant-presentation";
+import { parseFrameBreadcrumbs, type FrameBreadcrumb } from "@/lib/agentic-apps/frame-breadcrumbs";
 import { ownsAppPath } from "@/lib/agentic-apps/host-routes";
 import { HostedAgenticAppFrame } from "./HostedAgenticAppFrame";
 
@@ -42,6 +43,7 @@ export function AgenticAppShell({
   hostRoute?: boolean;
 }): React.ReactElement {
   const router = useRouter();
+  const pathname = usePathname();
   const { data: session, status: sessionStatus } = useSession();
   const identity = session?.user?.email
     ? JSON.stringify([session.sub ?? session.user.email, session.org ?? "", session.role ?? ""])
@@ -71,8 +73,13 @@ export function AgenticAppShell({
     agent: ResolvedChatAgent;
   } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const publicPath = hostRoute ? `/${path.map(encodeURIComponent).join("/")}` : buildAgenticAppPublicPath(appId, path);
-  const [managedFrame, setManagedFrame] = useState<{ identity: string; path: string; src: string } | null>(null);
+  const initialPublicPath = hostRoute ? `/${path.map(encodeURIComponent).join("/")}` : buildAgenticAppPublicPath(appId, path);
+  const roots = [...(state.status === "ready" ? state.app.hostPaths ?? [] : []), `/apps/${appId}`];
+  const publicPath = pathname && roots.some(root => ownsAppPath(root, pathname)) ? pathname : initialPublicPath;
+  const [managedFrame, setManagedFrame] = useState<{ identity: string; appId: string; src: string } | null>(null);
+  const latestPublicPath = useRef(publicPath);
+  useLayoutEffect(() => { latestPublicPath.current = publicPath; }, [publicPath]);
+  const [frameBreadcrumbs, setFrameBreadcrumbs] = useState<{ route: string; items: FrameBreadcrumb[] } | null>(null);
   const queryBridge = useRef<ReturnType<typeof connectFrameQueryNavigation> | null>(null);
   const latestSearch = useRef(search);
   useEffect(() => { latestSearch.current = search; }, [search]);
@@ -87,6 +94,7 @@ export function AgenticAppShell({
       consumedDrafts.current.clear();
       setAssistantBinding(null);
       setBridgeError(null);
+      setFrameBreadcrumbs(null);
       setAssistantError(null);
     });
   }, [appId, identity, sessionStatus]);
@@ -100,20 +108,20 @@ export function AgenticAppShell({
 
   useEffect(() => {
     const bridge = connectFrameQueryNavigation({
-      host: window, appId, publicPath, frame: () => iframeRef.current,
+      host: window, appId, publicPath: latestPublicPath.current, getPublicPath: () => latestPublicPath.current, frame: () => iframeRef.current,
       // The shell publishes the complete assistant capabilities. This helper
       // owns only history/state synchronization, so it cannot overwrite them.
       publishCapabilities: false,
       onConnect: () => {
         const src = iframeRef.current?.getAttribute("src");
-        if (src) setManagedFrame((previous) => previous?.identity === identity && previous.path === publicPath && previous.src === src ? previous : { identity, path: publicPath, src });
+        if (src) setManagedFrame((previous) => previous?.identity === identity && previous.appId === appId && previous.src === src ? previous : { identity, appId, src });
       },
     });
     queryBridge.current = bridge;
     return () => { bridge.dispose(); queryBridge.current = null; };
-  }, [appId, publicPath, identity]);
+  }, [appId, identity]);
 
-  useEffect(() => { queryBridge.current?.sync(); }, [search]);
+  useEffect(() => { queryBridge.current?.sync(); }, [publicPath, search]);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,10 +214,11 @@ export function AgenticAppShell({
     if (state.status !== "ready") return;
     setConfiguration(null);
     setAssistantContext(null);
+    setFrameBreadcrumbs(null);
     const target = iframeRef.current?.contentWindow;
     const envelope = { version: "1.0", appId };
     target?.postMessage({ ...envelope, type: "caipe.agenticApp.bridge.capabilities.v1",
-      capabilities: { assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured, navigation: true, queryNavigation: true, composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
+      capabilities: { assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured, navigation: true, queryNavigation: true, pathNavigation: true, breadcrumbs: true, composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
     target?.postMessage({ ...envelope, type: "caipe.agenticApp.navigation.v1",
       href: window.location.pathname + window.location.search + window.location.hash }, window.location.origin);
   }
@@ -225,7 +234,7 @@ export function AgenticAppShell({
       function reply(error?: string) {
         expectedSource.postMessage({ type: error ? "caipe.agenticApp.bridge.error.v1" : "caipe.agenticApp.bridge.capabilities.v1",
           version: "1.0", appId, ...(error ? { error } : { capabilities: {
-            assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured, navigation: true, queryNavigation: true, composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: app.assistantOptions,
+            assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured, navigation: true, queryNavigation: true, pathNavigation: true, breadcrumbs: true, composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: app.assistantOptions,
           } }) }, window.location.origin);
       }
       if (message.version !== "1.0") { reply("unsupported_version"); setBridgeError("This app uses an unsupported bridge version."); return; }
@@ -243,12 +252,24 @@ export function AgenticAppShell({
         const url = new URL(href, window.location.origin);
         // The query bridge owns connected same-path history changes. Keep
         // approved host-route navigation on the existing router path.
-        if (queryBridge.current?.isConnected() &&
-          (message.history !== undefined || url.pathname === publicPath)) return;
+        if (queryBridge.current?.isConnected() && url.pathname === publicPath) return;
+        if (message.history !== undefined && !["push", "replace"].includes(message.history)) { reply("invalid_route"); return; }
         const roots = [...(app.hostPaths ?? []), `/apps/${appId}`];
         if (url.origin !== window.location.origin || !roots.some(root => ownsAppPath(root, url.pathname))) { reply("route_not_owned"); return; }
-        if (url.pathname.startsWith("/apps/")) window.location.assign(href);
-        else router.push(href, { scroll: false });
+        if (queryBridge.current?.isConnected()) {
+          // Next's native history integration updates the URL without replacing
+          // the server page that owns this iframe document.
+          if (message.history === "replace") window.history.replaceState(null, "", href);
+          else window.history.pushState(null, "", href);
+        } else router.push(href, { scroll: false });
+        return;
+      }
+      if (message.type === "caipe.agenticApp.breadcrumbs.v1") {
+        const roots = [...(app.hostPaths ?? []), `/apps/${appId}`];
+        const items = parseFrameBreadcrumbs(message.breadcrumbs, roots);
+        const route = message.route;
+        if (!items || typeof route !== "string" || route.length > 2048 || !route.startsWith("/") || /[\\\u0000-\u0020]/.test(route) || !roots.some(root => ownsAppPath(root, route))) { reply("invalid_breadcrumbs"); return; }
+        setFrameBreadcrumbs({ route, items });
         return;
       }
       if (!assistantConfigured) { reply("assistant_unavailable_or_app_owned"); return; }
@@ -291,7 +312,7 @@ export function AgenticAppShell({
     if (!target || state.status !== "ready") return;
     target.postMessage({ type: "caipe.agenticApp.bridge.capabilities.v1", version: "1.0", appId,
       capabilities: { assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured,
-        navigation: true, queryNavigation: true, composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
+        navigation: true, queryNavigation: true, pathNavigation: true, breadcrumbs: true, composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
   }, [appId, assistantAgent, assistantConfigured, state]);
 
   useEffect(() => {
@@ -330,14 +351,21 @@ export function AgenticAppShell({
   for (const key of ["assistant_chat", ...(state.app.assistantOptions?.legacyConversationQueryParams ?? [])]) runtimeSearch.delete(key);
   const query = runtimeSearch.toString();
   const requestedRuntimePath = `${buildAgenticAppPublicPath(appId, path)}${query ? `?${query}` : ""}${hash}`;
+  if (hostRoute && !(state.app.hostPaths ?? []).some(root => ownsAppPath(root, publicPath))) return <></>;
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <WorkspaceBreadcrumbs
-        breadcrumbs={[
+        breadcrumbs={(frameBreadcrumbs?.route === publicPath && frameBreadcrumbs.items.length ? frameBreadcrumbs.items : [
           { label: "Home", href: "/" },
           { label: "Apps", href: "/apps" },
           { label: state.app.displayName },
-        ]}
+        ]).map(item => ({ ...item, onClick: event => {
+          if (!item.href || !queryBridge.current?.isConnected() || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+          const url = new URL(item.href, window.location.origin);
+          if (!roots.some(root => ownsAppPath(root, url.pathname))) return;
+          event.preventDefault();
+          window.history.pushState(null, "", item.href);
+        } }))}
       />
       {assistantConfigured && assistantError ? <p role="alert" className="p-3 text-sm text-destructive">
         {assistantError} <button type="button" onClick={() => setAssistantRetry(n => n + 1)} className="underline">Retry assistant</button>
@@ -347,7 +375,7 @@ export function AgenticAppShell({
         onLoad={notifyFrame}
         ref={iframeRef}
         className="block h-full min-h-0 w-full flex-1 border-0 bg-background"
-        src={managedFrame?.identity === identity && managedFrame.path === publicPath ? managedFrame.src : requestedRuntimePath}
+        src={managedFrame?.identity === identity && managedFrame.appId === appId ? managedFrame.src : requestedRuntimePath}
         title={state.app.displayName}
         allow="clipboard-read; clipboard-write"
       />

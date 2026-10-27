@@ -2,6 +2,7 @@ type FrameQueryBridgeOptions = {
   host: Window;
   appId: string;
   publicPath: string;
+  getPublicPath?: () => string;
   frame: () => HTMLIFrameElement | null;
   capabilities?: () => Record<string, unknown>;
   publishCapabilities?: boolean;
@@ -14,14 +15,15 @@ export function connectFrameQueryNavigation(options: FrameQueryBridgeOptions): {
   isConnected: () => boolean;
   dispose: () => void;
 } {
-  const { host, appId, publicPath, frame } = options;
+  const { host, appId, frame } = options;
+  const publicPath = () => options.getPublicPath?.() ?? options.publicPath;
   let connected = false;
   const target = () => frame()?.contentWindow ?? null;
   const send = (type: string, extra: Record<string, unknown>) => {
     target()?.postMessage({ type, version: "1.0", appId, ...extra }, host.location.origin);
   };
   const sync = () => {
-    if (!connected || host.location.pathname !== publicPath) return;
+    if (!connected || host.location.pathname !== publicPath()) return;
     if (options.publishCapabilities !== false) {
       send("caipe.agenticApp.bridge.capabilities.v1", {
         capabilities: { ...options.capabilities?.(), queryNavigation: true },
@@ -46,7 +48,7 @@ export function connectFrameQueryNavigation(options: FrameQueryBridgeOptions): {
     if (typeof href !== "string" || href.length > 8192 || !href.startsWith("/") || href.startsWith("//") || /[\\\u0000-\u0020]/.test(href)) return;
     let url: URL;
     try { url = new URL(href, host.location.origin); } catch { return; }
-    if (url.origin !== host.location.origin || url.pathname !== publicPath || host.location.pathname !== publicPath) return;
+    if (url.origin !== host.location.origin || url.pathname !== publicPath() || host.location.pathname !== publicPath()) return;
     if (message.history !== undefined && !["push", "replace"].includes(message.history)) return;
     const next = url.pathname + url.search + url.hash;
     const current = host.location.pathname + host.location.search + host.location.hash;
