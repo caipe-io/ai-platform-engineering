@@ -47,7 +47,7 @@
     ]
   },
   "engines": {
-    "node": ">=24.11.0 <25"
+    "node": ">=24.22.1 <25"
   },
   "overrides": {
     "brace-expansion": "1.1.21",

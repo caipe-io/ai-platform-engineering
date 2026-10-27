@@ -13,11 +13,14 @@ From the repository root:
 make caipe-ui-dev
 ```
 
-Or run directly:
+Direct development requires Node.js 24.22.1 or newer in the 24.x release line.
+With nvm, run from the repository root:
 
 ```bash
+nvm install
+nvm use
 cd ui
-npm install
+npm ci
 npm run dev
 ```
 

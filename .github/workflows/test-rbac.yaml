@@ -71,7 +71,7 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.14"
-  NODE_VERSION: "24"
+  NODE_VERSION: "24.22.1"
 
 jobs:
   # ===================================================================== #
