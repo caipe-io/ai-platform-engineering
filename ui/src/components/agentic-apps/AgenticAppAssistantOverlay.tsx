@@ -12,6 +12,7 @@ import { readAssistantDeepLink } from "@/lib/agentic-apps/assistant-links";
 import Image from "next/image";
 import { AppAssistantHistory } from "./AppAssistantHistory";
 import { loadHostConversation } from "@/native-extensions/host-chat";
+import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { ChatPanel } from "@/components/chat/DynamicAgentChatPanel";
 import { buildAssistantClientContext } from "@/lib/agentic-apps/assistant-context";
 import { cn } from "@/lib/utils";
@@ -37,6 +38,8 @@ export interface AgenticAppAssistantOverlayProps {
   activeContext: AgenticAppAssistantContextRecord | null;
   onClearContext: () => void;
   assistantAgentId: string;
+  composerDraft?: AssistantDraft | null;
+  onComposerDraftApplied?: (id: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -53,12 +56,18 @@ export function AgenticAppAssistantOverlay({
   assistantAgentId,
   open,
   onOpenChange,
+  composerDraft,
+  onComposerDraftApplied,
 }: AgenticAppAssistantOverlayProps): React.ReactElement {
   const bubbleLabel = (assistantLabel?.trim() || "Ask CAIPE").slice(0, 32);
   const headerTitle = (
     assistantAgentName?.trim() || `CAIPE assistant for ${appName}`
   ).slice(0, 64);
   const [view, setView] = useState<"chat" | "history">("chat");
+  const incomingDraftId = composerDraft?.id;
+  useEffect(() => {
+    if (incomingDraftId) queueMicrotask(() => setView("chat"));
+  }, [incomingDraftId]);
   const defaultSize = { width: options?.presentation?.width ?? DEFAULT_PANEL_SIZE.width, height: options?.presentation?.height ?? DEFAULT_PANEL_SIZE.height };
   const [panelSize, setPanelSize] = useState(defaultSize);
   const [expanded, setExpanded] = useState(false);
@@ -536,6 +545,8 @@ export function AgenticAppAssistantOverlay({
                 feedbackPrompt={options?.presentation?.feedbackPrompt}
                 clientContext={clientContext}
                 suggestedPrompts={activeContext?.suggestedPrompts}
+                composerDraft={composerDraft}
+                onComposerDraftApplied={onComposerDraftApplied}
               />
             ) : (
               <div className="flex h-full items-center justify-center gap-2 text-sm text-slate-300">

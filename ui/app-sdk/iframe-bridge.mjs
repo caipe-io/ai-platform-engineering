@@ -38,14 +38,25 @@ export function createAgenticAppBridge({ appId, onNavigate, onStatus, onAssistan
       validateAssistantConfiguration(configuration, capabilities.assistantOptions);
       send("caipe.agenticApp.assistant.configure.v1", { configuration });
     },
-    openAssistant(context) {
+    openAssistant(context, draft) {
       if (!capabilities?.assistant) throw new Error("Host assistant is unavailable or app-owned");
+      const valid = draft === undefined ? null : parseAssistantDraft(draft);
+      if (draft !== undefined && (!valid || !capabilities.assistantDraft)) throw new Error("Host assistant drafts are unavailable or the draft is invalid");
       if (context) send("caipe.agenticApp.context.v1", { context });
-      send("caipe.agenticApp.assistant.open.v1");
+      send("caipe.agenticApp.assistant.open.v1", valid ? { draft: valid } : {});
     },
     closeAssistant() { send("caipe.agenticApp.assistant.close.v1"); },
     setContext(context) { send("caipe.agenticApp.context.v1", { context }); },
     navigate(href) { send("caipe.agenticApp.navigate.v1", { href }); },
     dispose() { clearTimeout(timer); window.removeEventListener("message", receive); disposed = true; },
   };
+}
+
+/** Optional plain-text composer handoff; never an instruction to submit. */
+export function parseAssistantDraft(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (typeof value.id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(value.id) ||
+      typeof value.text !== "string" || !value.text.trim() || value.text.length > 12000 ||
+      /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value.text)) return null;
+  return { id: value.id, text: value.text };
 }

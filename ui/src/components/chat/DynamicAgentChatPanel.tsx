@@ -1,5 +1,7 @@
 "use client";
 
+import { useComposerDraft } from "@/hooks/use-composer-draft";
+import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
 import { ContextUsageIndicator } from "@/components/chat/ContextUsageIndicator";
 import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
@@ -113,6 +115,8 @@ interface ChatPanelProps {
   onAgentRelinked?: (agentId: string) => void;
   /** Bounded, host-validated metadata attached to each app-assistant turn. */
   clientContext?: Record<string, unknown>;
+  composerDraft?: AssistantDraft | null;
+  onComposerDraftApplied?: (id: string) => void;
   requestOptions?: Record<string, unknown>;
   composerHeader?: React.ReactNode;
   /** App suggestions only fill the composer; sending remains an explicit user action. */
@@ -136,6 +140,8 @@ export function ChatPanel({
   isLoadingMessages,
   onAgentRelinked,
   clientContext: suppliedClientContext,
+  composerDraft,
+  onComposerDraftApplied,
   requestOptions, composerHeader, suggestedPrompts, placeholder, emptyStateTitle, showAgentHeader = true, showAuditNotice = true, feedbackPrompt,
 }: ChatPanelProps) {
   // Derive display values from agent object
@@ -588,6 +594,13 @@ export function ChatPanel({
     : false;
   const externalActivity = useChatStore(state => activeConversationId ? state.externalActivity[activeConversationId] : undefined);
   const isRemoteResponse = !!externalActivity && !isThisConversationStreaming;
+  useComposerDraft({
+    draft: composerDraft,
+    enabled: !readOnly && !isLoadingMessages && !isRemoteResponse,
+    setInput,
+    inputRef,
+    onApplied: onComposerDraftApplied,
+  });
   useEffect(() => {
     if (isRemoteResponse) setIsRewindConfirmationOpen(false);
   }, [isRemoteResponse]);
