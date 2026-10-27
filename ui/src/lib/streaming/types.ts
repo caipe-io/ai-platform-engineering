@@ -185,6 +185,7 @@ export interface HITLMetadata {
 export type StreamEventType =
   | "content" // LLM token streaming
   | "tool_start" // Tool invocation started (task tool = subagent invocation)
+  | "tool_output" // Progressive remote tool output snapshot
   | "tool_end" // Tool invocation completed
   | "input_required" // Agent requests user input via form (HITL)
   | "context_usage" // Prompt usage before automatic conversation compaction
@@ -339,6 +340,7 @@ export function createStreamEvent(
       };
     }
 
+    case "tool_output":
     case "tool_end": {
       // Tool end has { tool_call_id, error?, result?, args?, namespace }
       const toolData: ToolEndEventData = {

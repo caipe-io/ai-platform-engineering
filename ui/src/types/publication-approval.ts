@@ -20,7 +20,22 @@ export type PublicationAuditAction =
   | "rejected"
   | "cancelled"
   | "superseded"
-  | "apply_failed";
+  | "apply_failed"
+  | "drift_detected";
+
+export type PublicationDriftValue = string | number | boolean | null | string[];
+
+/** One changed field surfaced to an approver when the live resource drifted since request creation. */
+export interface PublicationDriftItem {
+  field: string;
+  label: string;
+  before: PublicationDriftValue;
+  after: PublicationDriftValue;
+  /** Set only when approving would overwrite this live value with the requested one. */
+  will_apply?: PublicationDriftValue;
+  /** Soft drift the approver may confirm past; hard drift (owner/identity changes, deletions) omits this. */
+  overridable: boolean;
+}
 
 export interface PublicationActor {
   subject: string;
@@ -35,6 +50,7 @@ export interface PublicationAuditEntry {
   note?: string;
   from_status?: PublicationRequestStatus;
   to_status?: PublicationRequestStatus;
+  drift?: PublicationDriftItem[];
 }
 
 export interface PublicationRiskFacts {
@@ -66,6 +82,8 @@ export interface PublicationRequestDocument {
   /** Request-scoped OpenFGA policy object, bound to kind + resource hash. */
   authorization_policy_id: string;
   resource_revision: string;
+  /** Plain projection that `resource_revision` hashes; diffed against the live resource to classify drift. */
+  revision_basis?: Record<string, unknown>;
   requested_state: Record<string, unknown>;
   effective_state: Record<string, unknown>;
   risk_facts: PublicationRiskFacts;

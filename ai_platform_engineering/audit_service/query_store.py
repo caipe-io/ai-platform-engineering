@@ -6,14 +6,14 @@ import base64
 import hashlib
 import json
 import re
-from dataclasses import asdict
+from dataclasses import fields
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from pymongo import DESCENDING, MongoClient
 from pymongo.errors import BulkWriteError
 
-from ai_platform_engineering.audit_service.storage import AuditQuery
+from ai_platform_engineering.audit_service.storage import AuditQuery, AuditQueryCancelled
 
 
 def utc_now() -> datetime:
@@ -112,6 +112,8 @@ class MongoAuditStore:
             return int(exc.details.get("nInserted", 0))
 
     def page(self, query: AuditQuery, *, cursor: str | None, scope: str, max_days: int = 31) -> dict[str, Any]:
+        if query.cancel_event is not None and query.cancel_event.is_set():
+            raise AuditQueryCancelled
         since, until = query.since, query.until
         # BSON timestamps have millisecond precision. Exclude the current millisecond
         # so requests arriving after this page do not leak into its continuation.
@@ -139,8 +141,9 @@ class MongoAuditStore:
         state = {"scope": scope, "since": since.isoformat(), "until": until.isoformat(), "as_of": as_of.isoformat()}
         page_cursor = cursor or base64.urlsafe_b64encode(json.dumps(state, separators=(",", ":")).encode()).decode()
         filters: dict[str, Any] = {"ts": {"$gte": since, "$lte": until}, "ingested_at": {"$lte": as_of}}
-        for key, value in asdict(query).items():
-            if key in {"since", "until", "limit", "time_resolution"} or value is None:
+        for field in fields(query):
+            key, value = field.name, getattr(query, field.name)
+            if key in {"since", "until", "limit", "time_resolution", "cancel_event"} or value is None:
                 continue
             if key == "user_email":
                 filters["event.user_email"] = {"$regex": re.escape(value), "$options": "i"}
@@ -151,6 +154,8 @@ class MongoAuditStore:
         if after:
             filters.setdefault("$and", []).append(after)
         docs = list(self.events.find(filters).sort([("ts", -1), ("_id", -1)]).limit(query.limit + 1).max_time_ms(5000))
+        if query.cancel_event is not None and query.cancel_event.is_set():
+            raise AuditQueryCancelled
         has_more = len(docs) > query.limit
         docs = docs[: query.limit]
         next_cursor = None

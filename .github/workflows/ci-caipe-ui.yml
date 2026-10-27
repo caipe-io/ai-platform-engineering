@@ -1,5 +1,5 @@
 name: "[CI] CAIPE UI Build and Push"
-description: "Build and push CAIPE UI Docker image"
+# description: "Build and push CAIPE UI Docker image"
 
 on:
   push:
@@ -11,6 +11,7 @@ on:
     paths:
       - 'ui/**'
       - 'build/Dockerfile.caipe-ui'
+      - 'scripts/npm/**'
   workflow_dispatch:
     inputs:
       tag_version:
@@ -58,6 +59,7 @@ jobs:
             ui:
               - 'ui/**'
               - 'build/Dockerfile.caipe-ui'
+              - 'scripts/npm/**'
 
       - name: Set Outputs
         id: set-outputs
@@ -114,7 +116,7 @@ jobs:
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
           egress-policy: audit
 
@@ -193,7 +195,7 @@ jobs:
 
       - name: Upload digest
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: digests-${{ matrix.arch }}
           path: /tmp/digests/*
@@ -215,12 +217,12 @@ jobs:
       IMAGE_NAME: ${{ github.repository_owner }}/caipe-ui
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
           egress-policy: audit
 
       - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: digests-*
           path: /tmp/digests
@@ -272,7 +274,7 @@ jobs:
     steps:
       - name: 🔑 Generate GitHub App token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
         with:
           app-id: ${{ secrets.CI_BUILD_APP_ID }}
           private-key: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY }}

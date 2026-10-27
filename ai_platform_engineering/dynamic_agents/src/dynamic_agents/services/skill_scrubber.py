@@ -61,7 +61,7 @@ defensive — unknown attribute shapes pass through untouched, so a
 bug here can never break tracing, only fail to redact.
 
 We register the processor by attaching it to the active
-``TracerProvider``. ``cnoe_agent_utils.tracing.manager`` installs
+``TracerProvider``. The tracing manager installs
 its own ``BatchSpanProcessor`` first; we install ours alongside.
 The OTel SDK fans every span through every registered processor in
 registration order, so as long as we install before the first span
@@ -191,7 +191,13 @@ def _strip_marker_section(text: str, header: str) -> str:
         stripped = line.lstrip()
         if stripped.startswith(header):
             skipping = True
-            out.append(f"{header} [redacted from trace]\n")
+            marker_line = f"{header} [redacted from trace]\n"
+            # Span processors may see the same attributes in both the
+            # SDK's pre-export and export callbacks. Keep that second pass
+            # idempotent instead of repeating the marker.
+            out.append(
+                line if stripped.rstrip("\r\n") == marker_line.rstrip("\n") else marker_line
+            )
             continue
         if skipping:
             # Only stop at top-level (## or #) headers so we don't
@@ -339,8 +345,8 @@ class SkillContentScrubbingProcessor:
         return None
 
     def _on_ending(self, span) -> None:  # noqa: D401, ARG002
-        """Called by OTel SDK _MultiSpanProcessor before on_end."""
-        return None
+        """Scrub before OTel creates the immutable export span snapshot."""
+        self.on_end(span)
 
     def on_end(self, span) -> None:  # noqa: D401
         try:
@@ -411,6 +417,17 @@ class SkillContentScrubbingProcessor:
                 raw = getattr(span, "_attributes", None)
                 wrote = False
                 if raw is not None:
+                    # Recent OpenTelemetry SDKs freeze BoundedAttributes
+                    # before calling processors. Its public mapping setter
+                    # then rejects updates, but the readable span passed to
+                    # exporters shares this backing dictionary. Update that
+                    # dictionary when present so redaction still happens
+                    # before the exporter receives the span.
+                    backing = getattr(raw, "_dict", None)
+                    if isinstance(backing, dict):
+                        backing.update(updates)
+                        wrote = True
+                if raw is not None and not wrote:
                     try:
                         for k, v in updates.items():
                             raw[k] = v
@@ -463,7 +480,7 @@ def install_skill_content_scrubber() -> bool:
     add_processor = getattr(provider, "add_span_processor", None)
     if add_processor is None:
         # NoOpTracerProvider (tracing not initialized) returns None
-        # here; nothing to attach to. The cnoe_agent_utils manager
+        # here; nothing to attach to. The tracing manager
         # logs its own "tracing disabled" line in that case.
         logger.info("[skill-scrubber] active TracerProvider has no add_span_processor; skipping")
         return False

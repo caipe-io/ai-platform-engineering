@@ -5,6 +5,7 @@
  * The gateway owns all config writes — DA is a pure runtime reader.
  */
 
+import { projectAgentAppIdentity } from "@/lib/agentic-apps/agent-catalog";
 import {
   ApiError,
   getAuthFromBearerOrSession,
@@ -16,6 +17,10 @@ import {
 import { getCollection } from "@/lib/mongodb";
 import { publicPermissionDocument } from "@/lib/authz/permission-sync";
 import { createAuthzTraceContext } from "@/lib/rbac/authz-tracing";
+import {
+  getHarnessEngineConfig,
+  proxyHarnessEngine,
+} from "@/lib/harness-engine-proxy";
 import {
   RAG_COLLECTION_ID_PATTERN,
   RAG_COLLECTIONS_COLLECTION,
@@ -50,12 +55,13 @@ import type {
   DynamicAgentConfig,
   DynamicAgentConfigWithPermissions,
   LegacyVisibilityType,
+  ModelConfig,
   SubAgentRef,
   VisibilityType,
 } from "@/types/dynamic-agent";
 import { type RagCollection } from "@/types/rag-collection";
 import { Collection, ObjectId } from "mongodb";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const PLATFORM_DEFAULT_VISIBILITY_ERROR =
   "This agent is currently the platform default for new chats. Open Settings → Platform settings → Defaults and change the platform default before changing this agent's visibility.";
@@ -65,6 +71,45 @@ const PLATFORM_DEFAULT_DELETE_ERROR =
 const COLLECTION_NAME = "dynamic_agents";
 const OPENFGA_RESOURCE_ID_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}$/;
+const EXECUTION_HARNESS_ID_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
+
+function normalizeRemoteAgentIds(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim())) {
+    throw new ApiError("allowed_remote_agents must be a list of registry IDs", 400, "INVALID_REMOTE_AGENT_IDS");
+  }
+  return [...new Set(value.map((item) => (item as string).trim()))];
+}
+
+async function validateRemoteAgentIds(value: unknown): Promise<string[]> {
+  const ids = normalizeRemoteAgentIds(value);
+  if (!ids.length) return ids;
+  const registry = await getCollection<{ _id: string; enabled?: boolean }>("remote_agents");
+  const entries = await registry.find({ _id: { $in: ids }, enabled: { $ne: false } }, { projection: { _id: 1 } }).toArray();
+  const found = new Set(entries.map((entry) => entry._id));
+  const missing = ids.filter((id) => !found.has(id));
+  if (missing.length) {
+    throw new ApiError(`Unknown or disabled remote A2A agent(s): ${missing.join(", ")}`, 400, "INVALID_REMOTE_AGENT_IDS");
+  }
+  return ids;
+}
+
+function normalizeRemoteAgentTimeouts(value: unknown, allowedIds: unknown): Record<string, number> {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ApiError("remote_agent_timeouts must be a registry-ID to seconds map", 400, "INVALID_REMOTE_AGENT_TIMEOUTS");
+  }
+  const allowed = new Set(normalizeRemoteAgentIds(allowedIds));
+  const result: Record<string, number> = {};
+  for (const [id, rawTimeout] of Object.entries(value)) {
+    const timeout = Number(rawTimeout);
+    if (!allowed.has(id) || !Number.isInteger(timeout) || timeout < 1 || timeout > 600) {
+      throw new ApiError("Each remote-agent timeout must reference a selected registry ID and be between 1 and 600 seconds", 400, "INVALID_REMOTE_AGENT_TIMEOUTS");
+    }
+    result[id] = timeout;
+  }
+  return result;
+}
 
 interface TeamOwnershipDoc {
   _id?: unknown;
@@ -209,10 +254,13 @@ function slugify(name: string): string {
 
 /** Mutable fields allowed in agent create/update requests. */
 const AGENT_MUTABLE_FIELDS = [
+  "execution_harness_id",
   "name",
   "description",
   "system_prompt",
   "allowed_tools",
+  "allowed_remote_agents",
+  "remote_agent_timeouts",
   "builtin_tools",
   "model",
   "visibility",
@@ -279,6 +327,40 @@ function pickMutableFields(
 
 function normalizeString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeExecutionHarnessId(value: unknown): string {
+  const harnessId = normalizeString(value) || "dynamic_agents";
+  if (!EXECUTION_HARNESS_ID_PATTERN.test(harnessId)) {
+    throw new ApiError("Invalid execution harness ID", 400, "INVALID_HARNESS_ID");
+  }
+  return harnessId;
+}
+
+function normalizeAgentModel(
+  value: unknown,
+  required: boolean,
+): ModelConfig | undefined {
+  if (value === undefined && !required) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ApiError("Model selection is required for Deep Agents (model.id and model.provider)", 400);
+  }
+  const model = value as Record<string, unknown>;
+  if (typeof model.id !== "string" || !model.id.trim()) {
+    throw new ApiError("Model ID is required (model.id)", 400);
+  }
+  if (typeof model.provider !== "string" || !model.provider.trim()) {
+    throw new ApiError("Model provider is required (model.provider)", 400);
+  }
+  const reasoningEffort = model.reasoning_effort ?? "medium";
+  if (typeof reasoningEffort !== "string" || !["low", "medium", "high", "max"].includes(reasoningEffort)) {
+    throw new ApiError("Invalid model.reasoning_effort", 400);
+  }
+  return {
+    id: model.id,
+    provider: model.provider,
+    reasoning_effort: reasoningEffort as ModelConfig["reasoning_effort"],
+  };
 }
 
 function normalizeDatasourceIds(value: unknown): string[] | undefined {
@@ -617,7 +699,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     scopedItems,
     listTarget,
   );
-  const pageItems = visibleItems.slice(skip, skip + pageSize);
+  const projectedItems = projectAgentAppIdentity(visibleItems, session, { availableOnly: enabledOnly });
+  const pageItems = projectedItems.slice(skip, skip + pageSize);
   const { rows } = await resolveAgentListPermissions(
     session,
     pageItems.map((agent) => String(agent._id)),
@@ -628,7 +711,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     permissions: agentRowPermissionsOrDefault(rows, String(agent._id)),
   }));
 
-  return paginatedResponse(items, visibleItems.length, page, pageSize);
+  return paginatedResponse(items, projectedItems.length, page, pageSize);
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -660,16 +743,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     delete body.model_id;
     delete body.model_provider;
   }
-  if (!body.model?.id || typeof body.model.id !== "string") {
-    throw new ApiError("Model ID is required (model.id)", 400);
-  }
-  if (!body.model?.provider || typeof body.model.provider !== "string") {
-    throw new ApiError("Model provider is required (model.provider)", 400);
-  }
-  body.model.reasoning_effort ??= "medium";
-  if (!["low", "medium", "high", "max"].includes(body.model.reasoning_effort)) {
-    throw new ApiError("Invalid model.reasoning_effort", 400);
-  }
+  const executionHarnessId = normalizeExecutionHarnessId(body.execution_harness_id);
+  body.model = normalizeAgentModel(body.model, executionHarnessId === "dynamic_agents");
   const requestedOwnerTeamSlug = normalizeString(body.owner_team_slug);
   const requestedOwnerTeamId = normalizeString(body.owner_team_id);
   // Coerce any legacy 'private' on the wire to 'team' (private visibility was
@@ -725,6 +800,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // Generate slug from name with agent- prefix
   const agentId = `agent-${slugify(body.name)}`;
+  // Agent IDs must fit the persisted chat-history group keys.
+  if (agentId.length > 230) {
+    throw new ApiError(
+      "Agent name is too long: generated ID must be at most 230 characters",
+      400,
+    );
+  }
   if (!agentId) {
     throw new ApiError(
       "Agent name must contain at least one alphanumeric character",
@@ -797,15 +879,19 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // Build document with explicit field allowlist (Security VII)
   const ownerSubject = requireStableSubject(session);
   const now = new Date();
+  const allowedRemoteAgents = await validateRemoteAgentIds(body.allowed_remote_agents);
   const doc: DynamicAgentConfig = {
     _id: agentId,
+    execution_harness_id: executionHarnessId,
     name: body.name as string,
     description: (body.description as string) ?? "",
     system_prompt: body.system_prompt as string,
     allowed_tools:
       (body.allowed_tools as Record<string, string[] | boolean>) ?? {},
+    allowed_remote_agents: allowedRemoteAgents,
+    remote_agent_timeouts: normalizeRemoteAgentTimeouts(body.remote_agent_timeouts, allowedRemoteAgents),
     builtin_tools: body.builtin_tools ?? undefined,
-    model: body.model as DynamicAgentConfig["model"],
+    ...(body.model ? { model: body.model as ModelConfig } : {}),
     visibility,
     shared_with_teams: sharedTeamSlugs,
     owner_team_slug: ownerTeamSlug ?? undefined,
@@ -883,15 +969,6 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
   const { session } = await getAuthFromBearerOrSession(request);
 
   const body = await request.json();
-  if (body.model !== undefined) {
-    if (!body.model || typeof body.model !== "object" || Array.isArray(body.model)) {
-      throw new ApiError("model must be an object", 400);
-    }
-    body.model.reasoning_effort ??= "medium";
-    if (!["low", "medium", "high", "max"].includes(body.model.reasoning_effort)) {
-      throw new ApiError("Invalid model.reasoning_effort", 400);
-    }
-  }
   const collection = await getCollection<DynamicAgentConfig>(COLLECTION_NAME);
 
   // Verify agent exists
@@ -911,6 +988,32 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
 
   // Build update with explicit field allowlist
   const updateData = pickMutableFields(body);
+  if (Object.prototype.hasOwnProperty.call(body, "execution_harness_id")) {
+    updateData.execution_harness_id = normalizeExecutionHarnessId(
+      body.execution_harness_id,
+    );
+  }
+  const previousHarnessId = normalizeExecutionHarnessId(agent.execution_harness_id);
+  const nextHarnessId = normalizeExecutionHarnessId(updateData.execution_harness_id ?? agent.execution_harness_id);
+  if (body.model !== undefined) {
+    updateData.model = normalizeAgentModel(body.model, nextHarnessId === "dynamic_agents");
+  } else if (nextHarnessId === "dynamic_agents" && previousHarnessId !== "dynamic_agents") {
+    // Switching runtimes needs a valid execution model; unrelated partial
+    // updates keep existing agents' saved model settings untouched.
+    normalizeAgentModel(agent.model, true);
+  }
+  if (Object.prototype.hasOwnProperty.call(updateData, "allowed_remote_agents")) {
+    updateData.allowed_remote_agents = await validateRemoteAgentIds(updateData.allowed_remote_agents);
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(updateData, "remote_agent_timeouts") ||
+    Object.prototype.hasOwnProperty.call(updateData, "allowed_remote_agents")
+  ) {
+    updateData.remote_agent_timeouts = normalizeRemoteAgentTimeouts(
+      updateData.remote_agent_timeouts ?? agent.remote_agent_timeouts ?? {},
+      updateData.allowed_remote_agents ?? agent.allowed_remote_agents ?? [],
+    );
+  }
   const unsetData: Record<string, "">  = {};
   const datasourceSelectionChanged = Object.prototype.hasOwnProperty.call(
     body,
@@ -1176,7 +1279,7 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
     throw new ApiError("Agent ID is required", 400);
   }
 
-  const { session } = await getAuthFromBearerOrSession(request);
+  const { user, session } = await getAuthFromBearerOrSession(request);
   await requireAgentPermission(session, id, "delete");
 
   const collection = await getCollection<DynamicAgentConfig>(COLLECTION_NAME);
@@ -1228,6 +1331,43 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
       502,
       "AUTONOMOUS_TASK_CASCADE_FAILED",
     );
+  }
+
+  if (normalizeExecutionHarnessId(agent.execution_harness_id) !== "dynamic_agents") {
+    const config = getHarnessEngineConfig();
+    if (config instanceof NextResponse) {
+      throw new ApiError(
+        "Harness Engine is unavailable; deletion was aborted to avoid orphaning its provider resource.",
+        503,
+        "HARNESS_ENGINE_UNAVAILABLE",
+      );
+    }
+    const sessionValues = session as unknown as Record<string, unknown>;
+    const response = await proxyHarnessEngine(
+      config,
+      {
+        subject:
+          (sessionValues.sub as string | undefined) ??
+          agent.owner_subject ??
+          user.email,
+        traceparent: request.headers.get("traceparent") ?? undefined,
+      },
+      `/api/v1/agents/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    );
+    if (!response.ok) {
+      const result = (await response.json().catch(() => null)) as {
+        detail?: string;
+        error?: string;
+      } | null;
+      throw new ApiError(
+        result?.detail ??
+          result?.error ??
+          "Failed to remove the agent's provider resource. Deletion was aborted.",
+        response.status,
+        "HARNESS_PROVIDER_DELETE_FAILED",
+      );
+    }
   }
 
   const result = await deleteAllAgentToolTuples(id, {

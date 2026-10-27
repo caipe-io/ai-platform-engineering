@@ -253,6 +253,12 @@ export class TimelineManager {
   /**
    * Push a tool end event.
    */
+  pushToolOutput(toolCallId: string, namespace: string[], result: string): void {
+    const tools = namespace.length === 0 ? this.rootToolMap : this.subagents.get(namespace[0])?.toolMap;
+    const tool = tools?.get(toolCallId);
+    if (tool) tool.result = result;
+  }
+
   pushToolEnd(toolCallId: string, namespace: string[], args?: Record<string, unknown>, result?: string): void {
     const now = new Date();
     const currentIndex = this.eventIndex++;

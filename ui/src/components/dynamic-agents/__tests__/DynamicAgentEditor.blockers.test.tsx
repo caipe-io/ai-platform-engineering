@@ -262,6 +262,26 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does not require an owner team when creating a global agent", async () => {
+    render(<DynamicAgentEditor onCancel={jest.fn()} onSave={jest.fn()} />);
+    await flushAsync();
+
+    fireEvent.change(screen.getByPlaceholderText(/Code Review Agent/i), {
+      target: { value: "global-agent" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Global/ }));
+
+    const createButton = screen.getByRole("button", { name: /Create Agent/i });
+    expect(screen.getByLabelText(/Owner Team/i)).not.toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(createButton).not.toHaveAttribute(
+      "title",
+      expect.stringContaining("Owner Team is required") as unknown as string,
+    );
+  });
+
   it("starts on the deep-linked setup step and reports subsequent step changes", async () => {
     const onStepChange = jest.fn();
     render(

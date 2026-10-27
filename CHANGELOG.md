@@ -1,3 +1,191 @@
+## 1.3.0-rc.18 (2026-10-26)
+
+### Fix
+
+- **auth**: preserve shared token consistency across replicas (#3085)
+
+## 1.3.0-rc.17 (2026-10-26)
+
+### Feat
+
+- **webex**: dispatch linked user chats to native app assistants (#3070)
+- **ui**: restrict release-note comparisons to deployment-approved repos (#2663)
+- **notifications**: let an installed app create a notification for named users (#3018)
+- **notifications**: let an installed app create a notification for named users
+
+### Fix
+
+- **auth**: reject tokens missing allowed client ID (#2583)
+- **deps**: update vulnerable dependencies and preserve trace redaction (#3048)
+- **helm**: remove duplicated rag-stack key in umbrella values.yaml (#3045)
+- **webex-bot**: retain thread context when parent is unavailable (#3023)
+- **workflows**: reject incomplete streams and expose step artifacts (#3075)
+- **dynamic-agents**: guard truncated and incomplete tool calls (#2875)
+- **notifications**: enforce safe links and unique app credentials
+
+## 1.3.0-rc.16 (2026-10-23)
+
+### Feat
+
+- **ui**: enable remote MCP providers by default (#3047)
+- **dynamic-agents**: add opt-in app context prompt adapter (#3008)
+
+### Fix
+
+- **chat**: preserve browser session authorization for streams (#3057)
+- **chat**: restore retry and regenerate next to edit (#3009)
+- **harness-engine**: update vulnerable dependencies (#3044)
+- **ui**: preserve nested markdown list structure (#3000)
+
+## 1.3.0-rc.15 (2026-10-22)
+
+### Feat
+
+- **harness-engine**: add portable runtime and BFF gateway (#2401)
+- **ui**: restyle CAIPE chat composer (#3036)
+
+### Fix
+
+- **setup**: initialize and recover fresh local workspaces (#3028)
+- **ui**: stop skill workspace refetching store in a loop for catalog skills (#2991)
+- **deps**: upgrade uv to 0.13.4 to remove compromised CA trust (#3041)
+
+## 1.3.0-rc.14 (2026-10-22)
+
+### Feat
+
+- **chat**: expose native feedback and opt-in chat excerpts (#3038)
+- **app-sdk**: expose authorized native conversation controls (#3037)
+- **helm**: select shared database credentials (#3024)
+
+### Fix
+
+- **ci**: limit MCP registry publishing concurrency (#3027)
+
+## 1.3.0-rc.13 (2026-10-21)
+
+### Feat
+
+- **chat**: add personal folders and agent grouping (#3019)
+- **agentic-apps**: unify assistant overlay and app-owned chat routing (#2693)
+
+## 1.3.0-rc.12 (2026-10-19)
+
+### Feat
+
+- **setup**: add --ui-url/--idp-url and --expose=nodeport (#3006)
+
+### Fix
+
+- **setup**: make fresh kind installs usable without manual patches (#3005)
+- **charts**: give openfga migrate hook its own service account (#3004)
+- **webex-meetings**: redact recording password and host keys (#2996)
+- **rag**: upgrade MCP SDK for session limits (#2985)
+
+## 1.3.0-rc.11 (2026-10-16)
+
+### Fix
+
+- **oncall**: use VictorOps as live source (#2981)
+
+## 1.3.0-rc.10 (2026-10-14)
+
+### Feat
+
+- **charts**: support deployment-owned OpenFGA models (#2940)
+- **auth**: require authenticated development with local Keycloak (#2906)
+
+## 1.3.0-rc.9 (2026-10-13)
+
+### Feat
+
+- **ui**: add shared AgenticAppManifest and native UI contract (#2852)
+
+### Fix
+
+- **ui**: redirect unauthenticated app navigations to a relative login URL (#2923)
+- **security**: upgrade runtime uv to patched Rustls (#2921)
+- **security**: scan releases after publication (#2920)
+- **security**: patch RSA verification and glob nesting vulnerabilities (#2918)
+
+## 1.3.0-rc.8 (2026-10-11)
+
+### Fix
+
+- **ui**: upgrade vulnerable npm dependency overrides (#2917)
+
+## 1.3.0-rc.7 (2026-10-11)
+
+### Feat
+
+- **dynamic-agents**: integrate remote agents as tool calls via A2A protocol (#2373)
+- **openfga-bridge**: log agent_context_kind per tools/call decision (#2907)
+- **sharepoint-mcp**: support pdf/pptx metadata and streaming through http routes (#2903)
+- **victorops**: expose computed current on-call users (#2872)
+
+### Fix
+
+- **deps**: update MongoDB persistence and urllib3 security pins (#2916)
+- **docs**: upgrade vulnerable documentation dependencies (#2915)
+- **security**: scope scans to release revisions and validate namespaces (#2642)
+- **e2e**: stop closing the OAuth relay popup before its message arrives (#2794)
+- **ui**: remove unsafe agentgateway repair action (#2302)
+- **sharepoint-mcp**: expose folder document versions for incremental ingest (#2911)
+- **ui**: send source in ticket-client clientContext to prevent 422
+- **slack-ingestor**: detect lookback_days changes on reload, not just first sync (#2833)
+- **mcp**: retry AgentGateway route reconciliation (#2400)
+- **argocd**: filter applications by status (#2689)
+- **audit**: cancel abandoned scans and bound query memory (#2900)
+- **ci**: skip prebuild images for fork pull requests (#2898)
+
+## 1.3.0-rc.6 (2026-10-06)
+
+### Fix
+
+- **platform**: restore adaptive reasoning and chat history filters (#2878)
+
+## 1.3.0-rc.5 (2026-10-05)
+
+### Feat
+
+- **ui**: forward platform admin notifications to Slack (#2865)
+- **sharepoint**: refresh read-only MCP prebuild on latest main (#2860)
+
+### Fix
+
+- **rag**: authorize ingestion credential reads by verified platform identity (#2876)
+- **rag-stack**: preserve gp2 default with default StorageClass option (#2088)
+- **dynamic-agents**: raise MCP tool-load retry budget to 5 attempts (#2786)
+
+### Refactor
+
+- **dynamic-agents**: remove cnoe-agent-utils, add a shared llm_wrapper (#2820)
+
+## 1.3.0-rc.4 (2026-10-01)
+
+### Feat
+
+- **publication-approval**: confirm drift instead of superseding on approve (#2849)
+- **eks**: add Auto Mode RAG pool and PodDisruptionBudgets (#1446)
+- **rag**: ingest web pages behind header-based authentication (#2808)
+
+### Fix
+
+- **rag**: correct fetch_document tool name in truncation hint (#2856)
+- **ui**: fix team admin dialog search and layout issues (#2842)
+- **security**: report failed post-release Grype dispatch (#2847)
+- **deps**: resolve current Dependabot alerts (#2845)
+- **caipe-ui**: show session-expired hint for auth-interrupted turns (#1764)
+- **rag**: pin tenacity dependency (#2844)
+- **ci**: grant PR write access for size labeling (#2835)
+- **autonomous**: correct owner token forward to agent and mcp (#2708)
+- **webex-meetings-mcp**: fix timezone issue (#2838)
+- **rag**: retry ingestor POST on 429, split batch on 413 (#2600)
+
+### Refactor
+
+- **authz**: route agent execution through fresh CAS decisions (#2813)
+
 ## 1.3.0-rc.3 (2026-09-24)
 
 ## 1.3.0-rc.2 (2026-09-24)

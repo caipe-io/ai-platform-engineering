@@ -79,6 +79,10 @@ const sidebars: SidebarsConfig = {
               id: 'getting-started/helm/setup',
             },
             {
+              type: 'doc',
+              id: 'installation/openfga-model-override',
+            },
+            {
               type: 'category',
               label: 'Chart Reference',
               items: [
@@ -255,6 +259,8 @@ const sidebars: SidebarsConfig = {
         { type: 'doc', id: 'features/agent-builder', label: 'Agent Builder' },
         { type: 'doc', id: 'features/workflows', label: 'Workflows' },
         { type: 'doc', id: 'features/agentic-apps', label: 'External Apps' },
+        { type: 'doc', id: 'features/agentic-app-manifest', label: 'Shared App Manifest' },
+        { type: 'doc', id: 'features/native-ui-extensions', label: 'Native UI Extensions' },
         {
           type: 'category',
           label: 'Rich Web UI',
@@ -367,10 +373,6 @@ const sidebars: SidebarsConfig = {
         {
           type: 'doc',
           id: 'tools-utils/openapi-mcp-codegen',
-        },
-        {
-          type: 'doc',
-          id: 'tools-utils/cnoe-agent-utils',
         },
         {
           type: 'doc',

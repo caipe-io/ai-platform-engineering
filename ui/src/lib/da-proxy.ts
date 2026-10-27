@@ -26,6 +26,8 @@ import type { RbacResource, RbacScope } from "@/lib/rbac/types";
 // ═══════════════════════════════════════════════════════════════
 
 export interface AuthResult {
+  /** Server-only resolved identity, shared with app-owned stream forwarding. */
+  authenticatedUser?: Awaited<ReturnType<typeof getAuthFromBearerOrSession>>;
   /** Stable caller subject for ReBAC/OpenFGA checks. */
   subject?: string;
   /** Human-readable email for privacy-aware audit display. */
@@ -133,7 +135,7 @@ export async function authenticateRequest(
     const subject = (s?.sub as string | undefined) || user.email;
     const tenantId = (s?.org as string | undefined) || "default";
     const isServiceAccount = (s?.isServiceAccount as boolean | undefined) === true;
-    return { subject, email: user.email, role: user.role, tenantId, userContextHeader: encoded, bearerToken, isServiceAccount };
+    return { subject, email: user.email, role: user.role, tenantId, userContextHeader: encoded, bearerToken, isServiceAccount, authenticatedUser: { user, session } };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 

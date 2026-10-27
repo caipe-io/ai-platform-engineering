@@ -30,6 +30,16 @@ function findMatcher(filter: Record<string, unknown>) {
         if (!inValues.includes(rowValue)) return false;
         continue;
       }
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        "$regex" in (value as Record<string, unknown>)
+      ) {
+        const { $regex, $options } = value as { $regex: string; $options?: string };
+        const re = new RegExp($regex, $options);
+        if (typeof rowValue !== "string" || !re.test(rowValue)) return false;
+        continue;
+      }
       if (rowValue !== value) return false;
     }
     return true;
@@ -409,6 +419,61 @@ describe("loadActiveTeamMembersPage — DocumentDB compatibility", () => {
     );
     const limitStage = pagePipeline!.find((s: Record<string, unknown>) => "$limit" in s);
     expect(limitStage.$limit).toBe(100);
+  });
+});
+
+describe("loadActiveTeamMembersPage — search $match construction", () => {
+  // The aggregateStub above only faithfully simulates loadTeamMemberCounts's
+  // pipeline shape (per its own comment), not this function's — so, like the
+  // "DocumentDB compatibility" tests above, these assert on the constructed
+  // pipeline's $match stage directly rather than trusting the stub's
+  // simulated output.
+  function matchStageOf(pipelines: Record<string, unknown>[][]) {
+    return (pipelines[0][0] as { $match: Record<string, unknown> }).$match;
+  }
+
+  it("matches by an email substring via a case-insensitive $regex", async () => {
+    await loadActiveTeamMembersPage("platform", { search: "alice" });
+    const pipelines = collectionStub.aggregate.mock.calls.map((call) => call[0]);
+    expect(matchStageOf(pipelines).user_email).toEqual({ $regex: "alice", $options: "i" });
+  });
+
+  // Members are stored with only an email, no name — a search by name has
+  // to be resolved by the caller (a directory lookup) into
+  // `searchMatchedEmails`, which this OR's in alongside the plain email
+  // substring match.
+  it("OR's the email substring match with searchMatchedEmails from a resolved name search", async () => {
+    await loadActiveTeamMembersPage("platform", {
+      search: "ali",
+      searchMatchedEmails: ["bob@example.com", "carol@example.com"],
+    });
+    const pipelines = collectionStub.aggregate.mock.calls.map((call) => call[0]);
+    expect(matchStageOf(pipelines).$or).toEqual([
+      { user_email: { $regex: "ali", $options: "i" } },
+      { user_email: { $regex: "^bob@example\\.com$", $options: "i" } },
+      { user_email: { $regex: "^carol@example\\.com$", $options: "i" } },
+    ]);
+  });
+
+  it("skips empty/falsy entries in searchMatchedEmails", async () => {
+    await loadActiveTeamMembersPage("platform", {
+      search: "",
+      searchMatchedEmails: ["", "dan@example.com"],
+    });
+    const pipelines = collectionStub.aggregate.mock.calls.map((call) => call[0]);
+    // Only one real clause survives, so it's assigned directly (no $or).
+    expect(matchStageOf(pipelines).user_email).toEqual({
+      $regex: "^dan@example\\.com$",
+      $options: "i",
+    });
+    expect(matchStageOf(pipelines).$or).toBeUndefined();
+  });
+
+  it("adds no search filter at all when both search and searchMatchedEmails are empty", async () => {
+    await loadActiveTeamMembersPage("platform", {});
+    const pipelines = collectionStub.aggregate.mock.calls.map((call) => call[0]);
+    expect(matchStageOf(pipelines).user_email).toBeUndefined();
+    expect(matchStageOf(pipelines).$or).toBeUndefined();
   });
 });
 

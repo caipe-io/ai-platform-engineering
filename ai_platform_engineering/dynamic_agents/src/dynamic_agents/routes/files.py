@@ -11,11 +11,10 @@ Endpoints:
   DELETE /files/namespace — delete all files in a namespace
 """
 
-import json
 import logging
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from pymongo.database import Database
 
 from dynamic_agents.auth.auth import UserContext, get_user_context
@@ -28,6 +27,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/files", tags=["files"])
 
+_NAMESPACE_ADAPTER = TypeAdapter(tuple[str, str, str])
+
 
 def _get_gridfs_store(db: Database) -> MongoDBGridFSStore:
     """Get a GridFS store instance for the given database."""
@@ -36,19 +37,11 @@ def _get_gridfs_store(db: Database) -> MongoDBGridFSStore:
 
 
 def _parse_namespace(raw: str) -> tuple[str, str, str]:
-    """Parse fs_namespace JSON array into a 3-tuple."""
+    """Parse and strictly validate a three-string JSON namespace."""
     try:
-        parsed = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        raise HTTPException(status_code=400, detail="fs_namespace must be a valid JSON array")
-
-    if not isinstance(parsed, list) or len(parsed) != 3:
-        raise HTTPException(status_code=400, detail="fs_namespace must be an array of exactly 3 strings")
-
-    if not all(isinstance(s, str) for s in parsed):
-        raise HTTPException(status_code=400, detail="fs_namespace elements must all be strings")
-
-    return (parsed[0], parsed[1], parsed[2])
+        return _NAMESPACE_ADAPTER.validate_json(raw, strict=True)
+    except (ValidationError, TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="fs_namespace must be a JSON array of exactly 3 strings")
 
 
 def _get_db(mongo: MongoDBService) -> Database:

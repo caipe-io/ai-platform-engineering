@@ -1,0 +1,270 @@
+# Preview-only overlay for caipe-oss.outshift.io.
+#
+# The checked-out source must be an upstream cnoe-io revision with the Harness
+# Engine change applied. Existing Dynamic Agents services remain unchanged;
+# Harness Engine runs beside them and is reached only through the UI BFF.
+#
+# Usage:
+#   COMPOSE_PROFILES="mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor" \
+#   docker compose --env-file .env \
+#     -f docker-compose.yaml \
+#     -f docker-compose.caipe-oss.yaml up -d --build
+
+services:
+  # mcp-atlassian 0.22+ defaults to stdio and exits when Compose does not
+  # attach stdin. Run its streamable HTTP transport so AgentGateway can keep
+  # the existing /mcp/confluence target healthy.
+  mcp-confluence:
+    command:
+      - --transport
+      - streamable-http
+      - --stateless
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --path
+      - /mcp
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; s=socket.socket(); s.settimeout(2); raise SystemExit(s.connect_ex(('127.0.0.1', 8000)))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # These targets already exist in the shared AgentGateway configuration but
+  # are defined only by docker-compose.dev.yaml upstream. Supply published
+  # services for this production-style preview so catalog entries are usable.
+  mcp-gitlab:
+    image: zereight050/gitlab-mcp:latest
+    container_name: mcp-gitlab
+    restart: unless-stopped
+    env_file: [.env]
+    ports:
+      - "18010:8000"
+    environment:
+      STREAMABLE_HTTP: "true"
+      HOST: 0.0.0.0
+      PORT: "8000"
+      MAX_SESSIONS: ${GITLAB_MCP_MAX_SESSIONS:-1000}
+      MAX_REQUESTS_PER_MINUTE: ${GITLAB_MCP_MAX_REQUESTS_PER_MINUTE:-60}
+      USE_PIPELINE: "true"
+      GITLAB_API_URL: https://${GITLAB_HOST:-gitlab.com}/api/v4
+      GITLAB_PERSONAL_ACCESS_TOKEN: ${GITLAB_PERSONAL_ACCESS_TOKEN:-${GITLAB_TOKEN:-}}
+      REMOTE_AUTHORIZATION: ${GITLAB_MCP_REMOTE_AUTHORIZATION:-true}
+      GITLAB_READ_ONLY_MODE: ${GITLAB_READ_ONLY_MODE:-true}
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "const s=require('net').connect(8000,'127.0.0.1',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    profiles:
+      - gitlab
+      - mcp-servers
+
+  mcp-victorops:
+    image: ghcr.io/cnoe-io/mcp-victorops:${IMAGE_TAG:-0.5.66}
+    container_name: mcp-victorops
+    restart: unless-stopped
+    env_file: [.env]
+    ports:
+      - "18012:8000"
+    environment:
+      MCP_MODE: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; s=socket.socket(); s.settimeout(2); raise SystemExit(s.connect_ex(('127.0.0.1', 8000)))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    profiles:
+      - victorops
+      - mcp-servers
+
+  # Browser-issued Keycloak tokens carry the public HTTPS issuer. Keep JWKS
+  # retrieval on the Docker network, but validate the issuer embedded in the
+  # token so AgentGateway and its OpenFGA authorization bridge agree.
+  agentgateway-config-bridge:
+    environment:
+      AGENTGATEWAY_JWT_ISSUER: https://caipe-oss.outshift.io/realms/caipe
+      AGENTGATEWAY_JWKS_URL: http://keycloak:7080/realms/caipe/protocol/openid-connect/certs
+
+  openfga-authz-bridge:
+    environment:
+      JWT_ISSUER: https://caipe-oss.outshift.io/realms/caipe
+
+  # Keep the Langfuse dashboard available for host-local diagnostics without
+  # competing with the CAIPE UI for the public port exposed by the base file.
+  langfuse-web:
+    ports: !override
+      - "127.0.0.1:3001:3000"
+
+  # The previous Kubernetes deployment used an in-cluster Ollama endpoint.
+  # Preserve that local-provider behavior in Compose instead of depending on
+  # the deleted *.svc.cluster.local DNS name.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  ollama-models:
+    image: ollama/ollama:latest
+    container_name: ollama-models
+    restart: "no"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - ollama pull qwen3:0.6b && ollama pull snowflake-arctic-embed2
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  rag-server:
+    environment:
+      EMBEDDINGS_PROVIDER: ollama
+      EMBEDDINGS_MODEL: snowflake-arctic-embed2
+      OLLAMA_BASE_URL: http://ollama:11434
+      OPENAI_BASE_URL: http://ollama:11434/v1
+      OPENAI_ENDPOINT: http://ollama:11434/v1
+    depends_on:
+      ollama-models:
+        condition: service_completed_successfully
+
+  keycloak-ui-client-config:
+    image: quay.io/keycloak/keycloak:26.3
+    container_name: caipe-oss-keycloak-ui-client-config
+    restart: "no"
+    entrypoint: ["/bin/sh", "/scripts/configure-keycloak-ui-client.sh"]
+    environment:
+      KEYCLOAK_URL: http://keycloak:7080
+      KEYCLOAK_REALM: caipe
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KEYCLOAK_UI_CLIENT_ID: caipe-ui
+      KEYCLOAK_UI_BASE_URL: https://caipe-oss.outshift.io
+    volumes:
+      - ./deploy/configure-keycloak-ui-client.sh:/scripts/configure-keycloak-ui-client.sh:ro
+    depends_on:
+      keycloak:
+        condition: service_healthy
+
+  caipe-nginx:
+    image: nginx:1.27-alpine
+    container_name: caipe-oss-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/caipe-oss-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - /home/ubuntu/certs:/etc/nginx/certs:ro
+    depends_on:
+      caipe-ui:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      keycloak-ui-client-config:
+        condition: service_completed_successfully
+
+  harness-engine:
+    build:
+      context: .
+      dockerfile: ai_platform_engineering/harness_engine/build/Dockerfile
+    image: caipe-harness-engine:${HARNESS_ENGINE_IMAGE_TAG:-preview}
+    container_name: harness-engine
+    restart: unless-stopped
+    # Operator profiles use /workspace as their SDK working directory. This is
+    # intentionally ephemeral until the sandbox lease abstraction is wired to
+    # isolated pods.
+    tmpfs:
+      - /workspace:rw,nosuid,nodev,mode=1777,size=512m
+    environment:
+      HARNESS_ENGINE_INTERNAL_TOKEN: ${HARNESS_ENGINE_INTERNAL_TOKEN:?set HARNESS_ENGINE_INTERNAL_TOKEN}
+      HARNESS_ENGINE_STORAGE_BACKEND: mongodb
+      HARNESS_ENGINE_MONGODB_URI: ${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/harness_engine?authSource=admin}
+      HARNESS_ENGINE_MONGODB_DATABASE: harness_engine
+      HARNESS_ENGINE_EVENT_RETENTION_SECONDS: ${HARNESS_ENGINE_EVENT_RETENTION_SECONDS:-86400}
+      HARNESS_ENGINE_AGENTCORE_RUNTIMES_JSON: ${HARNESS_ENGINE_AGENTCORE_RUNTIMES_JSON:-{}}
+      HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON: ${HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON:-{}}
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-}
+      # Preview hosts use their EC2 instance profile. Do not copy ambient
+      # developer credentials or an Anthropic key into this container: either
+      # would override the Bedrock credential provider chain used by Claude SDK.
+      CLAUDE_CODE_USE_BEDROCK: ${CLAUDE_CODE_USE_BEDROCK:-}
+    depends_on:
+      caipe-mongodb:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/healthz', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+
+  # Build only the UI from this branch because it contains the additive
+  # Harness Engine editor and BFF routes. Every unchanged service continues to
+  # use the published upstream image declared by docker-compose.yaml.
+  caipe-ui:
+    build:
+      context: .
+      dockerfile: build/Dockerfile.caipe-ui
+      target: runner
+      args:
+        IMAGE_TAG: ${HARNESS_ENGINE_IMAGE_TAG:-preview}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-}
+        CAIPE_UI_FAST_BUILD: ${CAIPE_UI_FAST_BUILD:-true}
+    image: caipe-ui-harness-preview:${HARNESS_ENGINE_IMAGE_TAG:-preview}
+    environment:
+      NEXTAUTH_URL: https://caipe-oss.outshift.io
+      OIDC_ISSUER: https://caipe-oss.outshift.io/realms/caipe
+      INTERNAL_BASE_URL: http://localhost:3000
+      APP_CONFIG_PATH: /app/config/app-config.yaml
+      HARNESS_ENGINE_URL: http://harness-engine:8010
+      HARNESS_ENGINE_INTERNAL_TOKEN: ${HARNESS_ENGINE_INTERNAL_TOKEN:?set HARNESS_ENGINE_INTERNAL_TOKEN}
+    volumes:
+      - ./config/app-config.caipe-oss.yaml:/app/config/app-config.yaml:ro
+    depends_on:
+      harness-engine:
+        condition: service_healthy
+
+  keycloak:
+    environment:
+      KC_HOSTNAME: https://caipe-oss.outshift.io
+      KC_PROXY_HEADERS: xforwarded
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+
+volumes:
+  ollama_data:

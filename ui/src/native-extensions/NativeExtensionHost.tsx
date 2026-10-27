@@ -1,0 +1,105 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
+import Link from "next/link";
+import { isSupportedNativeContractVersion } from "../../app-sdk/contract-version.mjs";
+
+import { HeaderBreadcrumbPortal } from "@/components/layout/HeaderBreadcrumbSlot";
+import { WorkspaceBreadcrumbs } from "@/components/layout/WorkspacePageHeader";
+import { createHostChatCapability } from "./host-chat";
+import { NativeExtensionAssistant } from "./NativeExtensionAssistant";
+import { installedNativeExtensions } from "./installed.generated";
+import { isSafeHostHref } from "./navigation";
+import type { NativeExtensionBreadcrumb } from "./types";
+
+export function NativeExtensionHost({
+  children,
+  extensionId,
+  slot = false,
+}: {
+  children?: React.ReactNode;
+  extensionId: string;
+  slot?: boolean;
+}): React.ReactElement {
+  const router = useRouter();
+  const { data: session, status } = useSession();
+  const identity = JSON.stringify([status, session?.sub, session?.user?.email, session?.org, session?.role]);
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const search = searchParams.toString();
+  const extension = useMemo(
+    () =>
+      installedNativeExtensions.find(
+        (candidate) => candidate.manifest.id === extensionId,
+      ),
+    [extensionId],
+  );
+  const chat = useMemo(() => createHostChatCapability(extensionId,
+    !slot && Boolean(extension?.manifest.assistant && extension.manifest.assistant.overlay !== "app"), extension?.manifest.assistant?.hostOptions), [extensionId, extension, slot]);
+  const [breadcrumbs, setBreadcrumbs] = useState<
+    NativeExtensionBreadcrumb[]
+  >(() =>
+    extension
+      ? [
+          { label: "Home", href: "/" },
+          {
+            label: extension.manifest.navigation?.label ?? extension.manifest.displayName,
+            href: extension.manifest.navigation?.href ?? extension.manifest.hostPaths[0],
+          },
+        ]
+      : [],
+  );
+  const navigate = useCallback(
+    (href: string) => {
+      if (isSafeHostHref(href)) router.push(href, { scroll: false });
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    if (typeof performance.mark === "function") {
+      performance.mark(`caipe-native-extension:${extensionId}:route-ready`);
+    }
+  }, [extensionId, pathname, search]);
+
+  if (
+    !extension ||
+    !isSupportedNativeContractVersion(extension.module.contractVersion) ||
+    extension.module.contractVersion !== extension.manifest.contractVersion
+  ) {
+    return (
+      <div className="p-6 text-sm text-destructive">
+        Native extension is not installed.
+      </div>
+    );
+  }
+
+  const Component = extension.module.Component;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto" data-native-extension={extensionId}>
+      {!slot && <HeaderBreadcrumbPortal>
+        <WorkspaceBreadcrumbs breadcrumbs={breadcrumbs} portal={false} />
+      </HeaderBreadcrumbPortal>}
+      {!slot && extension.manifest.assistant && extension.manifest.assistant.overlay !== "app" && (
+        <NativeExtensionAssistant
+          assistant={extension.manifest.assistant}
+          extensionId={extensionId}
+          pathname={pathname}
+          search={search}
+        />
+      )}
+      <Component key={identity}
+        apiBasePath={extension.manifest.api.basePath}
+        pathname={pathname}
+        search={search}
+        navigate={navigate}
+        Link={Link}
+        setBreadcrumbs={setBreadcrumbs}
+        chat={chat}
+      />
+      {children}
+    </div>
+  );
+}

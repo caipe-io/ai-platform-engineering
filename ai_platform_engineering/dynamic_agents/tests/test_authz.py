@@ -333,4 +333,27 @@ async def test_invalid_agent_id_returns_400_without_calling_cas(monkeypatch):
     finally:
         current_user_token.reset(token_ref)
     assert exc.value.status_code == 400
-    assert exc.value.detail["code"] == "invalid_agent_id"
+    assert exc.value.detail["code"] == "invalid_resource_id"
+
+
+@pytest.mark.asyncio
+async def test_org_manage_uses_canonical_cas_endpoint_and_caller_bearer(monkeypatch):
+    from dynamic_agents.auth import authz
+
+    monkeypatch.setenv("AUTHZ_SERVICE_URL", "https://cas.example.test")
+    monkeypatch.setenv("CAIPE_ORG_KEY", "example")
+    posts: list = []
+    monkeypatch.setattr(authz.httpx, "AsyncClient", _client(posts, _Resp(200, {"decision": "ALLOW"})))
+    bearer = _fake_jwt({"sub": "test-user"})
+    token_ref = current_user_token.set(bearer)
+    try:
+        await authz.require_org_admin_permission()
+    finally:
+        current_user_token.reset(token_ref)
+    assert posts[-1][0] == "https://cas.example.test/api/authz/v1/decisions"
+    assert posts[-1][1]["Authorization"] == f"Bearer {bearer}"
+    assert posts[-1][2] == {
+        "subject": {"type": "user", "id": "test-user"},
+        "resource": {"type": "organization", "id": "example"},
+        "action": "manage",
+    }

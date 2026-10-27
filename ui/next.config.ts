@@ -22,6 +22,12 @@ const nextConfig: NextConfig = {
   // HTTP security headers — applied to all responses
   headers: async () => [
     {
+      source: '/app-icons/:path*',
+      headers: [
+        { key: 'Content-Security-Policy', value: "default-src 'none'; style-src 'unsafe-inline'; sandbox" },
+      ],
+    },
+    {
       // External App responses arrive on their canonical /apps/* URLs after
       // an internal proxy rewrite. Keep every route outside that surface and
       // the private runtime gateway unframeable.

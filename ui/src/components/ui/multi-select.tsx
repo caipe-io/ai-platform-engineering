@@ -21,6 +21,11 @@ interface MultiSelectProps {
   badgeLabel?: string;
   className?: string;
   portalled?: boolean;
+  // When provided, `options` is assumed to already reflect the results for
+  // the current query (e.g. fetched server-side) and is used as-is instead
+  // of being filtered locally. The caller owns debouncing.
+  onSearchChange?: (query: string) => void;
+  searchLoading?: boolean;
 }
 
 export function MultiSelect({
@@ -36,6 +41,8 @@ export function MultiSelect({
   badgeLabel = "selected",
   className,
   portalled = true,
+  onSearchChange,
+  searchLoading = false,
 }: MultiSelectProps) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
@@ -47,8 +54,14 @@ export function MultiSelect({
     return () => window.clearTimeout(id);
   }, [open]);
 
+  React.useEffect(() => {
+    onSearchChange?.(search.trim());
+  }, [search, onSearchChange]);
+
   const normalizedSearch = search.trim().toLowerCase();
-  const filtered = normalizedSearch
+  const filtered = onSearchChange
+    ? options
+    : normalizedSearch
     ? options.filter((o) => formatOption(o).toLowerCase().includes(normalizedSearch))
     : options;
   const customOption = allowCustom && normalizedSearch &&
@@ -148,7 +161,9 @@ export function MultiSelect({
               Add &quot;{customOption}&quot;
             </button>
           )}
-          {filtered.length === 0 && !customOption ? (
+          {searchLoading && filtered.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-muted-foreground">Searching…</div>
+          ) : filtered.length === 0 && !customOption ? (
             <div className="px-3 py-2 text-xs text-muted-foreground">{emptyLabel}</div>
           ) : (
             filtered.map((option) => {

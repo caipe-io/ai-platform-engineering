@@ -14,7 +14,7 @@ export function buildAgenticAppRuntimePath(appId: string, path: string[] = []): 
 }
 
 export function resolveAgenticAppOrigin(app: ConfiguredAgenticApp): string | null {
-  return app.installation.runtimeOriginOverride ?? app.manifest.runtime.origin ?? null;
+  return app.installation.bindings?.runtimeOrigin ?? app.installation.runtimeOriginOverride ?? app.manifest.runtime?.origin ?? null;
 }
 
 export function buildAgenticAppTargetUrl(
@@ -27,9 +27,9 @@ export function buildAgenticAppTargetUrl(
   const target = new URL(origin);
   const encodedPath = path.map((part) => encodeURIComponent(part)).join("/");
   const suffix = encodedPath ? `/${encodedPath}` : "/";
-  if (app.manifest.runtime.preserveMountPath) {
+  if (app.manifest.runtime?.preserveMountPath) {
     const mountPath = (
-      app.installation.runtimeMountPath ?? app.manifest.runtime.mountPath
+      app.installation.runtimeMountPath ?? app.manifest.runtime?.mountPath ?? buildAgenticAppPublicPath(app.manifest.id)
     ).replace(/\/+$/, "");
     target.pathname = `${mountPath}${suffix}`;
   } else {
@@ -64,7 +64,7 @@ export function rewriteAgenticAppResponseLocation(
   if (resolved.origin !== target.origin) return resolved.toString();
 
   const mountPath = (
-    app.installation.runtimeMountPath ?? app.manifest.runtime.mountPath
+    app.installation.runtimeMountPath ?? app.manifest.runtime?.mountPath ?? buildAgenticAppPublicPath(app.manifest.id)
   ).replace(/\/+$/, "");
   let runtimePath = resolved.pathname;
   if (runtimePath === mountPath) {

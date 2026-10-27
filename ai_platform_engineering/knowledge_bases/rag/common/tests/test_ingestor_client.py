@@ -97,6 +97,20 @@ def test_unreachable_issuer_fallback_is_not_cached(
   assert client._fetch_discovery.await_count == 4
 
 
+def test_retrieve_secret_without_api_url_names_both_configuration_options(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  monkeypatch.delenv("CAIPE_API_URL", raising=False)
+  monkeypatch.delenv("CREDENTIAL_API_URL", raising=False)
+  client = Client("primary", "webloader")
+  client._get_access_token = AsyncMock()
+
+  with pytest.raises(RuntimeError, match=r"CAIPE_API_URL \(or CREDENTIAL_API_URL\)"):
+    asyncio.run(client.retrieve_secret("example-secret"))
+
+  client._get_access_token.assert_not_awaited()
+
+
 def test_resolve_auth_headers_rejects_a_non_https_url() -> None:
   """A configured header must never go out on a request the crawl itself
   makes over plain HTTP — that is the wire, not a redirect edge case."""

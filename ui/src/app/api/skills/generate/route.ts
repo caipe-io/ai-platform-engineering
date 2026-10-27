@@ -1,4 +1,4 @@
-import { authenticateRequest } from "@/lib/da-proxy";
+import { authenticateRequest, buildBackendHeaders } from "@/lib/da-proxy";
 import { resolveLlmModel } from "@/lib/server/platform-llm.server";
 import { getAiAssistTask } from "@/lib/server/ai-assist-tasks";
 import { fetchAssistantSuggest } from "@/lib/server/assistant-suggest-da";
@@ -67,10 +67,11 @@ export async function POST(request: NextRequest) {
         }
 
         const auth = await authenticateRequest(request);
-        const headers: Record<string, string> = {};
-        if (!(auth instanceof Response) && auth.userContextHeader) {
-          headers["X-User-Context"] = auth.userContextHeader;
+        if (auth instanceof Response) {
+          send("error", { message: "Authentication required" });
+          return;
         }
+        const headers = buildBackendHeaders("application/json", auth);
 
         const userMessage = task.buildUserMessage({
           instruction:

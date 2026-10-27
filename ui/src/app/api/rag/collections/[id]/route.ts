@@ -468,6 +468,7 @@ export const PATCH = withErrorHandler(
         publicationRequest = await createPublicationRequest({
           resource: publication.resource,
           resourceRevision: publication.resourceRevision,
+          revisionBasis: publication.resourceRevisionBasis,
           requestedState: {
             ...publication.requestedState,
             source_dependency_revisions: sourceDependencyRevisions,
@@ -483,6 +484,7 @@ export const PATCH = withErrorHandler(
         await recordAutoApprovedPublication({
           resource: publication.resource,
           resourceRevision: publication.resourceRevision,
+          revisionBasis: publication.resourceRevisionBasis,
           requestedState: publication.requestedState as unknown as Record<string, unknown>,
           effectiveState: publication.requestedState as unknown as Record<string, unknown>,
           riskFacts: publication.plan.risk_facts,

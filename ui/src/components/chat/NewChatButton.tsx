@@ -1,6 +1,7 @@
 "use client";
 
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
+import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
 import { Button } from "@/components/ui/button";
 import { Tooltip,TooltipContent,TooltipProvider,TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/components/ui/toast";
@@ -25,6 +26,7 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [defaultAgentId, setDefaultAgentId] = useState<string | null>(null);
   const [defaultAgentName, setDefaultAgentName] = useState<string>("New Chat");
+  const [defaultAgent, setDefaultAgent] = useState<DynamicAgentConfig | null>(null);
   const [defaultAgentResolved, setDefaultAgentResolved] = useState(false);
   const [userDefaultAgentId, setUserDefaultAgentId] = useState<string | null>(null);
   const [savingDefaultAgentId, setSavingDefaultAgentId] = useState<string | null>(null);
@@ -44,6 +46,20 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
         setDefaultAgentId(agent.id);
         setDefaultAgentName(agent.name);
         setUserDefaultAgentId(agent.source === "user-default" ? agent.id : null);
+        if (agent.id) {
+          try {
+            const agentResponse = await fetch(`/api/dynamic-agents/agents/${encodeURIComponent(agent.id)}`);
+            if (agentResponse.ok) {
+              const agentData = await agentResponse.json();
+              if (!cancelled && agentData.success && agentData.data?.name) {
+                setDefaultAgentName(agentData.data.name);
+                setDefaultAgent(agentData.data as DynamicAgentConfig);
+              }
+            }
+          } catch {
+            // Keep the generic label; the agent id still routes the chat correctly.
+          }
+        }
       } catch {
         if (!cancelled) {
           setDefaultAgentId(null);
@@ -80,7 +96,10 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
         // Update default agent display name now that we have the full list
         if (defaultAgentId) {
           const found = fetched.find((a) => a._id === defaultAgentId);
-          if (found) setDefaultAgentName(found.name);
+          if (found) {
+            setDefaultAgentName(found.name);
+            setDefaultAgent(found);
+          }
         }
       } catch (err) {
         console.error("Error fetching dynamic agents:", err);
@@ -151,6 +170,7 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
       setUserDefaultAgentId(agent._id);
       setDefaultAgentId(agent._id);
       setDefaultAgentName(agent.name);
+      setDefaultAgent(agent);
       toast(`${agent.name} is now your Web default agent.`, "success");
     } catch (reason) {
       toast(
@@ -179,15 +199,35 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
   // Collapsed mode: simple button without dropdown
   if (collapsed) {
     return (
-      <Button
-        onClick={handleMainClick}
-        disabled={!defaultAgentResolved}
-        className="w-full px-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 hover-glow"
-        variant="ghost"
-        size="icon"
-      >
-        <Plus className="h-4 w-4 shrink-0" />
-      </Button>
+      <TooltipProvider delayDuration={150}>
+        <Tooltip className="block w-full">
+          <TooltipTrigger asChild>
+            <Button
+              aria-label={`New chat with ${defaultAgentName}`}
+              onClick={handleMainClick}
+              disabled={!defaultAgentResolved}
+              className="w-full px-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 hover-glow"
+              variant="ghost"
+              size="icon"
+            >
+              <Plus className="h-4 w-4 shrink-0" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right" sideOffset={10} className="px-3 py-2">
+            <p className="font-semibold">New chat</p>
+            <div className="mt-1 flex items-center gap-2 text-[11px] font-normal text-muted-foreground">
+              <span>{defaultAgentName}</span>
+              {defaultAgent ? (
+                <AgentHarnessBadge
+                  harnessId={defaultAgent.execution_harness_id}
+                  presentation={defaultAgent.presentation}
+                  compact
+                />
+              ) : null}
+            </div>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     );
   }
 
@@ -207,7 +247,15 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
           size="default"
         >
           <Plus className="h-4 w-4 shrink-0" />
-          <span className="whitespace-nowrap">{defaultAgentName}</span>
+          <span className="min-w-0 truncate">{defaultAgentName}</span>
+          {defaultAgentId && defaultAgent && (
+            <AgentHarnessBadge
+              harnessId={defaultAgent.execution_harness_id}
+              presentation={defaultAgent.presentation}
+              compact
+              className="ml-auto"
+            />
+          )}
         </Button>
 
         {/* Dropdown trigger */}
@@ -323,7 +371,10 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
                     onClick={() => handleSelectAgent(agent._id)}
                     className="min-w-0 flex-1 px-1 py-1 text-left"
                   >
-                    <span className="block truncate font-medium">{agent.name}</span>
+                    <span className="flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate font-medium">{agent.name}</span>
+                      <AgentHarnessBadge harnessId={agent.execution_harness_id} presentation={agent.presentation} compact />
+                    </span>
                     {agent.description && (
                       <span className="block truncate text-xs text-muted-foreground">
                         {agent.description}

@@ -6,7 +6,8 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from threading import BoundedSemaphore, Event
+from typing import Any, Callable, TypeVar
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from pydantic import ValidationError
@@ -18,6 +19,7 @@ from ai_platform_engineering.audit_service.models import AuditEvent, IngestRespo
 from ai_platform_engineering.audit_service.query_store import CursorError, EventConflict, MongoAuditStore, query_scope
 from ai_platform_engineering.audit_service.storage import (
     AuditQuery,
+    AuditQueryCancelled,
     LocalAuditStore,
     S3AuditStore,
     S3RetentionError,
@@ -42,6 +44,52 @@ _WINDOWS: dict[str, timedelta] = {
 }
 _LOCAL_RETENTION_CLEANUP_INTERVAL_SECONDS = 60 * 60
 _logger = logging.getLogger(__name__)
+
+
+QueryValue = TypeVar("QueryValue")
+
+
+def _log_query_failure(task: asyncio.Task[Any]) -> None:
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None and not isinstance(error, AuditQueryCancelled):
+        _logger.warning("audit history scan failed", exc_info=error)
+
+
+async def _query_events(
+    request: Request, query: AuditQuery, read: Callable[[], QueryValue], timeout_seconds: float
+) -> QueryValue:
+    slots: BoundedSemaphore = request.app.state.audit_read_slots
+    if not slots.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail="audit read capacity exhausted; retry later")
+    cancel_event = query.cancel_event
+    assert cancel_event is not None
+
+    def scan() -> QueryValue:
+        try:
+            return read()
+        finally:
+            # Cancelling an asyncio waiter cannot stop its thread. Capacity is
+            # available only after the underlying storage scan actually exits.
+            slots.release()
+
+    task = asyncio.create_task(asyncio.to_thread(scan))
+    task.add_done_callback(_log_query_failure)
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=0.1)
+            if done:
+                return task.result()
+            if await request.is_disconnected():
+                raise HTTPException(status_code=499, detail="audit read client disconnected")
+            if asyncio.get_running_loop().time() >= deadline:
+                raise HTTPException(status_code=504, detail="audit read timed out; use a shorter time range")
+    except AuditQueryCancelled as exc:
+        raise HTTPException(status_code=499, detail="audit read cancelled") from exc
+    finally:
+        cancel_event.set()
 
 
 async def _purge_local_retention(store: LocalAuditStore, retention_days: int) -> None:
@@ -189,6 +237,7 @@ def create_app(settings: Settings | None = None, *, query_store: MongoAuditStore
             await queue_service.stop()
 
     app = FastAPI(title="CAIPE Audit Service", version="0.1.0", lifespan=lifespan)
+    app.state.audit_read_slots = BoundedSemaphore(settings.read_max_concurrent)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -345,17 +394,17 @@ def create_app(settings: Settings | None = None, *, query_store: MongoAuditStore
             agent_name=agent_name,
             tool_name=tool_name,
             user_email=user_email,
+            cancel_event=Event(),
         )
         scope = query_scope(
             {key: value for key, value in request.query_params.items() if key not in {"cursor", "limit"}}
         )
         try:
-            result = await asyncio.to_thread(
-                query_store.page,
+            result = await _query_events(
+                request,
                 audit_query,
-                cursor=cursor,
-                scope=scope,
-                max_days=current_settings.read_max_days,
+                lambda: query_store.page(audit_query, cursor=cursor, scope=scope, max_days=current_settings.read_max_days),
+                current_settings.read_timeout_seconds,
             )
         except CursorError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

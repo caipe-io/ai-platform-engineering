@@ -64,10 +64,8 @@ async def test_lifespan_always_closes_cache_and_database(
 ) -> None:
     # Import only after disabling deployment-specific startup dependencies.
     monkeypatch.setenv("DEBUG", "false")
-    from cnoe_agent_utils import tracing
-
     from dynamic_agents import main
-    from dynamic_agents.services import mcp_client, skill_scrubber
+    from dynamic_agents.services import mcp_client, skill_scrubber, tracing
 
     mongo = MagicMock(_client=object(), _db=None)
     cache = MagicMock(stop=AsyncMock())

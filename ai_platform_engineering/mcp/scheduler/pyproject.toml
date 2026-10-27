@@ -12,16 +12,16 @@ keywords = ["scheduler", "cron", "mcp"]
 requires-python = ">=3.14,<3.15"
 dependencies = [
     "click==8.5.0",
-    "mcp==1.29.1",
+    "mcp==1.30.0",
     "mcp-agent-auth",
     "pydantic==2.13.4",
     "httpx==0.28.1",
     "python-dotenv==1.2.2",
-    "fastmcp==3.4.7",
+    "fastmcp==3.4.10",
 ]
 
 [tool.uv]
-constraint-dependencies = ["uv==0.12.6"]
+constraint-dependencies = ["uv==0.13.4"]
 
 [dependency-groups]
 dev = [

@@ -31,6 +31,7 @@ import { useReleaseUpgradePrompt } from "@/hooks/use-release-upgrade-prompt";
 import { config } from "@/lib/config";
 import { pushWithNavigationProgress } from "@/lib/navigation-progress";
 import { cn } from "@/lib/utils";
+import { installedNativeExtensionManifests } from "@/native-extensions/manifests.generated";
 import { useUnsavedChangesStore } from "@/store/unsaved-changes-store";
 import {
 AlertTriangle,
@@ -70,6 +71,21 @@ function titleCaseRouteSegment(segment: string): string {
 export function getApplicationBreadcrumbs(
   pathname: string,
 ): WorkspaceBreadcrumbItem[] {
+  const nativeExtension = installedNativeExtensionManifests.find((manifest) =>
+    manifest.hostPaths.some(
+      (path) => pathname === path || pathname.startsWith(`${path}/`),
+    ),
+  );
+  if (nativeExtension) {
+    return [
+      { label: "Home", href: "/" },
+      {
+        label: nativeExtension.navigation?.label ?? nativeExtension.displayName,
+        href: nativeExtension.navigation?.href ?? nativeExtension.hostPaths[0],
+      },
+    ];
+  }
+
   const section = pathname.split("/").filter(Boolean)[0];
   if (!section) return [];
 

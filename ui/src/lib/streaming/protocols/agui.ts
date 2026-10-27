@@ -252,6 +252,11 @@ function handleCustom(
   const value = parsed.value as Record<string, unknown> | undefined;
 
   switch (name) {
+    case "TOOL_OUTPUT":
+      if (typeof value?.tool_call_id === "string" && typeof value.result === "string") {
+        callbacks.onToolOutput?.(value.tool_call_id, value.result, (value.namespace as string[]) || state.currentNamespace);
+      }
+      return false;
     case CUSTOM_NAMESPACE_CONTEXT:
       state.currentNamespace = (value?.namespace as string[]) || [];
       return false;

@@ -10,12 +10,12 @@ keywords = ["webex", "mcp", "llm", "automation"]
 requires-python = ">=3.14,<3.15"
 dependencies = [
     "click==8.5.0",
-    "mcp==1.29.1",
+    "mcp==1.30.0",
     "mcp-agent-auth", # gitleaks:allow - package name, not a credential
     "pydantic==2.13.4",
     "httpx==0.28.1",
     "python-dotenv==1.2.2",
-    "fastmcp==3.4.7",
+    "fastmcp==3.4.10",
 ]
 
 [tool.uv]

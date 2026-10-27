@@ -141,6 +141,12 @@ LOCAL_USER_PASSWORD="${LOCAL_USER_PASSWORD:-}"
 # --no-shared-postgres to fall back to the old ephemeral H2/in-memory stores.
 ENABLE_SHARED_POSTGRES="${ENABLE_SHARED_POSTGRES:-true}"
 SHARED_PG_SERVICE="caipe-postgres"
+# Shared Postgres serves Keycloak and OpenFGA together; the bitnami chart's
+# default resourcesPreset (192Mi) gets it OOM-killed under that load.
+SHARED_PG_CPU_REQUEST="${SHARED_PG_CPU_REQUEST:-100m}"
+SHARED_PG_MEMORY_REQUEST="${SHARED_PG_MEMORY_REQUEST:-256Mi}"
+SHARED_PG_CPU_LIMIT="${SHARED_PG_CPU_LIMIT:-1}"
+SHARED_PG_MEMORY_LIMIT="${SHARED_PG_MEMORY_LIMIT:-1Gi}"
 SHARED_PG_ADMIN_PASSWORD=""
 KEYCLOAK_DB_PASSWORD=""
 OPENFGA_DB_PASSWORD=""
@@ -218,6 +224,9 @@ AUTO_YES=false
 NON_INTERACTIVE=false
 CREATE_CLUSTER=false
 FORCE_UPGRADE=false
+APPLY_WORKSPACE_MIGRATIONS=false
+REPAIR_PENDING_INSTALL=false
+REPAIRED_PENDING_INSTALL=false
 INGEST_URLS=()
 # MetalLB: default ON. Required for real LoadBalancer IPs on kind clusters
 # and is a prerequisite for ingress. Set ENABLE_METALLB=false or pass
@@ -233,6 +242,16 @@ ENABLE_INGRESS="${ENABLE_INGRESS:-true}"
 # out-of-the-box on any laptop without /etc/hosts edits.
 CAIPE_DOMAIN_DEFAULT="${CAIPE_DOMAIN_DEFAULT:-caipe.localtest.me}"
 CAIPE_DOMAIN=""
+# Browser-facing URLs for the UI and Keycloak. Default: https://<domain>. Override
+# when CAIPE is reached through a proxy or port mapping rather than the ingress
+# (e.g. a cloud dev environment that forwards host ports to kind NodePorts).
+CAIPE_UI_URL="${CAIPE_UI_URL:-}"
+CAIPE_IDP_URL="${CAIPE_IDP_URL:-}"
+# Service exposure for the UI and Keycloak: "port-forward" (default) or
+# "nodeport" (fixed NodePorts, for kind clusters with extraPortMappings).
+CAIPE_EXPOSE="${CAIPE_EXPOSE:-port-forward}"
+UI_NODE_PORT="${UI_NODE_PORT:-30201}"
+IDP_NODE_PORT="${IDP_NODE_PORT:-30001}"
 TLS_CERT_FILE=""
 TLS_KEY_FILE=""
 TLS_SELF_SIGNED=false   # true when setup generates the cert (no --tls-cert)
@@ -320,6 +339,24 @@ err()     { echo -e "${RED}  ✗${NC} $*" >&2; }
 step()    { echo -e "\n${CYAN}${BOLD}━━━ $* ━━━${NC}"; }
 header()  { echo -e "\n${BLUE}${BOLD}$*${NC}"; }
 prompt()  { echo -en "${BOLD}  ▸ $*${NC}"; }
+
+# Public URLs (no trailing slash). The IdP URL is Keycloak's KC_HOSTNAME; the
+# realm issuer is "$(_idp_public_url)/realms/caipe".
+_ui_public_url()  { local u="${CAIPE_UI_URL:-https://${CAIPE_DOMAIN}}";  echo "${u%/}"; }
+_idp_public_url() { local u="${CAIPE_IDP_URL:-https://${CAIPE_DOMAIN}}"; echo "${u%/}"; }
+# True when Keycloak is not served from the ingress host, so server-side OIDC
+# calls must use the in-cluster service instead of the browser-facing URL.
+_idp_url_overridden() { [[ -n "${CAIPE_IDP_URL:-}" ]]; }
+# Where this script itself reaches the UI for health checks.
+_ui_check_url() {
+  if $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; then
+    echo "https://${CAIPE_DOMAIN}"
+  elif [[ "$CAIPE_EXPOSE" == nodeport ]]; then
+    _ui_public_url
+  else
+    echo "http://localhost:${UI_PORT}"
+  fi
+}
 
 # Interactive read wrapper — reads from /dev/tty (fd 3) so that
 # "curl | bash" keeps reading the script from stdin while prompts
@@ -3449,7 +3486,7 @@ provision_ui_secret() {
   # the correct values for a k8s deployment.
   if [[ -n "$CAIPE_DOMAIN" ]]; then
     local _patches=()
-    _patches+=("{\"op\":\"add\",\"path\":\"/data/NEXTAUTH_URL\",\"value\":\"$(echo -n "https://${CAIPE_DOMAIN}" | base64 -w0)\"}")
+    _patches+=("{\"op\":\"add\",\"path\":\"/data/NEXTAUTH_URL\",\"value\":\"$(echo -n "$(_ui_public_url)" | base64 -w0)\"}")
     # RAG BFF: Next.js server-side calls use the in-cluster service, not localhost
     _patches+=("{\"op\":\"add\",\"path\":\"/data/RAG_SERVER_URL\",\"value\":\"$(echo -n "http://rag-server:${RAG_SERVER_PORT}" | base64 -w0)\"}")
     # In-chart Keycloak SSO over a public DNS domain: the dev env file points
@@ -3460,16 +3497,16 @@ provision_ui_secret() {
     # Cisco-specific OIDC_REQUIRED_GROUP=backstage-access copied from the dev env
     # file so any authenticated Keycloak user is admitted (chart default = empty).
     if $ENABLE_RBAC_RUNTIME && [[ ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      _patches+=("{\"op\":\"add\",\"path\":\"/data/OIDC_ISSUER\",\"value\":\"$(echo -n "https://${CAIPE_DOMAIN}/realms/caipe" | base64 -w0)\"}")
+      _patches+=("{\"op\":\"add\",\"path\":\"/data/OIDC_ISSUER\",\"value\":\"$(echo -n "$(_idp_public_url)/realms/caipe" | base64 -w0)\"}")
       _patches+=("{\"op\":\"add\",\"path\":\"/data/OIDC_DISCOVERY_URL\",\"value\":\"$(echo -n "http://caipe-keycloak:8080/realms/caipe" | base64 -w0)\"}")
       _patches+=("{\"op\":\"add\",\"path\":\"/data/OIDC_REQUIRED_GROUP\",\"value\":\"$(echo -n "" | base64 -w0)\"}")
     fi
     kubectl patch secret caipe-ui-secret -n caipe --type='json' \
       -p="[$(IFS=,; echo "${_patches[*]}")]" 2>/dev/null || true
-    log "NEXTAUTH_URL overridden to https://${CAIPE_DOMAIN}"
+    log "NEXTAUTH_URL overridden to $(_ui_public_url)"
     log "RAG_SERVER_URL overridden to http://rag-server:${RAG_SERVER_PORT} (cluster service)"
     if $ENABLE_RBAC_RUNTIME && [[ ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      log "OIDC issuer -> https://${CAIPE_DOMAIN}/realms/caipe (discovery via in-cluster caipe-keycloak; group gate cleared)"
+      log "OIDC issuer -> $(_idp_public_url)/realms/caipe (discovery via in-cluster caipe-keycloak; group gate cleared)"
     fi
   fi
 
@@ -4545,7 +4582,7 @@ prompt_github_social() {
   [[ "$ENABLE_GITHUB_SOCIAL" == "false" ]] && return 0
   if [[ "$ENABLE_GITHUB_SOCIAL" != "true" ]]; then
     $NON_INTERACTIVE && return 0
-    local cb="https://${CAIPE_DOMAIN}/realms/caipe/broker/github/endpoint"
+    local cb="$(_idp_public_url)/realms/caipe/broker/github/endpoint"
     header "Optional: GitHub social login (public users)"
     echo -e "  ${DIM}Lets anyone with a GitHub account sign in, in addition to local Keycloak users.${NC}"
     echo -e "  ${DIM}Requires a DEDICATED GitHub OAuth App with this Authorization callback URL:${NC}"
@@ -4619,7 +4656,7 @@ JSON
   kill "$_pf" 2>/dev/null || true
   if [[ "$code" =~ ^20[0-9]$ ]]; then
     log "GitHub social login enabled (Keycloak 'github' broker)"
-    log "Verify the GitHub OAuth App callback URL is: https://${CAIPE_DOMAIN}/realms/caipe/broker/github/endpoint"
+    log "Verify the GitHub OAuth App callback URL is: $(_idp_public_url)/realms/caipe/broker/github/endpoint"
   else
     warn "GitHub social login: Keycloak IdP upsert returned HTTP ${code} (check client id/secret)"
   fi
@@ -4638,7 +4675,7 @@ provision_rag_ingestor_client() {
   # Keycloak service URL so the web-ingestor works on Kind without a domain.
   local issuer_base
   if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
-    issuer_base="https://${CAIPE_DOMAIN}"
+    issuer_base="$(_idp_public_url)"
   else
     issuer_base="http://caipe-keycloak.${CAIPE_NAMESPACE:-caipe}.svc.cluster.local:8080"
   fi
@@ -4813,7 +4850,7 @@ update_keycloak_client_urls() {
     return 0
   fi
 
-  local target_origin="https://${CAIPE_DOMAIN}"
+  local target_origin="$(_ui_public_url)"
   for client_id in caipe-ui caipe-platform; do
     local uuid
     uuid=$(curl -s -H "Authorization: Bearer $tok" \
@@ -5046,6 +5083,207 @@ JSON
   kill "$_pf" 2>/dev/null || true
 }
 
+# Recover the first-install state in an exclusively managed local kind cluster.
+# This is opt-in: process inspection only observes Helm clients on this host.
+repair_pending_install() {
+  local original current started process_names pods nodes check
+  if ! original=$(helm status caipe -n caipe -o json 2>/dev/null); then
+    return 0
+  fi
+  case "$(printf '%s' "$original" | jq -r '.info.status')" in
+    pending-install) ;;
+    pending-upgrade|pending-rollback)
+      err "An upgrade or rollback is pending. Inspect helm history caipe -n caipe before recovery."
+      return 1
+      ;;
+    *) return 0 ;;
+  esac
+  if [[ "$(printf '%s' "$original" | jq -r '.version')" != 1 ]]; then
+    err "Automatic pending-install repair requires the first release revision."
+    return 1
+  fi
+  nodes=$(kubectl get nodes -o json) || return 1
+  if ! printf '%s' "$nodes" | jq -e '(.items | length > 0) and all(.items[]; (.spec.providerID // "") | startswith("kind://"))' >/dev/null; then
+    err "Automatic pending-install repair requires an exclusively managed local kind cluster."
+    return 1
+  fi
+  started=$(printf '%s' "$original" | jq -r '.info.last_deployed')
+  if ! python3 - "$started" <<'REPAIR_INSTALL_AGE'
+import datetime
+import re
+import sys
+
+try:
+    raw = sys.argv[1].replace("Z", "+00:00")
+    # Python before 3.11 requires 3 or 6 fractional digits; Helm can emit 9.
+    raw = re.sub(r"(\.\d{1,6})\d*", lambda match: match.group(1).ljust(7, "0"), raw)
+    started = datetime.datetime.fromisoformat(raw)
+    age = (datetime.datetime.now(datetime.timezone.utc) - started).total_seconds()
+except (ValueError, TypeError):
+    sys.exit(1)
+sys.exit(0 if age >= 120 else 1)
+REPAIR_INSTALL_AGE
+  then
+    err "The pending install is too recent to repair, or its start time cannot be verified. Wait at least two minutes before retrying."
+    return 1
+  fi
+  step "Checking whether the pending first install can be recovered"
+  for check in 1 2; do
+    current=$(helm status caipe -n caipe -o json) || return 1
+    if [[ "$(printf '%s' "$current" | jq -r '.info.status')" == deployed ]]; then
+      return 0
+    fi
+    if ! printf '%s' "$current" | jq -e --arg started "$started" '.version == 1 and .info.status == "pending-install" and .info.last_deployed == $started' >/dev/null; then
+      err "The Helm release changed while checking recovery; retry after inspecting its status."
+      return 1
+    fi
+    process_names=$(ps -eo comm=) || { err "Cannot verify whether a Helm process is active."; return 1; }
+    if printf '%s\n' "$process_names" | awk '$1 ~ /(^|\/)helm$/ {found=1} END {exit !found}'; then
+      err "A Helm process is still running. Wait for it to finish before retrying preparation."
+      return 1
+    fi
+    pods=$(kubectl get pods -n caipe -o json) || return 1
+    if ! printf '%s' "$pods" | jq -e '(.items | length > 0) and all(.items[];
+      .metadata.deletionTimestamp == null and (.status.phase == "Succeeded" or
+        (.status.phase == "Running" and any(.status.conditions[]?; .type == "Ready" and .status == "True"))))' >/dev/null; then
+      err "Workloads are not healthy enough for automatic pending-install repair. Inspect kubectl get pods -n caipe."
+      return 1
+    fi
+    if [[ "$check" == 1 ]]; then
+      log "Workloads are healthy and no local Helm process is active; checking again in 15 seconds"
+      sleep 15
+    fi
+  done
+  log "Reapplying saved revision 1 to recover the interrupted first install"
+  helm rollback caipe 1 -n caipe --wait --timeout 10m || return 1
+  current=$(helm status caipe -n caipe -o json) || return 1
+  if ! printf '%s' "$current" | jq -e '.info.status == "deployed"' >/dev/null; then
+    err "Helm recovery did not report a deployed release."
+    return 1
+  fi
+  REPAIRED_PENDING_INSTALL=true
+  log "Pending first install recovered; continuing setup"
+}
+
+# Initialize local workspaces through the same authenticated API as the UI.
+# Fresh installs opt in automatically; existing deployments require the flag.
+initialize_workspace_migrations() {
+  if ! _local_admin_active; then
+    err "Automatic workspace migrations require the installer-managed local admin. Apply migrations from the admin UI for brokered identities."
+    return 1
+  fi
+  step "Initializing workspace migrations"
+  local script=""
+  IFS= read -r -d '' script <<'CAIPE_WORKSPACE_MIGRATIONS_JS' || [[ -n "$script" ]]
+const { randomBytes } = require("node:crypto");
+async function main() {
+  let input = "";
+  for await (const chunk of process.stdin) input += chunk;
+  const items = JSON.parse(input).items;
+  const field = (name, key) => {
+    const value = items?.find(item => item.metadata?.name === name)?.data?.[key];
+    if (!value) throw new Error(`Missing setup credential: ${name}/${key}`);
+    return Buffer.from(value, "base64").toString("utf8");
+  };
+  const kc = (process.env.KEYCLOAK_URL || "http://caipe-keycloak:8080").replace(/\/$/, "");
+  const realm = encodeURIComponent(process.env.KEYCLOAK_REALM || "caipe");
+  const ui = "http://127.0.0.1:3000/api/admin/rebac/migrations";
+  const token = async (realmName, values) => {
+    const r = await fetch(`${kc}/realms/${realmName}/protocol/openid-connect/token`, {
+      method: "POST", body: new URLSearchParams(values), signal: AbortSignal.timeout(30000),
+    });
+    if (!r.ok) throw new Error(`Keycloak authentication failed (HTTP ${r.status})`);
+    const body = await r.json();
+    if (!body.access_token) throw new Error("Keycloak returned no access token");
+    return body.access_token;
+  };
+  const masterToken = () => token("master", {
+    grant_type: "password", client_id: "admin-cli",
+    username: field("caipe-keycloak-admin", "username"),
+    password: field("caipe-keycloak-admin", "password"),
+  });
+  // A confidential, short-lived client gets the UI audience without changing
+  // existing clients, token validation, or the user's authorization.
+  const clientId = `caipe-setup-${randomBytes(12).toString("hex")}`;
+  const clientSecret = randomBytes(32).toString("hex");
+  let clientUuid, clientCreationAttempted = false;
+  try {
+    const admin = await masterToken();
+    clientCreationAttempted = true;
+    const created = await fetch(`${kc}/admin/realms/${realm}/clients`, {
+      method: "POST", signal: AbortSignal.timeout(30000),
+      headers: { Authorization: `Bearer ${admin}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId, secret: clientSecret, enabled: true, publicClient: false,
+        standardFlowEnabled: false, directAccessGrantsEnabled: true,
+        serviceAccountsEnabled: false, defaultClientScopes: ["profile", "email"],
+        attributes: { "access.token.lifespan": "600" },
+        protocolMappers: [{
+          name: "setup-ui-audience", protocol: "openid-connect", protocolMapper: "oidc-audience-mapper",
+          config: { "included.client.audience": process.env.OIDC_CLIENT_ID || "caipe-ui",
+            "access.token.claim": "true", "id.token.claim": "false" },
+        }],
+      }),
+    });
+    if (created.status !== 201) throw new Error(`Setup client creation failed (HTTP ${created.status})`);
+    clientUuid = created.headers.get("location")?.split("/").pop();
+    if (!clientUuid) throw new Error("Keycloak returned no setup client ID");
+    const accessToken = await token(realm, {
+      grant_type: "password", client_id: clientId, client_secret: clientSecret,
+      username: field("caipe-local-admin", "email"), password: field("caipe-local-admin", "password"),
+      scope: "openid email profile",
+    });
+    const api = async (path, body) => {
+      const r = await fetch(ui + path, {
+        method: body ? "POST" : "GET", signal: AbortSignal.timeout(300000),
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      if (!r.ok) throw new Error(`Workspace migration API failed (HTTP ${r.status})`);
+      const json = await r.json();
+      if (json.success !== true || !json.data) throw new Error("Invalid workspace migration response");
+      return json.data;
+    };
+    const result = await api("/apply-all", { confirmation: "APPLY ALL PENDING MIGRATIONS" });
+    if (result.failed_count !== 0 || !Array.isArray(result.results)) {
+      throw new Error("Workspace migrations did not all succeed; inspect Access Operations before continuing");
+    }
+    const state = await api("");
+    if (!Array.isArray(state.migrations) || !Array.isArray(state.schema_versions)) {
+      throw new Error("Invalid workspace migration verification response");
+    }
+    const pending = state.migrations.filter(m => m.required && m.status !== "completed");
+    const unversioned = state.schema_versions.filter(s => s.current_version === null && s.target_version !== null);
+    if (pending.length || unversioned.length) throw new Error("Workspace migration verification still requires attention");
+    console.log(`Workspace migrations: ${result.applied_count} applied; no required updates or version initialization pending`);
+  } finally {
+    if (clientCreationAttempted) {
+      const admin = await masterToken();
+      if (!clientUuid) {
+        const lookup = await fetch(`${kc}/admin/realms/${realm}/clients?clientId=${encodeURIComponent(clientId)}`, {
+          headers: { Authorization: `Bearer ${admin}` }, signal: AbortSignal.timeout(30000),
+        });
+        if (!lookup.ok) throw new Error(`Setup client cleanup lookup failed (HTTP ${lookup.status})`);
+        clientUuid = (await lookup.json()).find(client => client.clientId === clientId)?.id;
+      }
+      if (clientUuid) {
+        const removed = await fetch(`${kc}/admin/realms/${realm}/clients/${encodeURIComponent(clientUuid)}`, {
+          method: "DELETE", headers: { Authorization: `Bearer ${admin}` }, signal: AbortSignal.timeout(30000),
+        });
+        if (!removed.ok) throw new Error(`Setup client cleanup failed (HTTP ${removed.status})`);
+      }
+    }
+  }
+}
+main().catch(error => { console.error(error.message); process.exitCode = 1; });
+CAIPE_WORKSPACE_MIGRATIONS_JS
+  if ! kubectl get secrets caipe-local-admin caipe-keycloak-admin -n caipe -o json \
+    | kubectl exec -i deployment/caipe-caipe-ui -n caipe -- node -e "$script"; then
+    err "Workspace initialization failed. Resolve the error before using CAIPE; retry setup with --apply-migrations."
+    return 1
+  fi
+}
+
 _patch_rag_server_envfrom() {
   # The rag-stack subchart template builds envFrom from a hardcoded llm-secret
   # reference; it does not expose envFrom as a values key that propagates from
@@ -5197,7 +5435,7 @@ deploy_shared_postgres() {
   # initdb bootstrap: create a login role + owned database per consumer. Only
   # runs when the PVC is empty (first install); harmless to define on re-runs.
   local initdb_file
-  initdb_file=$(mktemp /tmp/caipe-pg-initdb-XXXXXX.sql)
+  initdb_file=$(mktemp "${TMPDIR:-/tmp}/caipe-pg-initdb-XXXXXX")
   cat > "$initdb_file" <<PGINIT
 CREATE ROLE keycloak WITH LOGIN PASSWORD '${KEYCLOAK_DB_PASSWORD}';
 CREATE DATABASE keycloak OWNER keycloak;
@@ -5220,6 +5458,10 @@ PGINIT
     --set architecture=standalone \
     --set "auth.postgresPassword=${SHARED_PG_ADMIN_PASSWORD}" \
     --set primary.persistence.size=4Gi \
+    --set "primary.resources.requests.cpu=${SHARED_PG_CPU_REQUEST}" \
+    --set "primary.resources.requests.memory=${SHARED_PG_MEMORY_REQUEST}" \
+    --set "primary.resources.limits.cpu=${SHARED_PG_CPU_LIMIT}" \
+    --set "primary.resources.limits.memory=${SHARED_PG_MEMORY_LIMIT}" \
     --set-file "primary.initdb.scripts.caipe-init\.sql=${initdb_file}" \
     --timeout 5m 2>&1 | while IFS= read -r line; do log "$line"; done; then
     rm -f "$initdb_file"
@@ -6067,13 +6309,15 @@ _write_rbac_runtime_values() {
   # get back plain-HTTP token/JWKS endpoints, so the self-signed cert never
   # enters back-channel flows.
   local _kc_backchannel=""
-  [[ "${TLS_SELF_SIGNED:-false}" == true ]] && _kc_backchannel=$'\n    KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"'
+  if [[ "${TLS_SELF_SIGNED:-false}" == true ]] || _idp_url_overridden; then
+    _kc_backchannel=$'\n    KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"'
+  fi
 
   local _kc_public_yaml=""
   if [[ -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     _kc_public_yaml=$(cat <<KCPUB
   env:
-    KC_HOSTNAME: "https://${CAIPE_DOMAIN}"
+    KC_HOSTNAME: "$(_idp_public_url)"
     KC_PROXY_HEADERS: "xforwarded"${_kc_backchannel}
   ingress:
     enabled: true
@@ -6091,10 +6335,10 @@ _write_rbac_runtime_values() {
           - "${CAIPE_DOMAIN}"
   uiClient:
     redirectUris:
-      - "https://${CAIPE_DOMAIN}/*"
+      - "$(_ui_public_url)/*"
       - "http://localhost:3000/*"
     webOrigins:
-      - "https://${CAIPE_DOMAIN}"
+      - "$(_ui_public_url)"
 KCPUB
 )
   fi
@@ -6192,7 +6436,7 @@ RBACEOF
     # (KC_HOSTNAME above), so the authz-bridge must validate against that —
     # not the localhost:7080 default copied from the dev env file.
     if [[ -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      oidc_issuer="https://${CAIPE_DOMAIN}/realms/caipe"
+      oidc_issuer="$(_idp_public_url)/realms/caipe"
     fi
     if [[ -n "$oidc_issuer" ]]; then
       cat >> "$values_file" <<RBACEOF
@@ -6397,10 +6641,13 @@ deploy_caipe() {
   if $ENABLE_RBAC_RUNTIME && [[ -z "$UI_ENV_FILE" \
       && -n "$CAIPE_DOMAIN" && ! "$CAIPE_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     helm_args+=(
-      --set "caipe-ui.config.NEXTAUTH_URL=https://${CAIPE_DOMAIN}"
-      --set "caipe-ui.config.OIDC_ISSUER=https://${CAIPE_DOMAIN}/realms/caipe"
-      --set "openfga-authz-bridge.tokenValidation.issuer=https://${CAIPE_DOMAIN}/realms/caipe"
+      --set "caipe-ui.config.NEXTAUTH_URL=$(_ui_public_url)"
+      --set "caipe-ui.config.OIDC_ISSUER=$(_idp_public_url)/realms/caipe"
+      --set "openfga-authz-bridge.tokenValidation.issuer=$(_idp_public_url)/realms/caipe"
     )
+    if _idp_url_overridden; then
+      helm_args+=(--set "caipe-ui.config.OIDC_DISCOVERY_URL=http://caipe-keycloak:8080/realms/caipe")
+    fi
     if _local_admin_active; then
       helm_args+=(--set "caipe-ui.config.BOOTSTRAP_ADMIN_EMAILS=${LOCAL_ADMIN_EMAIL}")
     fi
@@ -6446,11 +6693,11 @@ deploy_caipe() {
       da_oidc_admin_group=$(_env_get "$UI_ENV_FILE" "OIDC_REQUIRED_ADMIN_GROUP")
     fi
     # Fallback: derive issuer from CAIPE_DOMAIN when the env file doesn't have it.
-    # Keycloak sets KC_HOSTNAME=https://${CAIPE_DOMAIN} so tokens carry that as iss.
+    # Keycloak sets KC_HOSTNAME to the IdP URL (default https://<domain>), so tokens carry that as iss.
     # dynamic-agents must use the same issuer string; without it tokens fail validation
     # with "Invalid issuer" (internal http://keycloak:8080 vs external https://domain).
     if [[ -z "$da_oidc_issuer" && -n "${CAIPE_DOMAIN:-}" ]]; then
-      da_oidc_issuer="https://${CAIPE_DOMAIN}/realms/caipe"
+      da_oidc_issuer="$(_idp_public_url)/realms/caipe"
     fi
     if [[ -z "$da_oidc_client_id" ]]; then
       da_oidc_client_id="caipe-platform"
@@ -6486,7 +6733,7 @@ DAEOF
     AUTH_ENABLED: "true"
     OIDC_ISSUER: "${da_oidc_issuer}"
     OIDC_CLIENT_ID: "${da_oidc_client_id}"
-    CORS_ORIGINS: '["https://${CAIPE_DOMAIN}", "http://localhost:3000"]'
+    CORS_ORIGINS: '["$(_ui_public_url)", "http://localhost:3000"]'
 DAEOF
       # Pass OIDC_REQUIRED_ADMIN_GROUP to dynamic-agents so it matches the UI's
       # admin group. When unset, it falls back to generic pattern matching
@@ -6657,7 +6904,7 @@ DAEOF
   # over envFrom-secret for same-named keys, so values like NEXTAUTH_URL,
   # OIDC groups, branding, and feature flags must be set here, not just in the secret.
   if [[ -n "$CAIPE_DOMAIN" && -n "$UI_ENV_FILE" ]]; then
-    helm_args+=(--set "caipe-ui.config.NEXTAUTH_URL=https://${CAIPE_DOMAIN}")
+    helm_args+=(--set "caipe-ui.config.NEXTAUTH_URL=$(_ui_public_url)")
     local _config_keys=(
       OIDC_REQUIRED_GROUP OIDC_REQUIRED_ADMIN_GROUP OIDC_ENABLE_REFRESH_TOKEN
       WORKFLOW_RUNNER_ENABLED AUDIT_LOGS_ENABLED FEEDBACK_ENABLED NPS_ENABLED
@@ -6694,7 +6941,7 @@ DAEOF
     # Wire UI OIDC provider into rag-server so user tokens are validated.
     if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
       helm_args+=(
-        --set "rag-stack.rag-server.env.OIDC_ISSUER=https://${CAIPE_DOMAIN}/realms/caipe"
+        --set "rag-stack.rag-server.env.OIDC_ISSUER=$(_idp_public_url)/realms/caipe"
         --set 'rag-stack.rag-server.env.OIDC_CLIENT_ID=caipe-ui'
         --set 'rag-stack.rag-server.env.OIDC_GROUP_CLAIM=members\,groups'
       )
@@ -6766,10 +7013,14 @@ DAEOF
       )
       log "RAG stack enabled, vector-only (embeddings: ${EMBEDDINGS_PROVIDER}/${EMBEDDINGS_MODEL})"
     fi
+  else
+    # The UI treats an unset RAG_ENABLED as on and shows Knowledge Bases
+    # backed by a rag-server that was never deployed.
+    helm_args+=(--set caipe-ui.config.RAG_ENABLED=false)
   fi
 
   if $ENABLE_TRACING; then
-    # dynamic-agents uses cnoe-agent-utils TracingManager, which reads
+    # dynamic-agents uses its own TracingManager, which reads
     # ENABLE_TRACING + the LANGFUSE_* creds from its config. Langfuse public/
     # secret keys are wired separately (langfuse secret); here we flip the
     # flag and point at the in-cluster Langfuse host.
@@ -6933,7 +7184,7 @@ check_http() {
   local url="$1" label="$2"
   local code
   code=$(curl -s -o /dev/null -w "%{http_code}" "$url" --max-time 5 2>/dev/null || echo "000")
-  if [[ "$code" =~ ^(200|301|302|405)$ ]]; then
+  if [[ "$code" =~ ^(200|301|302|307|308|405)$ ]]; then
     print_result "$(date '+%H:%M:%S') ✓ ${label} reachable (HTTP ${code})"
     return 0
   else
@@ -6994,15 +7245,11 @@ run_validation() {
   # ── HTTP endpoints ──
   # When ingress is enabled the UI has no local port-forward; check via ingress.
   local _ui_url
-  if $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; then
-    _ui_url="https://${CAIPE_DOMAIN}"
-  else
-    _ui_url="http://localhost:${UI_PORT}"
-  fi
+  _ui_url=$(_ui_check_url)
   if $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; then
     local _ui_code
     _ui_code=$(curl -sk -o /dev/null -w "%{http_code}" "${_ui_url}/" --max-time 10 2>/dev/null || echo "000")
-    if [[ "$_ui_code" =~ ^(200|301|302|405)$ ]]; then
+    if [[ "$_ui_code" =~ ^(200|301|302|307|308|405)$ ]]; then
       print_result "$(date '+%H:%M:%S') ✓ CAIPE UI reachable via ingress (HTTP ${_ui_code})"
       pass=$((pass + 1))
     else
@@ -7182,13 +7429,8 @@ run_sanity_tests() {
 
   # ── Test 3: CAIPE UI serves HTML ──
   local ui_content_type _t3_url
-  if $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; then
-    _t3_url="https://${CAIPE_DOMAIN}/"
-    ui_content_type=$(curl -sk -o /dev/null -w "%{content_type}" "${_t3_url}" --max-time 10 2>/dev/null || echo "")
-  else
-    _t3_url="http://localhost:${UI_PORT}/"
-    ui_content_type=$(curl -sf -o /dev/null -w "%{content_type}" "${_t3_url}" --max-time 5 2>/dev/null || echo "")
-  fi
+  _t3_url="$(_ui_check_url)/"
+  ui_content_type=$(curl -sk -o /dev/null -w "%{content_type}" "${_t3_url}" --max-time 10 2>/dev/null || echo "")
   if echo "$ui_content_type" | grep -qi "text/html"; then
     print_result "$(date '+%H:%M:%S') ✓ [T3] CAIPE UI serves HTML content"
     pass=$((pass + 1))
@@ -7665,6 +7907,48 @@ restart_pf() {
   fi
 }
 
+# Expose the UI and Keycloak on fixed NodePorts (--expose=nodeport). Unlike
+# port-forwards these survive the script exiting.
+expose_nodeports() {
+  [[ "$CAIPE_EXPOSE" == nodeport ]] || return 0
+  step "Exposing CAIPE UI and Keycloak on NodePorts"
+  kubectl apply -f - <<NPEOF | while IFS= read -r line; do log "$line"; done
+apiVersion: v1
+kind: Service
+metadata:
+  name: caipe-ui-nodeport
+  namespace: caipe
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/instance: caipe
+    app.kubernetes.io/name: caipe-ui
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      nodePort: ${UI_NODE_PORT}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: caipe-keycloak-nodeport
+  namespace: caipe
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/instance: caipe
+    app.kubernetes.io/name: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      nodePort: ${IDP_NODE_PORT}
+NPEOF
+  log "CAIPE UI -> NodePort ${UI_NODE_PORT} ($(_ui_public_url))"
+  log "Keycloak -> NodePort ${IDP_NODE_PORT} ($(_idp_public_url))"
+}
+
 monitor_port_forwards() {
   step "Port-forwarding services"
 
@@ -7678,7 +7962,7 @@ monitor_port_forwards() {
   start_pf caipe-dynamic-agents caipe "$DYNAMIC_AGENTS_PORT" 8001 "Dynamic agents"
   # When ingress is enabled the UI is served via nginx-ingress at the domain —
   # no local port-forward needed.
-  if ! $ENABLE_INGRESS; then
+  if ! $ENABLE_INGRESS && [[ "$CAIPE_EXPOSE" != nodeport ]]; then
     start_pf caipe-caipe-ui caipe "$UI_PORT" 3000 "CAIPE UI"
   fi
 
@@ -7695,7 +7979,7 @@ monitor_port_forwards() {
   fi
 
   if $ENABLE_RBAC_RUNTIME; then
-    start_pf caipe-keycloak caipe "$KEYCLOAK_PORT" 8080 "Keycloak"
+    [[ "$CAIPE_EXPOSE" == nodeport ]] || start_pf caipe-keycloak caipe "$KEYCLOAK_PORT" 8080 "Keycloak"
     start_pf caipe-openfga caipe "$OPENFGA_PORT" 8080 "OpenFGA"
   fi
 
@@ -7704,11 +7988,7 @@ monitor_port_forwards() {
   while [[ $pf_wait -lt 15 ]]; do
     local all_up=true
     curl -sf -o /dev/null --max-time 2 "http://localhost:${DYNAMIC_AGENTS_PORT}/health" 2>/dev/null || all_up=false
-    if ! $ENABLE_INGRESS; then
-      curl -sf -o /dev/null --max-time 2 "http://localhost:${UI_PORT}/" 2>/dev/null || all_up=false
-    else
-      curl -sfk -o /dev/null --max-time 5 "https://${CAIPE_DOMAIN}/" 2>/dev/null || all_up=false
-    fi
+    curl -sfk -o /dev/null --max-time 5 "$(_ui_check_url)/" 2>/dev/null || all_up=false
     if $ENABLE_TRACING; then
       curl -sf -o /dev/null --max-time 2 "http://localhost:${LANGFUSE_PORT}/api/public/health" 2>/dev/null || all_up=false
     fi
@@ -7757,11 +8037,7 @@ monitor_port_forwards() {
   header "Services Ready"
   echo ""
   echo -e "  ${BOLD}Endpoints:${NC}"
-  if $ENABLE_INGRESS && [[ -n "$CAIPE_DOMAIN" ]]; then
-    echo -e "    CAIPE UI        ${CYAN}https://${CAIPE_DOMAIN}${NC}"
-  else
-    echo -e "    CAIPE UI        ${CYAN}http://localhost:${UI_PORT}${NC}"
-  fi
+  echo -e "    CAIPE UI        ${CYAN}$(_ui_check_url)${NC}"
   echo -e "    Dynamic agents  ${CYAN}http://localhost:${DYNAMIC_AGENTS_PORT}${NC}"
   if $ENABLE_RAG; then
     if $ENABLE_INGRESS && [[ -n "$CAIPE_DOMAIN" ]]; then
@@ -8735,14 +9011,19 @@ BANNER
   _load_caipe_config
   choose_cluster
 
+  if $REPAIR_PENDING_INSTALL; then repair_pending_install; fi
+
   # If saved config was loaded but context needed interactive cluster selection,
   # now that the cluster is set activate non-interactive for the remaining steps.
   $_SAVED_CONFIG_ACCEPTED && NON_INTERACTIVE=true
+
+  local fresh_install=true
 
   # ── Fast re-run detection ──
   # If CAIPE is already deployed, offer the user a shortcut instead of
   # running the full setup flow again.
   if helm status caipe -n caipe &>/dev/null; then
+    fresh_install=false
     local deployed_version
     deployed_version=$(helm get metadata caipe -n caipe -o json 2>/dev/null \
       | jq -r '.version // empty' 2>/dev/null || echo "unknown")
@@ -8781,6 +9062,9 @@ BANNER
         log "Skipping to monitor mode"
         detect_deployed_features
         ensure_healthy
+        if $APPLY_WORKSPACE_MIGRATIONS || { $REPAIRED_PENDING_INSTALL && _local_admin_active; }; then
+          initialize_workspace_migrations
+        fi
         monitor_port_forwards
         return
         ;;
@@ -8978,6 +9262,7 @@ BANNER
 
   deploy_caipe
   post_deploy_patches
+  expose_nodeports
 
   # The legacy AgentGateway controller path runs after CAIPE so MCP services exist
   # for auto-discovery. The RBAC runtime path installs the standalone proxy as
@@ -8991,6 +9276,9 @@ BANNER
   fi
 
   ensure_healthy
+  if $APPLY_WORKSPACE_MIGRATIONS || { { $fresh_install || $REPAIRED_PENDING_INSTALL; } && _local_admin_active; }; then
+    initialize_workspace_migrations
+  fi
   monitor_port_forwards
 }
 
@@ -9159,6 +9447,15 @@ Options:
   --no-ingress       Skip nginx-ingress
   --domain=HOST      Hostname for the UI ingress (e.g. my-caipe.example.com)
                      Default when ingress is enabled and --domain is omitted: ${CAIPE_DOMAIN_DEFAULT}
+  --ui-url=URL       Browser-facing UI URL (default: https://<domain>). Use when CAIPE
+                     is reached through a proxy or port mapping instead of the ingress.
+  --idp-url=URL      Browser-facing Keycloak URL (default: https://<domain>). Pods still
+                     reach Keycloak in-cluster for discovery, tokens and JWKS.
+  --expose=MODE      How the UI and Keycloak are reached: port-forward (default) or
+                     nodeport (fixed NodePorts that outlive this script; for kind
+                     clusters with extraPortMappings)
+  --ui-node-port=N   UI NodePort with --expose=nodeport (default: 30201)
+  --idp-node-port=N  Keycloak NodePort with --expose=nodeport (default: 30001)
   --tls-cert=FILE    Path to TLS certificate PEM file (default: auto-generate self-signed)
   --tls-key=FILE     Path to TLS private key PEM file (paired with --tls-cert)
   --github-social    Enable GitHub social login (Keycloak broker) for public users.
@@ -9200,6 +9497,9 @@ Options:
                      broken PVCs, missing secrets, RAG misconfig (every 30s)
   --upgrade          Skip to upgrade path when CAIPE is already deployed
                      (re-collect credentials + re-deploy; skips interactive menu)
+  --apply-migrations Apply workspace migrations using the local admin (also on re-runs)
+  --repair-pending-install
+                     Recover an abandoned first install on an exclusively managed kind cluster
   --no-auto-heal     Disable the auto-heal loop
   --yes, -y          Auto-confirm cleanup prompts (requires typing 'yes')
   -h, --help         Show this help message
@@ -9214,7 +9514,7 @@ Re-run behavior:
 Environment variables (all optional):
   LLM_PROVIDER            LLM provider: anthropic-claude (default) | aws-bedrock | openai
   OPENAI_API_KEY          Pre-set OpenAI API key (skips prompt)
-  OPENAI_MODEL_NAME       OpenAI model (default: gpt-5.2; used by LLMFactory)
+  OPENAI_MODEL_NAME       OpenAI model (default: gpt-5.2; used by llm_wrapper)
   ANTHROPIC_API_KEY       Pre-set Anthropic API key (skips prompt)
   ANTHROPIC_MODEL_NAME    Anthropic model (default: claude-haiku-4-5)
   AWS_ACCESS_KEY_ID       AWS access key for Bedrock
@@ -9355,6 +9655,11 @@ for arg in "$@"; do
     --ingress)         ENABLE_INGRESS=true; ENABLE_METALLB=true ;;
     --no-ingress)      ENABLE_INGRESS=false ;;
     --domain=*)        CAIPE_DOMAIN="${arg#--domain=}" ;;
+    --ui-url=*)        CAIPE_UI_URL="${arg#--ui-url=}" ;;
+    --idp-url=*)       CAIPE_IDP_URL="${arg#--idp-url=}" ;;
+    --expose=*)        CAIPE_EXPOSE="${arg#--expose=}" ;;
+    --ui-node-port=*)  UI_NODE_PORT="${arg#--ui-node-port=}" ;;
+    --idp-node-port=*) IDP_NODE_PORT="${arg#--idp-node-port=}" ;;
     --github-social)            ENABLE_GITHUB_SOCIAL=true ;;
     --no-github-social)         ENABLE_GITHUB_SOCIAL=false ;;
     --github-social-id=*)       GITHUB_SOCIAL_CLIENT_ID="${arg#--github-social-id=}" ;;
@@ -9378,6 +9683,8 @@ for arg in "$@"; do
     --webex-bot)       ENABLE_WEBEX_BOT=true;  _WEBEX_BOT_FORCED=on ;;
     --no-webex-bot)    ENABLE_WEBEX_BOT=false; _WEBEX_BOT_FORCED=off ;;
     --upgrade)         FORCE_UPGRADE=true ;;
+    --apply-migrations) APPLY_WORKSPACE_MIGRATIONS=true ;;
+    --repair-pending-install) REPAIR_PENDING_INSTALL=true ;;
     --auto-heal)       AUTOHEAL_ENABLED=true ;;
     --no-auto-heal)    AUTOHEAL_ENABLED=false ;;
     --ingest-url=*)    INGEST_URLS+=("${arg#--ingest-url=}") ;;
@@ -9393,6 +9700,10 @@ if $USE_DOCKER_COMPOSE; then
   args=(docker-compose)
 fi
 
+case "$CAIPE_EXPOSE" in
+  port-forward|nodeport) ;;
+  *) err "--expose must be port-forward or nodeport (got '${CAIPE_EXPOSE}')"; exit 1 ;;
+esac
 $ENABLE_RBAC_RUNTIME && ENABLE_AGENTGATEWAY=true
 $ENABLE_GRAPH_RAG && ENABLE_RAG=true
 [[ ${#INGEST_URLS[@]} -gt 0 ]] && ENABLE_RAG=true

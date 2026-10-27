@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 🔒 harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
           egress-policy: audit
       - name: Checkout
@@ -36,9 +36,9 @@ jobs:
           # release tags at build time (scripts/generate-versioned-docs.js).
           fetch-depth: 0
       - name: Install Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
-          node-version: 'lts/*'  # Use the latest LTS version of Node.js
+          node-version: '24.22.1'
       - name: Install helm-docs
         env:
           HELM_DOCS_VERSION: "1.14.2"

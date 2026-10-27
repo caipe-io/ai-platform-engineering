@@ -693,6 +693,8 @@ export function SkillsGallery({
     setDeletingId(config.id);
     try {
       await deleteSkill(config.id);
+      // The catalog feed projects Mongo skills too; without a refetch its copy of the deleted skill takes the card's place.
+      await reloadCatalog();
       setDeleteTarget(null);
     } catch (error) {
       console.error("Failed to delete config:", error);

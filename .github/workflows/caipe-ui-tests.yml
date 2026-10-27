@@ -1,10 +1,11 @@
 name: "[CI] CAIPE UI Tests"
-description: "Run CAIPE UI Jest tests and mocked RBAC Playwright regression on pull requests"
+# description: "Run CAIPE UI Jest tests and mocked RBAC Playwright regression on pull requests"
 
 on:
   pull_request:
     paths:
       - 'ui/**'
+      - 'scripts/npm/**'
       - '!ui/README.md'
       - '!ui/**/*.md'
   push:
@@ -12,6 +13,7 @@ on:
       - main
     paths:
       - 'ui/**'
+      - 'scripts/npm/**'
       - '!ui/README.md'
       - '!ui/**/*.md'
   workflow_dispatch:
@@ -27,28 +29,44 @@ jobs:
   test:
     if: github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]'
     runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 5s --health-timeout 5s --health-retries 12
     permissions:
       contents: read
       pull-requests: write
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
           egress-policy: audit
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
-          node-version: '24'
+          node-version: '24.22.1'
           cache: 'npm'
           cache-dependency-path: ui/package-lock.json
 
       - name: Install dependencies
         working-directory: ui
         run: npm ci
+
+      - name: Test npm security backports
+        working-directory: ui
+        run: node --test ../scripts/npm/*.test.mjs
+
+      - name: Test App SDK packed artifact and contracts
+        working-directory: ui
+        run: node --test scripts/__tests__/*.test.mjs
 
       - name: Test External App examples
         working-directory: ui
@@ -58,6 +76,8 @@ jobs:
         id: jest
         working-directory: ui
         continue-on-error: true
+        env:
+          AUTH_TOKEN_STORE_TEST_MONGODB_URI: mongodb://127.0.0.1:27017
         run: npm test -- --coverage --coverageReporters=text --coverageReporters=json-summary --forceExit
 
       - name: Set test results
@@ -285,7 +305,7 @@ jobs:
 
       - name: Upload coverage artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage-report
           path: ui/coverage/
@@ -318,7 +338,7 @@ jobs:
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
           egress-policy: audit
 
@@ -326,9 +346,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
-          node-version: '24'
+          node-version: '24.22.1'
           cache: 'npm'
           cache-dependency-path: ui/package-lock.json
 
@@ -369,6 +389,11 @@ jobs:
           CAIPE_UNSAFE_RBAC_BYPASS: 'true'
           CAIPE_CREDENTIALS_ENABLED: 'true'
           CAIPE_USER_CONNECTIONS_ENABLED: 'true'
+          # Empty operator catalog: browser specs supply their own public DTOs.
+          # No app runtimes, authorization grants, or production keys are loaded.
+          AGENTIC_APPS_INSTALL_ENABLED: 'true'
+          AGENTIC_APPS_CONFIG_PATH: 'e2e/fixtures/agentic-apps-empty.yaml'
+          AGENTIC_APP_TOKEN_SECRET: 'ci-agentic-app-secret-for-playwright-regression-only'
         run: |
           # Run the production server, not `next dev`: React StrictMode
           # double-invokes effects only in dev, which breaks exact
@@ -436,7 +461,7 @@ jobs:
 
       - name: Upload Playwright artifacts
         if: failure() && steps.playwright.outcome == 'failure'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: playwright-rbac-regression
           path: |
@@ -464,16 +489,16 @@ jobs:
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
           egress-policy: audit
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
-          node-version: '24'
+          node-version: '24.22.1'
           cache: 'npm'
           cache-dependency-path: ui/package-lock.json
 

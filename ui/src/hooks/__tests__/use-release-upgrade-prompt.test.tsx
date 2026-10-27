@@ -96,6 +96,31 @@ describe("useReleaseUpgradePrompt", () => {
     expect(result.current.isAdmin).toBe(true);
   });
 
+  it("uses the configured compare range and a range-specific dismissal", async () => {
+    const fallback = global.fetch;
+    (global.fetch as jest.Mock) = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url) === "/api/admin/platform-config") return jsonResponse({ success: true, data: { release_notes: {
+        enabled: true, repository_url: "https://github.com/example/repository", previous_commit: "1111111", latest_commit: "2222222",
+      } } });
+      if (String(url).includes("compare=platform")) return jsonResponse({
+        matchedVersion: "0.5.1", body: "Configured changes", source: "github-compare",
+        changelogUrl: "https://github.com/example/repository/compare/1111111...2222222",
+      });
+      return fallback(url, init);
+    });
+    const { result } = renderHook(() => useReleaseUpgradePrompt());
+    await waitFor(() => expect(result.current.open).toBe(true));
+    expect(result.current.release).toBeNull();
+    expect(result.current.releaseMarkdown?.body).toBe("Configured changes");
+    expect(global.fetch).toHaveBeenCalledWith("/api/release-notes?version=0.5.1&compare=platform");
+    await act(async () => { await result.current.dismissPermanently(); });
+    expect(global.fetch).toHaveBeenCalledWith("/api/settings/preferences", expect.objectContaining({
+      body: JSON.stringify({ releaseNotesDismissedVersions: [JSON.stringify([
+        "0.5.1", "https://github.com/example/repository", "1111111", "2222222",
+      ])] }),
+    }));
+  });
+
   it("uses exact changelog entries before exact curated release markdown", async () => {
     const { result } = renderHook(() => useReleaseUpgradePrompt());
 

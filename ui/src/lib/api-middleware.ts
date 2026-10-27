@@ -151,6 +151,8 @@ type SessionAuthSession = {
   canViewAdmin?: boolean;
   isAuthorized?: boolean;
   isServiceAccount?: boolean;
+  serviceAccountClientId?: string;
+  authorizedParty?: string;
   org?: string;
   principalType?: 'oidc_user' | 'service_account' | 'catalog_api_key' | 'skills_api_key';
   /**
@@ -648,6 +650,8 @@ export async function getAuthFromBearerOrSession(
       // first-party service callers (e.g. the Slack bot) as
       // `service_account:<sub>` rather than `user:<sub>`.
       isServiceAccount: identity.isServiceAccount === true,
+      serviceAccountClientId: identity.serviceAccountClientId,
+      authorizedParty: identity.authorizedParty,
       principalType: identity.isServiceAccount === true ? 'service_account' as const : 'oidc_user' as const,
       authMethod: 'bearer' as const,
       user: { email: identity.email, name: identity.name },

@@ -64,6 +64,14 @@ The browser uses `/api/admin/audit-events` with the same cursor fields and its e
 - Producer-side buffers remain best-effort. This does **not** make audit delivery end-to-end lossless, nor does it change authorization decisions when audit delivery fails.
 - Keep the service internal. Its HTTP API has no new authentication mechanism; transport and signed provenance remain separate work.
 
+## Query admission limits
+
+Mongo paging uses `AUDIT_SERVICE_READ_MAX_CONCURRENT` (default `2`) and
+`AUDIT_SERVICE_READ_TIMEOUT_SECONDS` (default `30`). A busy reader returns `503`;
+a timed-out request returns `504`. Capacity is released when its database worker
+exits, so cancelling the HTTP request cannot bypass the concurrency limit.
+Archive scans used by offline migration retain bounded S3 fetches and decoding.
+
 ## CAS release migration and coordinated cutover
 
 This upgrade intentionally has no old-query compatibility mode. Deploy the matching audit service and BFF/UI together.

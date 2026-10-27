@@ -35,6 +35,7 @@ const RETENTION_DAYS = 7;
 interface RecycleBinDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onRestored?: () => void;
 }
 
 /** Calculate days remaining before auto-purge */
@@ -62,7 +63,7 @@ export function formatDeletedAt(deletedAt: Date | string): string {
   return `${diffDays}d ago`;
 }
 
-export function RecycleBinDialog({ open, onOpenChange }: RecycleBinDialogProps) {
+export function RecycleBinDialog({ open, onOpenChange, onRestored }: RecycleBinDialogProps) {
   const [trashedConversations, setTrashedConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(false);
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
@@ -98,6 +99,7 @@ export function RecycleBinDialog({ open, onOpenChange }: RecycleBinDialogProps) 
       setTrashedConversations((prev) => prev.filter((c) => c._id !== id));
       // Refresh the sidebar conversations
       await loadConversationsFromServer();
+      onRestored?.();
     } catch (error) {
       console.error("[RecycleBin] Failed to restore:", error);
     } finally {

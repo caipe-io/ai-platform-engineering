@@ -64,6 +64,7 @@ const mockCheckPermission = jest.requireMock('@/lib/rbac/keycloak-authz').checkP
 
 beforeEach(() => {
   mockGetConfig.mockImplementation((key: string) => key === 'ssoEnabled');
+  mockValidateBearerJWT.mockClear();
   mockAuditWrite.mockClear();
   mockVerifyCatalogApiKey.mockReset().mockResolvedValue(null);
   mockValidateLocalSkillsJWT.mockReset().mockResolvedValue(null);
@@ -72,6 +73,28 @@ beforeEach(() => {
 });
 
 describe('getAuthFromBearerOrSession scoped credentials', () => {
+  it('preserves the verified service-account client identity for credential authorization', async () => {
+    mockValidateBearerJWT.mockResolvedValueOnce({
+      email: 'service-account@example.test',
+      name: 'Example service',
+      groups: [],
+      sub: 'example-service-sub',
+      isServiceAccount: true,
+      serviceAccountClientId: 'example-platform',
+    });
+    const request = new Request('https://example.test/api/credentials/retrieve', {
+      headers: { Authorization: 'Bearer example-token' },
+    }) as unknown as NextRequest;
+
+    const { session } = await getAuthFromBearerOrSession(request);
+    expect(session).toMatchObject({
+      sub: 'example-service-sub',
+      isServiceAccount: true,
+      serviceAccountClientId: 'example-platform',
+      authMethod: 'bearer',
+    });
+  });
+
   it('rejects an invalid catalog API key', async () => {
     const request = new Request('http://test.com/api/skills', {
       headers: { 'X-Caipe-Catalog-Key': 'sk_invalid.secret' },
@@ -1253,6 +1276,29 @@ describe('getAuthenticatedUser', () => {
 
     expect(mockGetServerSession).toHaveBeenCalledTimes(3);
     nowSpy.mockRestore();
+  });
+
+  it('sees fresh credentials immediately for the same browser cookie', async () => {
+    const session = { user: { email: 'test-user@example.test' }, sub: 'test-user',
+      expiresAt: Math.floor(Date.now() / 1000) + 600 };
+    mockGetServerSession.mockResolvedValueOnce({ ...session, accessToken: 'old' })
+      .mockResolvedValueOnce({ ...session, accessToken: 'fresh' });
+    const request = () => new Request('https://host.example.test/api/projects', {
+      headers: { cookie: 'next-auth.session-token=example-session' },
+    }) as unknown as NextRequest;
+    expect((await getAuthenticatedUser(request())).session.accessToken).toBe('old');
+    expect((await getAuthenticatedUser(request())).session.accessToken).toBe('fresh');
+  });
+
+  it('rejects an expired session even when its previous request authenticated', async () => {
+    const session = { user: { email: 'test-user@example.test' }, sub: 'test-user' };
+    mockGetServerSession.mockResolvedValueOnce({ ...session, expiresAt: Date.now() / 1000 + 600 })
+      .mockResolvedValueOnce({ ...session, expiresAt: 1 });
+    const request = () => new Request('https://host.example.test/api/projects', {
+      headers: { cookie: 'next-auth.session-token=example-session' },
+    }) as unknown as NextRequest;
+    await getAuthenticatedUser(request());
+    await expect(getAuthenticatedUser(request())).rejects.toMatchObject({ statusCode: 401, code: 'SESSION_EXPIRED' });
   });
 
   it('does not cache sessions denied by the Web UI admission gate', async () => {

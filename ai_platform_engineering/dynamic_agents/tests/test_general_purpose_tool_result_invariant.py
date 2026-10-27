@@ -13,6 +13,7 @@ from pydantic import Field
 
 from dynamic_agents.services.agent_runtime import _with_general_purpose_tool_result_recovery
 from dynamic_agents.services.middleware import ToolResultInvariantMiddleware
+from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryMiddleware
 
 
 class _CapturingFakeModel(FakeMessagesListChatModel):
@@ -55,7 +56,8 @@ def test_general_purpose_recovery_override_is_applied_last() -> None:
     assert result[0] is configured_subagent
     assert [subagent["name"] for subagent in result] == ["configured-agent", "general-purpose"]
     assert result[-1]["name"] == "general-purpose"
-    assert isinstance(result[-1]["middleware"][0], ToolResultInvariantMiddleware)
+    assert isinstance(result[-1]["middleware"][0], ToolCallRecoveryMiddleware)
+    assert isinstance(result[-1]["middleware"][1], ToolResultInvariantMiddleware)
 
 
 @pytest.mark.asyncio
@@ -73,7 +75,10 @@ async def test_general_purpose_subagent_repairs_content_block_orphan(
         "deepagents.graph.SubAgentMiddleware",
         _CapturingSubAgentMiddleware,
     )
-    model = _CapturingFakeModel(responses=[AIMessage(content="Recovered response")])
+    model = _CapturingFakeModel(responses=[
+        AIMessage(content="partial", response_metadata={"stop_reason": "max_tokens"}),
+        AIMessage(content="Recovered response"),
+    ])
     subagent_specs = _with_general_purpose_tool_result_recovery(
         [],
         model=model,
@@ -107,6 +112,8 @@ async def test_general_purpose_subagent_repairs_content_block_orphan(
     )
 
     assert result["messages"][-1].content == "Recovered response"
+    assert len(model.captured_messages) == 2
+    assert "No tools from this response" in model.captured_messages[1][-2].content
     captured = model.captured_messages[0]
     tool_result = next(message for message in captured if isinstance(message, ToolMessage))
     orphaned_call = next(message for message in captured if isinstance(message, AIMessage))

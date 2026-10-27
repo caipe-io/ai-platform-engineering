@@ -1,3 +1,18 @@
+# Optional shared UI database Secret management.
+# Keep the MongoDB subchart enabled independently to retain existing data/PVs.
+caipeDatabase:
+  # -- Let the parent chart manage the shared UI database ExternalSecret.
+  manageExternalSecret: false
+  # -- Shared URI backend: mongodb or documentdb (AWS DocumentDB). See docs/docs/installation/persistence.md.
+  backend: mongodb
+  # -- Target Secret name; must match caipe-ui.existingSecret.
+  secretName: ""
+  documentdb:
+    # -- Secret-store key containing the DocumentDB MONGODB_URI property.
+    remoteKey: ""
+    # -- DocumentDB hostname used by UI health checks.
+    host: ""
+
 tags:
   basic: false
   complete: false
@@ -13,6 +28,7 @@ tags:
   mcp-jira: false
   mcp-komodor: false
   mcp-pagerduty: false
+  mcp-sharepoint: false
   mcp-slack: false
   mcp-splunk: false
   mcp-victorops: false
@@ -566,6 +582,28 @@ mcp-pagerduty:
     port: 8000
     agentgateway:
       enabled: false
+      protocol: StreamableHTTP
+
+mcp-sharepoint:
+  nameOverride: "mcp-sharepoint"
+  mcpSecrets:
+    requiresSecret: true
+    create: false
+    secretName: "mcp-sharepoint-secret"
+  mcp:
+    image:
+      repository: "ghcr.io/caipe-io/mcp-sharepoint"
+      # tag defaults to .Chart.AppVersion when not specified
+      tag: ""
+      pullPolicy: "IfNotPresent"
+    mode: "http"
+    port: 8000
+    env:
+      MCP_AUTH_MODE: "none"
+    agentgateway:
+      enabled: true
+      id: sharepoint
+      pathPrefix: /mcp/sharepoint
       protocol: StreamableHTTP
 
 mcp-slack:
@@ -1611,6 +1649,8 @@ openfga:
     pullPolicy: IfNotPresent
   init:
     enabled: true
+    # -- Existing same-namespace ConfigMap containing the complete composed authorization-model.json. Empty uses the bundled model.
+    existingModelConfigMap: ""
     storeName: caipe-openfga
     seedTuples: []
     platformClient:
@@ -1673,11 +1713,6 @@ openfga-authz-bridge:
     fullFidelityAllows: false
     allowRollupFlushSeconds: 60
 
-######### RAG Stack configuration #########
-# RAG Stack - Complete stack including web, server, agent, Redis, and Milvus
-# Below values are only a subset of the values that are available in the rag-stack chart.
-# For more values, please refer to the rag-stack chart values.yaml file.
-rag-stack:
 ######### RAG Stack configuration #########
 # RAG Stack - Complete stack including web, server, agent, Redis, and Milvus
 # Below values are only a subset of the values that are available in the rag-stack chart.

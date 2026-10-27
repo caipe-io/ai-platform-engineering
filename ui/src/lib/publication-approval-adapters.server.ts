@@ -1,4 +1,4 @@
-import { ApiError } from "@/lib/api-error";
+import { ApiError, PublicationDriftError, withDrift } from "@/lib/api-error";
 import { getCollection } from "@/lib/mongodb";
 import { publicationResourceRevision } from "@/lib/publication-approval.server";
 import { applyRagCollectionPublicationRequest } from "@/lib/rag-collection-publication-approval.server";
@@ -9,9 +9,16 @@ import {
   onboardWebexSpace,
   type WebexSpaceOnboardingInput,
 } from "@/lib/rbac/webex-space-onboarding";
-import type { PublicationRequestDocument } from "@/types/publication-approval";
+import type {
+  PublicationDriftItem,
+  PublicationRequestDocument,
+} from "@/types/publication-approval";
 import { callSlackBotAdmin } from "@/lib/slack-bot-admin";
 import { callWebexBotAdmin } from "@/lib/webex-bot-admin";
+
+interface AdapterApplyOptions {
+  acknowledgedFingerprint?: string;
+}
 
 interface AdapterSession {
   accessToken?: string;
@@ -65,6 +72,7 @@ function publicationApplyActor(request: PublicationRequestDocument): string {
 async function assertConnectorRevision(
   request: PublicationRequestDocument,
   existing: { updated_by?: string; team_slug?: string } | null,
+  contextDrift: PublicationDriftItem[],
 ): Promise<void> {
   const currentRevision = publicationResourceRevision({
     status: existing ? "onboarded" : "not_onboarded",
@@ -75,15 +83,44 @@ async function assertConnectorRevision(
     existing?.updated_by === publicationApplyActor(request) &&
     existing.team_slug === targetTeam;
   if ((!isOwnPriorApply && existing) || (!existing && currentRevision !== request.resource_revision)) {
-    throw new ApiError(
-      "This channel or space changed after approval was requested.",
-      409,
-      "PUBLICATION_REVISION_CONFLICT",
+    throw withDrift(
+      new ApiError(
+        "This channel or space changed after approval was requested.",
+        409,
+        "PUBLICATION_REVISION_CONFLICT",
+      ),
+      contextDrift,
     );
   }
 }
 
-async function applySlackPublication(request: PublicationRequestDocument): Promise<void> {
+function memberCountDrift(
+  expected: number | undefined,
+  live: number | undefined,
+): PublicationDriftItem | null {
+  const risky =
+    typeof expected === "number"
+      ? typeof live !== "number" || live > expected
+      : typeof live === "number";
+  if (!risky) return null;
+  return {
+    field: "member_count",
+    label: "Members",
+    before: typeof expected === "number" ? expected : null,
+    after: typeof live === "number" ? live : null,
+    overridable: true,
+  };
+}
+
+function nameDrift(field: string, label: string, before: string, after: string): PublicationDriftItem | null {
+  if (before === after) return null;
+  return { field, label, before, after, overridable: true };
+}
+
+async function applySlackPublication(
+  request: PublicationRequestDocument,
+  { acknowledgedFingerprint }: AdapterApplyOptions,
+): Promise<PublicationDriftItem[]> {
   const defaults = request.requested_state.channel_defaults;
   if (!Array.isArray(defaults) || defaults.length !== 1) {
     throw new ApiError("Slack approval must contain exactly one channel", 409);
@@ -99,23 +136,36 @@ async function applySlackPublication(request: PublicationRequestDocument): Promi
     "/admin/slack/channels/inspect",
     { method: "POST", body: { channel_id: channelId } },
   );
-  const expectedMemberCount = request.risk_facts.member_count;
-  const providerMemberCount = provider.member_count;
-  const membershipRiskChanged =
-    typeof expectedMemberCount === "number"
-      ? typeof providerMemberCount !== "number" ||
-        providerMemberCount > expectedMemberCount
-      : typeof providerMemberCount === "number";
-  if (
-    provider.channel_id !== channelId ||
-    slackWorkspaceRef(provider.workspace_id) !== workspaceId ||
-    membershipRiskChanged
-  ) {
-    throw new ApiError(
-      "Slack channel membership or audience changed after approval was requested.",
-      409,
-      "PUBLICATION_REVISION_CONFLICT",
+  if (provider.channel_id !== channelId || slackWorkspaceRef(provider.workspace_id) !== workspaceId) {
+    throw withDrift(
+      new ApiError(
+        "Slack channel membership or audience changed after approval was requested.",
+        409,
+        "PUBLICATION_REVISION_CONFLICT",
+      ),
+      [],
     );
+  }
+  const membersDrift = memberCountDrift(request.risk_facts.member_count, provider.member_count);
+  let appliedDrift: PublicationDriftItem[] = [];
+  if (membersDrift) {
+    const drift = [
+      membersDrift,
+      ...(typeof record.channel_name === "string"
+        ? [nameDrift("channel_name", "Channel name", record.channel_name, provider.channel_name)].filter(
+            (item): item is PublicationDriftItem => item !== null,
+          )
+        : []),
+    ];
+    const fingerprint = publicationResourceRevision(drift);
+    if (acknowledgedFingerprint !== fingerprint) {
+      throw new PublicationDriftError(
+        "Slack channel membership or audience changed after approval was requested.",
+        drift,
+        fingerprint,
+      );
+    }
+    appliedDrift = drift;
   }
   const mappings = await getCollection<SlackMapping>("channel_team_mappings");
   const existing = await mappings.findOne({
@@ -123,7 +173,7 @@ async function applySlackPublication(request: PublicationRequestDocument): Promi
     slack_channel_id: channelId,
     active: { $ne: false },
   } as never);
-  await assertConnectorRevision(request, existing);
+  await assertConnectorRevision(request, existing, membersDrift ? [membersDrift] : []);
   // Importing the route-owned implementation here keeps the existing,
   // transactional onboarding path as the single writer while it is moved to
   // a standalone connector module in a follow-up cleanup.
@@ -143,9 +193,13 @@ async function applySlackPublication(request: PublicationRequestDocument): Promi
     },
     publicationApplyActor(request),
   );
+  return appliedDrift;
 }
 
-async function applyWebexPublication(request: PublicationRequestDocument): Promise<void> {
+async function applyWebexPublication(
+  request: PublicationRequestDocument,
+  { acknowledgedFingerprint }: AdapterApplyOptions,
+): Promise<PublicationDriftItem[]> {
   const state = request.requested_state;
   const botId = requiredString(state.bot_id, "bot_id");
   const workspaceId = requiredString(state.workspace_id, "workspace_id");
@@ -154,21 +208,36 @@ async function applyWebexPublication(request: PublicationRequestDocument): Promi
     "/admin/webex/spaces/inspect",
     { method: "POST", body: { bot_id: botId, space_id: spaceId } },
   );
-  const expectedMemberCount = request.risk_facts.member_count;
-  const membershipRiskChanged =
-    typeof expectedMemberCount === "number"
-      ? provider.member_count > expectedMemberCount
-      : typeof provider.member_count === "number";
-  if (
-    provider.bot_id !== botId ||
-    provider.space_id !== spaceId ||
-    membershipRiskChanged
-  ) {
-    throw new ApiError(
-      "Webex space membership or audience changed after approval was requested.",
-      409,
-      "PUBLICATION_REVISION_CONFLICT",
+  if (provider.bot_id !== botId || provider.space_id !== spaceId) {
+    throw withDrift(
+      new ApiError(
+        "Webex space membership or audience changed after approval was requested.",
+        409,
+        "PUBLICATION_REVISION_CONFLICT",
+      ),
+      [],
     );
+  }
+  const membersDrift = memberCountDrift(request.risk_facts.member_count, provider.member_count);
+  let appliedDrift: PublicationDriftItem[] = [];
+  if (membersDrift) {
+    const drift = [
+      membersDrift,
+      ...(typeof state.space_name === "string"
+        ? [nameDrift("space_name", "Space name", state.space_name, provider.space_name)].filter(
+            (item): item is PublicationDriftItem => item !== null,
+          )
+        : []),
+    ];
+    const fingerprint = publicationResourceRevision(drift);
+    if (acknowledgedFingerprint !== fingerprint) {
+      throw new PublicationDriftError(
+        "Webex space membership or audience changed after approval was requested.",
+        drift,
+        fingerprint,
+      );
+    }
+    appliedDrift = drift;
   }
   const mappings = await getRbacCollection<WebexMapping>("webexSpaceTeamMappings");
   const existing = await mappings.findOne({
@@ -177,31 +246,29 @@ async function applyWebexPublication(request: PublicationRequestDocument): Promi
     webex_space_id: spaceId,
     active: { $ne: false },
   } as never);
-  await assertConnectorRevision(request, existing);
+  await assertConnectorRevision(request, existing, membersDrift ? [membersDrift] : []);
   await onboardWebexSpace({
     ...(state as unknown as WebexSpaceOnboardingInput),
     space_name: provider.space_name,
     actor: publicationApplyActor(request),
   });
+  return appliedDrift;
 }
 
 /** Apply the domain-specific requested state after the generic store acquires it. */
 export async function applyPublicationRequestAdapter(
   request: PublicationRequestDocument,
   session: AdapterSession,
-): Promise<void> {
+  options: AdapterApplyOptions = {},
+): Promise<PublicationDriftItem[]> {
   switch (request.resource.kind) {
     case "rag_datasource":
-      await applyRagPublicationRequest(request, session.accessToken);
-      return;
+      return applyRagPublicationRequest(request, session.accessToken, options);
     case "slack_channel":
-      await applySlackPublication(request);
-      return;
+      return applySlackPublication(request, options);
     case "webex_space":
-      await applyWebexPublication(request);
-      return;
+      return applyWebexPublication(request, options);
     case "rag_collection":
-      await applyRagCollectionPublicationRequest(request, session);
-      return;
+      return applyRagCollectionPublicationRequest(request, session, options);
   }
 }

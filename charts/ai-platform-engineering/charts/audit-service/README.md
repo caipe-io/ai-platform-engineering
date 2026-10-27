@@ -93,8 +93,10 @@ helm show values oci://ghcr.io/caipe-io/charts/audit-service --version 1.1.0
 | podSecurityContext.runAsUser | int | `1001` |  |
 | query.retentionDays | int | `7` |  |
 | read.defaultLimit | int | `1000` |  |
+| read.maxConcurrent | int | `2` | Maximum simultaneous history scans per process; additional reads return HTTP 503. |
 | read.maxDays | int | `31` |  |
 | read.maxLimit | int | `10000` |  |
+| read.timeoutSeconds | int | `30` | History scan deadline in seconds; expired reads return HTTP 504 and stop scheduling storage work. |
 | readinessProbe.failureThreshold | int | `3` |  |
 | readinessProbe.httpGet.path | string | `"/readyz"` |  |
 | readinessProbe.httpGet.port | string | `"http"` |  |

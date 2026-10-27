@@ -6,8 +6,10 @@ metadata:
   labels:
     {{- include "openfga.labels" . | nindent 4 }}
 data:
+  {{- if not .Values.init.existingModelConfigMap }}
   authorization-model.json: |-
 {{ .Files.Get "authorization-model.json" | indent 4 }}
+  {{- end }}
   seed.py: |-
     import base64
     import json

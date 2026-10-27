@@ -14,6 +14,7 @@ import { ObjectId } from "mongodb";
 const mockGetServerSession = jest.fn();
 const mockCheckPermission = jest.fn();
 const mockLoadActiveTeamMembersPage = jest.fn();
+const mockSearchRealmUsers = jest.fn();
 
 jest.mock("next-auth", () => ({
   getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
@@ -37,10 +38,11 @@ jest.mock("@/lib/rbac/audit", () => ({
   logAuthzDecision: jest.fn(),
 }));
 
-// The route's other imports are only exercised by POST/DELETE; stub them so
-// importing the module doesn't drag in real implementations.
+// `isValidTeamSlug` is only exercised by POST/DELETE; stub it so importing
+// the module doesn't drag in a real implementation. `searchRealmUsers` IS
+// exercised by GET now — it resolves a name search into candidate emails.
 jest.mock("@/lib/rbac/keycloak-admin", () => ({
-  searchRealmUsers: jest.fn(),
+  searchRealmUsers: (...args: unknown[]) => mockSearchRealmUsers(...args),
   isValidTeamSlug: jest.fn(() => true),
 }));
 
@@ -132,6 +134,7 @@ beforeEach(() => {
   Object.keys(mockCollections).forEach((key) => delete mockCollections[key]);
   mockCheckPermission.mockResolvedValue({ allowed: true, reason: "OK" });
   mockGetServerSession.mockResolvedValue(adminSession());
+  mockSearchRealmUsers.mockResolvedValue([]);
   mockLoadActiveTeamMembersPage.mockResolvedValue({
     members: [
       {
@@ -170,10 +173,12 @@ describe("GET /api/admin/teams/[id]/members", () => {
     // 2 * 25 = 50 < 60, so there is another page.
     expect(body.data.has_more).toBe(true);
 
+    expect(mockSearchRealmUsers).toHaveBeenCalledWith({ search: "ali", max: 50 });
     expect(mockLoadActiveTeamMembersPage).toHaveBeenCalledWith("platform", {
       page: 2,
       pageSize: 25,
       search: "ali",
+      searchMatchedEmails: [],
       ownerEmail: "owner@example.com",
     });
   });
@@ -182,12 +187,61 @@ describe("GET /api/admin/teams/[id]/members", () => {
     seedTeam();
     await callGet(`/api/admin/teams/${TEAM_ID}/members`);
 
+    // No search term — the Keycloak name/email lookup is skipped entirely.
+    expect(mockSearchRealmUsers).not.toHaveBeenCalled();
     expect(mockLoadActiveTeamMembersPage).toHaveBeenCalledWith("platform", {
       page: 1,
       pageSize: 25,
       search: "",
+      searchMatchedEmails: [],
       ownerEmail: "owner@example.com",
     });
+  });
+
+  it("skips the Keycloak lookup for a single-character search", async () => {
+    seedTeam();
+    await callGet(`/api/admin/teams/${TEAM_ID}/members?search=a`);
+
+    expect(mockSearchRealmUsers).not.toHaveBeenCalled();
+    expect(mockLoadActiveTeamMembersPage).toHaveBeenCalledWith(
+      "platform",
+      expect.objectContaining({ search: "a", searchMatchedEmails: [] }),
+    );
+  });
+
+  it("resolves a search term to matching emails via Keycloak name/email lookup", async () => {
+    seedTeam();
+    mockSearchRealmUsers.mockResolvedValueOnce([
+      { email: "alice@example.com", firstName: "Alice" },
+      { email: "bob@example.com", firstName: "Alice" },
+      // No email on this row (e.g. a service account) — must be dropped,
+      // not passed through as `undefined`.
+      { username: "no-email-user" },
+    ]);
+
+    await callGet(`/api/admin/teams/${TEAM_ID}/members?search=alice`);
+
+    expect(mockSearchRealmUsers).toHaveBeenCalledWith({ search: "alice", max: 50 });
+    expect(mockLoadActiveTeamMembersPage).toHaveBeenCalledWith(
+      "platform",
+      expect.objectContaining({
+        search: "alice",
+        searchMatchedEmails: ["alice@example.com", "bob@example.com"],
+      }),
+    );
+  });
+
+  it("falls back to the plain email match when the Keycloak lookup fails", async () => {
+    seedTeam();
+    mockSearchRealmUsers.mockRejectedValueOnce(new Error("Keycloak unreachable"));
+
+    const { response } = await callGet(`/api/admin/teams/${TEAM_ID}/members?search=alice`);
+
+    expect(response.status).toBe(200);
+    expect(mockLoadActiveTeamMembersPage).toHaveBeenCalledWith(
+      "platform",
+      expect.objectContaining({ search: "alice", searchMatchedEmails: [] }),
+    );
   });
 
   it("clamps page_size to the 1..100 range", async () => {

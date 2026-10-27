@@ -2,7 +2,7 @@
 Embeddings Factory for RAG System
 
 This module provides a factory pattern for creating embedding models from various providers.
-Follows the same pattern as LLMFactory for consistency.
+Follows the same provider-string pattern as llm_wrapper for consistency.
 
 Supported providers:
 - azure-openai (default)

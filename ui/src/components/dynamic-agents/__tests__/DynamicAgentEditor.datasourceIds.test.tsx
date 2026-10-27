@@ -49,6 +49,15 @@ jest.mock("@/components/dynamic-agents/BuiltinToolsPicker", () => ({
 jest.mock("@/components/dynamic-agents/MiddlewarePicker", () => ({
   MiddlewarePicker: () => <div data-testid="middleware-picker" />,
 }));
+jest.mock("@/components/dynamic-agents/RemoteAgentsPicker", () => ({
+  RemoteAgentsPicker: ({ onChange, timeoutValues }: { onChange: (ids: string[]) => void; timeoutValues: Record<string, number> }) => (
+    <div>
+      <span data-testid="remote-timeouts">{JSON.stringify(timeoutValues)}</span>
+      <button type="button" onClick={() => onChange(["remote-secondary"])}>Deselect primary remote agent</button>
+    </div>
+  ),
+}));
+
 jest.mock("@/components/dynamic-agents/SubagentPicker", () => ({
   SubagentPicker: () => <div data-testid="subagent-picker" />,
 }));
@@ -294,4 +303,19 @@ describe("DynamicAgentEditor — clearing the datasource picker", () => {
       "true",
     );
   });
+  it("clears deselected A2A timeout overrides and preserves the remaining agent's override", async () => {
+    render(<DynamicAgentEditor agent={{ ...agent, allowed_remote_agents: ["remote-primary", "remote-secondary"],
+      remote_agent_timeouts: { "remote-primary": 45, "remote-secondary": 90 } }}
+      initialStep="advanced" onCancel={jest.fn()} onSave={jest.fn()} />);
+    await flushAsync();
+    fireEvent.click(screen.getByRole("button", { name: "Deselect primary remote agent" }));
+    expect(screen.getByTestId("remote-timeouts")).toHaveTextContent('{"remote-secondary":90}');
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Save Changes/i })); });
+    const call = (global.fetch as jest.Mock).mock.calls.find(([, init]) => init?.method === "PUT");
+    expect(call).toBeDefined();
+    const body = JSON.parse(call[1].body);
+    expect(body.allowed_remote_agents).toEqual(["remote-secondary"]);
+    expect(body.remote_agent_timeouts).toEqual({ "remote-secondary": 90 });
+  });
+
 });

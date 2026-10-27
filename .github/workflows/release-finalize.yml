@@ -18,9 +18,10 @@ jobs:
     outputs:
       all_passed: ${{ steps.check-cis.outputs.all_passed }}
       tag: ${{ steps.payload.outputs.tag }}
+      published: ${{ steps.publish-release.outputs.published }}
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
           egress-policy: audit
 
@@ -46,8 +47,8 @@ jobs:
             exit 0
           fi
 
-          if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "❌ Tag must match x.y.z"
+          if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || (( ${#TAG} > 128 )); then
+            echo "❌ Tag must match x.y.z and be at most 128 characters"
             exit 1
           fi
 
@@ -173,6 +174,7 @@ jobs:
           fi
 
       - name: 🚀 Publish release
+        id: publish-release
         if: steps.check-cis.outputs.all_passed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -191,6 +193,7 @@ jobs:
 
           # Publish the release
           gh release edit "$TAG" --repo="${{ github.repository }}" --draft=false
+          echo "published=true" >> "$GITHUB_OUTPUT"
 
           echo "✅ Release $TAG published!"
           echo "🔗 $(echo "$RELEASE_INFO" | jq -r '.url')"
@@ -374,12 +377,12 @@ jobs:
     name: Trigger post-release scans
     runs-on: ubuntu-latest
     needs: check-and-publish
-    if: needs.check-and-publish.outputs.all_passed == 'true'
+    if: needs.check-and-publish.outputs.published == 'true'
     permissions:
       contents: read
       actions: write
     steps:
-      - name: 🔍 Trigger post-release scans and tests
+      - name: 🔍 Trigger post-release scan
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.check-and-publish.outputs.tag }}
@@ -387,8 +390,11 @@ jobs:
           set -euo pipefail
 
           echo "🔍 Triggering post-release Grype container scan..."
+          # GITHUB_TOKEN publication does not trigger release workflows;
+          # dispatch the corrected scanner from main with the exact release tag.
           gh workflow run security-scan.yml \
             --repo="${{ github.repository }}" \
+            --ref main \
             --field tag="$TAG"
 
           echo "✅ Post-release workflows dispatched for $TAG"

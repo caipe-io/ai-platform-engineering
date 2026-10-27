@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
 
   // ---- Build prompt + call backend ---------------------------------------
   const userMessage = task.buildUserMessage(context);
-  const model = await resolveLlmModel();
+  const model = await resolveLlmModel(undefined, task.defaultModel(process.env));
 
   // When the task feeds a graded surface, append the live AI Review rubric to
   // the system prompt so generated content clears the grader on the first try.

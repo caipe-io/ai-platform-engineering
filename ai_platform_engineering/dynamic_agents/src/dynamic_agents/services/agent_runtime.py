@@ -16,13 +16,12 @@ import os
 import re
 import time
 from collections.abc import AsyncGenerator, Callable
+from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import uuid4
 
-from cnoe_agent_utils.llm_factory import resolve_bedrock_client
-from cnoe_agent_utils.tracing import TracingManager
 from deepagents import create_deep_agent
 from deepagents.backends.state import StateBackend
 from deepagents.backends.store import StoreBackend
@@ -30,10 +29,12 @@ from deepagents.middleware.skills import SkillsMiddleware
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
 from jinja2 import ChainableUndefined, TemplateSyntaxError
 from jinja2.sandbox import ImmutableSandboxedEnvironment, SecurityError
+from langchain.agents.middleware.pii import PIIMiddleware
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.mongodb.saver import MongoDBSaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
+from llm_wrapper.bedrock_family import resolve_bedrock_client
 from pymongo import MongoClient
 
 from dynamic_agents.config import Settings, get_settings
@@ -49,6 +50,7 @@ from dynamic_agents.models import (
     SubAgentRef,
     UserContext,
 )
+from dynamic_agents.services.app_context_prompt import AppContextPromptMiddleware
 from dynamic_agents.services.attachment_store import (
     AttachmentStore,
     build_attachment_store,
@@ -88,7 +90,10 @@ from dynamic_agents.services.model_capabilities import (
     ModelCapabilities,
     get_model_capabilities,
 )
+from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
+from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryMiddleware
+from dynamic_agents.services.tracing import TracingManager
 
 if TYPE_CHECKING:
     from dynamic_agents.services.mongo import MongoDBService
@@ -138,7 +143,7 @@ def _with_general_purpose_tool_result_recovery(
         "tools": tools,
         "model": model,
         "interrupt_on": interrupt_on,
-        "middleware": [ToolResultInvariantMiddleware()],
+        "middleware": [ToolCallRecoveryMiddleware(), ToolResultInvariantMiddleware()],
     }
     configured_subagents = [
         subagent
@@ -596,6 +601,7 @@ class AgentRuntime:
         self.mcp_servers = mcp_servers
         self.settings = settings or get_settings()
         self._mongo_service = mongo_service
+        self._remote_agent_versions: dict[str, str | None] = {}
         self._user = user
         self._client_context = client_context
         # Spec 102 Phase 8 / T107: prefer the per-request bearer from
@@ -960,6 +966,11 @@ class AgentRuntime:
         if builtin_tools:
             tools = tools + builtin_tools
 
+        # 2b. Add remote A2A agents as delegation tools
+        remote_agent_tools = await self._build_remote_agent_tools()
+        if remote_agent_tools:
+            tools = tools + remote_agent_tools
+
         # 3. Wrap all tools with error handling
         #    Exceptions become LLM-visible "ERROR: ..." strings instead of crashing the agent loop.
         if tools:
@@ -1156,6 +1167,12 @@ class AgentRuntime:
             attachment_store=self._get_attachment_store(),
             enable_prompt_cache=self._prompt_cache_enabled(),
         )
+        # PII middleware checks graph state before this request-only projection is added.
+        # Omit the projection when PII handling is configured so it cannot bypass that policy.
+        if self.config.app_context_prompt is not None and not any(
+            isinstance(middleware, PIIMiddleware) for middleware in middleware_stack
+        ):
+            middleware_stack.insert(0, AppContextPromptMiddleware())
         # Prepend skills middleware so it runs before other middleware
         if skills_middleware:
             middleware_stack = [skills_middleware] + middleware_stack
@@ -1238,6 +1255,60 @@ class AgentRuntime:
             f"[agent] Agent '{self.config.name}' initialized in {init_duration:.2f}s: "
             f"tools={len(tools)}, subagents={len(subagents) if subagents else 0}"
         )
+
+    async def _build_remote_agent_tools(self, config: DynamicAgentConfig | None = None) -> list:
+        """Build tools for a dynamic agent's selected A2A registry entries."""
+        agent_config = config or self.config
+        if not self._mongo_service or not agent_config.allowed_remote_agents:
+            return []
+
+        remote_agents = await asyncio.to_thread(
+            self._mongo_service.get_remote_agents_by_ids, agent_config.allowed_remote_agents
+        )
+        versions = {item["_id"]: item.get("updated_at") for item in remote_agents}
+        self._remote_agent_versions.update({agent_id: versions.get(agent_id) for agent_id in agent_config.allowed_remote_agents})
+        if not remote_agents:
+            return []
+
+        # Build selected tools concurrently. One invalid registry entry must not
+        # hide the other selected tools from this runtime.
+        results = await asyncio.gather(
+            *(
+                create_remote_agent_tool(
+                    a2a_url=remote_agent["endpoint"],
+                    allowed_http_origins=self.settings.remote_a2a_allowed_http_origins,
+                    max_response_bytes=self.settings.remote_a2a_max_response_bytes,
+                    max_output_bytes=self.settings.remote_a2a_max_output_bytes,
+                    name=remote_agent.get("name"),
+                    description=remote_agent.get("description"),
+                    bearer_token=self._auth_bearer,
+                    credential_source=remote_agent.get("credential_source"),
+                    streaming=remote_agent.get("streaming") is True,
+                    credential_api_url=self.settings.credential_api_url,
+                    credential_service_audience=self.settings.credential_service_audience,
+                    timeout=int(
+                        agent_config.remote_agent_timeouts.get(
+                            remote_agent["_id"], remote_agent.get("timeout_seconds", 120)
+                        )
+                    ),
+                )
+                for remote_agent in remote_agents
+            ),
+            return_exceptions=True,
+        )
+
+        tools = []
+        for remote_agent, result in zip(remote_agents, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.warning("Skipping remote agent %s: %s", remote_agent.get("_id"), result)
+                continue
+            tools.append(result)
+
+        logger.info(
+            f"Agent '{self.config.name}': added {len(tools)} remote agent tools: "
+            f"{[t.name for t in tools]}"
+        )
+        return tools
 
     def _build_builtin_tools(
         self,
@@ -1545,14 +1616,18 @@ class AgentRuntime:
                     )
                 tools.extend(mcp_tools)
 
-        # 2. Add built-in tools based on subagent's config
+        # 2. Add only the remote A2A agents selected on this subagent.
+        remote_tools = await self._build_remote_agent_tools(subagent_config)
+        tools.extend(remote_tools)
+
+        # 3. Add built-in tools based on subagent's config
         client_ctx = self._client_context.model_dump() if self._client_context else None
         builtin_tools = self._build_builtin_tools(self._user, subagent_config, client_context=client_ctx)
         builtin_tool_names = {tool.name for tool in builtin_tools}
         if builtin_tools:
             tools.extend(builtin_tools)
 
-        # 3. Wrap all subagent tools with error handling
+        # 4. Wrap all subagent tools with error handling
         if tools:
             tools = wrap_tools_with_error_handling(tools, agent_name=subagent_config.name)
 
@@ -1617,8 +1692,7 @@ class AgentRuntime:
     ) -> bool:
         """Check if cached runtime is stale due to config changes.
 
-        Returns True if either the agent config or any MCP server has been
-        updated since this runtime was created.
+        Includes remote A2A registry entries selected by the parent or its subagents.
         """
         if agent_config.updated_at != self._config_updated_at:
             return True
@@ -1627,6 +1701,11 @@ class AgentRuntime:
         current_mcp_max = max((s.updated_at for s in mcp_servers), default=datetime.min.replace(tzinfo=timezone.utc))
         if current_mcp_max != self._mcp_servers_updated_at:
             return True
+        if self._mongo_service and self._remote_agent_versions:
+            entries = self._mongo_service.get_remote_agents_by_ids(list(self._remote_agent_versions))
+            versions = {entry["_id"]: entry.get("updated_at") for entry in entries}
+            if any(versions.get(agent_id) != version for agent_id, version in self._remote_agent_versions.items()):
+                return True
         return False
 
     # ─────────────────────────────────────────────────────────────────────
@@ -1705,8 +1784,9 @@ class AgentRuntime:
             files,
             turn_id,
         )
-        async for frame in self._observe_turn(implementation, observation):
-            yield frame
+        async with aclosing(self._observe_turn(implementation, observation)) as observed:
+            async for frame in observed:
+                yield frame
 
     async def _observe_turn(
         self,
@@ -1718,8 +1798,9 @@ class AgentRuntime:
         self._is_streaming = True
         prom_metrics.active_streams.inc()
         try:
-            async for frame in implementation:
-                yield frame
+            async with aclosing(implementation):
+                async for frame in implementation:
+                    yield frame
         except (asyncio.CancelledError, GeneratorExit):
             observation.status = "cancelled"
             raise
@@ -1982,22 +2063,25 @@ class AgentRuntime:
         # In GridFS mode, skills are pre-populated in the store at init time.
         if getattr(self, "_skills_files", None) and self._resolve_backend_type() != BACKEND_STORE:
             state_input["files"] = dict(self._skills_files)
-        async for chunk in self._graph.astream(
-            state_input,
-            config=config,
-            stream_mode=["messages", "updates", "tasks", "custom"],
-            subgraphs=True,
-        ):
-            if self._cancelled:
-                logger.info(f"[stream] Stream cancelled by user for agent '{self.config.name}': user={user_id}")
-                observation.status = "cancelled"
-                return
+        async with aclosing(
+            self._graph.astream(
+                state_input,
+                config=config,
+                stream_mode=["messages", "updates", "tasks", "custom"],
+                subgraphs=True,
+            )
+        ) as graph_stream:
+            async for chunk in graph_stream:
+                if self._cancelled:
+                    logger.info(f"[stream] Stream cancelled by user for agent '{self.config.name}': user={user_id}")
+                    observation.status = "cancelled"
+                    return
 
-            content_length_before = len(encoder.get_thinking_content()) + len(encoder.get_accumulated_content())
-            frames = encoder.on_chunk(chunk)
-            self._record_first_response(encoder, content_length_before, observation)
-            for frame in frames:
-                yield frame
+                content_length_before = len(encoder.get_thinking_content()) + len(encoder.get_accumulated_content())
+                frames = encoder.on_chunk(chunk)
+                self._record_first_response(encoder, content_length_before, observation)
+                for frame in frames:
+                    yield frame
 
         # ── Core lifecycle: stream end (flush) ──
         for frame in encoder.on_stream_end():
@@ -2277,8 +2361,9 @@ class AgentRuntime:
             encoder,
             observation,
         )
-        async for frame in self._observe_turn(implementation, observation):
-            yield frame
+        async with aclosing(self._observe_turn(implementation, observation)) as observed:
+            async for frame in observed:
+                yield frame
 
     async def _resume_impl(
         self,
@@ -2315,22 +2400,25 @@ class AgentRuntime:
         logger.debug(f"[resume] Resume payload: {resume_payload}")
 
         # ── Core lifecycle: chunks ──
-        async for chunk in self._graph.astream(
-            Command(resume=resume_payload),
-            config=config,
-            stream_mode=["messages", "updates", "tasks", "custom"],
-            subgraphs=True,
-        ):
-            if self._cancelled:
-                logger.info(f"[resume] Resume stream cancelled by user for agent '{self.config.name}'")
-                observation.status = "cancelled"
-                return
+        async with aclosing(
+            self._graph.astream(
+                Command(resume=resume_payload),
+                config=config,
+                stream_mode=["messages", "updates", "tasks", "custom"],
+                subgraphs=True,
+            )
+        ) as graph_stream:
+            async for chunk in graph_stream:
+                if self._cancelled:
+                    logger.info(f"[resume] Resume stream cancelled by user for agent '{self.config.name}'")
+                    observation.status = "cancelled"
+                    return
 
-            content_length_before = len(encoder.get_thinking_content()) + len(encoder.get_accumulated_content())
-            frames = encoder.on_chunk(chunk)
-            self._record_first_response(encoder, content_length_before, observation)
-            for frame in frames:
-                yield frame
+                content_length_before = len(encoder.get_thinking_content()) + len(encoder.get_accumulated_content())
+                frames = encoder.on_chunk(chunk)
+                self._record_first_response(encoder, content_length_before, observation)
+                for frame in frames:
+                    yield frame
 
         # ── Core lifecycle: stream end (flush) ──
         for frame in encoder.on_stream_end():

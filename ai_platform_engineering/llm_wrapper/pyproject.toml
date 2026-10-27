@@ -1,0 +1,41 @@
+[project]
+name = "llm-wrapper"
+version = "0.1.0"
+description = "Shared LLM construction for CAIPE agents"
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+
+# Deliberately empty. This package declares no dependencies so that sharing it
+# imposes no version floor on its consumers: each consuming package pins the
+# provider integrations it ships, and this code imports whatever is installed
+# there. Declaring `langchain-aws` / `boto3` / `langchain-anthropic` here would
+# rebuild the coupling this package exists to remove.
+#
+# `llm_wrapper.build` therefore needs `langchain` present in the consumer, and
+# `llm_wrapper.providers`, `.bedrock_family` and `.reasoning` need nothing at
+# all -- which is what lets a sandboxed worker take a subset.
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "botocore==1.43.16",
+    "langchain==1.4.1",
+    "langchain-core==1.6.3",
+    "pytest==9.1.1",
+    "ruff==0.16.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

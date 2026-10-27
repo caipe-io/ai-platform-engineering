@@ -459,6 +459,51 @@ describe("SkillsGallery — delete", () => {
     fireEvent.click(cancelBtn);
     expect(mockDeleteConfig).not.toHaveBeenCalled();
   });
+
+  it("removes the deleted skill's card without a reload, also from the catalog feed", async () => {
+    const mongoId = "skill-delete-p2h9h87ty";
+    _configs = [{
+      ...makeQuickStart(mongoId),
+      id: mongoId,
+      name: "to-delete",
+      description: "to-delete",
+      is_system: false,
+      owner_id: "test@example.com",
+      visibility: "private",
+    } as AgentSkill];
+    // The catalog feed projects the same Mongo skill; the server drops it from both on delete.
+    let catalog = [{
+      id: mongoId,
+      name: "to-delete",
+      description: "to-delete",
+      source: "agent_skills",
+      source_id: mongoId,
+      owner_id: "test@example.com",
+      visibility: "private",
+      metadata: { is_system: false, category: "Custom" },
+    }];
+    (global.fetch as jest.Mock).mockImplementation((url: string | URL | Request) => {
+      if (requestUrl(url).includes("/api/skills?")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ skills: catalog }) } as Response);
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) } as Response);
+    });
+    mockDeleteConfig.mockImplementationOnce(async () => {
+      _configs = [];
+      catalog = [];
+    });
+
+    await renderGallery();
+    expect(screen.getByRole("heading", { name: "to-delete" })).toBeInTheDocument();
+    fireEvent.click(screen.getAllByTitle("Delete")[0]);
+    fireEvent.click(await screen.findByRole("button", { name: /^(Delete|Remove)$/ }));
+
+    // `hidden: true`: while the confirm dialog is open the gallery is aria-hidden, which would hide the card from the query.
+    await waitFor(() => {
+      expect(mockDeleteConfig).toHaveBeenCalledWith(mongoId);
+      expect(screen.queryByRole("heading", { name: "to-delete", hidden: true })).not.toBeInTheDocument();
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

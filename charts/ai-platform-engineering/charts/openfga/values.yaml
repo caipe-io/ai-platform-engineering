@@ -52,6 +52,8 @@ playground:
 
 init:
   enabled: true
+  # -- Existing same-namespace ConfigMap containing authorization-model.json. Empty uses the bundled model; seed.py remains chart-owned.
+  existingModelConfigMap: ""
   image:
     repository: python
     tag: "3.14-slim"

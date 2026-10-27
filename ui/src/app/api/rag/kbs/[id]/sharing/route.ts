@@ -30,7 +30,7 @@ import {
 } from "@/lib/rag-collections.server";
 import {
   prepareRagPublication,
-  ragPublicationRevision,
+  ragPublicationRevisionBasis,
 } from "@/lib/rag-publication-approval.server";
 import { readOpenFgaTuples } from "@/lib/rbac/openfga";
 import {
@@ -1086,15 +1086,16 @@ export async function PUT(
     const currentLocalSource = localSource
       ? await sourceCollection.findOne({ source_id: id } as never)
       : null;
-    const resourceRevision = currentLocalSource
-      ? ragPublicationRevision(currentLocalSource, effectiveSearch)
-      : publicationResourceRevision({
+    const revisionBasis = currentLocalSource
+      ? ragPublicationRevisionBasis(currentLocalSource, effectiveSearch)
+      : {
           source_id: id,
           owner_team_slug: appliedOwnerTeam,
           owner_subject: appliedPersonalOwner,
           creator_subject: creatorSubject,
           ...effectiveSearch,
-        });
+        };
+    const resourceRevision = publicationResourceRevision(revisionBasis);
     let publicationRequest: Awaited<
       ReturnType<typeof createPublicationRequest>
     > | null = null;
@@ -1102,6 +1103,7 @@ export async function PUT(
       publicationRequest = await createPublicationRequest({
         resource: publication.resource,
         resourceRevision,
+        revisionBasis,
         requestedState: publication.requestedState as unknown as Record<
           string,
           unknown
@@ -1117,6 +1119,7 @@ export async function PUT(
       await recordAutoApprovedPublication({
         resource: publication.resource,
         resourceRevision,
+        revisionBasis,
         requestedState: publication.requestedState as unknown as Record<
           string,
           unknown

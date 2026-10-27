@@ -48,6 +48,38 @@ Dynamic Agents provide a flexible way to create purpose-built AI assistants with
 - Exactly one terminal outcome per turn: `success`, `error`, `interrupted`, or `cancelled`
 - Time to first user-visible response and end-to-end turn latency histograms
 
+### Optional app-context prompt adapter
+
+- Structured `client_context` remains separate from the user's message.
+- Off by default. Operators may opt in an agent through its deployment-owned YAML definition:
+
+```yaml
+app_context_prompt:
+  app_ids: [example-app]
+  fields: [title, selection.city, selection.forecast.temperature]
+  max_bytes: 4096
+```
+
+- A chat `config_override` cannot enable or change this policy; the ordinary agent editor does not edit it.
+- Send `source: agentic_app_context`, `trust: untrusted_user_visible_data`, the matching `appId`,
+  and a timezone-qualified `expiresAt` in the next ten minutes. `selection` may be an object or JSON string.
+- Only configured scalar paths are projected: `title`, `summary`, `route`, or dotted `selection.*` paths.
+  Whole objects/arrays, credential-named paths, bearer/JWT-looking values and strings over 2,048 characters are omitted.
+- Invalid/expired context, input over 16 KiB, or formatted output over the configured limit is omitted.
+  Limits include the complete formatted reference block; oversize data is not silently truncated into invalid JSON.
+  Expiration is rechecked when preparing model requests, including after a long-running tool.
+- When PII middleware is enabled, the adapter omits the projection. PII middleware checks graph-state
+  messages before this request-only block is added, so it cannot redact or block the projected data.
+- The root agent receives a labelled, untrusted reference block in a copy of its current model request.
+  The UI question, system instructions, attachments, and checkpoint messages are not rewritten.
+  Subagents are not implicitly opted in. Context is task-local and reset on success, exception or cancellation.
+- Streaming, invoke and resume use only the current request, including when the runtime is cached. Resume requires
+  resending fresh context; no old snapshot is replayed. This adapter does not add snapshots to checkpoint state.
+- App IDs, resource references and trust labels from the browser are not authorization evidence. Existing API/tool
+  permissions remain authoritative. Delimiters and heuristics are not a prompt-injection defense or a secret scanner.
+- Selected data reaches the model and may appear in provider traces/logs. Include only necessary, approved data.
+  Existing raw-context tooling/templates and their telemetry are unchanged; this adapter is not a general DLP layer.
+
 ## Running Locally
 
 ### Prerequisites
@@ -91,9 +123,11 @@ DYNAMIC_AGENTS_COLLECTION=dynamic_agents
 MCP_SERVERS_COLLECTION=mcp_servers
 
 # Authentication
-# In production, the Next.js gateway injects X-User-Context headers.
-# For local development, set DEBUG=true to bypass auth with a dev admin user.
-DEBUG=true
+# Use Keycloak for local development and production.
+KEYCLOAK_URL=http://localhost:7080
+KEYCLOAK_REALM=caipe
+# Set OIDC_ISSUER when the browser-facing issuer differs from KEYCLOAK_URL.
+DEBUG=false
 
 # LLM Provider (configure at least one)
 # For Anthropic:
@@ -139,6 +173,22 @@ The API documentation is available at:
 - Swagger UI: http://localhost:8001/docs
 - ReDoc: http://localhost:8001/redoc
 
+## Tool call recovery
+
+Every agent and subagent checks model output before executing tools:
+
+- Output-limit stops (`length` / `max_tokens`), invalid tool-call JSON, and invalid
+  Pydantic tool arguments trigger recovery. Remote JSON-schema tools are checked
+  for missing required top-level arguments and malformed `required` metadata.
+- The entire defective parallel batch is rejected, including otherwise complete
+  calls. Rejected calls never run and raw tool-use blocks are removed from history.
+- The model gets one repair attempt, with feedback to use smaller file edits.
+  Consecutive failure counts belong to each invocation and reset after success.
+- Exhaustion emits an actionable stream error for start/resume, or HTTP 422 for
+  invoke. A later conversation turn can continue from the sanitized checkpoint.
+
+This guard does not change context compaction thresholds or model output budgets.
+
 ## Configuration Reference
 
 ### Environment Variables
@@ -148,7 +198,7 @@ The API documentation is available at:
 | `HOST` | Server bind address | `0.0.0.0` |
 | `PORT` | Server port | `8001` |
 | `METRICS_PORT` | Dedicated port for `/metrics` (0 = same as `PORT`) | `0` |
-| `DEBUG` | Enable debug mode / hot reload / dev auth bypass | `false` |
+| `DEBUG` | Enable debug mode / hot reload | `false` |
 | `MONGODB_URI` | MongoDB connection string | `mongodb://localhost:27017` |
 | `MONGODB_DATABASE` | Database name | `caipe` |
 | `DYNAMIC_AGENTS_COLLECTION` | Agents collection name | `dynamic_agents` |
@@ -192,7 +242,7 @@ For a private deployment alias, configure both sides of discovery:
 - `MODEL_CAPABILITIES_JSON` advertises the alias and its supported
   `reasoning_efforts` to the Dynamic Agents API and UI.
 - `LLM_REASONING_EFFORT_MAP_JSON` maps each portable level to the provider's
-  native string or thinking-token budget in `cnoe-agent-utils`.
+  native string or thinking-token budget.
 
 ## API Reference
 
@@ -357,14 +407,20 @@ uv run pytest --cov=dynamic_agents --cov-report=html
 
 ## Docker
 
+When using the local Compose Keycloak service, join its network so the
+`keycloak` hostname resolves. The issuer must match the browser-facing URL
+in the token.
+
 ```bash
 # Build
 docker build -t dynamic-agents .
 
 # Run
-docker run -p 8001:8001 \
+COMPOSE_NETWORK=$(docker inspect keycloak --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}')
+docker run --network "$COMPOSE_NETWORK" -p 8001:8001 \
   -e MONGODB_URI=mongodb://host.docker.internal:27017 \
-  -e DEBUG=true \
+  -e KEYCLOAK_URL=http://keycloak:7080 \
+  -e OIDC_ISSUER=http://localhost:7080/realms/caipe \
   -e ANTHROPIC_API_KEY=your-key \
   dynamic-agents
 ```
@@ -405,3 +461,53 @@ dynamic_agents/
 - [SSE_EVENTS.md](./SSE_EVENTS.md) - SSE event types and streaming protocol
 - [UI Integration](../../ui/src/components/dynamic-agents/) - Frontend components
 - [MCP Protocol](https://modelcontextprotocol.io/) - Model Context Protocol specification
+
+
+## Remote A2A agents
+
+- Register endpoints in **Agents > Advanced > Remote A2A Agents** as a platform admin.
+- Select multiple registry entries for an agent or its subagents. Each entry becomes a callable tool.
+- Configure an overall execution deadline (1–600 seconds); agent authors can override it per selection.
+  The deadline includes credential resolution, Agent Card discovery, and execution; stream activity does not reset it.
+- Check **Stream responses** when adding or editing a registry entry to opt into A2A streaming. It defaults to off and applies to callers of that entry.
+- Streaming uses the official SDK and Agent Card capability negotiation. Endpoints without streaming support return complete responses.
+- Remote text appears progressively in the running tool output panel, including calls from subagents. Artifact append/replacement semantics are preserved; the completed result is passed to the parent agent. Disconnected/failed streams surface errors rather than successful partial answers.
+- Choose **User JWT**, **Saved secret**, or **Connected credential**, then set the header name.
+- `Authorization` sends a Bearer token; other headers receive the value directly.
+- Saved secrets require the invoking caller's use permission. Connected credentials resolve the invoking caller's own provider account.
+- Set `CREDENTIAL_API_URL` to the UI credential API (for example `http://caipe-ui:3000/api/credentials`) for secrets and connected accounts. `CREDENTIAL_SERVICE_AUDIENCE` defaults to `caipe-credential-service`.
+- Credentials resolve on every invocation. Registry edits invalidate cached runtimes on the next request.
+- Agent Card discovery and calls use the official A2A SDK with JSON-RPC or HTTP+JSON negotiation.
+- Calls use the registered endpoint. Register a gateway URL to gate A2A calls; `AGENT_GATEWAY_URL` configures MCP routing only.
+
+### Standalone examples
+
+- [sample_a2a_agents](https://github.com/caipe-io/sample_a2a_agents) owns the Netutils and Weather example servers, their SDK adapter, tests, Docker image, and Compose/gateway configuration.
+- Follow that repository's setup guide to attach the examples to the running platform network. They are not bundled in the Dynamic Agents image or platform Compose files.
+- Register Netutils for direct A2A calls or Weather through its Keycloak JWT gateway in **Advanced > Remote A2A Agents**. Select both, optionally enable **Stream responses**, and **Save Changes**.
+
+### Authentication and destination policy
+
+- Registry writes and Agent Card discovery require CAS `manage` permission on the configured organization.
+  The backend probe repeats this check using the validated caller JWT; context flags do not grant access.
+- Parent agent execution requires CAS `use` permission. Selected remote entries define its callable tools.
+  The remote agent or its gateway enforces its own policies with the configured credential.
+- `DEBUG` controls diagnostics/reload and never creates an administrator identity.
+  Use the [Keycloak developer workflow](../../deploy/keycloak/README.md#developer-authentication)
+  for local login; its Compose override disables anonymous authentication and RBAC bypass flags.
+- A2A credentials are sent only to the registered origin. Agent Cards that advertise
+  another origin are rejected; register the externally reachable gateway origin instead.
+- HTTPS is required by default. For private/local Docker examples, set
+  `REMOTE_A2A_ALLOWED_HTTP_ORIGINS=["http://netutils-agent:8120","http://weather-agentgateway:4000"]`
+  in the DA deployment. Trusting HTTP permits plaintext credential transmission on
+  that network; do not add public HTTP origins.
+
+### A2A execution and response limits
+
+- `REMOTE_A2A_MAX_OUTPUT_BYTES`: maximum accumulated UTF-8 text (messages, artifacts, and status), default **1 MiB**.
+- `REMOTE_A2A_MAX_RESPONSE_BYTES`: total HTTP response bytes across discovery and execution in one call, default **8 MiB**. All response bytes count, including metadata, non-text payloads and SSE comments, before SDK parsing.
+- Configure these positive integer settings on the Dynamic Agents service. They apply to parent and subagent tools. UI timeouts remain bounded to 1–600 seconds.
+- Discovery probes use the response cap and a **10-second overall deadline**.
+- Requests use `Accept-Encoding: identity`; compressed responses are rejected to keep decompression from bypassing the response budget.
+- Exceeding a limit fails the tool call and closes the active response stream and SDK client. Oversized snapshots are not emitted; partial output is not returned as a successful answer. Closing a local stream does not guarantee cancellation of work already running on the remote service.
+- Remote endpoints must be trusted and administrator-approved. Mandatory AgentGateway routing, verified calling-agent identity and CAS delegation authorization are tracked in [#2914](https://github.com/caipe-io/ai-platform-engineering/issues/2914).

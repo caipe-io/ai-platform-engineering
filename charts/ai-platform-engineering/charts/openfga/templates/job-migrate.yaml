@@ -19,7 +19,7 @@ spec:
       labels:
         {{- include "openfga.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{ include "openfga.serviceAccountName" . }}
+      serviceAccountName: {{ include "openfga.migrateServiceAccountName" . }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
       restartPolicy: OnFailure
       securityContext:

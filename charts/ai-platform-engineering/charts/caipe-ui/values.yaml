@@ -188,6 +188,10 @@ podDisruptionBudget:
 # Each key-value pair is injected as a flat environment variable via ConfigMap (envFrom).
 # For sensitive values (OIDC secrets, MongoDB URI, etc.) use existingSecret or externalSecrets below.
 config:
+  # Optional comma-separated GitHub repository URLs approved for release-note
+  # commit comparisons. Unset uses the canonical upstream repository only.
+  # Setting a value replaces that default; empty disables commit comparisons.
+  # RELEASE_NOTES_ALLOWED_REPOSITORIES: "https://github.com/example/platform-fork"
   # Feature flags
   ENABLE_SUBAGENT_CARDS: "true"
   SSO_ENABLED: "true"

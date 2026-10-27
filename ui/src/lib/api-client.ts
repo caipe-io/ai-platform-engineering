@@ -172,6 +172,7 @@ class APIClient {
     page_size?: number;
     archived?: boolean;
     pinned?: boolean;
+    non_empty?: boolean;
     /** Filter the unified chat history by its originating surface. */
     source?: ConversationListFilter;
     /** Pass null to include every non-Slack/Webex client type. */
@@ -182,6 +183,7 @@ class APIClient {
     if (params?.page_size) searchParams.set('page_size', params.page_size.toString());
     if (params?.archived !== undefined) searchParams.set('archived', params.archived.toString());
     if (params?.pinned !== undefined) searchParams.set('pinned', params.pinned.toString());
+    if (params?.non_empty) searchParams.set('non_empty', 'true');
     if (params?.source) searchParams.set('source', params.source);
     // Default to webui conversations. Null intentionally omits the client filter
     // for the unified All view; the server still excludes Slack and Webex there.

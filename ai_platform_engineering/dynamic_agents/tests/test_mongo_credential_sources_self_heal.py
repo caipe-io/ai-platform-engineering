@@ -6,7 +6,7 @@ AgentGateway discovery historically persisted ``mcp_servers`` documents
 without ``credential_sources``; transform-based gateway routes then emitted an
 empty Bearer and the upstream returned 401 (most visibly ``knowledge-base``).
 ``get_server`` / ``get_servers_by_ids`` fill the built-in sources at read time
-for known servers when the stored value is absent/empty, without overwriting an
+for known servers when the stored value is absent, without overwriting an
 operator-customized list.
 """
 
@@ -75,15 +75,15 @@ def test_get_server_injects_builtin_when_missing():
     assert server.credential_sources[0].fallback_client_credentials is True
 
 
-def test_get_server_injects_builtin_when_empty_list():
-    """An explicit empty credential_sources is treated as missing and healed."""
+def test_get_server_preserves_explicit_empty_sources():
+    """An operator can clear credentials without read-time reattachment."""
     service = _make_service()
     _mock_servers(service, find_one=_kb_doc(credential_sources=[]))
 
     server = service.get_server("knowledge-base")
 
-    assert server.credential_sources
-    assert server.credential_sources[0].kind == "caller_token"
+    assert server is not None
+    assert server.credential_sources == []
 
 
 def test_get_server_preserves_operator_customized_sources():
@@ -143,3 +143,11 @@ def test_get_servers_by_ids_injects_per_document():
     # knowledge-base is healed; argocd has no built-in sources in config.yaml.
     assert servers["knowledge-base"].credential_sources[0].kind == "caller_token"
     assert servers["argocd"].credential_sources is None
+
+
+def test_get_servers_by_ids_preserves_explicit_empty_sources() -> None:
+    service = _make_service()
+    _mock_servers(service, find=[_kb_doc(credential_sources=[])])
+    servers = service.get_servers_by_ids(["knowledge-base"])
+    assert len(servers) == 1
+    assert servers[0].credential_sources == []

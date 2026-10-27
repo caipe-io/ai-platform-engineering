@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "dependencies": {
+    "@opencode-ai/plugin": "1.3.17"
+  },
+  "overrides": {
+    "zod": "4.6.6"
+  }
+}

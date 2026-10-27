@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { RESERVED_HOST_PATHS } from "../app-sdk/reserved-paths.mjs";
+import { isAgenticAppsEnabled, loadConfiguredAgenticApps } from "@/lib/agentic-apps/config";
+import { agenticAppForHostPath } from "@/lib/agentic-apps/host-routes";
 
 import { AGENTIC_APP_PUBLIC_BASE, AGENTIC_APP_RUNTIME_BASE } from "@/lib/agentic-apps/runtime";
+import {
+  nativeExtensionForApiPath,
+} from "@/native-extensions/runtime";
 
 const APP_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -16,6 +22,33 @@ const APP_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
  */
 export function proxy(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
+  const nativeApiExtension = nativeExtensionForApiPath(pathname);
+  if (nativeApiExtension) {
+    const runtimeUrl = request.nextUrl.clone();
+    runtimeUrl.pathname = `${nativeApiExtension.api.basePath}${pathname}`;
+    return NextResponse.rewrite(runtimeUrl);
+  }
+
+  // Runtime selection takes precedence over compiled native page claims.
+  // Admission remains in the destination page and authenticated app gateway.
+  // Reserved host routes never depend on optional app configuration.
+  const isReservedHostPath = RESERVED_HOST_PATHS.some(root =>
+    pathname === root || (root !== "/" && pathname.startsWith(`${root}/`)));
+  if (!isReservedHostPath && isAgenticAppsEnabled()) {
+    try {
+      const owner = agenticAppForHostPath(loadConfiguredAgenticApps(), pathname);
+      if (owner) {
+        const profile = owner.manifest.ui.profiles.find(p => p.id === owner.installation.selectedUiProfile);
+        const url = request.nextUrl.clone();
+        url.pathname = profile?.mode === "iframe"
+          ? `/agentic-app-routes/${owner.installation.appId}${pathname}`
+          : `/native-extensions/${owner.installation.appId}${pathname}`;
+        return NextResponse.rewrite(url);
+      }
+    } catch {
+      return NextResponse.json({ error: "Application route configuration unavailable" }, { status: 503 });
+    }
+  }
   const appPath = parseAgenticAppPath(pathname);
 
   if (!appPath || isHostShellRequest(request)) {
@@ -33,7 +66,9 @@ export function proxy(request: NextRequest): NextResponse {
 }
 
 export const config = {
-  matcher: ["/apps/:path*"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|icon.ico|robots.txt|sitemap.xml).*)",
+  ],
 };
 
 function parseAgenticAppPath(pathname: string): string | null {

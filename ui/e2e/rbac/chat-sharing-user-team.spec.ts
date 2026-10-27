@@ -173,7 +173,10 @@ async function openShareDialog(page: Page): Promise<Locator> {
 }
 
 function sidebarShareButton(page: Page): Locator {
-  return page.getByRole("button", { name: "Share conversation" }).first();
+  return page
+    .getByTestId("conversation-history-scroll")
+    .getByRole("button", { name: "Share conversation" })
+    .first();
 }
 
 async function expectSidebarShareIcon(
@@ -189,12 +192,17 @@ async function expectSidebarShareIcon(
   },
 ) {
   const button = sidebarShareButton(page);
+  const conversationRow = page
+    .getByTestId("conversation-history-scroll")
+    .locator("[data-chat-conversation-id]")
+    .first();
+  await conversationRow.hover({ force: true });
   await expect(button).toBeVisible();
   const icon = button.locator("svg").first();
   await expect(icon).toHaveClass(expectedIconClass);
   await expect(icon).not.toHaveClass(forbiddenIconClass);
 
-  await button.hover();
+  await button.hover({ force: true });
   await expect(page.getByRole("tooltip", { name: tooltip })).toBeVisible();
 }
 
@@ -477,9 +485,7 @@ test.describe("mocked RBAC e2e - chat sharing users and teams", () => {
     );
 
     await selectAccessRowPermission(dialog, RECIPIENT.email, "view");
-    await selectAccessRowPermission(dialog, TEAM.name, "comment");
-
-    expect(shareRequests).toContainEqual(
+    await expect.poll(() => shareRequests).toContainEqual(
       expect.objectContaining({
         method: "PATCH",
         body: {
@@ -488,7 +494,10 @@ test.describe("mocked RBAC e2e - chat sharing users and teams", () => {
         },
       }),
     );
-    expect(shareRequests).toContainEqual(
+    await expect(accessRow(dialog, RECIPIENT.email).locator("select")).toHaveValue("view");
+
+    await selectAccessRowPermission(dialog, TEAM.name, "comment");
+    await expect.poll(() => shareRequests).toContainEqual(
       expect.objectContaining({
         method: "PATCH",
         body: {
@@ -497,6 +506,7 @@ test.describe("mocked RBAC e2e - chat sharing users and teams", () => {
         },
       }),
     );
+    await expect(accessRow(dialog, TEAM.name).locator("select")).toHaveValue("comment");
   });
 
   test("recipient sees direct user shares on the Shared with me home tab", async ({

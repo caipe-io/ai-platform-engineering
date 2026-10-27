@@ -134,6 +134,7 @@ describe("AgentGateway MCP discovery", () => {
           "komodor",
           "netutils",
           "pagerduty",
+          "sharepoint",
           "slack",
           "splunk",
           "victorops",

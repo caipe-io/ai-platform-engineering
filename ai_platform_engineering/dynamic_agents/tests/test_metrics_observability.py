@@ -211,3 +211,25 @@ async def test_runtime_cache_records_capacity_rejections() -> None:
         metrics.runtime_cache_entries.set(entries_before)
         metrics.runtime_cache_capacity.set(capacity_before)
         metrics.runtime_cache_pending_initializations.set(pending_before)
+
+
+@pytest.mark.asyncio
+async def test_consumer_close_immediately_closes_underlying_turn() -> None:
+    runtime = _runtime_stub()
+    observation = _TurnObservation(started_at=time.monotonic(), turn_type="stream")
+    closed = False
+
+    async def implementation() -> Any:
+        nonlocal closed
+        try:
+            yield "frame"
+            yield "unexpected continuation"
+        finally:
+            closed = True
+
+    observed = runtime._observe_turn(implementation(), observation)
+    assert await anext(observed) == "frame"
+    await observed.aclose()
+    assert closed
+    assert observation.status == "cancelled"
+    assert not runtime._is_streaming
