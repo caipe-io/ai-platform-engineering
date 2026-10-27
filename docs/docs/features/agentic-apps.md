@@ -242,32 +242,6 @@ grant every declared app scope when `requiredScopes` is omitted.
 
 ## Application requirements
 
-### External MCP clients
-
-- Declare `api.mcp` to expose an app-owned MCP authentication boundary:
-
-  ```json
-  {
-    "path": "/api/example/mcp",
-    "metadataPath": "/.well-known/oauth-protected-resource/api/example/mcp",
-    "apiKeyHeader": "x-example-token"
-  }
-  ```
-
-- Declare allowed POST protocol and GET discovery policies. Installed/enabled state, method policy, private origin binding, and body limits still apply.
-- The app validates external bearer/API credentials and enforces resource authorization. External MCP access is independent of the host's browser-session/UI-role policy; enable it only when the app owns that complete authorization boundary.
-- The gateway forwards external credentials only to the exact declared protocol path. It strips host cookies and identity headers, preserves OAuth challenges, and never substitutes a browser identity for an invalid external credential.
-- Metadata and the protocol's `openapi.json` document are public GET/HEAD routes. No credentials are forwarded to them. Other runtime paths retain host-session admission.
-- The iframe resource URL is `/apps/<app-id>/api/example/mcp`; compiled native API mounts retain their declared public URL. The app's metadata must advertise that exact resource URL and a public authorization server.
-- Path-derived RFC 9728 discovery is available at `/.well-known/oauth-protected-resource` followed by the resource path. Disabled, unknown, or ambiguous resources fail closed.
-
-### Host keyboard shortcuts
-
-- A connected iframe can receive `hostShortcuts: ["search"]` in its bridge capabilities.
-- The SDK forwards Cmd+K/Ctrl+K as a search intent. It does not transmit typed text or arbitrary key events.
-- The host accepts the intent only from the active app frame with the expected origin, app ID, and bridge version. The existing search component owns result authorization.
-- Without the advertised capability, the SDK leaves the key event untouched. Already handled events, repeats, composition, and alternate modifiers are not forwarded.
-
 An application using `app-scoped-token` must:
 
 1. Be reachable from the CAIPE UI pod at the configured private HTTP(S) origin.
@@ -303,6 +277,34 @@ initial slice. `SAMEORIGIN` prevents cross-origin framing; it does not isolate a
 registered app from CAIPE. Do not register arbitrary or less-trusted websites.
 Use a separate-origin or sandbox/message-channel design before widening the
 publisher trust boundary.
+
+### External MCP clients
+
+- Declare `api.mcp` to expose an app-owned MCP authentication boundary:
+
+  ```json
+  {
+    "path": "/api/example/mcp",
+    "metadataPath": "/.well-known/oauth-protected-resource/api/example/mcp",
+    "apiKeyHeader": "x-example-token"
+  }
+  ```
+
+- Declare allowed POST protocol and GET metadata policies. Installed/enabled state, method policy, private origin binding, and body limits still apply.
+- The app validates external bearer/API credentials and enforces resource authorization. External MCP access is independent of the host's browser-session/UI-role policy; enable it only when the app owns that complete authorization boundary.
+- The gateway forwards external credentials only to the exact declared protocol path. It strips host cookies and identity headers, preserves OAuth challenges, and never substitutes a browser identity for an invalid external credential.
+- GET/HEAD requests to metadata and the protocol's `openapi.json` document bypass host-session authentication only when an applicable allow policy exists. Declare each desired method/path policy or a `proxy:GET`/`proxy:HEAD` fallback.
+- Manifest validation requires POST protocol and GET metadata policies; it does not automatically allow `openapi.json` or HEAD requests.
+- No credentials are forwarded to metadata or schema routes. Other runtime paths retain host-session admission.
+- The iframe resource URL is `/apps/<app-id>/api/example/mcp`; compiled native API mounts retain their declared public URL. The app's metadata must advertise that exact resource URL and a public authorization server.
+- Path-derived RFC 9728 discovery is available at `/.well-known/oauth-protected-resource` followed by the resource path. Disabled, unknown, or ambiguous resources fail closed.
+
+### Host keyboard shortcuts
+
+- A connected iframe can receive `hostShortcuts: ["search"]` in its bridge capabilities.
+- The SDK forwards Cmd+K/Ctrl+K as a search intent. It does not transmit typed text or arbitrary key events.
+- The host accepts the intent only from the active app frame with the expected origin, app ID, and bridge version. The existing search component owns result authorization.
+- Without the advertised capability, the SDK leaves the key event untouched. Already handled events, repeats, composition, and alternate modifiers are not forwarded.
 
 ## Current authorization scope
 

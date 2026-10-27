@@ -92,6 +92,59 @@ it("still enforces installation, method policy, and request size", async () => {
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
+it("cancels an oversized body without content-length before reading the remaining chunks", async () => {
+  const configured = app();
+  configured.manifest.runtime!.maxRequestBodyBytes = 3;
+  mockApp.mockReturnValue(configured);
+  const chunks = ["ab", "cd", "ef"].map(chunk => new TextEncoder().encode(chunk));
+  const cancel = jest.fn();
+  let index = 0;
+  const pull = jest.fn((controller: ReadableStreamDefaultController<Uint8Array>) => {
+    if (index < chunks.length) controller.enqueue(chunks[index++]);
+    else controller.close();
+  });
+  const stream = new ReadableStream({ pull, cancel }, { highWaterMark: 0 });
+  const request = new Request("https://example.test/apps/example/api/example/mcp", {
+    method: "POST", body: stream, duplex: "half",
+  } as RequestInit & { duplex: "half" });
+
+  expect(request.headers.has("content-length")).toBe(false);
+  const response = await proxyAgenticAppRequest(request, {
+    params: Promise.resolve({ appId: "example", path: ["api", "example", "mcp"] }),
+  });
+
+  expect(response.status).toBe(413);
+  expect(pull).toHaveBeenCalledTimes(2);
+  expect(cancel).toHaveBeenCalledTimes(1);
+  expect(stream.locked).toBe(false);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it("forwards a streamed body at the limit without changing its bytes", async () => {
+  const configured = app();
+  configured.manifest.runtime!.maxRequestBodyBytes = 3;
+  mockApp.mockReturnValue(configured);
+  const chunks = [new Uint8Array([0]), new Uint8Array([127, 255])];
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const chunk = chunks.shift();
+      if (chunk) controller.enqueue(chunk);
+      else controller.close();
+    },
+  }, { highWaterMark: 0 });
+  const request = new Request("https://example.test/apps/example/api/example/mcp", {
+    method: "POST", body: stream, duplex: "half",
+  } as RequestInit & { duplex: "half" });
+
+  await proxyAgenticAppRequest(request, {
+    params: Promise.resolve({ appId: "example", path: ["api", "example", "mcp"] }),
+  });
+
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(new Uint8Array(fetchMock.mock.calls[0][1].body)).toEqual(new Uint8Array([0, 127, 255]));
+  expect(stream.locked).toBe(false);
+});
+
 it("routes only a known native or iframe resource to discovery", () => {
   const configured = app();
   expect(appForMcpResource([configured], "/apps/example/api/example/mcp")).toBe(configured);

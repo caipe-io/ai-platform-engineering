@@ -241,8 +241,8 @@ async function proxyExternalMcpRequest(
   const limit = app.manifest.runtime?.maxRequestBodyBytes ?? DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES;
   const length = parseContentLength(request.headers.get("content-length"));
   if (length !== null && length > limit) return requestBodyTooLarge(limit);
-  const body = shouldForwardBody(request.method) ? await request.arrayBuffer() : undefined;
-  if (body && body.byteLength > limit) return requestBodyTooLarge(limit);
+  const body = shouldForwardBody(request.method) ? await readBodyWithLimit(request, limit) : undefined;
+  if (body === null) return requestBodyTooLarge(limit);
   const headers = new Headers();
   const names = ["accept", "content-type", "origin", "mcp-protocol-version", "mcp-session-id", "last-event-id"];
   if (forwardCredentials) names.push("authorization", ...(app.manifest.api.mcp?.apiKeyHeader ? [app.manifest.api.mcp.apiKeyHeader] : []));
@@ -264,6 +264,34 @@ async function proxyExternalMcpRequest(
   if (location) responseHeaders.set("location", location);
   responseHeaders.set("cache-control", "no-store");
   return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
+}
+
+async function readBodyWithLimit(request: Request, limit: number): Promise<ArrayBuffer | null> {
+  if (!request.body) return new ArrayBuffer(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value.byteLength > limit - total) {
+        await reader.cancel();
+        return null;
+      }
+      total += value.byteLength;
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body.buffer;
 }
 
 function buildForwardHeaders(input: {
