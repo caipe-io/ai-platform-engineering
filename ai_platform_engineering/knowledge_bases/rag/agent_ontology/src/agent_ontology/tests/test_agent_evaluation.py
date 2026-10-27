@@ -176,3 +176,13 @@ async def test_failed_post_publish_step_releases_processing_guard(agent: Ontolog
 
   assert agent.is_processing is False
   assert agent.agent_status_msg == "Idle"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("value", "expected"), [("0.7  # creative", 0.7), ("invalid", 0.0), ("3", 2.0)])
+async def test_provider_temperature_setting(agent: OntologyAgent, new_manager: Mock, worker: Mock, monkeypatch: pytest.MonkeyPatch, value: str, expected: float) -> None:
+  monkeypatch.setenv("OPENAI_TEMPERATURE", value)
+
+  await agent.process_and_evaluate_all()
+
+  agent_module.build_chat_model.assert_called_once_with("openai", temperature=expected)

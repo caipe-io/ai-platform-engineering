@@ -524,7 +524,8 @@ class OntologyAgent:
         "groq": "GROQ_TEMPERATURE",
       }.get(provider.lower().replace("_", "-"))
       try:
-        temperature = float(os.getenv(temperature_env, "0.0")) if temperature_env else 0.0
+        # Accept inline comments such as "0.7  # creative", as LLMFactory did.
+        temperature = float(os.getenv(temperature_env, "0.0").split("#", 1)[0]) if temperature_env else 0.0
       except ValueError:
         self.logger.warning("Invalid LLM temperature setting in %s; using 0.0", temperature_env)
         temperature = 0.0
