@@ -395,4 +395,14 @@ Declare `ui.assistant.overlay: "host"` to use CAIPE's popup. Optional
 
 ### Open the assistant with a question draft
 
-When `getCapabilities()?.assistantDraft` is true, call `bridge.openAssistant(context, { id: crypto.randomUUID(), text: question })`. The host validates a same-origin message from the app iframe, waits for its conversation, appends the question to existing composer text, and focuses it. It never submits the question. The ID is 1–128 ASCII letters, digits, `_` or `-`; text is plain text, limited to 12,000 characters. Invalid drafts are ignored by the host; the SDK reports invalid or unsupported drafts before opening. Existing `openAssistant(context)` calls remain compatible. The wire format is the optional `draft: { id, text }` field on `caipe.agenticApp.assistant.open.v1`.
+- Wait for both `getCapabilities()?.assistant` and `getCapabilities()?.assistantDraft`
+  before calling `bridge.openAssistant(context, { id: crypto.randomUUID(), text: question })`.
+  Draft support may be advertised while the assistant agent is still loading.
+- The host validates the iframe source and origin, shows Chat, waits for its
+  conversation and enabled composer, appends the question to existing text, and
+  focuses it. It never submits the question.
+- IDs contain 1–128 ASCII letters, digits, `_` or `-`. Text is plain text with a
+  12,000-character limit. The SDK reports invalid or unsupported drafts before opening;
+  the host ignores invalid drafts.
+- Existing `openAssistant(context)` calls remain compatible. The wire format is
+  the optional `draft: { id, text }` field on `caipe.agenticApp.assistant.open.v1`.

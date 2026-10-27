@@ -64,6 +64,10 @@ export function AgenticAppAssistantOverlay({
     assistantAgentName?.trim() || `CAIPE assistant for ${appName}`
   ).slice(0, 64);
   const [view, setView] = useState<"chat" | "history">("chat");
+  const incomingDraftId = composerDraft?.id;
+  useEffect(() => {
+    if (incomingDraftId) queueMicrotask(() => setView("chat"));
+  }, [incomingDraftId]);
   const defaultSize = { width: options?.presentation?.width ?? DEFAULT_PANEL_SIZE.width, height: options?.presentation?.height ?? DEFAULT_PANEL_SIZE.height };
   const [panelSize, setPanelSize] = useState(defaultSize);
   const [expanded, setExpanded] = useState(false);
