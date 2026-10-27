@@ -31,6 +31,8 @@ export function NativeExtensionAssistant({ extensionId, pathname, search = "" }:
   const setOpen = useCallback((value: boolean) => setRequest(previous => ({ key, open: value,
     context: previous.key === key ? previous.context : null })), [key]);
   const app = status === "authenticated" && binding?.key === key ? binding.app : null;
+  const canLaunch = Boolean(app?.canLaunch);
+  const requestedChat = new URLSearchParams(search).get("assistant_chat");
   useEffect(() => {
     if (status !== "authenticated") return;
     const controller = new AbortController();
@@ -47,8 +49,8 @@ export function NativeExtensionAssistant({ extensionId, pathname, search = "" }:
     return () => controller.abort();
   }, [key, extensionId, status, retry]);
   useEffect(() => {
-    if (app?.canLaunch && new URLSearchParams(search).has("assistant_chat")) queueMicrotask(() => setOpen(true));
-  }, [app, search, setOpen]);
+    if (canLaunch && requestedChat !== null) queueMicrotask(() => setOpen(true));
+  }, [canLaunch, requestedChat, setOpen]);
   // Listen before native mount effects; requests stay inside this binding's component state.
   useLayoutEffect(() => {
     function onRequest(event: Event) {

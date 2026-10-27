@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { MoreHorizontal, RefreshCw } from "lucide-react";
 
 import { apiClient } from "@/lib/api-client";
 import { getStorageMode } from "@/lib/storage-config";
@@ -9,6 +9,7 @@ import { matchesAssistantConversation } from "@/lib/agentic-apps/assistant-conve
 import HostConversationActions from "@/native-extensions/HostConversationActions";
 import { useChatStore } from "@/store/chat-store";
 import { getAgentId, type Conversation } from "@/types/a2a";
+import { Button } from "@/components/ui/button";
 
 /** History requires explicit app/agent bindings; the API remains the authorization boundary. */
 export function AppAssistantHistory({ appId, agentId, selectedId, onSelect, onArchived }: {
@@ -20,6 +21,7 @@ export function AppAssistantHistory({ appId, agentId, selectedId, onSelect, onAr
   const [error, setError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [pending, setPending] = useState(false);
+  const [actionsFor, setActionsFor] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -57,8 +59,13 @@ export function AppAssistantHistory({ appId, agentId, selectedId, onSelect, onAr
     {items.map(item => <div key={item.id} className="group flex items-center gap-2 rounded-lg p-2 hover:bg-accent" data-selected={selectedId === item.id}>
       <button type="button" disabled={pending} aria-current={selectedId === item.id ? "true" : undefined}
         className="min-w-0 flex-1 truncate p-1 text-left text-sm" onClick={() => void select(item.id)}>{item.title}</button>
-      <div className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100"><HostConversationActions appId={appId} agentId={agentId} conversationId={item.id} disabled={pending}
-        onHistoryChange={() => setRefresh(n => n + 1)} onArchived={() => { onArchived(item.id); setRefresh(n => n + 1); }} /></div>
+      <div className="flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+        <Button type="button" variant="ghost" size="icon" className="h-6 w-6" disabled={pending}
+          aria-label={`Actions for ${item.title}`} aria-expanded={actionsFor === item.id}
+          onClick={() => setActionsFor(current => current === item.id ? null : item.id)}><MoreHorizontal className="h-3 w-3" aria-hidden /></Button>
+        {actionsFor === item.id && <HostConversationActions appId={appId} agentId={agentId} conversationId={item.id} disabled={pending}
+          onHistoryChange={() => setRefresh(n => n + 1)} onArchived={() => { onArchived(item.id); setRefresh(n => n + 1); }} />}
+      </div>
     </div>)}
     {!error && !items.length && <p className="p-3 text-sm text-muted-foreground">No saved chats.</p>}
   </div>;

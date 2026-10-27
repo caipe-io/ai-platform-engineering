@@ -68,7 +68,7 @@ export default function HostConversationActions({ appId, conversationId, agentId
     {conversation?.access_level === "owner" && <>
       <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="h-6 w-6"
         aria-label="Rename conversation" disabled={disabled || pending}
-        onClick={() => { setTitle(conversation.title); setRenaming(true); }}><Pencil className="h-3 w-3" aria-hidden />
+        onClick={() => { setTitle(conversation.title); setError(null); setRenaming(true); }}><Pencil className="h-3 w-3" aria-hidden />
       </Button></TooltipTrigger><TooltipContent>Rename conversation</TooltipContent></Tooltip>
       {getStorageMode() === "mongodb" && !disabled && !pending && (
         <ShareButton conversationId={conversationId} conversationTitle={conversation.title}
@@ -83,9 +83,10 @@ export default function HostConversationActions({ appId, conversationId, agentId
       <DialogHeader><DialogTitle>Rename conversation</DialogTitle></DialogHeader>
       <form onSubmit={event => { event.preventDefault(); void rename(); }} className="space-y-3">
         <Input aria-label="Conversation title" value={title} maxLength={120} onChange={event => setTitle(event.target.value)} autoFocus />
+        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         <Button type="submit" disabled={pending || !title.trim()}>Save</Button>
       </form>
     </DialogContent></Dialog>
-    {error && <p role="alert" className="max-w-48 text-xs text-destructive">{error}</p>}
+    {error && !renaming && <p role="alert" className="max-w-48 text-xs text-destructive">{error}</p>}
   </div>;
 }

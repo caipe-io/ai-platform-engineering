@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import HostConversationActions from "../HostConversationActions";
 
@@ -84,4 +84,15 @@ it("blocks archive while the app is changing conversations", async () => {
   render(<HostConversationActions {...props} disabled />);
   expect(await screen.findByRole("button", { name: "Archive conversation" })).toBeDisabled();
   expect(mockArchive).not.toHaveBeenCalled();
+});
+
+it("keeps a failed rename visible inside the open dialog", async () => {
+  mockServerRename.mockRejectedValueOnce(new Error("Rename was denied"));
+  render(<HostConversationActions {...props} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Rename conversation" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Conversation title" }), { target: { value: "Updated title" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent("Rename was denied");
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
+  expect(props.onHistoryChange).not.toHaveBeenCalled();
 });

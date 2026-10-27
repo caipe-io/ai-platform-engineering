@@ -5,10 +5,11 @@ import { AppAssistantHistory } from "../AppAssistantHistory";
 
 const mockStorageMode = jest.fn(() => "mongodb");
 let mockConversations: Conversation[];
+const mockActions = jest.fn((props: unknown) => { void props; return <span>Validated row actions</span>; });
 jest.mock("@/lib/storage-config", () => ({ getStorageMode: () => mockStorageMode() }));
 jest.mock("@/lib/api-client", () => ({ apiClient: { getConversations: jest.fn() } }));
 jest.mock("@/store/chat-store", () => ({ useChatStore: { getState: () => ({ conversations: mockConversations }) } }));
-jest.mock("@/native-extensions/HostConversationActions", () => ({ __esModule: true, default: () => null }));
+jest.mock("@/native-extensions/HostConversationActions", () => ({ __esModule: true, default: (props: unknown) => mockActions(props) }));
 
 const binding = { conversation_surface: "agentic-app", agentic_app_id: "example-app", agentic_app_agent_id: "example-agent" };
 function conversation(id: string, metadata?: Record<string, unknown>): Conversation {
@@ -43,4 +44,16 @@ it.each(["localStorage", "mongodb"])("shows only explicitly bound, owned app cha
   for (const item of mockConversations.slice(1)) expect(screen.queryByText(item.title)).toBeNull();
   if (mode === "localStorage") expect(apiClient.getConversations).not.toHaveBeenCalled();
   else expect(apiClient.getConversations).toHaveBeenCalledWith(expect.objectContaining({ source: "web", client_type: "webui", archived: false }));
+});
+
+it("defers each row's validation and controls until its actions are requested", async () => {
+  mockStorageMode.mockReturnValue("localStorage");
+  mockConversations.push(conversation("Another allowed chat", binding));
+  render(<AppAssistantHistory appId="example-app" agentId="example-agent" onSelect={jest.fn()} onArchived={jest.fn()} />);
+  await screen.findByRole("button", { name: "Another allowed chat" });
+  expect(mockActions).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Actions for Allowed app chat" }));
+  expect(await screen.findByText("Validated row actions")).toBeInTheDocument();
+  expect(mockActions).toHaveBeenCalledTimes(1);
+  expect(mockActions).toHaveBeenCalledWith(expect.objectContaining({ appId: "example-app", agentId: "example-agent", conversationId: "Allowed app chat" }));
 });

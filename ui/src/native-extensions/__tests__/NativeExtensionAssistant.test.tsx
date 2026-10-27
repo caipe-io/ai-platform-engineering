@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useLayoutEffect } from "react";
 import { requestHostAssistant } from "@/lib/agentic-apps/assistant-events";
 
@@ -32,6 +32,21 @@ describe("NativeExtensionAssistant", () => {
     render(<><NativeExtensionAssistant {...props} /><MountRequest /></>);
     await waitFor(() => expect(screen.getByRole("button", { name: "Ask Example" })).toHaveAttribute("data-open", "true"));
     expect(mockOverlay.mock.calls.at(-1)?.[0].activeContext?.title).toBe("Mount context");
+  });
+
+  it("does not reopen a closed assistant for unrelated query changes", async () => {
+    const view = render(<NativeExtensionAssistant {...props} search="assistant_chat=chat-a&view=first" />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Ask Example" })).toHaveAttribute("data-open", "true"));
+    act(() => mockOverlay.mock.calls.at(-1)?.[0].onOpenChange(false));
+    view.rerender(<NativeExtensionAssistant {...props} search="assistant_chat=chat-a&view=second" />);
+    expect(screen.getByRole("button", { name: "Ask Example" })).toHaveAttribute("data-open", "false");
+    view.rerender(<NativeExtensionAssistant {...props} search="assistant_chat=chat-b&view=second" />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Ask Example" })).toHaveAttribute("data-open", "true"));
+  });
+
+  it("still opens for an explicitly empty assistant_chat parameter", async () => {
+    render(<NativeExtensionAssistant {...props} search="assistant_chat=" />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Ask Example" })).toHaveAttribute("data-open", "true"));
   });
 
   it.each(["subject", "account", "organization", "role"])("clears prior context and open state when the %s changes", async field => {

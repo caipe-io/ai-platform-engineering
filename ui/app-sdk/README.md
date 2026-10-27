@@ -325,6 +325,7 @@ organization and role changes reset the assistant binding.
 - The host popup provides Chat/History views with the existing rename, share and
   recoverable archive controls on each history item. No archive browser is added.
 - History selection revalidates the installation, bound agent and conversation.
+- Open a history row's actions to validate and load its rename/share/archive controls.
 - History and deep links require an explicit app/agent conversation binding;
   unrelated or unbound same-agent chats are not implicitly adopted.
 - `?assistant_chat=<conversation-id>` restores that exact authorized conversation;
