@@ -1357,7 +1357,7 @@ services:
       - ./ai_platform_engineering/llm_wrapper/src/llm_wrapper:/app/ai_platform_engineering/llm_wrapper/src/llm_wrapper
     ports: ["8098:8098"]
     environment:
-      - PYTHONPATH=/app/ai_platform_engineering/knowledge_bases/rag/common/src:/app/ai_platform_engineering/knowledge_bases/rag/agent_ontology/src
+      - PYTHONPATH=/app/ai_platform_engineering/knowledge_bases/rag/common/src:/app/ai_platform_engineering/llm_wrapper/src:/app/ai_platform_engineering/knowledge_bases/rag/agent_ontology/src
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REDIS_URL=redis://rag-redis:6379/0
       - NEO4J_ADDR=neo4j://neo4j:7687
