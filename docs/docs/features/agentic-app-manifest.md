@@ -187,6 +187,12 @@ of requiring an entry in the public catalog. The catalog omits hidden and
 service-only apps. Selecting native UI redirects the app's hosted entry to its
 native entry point.
 
+Catalog cards use the first declared `catalog.categories` value for their badge
+and color treatment. Valid packaged `catalog.icon` assets take precedence over
+the category fallback icon. Each user can favorite visible apps in the Apps
+catalog; favorites are stored in user preferences and do not change app access
+or sharing permissions.
+
 ### UI-only and service-only apps
 
 - UI-only native app: omit `runtime`, keep only its native profile, and use empty

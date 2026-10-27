@@ -278,6 +278,8 @@ export interface UserSettings {
     home_widgets_version?: number;
     /** Which Home page layout the user sees — the new default, or the previous fixed layout. */
     home_experience?: "new" | "classic";
+    /** Favorite app IDs shown in the Apps catalog. */
+    favorite_agentic_apps?: string[];
   };
   notifications: {
     email_enabled: boolean;

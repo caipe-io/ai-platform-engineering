@@ -17,11 +17,21 @@ for (const scenario of [
   { theme: "dark", width: 390 },
 ]) {
   test(`catalog layout, search, keyboard navigation: ${scenario.theme} ${scenario.width}`, async ({ page }, testInfo) => {
+    let favoriteAppIds: string[] = [];
     await page.setViewportSize({ width: scenario.width, height: 900 });
     await page.addInitScript((theme) => localStorage.setItem("theme", theme), scenario.theme);
     await installMockedRbacApp(page, {
       session: { email: "test-user@example.com", name: "Test User" },
       handlers: [async ({ path, route }) => {
+        if (path === "/api/settings") {
+          await fulfillJson(route, { success: true, data: { preferences: { favorite_agentic_apps: favoriteAppIds } } });
+          return true;
+        }
+        if (path === "/api/settings/preferences") {
+          favoriteAppIds = (route.request().postDataJSON() as { favorite_agentic_apps: string[] }).favorite_agentic_apps;
+          await fulfillJson(route, { success: true, data: { preferences: { favorite_agentic_apps: favoriteAppIds } } });
+          return true;
+        }
         if (path === "/api/agentic-apps") {
           await fulfillJson(route, { items: apps });
           return true;
@@ -42,10 +52,16 @@ for (const scenario of [
     await page.goto("/apps");
     await expect(page.getByRole("region", { name: "Available Apps" })).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("data-theme", scenario.theme);
-    await expect(page.getByText("2 of 2 apps")).toBeVisible();
+    await expect(page.getByText("2 apps")).toBeVisible();
     await expect(page.getByRole("link", { name: "Build a CAIPE app (opens in a new tab)" })).toHaveAttribute("target", "_blank");
     await expect(page.getByRole("link", { name: "Secondary workspace", exact: true })).toHaveCount(0);
     await expect(page.getByText("Access required: unauthorized")).toBeVisible();
+    const favorite = page.getByRole("button", { name: "Add Example workspace to favorites" });
+    await expect(favorite).toBeEnabled();
+    await favorite.click();
+    await expect(page.getByRole("button", { name: "Remove Example workspace from favorites" })).toHaveAttribute("aria-pressed", "true");
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Remove Example workspace from favorites" })).toHaveAttribute("aria-pressed", "true");
     const main = page.getByRole("main");
     expect(await main.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     for (const app of apps) {

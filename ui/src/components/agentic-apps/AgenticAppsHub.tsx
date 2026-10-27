@@ -1,13 +1,14 @@
 "use client";
 
-import { ArrowUpRight, LoaderCircle, Search } from "lucide-react";
+import { ArrowUpRight, LayoutGrid, LoaderCircle, Search, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { AgenticAppCard } from "./AgenticAppCard";
+import { apiClient } from "@/lib/api-client";
 import { matchesAgenticAppSearch } from "@/lib/agentic-apps/hub-search";
+import { normalizeFavoriteAppIds } from "@/lib/agentic-apps/favorites";
 import type { PublicAgenticApp } from "@/types/agentic-app";
-import { AgenticAppIcon } from "@/components/shared/AgenticAppIcon";
 
 type LoadState =
   | { status: "loading" }
@@ -18,10 +19,14 @@ export function AgenticAppsHub(): React.ReactElement {
   const router = useRouter();
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [query, setQuery] = useState("");
+  const [favoriteAppIds, setFavoriteAppIds] = useState<string[]>([]);
+  const [favoritesReady, setFavoritesReady] = useState(false);
+  const [favoritePending, setFavoritePending] = useState(false);
+  const [favoriteError, setFavoriteError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/agentic-apps", { cache: "no-store" })
+    Promise.all([fetch("/api/agentic-apps", { cache: "no-store" })
       .then(async (response) => {
         if (response.status === 401) {
           router.push(
@@ -31,9 +36,16 @@ export function AgenticAppsHub(): React.ReactElement {
         }
         if (!response.ok) throw new Error(`Apps catalog returned HTTP ${response.status}`);
         return response.json() as Promise<{ items: PublicAgenticApp[] }>;
-      })
-      .then((payload) => {
-        if (!cancelled && payload) setState({ status: "ready", apps: payload.items });
+      }), apiClient.getSettings().catch(() => null)])
+      .then(([payload, settings]) => {
+        if (cancelled) return;
+        if (payload) setState({ status: "ready", apps: payload.items });
+        if (settings) {
+          setFavoriteAppIds(normalizeFavoriteAppIds(settings.preferences.favorite_agentic_apps));
+          setFavoritesReady(true);
+        } else {
+          setFavoriteError("Favorites are unavailable while preferences cannot be loaded.");
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) {
@@ -53,19 +65,38 @@ export function AgenticAppsHub(): React.ReactElement {
     return state.apps.filter((app) => matchesAgenticAppSearch(app, query));
   }, [query, state]);
 
+  async function toggleFavorite(appId: string): Promise<void> {
+    if (!favoritesReady || favoritePending) return;
+    const previous = favoriteAppIds;
+    const next = previous.includes(appId)
+      ? previous.filter(id => id !== appId) : [...previous, appId];
+    setFavoriteAppIds(next);
+    setFavoritePending(true);
+    setFavoriteError(null);
+    try {
+      const saved = await apiClient.updatePreferences({ favorite_agentic_apps: next });
+      setFavoriteAppIds(normalizeFavoriteAppIds(saved.preferences.favorite_agentic_apps));
+    } catch {
+      setFavoriteAppIds(previous);
+      setFavoriteError("Could not save favorites. Try again.");
+    } finally {
+      setFavoritePending(false);
+    }
+  }
+
   return (
-    <main className="flex-1 overflow-y-auto bg-background px-6 py-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6">
-        <header className="relative overflow-hidden rounded-2xl border border-border bg-card px-5 py-4">
-          <div className="flex items-center gap-3">
+    <main className="flex-1 overflow-y-auto bg-background px-5 py-5 text-foreground">
+      <div className="mx-auto flex max-w-7xl flex-col gap-5">
+        <header className="relative overflow-hidden rounded-[1.25rem] border border-border bg-card/60 px-5 py-4 shadow-lg backdrop-blur">
+          <div aria-hidden className="absolute -right-20 -top-28 h-52 w-52 rounded-full bg-primary/15 blur-3xl" />
+          <div className="relative flex items-center gap-3">
             <span className="rounded-xl bg-primary/10 p-2 text-primary">
-              <AgenticAppIcon className="h-6 w-6" aria-hidden />
+              <LayoutGrid className="h-6 w-6" aria-hidden />
             </span>
             <div>
               <h1 className="text-2xl font-semibold tracking-tight">Apps</h1>
-              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                Discover applications with platform-managed sign-in and navigation.
-                Apps can render natively in CAIPE or in a hosted iframe.
+              <p className="mt-1 max-w-4xl text-sm leading-5 text-muted-foreground">
+                Discover trusted apps with platform-managed sign-in, navigation, authorization, credentials, and policy.
               </p>
             </div>
           </div>
@@ -96,20 +127,23 @@ export function AgenticAppsHub(): React.ReactElement {
         {state.status === "ready" ? (
           <>
             {state.apps.length > 0 ? (
-              <label className="relative block" aria-label="Search Apps">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-                <input
-                  className="h-11 w-full rounded-lg border bg-background pl-10 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                  type="search"
-                  placeholder="Search by app, capability, or category"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-              </label>
+              <section aria-label="Search Apps" className="flex items-center gap-3 rounded-2xl border border-border bg-card p-3">
+                <label className="relative min-w-0 flex-1">
+                  <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                  <input className="h-11 w-full appearance-none rounded-xl border border-border bg-background py-2 pl-10 pr-11 text-sm text-foreground outline-none transition placeholder:text-muted-foreground hover:border-primary/40 focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
+                    type="search" placeholder="Search by app, capability, or category" aria-label="Search apps"
+                    value={query} onChange={(event) => setQuery(event.target.value)} />
+                  {query ? <button type="button" onClick={() => setQuery("")} aria-label="Clear search"
+                    className="absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground">
+                    <X className="h-4 w-4" aria-hidden />
+                  </button> : null}
+                </label>
+                <p className="shrink-0 px-1 text-xs font-medium text-muted-foreground" aria-live="polite">
+                  {query.trim() ? `${visibleApps.length} of ${state.apps.length} apps` : `${state.apps.length} ${state.apps.length === 1 ? "app" : "apps"}`}
+                </p>
+              </section>
             ) : null}
-            {state.apps.length > 0 ? (
-              <p className="text-xs text-muted-foreground" aria-live="polite">{visibleApps.length} of {state.apps.length} apps</p>
-            ) : null}
+            {favoriteError ? <p role="alert" className="text-sm text-destructive">{favoriteError}</p> : null}
 
             {state.apps.length === 0 ? (
               <section className="rounded-xl border border-dashed p-10 text-center">
@@ -125,7 +159,9 @@ export function AgenticAppsHub(): React.ReactElement {
             ) : (
               <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" aria-label="Available Apps">
                 {visibleApps.map((app) => (
-                  <AgenticAppCard key={app.appId} app={app} />
+                  <AgenticAppCard key={app.appId} app={app}
+                    isFavorite={favoriteAppIds.includes(app.appId)} favoritePending={!favoritesReady || favoritePending}
+                    onToggleFavorite={() => void toggleFavorite(app.appId)} />
                 ))}
               </section>
             )}

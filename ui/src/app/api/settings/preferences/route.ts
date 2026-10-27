@@ -8,6 +8,7 @@ withErrorHandler,
 } from '@/lib/api-middleware';
 import { parseChatHistoryOrganization } from "@/lib/chat-history-organization";
 import { isAssistantFontScale } from "@/lib/appearance-preferences";
+import { parseFavoriteAppIds } from "@/lib/agentic-apps/favorites";
 import { getCollection } from '@/lib/mongodb';
 import type { UserSettings } from '@/types/mongodb';
 import type { Document } from 'mongodb';
@@ -25,6 +26,10 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
     }
     if (body.assistant_font_scale !== undefined && !isAssistantFontScale(body.assistant_font_scale)) {
       throw new ApiError('Invalid assistant_font_scale', 400, 'BAD_REQUEST');
+    }
+    if (body.favorite_agentic_apps !== undefined) {
+      try { body.favorite_agentic_apps = parseFavoriteAppIds(body.favorite_agentic_apps); }
+      catch { throw new ApiError('Invalid favorite_agentic_apps', 400, 'BAD_REQUEST'); }
     }
 
     if (body.chat_history !== undefined) {
