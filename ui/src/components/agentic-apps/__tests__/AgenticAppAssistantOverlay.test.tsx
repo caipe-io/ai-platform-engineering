@@ -11,7 +11,11 @@ const mockLoadConversationsFromServer = jest.fn();
 const mockLoadMessagesFromServer = jest.fn();
 const mockSetActiveConversation = jest.fn();
 const mockFindConversation = jest.fn();
+const mockRestoreConversation = jest.fn();
+jest.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(window.location.search) }));
+jest.mock("@/native-extensions/host-chat", () => ({ loadHostConversation: (...args: unknown[]) => mockRestoreConversation(...args) }));
 jest.mock("@/lib/agentic-apps/assistant-conversations", () => ({
+  ...jest.requireActual("@/lib/agentic-apps/assistant-conversations"),
   findLatestAppConversation: (...args: unknown[]) => mockFindConversation(...args),
 }));
 const mockChatStoreState: {
@@ -66,6 +70,11 @@ describe("AgenticAppAssistantOverlay", () => {
     mockLoadMessagesFromServer.mockResolvedValue(undefined);
     mockSetActiveConversation.mockImplementation((id) => { mockChatStoreState.activeConversationId = id; });
     mockFindConversation.mockImplementation(async () => mockChatStoreState.conversations.at(-1) ?? null);
+    mockRestoreConversation.mockImplementation(async (appId: string, agentId: string, id: string) => ({ saved: {
+      _id: id, title: "Saved app chat", participants: [{ type: "agent", id: agentId }],
+      created_at: new Date("2026-01-01"), updated_at: new Date("2026-01-01"),
+      metadata: { conversation_surface: "agentic-app", agentic_app_id: appId, agentic_app_agent_id: agentId },
+    } }));
     const mockUseChatStore = useChatStore as unknown as jest.Mock & {
       getState: () => typeof mockChatStoreState;
     };
@@ -73,7 +82,8 @@ describe("AgenticAppAssistantOverlay", () => {
       (selector: (state: typeof mockChatStoreState) => unknown) => selector(mockChatStoreState),
     );
     mockUseChatStore.getState = () => mockChatStoreState;
-    Object.assign(mockUseChatStore, { setState: jest.fn() });
+    Object.assign(mockUseChatStore, { setState: jest.fn((update: (state: typeof mockChatStoreState) => object) =>
+      Object.assign(mockChatStoreState, update(mockChatStoreState))) });
   });
 
   afterEach(() => jest.restoreAllMocks());
@@ -127,6 +137,69 @@ describe("AgenticAppAssistantOverlay", () => {
     const chat = await screen.findByTestId("chat-panel");
     expect(chat).toHaveAttribute("data-conversation-id", "assistant-conversation");
     expect(chat).toHaveAttribute("data-agent-id", "agent-example");
+  });
+
+  it.each([undefined, { agentic_app_id: "secondary-app" }, { agentic_app_id: "example-app" }])(
+    "rejects deep links without a complete matching app binding: %j", async metadata => {
+      window.history.replaceState(null, "", "/example?assistant_chat=other-chat");
+      mockRestoreConversation.mockResolvedValue({ saved: { _id: "other-chat", metadata,
+        participants: [{ type: "agent", id: "agent-example" }] } });
+      renderExampleOverlay();
+      expect(await screen.findByRole("alert")).toHaveTextContent("not bound to this app");
+      expect(screen.queryByTestId("chat-panel")).toBeNull();
+      expect(useChatStore.setState).not.toHaveBeenCalled();
+      expect(mockSetActiveConversation).not.toHaveBeenCalled();
+      expect(mockCreateConversation).not.toHaveBeenCalled();
+    },
+  );
+
+  it("restores a changed deep link while mounted and hides the old chat during validation", async () => {
+    window.history.replaceState(null, "", "/example?assistant_chat=chat-a");
+    const view = renderExampleOverlay();
+    await waitFor(() => expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-conversation-id", "chat-a"));
+    const restore = mockRestoreConversation.getMockImplementation()!;
+    let finish!: () => void;
+    mockRestoreConversation.mockImplementationOnce((...args: unknown[]) => new Promise(resolve => {
+      finish = () => { void restore(...args).then(resolve); };
+    }));
+    window.history.pushState(null, "", "/example?assistant_chat=chat-b");
+    view.rerender(exampleOverlay());
+    expect(screen.queryByTestId("chat-panel")).toBeNull();
+    expect(screen.getByRole("button", { name: "Clear assistant chat" })).toBeDisabled();
+    await act(async () => { finish(); });
+    await waitFor(() => expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-conversation-id", "chat-b"));
+    expect(mockCreateConversation).not.toHaveBeenCalled();
+  });
+
+  it("reports a denied changed deep link without showing the previous chat, then accepts another link", async () => {
+    window.history.replaceState(null, "", "/example?assistant_chat=chat-a");
+    const view = renderExampleOverlay();
+    await screen.findByTestId("chat-panel");
+    mockRestoreConversation.mockRejectedValueOnce(new Error("Conversation access denied"));
+    window.history.pushState(null, "", "/example?assistant_chat=denied-chat");
+    view.rerender(exampleOverlay());
+    expect(await screen.findByRole("alert")).toHaveTextContent("access denied");
+    expect(screen.queryByTestId("chat-panel")).toBeNull();
+    window.history.pushState(null, "", "/example?assistant_chat=chat-c");
+    view.rerender(exampleOverlay());
+    await waitFor(() => expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-conversation-id", "chat-c"));
+    expect(mockCreateConversation).not.toHaveBeenCalled();
+  });
+
+  it("ignores a late restoration after navigation selects a newer deep link", async () => {
+    const restore = mockRestoreConversation.getMockImplementation()!;
+    let finish!: () => void;
+    mockRestoreConversation.mockImplementationOnce((...args: unknown[]) => new Promise(resolve => {
+      finish = () => { void restore(...args).then(resolve); };
+    }));
+    window.history.replaceState(null, "", "/example?assistant_chat=chat-a");
+    const view = renderExampleOverlay();
+    window.history.pushState(null, "", "/example?assistant_chat=chat-b");
+    view.rerender(exampleOverlay());
+    await waitFor(() => expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-conversation-id", "chat-b"));
+    await act(async () => { finish(); });
+    expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-conversation-id", "chat-b");
+    expect(mockChatStoreState.activeConversationId).toBe("chat-b");
   });
 
   it("passes validated app context into the chat panel and restores the prior chat", async () => {
@@ -295,7 +368,11 @@ describe("AgenticAppAssistantOverlay", () => {
 });
 
 function renderExampleOverlay() {
-  return render(
+  return render(exampleOverlay());
+}
+
+function exampleOverlay() {
+  return (
     <AgenticAppAssistantOverlay
       appId="example-app"
       appName="Example App"
@@ -306,7 +383,7 @@ function renderExampleOverlay() {
       assistantAgentId="agent-example"
       open
       onOpenChange={jest.fn()}
-    />,
+    />
   );
 }
 

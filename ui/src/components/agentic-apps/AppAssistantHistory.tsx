@@ -5,11 +5,12 @@ import { RefreshCw } from "lucide-react";
 
 import { apiClient } from "@/lib/api-client";
 import { getStorageMode } from "@/lib/storage-config";
+import { matchesAssistantConversation } from "@/lib/agentic-apps/assistant-conversations";
 import HostConversationActions from "@/native-extensions/HostConversationActions";
 import { useChatStore } from "@/store/chat-store";
 import { getAgentId, type Conversation } from "@/types/a2a";
 
-/** History is filtered by the bound agent; the API remains the authorization boundary. */
+/** History requires explicit app/agent bindings; the API remains the authorization boundary. */
 export function AppAssistantHistory({ appId, agentId, selectedId, onSelect, onArchived }: {
   appId: string; agentId: string; selectedId?: string;
   onSelect: (id: string) => Promise<void>;
@@ -23,9 +24,9 @@ export function AppAssistantHistory({ appId, agentId, selectedId, onSelect, onAr
     let cancelled = false;
     async function load() {
       const matches = (agent: string | null | undefined, metadata?: Record<string, unknown>) =>
-        agent === agentId && (!metadata?.agentic_app_id || metadata.agentic_app_id === appId);
+        matchesAssistantConversation(appId, agentId, agent ?? undefined, metadata);
       if (getStorageMode() !== "mongodb") return useChatStore.getState().conversations
-        .filter((item: Conversation) => matches(getAgentId(item), item.metadata))
+        .filter((item: Conversation) => (!item.accessLevel || item.accessLevel === "owner") && matches(getAgentId(item), item.metadata))
         .map(item => ({ id: item.id, title: item.title }));
       const result: Array<{ id: string; title: string }> = [];
       for (let page = 1; page <= 100 && !cancelled; page++) {

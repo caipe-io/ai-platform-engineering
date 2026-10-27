@@ -4,8 +4,15 @@ import HostConversationActions from "../HostConversationActions";
 
 const mockLoad = jest.fn();
 const mockArchive = jest.fn();
+const mockRename = jest.fn();
+const mockServerRename = jest.fn();
+const mockStorageMode = jest.fn(() => "mongodb");
+jest.mock("@/lib/storage-config", () => ({ getStorageMode: () => mockStorageMode() }));
+jest.mock("@/lib/api-client", () => ({ apiClient: { updateConversation: (...args: unknown[]) => mockServerRename(...args) } }));
 jest.mock("../host-chat", () => ({ loadHostConversation: (...args: unknown[]) => mockLoad(...args) }));
-jest.mock("@/store/chat-store", () => ({ useChatStore: { getState: () => ({ deleteConversation: mockArchive }) } }));
+jest.mock("@/store/chat-store", () => ({ useChatStore: {
+  getState: () => ({ deleteConversation: mockArchive, updateConversationTitle: mockRename }), setState: jest.fn(),
+} }));
 jest.mock("@/components/chat/ShareButton", () => ({ ShareButton: ({ conversationId }: { conversationId: string }) =>
   <button>Share {conversationId}</button> }));
 
@@ -13,8 +20,26 @@ const props = { appId: "example-app", agentId: "example-agent", conversationId: 
   onArchived: jest.fn(), onHistoryChange: jest.fn() };
 beforeEach(() => {
   jest.clearAllMocks();
+  mockStorageMode.mockReturnValue("mongodb");
+  mockRename.mockResolvedValue(undefined);
+  mockServerRename.mockResolvedValue(undefined);
   mockLoad.mockResolvedValue({ saved: { _id: "example-chat", title: "Example", access_level: "owner" } });
   mockArchive.mockResolvedValue(undefined);
+});
+
+it("renames and archives local history through the store without server sharing or mutations", async () => {
+  mockStorageMode.mockReturnValue("localStorage");
+  render(<HostConversationActions {...props} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Rename conversation" }));
+  expect(screen.queryByRole("button", { name: "Share example-chat" })).toBeNull();
+  fireEvent.change(screen.getByRole("textbox", { name: "Conversation title" }), { target: { value: "Renamed local chat" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(props.onHistoryChange).toHaveBeenCalledTimes(1));
+  expect(mockRename).toHaveBeenCalledWith("example-chat", "Renamed local chat");
+  expect(mockServerRename).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Archive conversation" }));
+  await waitFor(() => expect(props.onArchived).toHaveBeenCalledTimes(1));
+  expect(mockArchive).toHaveBeenCalledWith("example-chat", { selectNext: false });
 });
 
 it("uses the host share control without an archive browser", async () => {

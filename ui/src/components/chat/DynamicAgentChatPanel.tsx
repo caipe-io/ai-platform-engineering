@@ -384,6 +384,7 @@ export function ChatPanel({
     .find((item) => item.id === (conversationId ?? state.activeConversationId))
     ?.title?.trim()) || "New chat";
   const isAutonomousHistory = conversation?.source === "autonomous";
+  const promptSuggestions = suggestedPrompts?.filter(prompt => prompt.trim()).slice(0, 8) ?? [];
   const autonomousFollowUps = useAutonomousFollowUps(
     isAutonomousHistory && !panelReadOnly ? conversation?.task_id : undefined,
   );
@@ -2354,11 +2355,11 @@ export function ChatPanel({
                       useGlobalTheme
                     />
                     <h2 className="text-2xl font-bold mb-4">{emptyStateTitle ?? `Welcome to ${getConfig('appName')}`}</h2>
-                    {!panelReadOnly && suggestedPrompts?.length ? <div className="mx-auto mb-4 flex max-w-lg flex-wrap justify-center gap-2">
-                      {suggestedPrompts.slice(0, 8).map((prompt, index) => <button key={index} type="button"
+                    {!panelReadOnly && !isAutonomousHistory && promptSuggestions.length ? <div role="group" aria-label="Suggested prompts" className="mx-auto mb-4 flex max-w-lg flex-wrap justify-center gap-2">
+                      {promptSuggestions.map((prompt, index) => <Button key={index} type="button" variant="outline" size="sm"
                         disabled={isThisConversationStreaming || isRemoteResponse || Boolean(pendingUserInput || pendingToolApproval)}
                         onClick={() => { setInput(prompt); inputRef.current?.focus(); }}
-                        className="rounded-lg border px-3 py-2 text-sm hover:bg-accent disabled:opacity-50">{prompt}</button>)}
+                        className="h-auto whitespace-normal">{prompt}</Button>)}
                     </div> : null}
                     {!emptyStateTitle && <>
                     <p className="text-muted-foreground mb-3">

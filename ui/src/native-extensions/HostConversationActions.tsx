@@ -8,6 +8,7 @@ import { ShareButton } from "@/components/chat/ShareButton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api-client";
+import { getStorageMode } from "@/lib/storage-config";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useChatStore } from "@/store/chat-store";
@@ -52,7 +53,8 @@ export default function HostConversationActions({ appId, conversationId, agentId
     setPending(true);
     setError(null);
     try {
-      await apiClient.updateConversation(conversationId, { title: title.trim() });
+      if (getStorageMode() === "mongodb") await apiClient.updateConversation(conversationId, { title: title.trim() });
+      else await useChatStore.getState().updateConversationTitle(conversationId, title.trim());
       useChatStore.setState(state => ({ conversations: state.conversations.map(item => item.id === conversationId
         ? { ...item, title: title.trim() } : item) }));
       setConversation({ ...conversation, title: title.trim() });
@@ -68,7 +70,7 @@ export default function HostConversationActions({ appId, conversationId, agentId
         aria-label="Rename conversation" disabled={disabled || pending}
         onClick={() => { setTitle(conversation.title); setRenaming(true); }}><Pencil className="h-3 w-3" aria-hidden />
       </Button></TooltipTrigger><TooltipContent>Rename conversation</TooltipContent></Tooltip>
-      {!disabled && !pending && (
+      {getStorageMode() === "mongodb" && !disabled && !pending && (
         <ShareButton conversationId={conversationId} conversationTitle={conversation.title}
           isOwner sharing={conversation.sharing} accessLevel="owner" />
       )}

@@ -1,10 +1,13 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { createHostChatCapability } from "../host-chat";
+import { createHostChatCapability, loadHostConversation } from "../host-chat";
+import type { Conversation } from "@/types/a2a";
 
 const mockLoad = jest.fn();
 const mockSelect = jest.fn();
 const mockGet = jest.fn();
-const mockState = { conversations: [] as Array<{ id: string }>, setActiveConversation: mockSelect,
+const mockStorageMode = jest.fn(() => "mongodb");
+jest.mock("@/lib/storage-config", () => ({ getStorageMode: () => mockStorageMode() }));
+const mockState = { conversations: [] as Conversation[], setActiveConversation: mockSelect,
   loadMessagesFromServer: mockLoad };
 const mockPanel = jest.fn((props: unknown) => { void props; return <p>Host conversation</p>; });
 jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({ ChatPanel: (props: unknown) => mockPanel(props) }));
@@ -17,6 +20,7 @@ jest.mock("@/store/chat-store", () => ({ useChatStore: {
 const originalFetch = global.fetch;
 beforeEach(() => {
   jest.clearAllMocks(); mockState.conversations = [];
+  mockStorageMode.mockReturnValue("mongodb");
   global.fetch = jest.fn().mockImplementation(async (url: string) => ({ ok: true, json: async () =>
     url === "/api/dynamic-agents/available" ? { success: true, data: [{ _id: "example-agent", name: "Example Assistant",
       presentation: { app: { id: "example-app", name: "Example App" }, available: true } }] } : { item: {
@@ -24,6 +28,35 @@ beforeEach(() => {
   mockGet.mockResolvedValue({ _id: "example-chat", title: "Example", participants: [{ type: "agent", id: "example-agent" }],
     metadata: { agent_id: "example-agent" }, created_at: "2026-01-01", updated_at: "2026-01-01" });
   mockLoad.mockResolvedValue(undefined);
+});
+
+it("restores local history from the store, preserving dates, metadata and messages", async () => {
+  mockStorageMode.mockReturnValue("localStorage");
+  const local: Conversation = { id: "example-chat", title: "Local chat", participants: [{ type: "agent", id: "example-agent" }],
+    createdAt: new Date("2026-01-01"), updatedAt: new Date("2026-01-02"), messages: [], streamEvents: [],
+    metadata: { conversation_surface: "agentic-app", agentic_app_id: "example-app", agentic_app_agent_id: "example-agent" } };
+  mockState.conversations = [local];
+  const { saved } = await loadHostConversation("example-app", "example-agent", "example-chat");
+  expect(saved).toMatchObject({ _id: local.id, created_at: local.createdAt, updated_at: local.updatedAt,
+    metadata: local.metadata, access_level: "owner" });
+  const { Panel } = createHostChatCapability("example-app");
+  render(<Panel conversationId="example-chat" agentId="example-agent" />);
+  await screen.findByText("Host conversation");
+  expect(mockSelect).toHaveBeenCalledWith("example-chat");
+  expect(mockState.conversations[0]).toBe(local);
+  expect(mockGet).not.toHaveBeenCalled();
+});
+
+it("rejects missing local history without calling the MongoDB API", async () => {
+  mockStorageMode.mockReturnValue("localStorage");
+  await expect(loadHostConversation("example-app", "example-agent", "missing")).rejects.toThrow("local history");
+  expect(mockGet).not.toHaveBeenCalled();
+});
+
+it("rejects another app's conversation even when it uses the same agent", async () => {
+  mockGet.mockResolvedValue({ participants: [{ type: "agent", id: "example-agent" }], metadata: { agentic_app_id: "secondary-app" } });
+  await expect(loadHostConversation("example-app", "example-agent", "other-chat")).rejects.toThrow("another app");
+  expect(mockSelect).not.toHaveBeenCalled();
 });
 afterEach(() => { global.fetch = originalFetch; });
 

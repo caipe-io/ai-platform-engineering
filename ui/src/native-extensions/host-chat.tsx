@@ -5,6 +5,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import type { NativeHostChat, NativeHostChatPanelProps, NativeHostConversationActionsProps } from "../../app-sdk";
 import { requestHostAssistant } from "@/lib/agentic-apps/assistant-events";
 import { apiClient } from "@/lib/api-client";
+import { getStorageMode } from "@/lib/storage-config";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { getAgentId } from "@/types/a2a";
 import { useChatStore } from "@/store/chat-store";
@@ -24,9 +25,20 @@ export async function loadHostConversation(appId: string, agentId: string, conve
   const agent = agents.success && Array.isArray(agents.data)
     ? (agents.data as DynamicAgentConfig[]).find(candidate => candidate._id === agentId) : undefined;
   if (!agent) throw new Error("Assistant is unavailable or access was denied");
-  const saved = await apiClient.getConversation(conversationId);
+  const saved = getStorageMode() === "mongodb"
+    ? await apiClient.getConversation(conversationId) : loadLocalConversation(conversationId);
   if (getAgentId(saved) !== agentId) throw new Error("Agent does not match this conversation");
+  if (saved.metadata?.agentic_app_id && saved.metadata.agentic_app_id !== appId)
+    throw new Error("Conversation belongs to another app");
   return { saved, agent };
+}
+
+function loadLocalConversation(id: string) {
+  const local = useChatStore.getState().conversations.find(item => item.id === id);
+  if (!local) throw new Error("Conversation not found in local history");
+  return { _id: local.id, title: local.title, participants: local.participants,
+    created_at: local.createdAt, updated_at: local.updatedAt, metadata: local.metadata,
+    owner_id: local.owner_id, access_level: local.accessLevel ?? "owner", sharing: local.sharing };
 }
 
 /** A native package receives a renderer, never a second copy of the host store. */

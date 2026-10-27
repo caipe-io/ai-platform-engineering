@@ -9,7 +9,7 @@ it("finds an owned app conversation beyond page one without the sidebar filter",
   lookup.mockResolvedValueOnce({ items: [], has_more: true } as never);
   lookup.mockResolvedValueOnce({ items: [{
     _id: "existing-chat", title: "Example chat", access_level: "owner",
-    created_at: new Date(), updated_at: new Date(), participants: [],
+    created_at: new Date(), updated_at: new Date(), participants: [{ type: "agent", id: "example-agent" }],
     metadata: { conversation_surface: "agentic-app", agentic_app_id: "example", agentic_app_agent_id: "example-agent" },
   }], has_more: false } as never);
   expect((await findLatestAppConversation([], "example", "example-agent"))?.id).toBe("existing-chat");
