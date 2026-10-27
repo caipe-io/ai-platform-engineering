@@ -45,10 +45,12 @@ LOG_LEVEL=DEBUG python src/agent_ontology/restapi.py
 
 ### LLM Configuration
 
-Requires LLM configuration. Set one of:
+Set `LLM_PROVIDER` (for example, `openai` or `anthropic-claude`) and the matching provider credentials:
 - `OPENAI_API_KEY` - For OpenAI models
 - `ANTHROPIC_API_KEY` - For Anthropic Claude
 - Custom LLM provider environment variables
+
+If processing or evaluation fails, the run raises an error without publishing the new version or cleaning up older ontology versions. A later run can retry regeneration after the underlying error is corrected.
 
 ## Connections
 

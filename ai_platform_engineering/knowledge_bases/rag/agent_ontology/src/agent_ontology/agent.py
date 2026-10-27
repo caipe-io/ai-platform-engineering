@@ -77,7 +77,7 @@ class OntologyAgent:
       self.agent_status_msg = f"Syncing [{idx}/{len(candidates)}] relation {candidate.relation_id}"
       await rc_manager.sync_relation(candidate.relation_id)
 
-  async def process_and_evaluate_all(self):
+  async def process_and_evaluate_all(self) -> None:
     self.logger.info("Running heuristics processing and the evaluation...")
     # self.last_evaluation_run_timestamp = time.time()
 
@@ -98,15 +98,12 @@ class OntologyAgent:
       self.logger.info("No current ontology version found, this seems to be the first run.")
 
     await self.process_all(rc_manager_new_version)
-    if new_ontology_version_id is None:
-      self.logger.error("Heuristics processing failed, skipping evaluation")
-      return
 
     # Evaluate the new heuristics version
     self.agent_status_msg = "Evaluating relations..."
     await self.evaluate_all(rc_manager_current_version, rc_manager_new_version)
 
-    # set the new ontology version as the current ontology version
+    # Publish only after heuristics and every evaluation worker succeed.
     self.logger.info(f"Setting new ontology version: {new_ontology_version_id}")
     await self.redis.set(constants.KV_ONTOLOGY_VERSION_ID_KEY, new_ontology_version_id)
 
@@ -121,15 +118,14 @@ class OntologyAgent:
     # invoke the garbage collector to free up memory
     gc.collect()
 
-  async def process_all(self, rc_manager: RelationCandidateManager) -> str | None:
+  async def process_all(self, rc_manager: RelationCandidateManager) -> None:
     """
     Processes all entities in the database to compute heuristics.
     This is meant to be run periodically to update the heuristics based on the entities in the database.
     """
     self.logger.info("Processing all entities for heuristics")
     if self.is_processing:
-      self.logger.warning("Processing is already in progress, skipping this run")
-      return None
+      raise RuntimeError("Heuristics processing is already in progress")
 
     self.is_processing = True
     self.processing_tasks_total = 0
@@ -165,6 +161,7 @@ class OntologyAgent:
     except Exception as e:
       self.logger.error(traceback.format_exc())
       self.logger.error(f"Error during heuristics processing: {e}")
+      raise
     finally:
       self.is_processing = False
 
@@ -450,7 +447,7 @@ class OntologyAgent:
 
     return sub_entities
 
-  async def evaluate_all(self, rc_manager_current: RelationCandidateManager | None, rc_manager_new: RelationCandidateManager):
+  async def evaluate_all(self, rc_manager_current: RelationCandidateManager | None, rc_manager_new: RelationCandidateManager) -> None:
     """
     Evaluates all relation candidate groups using isolated agent workers.
     Each worker gets its own queue of groups and processes them independently.
@@ -460,8 +457,7 @@ class OntologyAgent:
     """
     self.evaluation_logger.info("Evaluating all relations for ontology_version_id: %s", rc_manager_new.ontology_version_id)
     if self.is_evaluating:
-      self.evaluation_logger.warning("Evaluation is already in progress, skipping this run")
-      return
+      raise RuntimeError("Ontology evaluation is already in progress")
 
     self.is_evaluating = True
     self.evaluation_count = 0
@@ -537,7 +533,7 @@ class OntologyAgent:
       progress_tracker = {"completed_groups": 0, "total_groups": total_groups}
 
       # Step 5: Create isolated worker instances and launch them
-      async def run_worker(worker_id: int, worker_queue: list[CandidateGroupData]):
+      async def run_worker(worker_id: int, worker_queue: list[CandidateGroupData]) -> None:
         """Run a single worker with its own isolated state"""
         worker_logger = utils.get_logger(f"eval-worker-{worker_id}")
 
@@ -630,12 +626,18 @@ class OntologyAgent:
         except Exception as e:
           worker_logger.error(f"Worker {worker_id} error: {e}")
           worker_logger.error(traceback.format_exc())
+          raise
 
       # Launch all workers concurrently
       worker_tasks = [run_worker(i, worker_queues[i]) for i in range(num_workers)]
 
       self.evaluation_logger.info(f"Launching {len(worker_tasks)} concurrent evaluation workers")
-      await asyncio.gather(*worker_tasks, return_exceptions=True)
+      # Wait for all workers before releasing the evaluation guard, then
+      # propagate any failure so this version cannot become current.
+      worker_results = await asyncio.gather(*worker_tasks, return_exceptions=True)
+      for result in worker_results:
+        if isinstance(result, BaseException):
+          raise result
 
       self.evaluation_logger.info(f"All evaluation workers completed - Total evaluations made: {self.evaluation_count}")
       self.agent_status_msg = f"Evaluation complete - {self.evaluation_count} relations evaluated"
@@ -643,5 +645,6 @@ class OntologyAgent:
     except Exception as e:
       self.evaluation_logger.error(f"Error during evaluation: {e}")
       self.evaluation_logger.error(traceback.format_exc())
+      raise
     finally:
       self.is_evaluating = False

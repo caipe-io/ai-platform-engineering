@@ -1352,12 +1352,12 @@ services:
     image: ghcr.io/caipe-io/caipe-rag-agent-ontology:${IMAGE_TAG:-localtag}
     container_name: agent_ontology
     volumes:
-      - ./ai_platform_engineering/knowledge_bases/rag/agent_ontology/src/agent_ontology:/app/agent_ontology/src/agent_ontology
-      - ./ai_platform_engineering/knowledge_bases/rag/common/src/common:/app/common/src/common
-      - ./ai_platform_engineering/llm_wrapper/src/llm_wrapper:/llm_wrapper/src/llm_wrapper
+      - ./ai_platform_engineering/knowledge_bases/rag/agent_ontology/src/agent_ontology:/app/ai_platform_engineering/knowledge_bases/rag/agent_ontology/src/agent_ontology
+      - ./ai_platform_engineering/knowledge_bases/rag/common/src/common:/app/ai_platform_engineering/knowledge_bases/rag/common/src/common
+      - ./ai_platform_engineering/llm_wrapper/src/llm_wrapper:/app/ai_platform_engineering/llm_wrapper/src/llm_wrapper
     ports: ["8098:8098"]
     environment:
-      - PYTHONPATH=/app/common/src:/app/agent_ontology/src
+      - PYTHONPATH=/app/ai_platform_engineering/knowledge_bases/rag/common/src:/app/ai_platform_engineering/knowledge_bases/rag/agent_ontology/src
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REDIS_URL=redis://rag-redis:6379/0
       - NEO4J_ADDR=neo4j://neo4j:7687
