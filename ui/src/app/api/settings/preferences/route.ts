@@ -18,6 +18,9 @@ import { NextRequest } from 'next/server';
 export const PATCH = withErrorHandler(async (request: NextRequest) => {
   return withAuth(request, async (req, user) => {
     const body: Partial<UserSettings['preferences']> = await request.json();
+    if (Object.keys(body).some((key) => key.includes('.'))) {
+      throw new ApiError('Preference keys must not contain dots', 400, 'BAD_REQUEST');
+    }
     if (body.shadows_enabled !== undefined && typeof body.shadows_enabled !== 'boolean') {
       throw new ApiError('shadows_enabled must be a boolean', 400, 'BAD_REQUEST');
     }

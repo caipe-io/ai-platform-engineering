@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { AgenticAppsHub } from "../AgenticAppsHub";
 import type { PublicAgenticApp } from "@/types/agentic-app";
 
@@ -35,6 +35,7 @@ it("renders native and hosted catalog entries with one accessible launch link", 
   expect(screen.queryByRole("link", { name: "Secondary workspace" })).not.toBeInTheDocument();
   expect(screen.getByText("Access required: unauthorized")).toBeInTheDocument();
   expect(screen.getByText("2 apps")).toBeInTheDocument();
+  expect(screen.getByText("engineering")).toHaveClass("bg-violet-700", "text-white");
 });
 
 it("persists a favorite and keeps the card launch as one accessible link", async () => {
@@ -66,14 +67,32 @@ it("still shows the catalog when preferences fail and prevents overwriting favor
   expect(screen.getByRole("alert")).toHaveTextContent("Favorites are unavailable");
 });
 
+it("renders the catalog while settings are pending and enables favorites once loaded", async () => {
+  let resolveSettings!: (settings: { preferences: { favorite_agentic_apps: string[] } }) => void;
+  mockGetSettings.mockReturnValueOnce(new Promise((resolve) => { resolveSettings = resolve; }));
+  render(<AgenticAppsHub />);
+
+  expect(await screen.findByRole("link", { name: "Example workspace" })).toBeInTheDocument();
+  const favorite = screen.getByRole("button", { name: "Add Example workspace to favorites" });
+  expect(favorite).toBeDisabled();
+  fireEvent.click(favorite);
+  expect(mockUpdatePreferences).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+  await act(async () => {
+    resolveSettings({ preferences: { favorite_agentic_apps: ["example-app"] } });
+  });
+  expect(screen.getByRole("button", { name: "Remove Example workspace from favorites" })).toBeEnabled();
+});
+
 it("uses category colors without depending on app IDs", async () => {
   jest.mocked(global.fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ items: [
     { ...apps[0], appId: "primary", categories: ["cloud"], icon: undefined },
     { ...apps[1], appId: "secondary", categories: ["weather"], icon: undefined },
   ] }) } as Response);
   render(<AgenticAppsHub />);
-  expect(await screen.findByText("cloud")).toHaveClass("bg-emerald-500");
-  expect(screen.getByText("weather")).toHaveClass("bg-sky-500");
+  expect(await screen.findByText("cloud")).toHaveClass("bg-emerald-700", "text-white");
+  expect(screen.getByText("weather")).toHaveClass("bg-sky-700", "text-white");
 });
 
 it("keeps hosted launch links on the document-navigation gateway path", async () => {

@@ -3,19 +3,19 @@ const PALETTES = {
   violet: {
     tile: "from-violet-400 via-cyan-300 to-indigo-500",
     glow: "from-violet-300/35 to-cyan-500/10",
-    badge: "bg-violet-500 text-white",
+    badge: "bg-violet-700 text-white",
     icon: "default",
   },
   emerald: {
     tile: "from-emerald-300 via-cyan-300 to-teal-500",
     glow: "from-emerald-300/40 to-cyan-500/10",
-    badge: "bg-emerald-500 text-white",
+    badge: "bg-emerald-700 text-white",
     icon: "finance",
   },
   sky: {
     tile: "from-sky-300 via-cyan-300 to-blue-500",
     glow: "from-sky-300/40 to-cyan-500/10",
-    badge: "bg-sky-500 text-white",
+    badge: "bg-sky-700 text-white",
     icon: "weather",
   },
 } as const;

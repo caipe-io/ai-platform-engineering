@@ -26,7 +26,7 @@ export function AgenticAppsHub(): React.ReactElement {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetch("/api/agentic-apps", { cache: "no-store" })
+    fetch("/api/agentic-apps", { cache: "no-store" })
       .then(async (response) => {
         if (response.status === 401) {
           router.push(
@@ -36,16 +36,9 @@ export function AgenticAppsHub(): React.ReactElement {
         }
         if (!response.ok) throw new Error(`Apps catalog returned HTTP ${response.status}`);
         return response.json() as Promise<{ items: PublicAgenticApp[] }>;
-      }), apiClient.getSettings().catch(() => null)])
-      .then(([payload, settings]) => {
-        if (cancelled) return;
-        if (payload) setState({ status: "ready", apps: payload.items });
-        if (settings) {
-          setFavoriteAppIds(normalizeFavoriteAppIds(settings.preferences.favorite_agentic_apps));
-          setFavoritesReady(true);
-        } else {
-          setFavoriteError("Favorites are unavailable while preferences cannot be loaded.");
-        }
+      })
+      .then((payload) => {
+        if (!cancelled && payload) setState({ status: "ready", apps: payload.items });
       })
       .catch((error: unknown) => {
         if (!cancelled) {
@@ -53,6 +46,18 @@ export function AgenticAppsHub(): React.ReactElement {
             status: "error",
             message: error instanceof Error ? error.message : "Could not load Apps",
           });
+        }
+      });
+
+    apiClient.getSettings()
+      .then((settings) => {
+        if (cancelled) return;
+        setFavoriteAppIds(normalizeFavoriteAppIds(settings.preferences.favorite_agentic_apps));
+        setFavoritesReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFavoriteError("Favorites are unavailable while preferences cannot be loaded.");
         }
       });
     return () => {
