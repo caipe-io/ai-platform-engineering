@@ -316,6 +316,18 @@ describe("AgenticAppAssistantOverlay", () => {
     });
   });
 
+  it("shows Chat when an app opens a new draft from History", async () => {
+    const props = { appId: "example-app", appName: "Example App", assistantAgentId: "agent-example",
+      activeContext: null, onClearContext: jest.fn(), open: true, onOpenChange: jest.fn() };
+    const { rerender } = render(<AgenticAppAssistantOverlay {...props} />);
+    await screen.findByTestId("chat-panel");
+    fireEvent.click(screen.getByRole("button", { name: "History", exact: true }));
+    expect(screen.queryByTestId("chat-panel")).toBeNull();
+    rerender(<AgenticAppAssistantOverlay {...props} composerDraft={{ id: "source-2", text: "Find the source" }} />);
+    expect(await screen.findByTestId("chat-panel")).toHaveAttribute("data-draft", "Find the source");
+    expect(screen.getByRole("button", { name: "Chat", exact: true })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("retains a requested draft while the assistant conversation loads", async () => {
     let resolve!: (id: string) => void;
     mockCreateConversation.mockImplementation(() => new Promise<string>((done) => { resolve = done; }));

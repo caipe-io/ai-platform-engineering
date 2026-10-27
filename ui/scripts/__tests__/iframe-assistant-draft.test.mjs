@@ -20,6 +20,9 @@ test('bridge publishes a draft only on an explicit call and compatible host', ()
     receive({ assistant: true });
     assert.throws(() => bridge.openAssistant(undefined, { id: 'source-1', text: 'Find source' }), /unavailable/);
     assert.equal(messages.length, 1);
+    receive({ assistant: false, assistantDraft: true });
+    assert.throws(() => bridge.openAssistant(undefined, { id: 'source-1', text: 'Find source' }), /unavailable/);
+    assert.equal(messages.length, 1);
     receive({ assistant: true, assistantDraft: true });
     assert.equal(messages.length, 1);
     bridge.openAssistant({ route: '/apps/example' }, { id: 'source-1', text: 'Find source' });
