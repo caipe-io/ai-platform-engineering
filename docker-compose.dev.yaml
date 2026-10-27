@@ -1920,6 +1920,8 @@ services:
   langfuse-minio:
     image: cgr.dev/chainguard/minio
     container_name: langfuse-minio
+    # Keep root: existing langfuse_minio_data volumes are root-owned.
+    user: "0:0"
     restart: always
     entrypoint: sh
     command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
