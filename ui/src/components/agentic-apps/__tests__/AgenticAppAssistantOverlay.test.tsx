@@ -43,16 +43,19 @@ jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
     conversationId,
     agentId,
     clientContext,
+    readOnly,
   }: {
     conversationId?: string;
     agentId: string;
     clientContext?: Record<string, unknown>;
+    readOnly?: boolean;
   }) => (
     <div
       data-testid="chat-panel"
       data-conversation-id={conversationId}
       data-agent-id={agentId}
       data-context={JSON.stringify(clientContext ?? {})}
+      data-read-only={String(Boolean(readOnly))}
     />
   ),
 }));
@@ -137,6 +140,46 @@ describe("AgenticAppAssistantOverlay", () => {
     const chat = await screen.findByTestId("chat-panel");
     expect(chat).toHaveAttribute("data-conversation-id", "assistant-conversation");
     expect(chat).toHaveAttribute("data-agent-id", "agent-example");
+  });
+
+  it("dismisses display settings on the first Escape and the assistant on the next", async () => {
+    const onOpenChange = jest.fn();
+    render(<AgenticAppAssistantOverlay appId="example-app" appName="Example App" assistantAgentId="agent-example"
+      activeContext={null} onClearContext={jest.fn()} open onOpenChange={onOpenChange} />);
+    await screen.findByTestId("chat-panel");
+    fireEvent.click(screen.getByRole("button", { name: "Assistant display settings" }));
+    await screen.findByLabelText("Assistant text size");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByLabelText("Assistant text size")).toBeNull();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("retains server ownership and read-only access when restoring a shared deep link", async () => {
+    const restore = mockRestoreConversation.getMockImplementation()!;
+    mockRestoreConversation.mockImplementationOnce(async (...args: unknown[]) => {
+      const result = await restore(...args);
+      return { saved: { ...result.saved, owner_id: "owner@example.test", access_level: "shared_readonly" } };
+    });
+    window.history.replaceState(null, "", "/example?assistant_chat=shared-chat");
+    renderExampleOverlay();
+    expect(await screen.findByTestId("chat-panel")).toHaveAttribute("data-read-only", "true");
+    expect(mockChatStoreState.conversations.find(item => item.id === "shared-chat"))
+      .toMatchObject({ owner_id: "owner@example.test", accessLevel: "shared_readonly" });
+  });
+
+  it("keeps display settings closed when reopening the assistant", async () => {
+    const props = { appId: "example-app", appName: "Example App", assistantAgentId: "agent-example",
+      activeContext: null, onClearContext: jest.fn(), onOpenChange: jest.fn() };
+    const { rerender } = render(<AgenticAppAssistantOverlay {...props} open />);
+    await screen.findByTestId("chat-panel");
+    fireEvent.click(screen.getByRole("button", { name: "Assistant display settings" }));
+    await screen.findByLabelText("Assistant text size");
+    await act(async () => rerender(<AgenticAppAssistantOverlay {...props} open={false} />));
+    rerender(<AgenticAppAssistantOverlay {...props} open />);
+    await screen.findByTestId("chat-panel");
+    expect(screen.queryByLabelText("Assistant text size")).toBeNull();
   });
 
   it.each([undefined, { agentic_app_id: "secondary-app" }, { agentic_app_id: "example-app" }])(

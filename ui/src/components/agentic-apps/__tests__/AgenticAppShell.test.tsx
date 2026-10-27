@@ -129,6 +129,36 @@ describe("AgenticAppShell", () => {
     });
   });
 
+  it("replays the current assistant state when the iframe connects or reconnects", async () => {
+    render(<AgenticAppShell appId="example-app" path={[]} />);
+    const iframe = (await screen.findByTitle("Example App")) as HTMLIFrameElement;
+    const overlay = await screen.findByTestId("assistant-overlay");
+    const postMessage = jest.spyOn(iframe.contentWindow!, "postMessage");
+    function send(type: string, origin = window.location.origin, source: Window | null = iframe.contentWindow) {
+      act(() => { window.dispatchEvent(new MessageEvent("message", { origin, source,
+        data: { type: `caipe.agenticApp.${type}.v1`, version: "1.0", appId: "example-app" } })); });
+    }
+    send("assistant.open");
+    await waitFor(() => expect(overlay).toHaveAttribute("data-open", "true"));
+    postMessage.mockClear();
+    send("bridge.connect");
+    expect(postMessage).toHaveBeenCalledWith({ type: "caipe.agenticApp.assistant.state.v1", version: "1.0",
+      appId: "example-app", open: true }, window.location.origin);
+
+    send("assistant.close");
+    await waitFor(() => expect(overlay).toHaveAttribute("data-open", "false"));
+    postMessage.mockClear();
+    send("bridge.connect");
+    expect(postMessage).toHaveBeenCalledWith({ type: "caipe.agenticApp.assistant.state.v1", version: "1.0",
+      appId: "example-app", open: false }, window.location.origin);
+
+    postMessage.mockClear();
+    send("bridge.connect", "https://other.example.test");
+    send("bridge.connect", window.location.origin, window);
+    expect(postMessage).not.toHaveBeenCalled();
+    postMessage.mockRestore();
+  });
+
   it("uses an authorized default agent when the app does not specify one", async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,

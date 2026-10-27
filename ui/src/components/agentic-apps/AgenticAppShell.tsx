@@ -202,6 +202,8 @@ export function AgenticAppShell({
         reply();
         expectedSource.postMessage({ type: "caipe.agenticApp.navigation.v1", version: "1.0", appId,
           href: window.location.pathname + window.location.search + window.location.hash }, window.location.origin);
+        expectedSource.postMessage({ type: "caipe.agenticApp.assistant.state.v1", version: "1.0", appId,
+          open: assistantOpen }, window.location.origin);
         return;
       }
       if (message.type === "caipe.agenticApp.navigate.v1") {
@@ -239,7 +241,7 @@ export function AgenticAppShell({
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [appId, assistantConfigured, assistantAgent, router, state]);
+  }, [appId, assistantConfigured, assistantAgent, assistantOpen, router, state]);
 
   useEffect(() => {
     const target = iframeRef.current?.contentWindow;

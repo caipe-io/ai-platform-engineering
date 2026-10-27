@@ -62,6 +62,7 @@ export function AgenticAppAssistantOverlay({
   const defaultSize = { width: options?.presentation?.width ?? DEFAULT_PANEL_SIZE.width, height: options?.presentation?.height ?? DEFAULT_PANEL_SIZE.height };
   const [panelSize, setPanelSize] = useState(defaultSize);
   const [expanded, setExpanded] = useState(false);
+  const [displayMenuOpen, setDisplayMenuOpen] = useState(false);
   const [fontScale, setFontScale] = useState(options?.presentation?.fontScale ?? "default");
   const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration);
   const [glassMode, setGlassMode] = useState(readStoredGlassMode);
@@ -340,11 +341,17 @@ export function AgenticAppAssistantOverlay({
     if (selectionSessionRef.current) selectionSessionRef.current.owned = null;
   }
   useEffect(() => {
+    if (!open) queueMicrotask(() => setDisplayMenuOpen(false));
+  }, [open]);
+
+  useEffect(() => {
     if (!open) return;
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) onOpenChange(false); };
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented && !displayMenuOpen) onOpenChange(false);
+    };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [open, onOpenChange]);
+  }, [open, onOpenChange, displayMenuOpen]);
 
   const handleResizeStart = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>) => {
@@ -420,7 +427,7 @@ export function AgenticAppAssistantOverlay({
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Popover><PopoverTrigger asChild><button type="button" aria-label="Assistant display settings" className="rounded p-2 hover:bg-white/10"><MoreHorizontal className="h-4 w-4" /></button></PopoverTrigger>
+              <Popover open={displayMenuOpen} onOpenChange={setDisplayMenuOpen}><PopoverTrigger asChild><button type="button" aria-label="Assistant display settings" className="rounded p-2 hover:bg-white/10"><MoreHorizontal className="h-4 w-4" /></button></PopoverTrigger>
               <PopoverContent align="end" className="w-56 space-y-2">
               <label className="block text-sm">Text size<Select aria-label="Assistant text size" className="h-8 w-auto text-xs" value={fontScale}
                 onChange={event => setFontScale(event.target.value as typeof fontScale)}>
