@@ -216,7 +216,7 @@ test.describe("audit log — mocked regression", () => {
     expect(auditErrors).toHaveLength(0);
   });
 
-  test("admin page renders without audit errors", async ({ page }) => {
+  test("admin page renders without audit errors", { tag: "@sanity" }, async ({ page }) => {
     const auditErrors: string[] = [];
     page.on("console", (msg) => {
       if (msg.type() === "error" && msg.text().toLowerCase().includes("audit")) {
