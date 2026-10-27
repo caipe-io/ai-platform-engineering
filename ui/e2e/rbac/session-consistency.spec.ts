@@ -19,7 +19,7 @@ async function login(context: BrowserContext, sub: string, accessToken: string):
   return cookie;
 }
 
-test('both replicas immediately observe login and refreshed credentials with matching expiry', async ({ context }) => {
+test('both replicas immediately observe login and refreshed credentials with matching expiry', { tag: '@sanity' }, async ({ context }) => {
   const sub = `test-${crypto.randomUUID()}`;
   const cookie = await login(context, sub, 'old-test-token');
   expect(await (await context.request.get(`${peer}/api/auth/session`)).json()).toMatchObject({ accessToken: 'old-test-token' });
@@ -31,7 +31,7 @@ test('both replicas immediately observe login and refreshed credentials with mat
   }
 });
 
-test('logout rejects replay on the other replica but leaves the second browser signed in', async ({ context, browser, playwright }) => {
+test('logout rejects replay on the other replica but leaves the second browser signed in', { tag: '@sanity' }, async ({ context, browser, playwright }) => {
   const sub = `test-${crypto.randomUUID()}`;
   const originalCookie = await login(context, sub, 'browser-one');
   const other = await browser.newContext();
