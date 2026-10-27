@@ -9,7 +9,7 @@ dependencies = [
     "fastapi==0.135.3",
     "pydantic==2.13.4",
     "pydantic-settings==2.14.2",
-    "pymongo==4.18.2",
+    "pymongo==4.18.3",
     "uvicorn[standard]==0.34.2",
 ]
 
