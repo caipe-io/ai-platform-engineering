@@ -8,7 +8,7 @@ from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
 from embeddings import Handler, embedding
-from run import Smoke
+from run import Smoke, eventually
 
 
 def container(status: str = "running", health: str = "healthy", exit_code: int = 0) -> dict:
@@ -56,6 +56,20 @@ class ReadinessTests(unittest.TestCase):
             self.smoke.run()
         self.assertEqual(probes.call_args_list[0].kwargs, {})
         self.assertEqual(probes.call_args_list[1].kwargs, {"persisted": True})
+
+
+class EventuallyTests(unittest.TestCase):
+    def test_retries_non_json_and_partial_responses(self) -> None:
+        responses = iter([json.JSONDecodeError("Expecting value", "<html>", 0), KeyError("stores"), True])
+
+        def check() -> bool:
+            response = next(responses)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        with patch("run.time.sleep"):
+            self.assertTrue(eventually(check, "startup"))
 
 
 class EmbeddingTests(unittest.TestCase):

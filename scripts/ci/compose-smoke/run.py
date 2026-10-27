@@ -47,7 +47,8 @@ def eventually(check: Callable[[], object], label: str, timeout: int = 300) -> o
             if result:
                 print(f"PASS: {label}", flush=True)
                 return result
-        except (RuntimeError, urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+        # A starting service can return HTML or a partial payload; keep polling.
+        except (RuntimeError, urllib.error.URLError, TimeoutError, ConnectionError, ValueError, KeyError) as exc:
             error = exc
         time.sleep(3)
     raise RuntimeError(f"Timed out: {label}; last error: {error}")
