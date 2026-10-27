@@ -266,9 +266,11 @@ function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
       autonomousMessageKind: msg.metadata?.kind,
       autonomousExecutionContextId: msg.metadata?.execution_context_id,
       turnStatus: msg.metadata?.turn_status as TurnStatus | undefined,
-      isInterrupted: hasHitlForm
-        ? false
-        : Boolean(msg.metadata?.is_interrupted) || (msg.role === 'assistant' && !isFinal),
+      // A non-final message may still be streaming in another tab. Only a
+      // persisted terminal status can confirm that its response was interrupted.
+      isInterrupted: !hasHitlForm && (
+        Boolean(msg.metadata?.is_interrupted) || msg.metadata?.turn_status === 'interrupted'
+      ),
       feedback: msg.feedback ? {
         type: msg.feedback.rating === 'positive'
           ? 'like' as const
@@ -1541,12 +1543,10 @@ export const useChatStore = shouldUseLocalStorage()
               updatedAt: new Date(conv.updatedAt),
               streamEvents: [],
               messages: conv.messages.map((msg, idx, allMsgs) => {
-                // CRASH RECOVERY: Mark non-final assistant messages as interrupted.
-                // After a page crash/reload, streamingConversations is empty (not persisted),
-                // so any assistant message without isFinal=true was mid-stream when the tab died.
-                //
-                // HEAL: If a subsequent user message exists, the response actually completed
-                // — the original session just didn't persist isFinal=true before crashing.
+                // A different tab may own a non-final turn. Rehydration cannot
+                // tell whether that tab is still running, so only an explicit
+                // terminal status should show the interruption banner.
+                // A later user turn proves a stale non-final answer completed.
                 let healed = false;
                 if (msg.role === 'assistant' && !msg.isFinal) {
                   const hasFollowUp = allMsgs.slice(idx + 1).some(m => m.role === 'user');
@@ -1557,9 +1557,7 @@ export const useChatStore = shouldUseLocalStorage()
                   timestamp: new Date(msg.timestamp),
                   streamEvents: undefined,
                   isFinal: healed ? true : msg.isFinal,
-                  isInterrupted: healed
-                    ? false
-                    : (msg.role === 'assistant' && !msg.isFinal ? true : msg.isInterrupted),
+                  isInterrupted: !healed && msg.turnStatus === 'interrupted',
                 };
               }),
             }));

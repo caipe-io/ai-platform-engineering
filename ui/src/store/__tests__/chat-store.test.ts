@@ -268,6 +268,45 @@ describe('chat-store', () => {
   // --------------------------------------------------------------------------
 
   describe('loadMessagesFromServer', () => {
+    it('does not call a non-final response interrupted while another view may still be streaming it', async () => {
+      const conversation = makeConversation({ id: 'active-elsewhere' });
+      useChatStore.setState({ conversations: [conversation] });
+      mockApiClient.getMessages.mockResolvedValue({
+        items: [{
+          _id: 'pending-message', message_id: 'pending-message', conversation_id: conversation.id,
+          role: 'assistant', content: 'Partial response', created_at: '2026-01-01T00:00:00Z',
+          metadata: { is_final: false },
+        }],
+        total: 1,
+      });
+
+      await useChatStore.getState().loadMessagesFromServer(conversation.id);
+
+      expect(useChatStore.getState().conversations[0].messages[0]).toEqual(
+        expect.objectContaining({ isFinal: false, isInterrupted: false }),
+      );
+    });
+
+    it.each([
+      { metadata: { is_final: true, is_interrupted: true }, reason: 'explicit interruption flag' },
+      { metadata: { is_final: true, turn_status: 'interrupted' }, reason: 'terminal turn status' },
+    ])('shows an interruption only for a confirmed $reason', async ({ metadata, reason }) => {
+      const conversation = makeConversation({ id: `interrupted-${reason}` });
+      useChatStore.setState({ conversations: [conversation] });
+      mockApiClient.getMessages.mockResolvedValue({
+        items: [{
+          _id: 'interrupted-message', message_id: 'interrupted-message', conversation_id: conversation.id,
+          role: 'assistant', content: 'Partial response', created_at: '2026-01-01T00:00:00Z',
+          metadata,
+        }],
+        total: 1,
+      });
+
+      await useChatStore.getState().loadMessagesFromServer(conversation.id);
+
+      expect(useChatStore.getState().conversations[0].messages[0].isInterrupted).toBe(true);
+    });
+
     it('loads messages from MongoDB and updates store', async () => {
       const conv = makeConversation({ id: 'load-test-1' });
       useChatStore.setState({ conversations: [conv] });
@@ -851,6 +890,29 @@ describe('chat-store', () => {
       await expect(
         useChatStore.getState().loadMessagesFromServer('nonexistent')
       ).resolves.toBeUndefined();
+    });
+  });
+
+  it('does not infer interruption from a non-final answer rehydrated from localStorage', async () => {
+    (global as unknown).__mockStorageMode = 'localStorage';
+    window.localStorage.setItem('caipe-chat-history', JSON.stringify({
+      state: {
+        activeConversationId: 'local-conversation',
+        conversations: [{
+          id: 'local-conversation', title: 'Example chat',
+          createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+          messages: [{
+            id: 'pending-local', role: 'assistant', content: 'Partial response',
+            timestamp: '2026-01-01T00:00:00Z', isFinal: false,
+          }],
+        }],
+      },
+      version: 0,
+    }));
+
+    await jest.isolateModulesAsync(async () => {
+      const { useChatStore: localStore } = await import('../chat-store');
+      expect(localStore.getState().conversations[0].messages[0].isInterrupted).toBe(false);
     });
   });
 
