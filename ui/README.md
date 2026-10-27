@@ -13,11 +13,12 @@ From the repository root:
 make caipe-ui-dev
 ```
 
-Or run directly:
+Or run directly (requires Node.js 24.22.1 or newer, below 25):
 
 ```bash
 cd ui
-npm install
+nvm use   # if available
+npm ci
 npm run dev
 ```
 
