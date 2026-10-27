@@ -186,3 +186,33 @@ async def test_provider_temperature_setting(agent: OntologyAgent, new_manager: M
   await agent.process_and_evaluate_all()
 
   agent_module.build_chat_model.assert_called_once_with("openai", temperature=expected)
+
+
+@pytest.mark.asyncio
+async def test_second_generation_is_rejected_between_phases(agent: OntologyAgent, new_manager: Mock, worker: Mock) -> None:
+  # Pause the first run while it publishes, when neither phase flag is set.
+  publishing = asyncio.Event()
+  release = asyncio.Event()
+
+  async def publish(*args: object) -> None:
+    publishing.set()
+    await release.wait()
+
+  agent.redis.set.side_effect = publish
+  first_run = asyncio.create_task(agent.process_and_evaluate_all())
+  try:
+    await asyncio.wait_for(publishing.wait(), timeout=5)
+    assert agent.is_processing is False
+    assert agent.is_evaluating is False
+    assert agent.is_busy is True
+
+    with pytest.raises(RuntimeError, match="generation is already in progress"):
+      await agent.process_and_evaluate_all()
+  finally:
+    release.set()
+    await asyncio.wait_for(first_run, timeout=5)
+
+  agent.process_all.assert_awaited_once()
+  new_manager.cleanup.assert_awaited_once()
+  assert agent.is_generating is False
+  assert agent.is_busy is False

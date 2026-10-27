@@ -61,6 +61,7 @@ class OntologyAgent:
     # status flags
     self.is_processing = False  # Avoid parallel processing/evaluation
     self.is_evaluating = False
+    self.is_generating = False  # Held for a whole process_and_evaluate_all run
 
     self.agent_status_msg = "Idle"
     self.evaluation_count = 0  # Track number of evaluations made
@@ -77,7 +78,24 @@ class OntologyAgent:
       self.agent_status_msg = f"Syncing [{idx}/{len(candidates)}] relation {candidate.relation_id}"
       await rc_manager.sync_relation(candidate.relation_id)
 
+  @property
+  def is_busy(self) -> bool:
+    """Whether a generation or any of its phases is running."""
+    return self.is_generating or self.is_processing or self.is_evaluating
+
   async def process_and_evaluate_all(self) -> None:
+    # Check and set before the first await so two runs cannot both pass. The
+    # phase flags alone leave gaps between phases, and a second run's phase
+    # cleanup could release the first run's guard.
+    if self.is_generating:
+      raise RuntimeError("Ontology generation is already in progress")
+    self.is_generating = True
+    try:
+      await self._process_and_evaluate_all()
+    finally:
+      self.is_generating = False
+
+  async def _process_and_evaluate_all(self) -> None:
     self.logger.info("Running heuristics processing and the evaluation...")
     # self.last_evaluation_run_timestamp = time.time()
 
