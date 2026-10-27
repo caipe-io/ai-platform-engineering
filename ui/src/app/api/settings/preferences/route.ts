@@ -7,6 +7,7 @@ withAuth,
 withErrorHandler,
 } from '@/lib/api-middleware';
 import { parseChatHistoryOrganization } from "@/lib/chat-history-organization";
+import { isAssistantFontScale } from "@/lib/appearance-preferences";
 import { getCollection } from '@/lib/mongodb';
 import type { UserSettings } from '@/types/mongodb';
 import type { Document } from 'mongodb';
@@ -18,6 +19,12 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
     const body: Partial<UserSettings['preferences']> = await request.json();
     if (body.shadows_enabled !== undefined && typeof body.shadows_enabled !== 'boolean') {
       throw new ApiError('shadows_enabled must be a boolean', 400, 'BAD_REQUEST');
+    }
+    if (body.assistant_glass_enabled !== undefined && typeof body.assistant_glass_enabled !== 'boolean') {
+      throw new ApiError('assistant_glass_enabled must be a boolean', 400, 'BAD_REQUEST');
+    }
+    if (body.assistant_font_scale !== undefined && !isAssistantFontScale(body.assistant_font_scale)) {
+      throw new ApiError('Invalid assistant_font_scale', 400, 'BAD_REQUEST');
     }
 
     if (body.chat_history !== undefined) {

@@ -23,7 +23,7 @@ it("sends live presentation context on load and host theme changes, without iden
   const post = jest.spyOn(frame.contentWindow!, "postMessage");
   fireEvent.load(frame);
   expect(post).toHaveBeenLastCalledWith(expect.objectContaining({
-    appId: "example", context: expect.objectContaining({ theme: "dark", preferences: { shadows_enabled: true } }),
+    appId: "example", context: expect.objectContaining({ theme: "dark", preferences: { shadows_enabled: false } }),
   }), window.location.origin);
   mockTheme = "legacy-light";
   rerender(<HostedAgenticAppFrame appId="example" title="Example" src="/apps/example" />);
@@ -36,8 +36,8 @@ it("publishes a shadow change without changing the iframe document", () => {
   render(<HostedAgenticAppFrame appId="example" title="Example" src="/apps/example" />);
   const frame = screen.getByTitle("Example") as HTMLIFrameElement;
   const post = jest.spyOn(frame.contentWindow!, "postMessage");
-  act(() => applyInterfaceShadows(false));
-  expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ context: expect.objectContaining({ preferences: { shadows_enabled: false } }) }), window.location.origin);
+  act(() => applyInterfaceShadows(true));
+  expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ context: expect.objectContaining({ preferences: { shadows_enabled: true } }) }), window.location.origin);
   expect(screen.getByTitle("Example")).toBe(frame);
   expect(frame.getAttribute("src")).toBe("/apps/example");
 });

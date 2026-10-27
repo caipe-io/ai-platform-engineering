@@ -1,11 +1,10 @@
 "use client";
 
-import { ExternalLink, Maximize2, MoreVertical, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
+import { ExternalLink, Maximize2, MoreVertical, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Select } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Props {
@@ -22,10 +21,6 @@ interface Props {
   onClear: () => void;
   chatHref?: string;
   onMinimize: () => void;
-  fontScale: "compact" | "default" | "large";
-  onFontScaleChange: (scale: Props["fontScale"]) => void;
-  glassMode: boolean;
-  onGlassModeChange: () => void;
   context?: ReactNode;
 }
 
@@ -50,14 +45,6 @@ export function AssistantConversationToolbar(props: Props) {
           <Button variant="ghost" className="justify-start gap-2" aria-label="Reset assistant size" onClick={() => run(props.onResetSize)}><RotateCcw className="h-4 w-4" aria-hidden />Reset size</Button>
           <Button variant="ghost" className="justify-start gap-2 text-destructive hover:text-destructive" aria-label="Clear assistant chat" disabled={props.pending || !props.canClear} onClick={() => run(props.onClear)}><Trash2 className="h-4 w-4" aria-hidden />Clear chat</Button>
         </div>
-        <label className="block border-t border-border pt-2 text-xs text-muted-foreground">Text size
-          <Select aria-label="Assistant text size" className="mt-1 h-8 text-xs" value={props.fontScale} onChange={event => props.onFontScaleChange(event.target.value as Props["fontScale"])}>
-            <option value="compact">Small</option><option value="default">Default</option><option value="large">Large</option>
-          </Select>
-        </label>
-        <Button variant="ghost" className="w-full justify-start gap-2" aria-label={props.glassMode ? "Disable translucent assistant mode" : "Enable translucent assistant mode"} aria-pressed={props.glassMode} onClick={props.onGlassModeChange}>
-          <Sparkles className="h-4 w-4" aria-hidden />Glass
-        </Button>
         {props.context}
       </PopoverContent>
     </Popover>

@@ -89,7 +89,7 @@ export default async function RootLayout({
   // Only client-safe values are included (no secrets).
   const configScript = getClientConfigScript();
   const initialTheme = JSON.stringify(cfg.defaultTheme).replace(/</g,"\\u003c");
-  const themeScript = `(function(){try{var preference=localStorage.getItem("theme")||${initialTheme};var theme=preference;if(theme==="system"){theme=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}document.documentElement.setAttribute("data-theme-preference",preference);document.documentElement.setAttribute("data-theme",theme);document.documentElement.style.removeProperty("color-scheme");document.documentElement.setAttribute("data-interface-shadows",localStorage.getItem("caipe-shadows-enabled")==="false"?"off":"on");}catch(_error){}})();`;
+  const themeScript = `(function(){try{var preference=localStorage.getItem("theme")||${initialTheme};var theme=preference;if(theme==="system"){theme=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}document.documentElement.setAttribute("data-theme-preference",preference);document.documentElement.setAttribute("data-theme",theme);document.documentElement.style.removeProperty("color-scheme");document.documentElement.setAttribute("data-interface-shadows",localStorage.getItem("caipe-shadows-enabled")==="true"?"on":"off");}catch(_error){}})();`;
 
   return (
     <html lang="en" suppressHydrationWarning>

@@ -4,6 +4,7 @@
 
 import {
   applyColorTheme,
+  getDefaultAppearancePreferences,
   applyInterfaceShadows,
   normalizeServerAppearancePreferences,
   markAppearanceInteraction,
@@ -19,6 +20,8 @@ const CURRENT: AppearancePreferences = {
   gradientTheme: "default",
   theme: "dark",
   shadowsEnabled: true,
+  assistantGlassEnabled: true,
+  assistantFontScale: "auto",
 };
 
 describe("appearance preference hydration",() => {
@@ -26,6 +29,10 @@ describe("appearance preference hydration",() => {
     localStorage.clear();
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.style.removeProperty("color-scheme");
+  });
+
+  it("defaults to glass on and shadows off", () => {
+    expect(getDefaultAppearancePreferences()).toMatchObject({ assistantGlassEnabled: true, shadowsEnabled: false, assistantFontScale: "auto" });
   });
 
   it("applies explicit themes to the root and clears stale native color schemes",() => {
@@ -69,6 +76,8 @@ describe("appearance preference hydration",() => {
       gradientTheme: "ocean",
       theme: "light",
       shadowsEnabled: true,
+  assistantGlassEnabled: true,
+  assistantFontScale: "auto",
     });
   });
 

@@ -17,6 +17,7 @@ import { loadHostConversation } from "@/native-extensions/host-chat";
 import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { ChatPanel } from "@/components/chat/DynamicAgentChatPanel";
 import { buildAssistantClientContext } from "@/lib/agentic-apps/assistant-context";
+import { useAssistantAppearance } from "@/hooks/use-assistant-appearance";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import { findLatestAppConversation, matchesAssistantConversation, mergeAppConversation } from "@/lib/agentic-apps/assistant-conversations";
@@ -27,9 +28,6 @@ import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 const DEFAULT_PANEL_SIZE = { width: 720, height: 780 };
 const MIN_PANEL_SIZE = { width: 480, height: 560 };
 const MAX_PANEL_SIZE = { width: 1180, height: 940 };
-const GLASS_MODE_STORAGE_KEY = "agentic-app-assistant-glass";
-const FONT_SCALE_STORAGE_KEY = "agentic-app-assistant-font-scale";
-type FontScale = "compact" | "default" | "large";
 const AGENTIC_APP_CONVERSATION_KIND = "agentic-app";
 
 export interface AgenticAppAssistantOverlayProps {
@@ -79,10 +77,9 @@ export function AgenticAppAssistantOverlay({
   const [panelSize, setPanelSize] = useState(defaultSize);
   const [expanded, setExpanded] = useState(false);
   const [displayMenuOpen, setDisplayMenuOpen] = useState(false);
-  const [fontScale, setFontScale] = useState<FontScale>(() => readStoredFontScale(options?.presentation?.fontScale));
+  const { glassMode, fontScale } = useAssistantAppearance(options?.presentation?.fontScale);
   const [historyRevision, setHistoryRevision] = useState(0);
   const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration);
-  const [glassMode, setGlassMode] = useState(readStoredGlassMode);
   const [assistantConversation, setAssistantConversation] = useState<{
     key: string;
     id: string;
@@ -124,14 +121,6 @@ export function AgenticAppAssistantOverlay({
     () => buildAssistantClientContext(activeContext),
     [activeContext],
   );
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(GLASS_MODE_STORAGE_KEY, String(glassMode));
-    }
-  }, [glassMode]);
-
-  useEffect(() => { window.localStorage.setItem(FONT_SCALE_STORAGE_KEY, fontScale); }, [fontScale]);
 
   useEffect(() => {
     if (deepLink.requested) queueMicrotask(() => setView("chat"));
@@ -443,8 +432,7 @@ export function AgenticAppAssistantOverlay({
               onNewChat={() => void handleNewChat()} onClear={() => void handleClearChat()}
               onExpand={() => setExpanded(true)} onResetSize={() => { setExpanded(false); setPanelSize(defaultSize); }}
               chatHref={hasSelectedConversation && assistantConversation ? `/chat/${encodeURIComponent(assistantConversation.id)}` : undefined}
-              onMinimize={() => onOpenChange(false)} fontScale={fontScale} onFontScaleChange={setFontScale}
-              glassMode={glassMode} onGlassModeChange={() => setGlassMode(value => !value)}
+              onMinimize={() => onOpenChange(false)}
               context={activeContext ? <div className="space-y-2 border-t border-border pt-2 text-xs text-muted-foreground">
                 <p className="font-medium text-foreground">{activeContext.title ?? "Current page"}</p>
                 {activeContext.summary ? <p className="line-clamp-2">{activeContext.summary}</p> : null}
@@ -518,22 +506,10 @@ function clampPanelSize(size: { width: number; height: number }): {
   };
 }
 
-function readStoredGlassMode(): boolean {
-  if (typeof window === "undefined") return true;
-  const raw = window.localStorage.getItem(GLASS_MODE_STORAGE_KEY);
-  return raw === null ? true : raw === "true";
-}
-
 function updateAssistantDeepLink(id: string | null, aliases: string[] = []): void {
   const url = new URL(window.location.href);
   for (const alias of aliases) url.searchParams.delete(alias);
   if (id) url.searchParams.set("assistant_chat", id);
   else url.searchParams.delete("assistant_chat");
   window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
-}
-
-function readStoredFontScale(fallback: FontScale = "compact"): FontScale {
-  if (typeof window === "undefined") return fallback;
-  const value = window.localStorage.getItem(FONT_SCALE_STORAGE_KEY);
-  return value === "compact" || value === "default" || value === "large" ? value : fallback;
 }

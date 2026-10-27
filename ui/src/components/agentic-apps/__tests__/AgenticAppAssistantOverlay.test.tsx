@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { useChatStore } from "@/store/chat-store";
 import type { Conversation } from "@/types/a2a";
 
+import { applyAssistantGlass, applyAssistantFontScale } from "@/lib/appearance-preferences";
 import { AgenticAppAssistantOverlay } from "../AgenticAppAssistantOverlay";
 
 jest.mock("@/native-extensions/HostConversationActions", () => ({ __esModule: true, default: () => <h2>Saved app chat</h2> }));
@@ -136,8 +137,7 @@ describe("AgenticAppAssistantOverlay", () => {
     );
 
     expect(screen.getByRole("dialog", { name: "Example Assistant" })).toBeInTheDocument();
-    expect(action("Disable translucent assistant mode"))
-      .toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: /translucent assistant mode/ })).not.toBeInTheDocument();
     expect(screen.getByText("Starting Ask Example…")).toBeInTheDocument();
     await waitFor(() => {
       expect(mockCreateConversation).toHaveBeenCalledWith("agent-example", {
@@ -156,15 +156,15 @@ describe("AgenticAppAssistantOverlay", () => {
     expect(chat).toHaveAttribute("data-empty-title", "Ask Example");
   });
 
-  it("dismisses display settings on the first Escape and the assistant on the next", async () => {
+  it("dismisses conversation actions on the first Escape and the assistant on the next", async () => {
     const onOpenChange = jest.fn();
     render(<AgenticAppAssistantOverlay appId="example-app" appName="Example App" assistantAgentId="agent-example"
       activeContext={null} onClearContext={jest.fn()} open onOpenChange={onOpenChange} />);
     await screen.findByTestId("chat-panel");
     fireEvent.click(screen.getByRole("button", { name: "Conversation actions" }));
-    await screen.findByLabelText("Assistant text size");
+    await screen.findByRole("button", { name: "Start new assistant chat" });
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByLabelText("Assistant text size")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start new assistant chat" })).toBeNull();
     expect(onOpenChange).not.toHaveBeenCalled();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -183,17 +183,17 @@ describe("AgenticAppAssistantOverlay", () => {
       .toMatchObject({ owner_id: "owner@example.test", accessLevel: "shared_readonly" });
   });
 
-  it("keeps display settings closed when reopening the assistant", async () => {
+  it("keeps conversation actions closed when reopening the assistant", async () => {
     const props = { appId: "example-app", appName: "Example App", assistantAgentId: "agent-example",
       activeContext: null, onClearContext: jest.fn(), onOpenChange: jest.fn() };
     const { rerender } = render(<AgenticAppAssistantOverlay {...props} open />);
     await screen.findByTestId("chat-panel");
     fireEvent.click(screen.getByRole("button", { name: "Conversation actions" }));
-    await screen.findByLabelText("Assistant text size");
+    await screen.findByRole("button", { name: "Start new assistant chat" });
     await act(async () => rerender(<AgenticAppAssistantOverlay {...props} open={false} />));
     rerender(<AgenticAppAssistantOverlay {...props} open />);
     await screen.findByTestId("chat-panel");
-    expect(screen.queryByLabelText("Assistant text size")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start new assistant chat" })).toBeNull();
   });
 
   it.each([undefined, { agentic_app_id: "secondary-app" }, { agentic_app_id: "example-app" }])(
@@ -490,18 +490,22 @@ describe("AgenticAppAssistantOverlay", () => {
     expect(mockCreateConversation).toHaveBeenCalledTimes(1);
   });
 
-  it("preserves text size when the popup is closed and remounted", async () => {
+  it("reads user appearance preferences live and keeps them out of conversation actions", async () => {
     const view = renderExampleOverlay();
     await screen.findByTestId("chat-panel");
-    fireEvent.click(screen.getByRole("button", { name: "Conversation actions" }));
-    fireEvent.change(screen.getByLabelText("Assistant text size"), { target: { value: "large" } });
-    expect(window.localStorage.getItem("agentic-app-assistant-font-scale")).toBe("large");
+    expect(screen.getByRole("dialog")).toHaveClass("backdrop-blur-3xl");
+    act(() => { applyAssistantFontScale("large"); applyAssistantGlass(false); });
+    expect(document.querySelector('[style*="--text-sm"]')).toHaveStyle({ "--text-sm": "1rem" });
+    expect(screen.getByRole("dialog")).not.toHaveClass("backdrop-blur-3xl");
     view.unmount();
     renderExampleOverlay();
     await screen.findByTestId("chat-panel");
+    expect(document.querySelector('[style*="--text-sm"]')).toHaveStyle({ "--text-sm": "1rem" });
     fireEvent.click(screen.getByRole("button", { name: "Conversation actions" }));
-    expect(screen.getByLabelText("Assistant text size")).toHaveValue("large");
+    expect(screen.queryByLabelText("Assistant text size")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /translucent assistant mode/ })).not.toBeInTheDocument();
   });
+
 });
 
 function renderExampleOverlay() {

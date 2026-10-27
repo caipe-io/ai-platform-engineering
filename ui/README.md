@@ -27,9 +27,13 @@ Open http://localhost:3000.
 ## Runtime Configuration
 
 Settings > Appearance > Interface shadows lets each user turn decorative box
-and text shadows off. Shadows stay enabled by default; the preference saves to
+and text shadows off. Shadows are disabled by default; the preference saves to
 the account and applies immediately, including shared chat and SDK-connected
 iframe apps. Borders, focus rings, theme colors, and glass transparency remain.
+Glass (enabled by default) and chat text size are user Appearance preferences,
+not conversation actions. Existing device choices are retained until a saved
+account preference is available. App default text size follows each app’s
+presentation configuration.
 
 | Variable | Default | Purpose |
 |---|---|---|
