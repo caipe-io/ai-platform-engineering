@@ -1,12 +1,14 @@
 "use client";
 
-import { Bot, LoaderCircle, Maximize2, MoreHorizontal, MessageCircle, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
+import { LoaderCircle, MessageCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AssistantOptions, AssistantConfiguration } from "../../../app-sdk/assistant-options.mjs";
 import { useAssistantComposerOptions } from "./AssistantComposerOptions";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Select } from "@/components/ui/select";
+import { AssistantConversationToolbar } from "./AssistantConversationToolbar";
+import HostConversationActions from "@/native-extensions/HostConversationActions";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import { useSearchParams } from "next/navigation";
 import { readAssistantDeepLink } from "@/lib/agentic-apps/assistant-links";
 import Image from "next/image";
@@ -20,11 +22,14 @@ import { useChatStore } from "@/store/chat-store";
 import { findLatestAppConversation, matchesAssistantConversation, mergeAppConversation } from "@/lib/agentic-apps/assistant-conversations";
 import { getAgentId } from "@/types/a2a";
 import type { AgenticAppAssistantContextRecord } from "@/types/agentic-app";
+import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 
 const DEFAULT_PANEL_SIZE = { width: 720, height: 780 };
 const MIN_PANEL_SIZE = { width: 480, height: 560 };
 const MAX_PANEL_SIZE = { width: 1180, height: 940 };
 const GLASS_MODE_STORAGE_KEY = "agentic-app-assistant-glass";
+const FONT_SCALE_STORAGE_KEY = "agentic-app-assistant-font-scale";
+type FontScale = "compact" | "default" | "large";
 const AGENTIC_APP_CONVERSATION_KIND = "agentic-app";
 
 export interface AgenticAppAssistantOverlayProps {
@@ -38,6 +43,7 @@ export interface AgenticAppAssistantOverlayProps {
   activeContext: AgenticAppAssistantContextRecord | null;
   onClearContext: () => void;
   assistantAgentId: string;
+  assistantAgent?: DynamicAgentConfig;
   composerDraft?: AssistantDraft | null;
   onComposerDraftApplied?: (id: string) => void;
   open: boolean;
@@ -54,6 +60,7 @@ export function AgenticAppAssistantOverlay({
   activeContext,
   onClearContext,
   assistantAgentId,
+  assistantAgent,
   open,
   onOpenChange,
   composerDraft,
@@ -72,7 +79,8 @@ export function AgenticAppAssistantOverlay({
   const [panelSize, setPanelSize] = useState(defaultSize);
   const [expanded, setExpanded] = useState(false);
   const [displayMenuOpen, setDisplayMenuOpen] = useState(false);
-  const [fontScale, setFontScale] = useState(options?.presentation?.fontScale ?? "default");
+  const [fontScale, setFontScale] = useState<FontScale>(() => readStoredFontScale(options?.presentation?.fontScale));
+  const [historyRevision, setHistoryRevision] = useState(0);
   const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration);
   const [glassMode, setGlassMode] = useState(readStoredGlassMode);
   const [assistantConversation, setAssistantConversation] = useState<{
@@ -84,6 +92,7 @@ export function AgenticAppAssistantOverlay({
     message: string;
   } | null>(null);
   const [conversationActionPending, setConversationActionPending] = useState(false);
+  const selectedTitle = useChatStore(state => state.conversations.find(c => c.id === assistantConversation?.id)?.title);
   const selectedAccess = useChatStore(state => state.conversations.find(c => c.id === assistantConversation?.id)?.accessLevel);
   const canClear = !selectedAccess || selectedAccess === "owner";
   const selectionSessionRef = useRef<{ previous: string | null; owned: string | null } | null>(null);
@@ -121,6 +130,8 @@ export function AgenticAppAssistantOverlay({
       window.localStorage.setItem(GLASS_MODE_STORAGE_KEY, String(glassMode));
     }
   }, [glassMode]);
+
+  useEffect(() => { window.localStorage.setItem(FONT_SCALE_STORAGE_KEY, fontScale); }, [fontScale]);
 
   useEffect(() => {
     if (deepLink.requested) queueMicrotask(() => setView("chat"));
@@ -343,6 +354,7 @@ export function AgenticAppAssistantOverlay({
     setView("chat");
   }
   function onArchived(id: string) {
+    setHistoryRevision(value => value + 1);
     if (assistantConversation?.id !== id) return;
     updateAssistantDeepLink(null, options?.legacyConversationQueryParams);
     conversationRequestRef.current = null;
@@ -394,142 +406,63 @@ export function AgenticAppAssistantOverlay({
   );
 
   return (
-    <div className="pointer-events-none fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3" style={{ bottom: configuration?.bottomInset }}>
+    <div className="pointer-events-none fixed inset-x-4 bottom-4 top-18 z-40 flex min-h-0 flex-col items-end justify-end gap-3 sm:inset-x-6 sm:bottom-6" style={{ bottom: configuration?.bottomInset }}>
       {open ? (
+        <Tabs value={view} onValueChange={value => setView(value as typeof view)} asChild>
         <section
           role="dialog"
           aria-label={headerTitle}
           className={cn(
-            "pointer-events-auto relative flex flex-col overflow-hidden rounded-3xl border shadow-2xl transition-colors",
+            "pointer-events-auto relative flex min-h-0 flex-col overflow-hidden rounded-3xl border border-border bg-popover text-foreground shadow-2xl transition-colors",
             glassMode
-              ? "border-cyan-200/55 bg-cyan-950/30 shadow-[0_24px_120px_rgba(34,211,238,0.22),inset_0_1px_0_rgba(255,255,255,0.18),inset_0_0_64px_rgba(34,211,238,0.10)] ring-1 ring-cyan-200/45 backdrop-blur-3xl backdrop-saturate-200"
-              : "border-cyan-300/20 bg-slate-950/95 shadow-cyan-950/40",
+              ? "bg-popover/80 ring-1 ring-cyan-500/25 backdrop-blur-3xl backdrop-saturate-200 dark:border-cyan-200/55 dark:bg-cyan-950/15 dark:shadow-[0_24px_120px_rgba(34,211,238,0.22),inset_0_1px_0_rgba(255,255,255,0.18),inset_0_0_64px_rgba(34,211,238,0.10)] dark:ring-cyan-200/45"
+              : "shadow-black/10 dark:border-cyan-300/20 dark:bg-slate-950/95 dark:shadow-cyan-950/40",
           )}
           style={{
-            width: expanded ? "calc(100vw - 3rem)" : `min(${panelSize.width}px, calc(100vw - 3rem))`,
-            height: expanded ? `calc(100dvh - ${112 + (configuration?.bottomInset ?? 0)}px)` : `min(${panelSize.height}px, calc(100dvh - ${112 + (configuration?.bottomInset ?? 0)}px))`,
+            width: expanded ? "100%" : `min(${panelSize.width}px, 100%)`,
+            height: expanded ? "100%" : `min(${panelSize.height}px, 100%)`,
           }}
         >
-          <button
-            type="button"
-            aria-label={`Resize ${bubbleLabel} assistant`}
-            onPointerDown={handleResizeStart}
-            className="absolute left-3 top-3 z-10 flex h-10 w-10 cursor-nwse-resize touch-none items-center justify-center rounded-full border border-cyan-200/30 bg-slate-950/35 shadow-lg backdrop-blur-md transition hover:border-cyan-200/60 hover:bg-cyan-300/10"
-          >
-            <span className="absolute h-7 w-7 rounded-full border border-cyan-200/30" aria-hidden />
-            <span className="absolute h-4 w-4 rounded-full border border-cyan-300/40" aria-hidden />
-            <span className="h-1.5 w-1.5 rounded-full bg-cyan-200 shadow-[0_0_14px_rgba(34,211,238,0.8)]" aria-hidden />
-          </button>
-
-          <header className="flex items-center justify-between gap-3 border-b border-white/10 bg-cyan-950/30 py-3 pl-16 pr-4 backdrop-blur-3xl">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="rounded-full bg-cyan-300/15 p-2 text-cyan-100">
-                {assistantIcon ? <Image src={assistantIcon} width={20} height={20} alt="" unoptimized /> : <Bot className="h-4 w-4" aria-hidden />}
-              </span>
-              <div className="min-w-0">
-                <h2 className="truncate text-sm font-semibold text-white">{headerTitle}</h2>
-                <p className="truncate text-xs text-slate-400">
-                  {activeContext
-                    ? `${activeContext.route} context active`
-                    : `Waiting for ${appId} context`}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Popover open={displayMenuOpen} onOpenChange={setDisplayMenuOpen}><PopoverTrigger asChild><button type="button" aria-label="Assistant display settings" className="rounded p-2 hover:bg-white/10"><MoreHorizontal className="h-4 w-4" /></button></PopoverTrigger>
-              <PopoverContent align="end" className="w-56 space-y-2">
-              <label className="block text-sm">Text size<Select aria-label="Assistant text size" className="h-8 w-auto text-xs" value={fontScale}
-                onChange={event => setFontScale(event.target.value as typeof fontScale)}>
-                <option value="compact">Small</option><option value="default">Default</option><option value="large">Large</option>
-              </Select></label>
-              <button type="button" aria-label="Expand assistant" aria-pressed={expanded} onClick={() => setExpanded(value => !value)} className="rounded p-2 hover:bg-white/10"><Maximize2 className="h-4 w-4" /></button>
-              <button type="button" aria-label="Reset assistant size" onClick={() => { setExpanded(false); setPanelSize(defaultSize); }} className="rounded p-2 hover:bg-white/10"><RotateCcw className="h-4 w-4" /></button>
-              </PopoverContent></Popover>
-              <button
-                type="button"
-                aria-label="Start new assistant chat"
-                title="New chat"
-                disabled={(view !== "history" && !hasSelectedConversation) || conversationActionPending}
-                onClick={() => void handleNewChat()}
-                className="rounded-full p-2 text-slate-400 transition hover:bg-white/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
-              >
-                {conversationActionPending ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden />
-                ) : (
-                  <Plus className="h-4 w-4" aria-hidden />
-                )}
-              </button>
-              <button
-                type="button"
-                aria-label="Clear assistant chat"
-                title="Clear chat"
-                disabled={!hasSelectedConversation || conversationActionPending || !canClear}
-                onClick={() => void handleClearChat()}
-                className="rounded-full p-2 text-slate-400 transition hover:bg-red-400/10 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <Trash2 className="h-4 w-4" aria-hidden />
-              </button>
-              <button
-                type="button"
-                aria-label={glassMode ? "Disable translucent assistant mode" : "Enable translucent assistant mode"}
-                aria-pressed={glassMode}
-                onClick={() => setGlassMode((value) => !value)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] font-medium transition",
-                  glassMode
-                    ? "border-cyan-200/70 bg-cyan-300/25 text-cyan-50"
-                    : "border-white/10 bg-slate-950/40 text-slate-300 hover:text-white",
-                )}
-              >
-                <Sparkles className="h-3.5 w-3.5" aria-hidden /> Glass
-              </button>
-              <button
-                type="button"
-                className="rounded-full p-2 text-slate-400 transition hover:bg-white/10 hover:text-white"
-                aria-label="Close assistant"
-                onClick={() => onOpenChange(false)}
-              >
-                <X className="h-4 w-4" aria-hidden />
-              </button>
-            </div>
+          <button type="button" aria-label={`Resize ${bubbleLabel} assistant`} onPointerDown={handleResizeStart}
+            className="absolute left-0 top-0 z-10 h-3 w-3 cursor-nwse-resize touch-none" />
+          <header className="flex items-center justify-between gap-3 border-b border-border bg-popover/40 px-4 py-3 backdrop-blur-3xl dark:bg-white/[0.02]">
+            {hasSelectedConversation && assistantConversation ? <HostConversationActions key={assistantConversation.id}
+              appId={appId} agentId={assistantAgentId} conversationId={assistantConversation.id}
+              variant="title" conversationTitle={selectedTitle} disabled={conversationActionPending}
+              onHistoryChange={() => setHistoryRevision(value => value + 1)} onArchived={() => onArchived(assistantConversation.id)} />
+              : <h2 className="min-w-0 truncate text-sm font-semibold">New chat</h2>}
+            <AssistantConversationToolbar
+              viewTabs={<TabsList aria-label={`${bubbleLabel} views`} indicator="none" className="h-8 w-fit shrink-0 overflow-hidden border border-foreground/30 bg-transparent p-0">
+                <TabsTrigger value="chat" className="h-full rounded-none px-4 py-1 data-[state=active]:bg-foreground data-[state=active]:text-background">Chat</TabsTrigger>
+                <TabsTrigger value="history" className="h-full rounded-none border-l border-foreground/30 px-4 py-1 data-[state=active]:bg-foreground data-[state=active]:text-background">History</TabsTrigger>
+              </TabsList>}
+              menuOpen={displayMenuOpen} onMenuOpenChange={setDisplayMenuOpen}
+              expanded={expanded} pending={conversationActionPending}
+              canStart={view === "history" || hasSelectedConversation}
+              canClear={hasSelectedConversation && canClear}
+              onNewChat={() => void handleNewChat()} onClear={() => void handleClearChat()}
+              onExpand={() => setExpanded(true)} onResetSize={() => { setExpanded(false); setPanelSize(defaultSize); }}
+              chatHref={hasSelectedConversation && assistantConversation ? `/chat/${encodeURIComponent(assistantConversation.id)}` : undefined}
+              onMinimize={() => onOpenChange(false)} fontScale={fontScale} onFontScaleChange={setFontScale}
+              glassMode={glassMode} onGlassModeChange={() => setGlassMode(value => !value)}
+              context={activeContext ? <div className="space-y-2 border-t border-border pt-2 text-xs text-muted-foreground">
+                <p className="font-medium text-foreground">{activeContext.title ?? "Current page"}</p>
+                {activeContext.summary ? <p className="line-clamp-2">{activeContext.summary}</p> : null}
+                <Button variant="outline" size="sm" onClick={onClearContext}>Clear context</Button>
+              </div> : undefined} />
           </header>
-
-          <div className="border-b border-white/10 bg-cyan-300/15 px-4 py-3 text-xs text-slate-300 backdrop-blur-2xl">
-            {activeContext ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium text-cyan-100">
-                    {activeContext.title ?? "Published app context"}
-                  </span>
-                  <button
-                    type="button"
-                    className="rounded-full border border-white/10 px-2 py-1 text-[11px] text-slate-200 transition hover:bg-white/10"
-                    onClick={onClearContext}
-                  >
-                    Clear context
-                  </button>
-                </div>
-                {activeContext.summary ? (
-                  <p className="line-clamp-2 text-slate-400">{activeContext.summary}</p>
-                ) : null}
-              </div>
-            ) : (
-              <p>App context is treated as untrusted data, not instructions.</p>
-            )}
-          </div>
-
-          <div className="flex items-center justify-end gap-1 border-b border-white/10 px-4 py-2" role="group" aria-label="Assistant view">
-            <button type="button" aria-pressed={view === "chat"} onClick={() => setView("chat")} className="rounded px-3 py-1 text-sm hover:bg-white/10">Chat</button>
-            <button type="button" aria-pressed={view === "history"} onClick={() => setView("history")} className="rounded px-3 py-1 text-sm hover:bg-white/10">History</button>
-          </div>
-          {view === "history" ? <AppAssistantHistory appId={appId} agentId={assistantAgentId} includeLegacy={options?.includeLegacyAgentHistory}
-            selectedId={assistantConversation?.id} onSelect={selectHistory} onArchived={onArchived} /> :
-          <div className="min-h-0 flex-1 [&>div]:bg-transparent" style={{
+          <div className="flex min-h-0 flex-1 flex-col">
+          <TabsContent value="history" className="m-0 min-h-0 flex-1">
+            <AppAssistantHistory key={`${appId}:${assistantAgentId}`} appId={appId} agentId={assistantAgentId} includeLegacy={options?.includeLegacyAgentHistory}
+              revision={historyRevision} disabled={conversationActionPending}
+              selectedId={assistantConversation?.id} onSelect={selectHistory} onArchived={onArchived} />
+          </TabsContent>
+          <TabsContent value="chat" forceMount className="m-0 min-h-0 flex-1 data-[state=inactive]:hidden [&>div]:bg-transparent" style={{
             "--text-sm": fontScale === "large" ? "1rem" : fontScale === "compact" ? "0.8125rem" : "0.875rem",
             "--text-base": fontScale === "large" ? "1.125rem" : fontScale === "compact" ? "0.875rem" : "1rem",
           } as React.CSSProperties}>
             {conversationError?.key === requestKey ? (
-              <div role="alert" className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-red-200">
+              <div role="alert" className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-destructive">
                 {conversationError.message}
                 <button type="button" className="underline" onClick={() => setConversationError(null)}>Retry</button>
               </div>
@@ -538,9 +471,11 @@ export function AgenticAppAssistantOverlay({
                 key={assistantConversation.id}
                 conversationId={assistantConversation.id}
                 agentId={assistantAgentId}
+                agent={assistantAgent}
                 readOnly={selectedAccess === "shared_readonly"} readOnlyReason={selectedAccess === "shared_readonly" ? "shared_readonly" : undefined}
                 requestOptions={requestOptions} composerHeader={composerHeader}
-                placeholder={options?.presentation?.placeholder}
+                placeholder={options?.presentation?.placeholder ?? `${bubbleLabel}…`}
+                emptyStateTitle={bubbleLabel}
                 showAuditNotice={options?.presentation?.showAuditNotice}
                 feedbackPrompt={options?.presentation?.feedbackPrompt}
                 clientContext={clientContext}
@@ -549,26 +484,25 @@ export function AgenticAppAssistantOverlay({
                 onComposerDraftApplied={onComposerDraftApplied}
               />
             ) : (
-              <div className="flex h-full items-center justify-center gap-2 text-sm text-slate-300">
+              <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
                 <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden />
                 Starting {bubbleLabel}…
               </div>
             )}
-          </div>}
+          </TabsContent>
+          </div>
         </section>
+        </Tabs>
       ) : null}
 
       <button
         type="button"
         aria-label={`Open ${bubbleLabel}`}
-        className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-cyan-200/30 bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-200"
+        className="pointer-events-auto inline-flex shrink-0 items-center gap-2 rounded-full border border-cyan-200/30 bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-200"
         onClick={() => onOpenChange(!open)}
       >
         {assistantIcon ? <Image src={assistantIcon} width={20} height={20} alt="" unoptimized /> : <MessageCircle className="h-4 w-4" aria-hidden />}
         {bubbleLabel}
-        {activeContext ? (
-          <span className="rounded-full bg-slate-950/15 px-2 py-0.5 text-xs">context</span>
-        ) : null}
       </button>
     </div>
   );
@@ -596,4 +530,10 @@ function updateAssistantDeepLink(id: string | null, aliases: string[] = []): voi
   if (id) url.searchParams.set("assistant_chat", id);
   else url.searchParams.delete("assistant_chat");
   window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+}
+
+function readStoredFontScale(fallback: FontScale = "compact"): FontScale {
+  if (typeof window === "undefined") return fallback;
+  const value = window.localStorage.getItem(FONT_SCALE_STORAGE_KEY);
+  return value === "compact" || value === "default" || value === "large" ? value : fallback;
 }

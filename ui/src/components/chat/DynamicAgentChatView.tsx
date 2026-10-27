@@ -1,6 +1,7 @@
 "use client";
 
 import { ChatPanel } from "@/components/chat/DynamicAgentChatPanel";
+import { useAppAssistantPresentation, useAssistantComposerOptions } from "@/components/agentic-apps/AssistantComposerOptions";
 import { DynamicAgentContext } from "@/components/dynamic-agents/DynamicAgentContext";
 import { ResizableHandle,ResizablePanel,ResizablePanelGroup } from "@/components/ui/resizable";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
@@ -46,6 +47,10 @@ export function ChatView({
   const [contextPanelCollapsed, setContextPanelCollapsed] = useState(true);
   const [isAnimating, setIsAnimating] = useState(false);
   const contextPanelRef = usePanelRef();
+  const { app, configuration } = useAppAssistantPresentation(agent?.presentation?.available ? agent.presentation.app.id : undefined, selectedAgentId);
+  const options = app?.assistantOptions;
+  const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration, app?.appId);
+  const assistantLabel = app ? app.assistantLabel?.trim() || "Ask CAIPE" : undefined;
 
   const handleCollapse = useCallback((collapsed: boolean) => {
     // Enable transition for programmatic expand/collapse, disable after animation
@@ -79,6 +84,12 @@ export function ChatView({
             agent={agent}
             isLoadingMessages={isLoadingMessages}
             onAgentRelinked={onAgentRelinked}
+            requestOptions={app ? requestOptions : undefined}
+            composerHeader={composerHeader}
+            placeholder={options?.presentation?.placeholder ?? (assistantLabel ? `${assistantLabel}…` : undefined)}
+            emptyStateTitle={assistantLabel}
+            showAuditNotice={options?.presentation?.showAuditNotice}
+            feedbackPrompt={options?.presentation?.feedbackPrompt}
           />
         </div>
       </ResizablePanel>

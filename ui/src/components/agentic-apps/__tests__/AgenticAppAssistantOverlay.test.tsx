@@ -5,6 +5,13 @@ import type { Conversation } from "@/types/a2a";
 
 import { AgenticAppAssistantOverlay } from "../AgenticAppAssistantOverlay";
 
+jest.mock("@/native-extensions/HostConversationActions", () => ({ __esModule: true, default: () => <h2>Saved app chat</h2> }));
+
+function action(name: string): HTMLElement {
+  if (!screen.queryByRole("button", { name })) fireEvent.click(screen.getByRole("button", { name: "Conversation actions" }));
+  return screen.getByRole("button", { name });
+}
+
 const mockCreateConversation = jest.fn();
 const mockDeleteConversation = jest.fn();
 const mockLoadConversationsFromServer = jest.fn();
@@ -45,17 +52,20 @@ jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
     clientContext,
     readOnly,
     composerDraft,
+    emptyStateTitle,
   }: {
     conversationId?: string;
     agentId: string;
     clientContext?: Record<string, unknown>;
     readOnly?: boolean;
     composerDraft?: { text: string } | null;
+    emptyStateTitle?: string;
   }) => (
     <div
       data-testid="chat-panel"
       data-conversation-id={conversationId}
       data-agent-id={agentId}
+      data-empty-title={emptyStateTitle}
       data-draft={composerDraft?.text ?? ""}
       data-context={JSON.stringify(clientContext ?? {})}
       data-read-only={String(Boolean(readOnly))}
@@ -126,7 +136,7 @@ describe("AgenticAppAssistantOverlay", () => {
     );
 
     expect(screen.getByRole("dialog", { name: "Example Assistant" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Disable translucent assistant mode" }))
+    expect(action("Disable translucent assistant mode"))
       .toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("Starting Ask Example…")).toBeInTheDocument();
     await waitFor(() => {
@@ -143,6 +153,7 @@ describe("AgenticAppAssistantOverlay", () => {
     const chat = await screen.findByTestId("chat-panel");
     expect(chat).toHaveAttribute("data-conversation-id", "assistant-conversation");
     expect(chat).toHaveAttribute("data-agent-id", "agent-example");
+    expect(chat).toHaveAttribute("data-empty-title", "Ask Example");
   });
 
   it("dismisses display settings on the first Escape and the assistant on the next", async () => {
@@ -150,7 +161,7 @@ describe("AgenticAppAssistantOverlay", () => {
     render(<AgenticAppAssistantOverlay appId="example-app" appName="Example App" assistantAgentId="agent-example"
       activeContext={null} onClearContext={jest.fn()} open onOpenChange={onOpenChange} />);
     await screen.findByTestId("chat-panel");
-    fireEvent.click(screen.getByRole("button", { name: "Assistant display settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Conversation actions" }));
     await screen.findByLabelText("Assistant text size");
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByLabelText("Assistant text size")).toBeNull();
@@ -177,7 +188,7 @@ describe("AgenticAppAssistantOverlay", () => {
       activeContext: null, onClearContext: jest.fn(), onOpenChange: jest.fn() };
     const { rerender } = render(<AgenticAppAssistantOverlay {...props} open />);
     await screen.findByTestId("chat-panel");
-    fireEvent.click(screen.getByRole("button", { name: "Assistant display settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Conversation actions" }));
     await screen.findByLabelText("Assistant text size");
     await act(async () => rerender(<AgenticAppAssistantOverlay {...props} open={false} />));
     rerender(<AgenticAppAssistantOverlay {...props} open />);
@@ -211,7 +222,7 @@ describe("AgenticAppAssistantOverlay", () => {
     window.history.pushState(null, "", "/example?assistant_chat=chat-b");
     view.rerender(exampleOverlay());
     expect(screen.queryByTestId("chat-panel")).toBeNull();
-    expect(screen.getByRole("button", { name: "Clear assistant chat" })).toBeDisabled();
+    expect(action("Clear assistant chat")).toBeDisabled();
     await act(async () => { finish(); });
     await waitFor(() => expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-conversation-id", "chat-b"));
     expect(mockCreateConversation).not.toHaveBeenCalled();
@@ -256,7 +267,7 @@ describe("AgenticAppAssistantOverlay", () => {
     mockRestoreConversation.mockRejectedValueOnce(new Error("Access denied"));
     renderExampleOverlay();
     await screen.findByRole("alert");
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "History" }));
     fireEvent.click(await screen.findByRole("button", { name: "Example App Assistant" }));
     await waitFor(() => expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-conversation-id", "history-chat"));
     expect(screen.queryByText("Access denied")).toBeNull();
@@ -308,6 +319,7 @@ describe("AgenticAppAssistantOverlay", () => {
       "data-context",
       expect.stringContaining('"appId":"example-app"'),
     );
+    fireEvent.click(screen.getByRole("button", { name: "Conversation actions" }));
     expect(screen.getByText("Current report")).toBeInTheDocument();
 
     unmount();
@@ -321,11 +333,11 @@ describe("AgenticAppAssistantOverlay", () => {
       activeContext: null, onClearContext: jest.fn(), open: true, onOpenChange: jest.fn() };
     const { rerender } = render(<AgenticAppAssistantOverlay {...props} />);
     await screen.findByTestId("chat-panel");
-    fireEvent.click(screen.getByRole("button", { name: "History", exact: true }));
-    expect(screen.queryByTestId("chat-panel")).toBeNull();
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "History", exact: true }));
+    expect(screen.getByTestId("chat-panel").closest('[role="tabpanel"]')).toHaveAttribute("data-state", "inactive");
     rerender(<AgenticAppAssistantOverlay {...props} composerDraft={{ id: "source-2", text: "Find the source" }} />);
     expect(await screen.findByTestId("chat-panel")).toHaveAttribute("data-draft", "Find the source");
-    expect(screen.getByRole("button", { name: "Chat", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("tab", { name: "Chat", exact: true })).toHaveAttribute("aria-selected", "true");
   });
 
   it("retains a requested draft while the assistant conversation loads", async () => {
@@ -361,7 +373,7 @@ describe("AgenticAppAssistantOverlay", () => {
     mockCreateConversation.mockResolvedValueOnce("assistant-conversation").mockRejectedValueOnce(new Error("Replacement unavailable"));
     mockDeleteConversation.mockImplementation(async () => { mockChatStoreState.activeConversationId = null; });
     renderExampleOverlay(); await screen.findByTestId("chat-panel");
-    fireEvent.click(screen.getByRole("button", { name: "Clear assistant chat" }));
+    fireEvent.click(action("Clear assistant chat"));
     expect(await screen.findByRole("alert")).toHaveTextContent("Replacement unavailable");
     expect(screen.queryByTestId("chat-panel")).toBeNull();
     mockCreateConversation.mockResolvedValueOnce("replacement-chat");
@@ -372,7 +384,7 @@ describe("AgenticAppAssistantOverlay", () => {
   it("shows a failed New chat action instead of silently leaving the old panel", async () => {
     mockCreateConversation.mockResolvedValueOnce("assistant-conversation").mockRejectedValueOnce(new Error("New chat unavailable"));
     renderExampleOverlay(); await screen.findByTestId("chat-panel");
-    fireEvent.click(screen.getByRole("button", { name: "Start new assistant chat" }));
+    fireEvent.click(action("Start new assistant chat"));
     expect(await screen.findByRole("alert")).toHaveTextContent("New chat unavailable");
     expect(screen.queryByTestId("chat-panel")).toBeNull();
   });
@@ -384,7 +396,7 @@ describe("AgenticAppAssistantOverlay", () => {
     renderExampleOverlay();
     await screen.findByTestId("chat-panel");
 
-    fireEvent.click(screen.getByRole("button", { name: "Start new assistant chat" }));
+    fireEvent.click(action("Start new assistant chat"));
 
     await waitFor(() => {
       expect(screen.getByTestId("chat-panel")).toHaveAttribute(
@@ -403,7 +415,7 @@ describe("AgenticAppAssistantOverlay", () => {
     renderExampleOverlay();
     await screen.findByTestId("chat-panel");
 
-    fireEvent.click(screen.getByRole("button", { name: "Clear assistant chat" }));
+    fireEvent.click(action("Clear assistant chat"));
 
     await waitFor(() => {
       expect(mockDeleteConversation).toHaveBeenCalledWith("assistant-conversation", { selectNext: false });
@@ -423,14 +435,14 @@ describe("AgenticAppAssistantOverlay", () => {
     if (operation === "initialization") mockCreateConversation.mockReturnValueOnce(pending);
     const { rerender } = render(<AgenticAppAssistantOverlay {...props} open />);
     if (operation === "initialization") {
-      expect(screen.getByRole("button", { name: "Start new assistant chat" })).toBeDisabled();
-      expect(screen.getByRole("button", { name: "Clear assistant chat" })).toBeDisabled();
+      expect(action("Start new assistant chat")).toBeDisabled();
+      expect(action("Clear assistant chat")).toBeDisabled();
     }
     if (operation !== "initialization") {
       await screen.findByTestId("chat-panel");
       mockCreateConversation.mockReturnValueOnce(pending);
       jest.spyOn(window, "confirm").mockReturnValue(true);
-      fireEvent.click(screen.getByRole("button", { name: operation === "new" ? "Start new assistant chat" : "Clear assistant chat" }));
+      fireEvent.click(action(operation === "new" ? "Start new assistant chat" : "Clear assistant chat"));
     }
     await act(async () => { await Promise.resolve(); });
     rerender(<AgenticAppAssistantOverlay {...props} open={false} />);
@@ -466,6 +478,29 @@ describe("AgenticAppAssistantOverlay", () => {
     rerender(<AgenticAppAssistantOverlay {...props} open />);
     expect(await screen.findByTestId("chat-panel")).toHaveAttribute("data-conversation-id", "assistant-conversation");
     expect(mockFindConversation).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens the selected conversation in a new full-page chat tab", async () => {
+    renderExampleOverlay();
+    await screen.findByTestId("chat-panel");
+    const link = screen.getByRole("link", { name: "Open in chat (new tab)" });
+    expect(link).toHaveAttribute("href", "/chat/assistant-conversation");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(mockCreateConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves text size when the popup is closed and remounted", async () => {
+    const view = renderExampleOverlay();
+    await screen.findByTestId("chat-panel");
+    fireEvent.click(screen.getByRole("button", { name: "Conversation actions" }));
+    fireEvent.change(screen.getByLabelText("Assistant text size"), { target: { value: "large" } });
+    expect(window.localStorage.getItem("agentic-app-assistant-font-scale")).toBe("large");
+    view.unmount();
+    renderExampleOverlay();
+    await screen.findByTestId("chat-panel");
+    fireEvent.click(screen.getByRole("button", { name: "Conversation actions" }));
+    expect(screen.getByLabelText("Assistant text size")).toHaveValue("large");
   });
 });
 

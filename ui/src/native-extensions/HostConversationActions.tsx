@@ -14,8 +14,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useChatStore } from "@/store/chat-store";
 import { loadHostConversation } from "./host-chat";
 
-export default function HostConversationActions({ appId, conversationId, agentId, disabled, onArchived, onHistoryChange }:
-  NativeHostConversationActionsProps & { appId: string }) {
+export default function HostConversationActions({ appId, conversationId, agentId, disabled, onArchived, onHistoryChange, variant = "actions", conversationTitle }:
+  NativeHostConversationActionsProps & { appId: string; variant?: "actions" | "title"; conversationTitle?: string }) {
   const [conversation, setConversation] = useState<Awaited<ReturnType<typeof loadHostConversation>>["saved"] | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState("");
@@ -64,20 +64,21 @@ export default function HostConversationActions({ appId, conversationId, agentId
     finally { setPending(false); }
   }
 
-  return <div className="flex items-center gap-1" aria-label="Host conversation actions">
+  return <div className="group flex min-w-0 items-center gap-1" aria-label="Host conversation actions">
+    {variant === "title" && <h2 className="truncate text-sm font-semibold">{conversationTitle || conversation?.title || "New chat"}</h2>}
     {conversation?.access_level === "owner" && <>
-      <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="h-6 w-6"
+      <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className={variant === "title" ? "h-7 w-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100" : "h-6 w-6"}
         aria-label="Rename conversation" disabled={disabled || pending}
-        onClick={() => { setTitle(conversation.title); setError(null); setRenaming(true); }}><Pencil className="h-3 w-3" aria-hidden />
+        onClick={() => { setTitle(conversationTitle ?? conversation.title); setError(null); setRenaming(true); }}><Pencil className="h-3 w-3" aria-hidden />
       </Button></TooltipTrigger><TooltipContent>Rename conversation</TooltipContent></Tooltip>
-      {getStorageMode() === "mongodb" && !disabled && !pending && (
+      {variant === "actions" && getStorageMode() === "mongodb" && !disabled && !pending && (
         <ShareButton conversationId={conversationId} conversationTitle={conversation.title}
           isOwner sharing={conversation.sharing} accessLevel="owner" />
       )}
-      <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="h-6 w-6"
+      {variant === "actions" && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="h-6 w-6"
         aria-label="Archive conversation" disabled={disabled || pending} onClick={() => void archive()}>
         <Archive className="h-3 w-3" aria-hidden />
-      </Button></TooltipTrigger><TooltipContent>Archive conversation</TooltipContent></Tooltip>
+      </Button></TooltipTrigger><TooltipContent>Archive conversation</TooltipContent></Tooltip>}
     </>}
     <Dialog open={renaming} onOpenChange={setRenaming}><DialogContent>
       <DialogHeader><DialogTitle>Rename conversation</DialogTitle></DialogHeader>

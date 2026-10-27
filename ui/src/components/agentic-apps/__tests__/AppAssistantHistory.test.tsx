@@ -65,3 +65,38 @@ it.each(["localStorage", "mongodb"])("includes unbound history only with legacy 
   expect(screen.getByRole("button", { name: "Allowed app chat" })).toBeInTheDocument();
   for (const item of mockConversations.slice(2)) expect(screen.queryByText(item.title)).toBeNull();
 });
+
+it("loads older chats on demand, retains the first page, and deduplicates overlapping results", async () => {
+  mockStorageMode.mockReturnValue("mongodb");
+  const row = (id: string) => ({ _id: id, title: id, participants: [{ type: "agent", id: "example-agent" }], metadata: binding, access_level: "owner", updated_at: "2026-01-01" });
+  jest.mocked(apiClient.getConversations)
+    .mockResolvedValueOnce({ has_more: true, items: [row("First chat")] } as never)
+    .mockResolvedValueOnce({ has_more: false, items: [row("First chat"), row("Older chat")] } as never);
+  render(<AppAssistantHistory appId="example-app" agentId="example-agent" onSelect={jest.fn()} onArchived={jest.fn()} />);
+  await screen.findByRole("button", { name: "First chat" });
+  expect(apiClient.getConversations).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Load more chats" }));
+  await screen.findByRole("button", { name: "Older chat" });
+  expect(screen.getAllByRole("button", { name: "First chat" })).toHaveLength(1);
+  expect(apiClient.getConversations).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, page_size: 20 }));
+  expect(screen.queryByRole("button", { name: "Load more chats" })).toBeNull();
+  expect(document.querySelectorAll("time")).toHaveLength(2);
+});
+
+it("does not mistake a page of unrelated chats for exhausted app history", async () => {
+  mockStorageMode.mockReturnValue("mongodb");
+  jest.mocked(apiClient.getConversations).mockResolvedValueOnce({ has_more: true, items: [] } as never);
+  render(<AppAssistantHistory appId="example-app" agentId="example-agent" onSelect={jest.fn()} onArchived={jest.fn()} />);
+  expect(await screen.findByRole("button", { name: "Load more chats" })).toBeInTheDocument();
+  expect(screen.getByText("No matching chats on this page. Load more to continue.")).toBeInTheDocument();
+});
+
+it("shows a loading state and can retry a failed history request", async () => {
+  mockStorageMode.mockReturnValue("mongodb");
+  jest.mocked(apiClient.getConversations).mockRejectedValueOnce(new Error("History unavailable"));
+  render(<AppAssistantHistory appId="example-app" agentId="example-agent" onSelect={jest.fn()} onArchived={jest.fn()} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Loading history");
+  expect(await screen.findByRole("alert")).toHaveTextContent("History unavailable");
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByRole("button", { name: "Allowed app chat" })).toBeInTheDocument();
+});

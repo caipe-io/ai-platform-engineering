@@ -322,6 +322,28 @@ organization and role changes reset the assistant binding.
 
 ## Shared assistant history and conversation controls
 
+- Native and iframe assistants use the same compact conversation title,
+  inline rename dialog, Chat/History tabs, actions menu, open-in-chat link,
+  and minimize button. The full-page link opens the same conversation in a
+  new tab; it does not create or copy a chat.
+- New chat, expand, reset size, recoverable clear, text size, glass mode,
+  and current-page context controls are in the actions menu. Light and dark
+  appearance follow the host theme. Text size and glass preferences persist.
+- Chat stays mounted while History is visible, preserving the draft and live
+  stream. Closing the popup retains the host conversation and stream lifecycle.
+- History shows conversation dates and selected state, loads older pages on
+  demand, and provides loading, retry, and empty states. A page containing only
+  unrelated chats still offers Load more when older history exists.
+- The popup and full-page chat reuse the same chat panel for messages, tool
+  timelines, citations, attachments, queued turns, stop/retry, editing, feedback,
+  and authorized agent model/skills controls. App-specific source choices and
+  presentation text remain declarative options rather than a separate renderer.
+- Opening full-page chat carries over the app's validated runtime source choices
+  across tabs for up to five minutes, scoped to account, organization, role,
+  app, and agent. Updates from an open app refresh those choices. When required
+  configuration is unavailable or expires, controls stay hidden and the backend
+  chooses its default. This presentation cache never grants access; conversation,
+  app, agent, and request-option checks still run at the server boundary.
 - The host popup provides Chat/History views with the existing rename, share and
   recoverable archive controls on each history item. No archive browser is added.
 - History selection revalidates the installation, bound agent and conversation.

@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { ASSISTANT_EXTENSIONS, validateAssistantConfiguration, type AssistantConfiguration } from "../../../app-sdk/assistant-options.mjs";
 import { readAssistantDeepLink } from "@/lib/agentic-apps/assistant-links";
+import { rememberAssistantPresentation } from "@/lib/agentic-apps/assistant-presentation";
 import { ownsAppPath } from "@/lib/agentic-apps/host-routes";
 import { HostedAgenticAppFrame } from "./HostedAgenticAppFrame";
 
@@ -254,6 +255,7 @@ export function AgenticAppShell({
       if (message.type === "caipe.agenticApp.assistant.configure.v1") {
         try {
           validateAssistantConfiguration(message.configuration, app.assistantOptions);
+          if (app.assistantAgentId) rememberAssistantPresentation(appId, app.assistantAgentId, session, message.configuration, app.assistantOptions);
           setConfiguration(message.configuration);
           if (!message.configuration.visible) setAssistantOpen(false);
           setBridgeError(null);
@@ -282,7 +284,7 @@ export function AgenticAppShell({
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [appId, assistantConfigured, assistantAgent, assistantOpen, publicPath, router, state]);
+  }, [appId, assistantConfigured, assistantAgent, assistantOpen, publicPath, router, state, session]);
 
   useEffect(() => {
     const target = iframeRef.current?.contentWindow;
@@ -351,6 +353,7 @@ export function AgenticAppShell({
       />
       {assistantConfigured && assistantAgent && (configuration?.visible ?? !state.app.assistantOptions?.requireConfiguration) ? (
         <AgenticAppAssistantOverlay
+          assistantAgent={assistantAgent.config}
           key={`${identity}:${appId}:${assistantAgent.id}`}
           options={state.app.assistantOptions} configuration={configuration ?? undefined}
           appId={state.app.appId}

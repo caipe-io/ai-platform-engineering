@@ -5,10 +5,12 @@ import { useSession } from "next-auth/react";
 
 import { validateAssistantConfiguration, type AssistantConfiguration } from "../../app-sdk/assistant-options.mjs";
 import { readAssistantDeepLink } from "@/lib/agentic-apps/assistant-links";
+import { rememberAssistantPresentation } from "@/lib/agentic-apps/assistant-presentation";
 import { validateAssistantContextMessage } from "@/lib/agentic-apps/assistant-context";
 import { resolveUsableChatAgent } from "@/lib/chat-agent-selection";
 import { HOST_ASSISTANT_EVENT, HOST_ASSISTANT_STATE_EVENT } from "@/lib/agentic-apps/assistant-events";
 import type { AgenticAppAssistantContextRecord, PublicAgenticApp } from "@/types/agentic-app";
+import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import type { NativeExtensionManifest } from "./types";
 
 const AgenticAppAssistantOverlay = lazy(() => import("@/components/agentic-apps/AgenticAppAssistantOverlay")
@@ -26,7 +28,7 @@ function NativeAssistantSession({ assistant, extensionId, pathname, search = "" 
   const [configuration, setConfiguration] = useState<AssistantConfiguration | null>(null);
   const [retry, setRetry] = useState(0);
   const [error, setError] = useState<{ key: string; message: string } | null>(null);
-  const [binding, setBinding] = useState<{ key: string; app: PublicAgenticApp } | null>(null);
+  const [binding, setBinding] = useState<{ key: string; app: PublicAgenticApp; agent?: DynamicAgentConfig } | null>(null);
   const [request, setRequest] = useState<{ key: string; open: boolean; context: AgenticAppAssistantContextRecord | null }>(
     { key, open: false, context: null });
   const open = request.key === key && request.open;
@@ -35,6 +37,9 @@ function NativeAssistantSession({ assistant, extensionId, pathname, search = "" 
     context: previous.key === key ? previous.context : null })), [key]);
   const app = status === "authenticated" && binding?.key === key ? binding.app : null;
   const canLaunch = Boolean(app?.canLaunch);
+  useEffect(() => {
+    if (configuration && app?.assistantAgentId) rememberAssistantPresentation(extensionId, app.assistantAgentId, session, configuration, app.assistantOptions);
+  }, [configuration, app, extensionId, session]);
   const requestedLink = readAssistantDeepLink(search, app?.assistantOptions);
   useEffect(() => {
     if (status !== "authenticated") return;
@@ -44,8 +49,8 @@ function NativeAssistantSession({ assistant, extensionId, pathname, search = "" 
         if (!response.ok) throw new Error("Assistant app is unavailable or access was denied");
         const payload: { item: PublicAgenticApp } = await response.json();
         if (!payload.item?.canLaunch || !payload.item.assistantAgentId) throw new Error("Assistant is unavailable or access was denied");
-        await resolveUsableChatAgent({ signal: controller.signal, requestedAgentId: payload.item.assistantAgentId, requireAvailableAgent: true });
-        if (!controller.signal.aborted) { setBinding({ key, app: payload.item }); setError(null); }
+        const agent = await resolveUsableChatAgent({ signal: controller.signal, requestedAgentId: payload.item.assistantAgentId, requireAvailableAgent: true });
+        if (!controller.signal.aborted) { setBinding({ key, app: payload.item, agent: agent.config }); setError(null); }
       }).catch((reason: unknown) => {
         if (!controller.signal.aborted) { setBinding(null); setError({ key, message: reason instanceof Error ? reason.message : "Assistant is unavailable" }); }
       });
@@ -93,6 +98,7 @@ function NativeAssistantSession({ assistant, extensionId, pathname, search = "" 
   if (!(configuration?.visible ?? !app.assistantOptions?.requireConfiguration)) return null;
   return <Suspense fallback={<p role="status" className="p-3 text-sm">Loading assistant…</p>}><AgenticAppAssistantOverlay key={`${key}:${app.assistantAgentId}`}
     options={app.assistantOptions} configuration={configuration ?? undefined}
+    assistantAgent={binding?.key === key ? binding.agent : undefined}
     appId={app.appId} appName={app.displayName} assistantLabel={app.assistantLabel}
     assistantAgentName={app.assistantAgentName} assistantIcon={app.icon}
     assistantAgentId={app.assistantAgentId} open={open} onOpenChange={setOpen}
