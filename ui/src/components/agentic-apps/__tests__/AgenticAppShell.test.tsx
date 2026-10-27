@@ -64,6 +64,24 @@ function app(overrides: Record<string, unknown> = {}) {
 }
 
 describe("AgenticAppShell", () => {
+  it("accepts only the connected frame's allowlisted host shortcut without an assistant", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ item: app({ assistantEnabled: false }) }) });
+    const open = jest.fn(); window.addEventListener("caipe:open-application-search", open);
+    const view = render(<AgenticAppShell appId="example-app" path={[]} />);
+    try {
+      const frame = await screen.findByTitle("Example App") as HTMLIFrameElement;
+      const message = { type: "caipe.agenticApp.shortcut.v1", appId: "example-app", version: "1.0", shortcut: "search" };
+      const send = (origin: string, source: MessageEventSource | null, data = message) => act(() => window.dispatchEvent(new MessageEvent("message", { origin, source, data })));
+      send("https://other.example.test", frame.contentWindow);
+      send(window.location.origin, window);
+      send(window.location.origin, frame.contentWindow, { ...message, appId: "other" });
+      send(window.location.origin, frame.contentWindow, { ...message, version: "2.0" });
+      send(window.location.origin, frame.contentWindow, { ...message, shortcut: "execute" });
+      expect(open).not.toHaveBeenCalled();
+      send(window.location.origin, frame.contentWindow);
+      expect(open).toHaveBeenCalledTimes(1);
+    } finally { window.removeEventListener("caipe:open-application-search", open); view.unmount(); }
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     mockSearch = "";

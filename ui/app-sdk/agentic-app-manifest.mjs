@@ -253,7 +253,7 @@ export function validateAgenticAppManifest(value) {
     throw new Error(
       "auth.mode must be app-scoped-token or forward-user-access-token",
     );
-  record(app.api, ["mounts"], "api");
+  record(app.api, ["mounts", "mcp"], "api");
   strings(app.api.mounts, "api.mounts").forEach((mount) => {
     if (!pathValue(mount, "api.mount").startsWith("/api/"))
       throw new Error("invalid API mount");
@@ -284,6 +284,18 @@ export function validateAgenticAppManifest(value) {
   }
   if (modes.has("iframe") && !app.runtime)
     throw new Error("iframe profile requires a runtime binding");
+  if (app.api.mcp !== undefined) {
+    const mcp = record(app.api.mcp, ["path", "metadataPath", "apiKeyHeader"], "api.mcp");
+    if (!app.runtime || !pathValue(mcp.path, "api.mcp.path").startsWith("/api/") ||
+        RESERVED_API_PATHS.some(reserved => pathsOverlap(reserved, mcp.path)))
+      throw new Error("external MCP requires a non-reserved runtime API path");
+    if (mcp.metadataPath !== `/.well-known/oauth-protected-resource${mcp.path}`)
+      throw new Error("api.mcp.metadataPath must identify the declared MCP resource");
+    if (mcp.apiKeyHeader !== undefined &&
+        (typeof mcp.apiKeyHeader !== "string" || mcp.apiKeyHeader.length > 64 ||
+         !/^x-(?:[a-z0-9]+-)*(?:token|api-key|apikey)$/.test(mcp.apiKeyHeader)))
+      throw new Error("api.mcp.apiKeyHeader must be an explicit credential header");
+  }
   if (
     modes.has("iframe") &&
     !modes.has("native-package") &&
@@ -357,6 +369,12 @@ export function validateAgenticAppManifest(value) {
   }
   if (app.runtime && !policies.length)
     throw new Error("runtime must declare at least one policy action");
+  if (app.api.mcp) {
+    for (const [method, path] of [["POST", app.api.mcp.path], ["GET", app.api.mcp.metadataPath]]) {
+      if (resolveAgenticAppHttpPolicyAction(app, method, path)?.defaultEffect !== "allow")
+        throw new Error("external MCP requires allowed protocol and discovery policies");
+    }
+  }
   for (const field of ["streamPath", "resumePath", "cancelPath", "statusPath"]) {
     const path = ui.assistant?.[field];
     if (!path) continue;

@@ -50,7 +50,14 @@ export function createAgenticAppBridge({ appId, onNavigate, onStatus, onAssistan
       onStatus?.(message.error);
     }
   }
+  function forwardShortcut(event) {
+    if (!Array.isArray(capabilities?.hostShortcuts) || !capabilities.hostShortcuts.includes("search") || event.defaultPrevented || event.repeat || event.isComposing ||
+        event.altKey || event.shiftKey || (!event.metaKey && !event.ctrlKey) || event.key?.toLowerCase() !== "k") return;
+    event.preventDefault();
+    send("caipe.agenticApp.shortcut.v1", { shortcut: "search" });
+  }
   window.addEventListener("message", receive);
+  window.addEventListener("keydown", forwardShortcut);
   const timer = setTimeout(() => onStatus?.("unavailable"), timeoutMs);
   send("caipe.agenticApp.bridge.connect.v1");
   return {
@@ -74,7 +81,7 @@ export function createAgenticAppBridge({ appId, onNavigate, onStatus, onAssistan
       if (!capabilities?.breadcrumbs) throw new Error("Host breadcrumbs are unsupported");
       send("caipe.agenticApp.breadcrumbs.v1", { breadcrumbs, route });
     },
-    dispose() { clearTimeout(timer); window.removeEventListener("message", receive); disposed = true; },
+    dispose() { clearTimeout(timer); window.removeEventListener("message", receive); window.removeEventListener("keydown", forwardShortcut); disposed = true; },
   };
 }
 

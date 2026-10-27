@@ -9,6 +9,7 @@ export interface AgenticAppBridgeCapabilities {
   queryNavigation?: boolean;
   pathNavigation?: boolean;
   breadcrumbs?: boolean;
+  hostShortcuts?: Array<"search">;
   composerExtensions: string[];
 }
 export interface AgenticAppBridge {

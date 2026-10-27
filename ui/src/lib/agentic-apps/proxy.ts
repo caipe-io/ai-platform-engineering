@@ -10,6 +10,7 @@ import {
   isAgenticAppsEnabled,
 } from "@/lib/agentic-apps/config";
 import { deriveAgenticAppSubjectId } from "@/lib/agentic-apps/identity";
+import { externalMcpRoute } from "@/lib/agentic-apps/mcp-routing";
 import { resolveAgenticAppHttpPolicyAction } from "@/lib/agentic-apps/policy-routing";
 import { isHostControlledAgenticAppRequestHeader, RUNTIME_NEXT_URL_HEADER } from "@/lib/agentic-apps/request-headers";
 import {
@@ -56,22 +57,6 @@ export async function proxyAgenticAppRequest(
     return Response.json({ error: "app_not_found" }, { status: 404 });
   }
 
-  const nextRequest = request instanceof NextRequest
-    ? request
-    : new NextRequest(request.url, { headers: request.headers });
-  let auth: Awaited<ReturnType<typeof getAuthenticatedUser>>;
-  try {
-    auth = authenticatedUser ?? await getAuthenticatedUser(nextRequest, { allowAnonymous: false });
-  } catch (error) {
-    if (error instanceof ApiError) {
-      if (error.statusCode === 401 && isDocumentNavigation(request)) {
-        return redirectToLogin(request);
-      }
-      return Response.json({ error: error.message }, { status: error.statusCode });
-    }
-    throw error;
-  }
-
   const { appId, path = [] } = await context.params;
   let app: ReturnType<typeof getConfiguredAgenticApp>;
   try { app = getConfiguredAgenticApp(appId); }
@@ -83,6 +68,33 @@ export async function proxyAgenticAppRequest(
   if (nativeExtension && nativeExtension.auth.mode !== app.manifest.auth.mode) {
     return Response.json({ error: "native_extension_auth_mismatch" }, { status: 500 });
   }
+  const mcpRoute = externalMcpRoute(app.manifest, request.method, `/${path.join("/")}`);
+  const explicitMcpCredential = request.headers.has("authorization") ||
+    Boolean(app.manifest.api.mcp?.apiKeyHeader && request.headers.has(app.manifest.api.mcp.apiKeyHeader));
+  if (!authenticatedUser && mcpRoute &&
+      (mcpRoute !== "protocol" || explicitMcpCredential || !request.headers.has("cookie"))) {
+    return proxyExternalMcpRequest(request, app, path, mcpRoute === "protocol");
+  }
+
+  const nextRequest = request instanceof NextRequest
+    ? request
+    : new NextRequest(request.url, { headers: request.headers });
+  let auth: Awaited<ReturnType<typeof getAuthenticatedUser>>;
+  try {
+    auth = authenticatedUser ?? await getAuthenticatedUser(nextRequest, { allowAnonymous: false });
+  } catch (error) {
+    if (error instanceof ApiError) {
+      if (error.statusCode === 401 && mcpRoute) {
+        return proxyExternalMcpRequest(request, app, path, mcpRoute === "protocol");
+      }
+      if (error.statusCode === 401 && isDocumentNavigation(request)) {
+        return redirectToLogin(request);
+      }
+      return Response.json({ error: error.message }, { status: error.statusCode });
+    }
+    throw error;
+  }
+
   const session = auth.session as Record<string, unknown>;
   if (
     !canLaunchAgenticApp(
@@ -214,6 +226,44 @@ export async function proxyAgenticAppRequest(
     statusText: upstream.statusText,
     headers,
   });
+}
+
+/** The declared MCP server owns credential validation and domain authorization. */
+async function proxyExternalMcpRequest(
+  request: Request,
+  app: NonNullable<ReturnType<typeof getConfiguredAgenticApp>>,
+  path: string[],
+  forwardCredentials: boolean,
+): Promise<Response> {
+  const policy = resolveAgenticAppHttpPolicyAction(app.manifest, request.method, `/${path.join("/")}`);
+  if (!policy || policy.defaultEffect !== "allow") return Response.json({ error: "policy_denied" }, { status: 403 });
+  if (!resolveAgenticAppOrigin(app)) return Response.json({ error: "app_runtime_unavailable" }, { status: 503 });
+  const limit = app.manifest.runtime?.maxRequestBodyBytes ?? DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES;
+  const length = parseContentLength(request.headers.get("content-length"));
+  if (length !== null && length > limit) return requestBodyTooLarge(limit);
+  const body = shouldForwardBody(request.method) ? await request.arrayBuffer() : undefined;
+  if (body && body.byteLength > limit) return requestBodyTooLarge(limit);
+  const headers = new Headers();
+  const names = ["accept", "content-type", "origin", "mcp-protocol-version", "mcp-session-id", "last-event-id"];
+  if (forwardCredentials) names.push("authorization", ...(app.manifest.api.mcp?.apiKeyHeader ? [app.manifest.api.mcp.apiKeyHeader] : []));
+  for (const name of names) {
+    const value = request.headers.get(name);
+    if (value !== null) headers.set(name, value);
+  }
+  // No cookies, gateway identity assertions, or shared app token are supplied.
+  // An invalid external bearer must never fall back to a browser's identity.
+  const target = buildAgenticAppTargetUrl(app, path, request.url);
+  let upstream: Response;
+  try {
+    upstream = await fetch(target, { method: request.method, headers, ...(body ? { body } : {}),
+      redirect: "manual", signal: request.signal });
+  } catch { return Response.json({ error: "upstream_unavailable" }, { status: 502 }); }
+  const responseHeaders = filterResponseHeaders(upstream.headers);
+  // Do not follow an app redirect with the client's credential or expose an internal address.
+  const location = rewriteAgenticAppResponseLocation(app, app.installation.appId, target, upstream.headers.get("location"));
+  if (location) responseHeaders.set("location", location);
+  responseHeaders.set("cache-control", "no-store");
+  return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
 }
 
 function buildForwardHeaders(input: {

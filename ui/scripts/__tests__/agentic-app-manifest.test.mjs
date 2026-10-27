@@ -59,6 +59,23 @@ export function exampleManifest() {
   };
 }
 
+test("external MCP authentication is opt-in with fixed runtime and discovery paths", () => {
+  const app = exampleManifest();
+  app.runtime = { kind: "proxied-next-zone", mountPath: "/apps/example-app" };
+  app.access.policyActions = [{ action: "proxy:GET", defaultEffect: "allow" }, { action: "proxy:POST", defaultEffect: "allow" }];
+  app.api.mcp = { path: "/api/example/mcp", metadataPath: "/.well-known/oauth-protected-resource/api/example/mcp", apiKeyHeader: "x-example-token" };
+  assert.equal(validateAgenticAppManifest(app).api.mcp.path, "/api/example/mcp");
+  for (const changes of [
+    { path: "/api/auth/session" }, { metadataPath: "/api/private" },
+    { apiKeyHeader: "cookie" }, { apiKeyHeader: "x-caipe-roles" }, { apiKeyHeader: "Authorization" },
+  ]) {
+    const invalid = structuredClone(app); Object.assign(invalid.api.mcp, changes);
+    assert.throws(() => validateAgenticAppManifest(invalid));
+  }
+  delete app.runtime;
+  assert.throws(() => validateAgenticAppManifest(app), /runtime/);
+});
+
 test("app icons are owned same-origin assets; legacy symbolic names remain compatible", () => {
   const app = exampleManifest();
   const icon = "/app-icons/example-app/logo.svg";

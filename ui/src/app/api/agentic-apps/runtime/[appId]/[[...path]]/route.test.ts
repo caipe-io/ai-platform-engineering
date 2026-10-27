@@ -297,7 +297,7 @@ describe("External App runtime route", () => {
     fetchMock.mockRestore();
   });
 
-  it("rejects unauthenticated runtime requests before resolving the app", async () => {
+  it("rejects unauthenticated non-MCP runtime requests after classifying the deployment route", async () => {
     mockGetAuthenticatedUser.mockRejectedValueOnce(new MockApiError("not signed in"));
 
     const response = await GET(
@@ -306,7 +306,7 @@ describe("External App runtime route", () => {
     );
 
     expect(response.status).toBe(401);
-    expect(mockGetConfiguredAgenticApp).not.toHaveBeenCalled();
+    expect(mockGetConfiguredAgenticApp).toHaveBeenCalledWith("example-app");
   });
 
   it("rewrites upstream runtime redirects to the canonical public app path", async () => {
