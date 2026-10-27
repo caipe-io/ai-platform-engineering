@@ -84,6 +84,36 @@ describe.each([
   it("requires JSON rather than accepting cross-site form bodies", async () => {
     expect((await handler(request(body, { "content-type": "text/plain" }))).status).toBe(400);
   });
+  it.each([undefined, "1"])("bounds streamed JSON before authentication with Content-Length %s", async (contentLength) => {
+    const cancel = jest.fn();
+    const chunk = new TextEncoder().encode(" ".repeat(64 * 1024));
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ < 20) controller.enqueue(chunk);
+        else {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify(body)));
+          controller.close();
+        }
+      },
+      cancel,
+    });
+    const req = new NextRequest("https://example.test/api/access/check", {
+      method: "POST", body: stream, duplex: "half",
+      headers: { "content-type": "application/json", origin: "https://example.test",
+        ...(contentLength ? { "content-length": contentLength } : {}) },
+    } as RequestInit & { duplex: "half" });
+    const response = await handler(req);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: "INVALID_REQUEST", retriable: false });
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(mockAuth).not.toHaveBeenCalled();
+    expect(mockAuthorize).not.toHaveBeenCalled();
+    expect(mockMany).not.toHaveBeenCalled();
+    expect(mockGrant).not.toHaveBeenCalled();
+    expect(mockRevoke).not.toHaveBeenCalled();
+  });
   it.each([null, [], "example"].map((body) => [body]))("rejects a non-object body", async (invalidBody) => {
     expect((await handler(request(invalidBody))).status).toBe(400);
   });
@@ -155,6 +185,19 @@ it("filters candidates, preserves order, deduplicates and never returns other re
 
 it("returns only allowed candidates", async () => {
   expect(await (await query(request(queryBody))).json()).toEqual({ ids: ["example"] });
+});
+
+it("accepts a full query page of maximum-length JSON-escaped model IDs", async () => {
+  const ids = Array.from({ length: 200 }, (_, i) => {
+    const prefix = `${i}-`;
+    return prefix + "\u0001".repeat(512 - prefix.length);
+  });
+  const body = { resource_type: "llm_model", action: "discover", ids };
+  expect(Buffer.byteLength(JSON.stringify(body))).toBeGreaterThan(16 * 1024);
+  mockMany.mockResolvedValue(new Map(ids.map((id) => [id, allow])));
+  const response = await query(request(body));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ ids });
 });
 
 it("accepts an empty candidate page without calling the engine", async () => {

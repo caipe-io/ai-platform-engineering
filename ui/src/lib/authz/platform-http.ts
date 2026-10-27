@@ -10,7 +10,7 @@ const INVALID_TOKEN_CODES = new Set([
   "ERR_JWT_EXPIRED", "ERR_JWT_CLAIM_VALIDATION_FAILED", "ERR_JWS_SIGNATURE_VERIFICATION_FAILED",
   "ERR_JOSE_ALG_NOT_ALLOWED", "ERR_JWS_INVALID", "ERR_JWT_INVALID", "ERR_JWKS_NO_MATCHING_KEY",
 ]);
-export async function readAccessJson(request: NextRequest): Promise<unknown> {
+export async function readAccessJson(request: NextRequest, maxBytes = 16 * 1024): Promise<unknown> {
   if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
     return invalid("Content-Type must be application/json");
   }
@@ -23,7 +23,7 @@ export async function readAccessJson(request: NextRequest): Promise<unknown> {
       const { value, done } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 16384) { await reader.cancel(); return invalid("Access request exceeds 16 KiB"); }
+      if (size > maxBytes) { await reader.cancel(); return invalid(`Access request exceeds ${maxBytes} bytes`); }
       chunks.push(value);
     }
   } finally { reader.releaseLock(); }

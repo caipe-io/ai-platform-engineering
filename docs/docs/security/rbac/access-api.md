@@ -42,6 +42,8 @@ commitment to maintain two public contracts permanently.
   callers must not treat it as permission to proceed.
 - Queries filter at most 200 supplied IDs using the same per-resource CAS
   policy as checks. Any unavailable result fails the whole query.
+- Check, query and grant/revoke JSON bodies are capped at 1 MiB while reading,
+  before authentication. Registration and delegation retain a 16 KiB limit.
 - Grant/revoke uses the existing CAS rule: manage the resource, or manage
   the configured organization. Public-grant restrictions and auditing remain
   in place. Revoking a direct grant does not remove access inherited elsewhere.

@@ -5,7 +5,7 @@ import { ApiError } from "@/lib/api-error";
 import { getAuthFromBearerOrSession } from "@/lib/api-middleware";
 import { isSupportedResourceAction } from "@/lib/rbac/resource-model";
 import { resolveAppService } from "@/lib/agentic-apps/service-binding";
-import { authenticatePlatformRequest } from "./platform-http";
+import { authenticatePlatformRequest, readAccessJson } from "./platform-http";
 import { authorize, authorizeMany, grant, revoke } from "./index";
 import { ACCESS_QUERY_MAX_IDS, type AccessQueryResponse } from "./access-contract";
 import type { Action, AuthorizeResult, DecisionContext, ResourceType, Subject } from "./contract";
@@ -13,6 +13,8 @@ import {
   HttpAuthzError, decisionContext, isValidResourceId, metaErrorResponse,
   parseAction, parseGrantIntent, parseResource, parseResourceType, requireManage, resolveCaller,
 } from "./http";
+
+const ACCESS_API_MAX_BODY_BYTES = 1024 * 1024;
 
 type AccessHandler = (
   body: Record<string, unknown>, caller: Subject, ctx: DecisionContext,
@@ -52,11 +54,7 @@ async function authenticate(request: NextRequest): Promise<unknown> {
 async function handle(request: NextRequest, fields: string[], operation: AccessHandler): Promise<NextResponse> {
   let response: NextResponse;
   try {
-    if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
-      invalid("Content-Type must be application/json");
-    }
-    let body: unknown;
-    try { body = await request.json(); } catch { invalid("Request body must be valid JSON"); }
+    const body = await readAccessJson(request, ACCESS_API_MAX_BODY_BYTES);
     if (!body || typeof body !== "object" || Array.isArray(body)) invalid("Request body must be an object");
     if (Object.keys(body).some((key) => !fields.includes(key))) invalid("Request contains unsupported fields");
     const input = body as Record<string, unknown>;

@@ -66,7 +66,11 @@ it.each([
   expect(mockCreate).not.toHaveBeenCalled();
 });
 it("rejects oversized JSON before creating anything", async () => {
-  expect((await create(request({ ...intent, job_id: "x".repeat(20000) }))).status).toBe(400);
+  const req = new NextRequest("https://example.test/api/access/delegations", {
+    method: "POST", headers: { "content-type": "application/json", origin: "https://example.test", "idempotency-key": id },
+    body: " ".repeat(16 * 1024) + JSON.stringify(intent),
+  });
+  expect((await create(req)).status).toBe(400);
   expect(mockCreate).not.toHaveBeenCalled();
 });
 it.each(["https://other.example.test", ""])("rejects cookie mutation with Origin=%s", async (origin) => {
