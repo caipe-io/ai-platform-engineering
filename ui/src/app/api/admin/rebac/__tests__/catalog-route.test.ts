@@ -74,6 +74,10 @@ beforeEach(() => {
   mockCollections.dynamic_agents = createMockCollection([
     { _id: "agent-1", name: "Incident Agent", enabled: true },
   ]);
+  mockCollections.access_resources = createMockCollection([
+    { _id: "example-resource", app_id: "example-service", kind: "resource", local_id: "example-record",
+      owner: { type: "user", id: "test-user" }, state: "active" },
+  ]);
   // Spec 098 added `user` + `user_profile` to the universal resource model,
   // sourced from the `users` collection. Without a seed there's no `user`
   // resource in the catalog and the "every type is represented" assertion

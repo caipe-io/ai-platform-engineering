@@ -198,6 +198,11 @@ export const UNIVERSAL_REBAC_RESOURCE_TYPES: readonly UniversalRebacResourceType
       description: "Task template or execution target.",
     },
     {
+      type: "app_resource",
+      actions: ["discover", "read", "use", "write", "manage", "audit"],
+      description: "User/team-owned resource registered by an installed application.",
+    },
+    {
       type: "conversation",
       actions: ["discover", "read", "write", "share", "delete", "audit"],
       description: "Conversation history and sharing scope.",

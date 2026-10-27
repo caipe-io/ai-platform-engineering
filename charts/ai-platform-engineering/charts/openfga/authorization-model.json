@@ -5120,6 +5120,229 @@
           }
         }
       }
+    },
+    {
+      "type": "app_resource",
+      "relations": {
+        "owner": {
+          "this": {}
+        },
+        "reader": {
+          "this": {}
+        },
+        "user": {
+          "this": {}
+        },
+        "writer": {
+          "this": {}
+        },
+        "manager": {
+          "this": {}
+        },
+        "auditor": {
+          "this": {}
+        },
+        "can_discover": {
+          "computedUserset": {
+            "relation": "can_read"
+          }
+        },
+        "can_read": {
+          "union": {
+            "child": [
+              {
+                "computedUserset": {
+                  "relation": "reader"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "can_use"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "can_manage"
+                }
+              }
+            ]
+          }
+        },
+        "can_use": {
+          "union": {
+            "child": [
+              {
+                "computedUserset": {
+                  "relation": "user"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "can_write"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "can_manage"
+                }
+              }
+            ]
+          }
+        },
+        "can_write": {
+          "union": {
+            "child": [
+              {
+                "computedUserset": {
+                  "relation": "writer"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "can_manage"
+                }
+              }
+            ]
+          }
+        },
+        "can_manage": {
+          "union": {
+            "child": [
+              {
+                "computedUserset": {
+                  "relation": "manager"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "owner"
+                }
+              }
+            ]
+          }
+        },
+        "can_audit": {
+          "union": {
+            "child": [
+              {
+                "computedUserset": {
+                  "relation": "auditor"
+                }
+              },
+              {
+                "computedUserset": {
+                  "relation": "can_manage"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "metadata": {
+        "relations": {
+          "owner": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              },
+              {
+                "type": "team",
+                "relation": "member"
+              }
+            ]
+          },
+          "reader": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              },
+              {
+                "type": "service_account"
+              },
+              {
+                "type": "team",
+                "relation": "member"
+              },
+              {
+                "type": "team",
+                "relation": "admin"
+              }
+            ]
+          },
+          "user": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              },
+              {
+                "type": "service_account"
+              },
+              {
+                "type": "team",
+                "relation": "member"
+              },
+              {
+                "type": "team",
+                "relation": "admin"
+              }
+            ]
+          },
+          "writer": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              },
+              {
+                "type": "service_account"
+              },
+              {
+                "type": "team",
+                "relation": "member"
+              },
+              {
+                "type": "team",
+                "relation": "admin"
+              }
+            ]
+          },
+          "manager": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              },
+              {
+                "type": "service_account"
+              },
+              {
+                "type": "team",
+                "relation": "member"
+              },
+              {
+                "type": "team",
+                "relation": "admin"
+              }
+            ]
+          },
+          "auditor": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              },
+              {
+                "type": "service_account"
+              },
+              {
+                "type": "team",
+                "relation": "member"
+              },
+              {
+                "type": "team",
+                "relation": "admin"
+              }
+            ]
+          }
+        }
+      }
     }
   ]
 }

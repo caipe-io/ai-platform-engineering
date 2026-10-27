@@ -13,8 +13,11 @@ import type {
 import type { ListObjectsResult, PolicyAdmin, PolicyEngine } from "../engine";
 import { BoundedTtlCache } from "../cache";
 import { getReasonMeta } from "../reasons";
+import { registeredResourceGate, requireRegisteredResource } from "../resource-policy";
 import { openFgaRelation, openFgaCheckRelation } from "@/lib/rbac/tuple-builders";
 import { openFgaResourceObject, parseOpenFgaObject } from "@/lib/rbac/openfga-resource-ids";
+import { isSupportedResourceAction } from "@/lib/rbac/resource-model";
+import { HttpAuthzError } from "../errors";
 
 import {
   getCachedOpenFgaStoreId,
@@ -217,6 +220,11 @@ function deny(reason: AuthorizeResult["reason"] = "NO_CAPABILITY"): AuthorizeRes
 }
 
 async function runCheck(req: AuthorizeRequest, fresh = false, deadline?: AbortSignal): Promise<AuthorizeResult> {
+  const signal = deadline ?? (fresh ? AbortSignal.timeout(OPENFGA_READ_TIMEOUT_MS) : undefined);
+  if (req.resource.type === "app_resource") {
+    const resourceState = await registeredResourceGate(req.resource, signal);
+    if (resourceState) return resourceState;
+  }
   if (deadline?.aborted) return deny("AUTHZ_UNAVAILABLE");
   if (!circuitAllows()) return deny("AUTHZ_UNAVAILABLE");
   const halfOpenProbe = circuitState === "half_open";
@@ -227,7 +235,6 @@ async function runCheck(req: AuthorizeRequest, fresh = false, deadline?: AbortSi
 
   try {
     // Start before discovery so it consumes the same execution-check budget.
-    const signal = deadline ?? (fresh ? AbortSignal.timeout(OPENFGA_READ_TIMEOUT_MS) : undefined);
     signal?.throwIfAborted();
     const storeId = await getOpenFgaStoreId();
     signal?.throwIfAborted();
@@ -235,6 +242,12 @@ async function runCheck(req: AuthorizeRequest, fresh = false, deadline?: AbortSi
       fresh ? { consistency: "HIGHER_CONSISTENCY", signal } : {});
     signal?.throwIfAborted();
     recordSuccess();
+    // Do not publish an allow after another replica disabled the integration
+    // or changed the lifecycle state while the graph check was in flight.
+    if (req.resource.type === "app_resource") {
+      const latestState = await registeredResourceGate(req.resource, signal);
+      if (latestState) return latestState;
+    }
     const result = allowed ? allow() : deny("NO_CAPABILITY");
     return fresh ? { ...result, ttl_seconds: 0 } : result;
   } catch (err) {
@@ -315,6 +328,7 @@ async function listObjectsWithCache(
 }
 
 async function checkWithCache(req: AuthorizeRequest): Promise<AuthorizeResult> {
+  if (req.resource.type === "app_resource") return runCheck(req, true);
   const key = cacheKey(req.subject, req.resource, req.action, req.context);
   const cached = decisionCache.get(key);
   if (cached) {
@@ -360,6 +374,9 @@ export function createOpenFgaEngine(): PolicyEngine {
     },
 
     listObjects(subject: Subject, action: Action, resourceType: ResourceType): Promise<ListObjectsResult> {
+      // Registered resources have a second, authoritative availability gate.
+      // The public candidate query uses fresh checks instead of graph-only lookup.
+      if (resourceType === "app_resource") return Promise.resolve({ ids: new Set(), reason: "AUTHZ_UNAVAILABLE" });
       return listObjectsWithCache(subject, action, resourceType);
     },
   };
@@ -423,11 +440,23 @@ function isIdempotentWriteFailure(status: number, text: string, writes: FgaTuple
 export function createOpenFgaAdmin(): PolicyAdmin {
   return {
     async grant(intent: GrantIntent): Promise<void> {
+      if (intent.resource.type === "app_resource") {
+        if (!isSupportedResourceAction(intent.resource.type, intent.capability)) {
+          throw new HttpAuthzError(400, "INVALID_REQUEST", "Use resource registration to establish ownership");
+        }
+        await requireRegisteredResource(intent.resource);
+      }
       const storeId = await getOpenFgaStoreId();
       await fgaWrite(storeId, [grantTuple(intent)], []);
       invalidateDecisionCache(); // the graph changed — drop cached decisions
     },
     async revoke(intent: GrantIntent): Promise<void> {
+      if (intent.resource.type === "app_resource") {
+        if (!isSupportedResourceAction(intent.resource.type, intent.capability)) {
+          throw new HttpAuthzError(400, "INVALID_REQUEST", "Use the resource lifecycle API to change ownership");
+        }
+        await requireRegisteredResource(intent.resource);
+      }
       const storeId = await getOpenFgaStoreId();
       await fgaWrite(storeId, [], [grantTuple(intent)]);
       invalidateDecisionCache();

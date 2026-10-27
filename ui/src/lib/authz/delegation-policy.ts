@@ -1,6 +1,7 @@
 import type { Subject } from "./contract";
 import type { DelegatedRequest, DelegationAuthority, DelegationCheck, DelegationReason } from "./delegation-contract";
 import { checkDelegationPermission } from "./engines/openfga";
+import { resolveAppService } from "@/lib/agentic-apps/service-binding";
 
 export function approvalReason(approval: DelegationAuthority["approval"]): DelegationReason {
   if (approval.revoked_at) return "DELEGATION_REVOKED";
@@ -34,6 +35,11 @@ export async function evaluateDelegationAuthority(
   authority: DelegationAuthority, request: DelegatedRequest, checks: DelegationCheck[],
 ): Promise<DelegationReason> {
   const approval = authority.approval;
+  if (request.resource.type === "app_resource" && !resolveAppService({ issuer: authority.issuer,
+    subject: authority.actor, clientId: authority.clientId, expiresAt: authority.credentialExpiresAt })) {
+    checks.push({ gate: "binding", decision: "DENY", reason: "SERVICE_NOT_ALLOWED" });
+    return "SERVICE_NOT_ALLOWED";
+  }
   if (approval.job_id !== request.job_id) {
     checks.push({ gate: "binding", decision: "DENY", reason: "DELEGATION_BINDING_MISMATCH" });
     return "DELEGATION_BINDING_MISMATCH";

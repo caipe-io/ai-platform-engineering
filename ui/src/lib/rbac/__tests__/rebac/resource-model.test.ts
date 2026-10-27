@@ -49,6 +49,7 @@ describe("universal ReBAC resource model", () => {
       "document",
       "skill",
       "task",
+      "app_resource",
       "conversation",
       "admin_surface",
       "policy",

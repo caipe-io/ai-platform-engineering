@@ -48,6 +48,11 @@ export const FGA_ENFORCEMENT_MANIFEST: Record<
   UniversalRebacResourceType,
   FgaEnforcementManifestEntry
 > = {
+  app_resource: {
+    status: "rebac_enforced",
+    surfaces: ["ui/src/lib/authz/resource-policy.ts", "ui/src/lib/authz/resources.ts"],
+    notes: "Registration establishes ownership; current installation/lifecycle and fresh graph checks gate access.",
+  },
   organization: {
     status: "rebac_enforced",
     surfaces: [

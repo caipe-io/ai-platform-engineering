@@ -1,8 +1,11 @@
+import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 
 import { ApiError } from "@/lib/api-error";
 import { getAuthFromBearerOrSession } from "@/lib/api-middleware";
 import { isSupportedResourceAction } from "@/lib/rbac/resource-model";
+import { resolveAppService } from "@/lib/agentic-apps/service-binding";
+import { authenticatePlatformRequest } from "./platform-http";
 import { authorize, authorizeMany, grant, revoke } from "./index";
 import { ACCESS_QUERY_MAX_IDS, type AccessQueryResponse } from "./access-contract";
 import type { Action, AuthorizeResult, DecisionContext, ResourceType, Subject } from "./contract";
@@ -49,17 +52,6 @@ async function authenticate(request: NextRequest): Promise<unknown> {
 async function handle(request: NextRequest, fields: string[], operation: AccessHandler): Promise<NextResponse> {
   let response: NextResponse;
   try {
-    const session = await authenticate(request);
-    const caller = resolveCaller(session);
-    if (!caller) throw new HttpAuthzError(401, "NOT_AUTHENTICATED", "A stable authenticated subject is required");
-
-    // Cookie-authenticated requests must come from the BFF's own browser origin.
-    if (!request.headers.has("authorization")) {
-      const expectedOrigin = new URL(process.env.NEXTAUTH_URL || request.url).origin;
-      if (request.headers.get("origin") !== expectedOrigin) {
-        throw new HttpAuthzError(403, "FORBIDDEN", "Same-origin requests are required for session authentication");
-      }
-    }
     if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
       invalid("Content-Type must be application/json");
     }
@@ -67,10 +59,47 @@ async function handle(request: NextRequest, fields: string[], operation: AccessH
     try { body = await request.json(); } catch { invalid("Request body must be valid JSON"); }
     if (!body || typeof body !== "object" || Array.isArray(body)) invalid("Request body must be an object");
     if (Object.keys(body).some((key) => !fields.includes(key))) invalid("Request contains unsupported fields");
-    response = await operation(body as Record<string, unknown>, caller, decisionContext(session, caller, request));
+    const input = body as Record<string, unknown>;
+    const resourceType = (input.resource as { type?: unknown } | undefined)?.type ?? input.resource_type;
+    let caller: Subject;
+    let ctx: DecisionContext;
+    if (resourceType === "app_resource") {
+      // Select the strict new-service receiver profile directly. Requiring a
+      // legacy bearer first would reject correctly audience-bound credentials.
+      const { identity, tenantId } = await authenticatePlatformRequest(request);
+      if (identity.subject.type === "service_account") {
+        let app;
+        try { app = resolveAppService(identity); }
+        catch {
+          throw new HttpAuthzError(503, "AUTHZ_UNAVAILABLE", "App installation configuration is unavailable");
+        }
+        if (!app) throw new HttpAuthzError(403, "FORBIDDEN", "Service is not bound to an enabled resource integration");
+      }
+      caller = identity.subject;
+      ctx = { caller, tenantId, correlationId: randomUUID() };
+    } else {
+      const session = await authenticate(request);
+      const resolved = resolveCaller(session);
+      if (!resolved) throw new HttpAuthzError(401, "NOT_AUTHENTICATED", "A stable authenticated subject is required");
+
+      // Cookie-authenticated requests must come from the BFF's own browser origin.
+      if (!request.headers.has("authorization")) {
+        const expectedOrigin = new URL(process.env.NEXTAUTH_URL || request.url).origin;
+        if (request.headers.get("origin") !== expectedOrigin) {
+          throw new HttpAuthzError(403, "FORBIDDEN", "Same-origin requests are required for session authentication");
+        }
+      }
+      caller = resolved;
+      ctx = decisionContext(session, caller, request);
+    }
+    response = await operation(input, caller, ctx);
   } catch (error) {
     if (error instanceof HttpAuthzError) response = metaErrorResponse(error);
-    else {
+    else if (error instanceof ApiError && [401, 403, 503].includes(error.statusCode)) {
+      response = metaErrorResponse(new HttpAuthzError(error.statusCode,
+        error.statusCode === 503 ? "AUTHZ_UNAVAILABLE" : error.statusCode === 403 ? "FORBIDDEN" : "NOT_AUTHENTICATED",
+        "Authentication unavailable or rejected"));
+    } else {
       // A failed write may have reached OpenFGA: do not promise safe automatic retries.
       console.error("[access] Operation failed", { name: error instanceof Error ? error.name : "UnknownError" });
       response = NextResponse.json({ error: "Access operation failed", code: "INTERNAL_ERROR", retriable: false }, { status: 500 });

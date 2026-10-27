@@ -254,7 +254,7 @@ export function loadConfiguredAgenticApps(
     if (
       profile?.mode !== "native-package" &&
       manifest.consumes.platformApis.some(
-        (api) => api.required && api.id.startsWith("host.") && api.id !== "host.notifications",
+        (api) => api.required && api.id.startsWith("host.") && api.id !== "host.notifications" && api.id !== "host.access.resources",
       )
     )
       throw new Error(

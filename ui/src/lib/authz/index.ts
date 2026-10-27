@@ -40,6 +40,8 @@ export { signGatewayContext, gatewayCasEnabled } from "./gateway-context";
 export type { GatewayRequest, GatewayResult, GatewayCheck } from "./gateway-contract";
 
 export { createDelegation, inspectDelegation, revokeDelegation, authorizeDelegated } from "./delegations";
+export { registerResource, PendingResourceRegistrationError } from "./resources";
+export type { ResourceRegistration, RegisteredResource } from "./resource-contract";
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -152,7 +154,7 @@ export async function listAccessible(
 ): Promise<ListAccessibleResult> {
   if (candidateIds.length === 0) return { accessible: [], reason: "OK" };
 
-  if (candidateIds.length <= LIST_OBJECTS_MIN_CANDIDATES) {
+  if (resourceType === "app_resource" || candidateIds.length <= LIST_OBJECTS_MIN_CANDIDATES) {
     const results = await authorizeMany(subject, action, resourceType, candidateIds, ctx);
     const accessible = candidateIds.filter((id) => results.get(id)?.decision === "ALLOW");
     const unavailable = Array.from(results.values()).some((result) => result.reason === "AUTHZ_UNAVAILABLE");

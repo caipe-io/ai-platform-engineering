@@ -101,6 +101,14 @@ describe("filterAccessible", () => {
 });
 
 describe("listAccessible", () => {
+  it("keeps registered resources on lifecycle-aware candidate checks above the reverse-lookup threshold", async () => {
+    const ids = Array.from({ length: 101 }, (_, index) => `resource-${index}`);
+    mockBatch.mockResolvedValue(new Map(ids.map((id) => [id, DENY])));
+    expect(await listAccessible({ type: "user", id: "test-user" }, "read", "app_resource", ids))
+      .toEqual({ accessible: [], reason: "OK" });
+    expect(mockBatch).toHaveBeenCalled();
+    expect(mockListObjects).not.toHaveBeenCalled();
+  });
   // Above LIST_OBJECTS_MIN_CANDIDATES (100, the API's own page-size cap) —
   // only a candidate list this large exercises the real list-objects path.
   const manyIds = Array.from({ length: 101 }, (_, i) => `id-${i}`);

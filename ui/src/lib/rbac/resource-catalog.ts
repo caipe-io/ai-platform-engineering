@@ -6,6 +6,7 @@ import type {
 UniversalRebacResourceType,
 UniversalRebacResourceTypeDefinition,
 } from "@/types/rbac-universal";
+import type { RegisteredResource } from "@/lib/authz/resource-contract";
 
 export type RebacResourceStatus = "active" | "disabled" | "archived" | "deleted" | "unknown";
 export type RebacEnforcementStatus =
@@ -123,7 +124,7 @@ export async function listRebacCatalog(input: ListRebacCatalogInput = {}): Promi
     definitions.map((definition) => [definition.type, definition.actions])
   );
 
-  const [teams, users, agents, llmModels, mcpServers, ragCollections, slackMappings, webexMappings] =
+  const [teams, users, agents, llmModels, mcpServers, ragCollections, slackMappings, webexMappings, appResources] =
     await Promise.all([
       readCollection<{ _id: unknown; slug?: string; name?: string; status?: string }>("teams"),
       readCollection<{ _id?: unknown; email?: string; name?: string; role?: string; keycloak_sub?: string; metadata?: { keycloak_sub?: string } }>("users"),
@@ -149,9 +150,16 @@ export async function listRebacCatalog(input: ListRebacCatalogInput = {}): Promi
         space_name?: string;
         space_title?: string;
       }>("webex_space_team_mappings"),
+      readCollection<RegisteredResource>("access_resources"),
     ]);
 
   const discovered: RebacCatalogResource[] = [
+    ...appResources.map((record) => ({
+      ...resource("app_resource", record._id, record.local_id, "rebac_enforced", {
+        app_id: record.app_id, kind: record.kind, owner: record.owner, registration_state: record.state,
+      }),
+      status: record.state === "active" ? "active" as const : "disabled" as const,
+    })),
     ...teams.map((team) =>
       resource("team", team.slug || String(team._id), team.name || String(team._id), "rebac_shadowed")
     ),

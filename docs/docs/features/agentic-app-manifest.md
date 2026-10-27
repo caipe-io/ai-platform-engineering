@@ -104,8 +104,12 @@ The full reference manifest is
   are rejected; optional future references can remain descriptive metadata.
 - Currently recognized native host references are `host.navigation`,
   `host.breadcrumbs`, `host.theme`, `host.session`, `host.chat`, and `app.gateway`, version
-  `1.0`. Required host references cannot be satisfied by selecting the current
-  iframe profile. A required gateway reference needs a declared runtime.
+  `1.0`. UI host references require a native profile. A required
+  `app.gateway` reference needs a declared runtime.
+- `host.access.resources` version `1.0` is an HTTP capability for native,
+  iframe and service-only apps. It uses an operator-owned service-client binding
+  and the [CAS registration API](../security/rbac/access-api.md#register-resources-for-a-new-app-service);
+  declaring it does not grant access to resource data.
 - Unknown manifest fields, duplicate profiles/routes, ambiguous ownership,
   missing route references, undeclared policy scopes, and unsafe paths fail
   validation.
