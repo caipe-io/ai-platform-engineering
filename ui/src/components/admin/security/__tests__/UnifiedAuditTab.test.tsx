@@ -6,27 +6,156 @@ import { UnifiedAuditTab } from '../UnifiedAuditTab';
 // assisted-by Codex Codex-sonnet-4-6
 
 describe('UnifiedAuditTab', () => {
+  it('uses pinned cursors for next and previous, and starts a fresh query when filters change', async () => {
+    const requests: URL[] = [];
+    (global.fetch as jest.Mock).mockImplementation(async (input: string) => {
+      const url = new URL(input, 'https://example.test');
+      if (url.pathname !== '/api/admin/audit-events') return { ok: true, json: async () => ({}) };
+      requests.push(url);
+      const cursor = url.searchParams.get('cursor') ?? 'first';
+      return { ok: true, json: async () => ({
+        records: [], cursor, next_cursor: cursor === 'first' ? 'second' : null,
+        since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z', limit: 30,
+      }) };
+    });
+    render(<UnifiedAuditTab isAdmin view="decisions" />);
+    await screen.findByText('Page 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Next audit page' }));
+    await screen.findByText('Page 2');
+    expect(requests.at(-1)?.searchParams.get('cursor')).toBe('second');
+    fireEvent.click(screen.getByRole('button', { name: 'Previous audit page' }));
+    await screen.findByText('Page 1');
+    expect(requests.at(-1)?.searchParams.get('cursor')).toBe('first');
+    fireEvent.change(screen.getByLabelText('Audit time range'), { target: { value: '48h' } });
+    await waitFor(() => expect(requests.at(-1)?.searchParams.get('window')).toBe('48h'));
+    expect(requests.at(-1)?.searchParams.has('cursor')).toBe(false);
+    expect(requests.every((url) => url.searchParams.get('limit') === '30' && !url.searchParams.has('page'))).toBe(true);
+  });
+
+  it('applies text filters only on Search and keeps applied values for paging and refresh', async () => {
+    const requests: URL[] = [];
+    (global.fetch as jest.Mock).mockImplementation(async (input: string) => {
+      const url = new URL(input, 'https://example.test');
+      if (url.pathname !== '/api/admin/audit-events') return { ok: true, json: async () => ({}) };
+      requests.push(url);
+      const cursor = url.searchParams.get('cursor') ?? 'first';
+      return { ok: true, json: async () => ({
+        records: [], cursor, next_cursor: cursor === 'first' ? 'second' : null,
+        since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z', limit: 30,
+      }) };
+    });
+    render(<UnifiedAuditTab isAdmin view="decisions" />);
+    await screen.findByText('Page 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Next audit page' }));
+    await screen.findByText('Page 2');
+    const initialRequests = requests.length;
+
+    fireEvent.change(screen.getByPlaceholderText('User email...'), { target: { value: ' primary@example.test ' } });
+    fireEvent.change(screen.getByPlaceholderText('Agent name...'), { target: { value: ' primary-agent ' } });
+    expect(requests).toHaveLength(initialRequests);
+    expect(screen.getByText('Page 2')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByText('Page 1');
+    expect(requests).toHaveLength(initialRequests + 1);
+    expect(requests.at(-1)?.searchParams.get('user_email')).toBe('primary@example.test');
+    expect(requests.at(-1)?.searchParams.get('agent_name')).toBe('primary-agent');
+    expect(requests.at(-1)?.searchParams.has('cursor')).toBe(false);
+
+    fireEvent.change(screen.getByPlaceholderText('User email...'), { target: { value: 'draft@example.test' } });
+    fireEvent.change(screen.getByPlaceholderText('Agent name...'), { target: { value: 'draft-agent' } });
+    expect(requests).toHaveLength(initialRequests + 1);
+    fireEvent.click(screen.getByRole('button', { name: 'Next audit page' }));
+    await screen.findByText('Page 2');
+    expect(requests.at(-1)?.searchParams.get('cursor')).toBe('second');
+    expect(requests.at(-1)?.searchParams.get('user_email')).toBe('primary@example.test');
+    expect(requests.at(-1)?.searchParams.get('agent_name')).toBe('primary-agent');
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await screen.findByText('Page 1');
+    expect(requests.at(-1)?.searchParams.get('user_email')).toBe('primary@example.test');
+    expect(requests.at(-1)?.searchParams.get('agent_name')).toBe('primary-agent');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    await waitFor(() => expect(requests.at(-1)?.searchParams.has('user_email')).toBe(false));
+    expect(requests.at(-1)?.searchParams.has('agent_name')).toBe(false);
+    expect(requests.at(-1)?.searchParams.has('cursor')).toBe(false);
+    expect(screen.getByPlaceholderText('User email...')).toHaveValue('');
+    expect(screen.getByPlaceholderText('Agent name...')).toHaveValue('');
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     (global.fetch as jest.Mock) = jest.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         records: [],
-        total: 0,
-        page: 1,
+        cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
         limit: 30,
       }),
     });
   });
 
-  it('shows admin required message when not admin (fetch still runs before gate)', async () => {
+  it('does not fetch audit data when not admin', () => {
     render(<UnifiedAuditTab isAdmin={false} />);
     expect(
       screen.getByText(/Admin access required to view audit events/i)
     ).toBeInTheDocument();
-    await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalled();
-    });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('shows the recorded gateway check, workload and decision reference in the focused view', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => ({
+      records: [{ ts: '2026-10-13T12:00:00Z', type: 'cas_decision', outcome: 'deny', action: 'call',
+        tenant_id: 'default', subject_ref: 'user:test-user', subject_display: 'test-user@example.com', actor_ref: 'workload:agentgateway',
+        correlation_id: 'request-1', source: 'cas', reason_code: 'NO_CAPABILITY',
+        resource_ref: 'tool:example/list', failed_gate: 'caller_tool', decision_id: 'decision-1',
+        gateway_operation: 'tools/call', agent_ref: 'agent:example' }], cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z', limit: 30,
+    }) });
+    render(<UnifiedAuditTab isAdmin view="decisions" initialSubjectRef="user:test-user" />);
+    expect(await screen.findByText('Denied: call tool example/list')).toBeInTheDocument();
+    expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('type=cas_decision'));
+    expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('subject_ref=user%3Atest-user'));
+    expect(screen.getByLabelText('Principal: user:test-user')).toHaveClass('bg-violet-500/15');
+    expect(screen.getByText('test-user@example.com')).toBeInTheDocument();
+    expect(screen.getByLabelText('Resource: tool:example/list')).toHaveClass('bg-cyan-500/10');
+    expect(screen.getByLabelText('Action / relation: call')).toHaveClass('bg-muted/50');
+    fireEvent.click(screen.getByText('Denied: call tool example/list'));
+    expect(screen.getByText('decision-1')).toBeInTheDocument();
+    expect(screen.getAllByText('workload:agentgateway').length).toBeGreaterThan(0);
+    expect(screen.getByLabelText('Resource: agent:example')).toBeInTheDocument();
+    expect(screen.getByText(/does not identify a missing team or grant/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Decision ID'), { target: { value: 'decision-1' } });
+    expect((global.fetch as jest.Mock).mock.calls.some(([url]) => String(url).includes('decision_id='))).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('decision_id=decision-1')));
+    fireEvent.change(screen.getByLabelText('Correlation ID'), { target: { value: 'request-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('correlation_id=request-1')));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    await waitFor(() => expect(screen.getByLabelText('Decision ID')).toHaveValue(''));
+    expect(screen.getByLabelText('Audit event type')).toHaveValue('cas_decision');
+    expect(screen.getByLabelText('Audit event type')).toBeEnabled();
+  });
+
+  it('does not present an audit outage as an empty decision history', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => ({
+      records: [], cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z', limit: 30, auditUnavailable: true, warning: 'Audit service unavailable',
+    }) });
+    render(<UnifiedAuditTab isAdmin view="decisions" />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('No conclusion can be drawn');
+    expect(screen.queryByText('No audit events found for the selected filters.')).not.toBeInTheDocument();
+  });
+
+  it('does not present a lookup email as a recorded canonical principal', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => ({
+      records: [{ ts: '2026-10-13T12:00:00Z', type: 'cas_decision', outcome: 'deny', action: 'call',
+        tenant_id: 'default', subject_display: 'test-user@example.com', correlation_id: 'request-1',
+        source: 'cas', resource_ref: 'tool:example/list' }], cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z', limit: 30,
+    }) });
+    render(<UnifiedAuditTab isAdmin view="decisions" />);
+    expect(await screen.findByText('Principal not recorded')).toBeInTheDocument();
+    expect(screen.getByText('test-user@example.com')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Principal: test-user@example.com')).not.toBeInTheDocument();
   });
 
   it('loads audit events when admin', async () => {
@@ -46,8 +175,7 @@ describe('UnifiedAuditTab', () => {
             source: 'bff',
           },
         ],
-        total: 1,
-        page: 1,
+        cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
         limit: 30,
       }),
     });
@@ -61,10 +189,10 @@ describe('UnifiedAuditTab', () => {
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringContaining("window=5m"),
     );
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("time_resolution=minute"),
-    );
-    expect(await screen.findByText(/RBAC Audit Log/i)).toBeInTheDocument();
+    expect((global.fetch as jest.Mock).mock.calls[0][0]).not.toContain('time_resolution=');
+    expect((global.fetch as jest.Mock).mock.calls[0][0]).not.toContain('page=');
+    expect((global.fetch as jest.Mock).mock.calls.some(([url]) => String(url).includes('/api/admin/audit-storage'))).toBe(false);
+    expect(await screen.findByText(/Security audit/i)).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /^Last 5 min$/i })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /^All event types$/i })).toBeInTheDocument();
     expect(screen.queryByText(/Default view hides routine admin page-view checks/i)).not.toBeInTheDocument();
@@ -92,8 +220,7 @@ describe('UnifiedAuditTab', () => {
         ok: true,
         json: async () => ({
           records: [],
-          total: 0,
-          page: 1,
+          cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
           limit: 30,
         }),
       });
@@ -122,8 +249,7 @@ describe('UnifiedAuditTab', () => {
         ok: true,
         json: async () => ({
           records: [],
-          total: 0,
-          page: 1,
+          cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
           limit: 30,
         }),
       });
@@ -164,8 +290,7 @@ describe('UnifiedAuditTab', () => {
         ok: true,
         json: async () => ({
           records: [],
-          total: 0,
-          page: 1,
+          cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
           limit: 30,
         }),
       });
@@ -198,8 +323,7 @@ describe('UnifiedAuditTab', () => {
             resource_ref: 'user:alice can_use agent:default',
           },
         ],
-        total: 1,
-        page: 1,
+        cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
         limit: 30,
       }),
     });
@@ -232,8 +356,7 @@ describe('UnifiedAuditTab', () => {
               trace_id: '0123456789abcdef0123456789abcdef',
             },
           ],
-          total: 1,
-          page: 1,
+          cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
           limit: 30,
         }),
       });
@@ -250,7 +373,7 @@ describe('UnifiedAuditTab', () => {
   it('shows event type and outcome definition help', async () => {
     render(<UnifiedAuditTab isAdmin />);
 
-    await screen.findByText(/RBAC Audit Log/i);
+    await screen.findByText(/Security audit/i);
 
     const typeHelp = screen.getByRole('button', { name: /event type definitions/i });
     fireEvent.click(typeHelp);
@@ -298,8 +421,7 @@ describe('UnifiedAuditTab', () => {
             resource_ref: 'agent:platform-engineer',
           },
         ],
-        total: 2,
-        page: 1,
+        cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
         limit: 30,
       }),
     });
@@ -345,8 +467,7 @@ describe('UnifiedAuditTab', () => {
             resource_id: 'openfga_relationship_tuples',
           },
         ],
-        total: 1,
-        page: 1,
+        cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
         limit: 30,
       }),
     });
@@ -378,7 +499,7 @@ describe('UnifiedAuditTab', () => {
             action: 'manage',
             tenant_id: 'default',
             subject_hash: 'sha256:9accc8a00ffe8ae4451e81d95686e1f4',
-            user_email: 'sraradhy@cisco.com',
+            user_email: 'operator@example.test',
             correlation_id: 'af9c0e92-3060-46de-bb16-db3e26c4f973',
             source: 'cas',
             component: 'cas',
@@ -390,8 +511,7 @@ describe('UnifiedAuditTab', () => {
             decision_via: 'tuple',
           },
         ],
-        total: 1,
-        page: 1,
+        cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
         limit: 30,
       }),
     });
@@ -399,14 +519,14 @@ describe('UnifiedAuditTab', () => {
     render(<UnifiedAuditTab isAdmin />);
 
     expect(await screen.findByText(/Allowed to manage organization caipe/i)).toBeInTheDocument();
-    expect(screen.getByText(/sraradhy@cisco.com/i)).toBeInTheDocument();
+    expect(screen.getByText(/operator@example.test/i)).toBeInTheDocument();
     expect(screen.getByText(/OpenFGA tuple/i)).toBeInTheDocument();
     const headers = screen.getAllByRole('columnheader').map((header) => header.textContent?.trim());
     expect(headers.indexOf('Actor')).toBeLessThan(headers.indexOf('Request'));
 
     fireEvent.click(screen.getByText(/Allowed to manage organization caipe/i));
     expect(await screen.findByText(/What happened:/i)).toBeInTheDocument();
-    expect(screen.getByText(/CAS allowed this request because OpenFGA returned OK/i)).toBeInTheDocument();
+    expect(screen.getByText(/CAS allowed this check.*does not prove that the downstream tool ran/i)).toBeInTheDocument();
   });
 
   it('renders canonical principal display names instead of hashes or raw refs when available', async () => {
@@ -435,8 +555,7 @@ describe('UnifiedAuditTab', () => {
             resource_id: 'adbf4d53-cdd2-493c-b613-06f7c25f4709',
           },
         ],
-        total: 1,
-        page: 1,
+        cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
         limit: 30,
       }),
     });
@@ -486,6 +605,8 @@ describe('UnifiedAuditTab', () => {
       resource_id: 'hello-world',
       workflow_run_id: 'wfrun-20260611200000-abc',
       decision_via: 'tuple',
+      user_email: 'primary@example.test',
+      agent_name: 'primary-agent',
     };
     const pageTwoRecord = {
       ...pageOneRecord,
@@ -500,8 +621,7 @@ describe('UnifiedAuditTab', () => {
         ok: true,
         json: async () => ({
           records: [],
-          total: 0,
-          page: 1,
+          cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
           limit: 30,
         }),
       },
@@ -509,8 +629,15 @@ describe('UnifiedAuditTab', () => {
         ok: true,
         json: async () => ({
           records: [],
-          total: 0,
-          page: 1,
+          cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
+          limit: 30,
+        }),
+      },
+      {
+        ok: true,
+        json: async () => ({
+          records: [],
+          cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
           limit: 30,
         }),
       },
@@ -518,8 +645,7 @@ describe('UnifiedAuditTab', () => {
         ok: true,
         json: async () => ({
           records: [pageOneRecord],
-          total: 2,
-          page: 1,
+          cursor: 'first', next_cursor: 'second', since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
           limit: 200,
         }),
       },
@@ -527,8 +653,7 @@ describe('UnifiedAuditTab', () => {
         ok: true,
         json: async () => ({
           records: [pageTwoRecord],
-          total: 2,
-          page: 2,
+          cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
           limit: 200,
         }),
       },
@@ -559,8 +684,7 @@ describe('UnifiedAuditTab', () => {
           ok: true,
           json: async () => ({
             records: [],
-            total: 0,
-            page: 1,
+            cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
             limit: 30,
           }),
         },
@@ -569,7 +693,7 @@ describe('UnifiedAuditTab', () => {
 
     render(<UnifiedAuditTab isAdmin />);
 
-    await screen.findByText(/RBAC Audit Log/i);
+    await screen.findByText(/Security audit/i);
     fireEvent.change(screen.getAllByRole('combobox')[1], {
       target: { value: 'cas_decision' },
     });
@@ -577,15 +701,28 @@ describe('UnifiedAuditTab', () => {
       expect(auditEventUrls).toHaveLength(2);
     });
 
+    fireEvent.change(screen.getByPlaceholderText('User email...'), { target: { value: ' primary@example.test ' } });
+    fireEvent.change(screen.getByPlaceholderText('Agent name...'), { target: { value: ' primary-agent ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await waitFor(() => expect(auditEventUrls).toHaveLength(3));
+    fireEvent.change(screen.getByPlaceholderText('User email...'), { target: { value: 'draft@example.test' } });
+    fireEvent.change(screen.getByPlaceholderText('Agent name...'), { target: { value: 'draft-agent' } });
+    expect(auditEventUrls).toHaveLength(3);
+
     fireEvent.click(screen.getByRole('button', { name: /download audit log/i }));
 
     await waitFor(() => {
       expect(createObjectURL).toHaveBeenCalledTimes(1);
     });
 
-    expect(auditEventUrls[2]).toContain('type=cas_decision');
-    expect(auditEventUrls[2]).toContain('limit=200');
-    expect(auditEventUrls[3]).toContain('page=2');
+    expect(auditEventUrls[3]).toContain('type=cas_decision');
+    expect(auditEventUrls[3]).toContain('limit=200');
+    expect(auditEventUrls[4]).toContain('cursor=second');
+    for (const url of auditEventUrls.slice(3)) {
+      const params = new URL(url, 'https://example.test').searchParams;
+      expect(params.get('user_email')).toBe('primary@example.test');
+      expect(params.get('agent_name')).toBe('primary-agent');
+    }
     expect(click).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-0');
 
@@ -600,8 +737,8 @@ describe('UnifiedAuditTab', () => {
     const records = JSON.parse(recordsText ?? '[]');
     expect(manifest).toMatchObject({
       format: 'raw-json-zip',
-      filters: { type: 'cas_decision' },
-      total: 2,
+      filters: { type: 'cas_decision', user_email: 'primary@example.test', agent_name: 'primary-agent' },
+      as_of: '2026-01-02T00:00:00Z',
       record_count: 2,
     });
     expect(manifest.files).toEqual(['audit-events.json', 'manifest.json']);

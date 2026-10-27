@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getAuditBackend } from "@/lib/audit/backend";
-import { getAuditReader } from "@/lib/audit/reader";
+import { getAuditClient } from "@/lib/audit";
 
 // assisted-by Codex Codex-sonnet-4-6
 
@@ -14,7 +13,7 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
-  const events = await getAuditReader().query({ limit: 1000 });
+  const { records: events } = await getAuditClient().queryPage({ limit: 1000 });
   return NextResponse.json({ events }, { status: 200 });
 }
 
@@ -30,7 +29,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
-  getAuditBackend().write(event);
+  getAuditClient().append(event);
 
   return NextResponse.json({ written: true }, { status: 200 });
 }

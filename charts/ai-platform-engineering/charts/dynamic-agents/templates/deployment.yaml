@@ -68,7 +68,16 @@ spec:
               value: {{ index .Values.config "AUTHZ_SERVICE_URL" | default (printf "http://%s-caipe-ui:3000" .Release.Name) | quote }}
             - name: AUDIT_SERVICE_URL
               value: {{ index .Values.config "AUDIT_SERVICE_URL" | default (printf "http://%s-audit-service:8010" .Release.Name) | quote }}
-            {{- if .Values.agentContext.existingSecret.name }}
+            {{- $cas := dig "agentgateway" "cas" dict (.Values.global | default dict) }}
+            {{- if $cas.enabled }}
+            - name: CAIPE_GATEWAY_CAS_ENABLED
+              value: "true"
+            - name: CAIPE_AGENT_CONTEXT_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ ($cas.contextSecret).name | quote }}
+                  key: {{ ($cas.contextSecret).key | default "CAIPE_AGENT_CONTEXT_HMAC_SECRET" | quote }}
+            {{- else if .Values.agentContext.existingSecret.name }}
             - name: CAIPE_AGENT_CONTEXT_HMAC_SECRET
               valueFrom:
                 secretKeyRef:

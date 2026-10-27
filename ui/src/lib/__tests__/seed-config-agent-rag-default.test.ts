@@ -22,6 +22,7 @@ jest.mock("@/lib/rbac/openfga-agent-tools", () => ({
 }));
 
 import { seedAgents } from "../seed-config";
+import { reconcileAgentRelationships } from "@/lib/rbac/openfga-agent-tools";
 
 const baseAgent = {
   id: "agent-example",
@@ -41,14 +42,9 @@ describe("seedAgents RAG scope default", () => {
   it("leaves a new config-driven RAG agent unrestricted by default", async () => {
     await seedAgents([baseAgent]);
 
-    expect(replaceOne).toHaveBeenCalledWith(
-      { _id: "agent-example" },
-      expect.objectContaining({
-        datasource_ids: undefined,
-        rag_collection_ids: undefined,
-      }),
-      { upsert: true },
-    );
+    expect(reconcileAgentRelationships).toHaveBeenCalledWith(expect.objectContaining({
+      persistence: expect.objectContaining({ id: "agent-example", unset: expect.objectContaining({ datasource_ids: "", rag_collection_ids: "" }) }),
+    }));
     expect(mockGetCollection).not.toHaveBeenCalledWith("rag_collections");
   });
 
@@ -61,11 +57,9 @@ describe("seedAgents RAG scope default", () => {
       },
     ]);
 
-    expect(replaceOne).toHaveBeenCalledWith(
-      { _id: "agent-example" },
-      expect.objectContaining({ datasource_ids: [], rag_collection_ids: [] }),
-      { upsert: true },
-    );
+    expect(reconcileAgentRelationships).toHaveBeenCalledWith(expect.objectContaining({
+      persistence: expect.objectContaining({ id: "agent-example", set: expect.objectContaining({ datasource_ids: [], rag_collection_ids: [] }) }),
+    }));
   });
 
   it("leaves an existing config agent unrestricted when RAG is enabled without an explicit scope", async () => {
@@ -78,14 +72,9 @@ describe("seedAgents RAG scope default", () => {
 
     await seedAgents([baseAgent]);
 
-    expect(replaceOne).toHaveBeenCalledWith(
-      { _id: "agent-example" },
-      expect.objectContaining({
-        datasource_ids: undefined,
-        rag_collection_ids: undefined,
-      }),
-      { upsert: true },
-    );
+    expect(reconcileAgentRelationships).toHaveBeenCalledWith(expect.objectContaining({
+      persistence: expect.objectContaining({ id: "agent-example", unset: expect.objectContaining({ datasource_ids: "", rag_collection_ids: "" }) }),
+    }));
   });
 
   it("preserves an existing explicit empty scope", async () => {
@@ -100,10 +89,8 @@ describe("seedAgents RAG scope default", () => {
 
     await seedAgents([baseAgent]);
 
-    expect(replaceOne).toHaveBeenCalledWith(
-      { _id: "agent-example" },
-      expect.objectContaining({ datasource_ids: [], rag_collection_ids: [] }),
-      { upsert: true },
-    );
+    expect(reconcileAgentRelationships).toHaveBeenCalledWith(expect.objectContaining({
+      persistence: expect.objectContaining({ id: "agent-example", set: expect.objectContaining({ datasource_ids: [], rag_collection_ids: [] }) }),
+    }));
   });
 });

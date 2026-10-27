@@ -172,51 +172,9 @@ type SessionAuthSession = {
   } | null;
 };
 
-type SessionAuthPayload = {
-  user: {
-    email: string;
-    name: string;
-    role: string;
-  };
-  session: SessionAuthSession;
-};
 
-function cloneSessionAuthPayload(value: SessionAuthPayload): SessionAuthPayload {
-  const sessionUser = value.session.user;
-  return {
-    user: { ...value.user },
-    session: {
-      ...value.session,
-      user: sessionUser ? { ...sessionUser } : sessionUser,
-    },
-  };
-}
-
-/** Authentication is resolved per request; retained for existing test callers. */
-export function clearSessionAuthCacheForTests(): void {}
-
-// Keycloak subject mapping + conversation-owner-identity reconciliation is
-// idempotent bookkeeping, not authentication, so it doesn't need to run on
-// every call. The Bearer-token path
-// (service accounts: smoke tests, Slack bot, etc.) authenticates the same
-// static token on every request with no equivalent cache, so it re-ran the
-// full write path — including the `conversations.updateMany` in
-// `reconcileConversationOwnerIdentity` — on every single call. Under bursty
-// concurrent traffic from one service-account identity, that produced
-// `MongoServerError 40333 (Concurrent operations on the same resource)`.
-//
-// Dedup by keycloak sub, independent of auth path: concurrent callers for the
-// same subject join the one in-flight write instead of racing, and callers
-// within the TTL after it settles reuse the same resolved promise instead of
-// re-writing. The in-flight join mirrors `_inflightRefreshes` in
-// `auth-config.ts`, but unlike that map (which deletes its entry as soon as
-// the exchange settles) this one deliberately keeps entries around for the
-// TTL to also debounce non-concurrent repeat calls, so it needs its own
-// bound to prevent unbounded identity-bookkeeping entries.
-//
-// This is a per-pod in-memory cache: it fully covers today's deployment
-// (`replicaCount: 1` in both dev and prod values), but a burst spread across
-// multiple replicas would only be deduped per-replica if that's ever raised.
+// Deduplicate identity bookkeeping, not authentication or credentials. Every
+// cookie request still resolves its authoritative session record independently.
 const KEYCLOAK_SUB_MAPPING_DEDUP_TTL_MS = 10_000;
 const MAX_KEYCLOAK_SUB_MAPPING_CACHE_ENTRIES = 500;
 const keycloakSubMappingCache = new Map<string, { promise: Promise<void>; expiresAt: number }>();
@@ -338,6 +296,15 @@ export async function getAuthenticatedUser(
 
   const session = await getServerSession(authOptions);
 
+  if (session?.error === 'SessionUnavailable') {
+    throw new ApiError('Sign-in services are temporarily unavailable. Please retry.',
+      503, 'SESSION_UNAVAILABLE', 'session_unavailable', 'retry');
+  }
+  if (session?.error) {
+    throw new ApiError('Your session has expired. Please sign in again.',
+      401, 'SESSION_EXPIRED', 'session_expired', 'sign_in');
+  }
+
   if (!session || !session.user?.email) {
     const { allowAnonymous = false } = options;
     if (allowAnonymous && isDevAnonymousAuthEnabled()) {
@@ -355,7 +322,7 @@ export async function getAuthenticatedUser(
     );
   }
 
-  if (session.error || (typeof session.expiresAt === 'number' && session.expiresAt <= Date.now() / 1000)) {
+  if (typeof session.expiresAt === 'number' && session.expiresAt <= Date.now() / 1000) {
     throw new ApiError('Your session has expired. Please sign in again.',
       401, 'SESSION_EXPIRED', 'session_expired', 'sign_in');
   }
@@ -387,7 +354,7 @@ export async function getAuthenticatedUser(
     user,
     session: { ...session, role, principalType: 'oidc_user' as const },
   };
-  return cloneSessionAuthPayload(authenticated);
+  return authenticated;
 }
 
 /**

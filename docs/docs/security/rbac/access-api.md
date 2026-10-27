@@ -1,7 +1,7 @@
 # Access API: one authorization boundary
 
-**Status:** Access API foundation implemented; BFF chat agent-use guard migrated
-to in-process CAS. Remote consumers are not migrated yet.
+**Status:** Access API foundation, BFF chat agent-use checks and opt-in gateway
+authorization are implemented. Remaining consumers and production cutover are incomplete.
 
 CAS answers permission questions. Each service still stops an operation when
 the answer is no. CAS is a module inside the BFF, not another deployed service.
@@ -18,9 +18,11 @@ flowchart TD
     O --> F["OpenFGA"]
 ```
 
-This is the destination, not today's complete wiring. The new `/api/access/*`
-routes and the shared BFF agent-use guard call CAS now. Existing `/api/authz/v1/*` callers, direct service clients
-and the gateway bridge are unchanged. Migrating them is separate work, not a
+This is the destination, not today's complete wiring. The `/api/access/*`
+routes, shared BFF agent-use guard and opt-in gateway domain call CAS now.
+Existing `/api/authz/v1/*` callers and direct service clients remain to migrate.
+The [gateway cutover](./gateway-cas.md) is not a completed production rollout.
+Migrating remaining callers is separate work, not a
 commitment to maintain two public contracts permanently.
 
 ## The foundation
@@ -51,11 +53,22 @@ CAS owns the decisions and changes to relationships.
 ## What this does not solve yet
 
 - Normalized identity and verified delegation across every ingress.
-- Migration of gateway, RAG, bots and older BFF authorization paths.
+- Complete gateway cutover and migration of RAG, bots and older BFF paths.
 - Resource registration, unbounded discovery or a generic resource catalog.
 - System-wide model pinning, bounded dependency calls and revocation freshness.
   Single agent-use checks are fresh; other decision and query caches still apply.
   HTTP `no-store` does not disable those caches.
+
+New-service onboarding includes a strict signed service identity profile and a
+job-scoped delegation API. It does not replace existing caller authentication.
+See the [identity profile](./architecture.md#new-service-identity-foundation).
+Ordinary self-checks do not authorize acting for someone else. The user approves
+bounded work in a browser session; CAS stores the approval in MongoDB. The service
+keeps its own identity, and CAS requires the approval **and** current user/service
+permissions. Audit shows both identities and the approval, including denied uses.
+See the [delegation architecture](./architecture.md#cas-job-delegation--new-service-api).
+Existing background consumers are not migrated. Explicit authorization may outlive
+browser logout, but not its expiry, revocation or loss of required permissions.
 
 ## BFF agent execution
 
@@ -76,9 +89,18 @@ Chat routes → existing agent-use guard → CAS → OpenFGA
 - CAS records the decision. The guard preserves its 401/400/403/503 envelopes
   and passes tracing metadata without emitting a second legacy decision event.
 
-Picker filtering, membership writes, seed identity cleanup and other services
-remain separate migrations. Fresh checks cannot repair a missing relationship
-write or cancel a run that has already started.
+Agent lifecycle/default-selection writes now use CAS. The picker no longer
+creates or removes grants: public access is maintained by configuration changes
+and the existing startup reconciliation. A global agent retains public access
+when it stops being the default. Failed configuration saves trigger best-effort
+restrictive cleanup: remove attempted new grants, never restore revoked access
+on an uncertain database result. Guarded saves reject stale snapshots; failures
+include a support reference and may require admin repair. This is not a
+cross-database transaction. See the [CAS README](https://github.com/caipe-io/ai-platform-engineering/blob/main/ui/src/lib/authz/README.md#agent-grant-lifecycle) for configuration and recovery limits.
+
+Picker filtering/caching, membership writes, seed identity cleanup and other
+services remain separate migrations. Fresh checks cannot repair a missing
+relationship write or cancel a run that has already started.
 
 Moving remote consumers onto CAS makes BFF latency and availability part of
 their authorization path. Prove that behavior before migrating them. Enforcement
@@ -90,6 +112,13 @@ The contract, examples and failure semantics are in
 [`ui/src/lib/authz/README.md`](https://github.com/caipe-io/ai-platform-engineering/blob/main/ui/src/lib/authz/README.md).
 Request/response types live in `ui/src/lib/authz/access-contract.ts`.
 
-Next, migrate one complete agent-access journey: its checks, visible-resource
-queries and grant/revoke operations. Verify that selection agrees with execution,
-then remove that journey's obsolete authorization path.
+Next, prove one [new-service onboarding journey](https://github.com/caipe-io/ai-platform-engineering/issues/3031),
+including trusted background delegation, resources, checks, queries and grant/revoke
+operations. Dynamic Agents migration is deferred while its runtime changes; it
+does not block the shared contract. Existing consumer retirement remains required.
+
+Before the combined CAS integration goes to main, resolve
+[#2854](https://github.com/caipe-io/ai-platform-engineering/issues/2854): interrupted
+cross-store mutations need durable, bounded recovery. A process can die after
+publishing a grant but before saving configuration or running cleanup. Startup
+reconciliation and manual repair do not by themselves close that gap.

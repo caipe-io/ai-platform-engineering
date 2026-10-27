@@ -31,7 +31,8 @@ Open http://localhost:3000.
 | Variable | Default | Purpose |
 |---|---|---|
 | `DYNAMIC_AGENTS_URL` | `http://localhost:8100` in local dev, `http://dynamic-agents:8100` in production | Server-side Dynamic Agents runtime URL |
-| `MONGODB_URI` | unset | Enables MongoDB-backed conversations and admin state |
+| `MONGODB_URI` | unset | Required for SSO sessions; also enables conversations and admin state |
+| `MONGODB_DATABASE` | unset | Required with `MONGODB_URI` for SSO |
 | `PROMETHEUS_URL` | unset | Server-side Prometheus-compatible query URL for Admin metrics and health. In HA deployments, use a deduplicating query frontend such as Thanos rather than a load-balanced service over independent Prometheus replicas. |
 | `RAG_SERVER_URL` | unset | Server-side RAG API URL |
 | `NEXTAUTH_SECRET` | unset | Required for authenticated deployments |
@@ -41,21 +42,15 @@ Browser chat traffic goes through the BFF routes under
 `/api/v1/chat/stream/*`; the browser does not call the Dynamic Agents service
 directly.
 
-Multi-replica SSO requires shared MongoDB and the same `NEXTAUTH_SECRET` on every
-UI replica. The existing encrypted `auth_token_cache` stores credentials and
-expiry together. Login waits for publication, refresh uses a fenced MongoDB
-lease, and encoding a cookie never writes credentials. Authentication reads the
-shared record on each request; identity bookkeeping may still be deduplicated.
+SSO sessions use the shared `auth_sessions` collection, not process-local token
+caches. All BFF replicas need the same `NEXTAUTH_SECRET`. Session-format upgrades
+require a coordinated cutover and a fresh login; existing grants are unchanged.
+See [browser-session architecture and rollout](../docs/docs/security/browser-sessions.md).
 
-The cookie format and collection remain compatible. Legacy JWT token records
-derive expiry from the token; opaque records with unknown expiry must refresh or
-sign in again. Complete the UI rollout before validating login and refresh
-across replicas: an older replica can still write stale credentials. Already
-lost or expired OAuth credentials require a fresh sign-in.
-
-Run the real MongoDB race tests with
-`AUTH_TOKEN_STORE_TEST_MONGODB_URI=mongodb://127.0.0.1:27017 npm test -- --runInBand src/lib/__tests__/auth-token-store-mongo.test.ts`.
-
+Browser fixtures must seed a session record through `e2e/rbac/_session-cookie.ts`.
+Self-contained cookies, including those from the older `mint-test-session.mjs`
+benchmark helper, are deliberately rejected. Benchmarks should use a real OIDC
+login session until that helper is migrated.
 ### Agent Builder harness controls
 
 - Deep Agents retains its model, tools, knowledge, skills, and Advanced controls.

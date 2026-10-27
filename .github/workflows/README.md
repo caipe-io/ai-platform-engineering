@@ -6,6 +6,19 @@ This directory contains automated workflows for the AI Platform Engineering proj
 
 See the `.github/workflows/` directory for the full list of CI/CD workflows.
 
+### UI browser coverage
+
+- PRs targeting a branch other than `main` run six existing `@sanity` browser
+  cases: shared sessions, logout, chat, Settings, audit and the app catalog.
+- PRs targeting `main`, pushes to `main` and manual runs keep the full mocked
+  browser suite. The full suite discovers every non-live spec automatically.
+- PR edits rerun the workflow so retargeting to `main` refreshes full coverage.
+  GitHub also emits this event for title and description edits.
+- Both lanes use the production build, two BFF replicas and real MongoDB
+  session/delegation checks. Jest, lint and other checks keep their coverage.
+- The browser step and job summary show `sanity` or `full`. Sanity targets
+  roughly three minutes including setup; cold runners can take longer.
+
 ### MCP registry concurrency
 
 - `ci-mcp-servers.yml` and `prebuild-mcp-servers.yml` each allow at most

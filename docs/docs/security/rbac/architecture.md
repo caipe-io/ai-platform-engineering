@@ -7,6 +7,43 @@ Component-by-component reference. Each section describes **what it owns**, **wha
 
 ---
 
+## CAS job delegation — new-service API
+
+The `/api/access/delegations` API keeps the authenticated service and effective
+user separate. This is a new-service foundation, not a migration of existing
+scheduler, bot, Dynamic Agents or gateway paths.
+
+- **Keycloak owns identity tokens.** Service bearers require the primary issuer,
+  `caipe-access` audience, canonical subject, explicit signed principal type,
+  authorized client and expiry. New BFF-managed service clients receive the
+  corresponding mappers; existing clients are not silently rewritten.
+- **CAS owns approvals inside the BFF.** A same-origin signed-in browser user
+  approves one job, exact resources/actions and an expiry of at most seven days.
+  MongoDB stores the immutable approval; idempotent creation cannot extend it
+  or undo revocation. No user token is stored or new OpenFGA grant created.
+- **A reference is not authority by itself.** CAS requires the matching service
+  subject/client/issuer/job, an active approval, and fresh OpenFGA permissions
+  for both service and user. It rechecks approval after graph checks. Logout
+  alone does not revoke it; expiry, revocation or lost permission blocks use.
+- **Audit preserves both identities.** Individual delegated decisions link to
+  approval scope/version/expiry and ordered checks. Admin audit can filter the
+  chain by delegation ID. New approvals retain the approving session's audit
+  tenant for later background decisions; the default minimal preset keeps their
+  individual allow/deny receipts. Delivery remains best-effort and unsigned, not proof
+  that downstream work executed. Applications still enforce the decision.
+- **Approval validation is bounded.** Up to four scope entries are checked
+  concurrently within one five-second graph budget. Exhausted caller budgets
+  deny the request without counting as dependency failures in the shared breaker.
+- **Evidence adapters do not own resource policy.** The current adapter binds a
+  service token and stored job approval into a server-only actor/effective-user
+  context. Policy and audit consume that context, with the evidence source
+  recorded separately. A future verified Keycloak delegation adapter can reuse
+  this boundary; it must prove consent semantics, job binding and background
+  lifetime/revocation first. Native `act` tokens are not accepted today.
+
+See [Access API](./access-api.md) and its linked component contract for endpoint
+details, onboarding prerequisites and the remaining migration boundaries.
+
 ## Helm Runtime Packaging
 
 The `0.5.0` umbrella chart can own the RBAC runtime stack for demo and managed environments:
@@ -34,6 +71,23 @@ Production installs must still supply ExternalSecrets and persistent datastore s
 > **Badge analogy:** HR issues ID badges. The front desk verifies them on entry. Every other door in the building trusts the badge's chip — they don't call HR each time. When a contractor arrives via a partner agency (Duo SSO), the front desk checks with the agency once, creates an internal record, and issues a standard building badge. From that point on, the contractor uses the same badge as everyone else.
 
 **Technically:** Keycloak acts as an OIDC Authorization Server and IdP broker. It proxies login to Duo SSO via an OIDC client, mirrors external group claims into identity attributes for sync, and issues its own signed JWT — so downstream services only ever need to trust one issuer. CAIPE authorization decisions are no longer encoded as Keycloak realm roles.
+
+### New-service identity foundation
+
+- `validatePlatformBearerJWT()` verifies service bearer identity for the CAS
+  delegation API: the configured primary issuer, `caipe-access` audience,
+  canonical `sub`, explicit signed `caipe_principal_type`, authorized client
+  (`azp`) and issuance/expiry are required. It does not infer identity type from
+  email or username, use secondary-keyset fallback, or flatten `act` tokens.
+  Issuance may lead the BFF clock by at most 30 seconds; token expiry and any
+  not-before boundary remain strict.
+- Newly created BFF-managed service clients receive access-token-only mappers
+  for the audience and `service_account` principal type. Existing clients and
+  ordinary bearer/session authentication are unchanged.
+- Identity alone is not delegation proof. The delegation API additionally
+  requires a durable approval and current user/service permissions; ordinary
+  Access API authentication remains unchanged.
+  See [Access API](./access-api.md) for the consumer boundary and remaining work.
 
 ### Realm Roles (configured realm, default `caipe`)
 
@@ -479,9 +533,9 @@ The collection, env, and naming details are in the BFF library README at
 
 ## Component 2: CAIPE UI — The Reception Desk
 
-> **Badge analogy:** The reception desk at each department entrance. When you badge in, it reads your chip (JWT), checks your clearance level for this department, and either waves you through or says "sorry, you don't have access here." It doesn't phone HR — the badge chip already carries everything needed to make the decision.
+> **Badge analogy:** Any reception desk can look up your current login in the same register. Your badge identifies you; a separate permission check decides which doors you can open.
 
-**Technically:** Next.js App Router with NextAuth (Auth.js v5) for OIDC session management. Every API route handler runs `requireRbacPermission()` which validates the server-side session and enforces role requirements before proxying to backend services.
+**Technically:** Next.js App Router with NextAuth for OIDC session management. The BFF session module owns shared login credentials; authorization helpers enforce permissions before protected operations.
 
 Cookie authentication reads credentials and their matching expiry from the
 shared encrypted `auth_token_cache` record on each request. Login waits for
@@ -495,18 +549,20 @@ deduplication remains separate from authentication and permission decisions.
 ```
 1. Browser visits http://localhost:3000
 2. NextAuth detects no session → 302 to Keycloak (OIDC auth code flow)
-3. Keycloak → Duo SSO (kc_idp_hint=duo-sso auto-redirects, user never sees KC)
-4. Duo SSO login → auth code returned to Keycloak
+3. Keycloak optionally redirects to a configured upstream identity provider
+4. Upstream login completes through Keycloak
 5. Keycloak issues JWT → NextAuth exchanges code for tokens
-6. NextAuth stores small session metadata in the encrypted httpOnly cookie
-7. OAuth credentials are read from the shared encrypted auth_token_cache record in MongoDB on each request; standalone mode without MongoDB uses the UI server's in-process token cache
+6. The BFF persists encrypted credentials, expiry and version in MongoDB auth_sessions
+7. NextAuth issues an encrypted httpOnly cookie identifying that login
+8. Any BFF replica reads the same record; refresh is coordinated through a MongoDB lease
 ```
 
-**Security note:** The session cookie is httpOnly, Secure, SameSite=Lax, and encrypted with `NEXTAUTH_SECRET`. Large OAuth tokens are kept out of the browser cookie to avoid oversized request headers when Keycloak emits RBAC scopes, groups, or relationship-derived claims.
-
-- Multi-replica deployments require shared MongoDB and a common `NEXTAUTH_SECRET`. Sticky sessions are not needed for credential consistency.
-- In standalone mode, losing the in-process token cache on restart marks an existing slim session cookie `AccessTokenMissing`. The token-expiry guard sends the user through login instead of allowing tokenless backend proxy calls.
-- A shared-store read failure withholds credentials for that request and reports `SharedStoreUnavailable`. This transient error is not written into the cookie, so a later successful read can recover the same credential version. Actual refresh failures remain sticky until newer credentials are published.
+- There is no per-replica credential/session cache and no sticky-session requirement.
+- SSO requires MongoDB and a common `NEXTAUTH_SECRET`. Each login has its own record; the user subject and grants are unchanged.
+- Missing/revoked/expired sessions require sign-in. Store outages return retryable errors, without exposing a usable identity or clearing the cookie.
+- Logout durably revokes that login after CSRF validation. Fenced refresh writes cannot restore it.
+- Definitely retryable refresh rejections use a shared retry delay and may retain an unexpired token after rereading the session. Database outages and ambiguous provider failures do not use that fallback.
+- Existing cookies require a fresh login at coordinated cutover. See [browser sessions](../browser-sessions.md) for failure handling and rollout details.
 
 ### Server-Side Authorization (`api-middleware.ts`)
 
@@ -1315,7 +1371,7 @@ Legacy Keycloak realm roles may still appear in old local data, but they are not
 
 | Variable                                                      | Purpose                                                                                                                                                            | Security note                                                                                                                                                                                                                                    |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `OPENFGA_RECONCILE_ENABLED`                                   | Enables Team Resources → OpenFGA tuple reconciliation in the Web UI backend                                                                                        | Defaults to `false` so non-RBAC local UI runs do not require OpenFGA; enable only when the OpenFGA profile is healthy.                                                                                                                           |
+| `OPENFGA_RECONCILE_ENABLED` | Enables permission writes in the Web UI backend | Defaults to enabled when unset. False or an invalid nonempty value disables writes, not authorization checks. With OpenFGA configured, agent/default saves requiring permission updates fail closed. Storage-only callbacks remain available without `OPENFGA_HTTP`; this does not bypass route authentication or authorization. |
 | `OPENFGA_HTTP`                                                | Docker-internal OpenFGA HTTP API URL used by the Web UI backend tuple writer and Slack bot route resolver                                                          | Keep this on the private service network; do not point browser clients at OpenFGA.                                                                                                                                                               |
 | `OPENFGA_STORE_NAME` / `OPENFGA_STORE_ID`                     | Selects the OpenFGA store for tuple writes                                                                                                                         | Prefer `OPENFGA_STORE_ID` in locked-down deployments to avoid discovery ambiguity.                                                                                                                                                               |
 | `BOOTSTRAP_ADMIN_EMAILS` / `RBAC_BOOTSTRAP_ADMIN_EMAILS`      | Comma-separated initial admin emails consumed by the Web UI BFF bootstrap reconciler; `RBAC_BOOTSTRAP_ADMIN_EMAILS` overrides the legacy fallback env var when set  | Keep the list short. The BFF resolves emails to Keycloak `sub` values and writes durable OpenFGA tuples; do not hardcode user UUID tuples in Helm values for normal admin bootstrap.                                                             |

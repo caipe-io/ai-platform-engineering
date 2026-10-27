@@ -98,8 +98,8 @@ jest.mock("@/lib/mongodb", () => ({
   isMongoDBConfigured: true,
 }));
 
-jest.mock("@/lib/audit/reader", () => ({
-  getAuditReader: () => ({ query: (...args: unknown[]) => mockAuditQuery(...args) }),
+jest.mock("@/lib/audit", () => ({
+  getAuditClient: () => ({ queryPage: async (...args: unknown[]) => ({ records: await mockAuditQuery(...args) }) }),
 }));
 
 jest.mock("@/lib/config", () => ({
@@ -302,6 +302,18 @@ describe("Slack channel ReBAC APIs", () => {
     expect(mockAuditQuery).not.toHaveBeenCalled();
   });
 
+  it("keeps channel listing available and warns when advisory audit history is unavailable", async () => {
+    mockCollections.channel_team_mappings = createMockCollection([
+      { slack_workspace_id: workspaceId, slack_channel_id: channelId, channel_name: "example", active: true },
+    ]);
+    mockAuditQuery.mockRejectedValueOnce(new Error("Audit queries unavailable"));
+    const { GET } = await import("../route");
+    const response = await GET(request("/api/admin/slack/channels?health=1"));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.channels[0].health).toMatchObject({ warnings_count: 1, last_runtime_error_ts: null });
+  });
+
   it("adds bounded health summaries for the configured Slack channel list when requested", async () => {
     // assisted-by Codex Codex-sonnet-4-6
     mockCollections.channel_team_mappings = createMockCollection([
@@ -367,9 +379,9 @@ describe("Slack channel ReBAC APIs", () => {
       component: "slack_bot",
       outcome: "error",
       limit: 5000,
-      timeoutMs: 2000,
     });
-    expect(query.resourceRef).toBeUndefined();
+    expect(mockAuditQuery.mock.calls[0][1]).toEqual({ timeoutMs: 2000 });
+    expect(query.resource_ref).toBeUndefined();
     expect(until.getTime() - since.getTime()).toBe(24 * 60 * 60 * 1000);
   });
 
@@ -410,11 +422,11 @@ describe("Slack channel ReBAC APIs", () => {
         component: "slack_bot",
         outcome: "error",
         limit: 5000,
-        timeoutMs: 2000,
       }),
+      { timeoutMs: 2000 },
     );
     expect(mockAuditQuery.mock.calls[0][0]).toEqual(
-      expect.not.objectContaining({ resourceRef: expect.anything() }),
+      expect.not.objectContaining({ resource_ref: expect.anything() }),
     );
     const healthByChannel = Object.fromEntries(
       body.data.channels.map((channel: { channel_id: string; health: unknown }) => [

@@ -16,7 +16,7 @@
 
 import { createHash, randomUUID } from "crypto";
 
-import { getAuditBackend } from "@/lib/audit";
+import { getAuditClient } from "@/lib/audit";
 
 import type {
   Action,
@@ -27,6 +27,9 @@ import type {
   Subject,
   TrustedAuthorizeContext,
 } from "./contract";
+import type { GatewayCheck, GatewayRequest, GatewayResult } from "./gateway-contract";
+import { DELEGATION_POLICY, type DelegatedPermission, type DelegationApproval, type DelegationCheck,
+  type DelegationIdentity, type DelegationReason } from "./delegation-contract";
 
 const SUBJECT_SALT = process.env.AUDIT_SUBJECT_SALT ?? "caipe-098-audit";
 
@@ -53,10 +56,17 @@ export interface CasDecisionEvent {
   resource_id: string;
   workflow_run_id?: string;
   decision_via?: string;
-  pdp: "openfga";
+  pdp: "openfga" | "local";
   source: "cas";
   trace_id?: string;
   span_id?: string;
+  actor_ref?: string;
+  gateway_operation?: string;
+  agent_ref?: string;
+  failed_gate?: string;
+  decision_id?: string;
+  gateway_checks?: GatewayCheck[];
+  gateway_policy?: string;
 }
 
 /**
@@ -119,9 +129,18 @@ function hashSubject(id: string): string {
   return "sha256:" + createHash("sha256").update(`${SUBJECT_SALT}:${id}`).digest("hex");
 }
 
-function writeAuditEvent(event: Record<string, unknown>): void {
+/** CAS owns these event shapes; transport preserves them without reinterpretation. */
+export type CasAuditEvent = CasDecisionEvent | CasBatchDecisionEvent | CasListObjectsEvent | CasGrantEvent | CasReconcileEvent | CasAllowRollupEvent;
+
+type CasAllowRollupEvent = Omit<CasDecisionEvent, "decision_id" | "gateway_checks" | "gateway_policy"> & {
+  count: number;
+  window_start: Date;
+  window_end: Date;
+};
+
+function writeAuditEvent(event: CasAuditEvent): void {
   try {
-    getAuditBackend().write(event);
+    getAuditClient().append(event);
   } catch (err) {
     console.warn("[cas/audit] Failed to enqueue audit event:", err);
   }
@@ -199,6 +218,9 @@ function rollupKey(event: CasDecisionEvent): string {
     event.reason_code,
     event.decision_via ?? "",
     event.workflow_run_id ?? "",
+    event.actor_ref ?? "",
+    event.gateway_operation ?? "",
+    event.agent_ref ?? "",
   ]);
 }
 
@@ -208,8 +230,12 @@ export function flushAllowRollups(): void {
   const pending = Array.from(allowRollups.values());
   allowRollups.clear();
   for (const entry of pending) {
+    const sample = { ...entry.sample };
+    delete sample.decision_id; // A rollup is not one request's decision receipt.
+    delete sample.gateway_checks; // A sample chain cannot explain every aggregated check.
+    delete sample.gateway_policy;
     writeAuditEvent({
-      ...entry.sample,
+      ...sample,
       audit_event_id: randomUUID(),
       ts: entry.windowEnd,
       // This row summarizes `count` decisions, not one request, so there is no
@@ -218,7 +244,7 @@ export function flushAllowRollups(): void {
       count: entry.count,
       window_start: entry.windowStart,
       window_end: entry.windowEnd,
-    } as unknown as Record<string, unknown>);
+    });
   }
 }
 
@@ -250,7 +276,49 @@ export function emitDecisionAudit(
     recordAllow(event);
     return;
   }
-  writeAuditEvent(event as unknown as Record<string, unknown>);
+  writeAuditEvent(event);
+}
+
+/** One completed gateway decision, not one row per internal graph check. */
+export function emitGatewayDecisionAudit(req: GatewayRequest, result: GatewayResult, ctx: DecisionContext): void {
+  const resource: Resource = req.toolName ? { type: "tool", id: `${req.serverId}/${req.toolName}` } :
+    { type: "mcp_server", id: req.serverId };
+  const event: CasDecisionEvent = {
+    ...buildDecisionEvent(req.caller, resource, "call", result, ctx),
+    pdp: result.checks.some((check) => check.relation) ? "openfga" : "local",
+    actor_ref: "workload:agentgateway", gateway_operation: req.operation,
+    decision_id: result.decision_id, gateway_checks: result.checks, gateway_policy: result.policy_rule,
+    ...(result.failed_gate ? { failed_gate: result.failed_gate } : {}),
+    ...(result.agent_id ? { agent_ref: `agent:${result.agent_id}` } : {}),
+  };
+  if (event.outcome === "allow" && !fullFidelityAllows()) recordAllow(event);
+  else writeAuditEvent(event);
+}
+
+/** Delegated decisions retain individual receipts, including allows. Delivery
+ * remains best-effort; neither this ID nor a job label is signed provenance. */
+export function emitDelegationAudit(
+  operation: "create" | "revoke" | "check", identity: DelegationIdentity,
+  authority: DelegationApproval | undefined, id: string, reason: DelegationReason,
+  ctx: DecisionContext, checks: DelegationCheck[] = [], permission?: DelegatedPermission, decisionId = randomUUID(),
+): void {
+  const subject = authority?.effectiveSubject ?? identity.subject;
+  try {
+    getAuditClient().append({
+      audit_event_id: randomUUID(), ts: new Date(), type: operation === "check" ? "cas_decision" : "cas_delegation",
+      tenant_id: authority?.auditTenantId ?? ctx.tenantId ?? process.env.TENANT_ID ?? "default", component: "cas", source: "cas",
+      actor_ref: principalRef(identity.subject.type, identity.subject.id),
+      subject_ref: principalRef(subject.type, subject.id), subject_hash: hashSubject(subject.id),
+      action: permission?.action ?? operation, resource_ref: permission ? `${permission.resource.type}:${permission.resource.id}` : `delegation:${id}`,
+      outcome: operation === "check" ? reason === "OK" ? "allow" : "deny" : reason === "OK" ? "success" : "error",
+      reason_code: reason, correlation_id: ctx.correlationId ?? randomUUID(), decision_id: decisionId,
+      delegation_id: id, delegation_operation: operation, delegation_policy: DELEGATION_POLICY,
+      delegation_checks: checks, ...(authority ? { delegation: authority.approval, delegation_evidence: authority.evidence } : {}),
+      pdp: checks.some((item) => item.gate.endsWith("_permission")) ? "openfga" : "local",
+    });
+  } catch (error) {
+    console.warn("[cas/audit] Could not enqueue delegation evidence", { name: error instanceof Error ? error.name : "UnknownError" });
+  }
 }
 
 export function buildBatchDecisionEvent(
@@ -313,7 +381,7 @@ export function emitBatchDecisionAudit(
 ): void {
   if (results.size === 0) return;
   const event = buildBatchDecisionEvent(subject, action, resourceType, results, ctx);
-  writeAuditEvent(event as unknown as Record<string, unknown>);
+  writeAuditEvent(event);
 }
 
 /**
@@ -416,7 +484,7 @@ export function emitListObjectsDecisionAudit(
 ): void {
   if (candidateIds.length === 0) return;
   const event = buildListObjectsDecisionEvent(subject, action, resourceType, candidateIds, accessibleIds, reason, ctx);
-  writeAuditEvent(event as unknown as Record<string, unknown>);
+  writeAuditEvent(event);
 }
 
 export type GrantOperation = "grant" | "revoke";
@@ -610,7 +678,7 @@ export function emitReconcileAudit(
     ...(ctx.spanId ? { span_id: ctx.spanId } : {}),
   };
 
-  writeAuditEvent(event as unknown as Record<string, unknown>);
+  writeAuditEvent(event);
 }
 
 /** One audit event per grant/revoke attempt through audit-service. */
@@ -623,5 +691,5 @@ export async function emitGrantAudit(
   if (!ctx.caller) return;
 
   const event = buildGrantEvent(operation, intent, ctx, options);
-  writeAuditEvent(event as unknown as Record<string, unknown>);
+  writeAuditEvent(event);
 }

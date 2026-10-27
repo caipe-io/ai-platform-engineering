@@ -13,8 +13,8 @@ import sys
 import urllib.error
 from pathlib import Path
 
-import yaml
 import pytest
+import yaml
 
 
 BRIDGE_PATH = Path(__file__).resolve().parents[1] / "config_bridge.py"
@@ -70,6 +70,63 @@ def _baseline_config() -> dict:
             "logging": {"level": "debug", "format": "json"},
         },
     }
+
+
+def test_cas_off_leaves_existing_policy_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CAIPE_GATEWAY_CAS_ENABLED", raising=False)
+    config = _baseline_config()
+    original = copy.deepcopy(config)
+    bridge.configure_gateway_cas(config)
+    assert config == original
+
+
+def test_cas_covers_all_mcp_routes_and_preserves_provider_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CAIPE_GATEWAY_CAS_ENABLED", "true")
+    monkeypatch.setenv("CAIPE_GATEWAY_CAS_HOST", "test-caipe-ui:3000")
+    config = copy.deepcopy(_baseline_config())
+    routes = config["binds"][0]["listeners"][0]["routes"]
+    dynamic = copy.deepcopy(routes[0])
+    dynamic["matches"][0]["path"]["pathPrefix"] = "/mcp/example"
+    dynamic["policies"]["transformations"] = {"request": {"set": {"authorization": "provider-token-expression"}}}
+    other = {"matches": [{"path": {"pathPrefix": "/health"}}], "policies": {"test": True}}
+    routes.extend([dynamic, other])
+    bridge.configure_gateway_cas(config)
+    for route in routes[:2]:
+        policy = route["policies"]["extAuthz"]
+        assert policy["backend"] == "/caipe-cas"
+        assert policy["failureMode"] == {"denyWithStatus": 503}
+        assert policy["includeRequestBody"]["allowPartialMessage"] is False
+        assert policy["protocol"]["http"]["addRequestHeaders"]["x-caipe-caller-sub"] == "jwt.sub"
+        assert "authorization" not in policy["protocol"]["http"]["addRequestHeaders"]
+    assert dynamic["policies"]["transformations"]["request"]["set"]["authorization"] == "provider-token-expression"
+    assert other["policies"] == {"test": True}
+    assert config["backends"][0]["policies"] == {
+        "backendAuth": {"key": {"file": "/etc/caipe-gateway-auth/token"}},
+        "http": {"requestTimeout": "6s"},
+    }
+    # A config discovery round trip must restore the file reference, not persist
+    # the gateway's redacted key as a credential or duplicate the backend.
+    config["backends"][0]["policies"]["backendAuth"]["key"] = "<redacted>"
+    bridge.configure_gateway_cas(config)
+    assert len(config["backends"]) == 1
+    assert config["backends"][0]["policies"]["backendAuth"]["key"] == {"file": "/etc/caipe-gateway-auth/token"}
+
+
+@pytest.mark.parametrize("mode", ["optional", None])
+def test_cas_requires_strict_jwt(monkeypatch: pytest.MonkeyPatch, mode: str | None) -> None:
+    monkeypatch.setenv("CAIPE_GATEWAY_CAS_ENABLED", "true")
+    config = copy.deepcopy(_baseline_config())
+    config["binds"][0]["listeners"][0]["policies"]["jwtAuth"]["mode"] = mode
+    with pytest.raises(ValueError, match="strict JWT"):
+        bridge.configure_gateway_cas(config)
+
+
+@pytest.mark.parametrize("host", ["https://public.example.test", "primary:3000/path", "primary:3000@secondary"])
+def test_cas_rejects_invalid_internal_authority(monkeypatch: pytest.MonkeyPatch, host: str) -> None:
+    monkeypatch.setenv("CAIPE_GATEWAY_CAS_ENABLED", "true")
+    monkeypatch.setenv("CAIPE_GATEWAY_CAS_HOST", host)
+    with pytest.raises(ValueError, match="internal host:port"):
+        bridge.configure_gateway_cas(copy.deepcopy(_baseline_config()))
 
 
 def test_select_gateway_targets_uses_enabled_network_rows() -> None:

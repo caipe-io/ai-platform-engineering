@@ -2,6 +2,8 @@
  * TypeScript types for Dynamic Agents feature.
  */
 
+import type { PermissionSyncStatus } from "@/lib/authz/permission-sync-contract";
+
 // =============================================================================
 // Enums
 // =============================================================================
@@ -435,6 +437,7 @@ export interface AgentPresentation {
 }
 
 export interface DynamicAgentConfig {
+  permission_sync?: PermissionSyncStatus;
   /** Deployment-owned, opt-in model-input projection. Not a permission grant. */
   app_context_prompt?: { app_ids: string[]; fields: string[]; max_bytes?: number };
   _id: string;

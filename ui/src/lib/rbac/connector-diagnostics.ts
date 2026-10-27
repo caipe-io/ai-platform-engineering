@@ -1,4 +1,4 @@
-import { getAuditReader } from "@/lib/audit/reader";
+import { getAuditClient } from "@/lib/audit";
 import {
   missingRouteMetadataMessage,
   noTuplesMessage,
@@ -142,19 +142,19 @@ async function latestRuntimeError(
   try {
     const until = new Date();
     const since = new Date(until.getTime() - RUNTIME_ERROR_LOOKBACK_MS);
-    const rows = await getAuditReader().query({
+    const { records: rows } = await getAuditClient().queryPage({
       since,
       until,
       component: adapter.auditComponent,
       outcome: "error",
-      resourceRef,
+      resource_ref: resourceRef,
       limit: 1,
-      timeoutMs: RUNTIME_ERROR_QUERY_TIMEOUT_MS,
-    });
+    }, { timeoutMs: RUNTIME_ERROR_QUERY_TIMEOUT_MS });
     const event = rows[0] as Record<string, unknown> | undefined;
     if (!event) return null;
     return runtimeErrorFromEvent(event);
-  } catch {
+  } catch (error) {
+    console.warn(`[connector-audit] Runtime history unavailable for ${resourceRef}`, error);
     return null;
   }
 }
@@ -180,14 +180,13 @@ async function latestRuntimeErrors(
   try {
     const until = new Date();
     const since = new Date(until.getTime() - RUNTIME_ERROR_LOOKBACK_MS);
-    const rows = await getAuditReader().query({
+    const { records: rows } = await getAuditClient().queryPage({
       since,
       until,
       component: adapter.auditComponent,
       outcome: "error",
       limit: RUNTIME_ERROR_BATCH_LIMIT,
-      timeoutMs: RUNTIME_ERROR_QUERY_TIMEOUT_MS,
-    });
+    }, { timeoutMs: RUNTIME_ERROR_QUERY_TIMEOUT_MS });
     for (const event of rows) {
       const resourceRef = event.resource_ref;
       if (typeof resourceRef !== "string") continue;
@@ -195,7 +194,8 @@ async function latestRuntimeErrors(
       if (!targetKey || errorsByTarget.has(targetKey)) continue;
       errorsByTarget.set(targetKey, runtimeErrorFromEvent(event));
     }
-  } catch {
+  } catch (error) {
+    console.warn(`[connector-audit] Runtime history unavailable for ${adapter.auditComponent}`, error);
     return errorsByTarget;
   }
   return errorsByTarget;

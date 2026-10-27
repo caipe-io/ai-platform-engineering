@@ -15,6 +15,17 @@ discover/sync flow already consumes.
 */ -}}
 {{- $agw := .Values.global.agentgateway | default dict }}
 {{- $routingMode := ($agw.routingMode | default "static") }}
+{{- $cas := $agw.cas | default dict }}
+{{- if $cas.enabled }}
+{{- if or (not $agw.enabled) (ne $routingMode "static") }}
+{{- fail "Gateway CAS requires enabled AgentGateway with static routing" }}
+{{- end }}
+{{- if not (($agw.static).jwtAuth).enabled }}
+{{- fail "Gateway CAS requires strict static.jwtAuth" }}
+{{- end }}
+{{- $_ := required "Gateway CAS requires cas.existingSecret.name" ($cas.existingSecret).name }}
+{{- $_ := required "Gateway CAS requires cas.contextSecret.name" ($cas.contextSecret).name }}
+{{- end }}
 {{- if and $agw.enabled (eq $routingMode "static") }}
 {{- $sub := .Values.agentgateway | default dict }}
 {{- $svc := $sub.service | default dict }}
@@ -58,9 +69,29 @@ data:
               - matches:
                   - path:
                       pathPrefix: {{ $t.pathPrefix | quote }}
-                {{- if or $extAuth.enabled $t.providerTokenAuth }}
+                {{- if or $cas.enabled $extAuth.enabled $t.providerTokenAuth }}
                 policies:
-                  {{- if $extAuth.enabled }}
+                  {{- if $cas.enabled }}
+                  extAuthz:
+                    backend: /caipe-cas
+                    failureMode:
+                      denyWithStatus: 503
+                    includeRequestHeaders: [content-type, x-caipe-agent-context, x-caipe-agent-context-signature]
+                    includeRequestBody:
+                      maxRequestBytes: 65536
+                      allowPartialMessage: false
+                      packAsBytes: true
+                    protocol:
+                      http:
+                        path: '"/api/access/gateway/check"'
+                        addRequestHeaders:
+                          x-caipe-caller-sub: jwt.sub
+                          x-caipe-caller-username: 'default(jwt.preferred_username, "")'
+                          x-caipe-mcp-path: request.path
+                  authorization:
+                    rules:
+                      - allow: 'true'
+                  {{- else if $extAuth.enabled }}
                   extAuthz:
                     host: {{ $extAuthHost | quote }}
                     failureMode:
@@ -109,6 +140,17 @@ data:
                           {{- end }}
             {{- end }}
             {{- end }}
+    {{- if $cas.enabled }}
+    backends:
+      - name: caipe-cas
+        host: {{ $cas.host | default (printf "%s-caipe-ui:3000" .Release.Name) | quote }}
+        policies:
+          backendAuth:
+            key:
+              file: /etc/caipe-gateway-auth/token
+          http:
+            requestTimeout: 6s
+    {{- end }}
     config:
       adminAddr: {{ printf "0.0.0.0:%v" $adminPort | quote }}
       {{- if $explicitBindAddrs }}

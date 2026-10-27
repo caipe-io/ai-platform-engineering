@@ -19,6 +19,7 @@ import httpx
 from langchain_core.tools import BaseTool, StructuredTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+from dynamic_agents.auth.authz import _subject_from_token
 from dynamic_agents.auth.token_context import current_user_token
 from dynamic_agents.config import get_settings
 from dynamic_agents.models import MCPServerConfig, TransportType
@@ -141,15 +142,17 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
 
-def build_agent_context_headers(agent_id: str, *, now: int | None = None) -> dict[str, str]:
+def build_agent_context_headers(agent_id: str, *, token: str | None = None, now: int | None = None) -> dict[str, str]:
     """Build signed AgentGateway context headers for per-agent tool policy.
 
-    The bridge only trusts this context when both Dynamic Agents and the bridge
-    share ``CAIPE_AGENT_CONTEXT_HMAC_SECRET``. Without that secret we omit the
-    headers and the gateway falls back to coarse user-level authorization.
+    The CAS cutover binds the caller and audience and fails closed without its
+    signing key. Flag-off deployments retain the existing bridge wire format.
+    The gateway still verifies the JWT; decoding it here only binds context.
     """
     secret = os.getenv("CAIPE_AGENT_CONTEXT_HMAC_SECRET", "").strip()
     if not secret:
+        if os.getenv("CAIPE_GATEWAY_CAS_ENABLED") == "true":
+            raise McpCredentialUnavailableError("Gateway execution-context signing is not configured")
         return {}
     issued_at = int(now if now is not None else time.time())
     payload = {
@@ -157,6 +160,14 @@ def build_agent_context_headers(agent_id: str, *, now: int | None = None) -> dic
         "iat": issued_at,
         "exp": issued_at + 300,
     }
+    if os.getenv("CAIPE_GATEWAY_CAS_ENABLED") == "true":
+        subject = _subject_from_token(token or current_user_token.get() or "")
+        identifier = r"[A-Za-z0-9][A-Za-z0-9_.~-]{0,191}"
+        if (len(secret) < 32 or not subject or not re.fullmatch(identifier, subject[1])
+                or not re.fullmatch(identifier, agent_id)):
+            raise McpCredentialUnavailableError("A valid gateway caller and execution-context key are required")
+        payload.update({"version": 1, "audience": "caipe-gateway", "kind": "dynamic",
+                        "caller": {"type": subject[0], "id": subject[1]}})
     encoded = _b64url(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode())
     signature = hmac.new(secret.encode(), encoded.encode(), hashlib.sha256).hexdigest()
     return {
@@ -174,9 +185,8 @@ def warn_if_agent_gateway_missing_hmac() -> None:
         return
     logger.warning(
         "AGENT_GATEWAY_URL is set (%s) but CAIPE_AGENT_CONTEXT_HMAC_SECRET is unset; "
-        "AgentGateway will enforce only coarse mcp_gateway:list checks and per-agent "
-        "tool calls may 403. Set the same shared secret on dynamic-agents and "
-        "openfga-authz-bridge.",
+        "Gateway tool calls require a shared execution-context signing key. "
+        "Configure it on Dynamic Agents and the authorization decision owner.",
         gateway_url,
     )
 
@@ -223,7 +233,8 @@ def build_httpx_client_factory(agent_id: str | None = None) -> Callable[..., htt
         has_authorization = any(key.lower() == "authorization" for key in merged)
         if token and not has_authorization:
             merged["Authorization"] = f"Bearer {token}"
-        if agent_id:
+        cas_enabled = os.getenv("CAIPE_GATEWAY_CAS_ENABLED") == "true"
+        if agent_id and not cas_enabled:
             for key in list(merged):
                 if key.lower() in (
                     "x-caipe-agent-context",
@@ -231,11 +242,23 @@ def build_httpx_client_factory(agent_id: str | None = None) -> Callable[..., htt
                 ):
                     del merged[key]
             merged.update(build_agent_context_headers(agent_id))
+        async def refresh_gateway_context(request: httpx.Request) -> None:
+            if not agent_id or not _is_agentgateway_endpoint(str(request.url), _agent_gateway_base_url()):
+                return
+            # Refresh on every HTTP request, including a reused MCP connection.
+            active_token = current_user_token.get()
+            if active_token:
+                request.headers["Authorization"] = f"Bearer {active_token}"
+            bearer = request.headers.get("authorization", "")
+            for name in ("x-caipe-agent-context", "x-caipe-agent-context-signature"):
+                request.headers.pop(name, None)
+            request.headers.update(build_agent_context_headers(agent_id, token=bearer.removeprefix("Bearer ")))
         return httpx.AsyncClient(
             headers=merged,
             timeout=timeout or httpx.Timeout(30.0),
             auth=auth,
             verify=verify,
+            event_hooks={"request": [refresh_gateway_context]} if cas_enabled else None,
         )
 
     return _factory

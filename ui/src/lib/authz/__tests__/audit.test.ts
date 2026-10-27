@@ -3,10 +3,10 @@
  */
 
 const mockWrite = jest.fn();
-const mockGetAuditBackend = jest.fn(() => ({ write: mockWrite }));
+const mockGetAuditClient = jest.fn(() => ({ append: mockWrite }));
 
 jest.mock("@/lib/audit", () => ({
-  getAuditBackend: () => mockGetAuditBackend(),
+  getAuditClient: () => mockGetAuditClient(),
 }));
 
 import {
@@ -16,11 +16,13 @@ import {
   buildListObjectsDecisionEvent,
   emitBatchDecisionAudit,
   emitDecisionAudit,
+  emitDelegationAudit,
   emitGrantAudit,
   emitListObjectsDecisionAudit,
   emitReconcileAudit,
   flushAllowRollups,
 } from "../audit";
+import { storedApproval } from "../delegation-authority";
 
 const subject = { type: "user" as const, id: "alice" };
 const resource = { type: "agent" as const, id: "platform-engineer" };
@@ -33,7 +35,7 @@ beforeEach(() => {
   // pending counts never leak into the next assertion.
   flushAllowRollups();
   jest.clearAllMocks();
-  mockGetAuditBackend.mockReturnValue({ write: mockWrite });
+  mockGetAuditClient.mockReturnValue({ append: mockWrite });
   delete process.env.AUDIT_FULL_FIDELITY_ALLOWS;
 });
 
@@ -101,7 +103,7 @@ describe("emitDecisionAudit", () => {
   });
 
   it("swallows backend lookup failures (never throws into the decision path)", () => {
-    mockGetAuditBackend.mockImplementationOnce(() => {
+    mockGetAuditClient.mockImplementationOnce(() => {
       throw new Error("audit-service down");
     });
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
@@ -172,6 +174,49 @@ const grantIntent = {
   capability: "use" as const,
 };
 const caller = { type: "user" as const, id: "alice" };
+
+it("keeps each delegated allow receipt and both identities even when normal allows are rolled up", () => {
+  const identity = { issuer: "https://identity.example.test", subject: { type: "service_account" as const, id: "test-service" }, clientId: "example-service", expiresAt: 10 ** 10 };
+  const approval = { _id: "approval-1", issuer: identity.issuer, user_id: "test-user", service: { id: "test-service", client_id: "example-service" },
+    scope: [{ resource: { type: "agent" as const, id: "example" }, action: "use" as const }], job_id: "test-job",
+    expires_at: "2026-10-25T12:00:00Z", created_at: "2026-10-21T12:00:00Z", revoked_at: null, version: 1 };
+  for (const decisionId of ["decision-1", "decision-2"]) {
+    emitDelegationAudit("check", identity, { effectiveSubject: { type: "user", id: "test-user" },
+      evidence: { kind: "cas_approval", reference: approval._id },
+      approval: { issuer: approval.issuer, service: approval.service, scope: approval.scope,
+      job_id: approval.job_id, expires_at: approval.expires_at, created_at: approval.created_at,
+      revoked_at: approval.revoked_at, version: approval.version, user_ref: "user:test-user", service_ref: "service_account:test-service" } },
+    approval._id, "OK", { correlationId: "request-1" }, [], approval.scope[0], decisionId);
+  }
+  flushAllowRollups();
+  expect(mockWrite).toHaveBeenCalledTimes(2);
+  expect(mockWrite.mock.calls[0][0]).toMatchObject({ type: "cas_decision", actor_ref: "service_account:test-service", subject_ref: "user:test-user",
+    delegation_id: "approval-1", decision_id: "decision-1", delegation_policy: "cas-delegation/v1", delegation: { version: 1, job_id: "test-job" },
+    delegation_evidence: { kind: "cas_approval", reference: "approval-1" } });
+  expect(mockWrite.mock.calls[0][0]).not.toHaveProperty("count");
+  expect(JSON.stringify(mockWrite.mock.calls)).not.toContain("Bearer");
+});
+
+it.each(["create", "revoke", "check"] as const)("keeps %s audit attribution bound to the approval after logout", (operation) => {
+  const identity = { issuer: "https://identity.example.test", subject: { type: "service_account" as const, id: "test-service" },
+    clientId: "example-service", expiresAt: 10 ** 10 };
+  const authority = storedApproval({ _id: "approval-1", issuer: identity.issuer, user_id: "test-user", tenant_id: "primary",
+    service: { id: "test-service", client_id: "example-service" }, job_id: "test-job", scope: [], version: 1,
+    created_at: new Date().toISOString(), expires_at: new Date().toISOString(), revoked_at: null });
+  emitDelegationAudit(operation, identity, authority, "approval-1", "OK", { tenantId: "secondary" });
+  expect(mockWrite.mock.calls[0][0]).toMatchObject({ tenant_id: "primary", actor_ref: "service_account:test-service",
+    subject_ref: "user:test-user", delegation_id: "approval-1" });
+  // The stored audit tenant is internal attribution, not an added public job claim.
+  expect(authority.approval).not.toHaveProperty("tenant_id");
+});
+
+it("attributes unbound delegation attempts to trusted request context, never another approval's tenant", () => {
+  const identity = { issuer: "https://identity.example.test", subject: { type: "service_account" as const, id: "test-service" },
+    clientId: "example-service", expiresAt: 10 ** 10 };
+  emitDelegationAudit("check", identity, undefined, "approval-1", "DELEGATION_BINDING_MISMATCH", { tenantId: "primary" });
+  expect(mockWrite.mock.calls[0][0]).toMatchObject({ tenant_id: "primary", subject_ref: "service_account:test-service" });
+  expect(mockWrite.mock.calls[0][0]).not.toHaveProperty("delegation");
+});
 
 describe("buildGrantEvent — policy-change audit conformance", () => {
   it("records caller, grantee, resource, capability, operation, outcome, and context", () => {
@@ -258,7 +303,7 @@ describe("emitGrantAudit", () => {
   });
 
   it("swallows backend lookup failures (never throws into the grant path)", async () => {
-    mockGetAuditBackend.mockImplementationOnce(() => {
+    mockGetAuditClient.mockImplementationOnce(() => {
       throw new Error("audit-service down");
     });
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});

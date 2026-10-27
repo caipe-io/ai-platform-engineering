@@ -1,5 +1,5 @@
 import { redactCredentialDetails } from "./masking";
-import { getAuditBackend } from "@/lib/audit";
+import { getAuditClient } from "@/lib/audit";
 import { createHash, randomUUID } from "crypto";
 
 export type CredentialAuditResult = "denied" | "failure" | "success";
@@ -33,7 +33,7 @@ export function writeCredentialAuditEvent(
   input: CredentialAuditEventInput,
 ): void {
   const outcome = input.result === "denied" ? "deny" : input.result === "failure" ? "error" : "success";
-  getAuditBackend().write({
+  getAuditClient().append({
     audit_event_id: randomUUID(),
     type: "credential_action",
     ts: new Date().toISOString(),

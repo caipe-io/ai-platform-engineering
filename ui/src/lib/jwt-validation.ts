@@ -8,11 +8,17 @@
  * (e.g. Slack bot using a separate OIDC app for client credentials):
  *   OIDC_ADDITIONAL_JWKS — comma-separated JWKS URLs
  *
- * In dev mode (OIDC_ISSUER not set), validation is bypassed and a
- * fallback identity is returned.
+ * Bearer validation requires OIDC_ISSUER. Any anonymous/local-session policy
+ * belongs to the caller, not to this JWT verifier.
  */
 
 import { createRemoteJWKSet,decodeProtectedHeader,errors as joseErrors,jwtVerify,SignJWT,type JWTPayload } from 'jose';
+
+import {
+  PLATFORM_ACCESS_AUDIENCE,
+  PLATFORM_PRINCIPAL_TYPE_CLAIM,
+  type PlatformIdentity,
+} from './auth/platform-identity';
 
 import {
 getSafeNextAuthSecret,
@@ -95,7 +101,7 @@ function jwtDebugLog(message: string): void {
  * `jwks_uri`, so the failure mode was a misleading
  * "OIDC discovery response missing jwks_uri" 500 instead of a 404.
  */
-async function getJWKS(): Promise<ReturnType<typeof createRemoteJWKSet>> {
+async function getJWKS(signal?: AbortSignal): Promise<ReturnType<typeof createRemoteJWKSet>> {
   const issuer = process.env.OIDC_ISSUER!;
   const rawDiscovery =
     process.env.OIDC_DISCOVERY_URL ||
@@ -109,7 +115,7 @@ async function getJWKS(): Promise<ReturnType<typeof createRemoteJWKSet>> {
     return _cachedJWKS;
   }
 
-  const res = await fetch(discoveryUrl, { next: { revalidate: 3600 } });
+  const res = await fetch(discoveryUrl, { next: { revalidate: 3600 }, ...(signal ? { signal } : {}) });
   if (!res.ok) {
     throw new Error(`OIDC discovery failed: ${res.status} ${res.statusText}`);
   }
@@ -122,6 +128,42 @@ async function getJWKS(): Promise<ReturnType<typeof createRemoteJWKSet>> {
   _cachedJWKS = createRemoteJWKSet(new URL(jwksUri));
   _cachedJWKSUri = discoveryUrl;
   return _cachedJWKS;
+}
+
+// Issuance is descriptive, unlike exp/nbf validity bounds. Allow a small issuer
+// clock lead without extending token expiry or accepting a future not-before.
+const PLATFORM_IAT_SKEW_SECONDS = 30;
+
+/**
+ * Strict profile for new delegated Access APIs. Legacy bearer callers retain
+ * their existing contract in validateBearerJWT; this grants no delegation.
+ * Only the configured primary issuer may establish platform subject IDs.
+ */
+export async function validatePlatformBearerJWT(token: string): Promise<PlatformIdentity> {
+  const issuer = process.env.OIDC_ISSUER?.trim();
+  if (!issuer) throw new Error('OIDC_ISSUER is required for platform identity');
+  const { payload } = await jwtVerify(token, await getJWKS(AbortSignal.timeout(5000)), {
+    issuer,
+    audience: PLATFORM_ACCESS_AUDIENCE,
+    algorithms: ['RS256', 'ES256'],
+    requiredClaims: ['iss', 'sub', 'aud', 'exp', 'iat', 'azp', 'typ', PLATFORM_PRINCIPAL_TYPE_CLAIM],
+  });
+  const invalid = (claim: string): never => {
+    throw new joseErrors.JWTClaimValidationFailed('Invalid platform identity claim', payload, claim, 'invalid');
+  };
+  const type = payload[PLATFORM_PRINCIPAL_TYPE_CLAIM];
+  if (type !== 'user' && type !== 'service_account') return invalid(PLATFORM_PRINCIPAL_TYPE_CLAIM);
+  if (payload.typ !== 'Bearer') return invalid('typ');
+  const sub = payload.sub;
+  // Subject IDs are opaque: do not substitute email, username or client ID.
+  if (typeof sub !== 'string' || sub.length > 256 || !/^[A-Za-z0-9._%+\-@]+$/.test(sub)) return invalid('sub');
+  const clientId = payload.azp;
+  if (typeof clientId !== 'string' || !clientId || clientId !== clientId.trim() || clientId.length > 256) return invalid('azp');
+  if (typeof payload.iat !== 'number' || !Number.isFinite(payload.iat) || payload.iat > Date.now() / 1000 + PLATFORM_IAT_SKEW_SECONDS ||
+      typeof payload.exp !== 'number' || !Number.isFinite(payload.exp) || payload.exp <= payload.iat) return invalid('iat');
+  // An actor-bearing token needs a reviewed delegation validator; never flatten it.
+  if (payload.act !== undefined) return invalid('act');
+  return { issuer, subject: { type, id: sub }, clientId, expiresAt: payload.exp };
 }
 
 /**

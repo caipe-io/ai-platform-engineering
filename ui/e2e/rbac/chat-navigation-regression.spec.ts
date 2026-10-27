@@ -207,7 +207,7 @@ test.describe("mocked RBAC e2e — chat navigation regression", () => {
     expect(createCallCount).toBe(0);
   });
 
-  test("creates exactly one conversation when the server list is empty", async ({ page }) => {
+  test("creates exactly one conversation when the server list is empty", { tag: "@sanity" }, async ({ page }) => {
     let createCallCount = 0;
 
     await page.addInitScript(() => {

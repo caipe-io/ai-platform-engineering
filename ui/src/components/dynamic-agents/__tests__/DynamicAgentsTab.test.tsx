@@ -136,6 +136,28 @@ describe("DynamicAgentsTab search + pagination", () => {
     });
   });
 
+  it("keeps pending-status polling on schedule across unrelated parent rerenders", async () => {
+    const pending = { id: "example-operation", state: "pending" as const, requested_at: "2026-01-01" };
+    let applied = false;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === "/api/access/operations/example-operation") {
+        applied = true;
+        return { ok: true, json: async () => ({ data: { ...pending, state: "applied" } }) } as Response;
+      }
+      return jsonResponse({ success: true, data: { items: [makeAgent({
+        permission_sync: { ...pending, state: applied ? "applied" : "pending" },
+      })], total: 1 } });
+    });
+    const { rerender } = render(<DynamicAgentsTab />);
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByText(/Previous access may still work/)).toBeInTheDocument();
+    await act(async () => { await jest.advanceTimersByTimeAsync(4000); });
+    rerender(<DynamicAgentsTab onSelectedAgentNameChange={() => {}} />);
+    await act(async () => { await jest.advanceTimersByTimeAsync(1000); });
+    expect(fetchMock).toHaveBeenCalledWith("/api/access/operations/example-operation", expect.objectContaining({ cache: "no-store" }));
+    expect(screen.queryByText(/Previous access may still work/)).not.toBeInTheDocument();
+  });
+
   it("starts a chat with the selected row's agent", async () => {
     render(<DynamicAgentsTab />);
 

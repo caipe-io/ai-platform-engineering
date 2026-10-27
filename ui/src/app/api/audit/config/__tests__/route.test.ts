@@ -37,10 +37,10 @@ describe("GET /api/audit/config", () => {
       backend: "service",
       readsAvailable: true,
       storageBackend: "s3",
-      storageLabel: "Storage: audit-service -> S3",
+      storageLabel: "Queries: MongoDB · Archive: S3",
     });
     expect(global.fetch).toHaveBeenCalledWith(
-      "http://audit-service:8010/v1/audit/status",
+      "http://audit-service:8010/readyz",
       expect.objectContaining({ cache: "no-store" }),
     );
   });
@@ -60,7 +60,7 @@ describe("GET /api/audit/config", () => {
     expect(body).toMatchObject({
       readsAvailable: true,
       storageBackend: "local",
-      storageLabel: "Storage: audit-service -> local disk",
+      storageLabel: "Queries: MongoDB · Archive: local disk",
     });
   });
 

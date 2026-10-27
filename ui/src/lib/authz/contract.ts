@@ -1,8 +1,9 @@
 // assisted-by Codex Codex-sonnet-4-6
 
 import type { UniversalRebacResourceAction, UniversalRebacResourceType } from "@/types/rbac-universal";
+import type { PlatformPrincipal } from "@/lib/auth/platform-identity";
 
-export type SubjectType = "user" | "service_account";
+export type SubjectType = PlatformPrincipal["type"];
 
 export type ResourceType = UniversalRebacResourceType;
 
@@ -17,10 +18,7 @@ export type ReasonCode =
   | "AUTHZ_UNAVAILABLE"// PDP error, retriable
   | "INVALID_REQUEST"; // bad id or malformed input
 
-export interface Subject {
-  type: SubjectType;
-  id: string;
-}
+export type Subject = PlatformPrincipal;
 
 export interface Resource {
   type: ResourceType;

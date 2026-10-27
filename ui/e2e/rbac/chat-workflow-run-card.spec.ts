@@ -72,11 +72,13 @@ test.describe("mocked RBAC e2e — chat workflow run card", () => {
     const env = minimalSessionEnv();
     const now = new Date().toISOString();
     const workflowConfig = buildDefaultWorkflowCatalog().find((w) => w._id === "wf-global-mcp");
+    let conversationListRequests = 0;
 
     await installChatBootMocks(page, env, {
       conversationId: CHAT_WORKFLOW_CONV_ID,
       ownerEmail: env.user.email,
       agentId: CHAT_AGENT_ID,
+      onConversationListRequest: () => { conversationListRequests += 1; },
     });
 
     await page.route("**/api/chat/conversations**", async (route) => {
@@ -166,7 +168,8 @@ test.describe("mocked RBAC e2e — chat workflow run card", () => {
         return;
       }
 
-      await route.continue();
+      // Keep unhandled requests inside the shared chat boot mocks.
+      await route.fallback();
     });
 
     await page.route("**/api/dynamic-agents/**", async (route) => {
@@ -198,7 +201,7 @@ test.describe("mocked RBAC e2e — chat workflow run card", () => {
         });
         return;
       }
-      await route.continue();
+      await route.fallback();
     });
 
     await page.route("**/api/workflow-runs**", async (route) => {
@@ -211,7 +214,7 @@ test.describe("mocked RBAC e2e — chat workflow run card", () => {
         });
         return;
       }
-      await route.continue();
+      await route.fallback();
     });
 
     await page.route("**/api/workflow-configs**", async (route) => {
@@ -224,7 +227,7 @@ test.describe("mocked RBAC e2e — chat workflow run card", () => {
         });
         return;
       }
-      await route.continue();
+      await route.fallback();
     });
 
     await installTestSession(page, env, {
@@ -235,6 +238,7 @@ test.describe("mocked RBAC e2e — chat workflow run card", () => {
 
     await page.goto(`/chat/${CHAT_WORKFLOW_CONV_ID}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
+    await expect.poll(() => conversationListRequests).toBeGreaterThan(0);
     await expectChatComposerReady(page);
 
     await expect(page.getByText("Global SRE workflow", { exact: true })).toBeVisible();

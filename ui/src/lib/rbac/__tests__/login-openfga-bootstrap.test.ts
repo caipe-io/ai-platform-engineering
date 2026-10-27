@@ -139,7 +139,7 @@ describe("login OpenFGA bootstrap", () => {
     });
   });
 
-  it("repairs the all-users OpenFGA grant for the configured default dynamic agent on login", async () => {
+  it("does not race durable default-agent permission recovery during login", async () => {
     mockGetCollection.mockImplementation(async (name: string) => {
       if (name === "platform_config") {
         return { findOne: jest.fn().mockResolvedValue({ default_agent_id: "agent-default" }) };
@@ -157,11 +157,12 @@ describe("login OpenFGA bootstrap", () => {
 
     expect(result.status).toBe("completed");
     expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
-      writes: expect.arrayContaining([
+      writes: expect.not.arrayContaining([
         { user: "user:*", relation: "user", object: "agent:agent-default" },
       ]),
       deletes: [],
     });
+    expect(mockGetCollection).not.toHaveBeenCalledWith("platform_config");
   });
 
   it("applies team profile overrides instead of the global member baseline on login", async () => {

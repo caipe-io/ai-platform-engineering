@@ -1,5 +1,6 @@
 // assisted-by Codex Codex-sonnet-4-6
 import { randomBytes } from "crypto";
+import { PLATFORM_ACCESS_AUDIENCE, PLATFORM_PRINCIPAL_TYPE_CLAIM } from "@/lib/auth/platform-identity";
 
 export interface KeycloakRole {
   id: string;
@@ -1936,6 +1937,27 @@ export async function createServiceAccountClient(name: string): Promise<ServiceA
       serviceAccountsEnabled: true,
       authorizationServicesEnabled: false,
       protocol: "openid-connect",
+      // This client is client-credentials-only: its signed type is unambiguous.
+      // The extra audience permits authentication, not access to any resource.
+      protocolMappers: [
+        {
+          name: "platform-principal-type", protocol: "openid-connect",
+          protocolMapper: "oidc-hardcoded-claim-mapper",
+          config: {
+            "claim.name": PLATFORM_PRINCIPAL_TYPE_CLAIM, "claim.value": "service_account",
+            "jsonType.label": "String", "access.token.claim": "true",
+            "id.token.claim": "false", "userinfo.token.claim": "false",
+          },
+        },
+        {
+          name: "platform-access-audience", protocol: "openid-connect",
+          protocolMapper: "oidc-audience-mapper",
+          config: {
+            "included.custom.audience": PLATFORM_ACCESS_AUDIENCE,
+            "access.token.claim": "true", "id.token.claim": "false",
+          },
+        },
+      ],
     }),
   });
   await assertOk(createResponse, `createServiceAccountClient(${clientId})`);

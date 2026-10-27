@@ -1,2 +1,2 @@
-export type { AuditBackend } from "./backend";
-export { getAuditBackend } from "./backend";
+export { AuditServiceError, auditServiceUrl, getAuditClient } from "./client";
+export type { AuditPage, AuditQuery } from "./client";

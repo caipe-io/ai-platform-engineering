@@ -27,7 +27,7 @@ name: "Grype Scan"
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'prebuild/feat/cas-authz']
   push:
     branches: [main]
   workflow_dispatch:

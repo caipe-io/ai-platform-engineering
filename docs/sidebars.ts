@@ -314,6 +314,7 @@ const sidebars: SidebarsConfig = {
           items: [
             { type: 'doc', id: 'security/index', label: 'Overview' },
             { type: 'doc', id: 'security/auth-flow', label: 'Authentication Flow' },
+            { type: 'doc', id: 'security/browser-sessions', label: 'Browser Sessions' },
             { type: 'doc', id: 'security/agent-context-hmac', label: 'Agent Context HMAC' },
             {
               type: 'category',
@@ -323,6 +324,7 @@ const sidebars: SidebarsConfig = {
                 { type: 'doc', id: 'security/rbac/feature-guide', label: 'Feature Guide' },
                 { type: 'doc', id: 'security/rbac/architecture', label: 'Architecture' },
                 { type: 'doc', id: 'security/rbac/access-api', label: 'Access API' },
+                { type: 'doc', id: 'security/rbac/gateway-cas', label: 'Gateway through CAS' },
                 { type: 'doc', id: 'security/rbac/pdp-coverage-audit', label: 'PDP Coverage Audit (BFF /api/*)' },
                 { type: 'doc', id: 'security/rbac/comprehensive-rbac-refactor', label: 'Comprehensive Refactor' },
                 { type: 'doc', id: 'security/rbac/workflows', label: 'Workflows' },
@@ -331,6 +333,7 @@ const sidebars: SidebarsConfig = {
                 { type: 'doc', id: 'security/rbac/helm-install-upgrade', label: 'Helm Install and Upgrade' },
                 { type: 'doc', id: 'security/rbac/caipe-rbac-migration', label: 'CAIPE RBAC Migration' },
                 { type: 'doc', id: 'security/rbac/audit-log-performance', label: 'Audit Log Performance' },
+                { type: 'doc', id: 'security/rbac/audit-query-store', label: 'Audit Queries and Migration' },
                 { type: 'doc', id: 'security/rbac/secrets-bootstrap', label: 'Secrets Bootstrap' },
                 { type: 'doc', id: 'security/rbac/agent-context-hmac', label: 'Agent Context HMAC' },
                 { type: 'doc', id: 'security/rbac/file-map', label: 'File Map' },

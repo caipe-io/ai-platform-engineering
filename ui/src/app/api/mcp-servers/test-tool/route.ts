@@ -5,6 +5,8 @@
 // assisted-by Codex Codex-sonnet-4-6
 
 import crypto from "crypto";
+import { gatewayCasEnabled } from "@/lib/authz";
+import { buildAgentContextHeaders as buildSharedContextHeaders } from "@/lib/mcp-http-server-client";
 
 import {
   ApiError,
@@ -73,7 +75,10 @@ function diagnosticAgentId(serverId: string, session: Awaited<ReturnType<typeof 
   return `mcp-test-${serverId}-${hash}`.replace(/[^A-Za-z0-9._~@|*+=,/-]/g, "-").slice(0, 191);
 }
 
-function buildAgentContextHeaders(agentId: string): Record<string, string> {
+function buildAgentContextHeaders(agentId: string, session: Awaited<ReturnType<typeof getAuthFromBearerOrSession>>["session"]): Record<string, string> {
+  if (gatewayCasEnabled()) {
+    return buildSharedContextHeaders(agentId, "dynamic", session);
+  }
   const secret = process.env.CAIPE_AGENT_CONTEXT_HMAC_SECRET?.trim();
   if (!secret) return {};
 
@@ -240,7 +245,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const viaAgentGateway = isAgentGatewayEndpoint(server);
   const diagnosticAgent = diagnosticAgentId(serverId, session);
-  const diagnosticTuples = viaAgentGateway
+  const diagnosticTuples = viaAgentGateway && !gatewayCasEnabled()
     ? await grantDiagnosticAgentAccess(serverId, diagnosticAgent, session)
     : [];
 
@@ -274,7 +279,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
     const headers = {
       ...credentialResolution.headers,
-      ...buildAgentContextHeaders(diagnosticAgent),
+      ...(viaAgentGateway ? buildAgentContextHeaders(diagnosticAgent, session) : {}),
     };
 
     const initialized = await initializeMcpSession({

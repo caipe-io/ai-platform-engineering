@@ -12,6 +12,7 @@ successResponse,
 withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
+import { publicPermissionDocument } from "@/lib/authz/permission-sync";
 import { projectAgentAppIdentity } from "@/lib/agentic-apps/agent-catalog";
 import {
 agentRowPermissionsOrDefault,
@@ -75,6 +76,6 @@ export const GET = withErrorHandler(
 
       const [projected] = projectAgentAppIdentity([result], session);
       if (!projected) throw new ApiError("Agent not found", 404);
-      return successResponse(projected);
+      return successResponse(publicPermissionDocument(projected));
   }
 );

@@ -129,7 +129,8 @@ async function installChatWorkflowMocks(
       return;
     }
 
-    await route.continue();
+    // Preserve the shared list/turns mocks; continue() bypasses earlier handlers.
+    await route.fallback();
   });
 
   await page.route("**/api/dynamic-agents/**", async (route) => {
@@ -161,7 +162,7 @@ async function installChatWorkflowMocks(
       });
       return;
     }
-    await route.continue();
+    await route.fallback();
   });
 
   await page.route("**/api/workflow-runs**", async (route) => {
@@ -190,6 +191,49 @@ async function installChatWorkflowMocks(
     await route.continue();
   });
 }
+
+test("workflow overrides preserve shared chat boot mocks", async ({ page }) => {
+  test.skip(!mockedRbacEnabled(), "Set RUN_RBAC_REGRESSION=1 to run mocked regressions.");
+
+  await installChatWorkflowMocks(page, minimalSessionEnv(), {
+    _id: RUN_ID,
+    workflow_config_id: WORKFLOW_CONFIG_ID,
+    workflow_name: "Example workflow",
+    status: "running",
+    current_step_index: 0,
+    started_at: new Date().toISOString(),
+    steps: [],
+    events: {},
+  });
+  // Exercise browser route dispatch without a BFF or authenticated session.
+  await page.route("http://example.test/mock-route-check", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<html></html>" }),
+  );
+  await page.goto("http://example.test/mock-route-check");
+  const paths = [
+    "/api/chat/conversations?page=1&page_size=30&source=web&client_type=webui",
+    `/api/chat/conversations/${CONV_ID}/messages`,
+    `/api/chat/conversations/${CONV_ID}/turns`,
+    "/api/dynamic-agents/teams",
+  ];
+  const [conversations, messages, turns, teams] = await page.evaluate(
+    async (urls) => Promise.all(urls.map(async (url) => {
+      const response = await fetch(url);
+      return { status: response.status, body: await response.json() };
+    })),
+    paths,
+  );
+  expect(conversations).toMatchObject({
+    status: 200,
+    body: { data: { items: [{ _id: CONV_ID, participants: [{ id: AGENT_ID }] }] } },
+  });
+  expect(messages).toMatchObject({
+    status: 200,
+    body: { data: { items: [{ message_id: "msg-assistant-hitl" }] } },
+  });
+  expect(turns).toMatchObject({ status: 200, body: { data: { items: [] } } });
+  expect(teams).toMatchObject({ status: 200, body: { data: [] } });
+});
 
 test.describe("mocked RBAC e2e — WorkflowRunCard HITL inline form", () => {
   test.beforeEach(() => {

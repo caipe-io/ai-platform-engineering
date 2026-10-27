@@ -216,8 +216,10 @@ function deny(reason: AuthorizeResult["reason"] = "NO_CAPABILITY"): AuthorizeRes
   return { decision: "DENY", reason, retriable: getReasonMeta(reason).retriable };
 }
 
-async function runCheck(req: AuthorizeRequest, fresh = false): Promise<AuthorizeResult> {
+async function runCheck(req: AuthorizeRequest, fresh = false, deadline?: AbortSignal): Promise<AuthorizeResult> {
+  if (deadline?.aborted) return deny("AUTHZ_UNAVAILABLE");
   if (!circuitAllows()) return deny("AUTHZ_UNAVAILABLE");
+  const halfOpenProbe = circuitState === "half_open";
 
   const relation = openFgaCheckRelation(req.action);
   const user = `${req.subject.type}:${req.subject.id}`;
@@ -225,17 +227,50 @@ async function runCheck(req: AuthorizeRequest, fresh = false): Promise<Authorize
 
   try {
     // Start before discovery so it consumes the same execution-check budget.
-    const signal = fresh ? AbortSignal.timeout(OPENFGA_READ_TIMEOUT_MS) : undefined;
+    const signal = deadline ?? (fresh ? AbortSignal.timeout(OPENFGA_READ_TIMEOUT_MS) : undefined);
+    signal?.throwIfAborted();
     const storeId = await getOpenFgaStoreId();
     signal?.throwIfAborted();
     const allowed = await fgaCheck(storeId, user, relation, object,
       fresh ? { consistency: "HIGHER_CONSISTENCY", signal } : {});
+    signal?.throwIfAborted();
     recordSuccess();
     const result = allowed ? allow() : deny("NO_CAPABILITY");
     return fresh ? { ...result, ttl_seconds: 0 } : result;
   } catch (err) {
-    recordFailure();
+    // Exhausting a caller's total budget is not a failed dependency probe.
+    // Release a cancelled half-open probe without poisoning other requests.
+    if (deadline?.aborted) {
+      if (halfOpenProbe && circuitState === "half_open") probeInFlight = false;
+    } else recordFailure();
     console.warn("[cas/openfga] check error:", err instanceof Error ? err.message : String(err));
+    return deny("AUTHZ_UNAVAILABLE");
+  }
+}
+
+/** Delegation only narrows existing graph authority; no product-policy override. */
+export function checkDelegationPermission(req: AuthorizeRequest, signal: AbortSignal): Promise<AuthorizeResult> {
+  return runCheck(req, true, signal);
+}
+
+/** Private gateway adapter: agents are allowed here, never as public API subjects. */
+export async function checkGatewayPermission(
+  subject: Subject | { type: "agent"; id: string },
+  relation: "can_call" | "can_use" | "can_invoke" | "can_search",
+  object: string,
+  signal: AbortSignal,
+): Promise<AuthorizeResult> {
+  if (!circuitAllows()) return deny("AUTHZ_UNAVAILABLE");
+  try {
+    const storeId = await getOpenFgaStoreId();
+    signal.throwIfAborted();
+    const allowed = await fgaCheck(storeId, `${subject.type}:${subject.id}`, relation, object,
+      { consistency: "HIGHER_CONSISTENCY", signal });
+    recordSuccess();
+    return { ...(allowed ? allow() : deny()), ttl_seconds: 0 };
+  } catch (err) {
+    recordFailure();
+    console.warn("[cas/openfga] Gateway check unavailable:", err instanceof Error ? err.message : String(err));
     return deny("AUTHZ_UNAVAILABLE");
   }
 }

@@ -9,6 +9,7 @@ import {
 } from "@/lib/rbac/admin-simulation-query";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { useSession } from "next-auth/react";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -866,6 +867,11 @@ export function UserDetailModal({
                 </div>
               )}
               <p className="mt-3 text-xs text-muted-foreground">OpenFGA-backed access summary, not a complete grant inventory or a CAS decision for a specific request. “Effective” means the exact grant source was not resolved.</p>
+              {!simulationTarget && (
+                <Link className="inline-block text-sm text-primary underline" href={`/admin/security/audit?auditTab=decisions&subject_ref=${encodeURIComponent(`${user.principalType ?? "user"}:${user.id}`)}`} onClick={onClose}>
+                  View recorded access decisions
+                </Link>
+              )}
             </div>
               </div>
             </details>

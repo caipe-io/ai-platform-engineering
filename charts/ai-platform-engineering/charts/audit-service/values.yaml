@@ -20,6 +20,25 @@ service:
   type: ClusterIP
   port: 8010
 
+mongodb:
+  # Preferred for external databases or a dedicated audit-service account.
+  uriSecret:
+    name: ""
+    key: MONGODB_URI
+  database: caipe
+  # Bundled MongoDB defaults: <release>-mongodb and its root-credential Secret.
+  # Ignored when uriSecret or existingSecret (envFrom) supplies the URI.
+  host: ""
+  credentialsSecret:
+    name: ""
+    usernameKey: MONGO_INITDB_ROOT_USERNAME
+    passwordKey: MONGO_INITDB_ROOT_PASSWORD
+
+query:
+  # Query records expire 7 days after archival/import by default, independently
+  # of archive retention. 0 disables query expiry; pending archives never expire.
+  retentionDays: 7
+
 storage:
   # Backend can be "auto", "local", or "s3".
   # auto uses S3 only when storage.s3.bucket and an AWS credential path are set;
@@ -72,8 +91,10 @@ persistence:
     - ReadWriteOnce
   size: 10Gi
 
-queue:
-  maxSize: 10000
+ingest:
+  maxBatchSize: 10000
+
+archive:
   flushBatchSize: 500
   flushIntervalSeconds: 1.0
 

@@ -123,6 +123,10 @@ jest.mock('@/lib/mongodb', () => ({
 const mockFetch = jest.fn();
 global.fetch = mockFetch as unknown as typeof fetch;
 
+function auditPage() {
+  return { records: [], limit: 10_000, cursor: 'first', next_cursor: null, since: '2026-10-01T00:00:00Z', until: '2026-10-02T00:00:00Z', as_of: '2026-10-02T00:00:00Z' };
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -227,7 +231,7 @@ function resetMocks() {
   mockFetch.mockReset();
   mockFetch.mockResolvedValue({
     ok: true,
-    json: async () => ({ records: [], total: 0 }),
+    json: async () => auditPage(),
   });
 }
 
@@ -2419,12 +2423,20 @@ describe('GET /api/admin/stats — API Activity', () => {
 describe('GET /api/admin/stats — Direct MCP Activity', () => {
   beforeEach(resetMocks);
 
+  it('marks a bounded cursor result as capped instead of presenting it as complete history', async () => {
+    setupAdminWithCollections();
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ ...auditPage(), next_cursor: 'more-events' }) });
+    const response = await GET(makeRequest('/api/admin/stats?section=api&range=7d'));
+    const body = await response.json();
+    expect(body.data.api.mcp_activity.range_capped).toBe(true);
+  });
+
   it('queries the audit-service for OK_LOCAL_AGENT_CONTEXT events within the selected range', async () => {
     setupAdminWithCollections();
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({
-        total: 2,
+        ...auditPage(),
         records: [
           { ts: '2026-08-01T10:00:00Z', subject_ref: 'user:alice' },
           { ts: '2026-08-01T11:00:00Z', subject_ref: 'user:bob' },
@@ -2453,7 +2465,7 @@ describe('GET /api/admin/stats — Direct MCP Activity', () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({
-        total: 2,
+        ...auditPage(),
         records: [
           { ts: '2026-08-01T10:00:00Z' },
           { ts: '2026-08-01T11:00:00Z', subject_ref: 'user:alice' },
@@ -2478,7 +2490,7 @@ describe('GET /api/admin/stats — Direct MCP Activity', () => {
       json: async () => ({
         // Row count (2) deliberately disagrees with the decisions represented
         // (17) — the bridge aggregates routine allows into counted rows.
-        total: 2,
+        ...auditPage(),
         records: [
           { ts: now.toISOString(), subject_ref: 'user:alice', count: 12 },
           { ts: now.toISOString(), subject_ref: 'user:bob', count: 5 },
@@ -2501,7 +2513,7 @@ describe('GET /api/admin/stats — Direct MCP Activity', () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({
-        total: 2,
+        ...auditPage(),
         records: [
           { ts: '2026-08-01T10:00:00Z', subject_ref: 'user:alice', count: 3 },
           { ts: '2026-08-01T11:00:00Z', subject_ref: 'user:alice' },

@@ -112,7 +112,7 @@ const docs: TestAuditDoc[] = [
     type: "auth",
     tenant_id: "default",
     subject_hash: "sha256:workflow-owner",
-    user_email: "sraradhy@cisco.com",
+    user_email: "operator@example.test",
     action: "admin_ui#view",
     outcome: "allow",
     correlation_id: "admin-view-correlation",
@@ -303,7 +303,8 @@ function mockAuditServiceFetch() {
     return new Response(
       JSON.stringify({
         records: filtered.slice(0, Number.isFinite(limit) ? limit : filtered.length),
-        total: filtered.length,
+        limit,
+        cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
       }),
       { status: 200, headers: { "content-type": "application/json" } },
     );
@@ -338,6 +339,106 @@ beforeEach(() => {
 });
 
 describe("GET /api/admin/audit-events", () => {
+  it('surfaces rejected service cursors as a query error rather than empty history', async () => {
+    global.fetch = jest.fn().mockResolvedValue(new Response('invalid cursor', { status: 400 }));
+    const { GET } = await import('../route');
+    await expect(GET(request('/api/admin/audit-events?cursor=invalid'))).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('does not treat an old service response as valid cursor history', async () => {
+    global.fetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({ records: [], total: 0 })));
+    const { GET } = await import('../route');
+    const response = await GET(request('/api/admin/audit-events'));
+    expect(await response.json()).toMatchObject({ auditUnavailable: true, records: [], next_cursor: null });
+  });
+
+  it.each(['page=2', 'time_resolution=minute', 'type=auth&type=cas_decision', 'limit=30junk'])(
+    'rejects obsolete or ambiguous query parameters: %s', async (query) => {
+      const { GET } = await import('../route');
+      await expect(GET(request(`/api/admin/audit-events?${query}`))).rejects.toMatchObject({ status: 400 });
+      expect(global.fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it('forwards the opaque cursor and exact page size without slicing earlier records', async () => {
+    const { GET } = await import('../route');
+    const response = await GET(request('/api/admin/audit-events?cursor=next-token&limit=30&window=48h'));
+    const body = await response.json();
+    const params = new URL((global.fetch as jest.Mock).mock.calls[0][0]).searchParams;
+    expect(params.get('cursor')).toBe('next-token');
+    expect(params.get('limit')).toBe('30');
+    expect(params.get('window')).toBe('48h');
+    expect(params.has('since')).toBe(false);
+    expect(body).not.toHaveProperty('total');
+    expect(body.cursor).toBe('first');
+  });
+
+  it("preserves safe gateway evidence and forwards exact principal/resource/request filters", async () => {
+    global.fetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({ records: [{
+      ts: "2026-10-13T12:00:00Z", type: "cas_decision", outcome: "deny", tenant_id: "default",
+      subject_ref: "user:test-user", resource_ref: "tool:example/list", actor_ref: "workload:agentgateway",
+      correlation_id: "request-1", decision_id: "decision-1", failed_gate: "caller_tool",
+      gateway_operation: "tools/call", agent_ref: "agent:example", access_token: "must-not-be-returned",
+      gateway_policy: "Caller and agent must independently have access.",
+      gateway_checks: [{ gate: "caller_tool", subject_ref: "user:test-user", relation: "can_call", resource_ref: "tool:example/list", decision: "DENY", reason: "NO_CAPABILITY", access_token: "nested-token-must-not-be-returned" }],
+    }], limit: 50, cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z', })));
+    const { GET } = await import("../route");
+    const response = await GET(request("/api/admin/audit-events?type=cas_decision&decision_id=decision-1&correlation_id=request-1&subject_ref=user%3Atest-user&resource_ref=tool%3Aexample%2Flist"));
+    const body = await response.json();
+    expect(body.records[0]).toMatchObject({ decision_id: "decision-1", failed_gate: "caller_tool", gateway_operation: "tools/call", agent_ref: "agent:example" });
+    expect(body.records[0]).not.toHaveProperty("access_token");
+    expect(body.records[0].gateway_checks).toEqual([{ gate: "caller_tool", subject_ref: "user:test-user", relation: "can_call", resource_ref: "tool:example/list", decision: "DENY", reason: "NO_CAPABILITY" }]);
+    expect(body.records[0].gateway_policy).toContain("independently");
+    const forwarded = new URL((global.fetch as jest.Mock).mock.calls[0][0]).searchParams;
+    expect(Object.fromEntries(forwarded)).toMatchObject({ decision_id: "decision-1", correlation_id: "request-1", subject_ref: "user:test-user", resource_ref: "tool:example/list" });
+    expect(mockRequireRbacPermission).toHaveBeenCalledWith(expect.anything(), "admin_ui", "audit.view");
+  });
+
+  it("does not query decision evidence when audit permission is denied", async () => {
+    mockRequireRbacPermission.mockRejectedValueOnce(new Error("Forbidden"));
+    const { GET } = await import("../route");
+    await expect(GET(request("/api/admin/audit-events?type=cas_decision"))).rejects.toThrow("Forbidden");
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("preserves an allowlisted delegation snapshot and forwards its indexed filter", async () => {
+    mockGetServerSession.mockResolvedValueOnce({ accessToken: "token", sub: "admin-sub", org: "primary",
+      user: { email: "admin@example.test" } });
+    global.fetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({ records: [{
+      ts: "2026-10-21T12:00:00Z", type: "cas_decision", outcome: "deny", tenant_id: "primary", correlation_id: "request-1",
+      actor_ref: "service_account:test-service", subject_ref: "user:test-user", delegation_id: "approval-1", delegation_policy: "cas-delegation/v1",
+      delegation_evidence: { kind: "cas_approval", reference: "approval-1", access_token: "must-not-be-returned" },
+      delegation_operation: "check", delegation: { user_ref: "user:test-user", service_ref: "service_account:test-service", issuer: "https://identity.example.test",
+        service: { id: "test-service", client_id: "example-service", secret: "must-not-be-returned" }, job_id: "test-job", version: 1,
+        created_at: "2026-10-21T11:00:00Z", expires_at: "2026-10-22T11:00:00Z", revoked_at: null,
+        scope: [{ resource: { type: "agent", id: "example" }, action: "use" }], access_token: "must-not-be-returned" },
+      delegation_checks: [{ gate: "user_permission", decision: "DENY", reason: "USER_NOT_ALLOWED", token: "must-not-be-returned" }],
+    }], limit: 50, cursor: "first", next_cursor: null, since: "2026-10-21T00:00:00Z", until: "2026-10-22T00:00:00Z", as_of: "2026-10-22T00:00:00Z" })));
+    const { GET } = await import("../route");
+    const response = await GET(request("/api/admin/audit-events?delegation_id=approval-1"));
+    const result = await response.json();
+    expect(result.records[0]).toMatchObject({ delegation_id: "approval-1", delegation: { user_ref: "user:test-user", version: 1 },
+      delegation_evidence: { kind: "cas_approval", reference: "approval-1" } });
+    expect(JSON.stringify(result)).not.toContain("must-not-be-returned");
+    expect(new URL((global.fetch as jest.Mock).mock.calls[0][0]).searchParams.get("delegation_id")).toBe("approval-1");
+    expect(new URL((global.fetch as jest.Mock).mock.calls[0][0]).searchParams.get("tenant_id")).toBe("primary");
+  });
+
+  it.each([{ value: "invalid" }, { value: [null] }, { value: [{ gate: "unexpected", subject_ref: "user:test-user", decision: "ALLOW", reason: "OK" }] }])("does not render malformed chain evidence %j", async ({ value: gateway_checks }) => {
+    global.fetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({ records: [{ ts: "2026-10-14T12:00:00Z", type: "cas_decision", outcome: "deny", tenant_id: "default", correlation_id: "request-1", gateway_checks }], limit: 50, cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z', })));
+    const { GET } = await import("../route");
+    const response = await GET(request("/api/admin/audit-events?type=cas_decision"));
+    expect(response.status).toBe(200);
+    expect((await response.json()).records[0]).not.toHaveProperty("gateway_checks");
+  });
+
+  it("does not query decision evidence without a session", async () => {
+    mockGetServerSession.mockResolvedValueOnce(null);
+    const { GET } = await import("../route");
+    await expect(GET(request("/api/admin/audit-events?type=cas_decision"))).rejects.toMatchObject({ status: 401 });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   it("returns all audit event rows by default", async () => {
     const { GET } = await import("../route");
 
@@ -411,7 +512,7 @@ describe("GET /api/admin/audit-events", () => {
     });
   });
 
-  it("forwards audit time window and storage resolution to audit-service", async () => {
+  it("forwards a bounded query without recomputing relative dates or scanning previous pages", async () => {
     const { GET } = await import("../route");
 
     const response = await GET(request("/api/admin/audit-events?window=15m"));
@@ -421,10 +522,11 @@ describe("GET /api/admin/audit-events", () => {
       expect.stringContaining("window=15m"),
       expect.objectContaining({ cache: "no-store" }),
     );
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("time_resolution=minute"),
-      expect.objectContaining({ cache: "no-store" }),
-    );
+    const query = new URL((global.fetch as jest.Mock).mock.calls[0][0]);
+    expect(query.searchParams.get('limit')).toBe('50');
+    expect(query.searchParams.has('since')).toBe(false);
+    expect(query.searchParams.has('until')).toBe(false);
+    expect(query.searchParams.has('time_resolution')).toBe(false);
   });
 
   it("includes admin UI view authorization rows when authorization type is explicitly selected", async () => {
@@ -556,7 +658,7 @@ describe("GET /api/admin/audit-events", () => {
               deletes: 1,
             },
           ],
-          total: 1,
+          limit: 50, cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z',
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       ),
@@ -587,11 +689,10 @@ describe("GET /api/admin/audit-events", () => {
     expect(response.status).toBe(200);
     expect(body).toMatchObject({
       records: [],
-      total: 0,
-      page: 1,
+      next_cursor: null,
       limit: 50,
       auditUnavailable: true,
     });
-    expect(body.warning).toContain("Audit service unavailable");
+    expect(body.warning).toContain("Audit queries unavailable");
   });
 });

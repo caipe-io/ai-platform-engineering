@@ -9,6 +9,7 @@ import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 
 import { emitGrantAudit, type GrantOperation } from "./audit";
+import { HttpAuthzError } from "./errors";
 import { authorize } from "./index";
 import { isSupportedResourceAction, listResourceTypeDefinitions } from "@/lib/rbac/resource-model";
 import type {
@@ -70,18 +71,7 @@ const PUBLIC_GRANTABLE_EVERYONE_RESOURCE_ACTIONS: ReadonlySet<string> = new Set(
 
 // ─── Meta errors (HTTP-level failures, distinct from a DENY decision) ─────────
 
-export type MetaCode = "NOT_AUTHENTICATED" | "FORBIDDEN" | "INVALID_REQUEST" | "AUTHZ_UNAVAILABLE";
-
-export class HttpAuthzError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: MetaCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "HttpAuthzError";
-  }
-}
+export { HttpAuthzError, type MetaCode } from "./errors";
 
 export function metaErrorResponse(err: HttpAuthzError): NextResponse {
   return NextResponse.json(

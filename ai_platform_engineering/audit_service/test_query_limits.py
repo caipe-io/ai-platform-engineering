@@ -11,11 +11,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import mongomock
+from pyarrow import ArrowInvalid
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from ai_platform_engineering.audit_service.config import Settings
 from ai_platform_engineering.audit_service.main import _query_events, create_app
+from ai_platform_engineering.audit_service.query_store import MongoAuditStore
 from ai_platform_engineering.audit_service.storage import (
     AuditQuery,
     AuditQueryCancelled,
@@ -23,6 +26,11 @@ from ai_platform_engineering.audit_service.storage import (
     QueryResult,
     S3AuditStore,
 )
+
+
+@pytest.fixture(autouse=True)
+def mock_mongo(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("ai_platform_engineering.audit_service.query_store.MongoClient", mongomock.MongoClient)
 
 
 def _query(**kwargs: object) -> AuditQuery:
@@ -178,13 +186,13 @@ def test_http_scan_cancels_and_holds_capacity_until_worker_exits(
         )
         try:
             with pytest.raises(HTTPException) as exc:
-                await _query_events(request, Store(), _query(cancel_event=cancel), 0.05)
+                await _query_events(request, query := _query(cancel_event=cancel), lambda: Store().query(query), 0.05)
             assert exc.value.status_code == expected_status
             assert started.is_set()
             assert cancel.is_set()
             assert not slots.acquire(blocking=False)
             with pytest.raises(HTTPException) as busy:
-                await _query_events(request, Store(), _query(cancel_event=threading.Event()), 1)
+                await _query_events(request, query, lambda: Store().query(query), 1)
             assert busy.value.status_code == 503
         finally:
             release.set()
@@ -218,12 +226,13 @@ def test_read_pressure_does_not_block_ingest_or_readiness(
     started = threading.Event()
     release = threading.Event()
 
-    def scan(self: LocalAuditStore, query: AuditQuery) -> QueryResult:
+    def scan(self: MongoAuditStore, query: AuditQuery, **kwargs: object) -> dict[str, object]:
         started.set()
         assert release.wait(5)
-        return QueryResult([], 0, False)
+        return {"records": [], "limit": query.limit, "cursor": "example",
+                "since": query.since.isoformat(), "until": query.until.isoformat(), "as_of": query.until.isoformat()}
 
-    monkeypatch.setattr(LocalAuditStore, "query", scan)
+    monkeypatch.setattr(MongoAuditStore, "page", scan)
     settings = Settings(local_path=str(tmp_path), read_max_concurrent=1, verbosity="verbose")
     with TestClient(create_app(settings)) as client, ThreadPoolExecutor(max_workers=1) as executor:
         first = executor.submit(client.get, "/v1/audit/events")
@@ -301,12 +310,16 @@ def test_failed_s3_object_returns_an_error_without_partial_totals(
     monkeypatch.setattr(S3AuditStore, "_build_client", lambda _: Client())
     monkeypatch.setattr(S3AuditStore, "_keys_for_range", lambda *args, **kwargs: iter(["good.parquet", "bad.parquet"]))
     settings = Settings(backend="s3", s3_bucket="example-bucket")
-    with TestClient(create_app(settings), raise_server_exceptions=False) as client:
+    app = create_app(settings)
+    with TestClient(app, raise_server_exceptions=False) as client:
         response = client.get(
             "/v1/audit/events", params={"since": "2026-06-20T00:00:00Z", "until": "2026-06-21T00:00:00Z"}
         )
-    assert response.status_code == 500
-    assert "total" not in response.text
+        # Live queries use Mongo and remain available despite a corrupt archive.
+        assert response.status_code == 200
+        assert response.json()["records"] == []
+        with pytest.raises((OSError, ArrowInvalid)):
+            app.state.audit_store.query(_query())
     assert "example backend detail" not in response.text
     assert all(stream.closed for stream in bad_streams)
     failures = [record for record in caplog.records if "s3://example-bucket/bad.parquet" in record.getMessage()]

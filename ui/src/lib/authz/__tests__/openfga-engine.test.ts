@@ -8,6 +8,7 @@ import {
   getEngineStats,
   invalidateDecisionCache,
   __resetAdapterStateForTests,
+  checkDelegationPermission,
 } from "../engines/openfga";
 import type { AuthorizeRequest } from "../contract";
 
@@ -73,12 +74,66 @@ describe("OpenFGA engine adapter", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("delegation checks never reuse cached read permissions", async () => {
+    const request = { ...req, action: "read" as const };
+    fetchMock.mockResolvedValueOnce(checkResponse(true)).mockResolvedValueOnce(checkResponse(false));
+    await createOpenFgaEngine().check(request);
+    expect(await checkDelegationPermission(request, AbortSignal.timeout(5000))).toMatchObject({ decision: "DENY", ttl_seconds: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).consistency).toBe("HIGHER_CONSISTENCY");
+  });
+
   it("never caches AUTHZ_UNAVAILABLE (retries on next call)", async () => {
     fetchMock.mockRejectedValue(new Error("down"));
     const engine = createOpenFgaEngine();
     await engine.check(req);
     await engine.check(req);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not call OpenFGA or trip the shared breaker for already-exhausted caller budgets", async () => {
+    for (let index = 0; index < 6; index++) {
+      expect((await checkDelegationPermission(req, AbortSignal.abort())).reason).toBe("AUTHZ_UNAVAILABLE");
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockResolvedValue(checkResponse(true));
+    expect((await createOpenFgaEngine().check(req)).decision).toBe("ALLOW");
+  });
+
+  it.each([true, false])("does not count caller cancellation as dependency failure (late response: %s)", async (lateResponse) => {
+    for (let index = 0; index < 6; index++) {
+      const controller = new AbortController();
+      fetchMock.mockImplementationOnce(() => {
+        controller.abort(new Error("Caller budget exhausted"));
+        return lateResponse ? Promise.resolve(checkResponse(true)) : Promise.reject(controller.signal.reason);
+      });
+      expect((await checkDelegationPermission(req, controller.signal)).reason).toBe("AUTHZ_UNAVAILABLE");
+      expect(getEngineStats().circuitState).toBe("closed");
+    }
+    fetchMock.mockResolvedValue(checkResponse(true));
+    expect((await createOpenFgaEngine().check(req)).decision).toBe("ALLOW");
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+  });
+
+  it("releases a cancelled half-open probe so the next request can recover", async () => {
+    let now = Date.now();
+    const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const engine = createOpenFgaEngine();
+      fetchMock.mockRejectedValue(new Error("dependency unavailable"));
+      for (let index = 0; index < 5; index++) await engine.check(req);
+      now += 31_000;
+      const controller = new AbortController();
+      fetchMock.mockImplementationOnce(() => {
+        controller.abort();
+        return Promise.reject(controller.signal.reason);
+      });
+      expect((await checkDelegationPermission(req, controller.signal)).reason).toBe("AUTHZ_UNAVAILABLE");
+      expect(getEngineStats().circuitState).toBe("half_open");
+      fetchMock.mockResolvedValue(checkResponse(true));
+      expect((await engine.check(req)).decision).toBe("ALLOW");
+      expect(getEngineStats().circuitState).toBe("closed");
+    } finally { clock.mockRestore(); }
   });
 
   it.each([true, false])("agent execution ignores a cached batch decision of %s", async (allowed) => {

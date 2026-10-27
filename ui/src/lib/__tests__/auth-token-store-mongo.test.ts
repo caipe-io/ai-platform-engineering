@@ -11,95 +11,95 @@ import * as store from '../auth-token-store';
 
 const uri = process.env.AUTH_TOKEN_STORE_TEST_MONGODB_URI;
 const describeMongo = uri ? describe : describe.skip;
-describeMongo('shared token consistency with independent replicas', () => {
+describeMongo('shared session consistency with independent module instances', () => {
   let client: MongoClient;
   let peer: typeof store;
   const sub = 'test-user';
   const initial = { accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: 1 };
   const fresh = { accessToken: 'fresh-access', refreshToken: 'fresh-refresh', expiresAt: 9999999999 };
   beforeAll(async () => {
-    process.env.NEXTAUTH_SECRET = 'example-token-consistency-secret';
+    process.env.NEXTAUTH_SECRET = 'example-session-consistency-secret';
     client = await new MongoClient(uri!).connect();
-    mockDb = client.db(`test_token_consistency_${crypto.randomUUID().replaceAll('-', '')}`);
+    mockDb = client.db(`test_session_consistency_${crypto.randomUUID().replaceAll('-', '')}`);
     jest.isolateModules(() => { peer = jest.requireActual('../auth-token-store'); });
   });
-  beforeEach(async () => { await mockDb.collection('auth_token_cache').deleteMany({}); });
+  beforeEach(async () => { await mockDb.collection('auth_sessions').deleteMany({}); });
   afterAll(async () => { if (mockDb) await mockDb.dropDatabase(); await client?.close(); });
 
-  it('makes a new login and its matching expiry visible on another replica immediately', async () => {
-    await store.storeTokens(sub, initial);
-    expect(await peer.getStoredTokens(sub)).toMatchObject(initial);
-    await store.storeTokens(sub, fresh);
-    expect(await peer.getStoredTokens(sub)).toMatchObject({ ...fresh, version: 2 });
+  it('publishes each login and its expiry immediately without replacing another login', async () => {
+    const old = await store.createSession(sub, initial);
+    expect(await peer.getStoredSession(old.sessionId, sub)).toMatchObject(initial);
+    const next = await store.createSession(sub, fresh);
+    expect(next.sessionId).not.toBe(old.sessionId);
+    expect(await peer.getStoredSession(next.sessionId, sub)).toMatchObject({ ...fresh, sessionVersion: 1 });
+    expect(await peer.getStoredSession(old.sessionId, sub)).toMatchObject(initial);
   });
 
-  it('performs only one rotating-token exchange across replicas', async () => {
-    await store.storeTokens(sub, initial);
+  it('performs only one rotating-token exchange across module instances', async () => {
+    const login = await store.createSession(sub, initial);
     const exchange = jest.fn(async () => {
       await new Promise(resolve => setTimeout(resolve, 50));
       return fresh;
     });
     const [one, two] = await Promise.all([
-      store.refreshStoredTokens(sub, 1, exchange), peer.refreshStoredTokens(sub, 1, exchange),
+      store.refreshSession(login.sessionId, sub, 1, exchange), peer.refreshSession(login.sessionId, sub, 1, exchange),
     ]);
     expect(one).toEqual(two);
-    expect(one).toMatchObject({ ...fresh, version: 2 });
+    expect(one).toMatchObject({ ...fresh, sessionVersion: 2 });
     expect(exchange).toHaveBeenCalledTimes(1);
   });
 
-  it.each([false, true])('a late refresh cannot overwrite or invalidate a newer login (failure=%s)', async failure => {
-    await store.storeTokens(sub, initial);
+  it.each([false, true])('a late refresh cannot restore logout or change another login (failure=%s)', async failure => {
+    const login = await store.createSession(sub, initial);
     let entered!: () => void;
     let release!: () => void;
     const started = new Promise<void>(resolve => { entered = resolve; });
     const gate = new Promise<void>(resolve => { release = resolve; });
-    const refresh = store.refreshStoredTokens(sub, 1, async () => {
+    const refresh = store.refreshSession(login.sessionId, sub, 1, async () => {
       entered(); await gate;
-      if (failure) throw new Error('RefreshTokenExpired');
+      if (failure) throw new Error('provider rejected refresh');
       return { ...fresh, accessToken: 'late-response' };
     });
     await started;
-    await peer.storeTokens(sub, fresh);
+    await peer.revokeSession(login.sessionId, sub);
+    const next = await peer.createSession(sub, fresh);
     release();
-    expect(await refresh).toMatchObject(fresh);
-    expect(await peer.getStoredTokens(sub)).toMatchObject(fresh);
+    await expect(refresh).rejects.toThrow(/session has expired|temporarily unavailable/);
+    await expect(peer.getStoredSession(login.sessionId, sub)).rejects.toThrow(/session has expired/);
+    expect(await peer.getStoredSession(next.sessionId, sub)).toMatchObject(fresh);
   });
 
-  it('never replays a refresh token after an abandoned exchange; login restores progress', async () => {
-    await store.storeTokens(sub, initial);
-    await expect(store.refreshStoredTokens(sub, 1, async () => {
+  it('never replays an abandoned refresh; a new login restores progress', async () => {
+    const login = await store.createSession(sub, initial);
+    await expect(store.refreshSession(login.sessionId, sub, 1, async () => {
       throw new Error('response lost');
-    })).rejects.toThrow('response lost');
+    })).rejects.toThrow(/temporarily unavailable/);
     const exchange = jest.fn(async () => fresh);
-    await mockDb.collection('auth_token_cache').updateOne({ _id: sub as never }, {
+    await mockDb.collection('auth_sessions').updateOne({ _id: login.sessionId as never }, {
       $set: { 'refreshLease.until': new Date(0) },
     });
-    await expect(peer.refreshStoredTokens(sub, 1, exchange)).rejects.toThrow('RefreshTokenExpired');
+    await expect(peer.refreshSession(login.sessionId, sub, 1, exchange)).rejects.toThrow(/session has expired/);
     expect(exchange).not.toHaveBeenCalled();
-    await store.storeTokens(sub, fresh);
-    expect(await peer.refreshStoredTokens(sub, 2, exchange)).toMatchObject(fresh);
-    expect(exchange).toHaveBeenCalledTimes(1);
+    const next = await peer.createSession(sub, fresh);
+    expect(await peer.getStoredSession(next.sessionId, sub)).toMatchObject(fresh);
   });
 
   it('fences a response that arrives after its refresh lease expires', async () => {
-    await store.storeTokens(sub, initial);
-    await expect(store.refreshStoredTokens(sub, 1, async () => {
-      await mockDb.collection('auth_token_cache').updateOne({ _id: sub as never }, {
+    const login = await store.createSession(sub, initial);
+    await expect(store.refreshSession(login.sessionId, sub, 1, async () => {
+      await mockDb.collection('auth_sessions').updateOne({ _id: login.sessionId as never }, {
         $set: { 'refreshLease.until': new Date(0) },
       });
       return fresh;
-    })).rejects.toThrow('RefreshTokenExpired');
-    expect(await peer.getStoredTokens(sub)).toMatchObject(initial);
+    })).rejects.toThrow(/session has expired/);
+    await expect(peer.getStoredSession(login.sessionId, sub)).rejects.toThrow(/session has expired/);
   });
 
-  it('reads the existing encryption format and derives a legacy JWT expiry', async () => {
-    const token = `header.${Buffer.from(JSON.stringify({ exp: 5000 })).toString('base64url')}.signature`;
-    const key = Buffer.from(crypto.hkdfSync('sha256', process.env.NEXTAUTH_SECRET!, '', 'caipe-auth-token-store-v1', 32));
-    const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-    const ciphertext = Buffer.concat([cipher.update(JSON.stringify({ accessToken: token, refreshToken: 'legacy-refresh' })), cipher.final()]);
-    const enc = Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString('base64');
-    await mockDb.collection('auth_token_cache').insertOne({ _id: sub as never, enc, updatedAt: new Date() });
-    expect(await peer.getStoredTokens(sub)).toMatchObject({ accessToken: token, expiresAt: 5000, version: 0 });
+  it('does not treat an old per-user token-cache record as a new login session', async () => {
+    await mockDb.collection('auth_token_cache').insertOne({ _id: sub as never, enc: 'legacy-record', updatedAt: new Date() });
+    await expect(peer.getStoredSession(sub, sub)).rejects.toThrow(/session has expired/);
+    const login = await peer.createSession(sub, fresh);
+    expect(login.sessionId).not.toBe(sub);
+    expect(await peer.getStoredSession(login.sessionId, sub)).toMatchObject(fresh);
   });
 });

@@ -3,6 +3,7 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import JSZip from "jszip";
+import { auditPage } from "./_audit-pages";
 
 import {
   fulfillJson,
@@ -45,7 +46,7 @@ function auditRecords() {
       ts: "2026-06-12T16:27:54.000Z",
       type: "cas_decision",
       outcome: "deny",
-      user_email: "non-manager@caipe.local",
+      user_email: "non-manager@example.test",
       action: "manage",
       resource_ref: "agent:agent-private",
       resource_type: "agent",
@@ -86,12 +87,7 @@ test.describe("mocked RBAC admin browser regression", () => {
         ? records.filter((record) => record.type === typeFilter)
         : records;
 
-      await fulfillJson(route, {
-        records: filtered,
-        total: filtered.length,
-        page: Number(url.searchParams.get("page") ?? "1"),
-        limit: Number(url.searchParams.get("limit") ?? "30"),
-      });
+      await fulfillJson(route, auditPage(filtered, url));
       return true;
     };
 
@@ -101,12 +97,14 @@ test.describe("mocked RBAC admin browser regression", () => {
       handlers: [auditHandler],
     });
 
-    await page.goto("/admin/security/audit?auditTab=rbac", {
+    await page.goto("/admin/security/audit?auditTab=decisions", {
       waitUntil: "domcontentloaded",
     });
+    await page.getByLabel("Audit event type").selectOption("");
+    await page.getByLabel("Audit time range").selectOption("5m");
 
-    await expect(page.getByText("RBAC Audit Log", { exact: true })).toBeVisible();
-    await expect(page.getByText("2 events found")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Security audit", exact: true })).toBeVisible();
+    await expect(page.getByText("2 events on this page")).toBeVisible();
     await expect(page.getByText("Granted use on agent agent-private")).toBeVisible();
     await expect(page.getByText("Denied to manage agent agent-private")).toBeVisible();
 
@@ -117,7 +115,7 @@ test.describe("mocked RBAC admin browser regression", () => {
     const downloadPromise = page.waitForEvent("download");
     await page.getByRole("button", { name: /download audit log/i }).click();
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toMatch(/^rbac-audit-log-.*\.zip$/);
+    expect(download.suggestedFilename()).toMatch(/^security-audit-log-.*\.zip$/);
 
     const downloadPath = await download.path();
     expect(downloadPath).toBeTruthy();
@@ -131,7 +129,7 @@ test.describe("mocked RBAC admin browser regression", () => {
     await page.getByRole("button", { name: /^Search$/ }).click();
 
     await expect.poll(() => auditQueries.some((query) => query.includes("type=cas_grant"))).toBe(true);
-    await expect(page.getByText("1 event found")).toBeVisible();
+    await expect(page.getByText("1 event on this page")).toBeVisible();
     await expect(page.getByText("Denied to manage agent agent-private")).toHaveCount(0);
   });
 });

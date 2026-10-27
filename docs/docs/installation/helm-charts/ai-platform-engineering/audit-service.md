@@ -58,6 +58,8 @@ helm show values oci://ghcr.io/caipe-io/charts/audit-service --version 1.1.0
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | affinity | object | `{}` |  |
+| archive.flushBatchSize | int | `500` |  |
+| archive.flushIntervalSeconds | float | `1` |  |
 | existingSecret | string | `""` |  |
 | extraEnv | list | `[]` |  |
 | extraEnvFrom | list | `[]` |  |
@@ -66,12 +68,20 @@ helm show values oci://ghcr.io/caipe-io/charts/audit-service --version 1.1.0
 | image.repository | string | `"ghcr.io/caipe-io/caipe-audit-service"` |  |
 | image.tag | string | `""` |  |
 | imagePullSecrets | list | `[]` |  |
+| ingest.maxBatchSize | int | `10000` |  |
 | livenessProbe.failureThreshold | int | `3` |  |
 | livenessProbe.httpGet.path | string | `"/healthz"` |  |
 | livenessProbe.httpGet.port | string | `"http"` |  |
 | livenessProbe.initialDelaySeconds | int | `0` |  |
 | livenessProbe.periodSeconds | int | `20` |  |
 | livenessProbe.timeoutSeconds | int | `5` |  |
+| mongodb.credentialsSecret.name | string | `""` |  |
+| mongodb.credentialsSecret.passwordKey | string | `"MONGO_INITDB_ROOT_PASSWORD"` |  |
+| mongodb.credentialsSecret.usernameKey | string | `"MONGO_INITDB_ROOT_USERNAME"` |  |
+| mongodb.database | string | `"caipe"` |  |
+| mongodb.host | string | `""` |  |
+| mongodb.uriSecret.key | string | `"MONGODB_URI"` |  |
+| mongodb.uriSecret.name | string | `""` |  |
 | nameOverride | string | `""` |  |
 | nodeSelector | object | `{}` |  |
 | persistence.accessModes[0] | string | `"ReadWriteOnce"` |  |
@@ -79,14 +89,15 @@ helm show values oci://ghcr.io/caipe-io/charts/audit-service --version 1.1.0
 | persistence.size | string | `"10Gi"` |  |
 | persistence.storageClass | string | `""` |  |
 | podAnnotations | object | `{}` |  |
+| podDisruptionBudget.annotations | object | `{}` |  |
+| podDisruptionBudget.enabled | bool | `false` |  |
+| podDisruptionBudget.maxUnavailable | int | `1` |  |
 | podLabels | object | `{}` |  |
 | podSecurityContext.fsGroup | int | `1001` |  |
 | podSecurityContext.runAsGroup | int | `1001` |  |
 | podSecurityContext.runAsNonRoot | bool | `true` |  |
 | podSecurityContext.runAsUser | int | `1001` |  |
-| queue.flushBatchSize | int | `500` |  |
-| queue.flushIntervalSeconds | float | `1` |  |
-| queue.maxSize | int | `10000` |  |
+| query.retentionDays | int | `7` |  |
 | read.defaultLimit | int | `1000` |  |
 | read.maxDays | int | `31` |  |
 | read.maxLimit | int | `10000` |  |

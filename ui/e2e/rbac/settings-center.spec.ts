@@ -287,7 +287,7 @@ test.describe("mocked routed Settings browser regression",() => {
     await expect(page.getByRole("link",{ name: "System health" })).toHaveCount(0);
   });
 
-  test("opens Appearance from the header without hydration errors or a duplicate dialog",async ({ page }) => {
+  test("opens Appearance from the header without hydration errors or a duplicate dialog",{ tag: "@sanity" },async ({ page }) => {
     const state = createState();
     await installSettingsCenterMocks(page,state);
     const renderingErrors: string[] = [];

@@ -7,18 +7,18 @@ from __future__ import annotations
 
 # Empty frozenset means "allow all types" (no filter applied).
 PRESET_TYPES: dict[str, frozenset[str]] = {
-    "minimal": frozenset({"cas_grant", "cas_reconcile"}),
+    "minimal": frozenset({"cas_grant", "cas_reconcile", "cas_delegation"}),
     "standard": frozenset(
-        {"auth", "cas_grant", "cas_reconcile", "cas_decision", "credential_action", "openfga_rebac"}
+        {"auth", "cas_grant", "cas_reconcile", "cas_delegation", "cas_decision", "credential_action", "openfga_rebac"}
     ),
     "verbose": frozenset(),
-    "il2": frozenset({"auth", "cas_grant", "cas_decision", "credential_action"}),
+    "il2": frozenset({"auth", "cas_grant", "cas_delegation", "cas_decision", "credential_action"}),
     "il5": frozenset(),
-    "soc2": frozenset({"auth", "cas_grant", "cas_decision", "credential_action", "agent_delegation"}),
+    "soc2": frozenset({"auth", "cas_grant", "cas_delegation", "cas_decision", "credential_action", "agent_delegation"}),
 }
 
 PRESET_LABELS: dict[str, str] = {
-    "minimal": "Minimal — policy changes only",
+    "minimal": "Minimal — policy changes + delegated decisions",
     "standard": "Standard — policy + access decisions + auth",
     "verbose": "Verbose — all event types",
     "il2": "IL2 — DoD Impact Level 2",
@@ -27,7 +27,7 @@ PRESET_LABELS: dict[str, str] = {
 }
 
 PRESET_DESCRIPTIONS: dict[str, str] = {
-    "minimal": "Records cas_grant and cas_reconcile only. Lowest volume; captures policy changes.",
+    "minimal": "Records policy changes and individual delegated decisions; omits routine access decisions.",
     "standard": "Records policy changes, access decisions, credential ops, and auth events.",
     "verbose": "Records all event types. Equivalent to the historic default.",
     "il2": "Captures auth, policy changes, access decisions, and credential actions per IL2.",
@@ -50,8 +50,21 @@ def is_event_allowed(event_type: str | None, verbosity: str) -> bool:
 
 
 def filter_records(records: list[dict], verbosity: str) -> list[dict]:
-    """Drop records whose event type is not in the verbosity allowlist."""
+    """Keep delegated receipts even when routine decisions are filtered out.
+
+    These fields select retention, not authenticity; ingestion authentication
+    remains a separate boundary.
+    """
     types = allowed_types(verbosity)
     if not types:
         return records
-    return [r for r in records if r.get("type") in types]
+    return [
+        r for r in records
+        if r.get("type") in types or (
+            r.get("type") == "cas_decision"
+            and r.get("delegation_operation") == "check"
+            and isinstance(r.get("delegation_id"), str)
+            and bool(r["delegation_id"].strip())
+            and r.get("outcome") in {"allow", "deny"}
+        )
+    ]

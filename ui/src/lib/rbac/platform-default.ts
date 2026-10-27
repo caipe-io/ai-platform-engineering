@@ -32,15 +32,11 @@ function normalizeDefaultAgentId(value: unknown): string | null {
  * the invariant enforced.
  */
 export async function getPlatformDefaultAgentId(): Promise<string | null> {
-  try {
-    const col = await getCollection<PlatformConfigDoc>("platform_config");
-    const doc = await col.findOne({ _id: CONFIG_ID } as never);
-    const fromDb = normalizeDefaultAgentId(doc?.default_agent_id);
-    if (fromDb) return fromDb;
-    return normalizeDefaultAgentId(process.env.DEFAULT_AGENT_ID);
-  } catch {
-    return normalizeDefaultAgentId(process.env.DEFAULT_AGENT_ID);
-  }
+  // An unavailable database is not evidence that the default was cleared.
+  // Mutation guards must fail rather than accidentally demote/delete it.
+  const col = await getCollection<PlatformConfigDoc>("platform_config");
+  const doc = await col.findOne({ _id: CONFIG_ID } as never);
+  return normalizeDefaultAgentId(doc?.default_agent_id) ?? normalizeDefaultAgentId(process.env.DEFAULT_AGENT_ID);
 }
 
 /**

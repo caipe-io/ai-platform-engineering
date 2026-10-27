@@ -106,8 +106,8 @@ jest.mock("@/lib/mongodb", () => ({
   isMongoDBConfigured: true,
 }));
 
-jest.mock("@/lib/audit/reader", () => ({
-  getAuditReader: () => ({ query: (...args: unknown[]) => mockAuditQuery(...args) }),
+jest.mock("@/lib/audit", () => ({
+  getAuditClient: () => ({ queryPage: async (...args: unknown[]) => ({ records: await mockAuditQuery(...args) }) }),
 }));
 
 jest.mock("@/lib/rbac/mongo-collections", () => {

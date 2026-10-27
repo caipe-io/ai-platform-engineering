@@ -91,6 +91,22 @@ describe("Keycloak service-account client helpers", () => {
       serviceAccountsEnabled: true,
       standardFlowEnabled: false,
       directAccessGrantsEnabled: false,
+      protocolMappers: [
+        expect.objectContaining({
+          protocolMapper: "oidc-hardcoded-claim-mapper",
+          config: expect.objectContaining({
+            "claim.name": "caipe_principal_type", "claim.value": "service_account",
+            "access.token.claim": "true", "id.token.claim": "false",
+          }),
+        }),
+        expect.objectContaining({
+          protocolMapper: "oidc-audience-mapper",
+          config: expect.objectContaining({
+            "included.custom.audience": "caipe-access",
+            "access.token.claim": "true", "id.token.claim": "false",
+          }),
+        }),
+      ],
     });
     expect(sentBody.clientId).toBe(result.clientId);
   });

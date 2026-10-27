@@ -3193,9 +3193,9 @@ function AdminPage() {
                     ariaLabel="Audit sections"
                     items={[
                       ...(tabGateValues.action_audit ? [{
-                        id: "rbac",
-                        label: "RBAC",
-                        content: <UnifiedAuditTab isAdmin={canMutateAdminData} />,
+                        id: "decisions",
+                        label: "Security audit",
+                        content: <UnifiedAuditTab key={searchParams.get("subject_ref") ?? "decisions"} isAdmin={canMutateAdminData} view="decisions" initialSubjectRef={searchParams.get("subject_ref") ?? ""} />,
                       }] : []),
                       ...(tabGateValues.audit_logs ? [{
                         id: "chat",

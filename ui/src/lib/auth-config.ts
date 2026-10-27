@@ -1,6 +1,9 @@
 import { decodeJwt } from "jose";
 import type { NextAuthOptions } from "next-auth";
-import { accessTokenExpiry, getStoredTokens, storeTokens, refreshStoredTokens, resetTokenStore } from './auth-token-store';
+import type { JWT } from "next-auth/jwt";
+import { createSession, getStoredSession, refreshSession, revokeSession, SESSION_FORMAT, SESSION_MAX_AGE, SessionExpiredError } from './auth-token-store';
+import { accessTokenExpiry, exchangeRefreshToken } from './auth-token-refresh';
+import { isMongoDBConfigured } from './mongodb';
 
 /**
  * Auth configuration for OIDC SSO
@@ -302,44 +305,8 @@ export function canViewAdminDashboard(groups: string[]): boolean {
   });
 }
 
-/** Reset in-flight refresh map (for testing only). */
-export function _resetInflightRefreshes(): void {
-  _inflightRefreshes.clear();
-}
-
-// Safety net 1: In-flight deduplication.
-// Maps the current refresh token → the pending exchange Promise so that
-// concurrent callers (refetchInterval + TokenExpiryGuard) share one HTTP
-// request instead of racing and triggering invalid_grant with rotating tokens.
-type ExchangeResult = {
-  access_token: string;
-  id_token?: string;
-  refresh_token?: string;
-  expires_in?: number;
-  refresh_expires_in?: number;
-} | null; // null = graceful race (see safety net 2)
-
-type OidcExchangeResponse = Exclude<ExchangeResult, null> & {
-  error?: string;
-  error_description?: string;
-};
-
-const _inflightRefreshes = new Map<string, Promise<ExchangeResult>>();
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Server-side token store
-// ─────────────────────────────────────────────────────────────────────────────
-// Large OAuth tokens (accessToken, refreshToken, idToken) are offloaded from
-// the JWT cookie into the shared MongoDB store so the
-// encrypted cookie stays under the 4096-byte browser limit.
-//
-// MongoDB collection `auth_token_cache` — shared across all replicas,
-//     tokens AES-256-GCM encrypted at rest (key derived from NEXTAUTH_SECRET).
-//
-// See: https://github.com/caipe-io/ai-platform-engineering/issues/1986
-
-// Claim groups are only needed for in-process authorization checks and are
-// re-populated on login and every token refresh. They stay in L1 only.
+// Claim-group bookkeeping is separate from credentials. Identity-mapping
+// normalization remains a separate workstream.
 const _claimGroupsCache = new Map<string, { groups: string[]; checkedAt: number }>();
 
 export function cacheOidcClaimGroups(sub: string | undefined, groups: string[]): void {
@@ -352,227 +319,21 @@ export function getCachedOidcClaimGroups(sub: string | undefined): string[] {
   return _claimGroupsCache.get(sub)?.groups ?? [];
 }
 
-/** Reset server-side token store (for testing only). */
+/** Reset claim-group bookkeeping (for testing only). */
 export function _resetServerTokenStore(): void {
   _claimGroupsCache.clear();
-  resetTokenStore();
 }
 
-/**
- * Refresh the access token using the refresh token
- *
- * This function calls the OIDC token endpoint to exchange a refresh_token
- * for a new access_token and id_token.
- *
- * Safety nets:
- *   1. In-flight deduplication: concurrent calls with the same refresh token
- *      share a single HTTP exchange rather than racing.
- *   2. Graceful invalid_grant: if the provider rejects the token but the
- *      access token is still valid, we treat it as a race (another instance
- *      already refreshed) and return the existing token without an error.
- *
- * @param token - The JWT token containing the refresh token
- * @returns Updated token with new access_token and expiry
- */
-async function exchangeAccessToken(token: {
-  accessToken?: string;
-  refreshToken?: string;
-  idToken?: string;
-  refreshTokenExpiresAt?: number;
-  error?: string;
-  expiresAt?: number;
-  [key: string]: unknown;
-}, coordinated = false) {
-  try {
-    const issuer = process.env.OIDC_ISSUER;
-    // Server-side calls (discovery + token refresh) prefer OIDC_DISCOVERY_URL so
-    // they can use the Docker-internal hostname while OIDC_ISSUER stays
-    // browser-facing. See provider config below for full rationale.
-    const serverIssuer = process.env.OIDC_DISCOVERY_URL || issuer;
-    const clientId = process.env.OIDC_CLIENT_ID;
-    const clientSecret = process.env.OIDC_CLIENT_SECRET;
-
-    if (!issuer || !clientId || !clientSecret) {
-      console.error("[Auth] Missing OIDC configuration for token refresh");
-      return {
-        ...token,
-        error: "RefreshTokenMissingConfig",
-      };
-    }
-
-    if (!token.refreshToken) {
-      console.error("[Auth] No refresh token available");
-      return {
-        ...token,
-        error: "RefreshTokenMissing",
-      };
-    }
-
-    const currentRefreshToken = token.refreshToken as string;
-
-    // Shared exchanges are fenced by record version. They must not join an
-    // unversioned promise left over from an older login with the same token.
-    const existing = coordinated ? undefined : _inflightRefreshes.get(currentRefreshToken);
-    if (existing) {
-      console.log("[Auth] Joining in-flight token exchange (concurrent refresh detected)");
-      const result = await existing;
-      if (result === null) {
-        // Another caller already handled the race; current access token is still valid
-        return { ...token, error: undefined };
-      }
-      return {
-        ...token,
-        accessToken: result.access_token,
-        idToken: result.id_token,
-        expiresAt: accessTokenExpiry(result.access_token, Math.floor(Date.now() / 1000) + (result.expires_in || 3600)),
-        refreshToken: result.refresh_token ?? currentRefreshToken,
-        refreshTokenExpiresAt: result.refresh_expires_in
-          ? Math.floor(Date.now() / 1000) + result.refresh_expires_in : token.refreshTokenExpiresAt,
-        error: undefined,
-      };
-    }
-
-    // Inner function that performs the actual HTTP exchange.
-    // Returns the token data on success, null for graceful races, or throws on real errors.
-    const doExchange = async (): Promise<ExchangeResult> => {
-      // Discover the token endpoint from the OIDC issuer's well-known configuration.
-      // Falls back to Keycloak-style path if discovery fails.
-      let tokenEndpoint: string;
-      try {
-        const wellKnownUrl = `${serverIssuer}/.well-known/openid-configuration`;
-        const discoveryResponse = await fetch(wellKnownUrl, { next: { revalidate: 3600 }, signal: AbortSignal.timeout(5000) });
-        if (discoveryResponse.ok) {
-          const discoveryDoc = await discoveryResponse.json();
-          tokenEndpoint = discoveryDoc.token_endpoint;
-          console.log("[Auth] Token endpoint from OIDC discovery:", tokenEndpoint);
-        } else {
-          console.warn("[Auth] OIDC discovery failed, falling back to Keycloak-style path");
-          tokenEndpoint = `${serverIssuer}/protocol/openid-connect/token`;
-        }
-      } catch (discoveryError) {
-        console.warn("[Auth] OIDC discovery error, falling back to Keycloak-style path:", discoveryError);
-        tokenEndpoint = `${serverIssuer}/protocol/openid-connect/token`;
-      }
-
-      console.log("[Auth] Refreshing access token...");
-
-      const response = await fetch(tokenEndpoint, {
-        method: "POST",
-        signal: AbortSignal.timeout(10_000),
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          client_id: clientId!,
-          client_secret: clientSecret!,
-          grant_type: "refresh_token",
-          refresh_token: currentRefreshToken,
-        }),
-      });
-
-      // Check content-type before parsing - OIDC providers may return HTML error pages
-      const contentType = response.headers.get("content-type") || "";
-      let data: OidcExchangeResponse;
-
-      if (contentType.includes("application/json")) {
-        data = await response.json() as OidcExchangeResponse;
-      } else {
-        const text = await response.text();
-        console.error("[Auth] Token refresh returned non-JSON response:", text.substring(0, 200));
-        throw new Error("RefreshTokenExpired");
-      }
-
-      if (!response.ok) {
-        // Safety net 2: graceful invalid_grant handling.
-        // When a peer (another Next.js instance or refetchInterval) already consumed
-        // the rotating refresh token, we get invalid_grant back. If the access token
-        // is still valid, treat this as a benign race rather than forcing a logout.
-        if (data.error === "invalid_grant" && !coordinated) {
-          const now = Math.floor(Date.now() / 1000);
-          const expiresAt = token.expiresAt as number | undefined;
-          if (expiresAt && expiresAt > now) {
-            console.warn(
-              "[Auth] invalid_grant with valid access token — concurrent refresh race detected, keeping current token"
-            );
-            return null; // Signal: no error, keep existing token
-          }
-        }
-        console.error("[Auth] Token refresh failed:", data);
-        throw new Error("RefreshTokenExpired");
-      }
-
-      console.log("[Auth] Token refreshed successfully");
-      return data as ExchangeResult;
-    };
-
-    // Register the exchange Promise so concurrent callers can join it (safety net 1)
-    const exchangePromise = doExchange();
-    if (!coordinated) _inflightRefreshes.set(currentRefreshToken, exchangePromise);
-
-    let result: ExchangeResult;
-    try {
-      result = await exchangePromise;
-    } finally {
-      if (!coordinated) _inflightRefreshes.delete(currentRefreshToken);
-    }
-
-    if (result === null) {
-      // Graceful race: access token still valid, no logout needed
-      return { ...token, error: undefined };
-    }
-
-    return {
-      ...token,
-      accessToken: result.access_token,
-      idToken: result.id_token,
-      expiresAt: accessTokenExpiry(result.access_token, Math.floor(Date.now() / 1000) + (result.expires_in || 3600)),
-      refreshToken: result.refresh_token ?? currentRefreshToken, // Use new refresh token if provided
-      refreshTokenExpiresAt: result.refresh_expires_in
-        ? Math.floor(Date.now() / 1000) + result.refresh_expires_in : token.refreshTokenExpiresAt,
-      error: undefined, // Clear any previous errors
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    if (errorMessage === "RefreshTokenExpired") {
-      return { ...token, error: "RefreshTokenExpired" };
-    }
-    console.error("[Auth] Error refreshing access token:", error);
-    return {
-      ...token,
-      error: "RefreshTokenError",
-    };
-  }
-}
-
-async function refreshAccessToken(token: {
-  accessToken?: string;
-  refreshToken?: string;
-  idToken?: string;
-  refreshTokenExpiresAt?: number;
-  error?: string;
-  expiresAt?: number;
-  [key: string]: unknown;
-}) {
-  // Self-contained legacy cookies have no shared-record version. Keep their
-  // existing refresh path; normal OAuth logins always publish a shared record.
-  if (typeof token.sub !== 'string' || typeof token.tokenStoreVersion !== 'number') {
-    return exchangeAccessToken(token);
+async function refreshAccessToken(token: JWT): Promise<JWT> {
+  if (!token.sessionId || !token.sub || !token.sessionVersion) {
+    return { ...token, accessToken: undefined, error: 'SessionExpired' };
   }
   try {
-    const stored = await refreshStoredTokens(token.sub, token.tokenStoreVersion, async (current) => {
-      const refreshed = await exchangeAccessToken({ ...token, ...current }, true);
-      if (refreshed.error) throw new Error(String(refreshed.error));
-      return {
-        accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken,
-        idToken: typeof refreshed.idToken === 'string' ? refreshed.idToken : undefined,
-        expiresAt: refreshed.expiresAt,
-        refreshTokenExpiresAt: typeof refreshed.refreshTokenExpiresAt === 'number' ? refreshed.refreshTokenExpiresAt : undefined,
-      };
-    });
-    return { ...token, ...stored, tokenStoreVersion: stored.version, error: undefined };
+    const stored = await refreshSession(token.sessionId, token.sub, token.sessionVersion, exchangeRefreshToken);
+    return { ...token, ...stored, error: undefined };
   } catch (error) {
-    return { ...token, error: error instanceof Error && error.message === 'RefreshTokenExpired'
-      ? 'RefreshTokenExpired' : 'RefreshTokenError' };
+    return { ...token, accessToken: undefined, refreshToken: undefined, expiresAt: undefined,
+      error: error instanceof SessionExpiredError ? 'SessionExpired' : 'SessionUnavailable' };
   }
 }
 
@@ -635,12 +396,12 @@ export const authOptions: NextAuthOptions = {
     },
   ],
   callbacks: {
+    async signIn() {
+      return isMongoDBConfigured ? true : '/login?error=SessionStorageRequired';
+    },
     async jwt({ token, account, profile, trigger, session: updateData }) {
-      // Strip idToken from existing sessions — it adds ~1KB and pushes
-      // the cookie over the 4096-byte limit, causing chunking loops.
-      if (token.idToken) {
-        delete token.idToken;
-      }
+      // Infrastructure errors must not trigger refresh or masquerade as logout.
+      if (token.error && !account) return token;
 
       // Force-refresh when admin changes roles/permissions and calls
       // update({ forceRefresh: true }) from the client.
@@ -658,6 +419,7 @@ export const authOptions: NextAuthOptions = {
 
       // Initial sign in - persist the OAuth tokens (NOT id_token).
       if (account) {
+        if (!token.sub || !account.access_token) throw new SessionExpiredError();
         token.accessToken = account.access_token;
         token.refreshToken = account.refresh_token;
         token.expiresAt = accessTokenExpiry(account.access_token, account.expires_at);
@@ -667,14 +429,6 @@ export const authOptions: NextAuthOptions = {
         // Some OIDC providers (like Keycloak) include this field
         if (account.refresh_expires_in) {
           token.refreshTokenExpiresAt = Math.floor(Date.now() / 1000) + (account.refresh_expires_in as number);
-        }
-
-        if (token.sub && token.accessToken) {
-          const stored = await storeTokens(token.sub, {
-            accessToken: token.accessToken, refreshToken: token.refreshToken,
-            expiresAt: token.expiresAt, refreshTokenExpiresAt: token.refreshTokenExpiresAt,
-          });
-          if (stored) Object.assign(token, stored, { tokenStoreVersion: stored.version });
         }
 
         const expiryDate = new Date((account.expires_at || 0) * 1000).toISOString();
@@ -695,6 +449,13 @@ export const authOptions: NextAuthOptions = {
         } else {
           console.log("[Auth] ℹ️  Refresh token support disabled (OIDC_ENABLE_REFRESH_TOKEN=false)");
         }
+      }
+
+      if (account && token.sub && token.accessToken && token.expiresAt !== undefined) {
+        Object.assign(token, await createSession(token.sub, {
+          accessToken: token.accessToken, refreshToken: token.refreshToken,
+          expiresAt: token.expiresAt, refreshTokenExpiresAt: token.refreshTokenExpiresAt,
+        }), { sessionFormat: SESSION_FORMAT });
       }
 
       // Extract and check groups from profile (but DON'T store them - too large!)
@@ -787,27 +548,11 @@ export const authOptions: NextAuthOptions = {
             return token;
           }
 
-          // Don't attempt refresh if suppressed (graceful invalid_grant already handled)
-          // This prevents infinite refresh loops when the refresh token is consumed but
-          // the access token is still valid.
-          const suppressedUntil = token.refreshSuppressedUntil as number | undefined;
-          if (suppressedUntil && now < suppressedUntil) {
-            return token;
-          }
-
           console.debug(`[Auth] Token expires in ${timeUntilExpiry}s, attempting refresh...`);
 
           // Only attempt refresh if we have a refresh token
           if (token.refreshToken) {
             const refreshedToken = await refreshAccessToken(token) as typeof token;
-
-            // If refresh returned the same access token (graceful invalid_grant race),
-            // suppress further refresh attempts until the token expires to prevent
-            // an infinite refresh loop.
-            if (!refreshedToken.error && refreshedToken.accessToken === token.accessToken) {
-              console.log(`[Auth] Refresh suppressed — access token still valid for ${timeUntilExpiry}s, will not retry`);
-              return { ...refreshedToken, refreshSuppressedUntil: expiresAt };
-            }
 
             // Re-evaluate group authorization every 4 hours using claims from
             // the fresh id_token. This ensures revoked group membership takes
@@ -854,12 +599,13 @@ export const authOptions: NextAuthOptions = {
       // Don't store full tokens in session - they're huge (2KB+ each)
       // Only store what the client actually needs
 
-      if (!token.error && token.sub && !token.accessToken) {
-        token.error = "AccessTokenMissing";
+      if (!token.error && (!token.accessToken || !token.expiresAt || token.expiresAt <= Math.floor(Date.now() / 1000))) {
+        token.error = "SessionExpired";
       }
-      if (!token.error && typeof token.expiresAt === 'number' && token.expiresAt <= Date.now() / 1000) {
-        token.error = "RefreshTokenExpired";
-      }
+      // Direct getServerSession callers must not see a usable identity on failure.
+      if (token.error) return { expires: session.expires, error: token.error };
+      if (token.sessionExpiresAt) session.expires = new Date(token.sessionExpiresAt * 1000).toISOString();
+      session.accessToken = undefined;
 
       // Only pass tokens if they're valid (not expired)
       if (!token.error) {
@@ -886,20 +632,6 @@ export const authOptions: NextAuthOptions = {
       // OpenFGA-backed BFF/resource checks, not OIDC/AD group claims.
       session.canAccessDynamicAgents = true;
 
-      // If token refresh failed or the server-side token cache was lost,
-      // mark session as invalid and DON'T include tokens.
-      if (
-        token.error === "RefreshTokenExpired" ||
-        token.error === "RefreshTokenError" ||
-        token.error === "AccessTokenMissing" ||
-        token.error === "SharedStoreUnavailable"
-      ) {
-        console.error(`[Auth] Session invalid due to: ${token.error}`);
-        session.error = token.error;
-        // Clear tokens from session to reduce cookie size
-        session.accessToken = undefined;
-      }
-
       // User info is already populated by NextAuth from the profile() callback
       // We don't store profile in token anymore (saves session cookie size)
       // Just pass through the sub if available
@@ -917,70 +649,43 @@ export const authOptions: NextAuthOptions = {
   },
   session: {
     strategy: "jwt",
-    maxAge: 24 * 60 * 60, // 24 hours
+    maxAge: SESSION_MAX_AGE, // Shared record also enforces absolute lifetime
   },
-  // Credentials are published only by login/refresh. Encoding an older cookie
-  // must never write its credentials back over the shared record.
+  // Cookies identify a login, never carry a second source of credential truth.
   jwt: {
     async encode({ token, secret, maxAge }) {
-      const slimToken = { ...(token ?? {}) } as Record<string, unknown>;
-      // Already self-contained legacy cookies retain their existing format.
-      if (typeof token?.tokenStoreVersion === 'number') {
-        delete slimToken.accessToken;
-        delete slimToken.refreshToken;
-      }
-      // A read outage is request-scoped and must not poison the cookie.
-      if (slimToken.error === 'SharedStoreUnavailable') delete slimToken.error;
-      delete slimToken.idToken;
-      delete slimToken.version;
-      // Dynamic import avoids top-level ESM/CJS conflict with jose in test environments
+      const slimToken = { ...(token ?? {}) };
+      for (const key of ['accessToken', 'refreshToken', 'idToken', 'expiresAt',
+        'refreshTokenExpiresAt', 'sessionVersion', 'sessionExpiresAt', 'error']) delete slimToken[key];
       const { encode } = await import("next-auth/jwt");
       return encode({ token: slimToken, secret, maxAge });
     },
     async decode({ token, secret }) {
       const { decode } = await import("next-auth/jwt");
       const decoded = await decode({ token, secret });
-      // Existing offloaded cookies acquire a version on their first read.
-      // Self-contained legacy cookies keep their previous authentication path.
-      if (
-        decoded?.sub &&
-        (!decoded.accessToken || typeof decoded.tokenStoreVersion === 'number')
-      ) {
-        try {
-          const stored = await getStoredTokens(decoded.sub);
-          if (stored) {
-            if (decoded.tokenStoreVersion !== stored.version) {
-              delete decoded.error;
-              delete decoded.refreshSuppressedUntil;
-            }
-            decoded.accessToken = stored.accessToken;
-            decoded.refreshToken = stored.refreshToken;
-            decoded.idToken = stored.idToken;
-            // Unknown legacy opaque-token expiry forces refresh, never the
-            // unrelated future expiry carried by a different browser cookie.
-            decoded.expiresAt = stored.expiresAt ?? 1;
-            decoded.refreshTokenExpiresAt = stored.refreshTokenExpiresAt;
-            decoded.tokenStoreVersion = stored.version;
-          } else {
-            decoded.accessToken = undefined;
-            decoded.refreshToken = undefined;
-            decoded.error = 'AccessTokenMissing';
-          }
-        } catch {
-          decoded.accessToken = undefined;
-          decoded.refreshToken = undefined;
-          // Keep genuine refresh failures sticky; a failed read alone is retryable.
-          decoded.error ??= 'SharedStoreUnavailable';
-        }
+      if (!decoded) return null;
+      // Reject old cookies, including self-contained test cookies. No legacy fallback.
+      for (const key of ['accessToken', 'refreshToken', 'idToken', 'expiresAt',
+        'refreshTokenExpiresAt', 'sessionVersion', 'sessionExpiresAt', 'error']) delete decoded[key];
+      if (decoded.sessionFormat !== SESSION_FORMAT || !decoded.sessionId || !decoded.sub) {
+        return { ...decoded, error: 'SessionExpired' };
       }
-      if (decoded?.accessToken) {
-        decoded.expiresAt = accessTokenExpiry(decoded.accessToken, decoded.expiresAt) ?? 1;
+      try {
+        return { ...decoded, ...await getStoredSession(decoded.sessionId, decoded.sub) };
+      } catch (error) {
+        // Throwing here makes NextAuth clear the cookie even for a database outage.
+        return { ...decoded, error: error instanceof SessionExpiredError ? 'SessionExpired' : 'SessionUnavailable' };
       }
-      return decoded;
     },
   },
-  // Explicitly disable session store (we use JWT only)
-  // This prevents NextAuth from trying to write SST files
+  events: {
+    async signOut({ token }) {
+      if (token?.sessionId && token.sub && token.sessionFormat === SESSION_FORMAT) {
+        await revokeSession(token.sessionId, token.sub);
+      }
+    },
+  },
+  // NextAuth manages protected cookies; our session module owns MongoDB records.
   adapter: undefined,
   cookies: {
     sessionToken: {
@@ -999,7 +704,7 @@ export const authOptions: NextAuthOptions = {
           process.env.NODE_ENV === 'production' &&
           (process.env.NEXTAUTH_URL ?? '').startsWith('https://'),
         // Reduce session cookie size by not storing everything in cookie
-        maxAge: 24 * 60 * 60, // 24 hours
+        maxAge: SESSION_MAX_AGE, // Shared record also enforces absolute lifetime
       },
     },
   },
@@ -1039,7 +744,6 @@ declare module "next-auth" {
 
 declare module "next-auth/jwt" {
   interface JWT {
-    tokenStoreVersion?: number;
     accessToken?: string;
     refreshToken?: string;
     expiresAt?: number;
@@ -1050,7 +754,10 @@ declare module "next-auth/jwt" {
     canViewAdmin?: boolean;
     canAccessDynamicAgents?: boolean; // Legacy context flag; OpenFGA authorizes agents
     groupsCheckedAt?: number; // Unix timestamp of last group re-evaluation
-    refreshSuppressedUntil?: number; // Unix timestamp — skip refresh attempts until this time (set after graceful invalid_grant)
+    sessionId?: string;
+    sessionFormat?: number;
+    sessionVersion?: number;
+    sessionExpiresAt?: number;
     org?: string;           // Tenant identifier from org claim (FR-020)
   }
 }

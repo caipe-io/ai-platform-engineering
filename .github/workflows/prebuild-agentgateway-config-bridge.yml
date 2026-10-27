@@ -1,0 +1,194 @@
+name: "[Prebuild] AgentGateway Config Bridge"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'deploy/agentgateway/**'
+      - '.github/workflows/prebuild-agentgateway-config-bridge.yml'
+      - '.github/actions/prebuild-version/**'
+      - '.github/actions/prebuild-status/**'
+      - '.github/actions/publish-prebuild-manifest/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: ${{ github.repository_owner }}/agentgateway-config-bridge
+
+jobs:
+  verify-cas-wiring:
+    if: |
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.head_ref, 'prebuild/') &&
+      github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.14"
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.18.2
+      - name: Verify route generation, producers and deployment wiring
+        run: |
+          helm dependency build charts/ai-platform-engineering
+          uv sync --project ai_platform_engineering/dynamic_agents --extra dev --frozen
+          uv run --project ai_platform_engineering/dynamic_agents --no-sync pytest -q \
+            deploy/agentgateway/tests/test_config_bridge.py tests/test_gateway_cas_chart.py \
+            ai_platform_engineering/dynamic_agents/tests/test_mcp_client_token_forwarding.py
+
+  build:
+    needs: verify-cas-wiring
+    if: |
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.head_ref, 'prebuild/') &&
+      github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]'
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Compute prebuild tag
+        id: version
+        uses: ./.github/actions/prebuild-version
+        with:
+          head_ref: ${{ github.head_ref }}
+          base_ref: ${{ github.base_ref }}
+          base_sha: ${{ github.event.pull_request.base.sha }}
+      - name: Upload building status
+        if: matrix.arch == 'amd64'
+        uses: ./.github/actions/prebuild-status
+        with:
+          pr_number: ${{ github.event.pull_request.number }}
+          head_sha: ${{ github.event.pull_request.head.sha }}
+          head_ref: ${{ github.head_ref }}
+          source: agentgateway-config-bridge
+          type: docker
+          name: agentgateway-config-bridge
+          repository: ghcr.io/${{ env.IMAGE_NAME }}
+          tag: ${{ steps.version.outputs.prebuild_tag }}
+          ref: ghcr.io/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.prebuild_tag }}
+          status: building
+          artifact_suffix: start
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Log in to container registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build and push architecture digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: deploy/agentgateway
+          file: deploy/agentgateway/Dockerfile.config-bridge
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=ghcr.io/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          labels: io.cnoe.prebuild.branch=${{ steps.version.outputs.branch }}
+          cache-from: type=gha,scope=prebuild-config-bridge-${{ matrix.arch }}
+          cache-to: type=gha,mode=min,scope=prebuild-config-bridge-${{ matrix.arch }}
+          provenance: false
+          sbom: false
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+      - name: Upload digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: digests-agentgateway-config-bridge--${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: build
+    if: |
+      always() && !cancelled() &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.head_ref, 'prebuild/') &&
+      github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Compute prebuild tag
+        id: version
+        uses: ./.github/actions/prebuild-version
+        with:
+          head_ref: ${{ github.head_ref }}
+          base_ref: ${{ github.base_ref }}
+          base_sha: ${{ github.event.pull_request.base.sha }}
+      - name: Publish multi-architecture image
+        id: publish
+        if: needs.build.result == 'success'
+        uses: ./.github/actions/publish-prebuild-manifest
+        with:
+          artifact_pattern: digests-agentgateway-config-bridge--*
+          image_repository: ghcr.io/${{ env.IMAGE_NAME }}
+          image_ref: ghcr.io/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.prebuild_tag }}
+          registry_username: ${{ github.actor }}
+          registry_token: ${{ github.token }}
+      - name: Upload final status
+        if: ${{ always() && steps.version.outputs.prebuild_tag != '' }}
+        uses: ./.github/actions/prebuild-status
+        with:
+          pr_number: ${{ github.event.pull_request.number }}
+          head_sha: ${{ github.event.pull_request.head.sha }}
+          head_ref: ${{ github.head_ref }}
+          source: agentgateway-config-bridge
+          type: docker
+          name: agentgateway-config-bridge
+          repository: ghcr.io/${{ env.IMAGE_NAME }}
+          tag: ${{ steps.version.outputs.prebuild_tag }}
+          ref: ghcr.io/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.prebuild_tag }}
+          status: ${{ steps.publish.outcome == 'success' && 'published' || 'failed' }}
+          artifact_suffix: final

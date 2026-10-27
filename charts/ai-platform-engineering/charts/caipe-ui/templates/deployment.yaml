@@ -192,8 +192,23 @@ spec:
                   name: {{ $cbTokenSecretName | quote }}
                   key: {{ $cbTokenSecretKey | quote }}
             {{- end }}
+            {{- $cas := $agwGlobal.cas | default dict }}
             - name: OPENFGA_AUTHZ_BRIDGE_HOST
               value: {{ index .Values.config "OPENFGA_AUTHZ_BRIDGE_HOST" | default (printf "%s-openfga-authz-bridge" .Release.Name) | quote }}
+            {{- if and $agwGlobal.enabled $cas.enabled }}
+            - name: CAIPE_GATEWAY_CAS_ENABLED
+              value: "true"
+            - name: CAIPE_GATEWAY_AUTHZ_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ ($cas.existingSecret).name | quote }}
+                  key: {{ ($cas.existingSecret).key | default "CAIPE_GATEWAY_AUTHZ_TOKEN" | quote }}
+            - name: CAIPE_AGENT_CONTEXT_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ ($cas.contextSecret).name | quote }}
+                  key: {{ ($cas.contextSecret).key | default "CAIPE_AGENT_CONTEXT_HMAC_SECRET" | quote }}
+            {{- end }}
             - name: ETCD_HOST
               value: {{ index .Values.config "ETCD_HOST" | default (printf "%s-etcd" .Release.Name) | quote }}
             - name: MILVUS_HEALTH_URL

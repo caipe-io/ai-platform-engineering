@@ -7,6 +7,7 @@ import { getErrorMessage } from "@/lib/error-utils";
 import { LastReviewBadge } from "@/components/ai-review";
 import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
 import { Badge } from "@/components/ui/badge";
+import { PermissionSyncNotice } from "@/components/shared/PermissionSyncNotice";
 import { Button } from "@/components/ui/button";
 import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
 import { Card,CardContent } from "@/components/ui/card";
@@ -127,6 +128,8 @@ export function DynamicAgentsTab({
       setLoading(false);
     }
   }, [page, pageSize, search]);
+
+  const refreshAgents = React.useCallback(() => { void fetchAgents(); }, [fetchAgents]);
 
   React.useEffect(() => {
     fetchAgents();
@@ -489,6 +492,7 @@ export function DynamicAgentsTab({
               const rowActionError = rowActionErrors[agent._id];
               return (
               <div key={agent._id} className="space-y-2">
+              <PermissionSyncNotice status={agent.permission_sync} onApplied={refreshAgents} onMissing={refreshAgents} />
               <div
                 className="grid grid-cols-12 gap-4 py-3 px-2 rounded-lg hover:bg-muted/50 items-center cursor-pointer"
                 onClick={() => openAgent(agent)}

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -9,11 +8,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import mongomock
 from fastapi.testclient import TestClient
 
 from ai_platform_engineering.audit_service.config import Settings
 from ai_platform_engineering.audit_service.main import create_app
-from ai_platform_engineering.audit_service.queue_service import PUBLIC_FLUSH_ERROR, AuditQueueService
+from ai_platform_engineering.audit_service.archive_worker import ArchiveWorker
 from ai_platform_engineering.audit_service.storage import (
     AuditQuery,
     LocalAuditStore,
@@ -27,6 +27,11 @@ from ai_platform_engineering.audit_service.verbosity import (
 )
 
 
+@pytest.fixture(autouse=True)
+def mock_mongo(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("ai_platform_engineering.audit_service.query_store.MongoClient", mongomock.MongoClient)
+
+
 def _settings(tmp_path: Path, **overrides: object) -> Settings:
     values = {
         "local_path": str(tmp_path),
@@ -34,7 +39,7 @@ def _settings(tmp_path: Path, **overrides: object) -> Settings:
         "local_retention_days": 1,
         "local_disk_warning_percent": 85.0,
         "local_disk_critical_percent": 95.0,
-        "queue_max_size": 10,
+        "ingest_max_batch_size": 10,
         "flush_batch_size": 2,
         "flush_interval_seconds": 0.05,
         "read_default_limit": 100,
@@ -96,8 +101,62 @@ def test_ingests_batches_and_reads_filtered_events(tmp_path: Path) -> None:
 
         assert read.status_code == 200
         body = read.json()
-        assert body["total"] == 1
+        assert len(body["records"]) == 1
         assert body["records"][0]["correlation_id"] == "corr-1"
+
+
+@pytest.mark.parametrize(
+    ("filters", "expected"),
+    [
+        ({"decision_id": "decision-1"}, 1),
+        ({"delegation_id": "approval-1"}, 1),
+        ({"delegation_id": "approval-1", "subject_ref": "user:other-user"}, 0),
+        ({"subject_ref": "user:test-user", "resource_ref": "tool:example/list"}, 1),
+        ({"decision_id": "decision-1", "subject_ref": "user:other-user"}, 0),
+    ],
+)
+def test_filters_cas_evidence_by_exact_reference(tmp_path: Path, filters: dict[str, str], expected: int) -> None:
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        events = [
+            {
+                "ts": "2026-10-13T12:00:00Z",
+                "type": "cas_decision",
+                "outcome": "deny",
+                "subject_ref": f"user:{subject}",
+                "resource_ref": "tool:example/list",
+                "decision_id": f"decision-{index}",
+                "delegation_id": f"approval-{index}",
+                "failed_gate": "caller_tool",
+                "gateway_policy": "Caller must can_call the tool.",
+                "gateway_checks": [
+                    {
+                        "gate": "caller_tool",
+                        "subject_ref": f"user:{subject}",
+                        "relation": "can_call",
+                        "resource_ref": "tool:example/list",
+                        "decision": "DENY",
+                        "reason": "NO_CAPABILITY",
+                    }
+                ],
+            }
+            for index, subject in enumerate(("test-user", "other-user"), start=1)
+        ]
+        assert client.post("/v1/audit/events", json={"events": events}).status_code == 202
+        _wait_for_flushed(client, 2)
+        response = client.get(
+            "/v1/audit/events",
+            params={
+                "since": "2026-10-13T11:00:00Z",
+                "until": "2026-10-13T13:00:00Z",
+                **filters,
+            },
+        )
+        assert response.status_code == 200
+        assert len(response.json()["records"]) == expected
+        if expected:
+            assert response.json()["records"][0]["failed_gate"] == "caller_tool"
+            assert response.json()["records"][0]["gateway_checks"][0]["relation"] == "can_call"
+            assert response.json()["records"][0]["gateway_policy"] == "Caller must can_call the tool."
 
 
 def test_readyz_fails_fast_once_shutdown_begins(tmp_path: Path) -> None:
@@ -105,12 +164,9 @@ def test_readyz_fails_fast_once_shutdown_begins(tmp_path: Path) -> None:
     with TestClient(app) as client:
         assert client.get("/readyz").status_code == 200
 
-        service: AuditQueueService = app.state.audit_queue
-        # stop() flips this before it awaits the drain — /readyz must reflect
-        # that immediately so Kubernetes pulls the pod out of Service
-        # endpoints while the drain is still in progress, not only once it
-        # finishes (status()["running"] only goes False at the very end).
-        service._stopping = True
+        service: ArchiveWorker = app.state.audit_queue
+        # stop() changes readiness before waiting for worker cancellation.
+        service.is_stopping = True
 
         response = client.get("/readyz")
         assert response.status_code == 503
@@ -120,26 +176,24 @@ def test_readyz_fails_fast_once_shutdown_begins(tmp_path: Path) -> None:
 def test_rejects_new_events_once_shutdown_begins(tmp_path: Path) -> None:
     app = create_app(_settings(tmp_path, flush_batch_size=10, flush_interval_seconds=10))
     with TestClient(app) as client:
-        service: AuditQueueService = app.state.audit_queue
-        service._stopping = True
+        service: ArchiveWorker = app.state.audit_queue
+        service.is_stopping = True
 
         response = client.post("/v1/audit/events", json={"events": [{"type": "auth"}]})
 
         assert response.status_code == 503
-        assert client.get("/v1/audit/status").json()["rejected_events"] == 1
 
 
-def test_rejects_when_queue_is_full(tmp_path: Path) -> None:
-    app = create_app(_settings(tmp_path, queue_max_size=1, flush_batch_size=10, flush_interval_seconds=10))
+def test_rejects_oversized_batch(tmp_path: Path) -> None:
+    app = create_app(_settings(tmp_path, ingest_max_batch_size=1, flush_batch_size=10, flush_interval_seconds=10))
     with TestClient(app) as client:
         response = client.post(
             "/v1/audit/events",
             json={"events": [{"type": "auth"}, {"type": "auth"}]},
         )
 
-        assert response.status_code == 503
-        status = client.get("/v1/audit/status").json()
-        assert status["rejected_events"] == 2
+        assert response.status_code == 413
+        assert app.state.audit_query_store.events.count_documents({}) == 0
 
 
 def test_accepts_single_event_payload_and_defaults_timestamp(tmp_path: Path) -> None:
@@ -240,34 +294,6 @@ def test_status_sanitizes_storage_health_errors(tmp_path: Path, monkeypatch) -> 
     assert "secret" not in storage["detail"]
 
 
-def test_queue_status_sanitizes_flush_errors() -> None:
-    class FailingStore:
-        @property
-        def backend_name(self) -> str:
-            return "local"
-
-        def readiness_check(self) -> None:
-            return None
-
-        def write_batch(self, records: list[dict[str, object]]) -> str | None:
-            raise RuntimeError("secret stack trace payload")
-
-    service = AuditQueueService(
-        FailingStore(),
-        queue_max_size=10,
-        flush_batch_size=1,
-        flush_interval_seconds=0.01,
-    )
-
-    assert service.enqueue_many([{"type": "auth"}])
-    asyncio.run(service._flush_remaining())
-
-    status = service.status()
-    assert status["failed_flushes"] == 1
-    assert status["last_error"] == PUBLIC_FLUSH_ERROR
-    assert "secret" not in status["last_error"]
-
-
 def test_local_store_purges_expired_audit_files(tmp_path: Path) -> None:
     store = LocalAuditStore(str(tmp_path), gzip_enabled=False)
     old_dir = tmp_path / "2026" / "06" / "18"
@@ -332,9 +358,10 @@ def test_s3_store_writes_and_reads_parquet_objects(monkeypatch) -> None:
                 "component": "admin_ui",
                 "outcome": "allow",
                 "correlation_id": "corr-1",
-                "subject_hash": "sha256:alice",
-                "subject_ref": "user:alice",
-                "actor_ref": "user:alice",
+                "subject_hash": "sha256:test-user",
+                "subject_ref": "user:test-user",
+                "actor_ref": "user:test-user",
+                "decision_id": "test-decision",
             }
         ]
     )
@@ -351,13 +378,16 @@ def test_s3_store_writes_and_reads_parquet_objects(monkeypatch) -> None:
             until=datetime(2026, 6, 20, 2, 0, tzinfo=timezone.utc),
             limit=10,
             outcome="allow",
+            decision_id="test-decision",
+            subject_ref="user:test-user",
         )
     )
 
     assert result.total == 1
     assert result.records[0]["correlation_id"] == "corr-1"
-    assert result.records[0]["subject_ref"] == "user:alice"
-    assert result.records[0]["actor_ref"] == "user:alice"
+    assert result.records[0]["subject_ref"] == "user:test-user"
+    assert result.records[0]["actor_ref"] == "user:test-user"
+    assert result.records[0]["decision_id"] == "test-decision"
 
 
 def test_s3_query_scopes_listing_and_fetch_to_date_range(monkeypatch) -> None:
@@ -529,6 +559,39 @@ def test_verbosity_endpoint_verbose(tmp_path: Path) -> None:
     assert data["allowed_types"] == []
 
 
+def test_minimal_retains_queryable_delegated_allow_and_deny_receipts(tmp_path: Path) -> None:
+    now = datetime.now(timezone.utc)
+    delegated = {
+        "ts": now.isoformat(), "type": "cas_decision", "component": "cas",
+        "tenant_id": "primary", "delegation_id": "approval-1",
+        "delegation_operation": "check", "delegation_policy": "cas-delegation/v1",
+        "actor_ref": "service_account:test-service", "subject_ref": "user:test-user",
+    }
+    app = create_app(_settings(tmp_path, verbosity="minimal"))
+    with TestClient(app) as client:
+        response = client.post("/v1/audit/events", json={"events": [
+            {**delegated, "outcome": "allow", "decision_id": "decision-1"},
+            {**delegated, "outcome": "deny", "decision_id": "decision-2"},
+            {**delegated, "outcome": "success"},
+            {**delegated, "outcome": "error"},
+            {**delegated, "outcome": None},
+            {"type": "cas_decision", "outcome": "allow"},
+            {"type": "cas_decision", "outcome": "deny"},
+        ]})
+        assert response.status_code == 202
+        assert response.json()["accepted"] == 2
+        query = client.get("/v1/audit/events", params={
+            "since": (now - timedelta(minutes=1)).isoformat(),
+            "until": (now + timedelta(minutes=1)).isoformat(),
+            "tenant_id": "primary", "delegation_id": "approval-1",
+        })
+        assert query.status_code == 200
+        records = query.json()["records"]
+        assert {record["decision_id"] for record in records} == {"decision-1", "decision-2"}
+        assert {record["outcome"] for record in records} == {"allow", "deny"}
+        assert all(record["subject_ref"] == "user:test-user" for record in records)
+
+
 # ============================================================
 # New tests — verbosity, storage, S3 retention, main endpoints
 # assisted-by claude code claude-sonnet-4-6
@@ -542,13 +605,13 @@ def test_verbosity_endpoint_verbose(tmp_path: Path) -> None:
 
 def test_verbosity_allowed_types_minimal() -> None:
     types = allowed_types("minimal")
-    assert types == frozenset({"cas_grant", "cas_reconcile"})
+    assert types == frozenset({"cas_grant", "cas_reconcile", "cas_delegation"})
 
 
 def test_verbosity_allowed_types_standard() -> None:
     types = allowed_types("standard")
     assert types == frozenset(
-        {"auth", "cas_grant", "cas_reconcile", "cas_decision", "credential_action", "openfga_rebac"}
+        {"auth", "cas_grant", "cas_reconcile", "cas_delegation", "cas_decision", "credential_action", "openfga_rebac"}
     )
 
 
@@ -605,6 +668,32 @@ def test_filter_records_verbose_passes_all() -> None:
     ]
     result = filter_records(records, "verbose")
     assert len(result) == 3
+
+
+@pytest.mark.parametrize("reference", [None, "", "   ", 123])
+def test_minimal_does_not_treat_missing_or_invalid_reference_as_a_delegated_receipt(reference: object) -> None:
+    assert filter_records([{
+        "type": "cas_decision", "delegation_operation": "check", "delegation_id": reference,
+        "outcome": "allow",
+    }], "minimal") == []
+
+
+@pytest.mark.parametrize("outcome", [None, "", "success", "error", "unexpected"])
+def test_minimal_excludes_delegated_checks_without_a_decision_outcome(outcome: str | None) -> None:
+    records = [{
+        "type": "cas_decision", "delegation_operation": "check", "delegation_id": "approval-1", "outcome": outcome,
+    }]
+    assert filter_records(records, "minimal") == []
+    for preset in ("standard", "verbose", "il2", "il5", "soc2"):
+        assert filter_records(records, preset) == records
+
+
+def test_minimal_preserves_delegation_lifecycle_outcomes() -> None:
+    records = [
+        {"type": "cas_delegation", "delegation_operation": "create", "outcome": "success"},
+        {"type": "cas_delegation", "delegation_operation": "revoke", "outcome": "error"},
+    ]
+    assert filter_records(records, "minimal") == records
 
 
 # ---------------------------------------------------------------------------
@@ -732,8 +821,7 @@ def test_s3_set_retention_zero_calls_delete_when_no_rules_remain(monkeypatch) ->
 def test_s3_set_retention_raises_clean_error_on_access_denied(monkeypatch) -> None:
     fake = LifecycleFakeS3Client()
     access_denied = Exception(
-        "An error occurred (AccessDenied) when calling the PutBucketLifecycleConfiguration operation: "
-        "not authorized to perform: s3:PutLifecycleConfiguration"
+        "An error occurred (AccessDenied) when calling the PutBucketLifecycleConfiguration operation: not authorized to perform: s3:PutLifecycleConfiguration"
     )
     access_denied.response = {  # type: ignore[attr-defined]
         "Error": {
@@ -817,10 +905,10 @@ def test_get_storage_local(tmp_path: Path) -> None:
     # Use local_retention_days=90 so the pre-seeded file is not purged on startup
     app = create_app(_settings(tmp_path, local_retention_days=90))
     # Write a real file into the store directory so audit_bytes > 0
-    now = datetime.now(timezone.utc)
-    day_dir = tmp_path / now.strftime("%Y") / now.strftime("%m") / now.strftime("%d")
+    today = datetime.now(timezone.utc)
+    day_dir = tmp_path / today.strftime("%Y/%m/%d")
     day_dir.mkdir(parents=True)
-    (day_dir / f"audit-{now.strftime('%Y%m%dT%H%M%SZ')}-abc.ndjson").write_bytes(b"x" * 512)
+    (day_dir / f"audit-{today.strftime('%Y%m%dT%H%M%SZ')}-abc.ndjson").write_bytes(b"x" * 512)
     with TestClient(app) as client:
         response = client.get("/v1/audit/storage")
     assert response.status_code == 200
@@ -910,8 +998,7 @@ def test_put_retention_negative_days(tmp_path: Path, monkeypatch) -> None:
 def test_put_retention_s3_access_denied_returns_clean_error(tmp_path: Path, monkeypatch) -> None:
     fake = LifecycleFakeS3Client()
     access_denied = Exception(
-        "An error occurred (AccessDenied) when calling the PutBucketLifecycleConfiguration operation: "
-        "not authorized to perform: s3:PutLifecycleConfiguration"
+        "An error occurred (AccessDenied) when calling the PutBucketLifecycleConfiguration operation: not authorized to perform: s3:PutLifecycleConfiguration"
     )
     access_denied.response = {  # type: ignore[attr-defined]
         "Error": {

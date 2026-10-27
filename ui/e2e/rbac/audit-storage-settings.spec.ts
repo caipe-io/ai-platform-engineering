@@ -8,6 +8,7 @@
 // exercise all new UI behaviour introduced by the two features.
 
 import { expect, test } from "@playwright/test";
+import { auditPage } from "./_audit-pages";
 
 import {
   fulfillJson,
@@ -17,7 +18,7 @@ import {
 } from "./_mocked-rbac";
 
 const adminSession = {
-  email: "audit-admin@caipe.local",
+  email: "audit-admin@example.test",
   name: "Audit Admin",
   role: "admin" as const,
   canViewAdmin: true,
@@ -27,6 +28,9 @@ const adminSession = {
 
 const LOCAL_STORAGE_PAYLOAD = {
   storage: {
+    query_backend: "mongodb",
+    record_count: 1234,
+    pending_archive_count: 7,
     backend: "local",
     audit_bytes: 4_718_592,
     audit_bytes_human: "4.5 MiB",
@@ -59,6 +63,9 @@ const LOCAL_STORAGE_PAYLOAD = {
 
 const S3_STORAGE_PAYLOAD = {
   storage: {
+    query_backend: "mongodb",
+    record_count: 5678,
+    pending_archive_count: 12,
     backend: "s3",
     object_count: 1_842,
     total_bytes: 94_371_840,
@@ -85,8 +92,6 @@ const S3_STORAGE_PAYLOAD = {
   errors: [],
 };
 
-const EMPTY_AUDIT_EVENTS = { records: [], total: 0, page: 1, limit: 30 };
-
 // ─── Route handler factories ──────────────────────────────────────────────────
 
 function makeAuditConfigHandler(storageBackend = "local"): MockRouteHandler {
@@ -105,9 +110,9 @@ function makeAuditConfigHandler(storageBackend = "local"): MockRouteHandler {
 }
 
 function makeAuditEventsHandler(): MockRouteHandler {
-  return async ({ route, path, method }) => {
+  return async ({ route, path, method, url }) => {
     if (path !== "/api/admin/audit-events" || method !== "GET") return false;
-    await fulfillJson(route, EMPTY_AUDIT_EVENTS);
+    await fulfillJson(route, auditPage([], url));
     return true;
   };
 }
@@ -151,8 +156,8 @@ function makeRetentionPutHandler(
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function navigateToAuditPage(page: import("@playwright/test").Page) {
-  await page.goto("/admin/security/audit?auditTab=rbac", { waitUntil: "domcontentloaded" });
-  await expect(page.getByText("RBAC Audit Log", { exact: true })).toBeVisible();
+  await page.goto("/admin/security/audit?auditTab=decisions", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "Security audit", exact: true })).toBeVisible();
 }
 
 async function openSettingsPanel(page: import("@playwright/test").Page) {
@@ -171,14 +176,22 @@ test.describe("audit storage settings panel (#1980 + #1981)", () => {
     );
   });
 
-  test("Settings button is visible in audit tab header", async ({ page }) => {
+  test("storage inventory is fetched only when Settings opens and reused on reopen", async ({ page }) => {
+    let storageRequests = 0;
+    const storageHandler = makeStorageHandler(LOCAL_STORAGE_PAYLOAD);
     await installMockedRbacApp(page, {
       isAdmin: true,
       session: adminSession,
       handlers: [
         makeAuditConfigHandler("local"),
         makeAuditEventsHandler(),
-        makeStorageHandler(LOCAL_STORAGE_PAYLOAD),
+        async (context) => {
+          if (await storageHandler(context)) {
+            storageRequests += 1;
+            return true;
+          }
+          return false;
+        },
       ],
     });
 
@@ -186,6 +199,18 @@ test.describe("audit storage settings panel (#1980 + #1981)", () => {
 
     const settingsBtn = page.getByTestId("audit-storage-settings-toggle");
     await expect(settingsBtn).toBeVisible();
+    expect(storageRequests).toBe(0);
+    await expect(page.getByText("Storage Usage", { exact: true })).not.toBeVisible();
+
+    await settingsBtn.click();
+    await expect(page.getByText("4.5 MiB")).toBeVisible();
+    expect(storageRequests).toBe(1);
+
+    await settingsBtn.click();
+    await expect(page.getByText("Storage Usage", { exact: true })).not.toBeVisible();
+    await settingsBtn.click();
+    await expect(page.getByText("4.5 MiB")).toBeVisible();
+    expect(storageRequests).toBe(1);
 
     await page.screenshot({
       path: "test-results/screenshots/audit-settings-button-visible.png",
@@ -209,6 +234,9 @@ test.describe("audit storage settings panel (#1980 + #1981)", () => {
 
     // ── Storage Usage section ──
     await expect(page.getByText("Storage Usage", { exact: true })).toBeVisible();
+    await expect(page.getByText("Queries: mongodb", { exact: true })).toBeVisible();
+    await expect(page.getByText("Query records (approx.): 1,234", { exact: true })).toBeVisible();
+    await expect(page.getByText("Pending archive: 7", { exact: true })).toBeVisible();
     await expect(page.getByText(/^local$/i)).toBeVisible();
     await expect(page.getByText("4.5 MiB")).toBeVisible();
     await expect(page.getByText("/var/lib/caipe-audit-service")).toBeVisible();
@@ -295,6 +323,9 @@ test.describe("audit storage settings panel (#1980 + #1981)", () => {
     await openSettingsPanel(page);
 
     // ── Storage Usage — S3 ──
+    await expect(page.getByText("Queries: mongodb", { exact: true })).toBeVisible();
+    await expect(page.getByText("Query records (approx.): 5,678", { exact: true })).toBeVisible();
+    await expect(page.getByText("Pending archive: 12", { exact: true })).toBeVisible();
     await expect(page.getByText("1,842")).toBeVisible();
     await expect(page.getByText("90.0 MiB")).toBeVisible();
 

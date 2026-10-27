@@ -19,7 +19,7 @@ import {
   resolveAgenticAppOrigin,
 } from "@/lib/agentic-apps/runtime";
 import { mintAgenticAppToken } from "@/lib/agentic-apps/tokens";
-import { ApiError, getAuthenticatedUser } from "@/lib/api-middleware";
+import { ApiError, getAuthenticatedUser, type getAuthFromBearerOrSession } from "@/lib/api-middleware";
 import { DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES } from "@/types/agentic-app";
 import type { AgenticAppAuthMode } from "@/types/agentic-app";
 import { nativeExtensionById } from "@/native-extensions/runtime";
@@ -42,6 +42,8 @@ const BLOCKED_RESPONSE_HEADERS = new Set([
   "x-frame-options",
 ]);
 
+type AuthenticatedAppCaller = Awaited<ReturnType<typeof getAuthenticatedUser>> | Awaited<ReturnType<typeof getAuthFromBearerOrSession>>;
+
 export type ProxyContext = {
   params: Promise<{ appId: string; path?: string[] }>;
 };
@@ -49,7 +51,7 @@ export type ProxyContext = {
 export async function proxyAgenticAppRequest(
   request: Request,
   context: ProxyContext,
-  authenticatedUser?: Awaited<ReturnType<typeof getAuthenticatedUser>>,
+  authenticatedUser?: AuthenticatedAppCaller,
   assistantClientContext?: AssistantClientContext,
 ): Promise<Response> {
   if (!isAgenticAppsEnabled()) {
@@ -59,7 +61,7 @@ export async function proxyAgenticAppRequest(
   const nextRequest = request instanceof NextRequest
     ? request
     : new NextRequest(request.url, { headers: request.headers });
-  let auth: Awaited<ReturnType<typeof getAuthenticatedUser>>;
+  let auth: AuthenticatedAppCaller;
   try {
     auth = authenticatedUser ?? await getAuthenticatedUser(nextRequest, { allowAnonymous: false });
   } catch (error) {

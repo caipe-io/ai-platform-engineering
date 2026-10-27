@@ -6,7 +6,7 @@ getAuthFromBearerOrSession,
 successResponse,
 withErrorHandler,
 } from "@/lib/api-middleware";
-import { getAuditReader } from "@/lib/audit/reader";
+import { getAuditClient } from "@/lib/audit";
 import { getCredentialFeatureConfig } from "@/lib/feature-flags/credentials";
 
 function assertFeatureEnabled(): void {
@@ -22,7 +22,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   if (!actorId) {
     throw new ApiError("Authenticated subject is required", 401, "UNAUTHORIZED");
   }
-  const events = (await getAuditReader().query({ type: "credential_action", limit: 500 }))
+  const { records } = await getAuditClient().queryPage({ type: "credential_action", limit: 500 });
+  const events = records
     .filter((event) => {
       const actor = event.actor as { id?: unknown } | undefined;
       return actor?.id === actorId;
