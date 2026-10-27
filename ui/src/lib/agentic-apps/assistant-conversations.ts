@@ -2,6 +2,20 @@ import { apiClient } from "@/lib/api-client";
 import { getStorageMode } from "@/lib/storage-config";
 import { getAgentId, type Conversation } from "@/types/a2a";
 
+/** Refresh authorized server fields while retaining local messages and stream state. */
+export function mergeAppConversation(conversations: Conversation[], saved: {
+  _id: string; title: string; participants: Conversation["participants"];
+  created_at: Date | string; updated_at: Date | string; metadata?: Conversation["metadata"];
+  owner_id?: string; access_level?: Conversation["accessLevel"]; sharing?: Conversation["sharing"];
+}): Conversation[] {
+  const previous = conversations.find(item => item.id === saved._id);
+  const restored: Conversation = { ...previous, id: saved._id, title: saved.title, participants: saved.participants,
+    createdAt: new Date(saved.created_at), updatedAt: new Date(saved.updated_at), metadata: saved.metadata,
+    owner_id: saved.owner_id, accessLevel: saved.access_level, sharing: saved.sharing,
+    messages: previous?.messages ?? [], streamEvents: previous?.streamEvents ?? [] };
+  return previous ? conversations.map(item => item.id === saved._id ? restored : item) : [...conversations, restored];
+}
+
 /** App history requires explicit app and agent bindings; metadata never grants access. */
 export function matchesAssistantConversation(appId: string, agentId: string, agent: string | undefined,
   metadata?: Record<string, unknown>): boolean {
@@ -28,11 +42,7 @@ export async function findLatestAppConversation(
     const found = response.items.find((conversation) =>
       matches(conversation) && conversation.access_level === "owner",
     );
-    if (found) return {
-      id: found._id, title: found.title, createdAt: new Date(found.created_at),
-      updatedAt: new Date(found.updated_at), participants: found.participants,
-      metadata: found.metadata, messages: [], streamEvents: [], accessLevel: "owner",
-    };
+    if (found) return mergeAppConversation([], found)[0];
     if (!response.has_more) return null;
   }
   throw new Error("Assistant history scan limit reached; no new conversation was created.");

@@ -202,6 +202,18 @@ describe("AgenticAppAssistantOverlay", () => {
     expect(mockChatStoreState.activeConversationId).toBe("chat-b");
   });
 
+  it("clears a failed deep-link error when a valid history selection succeeds", async () => {
+    window.history.replaceState(null, "", "/example?assistant_chat=denied-chat");
+    mockChatStoreState.conversations = [makeConversation("history-chat", "2026-01-01")];
+    mockRestoreConversation.mockRejectedValueOnce(new Error("Access denied"));
+    renderExampleOverlay();
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Example App Assistant" }));
+    await waitFor(() => expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-conversation-id", "history-chat"));
+    expect(screen.queryByText("Access denied")).toBeNull();
+  });
+
   it("passes validated app context into the chat panel and restores the prior chat", async () => {
     const { unmount } = render(
       <AgenticAppAssistantOverlay

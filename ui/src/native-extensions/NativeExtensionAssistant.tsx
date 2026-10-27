@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 
 import { validateAssistantContextMessage } from "@/lib/agentic-apps/assistant-context";
@@ -20,15 +20,16 @@ export function NativeExtensionAssistant({ extensionId, pathname, search = "" }:
   search?: string;
 }): React.ReactElement | null {
   const { data: session, status } = useSession();
-  const identity = session?.user?.email
-    ? JSON.stringify([session.sub ?? session.user.email, session.org ?? "", session.role ?? ""])
-    : undefined;
+  const key = JSON.stringify([status, session?.sub, session?.user?.email, session?.org, session?.role, extensionId]);
   const [retry, setRetry] = useState(0);
   const [error, setError] = useState<{ key: string; message: string } | null>(null);
   const [binding, setBinding] = useState<{ key: string; app: PublicAgenticApp } | null>(null);
-  const [open, setOpen] = useState(false);
-  const [context, setContext] = useState<AgenticAppAssistantContextRecord | null>(null);
-  const key = `${identity}:${extensionId}`;
+  const [request, setRequest] = useState<{ key: string; open: boolean; context: AgenticAppAssistantContextRecord | null }>(
+    { key, open: false, context: null });
+  const open = request.key === key && request.open;
+  const context = request.key === key ? request.context : null;
+  const setOpen = useCallback((value: boolean) => setRequest(previous => ({ key, open: value,
+    context: previous.key === key ? previous.context : null })), [key]);
   const app = status === "authenticated" && binding?.key === key ? binding.app : null;
   useEffect(() => {
     if (status !== "authenticated") return;
@@ -46,27 +47,27 @@ export function NativeExtensionAssistant({ extensionId, pathname, search = "" }:
     return () => controller.abort();
   }, [key, extensionId, status, retry]);
   useEffect(() => {
-    queueMicrotask(() => { setOpen(false); setContext(null); });
-  }, [key]);
-  useEffect(() => {
     if (app?.canLaunch && new URLSearchParams(search).has("assistant_chat")) queueMicrotask(() => setOpen(true));
-  }, [app, search]);
-  useEffect(() => {
+  }, [app, search, setOpen]);
+  // Listen before native mount effects; requests stay inside this binding's component state.
+  useLayoutEffect(() => {
     function onRequest(event: Event) {
       const detail = (event as CustomEvent).detail;
-      if (detail?.appId !== extensionId) return;
+      if (status !== "authenticated" || detail?.appId !== extensionId) return;
+      let record: AgenticAppAssistantContextRecord | null = null;
       if (detail.context) {
         const result = validateAssistantContextMessage({ appId: extensionId, message: {
           type: "caipe.agenticApp.context.v1", version: "1.0", appId: extensionId, context: detail.context,
         } });
         if (!result.ok) return;
-        setContext(result.record);
+        record = result.record;
       }
-      if (detail.open) setOpen(true);
+      setRequest(previous => ({ key, open: Boolean(detail.open) || (previous.key === key && previous.open),
+        context: record ?? (previous.key === key ? previous.context : null) }));
     }
     window.addEventListener(HOST_ASSISTANT_EVENT, onRequest);
     return () => window.removeEventListener(HOST_ASSISTANT_EVENT, onRequest);
-  }, [extensionId]);
+  }, [extensionId, key, status]);
   if (error?.key === key) return <div role="alert" className="fixed bottom-6 right-6 z-40 rounded-lg border bg-background p-3 text-sm">
     {error.message} <button type="button" onClick={() => setRetry(n => n + 1)} className="underline">Retry assistant</button>
   </div>;
@@ -75,5 +76,6 @@ export function NativeExtensionAssistant({ extensionId, pathname, search = "" }:
     appId={app.appId} appName={app.displayName} assistantLabel={app.assistantLabel}
     assistantAgentName={app.assistantAgentName} assistantIcon={app.icon}
     assistantAgentId={app.assistantAgentId} open={open} onOpenChange={setOpen}
-    activeContext={context?.route === pathname ? context : null} onClearContext={() => setContext(null)} /></Suspense>;
+    activeContext={context?.route === pathname ? context : null}
+    onClearContext={() => setRequest(previous => previous.key === key ? { ...previous, context: null } : previous)} /></Suspense>;
 }

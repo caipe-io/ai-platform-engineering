@@ -11,7 +11,7 @@ import { ChatPanel } from "@/components/chat/DynamicAgentChatPanel";
 import { buildAssistantClientContext } from "@/lib/agentic-apps/assistant-context";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
-import { findLatestAppConversation, matchesAssistantConversation } from "@/lib/agentic-apps/assistant-conversations";
+import { findLatestAppConversation, matchesAssistantConversation, mergeAppConversation } from "@/lib/agentic-apps/assistant-conversations";
 import { getAgentId } from "@/types/a2a";
 import type { AgenticAppAssistantContextRecord } from "@/types/agentic-app";
 
@@ -137,10 +137,7 @@ export function AgenticAppAssistantOverlay({
     if (!matchesAssistantConversation(appId, assistantAgentId, getAgentId(saved), saved.metadata))
       throw new Error("Conversation is not bound to this app assistant");
     if (!session || selectionSessionRef.current !== session) throw new Error("Assistant session changed");
-    useChatStore.setState(state => ({ conversations: state.conversations.some(item => item.id === saved._id)
-      ? state.conversations : [...state.conversations, { id: saved._id, title: saved.title, participants: saved.participants,
-        createdAt: new Date(saved.created_at), updatedAt: new Date(saved.updated_at), metadata: saved.metadata,
-        accessLevel: saved.access_level, sharing: saved.sharing, messages: [], streamEvents: [] }] }));
+    useChatStore.setState(state => ({ conversations: mergeAppConversation(state.conversations, saved) }));
     await loadMessagesFromServer(saved._id, { force: true });
     return saved._id;
   }, [appId, assistantAgentId, loadMessagesFromServer]);

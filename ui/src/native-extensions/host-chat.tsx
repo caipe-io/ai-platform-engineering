@@ -6,6 +6,7 @@ import type { NativeHostChat, NativeHostChatPanelProps, NativeHostConversationAc
 import { requestHostAssistant } from "@/lib/agentic-apps/assistant-events";
 import { apiClient } from "@/lib/api-client";
 import { getStorageMode } from "@/lib/storage-config";
+import { mergeAppConversation } from "@/lib/agentic-apps/assistant-conversations";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { getAgentId } from "@/types/a2a";
 import { useChatStore } from "@/store/chat-store";
@@ -55,10 +56,7 @@ export function createHostChatCapability(appId: string, assistantAvailable = fal
       async function open() {
         const { saved, agent: availableAgent } = await loadHostConversation(appId, props.agentId, props.conversationId);
         if (cancelled) return;
-        useChatStore.setState((state) => ({ conversations: state.conversations.some(c => c.id === saved._id)
-          ? state.conversations : [...state.conversations, { id: saved._id, title: saved.title,
-            participants: saved.participants, createdAt: new Date(saved.created_at), updatedAt: new Date(saved.updated_at),
-            metadata: saved.metadata, owner_id: saved.owner_id, accessLevel: saved.access_level, sharing: saved.sharing, messages: [], streamEvents: [] }] }));
+        useChatStore.setState(state => ({ conversations: mergeAppConversation(state.conversations, saved) }));
         activated = true;
         useChatStore.getState().setActiveConversation(saved._id);
         await useChatStore.getState().loadMessagesFromServer(saved._id, { force: true });

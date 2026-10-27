@@ -79,6 +79,14 @@ export function NativeExtensionHost({
       {!slot && <HeaderBreadcrumbPortal>
         <WorkspaceBreadcrumbs breadcrumbs={breadcrumbs} portal={false} />
       </HeaderBreadcrumbPortal>}
+      {!slot && extension.manifest.assistant && extension.manifest.assistant.overlay !== "app" && (
+        <NativeExtensionAssistant
+          assistant={extension.manifest.assistant}
+          extensionId={extensionId}
+          pathname={pathname}
+          search={search}
+        />
+      )}
       <Component
         apiBasePath={extension.manifest.api.basePath}
         pathname={pathname}
@@ -88,14 +96,6 @@ export function NativeExtensionHost({
         setBreadcrumbs={setBreadcrumbs}
         chat={chat}
       />
-      {!slot && extension.manifest.assistant && extension.manifest.assistant.overlay !== "app" && (
-        <NativeExtensionAssistant
-          assistant={extension.manifest.assistant}
-          extensionId={extensionId}
-          pathname={pathname}
-          search={search}
-        />
-      )}
       {children}
     </div>
   );

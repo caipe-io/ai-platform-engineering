@@ -43,7 +43,8 @@ it("restores local history from the store, preserving dates, metadata and messag
   render(<Panel conversationId="example-chat" agentId="example-agent" />);
   await screen.findByText("Host conversation");
   expect(mockSelect).toHaveBeenCalledWith("example-chat");
-  expect(mockState.conversations[0]).toBe(local);
+  expect(mockState.conversations[0]).toMatchObject({ id: local.id, metadata: local.metadata });
+  expect(mockState.conversations[0].messages).toBe(local.messages);
   expect(mockGet).not.toHaveBeenCalled();
 });
 
