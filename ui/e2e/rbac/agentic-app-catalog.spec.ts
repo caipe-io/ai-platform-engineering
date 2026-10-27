@@ -16,7 +16,8 @@ for (const scenario of [
   { theme: "light", width: 1440 },
   { theme: "dark", width: 390 },
 ]) {
-  test(`catalog layout, search, keyboard navigation: ${scenario.theme} ${scenario.width}`, async ({ page }, testInfo) => {
+  test(`catalog layout, search, keyboard navigation: ${scenario.theme} ${scenario.width}`,
+    { tag: scenario.theme === "light" && scenario.width === 1440 ? "@sanity" : [] }, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: scenario.width, height: 900 });
     await page.addInitScript((theme) => localStorage.setItem("theme", theme), scenario.theme);
     await installMockedRbacApp(page, {
