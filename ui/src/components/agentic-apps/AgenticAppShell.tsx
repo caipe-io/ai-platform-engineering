@@ -357,7 +357,6 @@ export function AgenticAppShell({
       <WorkspaceBreadcrumbs
         breadcrumbs={(frameBreadcrumbs?.route === publicPath && frameBreadcrumbs.items.length ? frameBreadcrumbs.items : [
           { label: "Home", href: "/" },
-          { label: "Apps", href: "/apps" },
           { label: state.app.displayName },
         ]).map(item => ({ ...item, onClick: event => {
           if (!item.href || !queryBridge.current?.isConnected() || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;

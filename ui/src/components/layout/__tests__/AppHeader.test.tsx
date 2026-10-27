@@ -570,7 +570,7 @@ describe('AppHeader — application chrome', () => {
       await waitFor(() => expect(within(slot).getByText('Example workspace')).toHaveAttribute('aria-current', 'page'))
       expect(screen.getAllByRole('navigation', { name: 'Breadcrumb' })).toHaveLength(1)
       expect(within(slot).getByText('Home')).toHaveAttribute('href', '/')
-      expect(within(slot).getByText('Apps')).toHaveAttribute('href', '/apps')
+      expect(within(slot).queryByText('Apps')).not.toBeInTheDocument()
       expect(screen.getByTitle('Example workspace')).toHaveAttribute('src', '/apps/example')
       global.fetch = previousFetch
     })

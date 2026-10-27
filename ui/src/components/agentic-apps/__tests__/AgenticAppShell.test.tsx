@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { AgenticAppShell } from "../AgenticAppShell";
 import AppRouteLayout from "../../../app/(app)/agentic-app-routes/[appId]/layout";
@@ -182,6 +182,34 @@ describe("AgenticAppShell", () => {
     act(() => window.dispatchEvent(new MessageEvent("message", { origin: window.location.origin, source: iframe.contentWindow, data: message })));
     expect(screen.getByText("Example page")).toBeInTheDocument();
     expect(screen.queryByTestId("assistant-overlay")).toBeNull();
+  });
+
+  it("keeps Home and the app as the root while frame breadcrumbs load, change routes, and reconnect", async () => {
+    window.history.replaceState(null, "", "/example/wiki");
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, status: 200,
+      json: async () => ({ item: app({ assistantEnabled: false, hostPaths: ["/example"] }) }) });
+    const view = render(<AgenticAppShell appId="example-app" path={["example", "wiki"]} hostRoute />);
+    const frame = await screen.findByTitle("Example App") as HTMLIFrameElement;
+    const assertRoot = () => {
+      const breadcrumb = within(screen.getByRole("navigation", { name: "Breadcrumb" }));
+      expect(breadcrumb.getByText("Home")).toHaveAttribute("href", "/");
+      expect(breadcrumb.getByText("Example App")).toBeInTheDocument();
+      expect(breadcrumb.queryByText("Apps")).not.toBeInTheDocument();
+    };
+    assertRoot();
+    act(() => window.dispatchEvent(new MessageEvent("message", {
+      origin: window.location.origin, source: frame.contentWindow,
+      data: { type: "caipe.agenticApp.breadcrumbs.v1", appId: "example-app", version: "1.0", route: "/example/wiki",
+        breadcrumbs: [{ label: "Home", href: "/" }, { label: "Example App", href: "/example" }, { label: "Example page" }] },
+    })));
+    assertRoot();
+    expect(screen.getByText("Example page")).toBeInTheDocument();
+    window.history.replaceState(null, "", "/example/ask");
+    view.rerender(<AgenticAppShell appId="example-app" path={["example", "ask"]} hostRoute />);
+    assertRoot();
+    expect(screen.queryByText("Example page")).not.toBeInTheDocument();
+    fireEvent.load(frame);
+    assertRoot();
   });
 
   it("retains the iframe when Next replaces the catch-all page at a different app route", async () => {
