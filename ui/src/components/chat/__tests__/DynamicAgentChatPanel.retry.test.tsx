@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { apiClient } from "@/lib/api-client";
 import type { ExternalChatActivity } from "@/store/chat-store";
 import type { ChatMessage, Conversation } from "@/types/a2a";
@@ -234,6 +234,25 @@ describe("retry alongside edit", () => {
 });
 
 describe("retry is unavailable when it would be unsafe", () => {
+  it("keeps an app draft pending until the remote response releases the composer", async () => {
+    mockChatState.externalActivity["chat-1"] = { agentId: "example-agent", state: "running" };
+    const onApplied = jest.fn();
+    const props = { agentId: "example-agent", conversationId: "chat-1",
+      composerDraft: { id: "source-1", text: "Find the source" }, onComposerDraftApplied: onApplied };
+    const { rerender } = render(<ChatPanel {...props} />);
+    const textarea = screen.getByRole("textbox");
+    expect(textarea).toBeDisabled();
+    await act(async () => {});
+    expect(textarea).toHaveValue("");
+    expect(onApplied).not.toHaveBeenCalled();
+    mockChatState.externalActivity = {};
+    rerender(<ChatPanel {...props} />);
+    await waitFor(() => expect(textarea).toHaveValue("Find the source"));
+    expect(textarea).toHaveFocus();
+    expect(onApplied).toHaveBeenCalledTimes(1);
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+  });
+
   const expectNoRetry = () => {
     expect(screen.queryByRole("button", { name: "Retry this prompt" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Regenerate response" })).toBeNull();

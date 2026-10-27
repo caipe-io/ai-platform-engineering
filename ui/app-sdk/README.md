@@ -392,3 +392,7 @@ Declare `ui.assistant.overlay: "host"` to use CAIPE's popup. Optional
   by the session-stream authentication fix.
 - Standalone apps can retain their own assistant when no host exists. Keep it
   outside native bundles; host-owned embedded apps use the host renderer/store.
+
+### Open the assistant with a question draft
+
+When `getCapabilities()?.assistantDraft` is true, call `bridge.openAssistant(context, { id: crypto.randomUUID(), text: question })`. The host validates a same-origin message from the app iframe, waits for its conversation, appends the question to existing composer text, and focuses it. It never submits the question. The ID is 1–128 ASCII letters, digits, `_` or `-`; text is plain text, limited to 12,000 characters. Invalid drafts are ignored by the host; the SDK reports invalid or unsupported drafts before opening. Existing `openAssistant(context)` calls remain compatible. The wire format is the optional `draft: { id, text }` field on `caipe.agenticApp.assistant.open.v1`.
