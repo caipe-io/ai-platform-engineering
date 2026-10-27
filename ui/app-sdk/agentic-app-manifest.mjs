@@ -215,10 +215,19 @@ export function validateAgenticAppManifest(value) {
   if (ui.assistant !== undefined) {
     const assistant = record(
       ui.assistant,
-      ["agentId", "label", "name", "streamPath", "resumePath", "cancelPath", "statusPath", "overlay"],
+      ["agentId", "label", "name", "streamPath", "resumePath", "cancelPath", "statusPath", "overlay", "supportedClients", "webexGroupChat"],
       "ui.assistant",
     );
     identifier(assistant.agentId, "ui.assistant.agentId");
+    if (assistant.supportedClients !== undefined) {
+      const clients = strings(assistant.supportedClients, "ui.assistant.supportedClients");
+      if (!assistant.streamPath || !clients.length || new Set(clients).size !== clients.length ||
+          clients.some(client => !["webui", "webex"].includes(client)))
+        throw new Error("assistant supportedClients requires a stream and distinct webui/webex clients");
+    }
+    if (assistant.webexGroupChat !== undefined &&
+        (typeof assistant.webexGroupChat !== "boolean" || !assistant.supportedClients?.includes("webex")))
+      throw new Error("assistant webexGroupChat requires explicit Webex support");
     if (assistant.overlay !== undefined && !["host", "app"].includes(assistant.overlay))
       throw new Error("assistant overlay must be host or app");
     if (
@@ -276,9 +285,10 @@ export function validateAgenticAppManifest(value) {
   if (
     modes.has("iframe") &&
     !modes.has("native-package") &&
-    routes.some((route) => route.path !== `/apps/${app.id}`)
+    routes.some(route => route.path !== `/apps/${app.id}` &&
+      RESERVED_HOST_PATHS.some(root => route.path === root || route.path.startsWith(`${root}/`)))
   )
-    throw new Error("iframe-only routes must use the canonical /apps mount");
+    throw new Error("invalid or reserved iframe host path");
   record(app.surfaces, ["showInHub", "navOrder", "homeEligible"], "surfaces");
   boolean(app.surfaces.showInHub, "surfaces.showInHub");
   if (

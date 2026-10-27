@@ -1,3 +1,28 @@
+## 1.3.0-rc.18 (2026-10-26)
+
+### Fix
+
+- **auth**: preserve shared token consistency across replicas (#3085)
+
+## 1.3.0-rc.17 (2026-10-26)
+
+### Feat
+
+- **webex**: dispatch linked user chats to native app assistants (#3070)
+- **ui**: restrict release-note comparisons to deployment-approved repos (#2663)
+- **notifications**: let an installed app create a notification for named users (#3018)
+- **notifications**: let an installed app create a notification for named users
+
+### Fix
+
+- **auth**: reject tokens missing allowed client ID (#2583)
+- **deps**: update vulnerable dependencies and preserve trace redaction (#3048)
+- **helm**: remove duplicated rag-stack key in umbrella values.yaml (#3045)
+- **webex-bot**: retain thread context when parent is unavailable (#3023)
+- **workflows**: reject incomplete streams and expose step artifacts (#3075)
+- **dynamic-agents**: guard truncated and incomplete tool calls (#2875)
+- **notifications**: enforce safe links and unique app credentials
+
 ## 1.3.0-rc.16 (2026-10-23)
 
 ### Feat

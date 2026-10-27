@@ -1,3 +1,5 @@
+import { agenticAppHostPaths, ownsAppPath } from "./host-routes";
+
 import type {
   ConfiguredAgenticApp,
   PublicAgenticApp,
@@ -14,9 +16,18 @@ export function buildPublicAgenticApp(
     appId: app.installation.appId,
     assistantEnabled: Boolean(app.manifest.ui.assistant),
     ...(app.manifest.ui.assistant ? {
+      assistantOverlay: app.manifest.ui.assistant.overlay ?? "host",
       assistantAgentId: app.manifest.ui.assistant.agentId,
       assistantLabel: app.manifest.ui.assistant.label,
       assistantAgentName: app.manifest.ui.assistant.name,
+    } : {}),
+    ...(app.manifest.ui.navigation && app.installation.navigationOverrides?.visible !== false ? {
+      navigation: {
+        label: app.installation.navigationOverrides?.label ?? app.manifest.ui.navigation.label,
+        href: agenticAppEntryHref(app),
+        icon: app.manifest.ui.navigation.icon,
+        order: app.installation.navigationOverrides?.order ?? app.manifest.surfaces.navOrder,
+      },
     } : {}),
     displayName: app.manifest.displayName,
     ...(icon ? { icon } : {}),
@@ -29,11 +40,7 @@ export function buildPublicAgenticApp(
     uiMode: app.manifest.ui.profiles.find(
       (profile) => profile.id === app.installation.selectedUiProfile,
     )?.mode,
-    ...(app.manifest.ui.profiles.find(
-      (profile) => profile.id === app.installation.selectedUiProfile,
-    )?.mode === "native-package"
-      ? { hostPaths: app.manifest.ui.routes.map((route) => route.path) }
-      : {}),
+    hostPaths: agenticAppHostPaths(app),
   };
 }
 
@@ -41,16 +48,18 @@ export function agenticAppEntryHref(app: ConfiguredAgenticApp): string {
   const profile = app.manifest.ui.profiles?.find(
     (candidate) => candidate.id === app.installation.selectedUiProfile,
   );
-  if (profile?.mode !== "native-package")
+  const hostPaths = agenticAppHostPaths(app);
+  if (profile?.mode !== "native-package" && !hostPaths.length)
     return `/apps/${encodeURIComponent(app.installation.appId)}`;
   const navigation = app.manifest.ui.navigation;
-  return (
+  const href = (
     navigation?.href ??
     app.manifest.ui.routes.find((route) => route.id === navigation?.routeRef)
       ?.path ??
     app.manifest.ui.routes[0]?.path ??
     "/"
   );
+  return hostPaths.some(root => ownsAppPath(root, href)) ? href : hostPaths[0] ?? `/apps/${app.installation.appId}`;
 }
 
 /** Retain owned deep links when the legacy /apps entry selects native UI. */

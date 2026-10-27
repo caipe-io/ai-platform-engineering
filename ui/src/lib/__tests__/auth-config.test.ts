@@ -4,12 +4,23 @@
  */
 
 // Mock the token store so tests don't require a MongoDB/ESM environment.
-// Provides a simple in-memory Map that behaves identically to the real L1 path.
-const _mockTokenStore = new Map<string, import('../auth-token-store').StoredTokens>()
+const _mockTokenStore = new Map<string, import('../auth-token-store').StoredTokenState>()
 jest.mock('../auth-token-store', () => ({
+  ...jest.requireActual('../auth-token-store'),
   getStoredTokens: jest.fn(async (sub: string | undefined) => _mockTokenStore.get(sub ?? '') ?? undefined),
   storeTokens: jest.fn(async (sub: string | undefined, tokens: import('../auth-token-store').StoredTokens) => {
-    if (sub) _mockTokenStore.set(sub, tokens)
+    if (!sub) return
+    const state = { ...tokens, version: (_mockTokenStore.get(sub)?.version ?? 0) + 1 }
+    _mockTokenStore.set(sub, state)
+    return state
+  }),
+  refreshStoredTokens: jest.fn(async (sub: string, version: number, exchange: (tokens: import('../auth-token-store').StoredTokenState) => Promise<import('../auth-token-store').StoredTokens>) => {
+    const current = _mockTokenStore.get(sub)
+    if (current && current.version !== version) return current
+    const fresh = await exchange(current ?? { version })
+    const state = { ...fresh, version: version + 1 }
+    _mockTokenStore.set(sub, state)
+    return state
   }),
   resetTokenStore: jest.fn(() => { _mockTokenStore.clear() }),
 }))
@@ -19,10 +30,9 @@ jest.mock('jose', () => ({
   decodeJwt: jest.fn(),
 }))
 
-jest.mock('next-auth/jwt', () => ({
-  encode: jest.fn(async () => 'encoded-session'),
-  decode: jest.fn(async () => ({})),
-}))
+const mockCookieEncode = jest.fn(async () => 'encoded-session')
+const mockCookieDecode = jest.fn(async () => ({}))
+jest.mock('next-auth/jwt', () => ({ encode: mockCookieEncode, decode: mockCookieDecode }))
 
 const mockReconcileOidcClaimGroupsForUser = jest.fn()
 jest.mock('@/lib/rbac/oidc-claim-reconciler', () => ({
@@ -1131,6 +1141,7 @@ describe('auth-config', () => {
       await authOptions.jwt!.encode!({
         token: {
           sub: 'sub-123',
+          tokenStoreVersion: 1,
           accessToken: 'at',
           refreshToken: 'rt',
         },
@@ -1423,5 +1434,113 @@ describe('auth-config', () => {
       // Access token is expired too — user must re-authenticate
       expect(result.error).toBe('RefreshTokenExpired')
     })
+  })
+})
+
+// Credential publication is independent of cookie serialization.
+describe('shared credential consistency', () => {
+  const store = jest.requireMock('../auth-token-store')
+  const codec = jest.requireMock('next-auth/jwt')
+  beforeEach(() => { _resetServerTokenStore(); jest.clearAllMocks() })
+
+  it('cannot write stale credentials back while encoding an older cookie', async () => {
+    await store.storeTokens('test-user', { accessToken: 'fresh', refreshToken: 'fresh-refresh', expiresAt: 9000 })
+    const writes = store.storeTokens.mock.calls.length
+    await authOptions.jwt!.encode!({ secret: 'example-secret', token: {
+      sub: 'test-user', tokenStoreVersion: 0, accessToken: 'expired', refreshToken: 'old-refresh', expiresAt: 1,
+    } })
+    expect(store.storeTokens).toHaveBeenCalledTimes(writes)
+    expect(await store.getStoredTokens('test-user')).toMatchObject({ accessToken: 'fresh', expiresAt: 9000 })
+    expect(codec.encode.mock.calls[0][0].token.accessToken).toBeUndefined()
+  })
+
+  it('hydrates the stored credential and expiry instead of a future expiry from another login', async () => {
+    await store.storeTokens('test-user', { accessToken: 'expired', refreshToken: 'refresh', expiresAt: 1 })
+    codec.decode.mockResolvedValueOnce({ sub: 'test-user', expiresAt: 9999999999 })
+    const token = await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' })
+    expect(token).toMatchObject({ accessToken: 'expired', expiresAt: 1, tokenStoreVersion: 1 })
+    const session = await (authOptions.callbacks!.session! as (...args: unknown[]) => Promise<Record<string, unknown>>)({ session: {}, token })
+    expect(session.accessToken).toBeUndefined()
+    expect(session.error).toBe('RefreshTokenExpired')
+  })
+
+  it('forces refresh when a legacy opaque token has no authoritative expiry', async () => {
+    _mockTokenStore.set('test-user', { accessToken: 'opaque', refreshToken: 'refresh', version: 0 })
+    codec.decode.mockResolvedValueOnce({ sub: 'test-user', expiresAt: 9999999999 })
+    expect(await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' }))
+      .toMatchObject({ accessToken: 'opaque', expiresAt: 1, tokenStoreVersion: 0 })
+  })
+
+  it('clears an old failure only after another replica publishes newer credentials', async () => {
+    await store.storeTokens('test-user', { accessToken: 'fresh', expiresAt: 9999999999 })
+    codec.decode.mockResolvedValueOnce({ sub: 'test-user', tokenStoreVersion: 0, error: 'RefreshTokenExpired', refreshSuppressedUntil: 9999999999 })
+    const token = await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' })
+    expect(token?.error).toBeUndefined()
+    expect(token?.refreshSuppressedUntil).toBeUndefined()
+    codec.decode.mockResolvedValueOnce({ sub: 'test-user', tokenStoreVersion: 1, error: 'RefreshTokenExpired' })
+    expect((await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' }))?.error).toBe('RefreshTokenExpired')
+  })
+
+  it('does not expose old credentials when the shared store is unavailable', async () => {
+    store.getStoredTokens.mockRejectedValueOnce(new Error('unavailable'))
+    codec.decode.mockResolvedValueOnce({ sub: 'test-user', tokenStoreVersion: 1, accessToken: 'old', refreshToken: 'old' })
+    const token = await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' })
+    expect(token).toMatchObject({ error: 'SharedStoreUnavailable' })
+    expect(token?.accessToken).toBeUndefined()
+    expect(token?.refreshToken).toBeUndefined()
+  })
+
+  it.each([9999999999, 1])('recovers from a shared-store read outage with the same credential version (cookie expiry %s)', async (expiresAt) => {
+    await store.storeTokens('test-user', { accessToken: 'fresh', refreshToken: 'refresh', expiresAt: 9999999999 })
+    store.getStoredTokens.mockRejectedValueOnce(new Error('unavailable'))
+    codec.decode.mockResolvedValueOnce({ sub: 'test-user', tokenStoreVersion: 1, expiresAt })
+    const decoded = await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' })
+    const token = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<Record<string, unknown>>)({ token: decoded })
+    const session = await (authOptions.callbacks!.session! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
+      session: { accessToken: 'old-client-token' }, token,
+    })
+    expect(session.error).toBe('SharedStoreUnavailable')
+    expect(session.accessToken).toBeUndefined()
+
+    // NextAuth serializes the token after the session callback has run.
+    await authOptions.jwt!.encode!({ secret: 'example-secret', token })
+    const cookie = codec.encode.mock.calls[0][0].token
+    expect(cookie.error).toBeUndefined()
+    expect(cookie.accessToken).toBeUndefined()
+    expect(cookie.refreshToken).toBeUndefined()
+    codec.decode.mockResolvedValueOnce(cookie)
+    const recovered = await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' })
+    expect(recovered).toMatchObject({ accessToken: 'fresh', refreshToken: 'refresh', expiresAt: 9999999999, tokenStoreVersion: 1 })
+    expect(recovered?.error).toBeUndefined()
+    expect(store.storeTokens).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not erase a prior refresh failure during a shared-store read outage', async () => {
+    store.getStoredTokens.mockRejectedValueOnce(new Error('unavailable'))
+    codec.decode.mockResolvedValueOnce({ sub: 'test-user', tokenStoreVersion: 1, error: 'RefreshTokenExpired' })
+    const token = await authOptions.jwt!.decode!({ secret: 'example-secret', token: 'cookie' })
+    await authOptions.jwt!.encode!({ secret: 'example-secret', token: token! })
+    expect(codec.encode.mock.calls[0][0].token.error).toBe('RefreshTokenExpired')
+  })
+
+  it('retains self-contained legacy cookies without creating a shared record during encoding', async () => {
+    await authOptions.jwt!.encode!({ secret: 'example-secret', token: {
+      sub: 'test-user', accessToken: 'legacy', refreshToken: 'refresh', expiresAt: 9999999999,
+    } })
+    expect(codec.encode.mock.calls[0][0].token.accessToken).toBe('legacy')
+    expect(store.storeTokens).not.toHaveBeenCalled()
+  })
+
+  it('waits for shared publication before completing a new OAuth login', async () => {
+    let publish!: (state: import('../auth-token-store').StoredTokenState) => void
+    store.storeTokens.mockImplementationOnce(() => new Promise(resolve => { publish = resolve }))
+    let completed = false
+    const login = (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<Record<string, unknown>>)({
+      token: { sub: 'test-user' }, account: { access_token: 'fresh', refresh_token: 'refresh', expires_at: 9999999999 },
+    }).then(token => { completed = true; return token })
+    await Promise.resolve()
+    expect(completed).toBe(false)
+    publish({ accessToken: 'fresh', refreshToken: 'refresh', expiresAt: 9999999999, version: 1 })
+    expect(await login).toMatchObject({ accessToken: 'fresh', expiresAt: 9999999999, tokenStoreVersion: 1 })
   })
 })

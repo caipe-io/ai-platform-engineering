@@ -61,6 +61,9 @@ export interface AgenticAppInstallation {
   };
   runtimeMountPath?: string;
   runtimeOriginOverride?: string;
+  /** Explicit operator approval of declared iframe host routes. */
+  hostRouteClaims?: string[];
+  navigationOverrides?: { visible?: boolean; label?: string; order?: number };
   accessOverrides?: {
     requiredRoles?: string[];
   };
@@ -83,6 +86,8 @@ export interface PublicAgenticApp {
   capabilities: string[];
   uiMode?: "native-package" | "iframe";
   hostPaths?: string[];
+  navigation?: { label: string; href: string; icon?: "book-open" | "layout-grid"; order?: number };
+  assistantOverlay?: "host" | "app";
   assistantEnabled?: boolean;
   assistantAgentId?: string;
   assistantLabel?: string;

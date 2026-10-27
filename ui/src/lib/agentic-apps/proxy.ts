@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 
 import {
@@ -24,6 +24,8 @@ import { DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES } from "@/types/agentic-app"
 import type { AgenticAppAuthMode } from "@/types/agentic-app";
 import { nativeExtensionById } from "@/native-extensions/runtime";
 
+import { ASSISTANT_CONTEXT_HEADER, type AssistantClientContext } from "./assistant-clients";
+
 const BLOCKED_RESPONSE_HEADERS = new Set([
   "connection",
   "content-encoding",
@@ -48,6 +50,7 @@ export async function proxyAgenticAppRequest(
   request: Request,
   context: ProxyContext,
   authenticatedUser?: Awaited<ReturnType<typeof getAuthenticatedUser>>,
+  assistantClientContext?: AssistantClientContext,
 ): Promise<Response> {
   if (!isAgenticAppsEnabled()) {
     return Response.json({ error: "app_not_found" }, { status: 404 });
@@ -164,20 +167,29 @@ export async function proxyAgenticAppRequest(
     return requestBodyTooLarge(maxRequestBodyBytes);
   }
 
+  const forwardHeaders = buildForwardHeaders({
+    request, appId, bearerToken, authMode, subject,
+    roles: deriveRoles(session, auth.user.role), decisionId, correlationId,
+  });
+  if (assistantClientContext) {
+    try {
+      const proof = await mintAgenticAppToken({
+        appId, subject, scopes, decisionId, correlationId, ttlSeconds: 60,
+        assistantContext: { ...assistantClientContext, method: request.method, path: target.pathname,
+          bodyHash: createHash("sha256").update(Buffer.from(body ?? new ArrayBuffer(0))).digest("hex"),
+          tokenHash: createHash("sha256").update(bearerToken).digest("hex") },
+      });
+      forwardHeaders.set(ASSISTANT_CONTEXT_HEADER, proof.token);
+    } catch {
+      console.error("[AppAssistant] Cannot sign native assistant context", { appId });
+      return Response.json({ error: "assistant_context_unavailable" }, { status: 503 });
+    }
+  }
   let upstream: Response;
   try {
     upstream = await fetch(target, {
       method: request.method,
-      headers: buildForwardHeaders({
-        request,
-        appId,
-        bearerToken,
-        authMode,
-        subject,
-        roles: deriveRoles(session, auth.user.role),
-        decisionId,
-        correlationId,
-      }),
+      headers: forwardHeaders,
       ...(body ? { body } : {}),
       redirect: "manual",
       signal: request.signal,

@@ -32,6 +32,8 @@ export interface NativeExtensionModule {
 
 /** Host owns streaming, history persistence and activity across native screens. */
 export interface NativeHostChat {
+  /** Optional: request the host-owned popup instead of bundling an overlay. */
+  assistant?: HostAssistantCapability;
   Panel: ComponentType<NativeHostChatPanelProps>;
   /** Optional controls reuse host sharing and recoverable archive. */
   ConversationActions?: ComponentType<NativeHostConversationActionsProps>;
@@ -59,4 +61,18 @@ export interface NativeHostChatPanelProps {
   showAuditNotice?: boolean;
   /** App-owned copy linking to the host feedback form when reporting is enabled. */
   feedbackPrompt?: { message: string; actionLabel: string; trailingText?: string };
+}
+
+/** User-visible context is untrusted input, never an authorization grant. */
+export interface AppAssistantContext {
+  route: string;
+  title?: string;
+  summary?: string;
+  selection?: string;
+  resourceRefs?: Array<Record<string, string>>;
+  suggestedPrompts?: string[];
+}
+export interface HostAssistantCapability {
+  open(context?: AppAssistantContext): void;
+  setContext(context: AppAssistantContext): void;
 }

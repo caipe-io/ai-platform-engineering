@@ -110,6 +110,44 @@ token mode. Service accounts cannot substitute for an interactive user.
 Declaring a stream grants no access. A conflicting/unavailable app configuration,
 a denial, or an upstream failure does not invoke a different agent runtime.
 
+### Webex native streams
+
+`ui.assistant.supportedClients` defaults to `["webui"]`. Apps explicitly enable
+Webex with `["webui", "webex"]`. `webexGroupChat: true` is a separate opt-in for
+apps that enforce group-safe data access; absent/false rejects group spaces.
+The publication checkers retain and validate both capabilities. Catalog discovery
+uses the verified OAuth client identity to omit unsupported app assistants.
+
+- The Webex bot continues using its linked human OBO token. The host validates
+  the signature-verified `azp` against `KEYCLOAK_WEBEX_BOT_CLIENT_ID`.
+- Configure the same `WEBEX_LINK_HMAC_SECRET` (at least 32 bytes) on bot and host.
+  The bot signs the exact POST bytes, bearer-token hash, room, space, thread,
+  conversation, agent and timestamp after the existing event/room/identity gates.
+  Public `client_context` or `X-Client-Source` alone never grants this authority.
+- The host checks the proof against the stored thread and authenticated request,
+  after the existing agent-use and conversation-write gates. It then applies the
+  app's ordinary role, HTTP-action and token policies without admin elevation.
+- The private runtime receives `X-CAIPE-Assistant-Context`: an app-audience JWT
+  signed with the existing `AGENTIC_APP_TOKEN_SECRET`, valid for 60 seconds. It
+  has `purpose: "assistant-stream"` and `assistant_context` containing `client`,
+  `kind`, `conversationId`, `agentId`, `roomId`, `spaceId`, `threadId`, `method`,
+  target `path`, exact `bodyHash` and upstream bearer `tokenHash` (SHA-256 hex).
+- Apps verify issuer, audience, signature, expiry, purpose, caller subject, body,
+  path and stored conversation/room bindings before accepting Webex. Then they
+  enforce their own project/tool permissions and room-data policy. Client type
+  stays `webex`. Service-account credentials cannot stand in for the human.
+- The proxy strips caller-supplied `X-CAIPE-*` headers before adding its own proof.
+  Missing/expired/mismatched proofs and unsupported clients fail closed, without
+  falling back to Dynamic Agents. Bot output limits and existing AG-UI rendering
+  remain in force. Disconnect/cancellation continues through the existing stream.
+
+Keep the legacy agent and thread route until the app has adopted this contract.
+Changing the default route affects new threads; migrating existing threads must
+also update the stored agent participant and `thread_owner_agent_id`, preserve
+messages and access controls, and clear the bot's thread-owner cache. Provider
+checkpoints are runtime-specific and must not be copied to the native runtime;
+the app should load authorized recent transcript context for a fresh session.
+
 A missing resume/cancel capability returns `501`; it never resumes or cancels a
 Dynamic Agents run. Without an app stream claim, existing Dynamic Agents behavior
 continues. Start/resume permit up to 16 minutes at the host boundary; applications
@@ -211,3 +249,73 @@ the snapshot; a UI restart revalidates it before serving traffic.
 - The host checks app launch access, agent availability and conversation binding before restoring the panel or its actions. Server authorization still applies to every mutation.
 - Closing a native view restores the previous selection while the host retains the stream. Native packages do not own another chat store.
 - Hosts without `ConversationActions` continue to support `chat.Panel`; older native packages need no changes.
+
+## Assistant overlay ownership
+
+`ui.assistant.overlay` defaults to `host`. Set it to `app` when the app owns
+its launcher and popup. Native and iframe renderers both honor this declaration.
+App ownership suppresses only the host popup; assistant registration, agent-use
+authorization and app-defined stream routing remain available.
+
+## Application sidebar contributions
+
+`ui.navigation` contributes one authorized entry after Chat in expanded and
+collapsed navigation. Disabled, hidden, uninstalled and unauthorized apps are
+omitted. Installation `navigation_overrides` supports `visible`, `label` and
+numeric `order`; overrides cannot move a link outside the app's entry route.
+Native and iframe profiles share the catalog, preventing duplicate entries.
+Canonical `/apps/<id>` entries use document navigation through the existing
+unsaved-change guard; compiled native host paths keep client navigation.
+
+## Iframe host routes and bridge
+
+Publishers declare `ui.routes`; operators explicitly approve iframe takeover
+using installation `host_route_claims`:
+
+```yaml
+- app_id: example-app
+  installed: true
+  enabled: true
+  selected_ui_profile: hosted
+  host_route_claims: [/projects]
+  bindings:
+    runtimeOrigin: http://example-app.example.svc:3000
+```
+
+- The declared `/projects` subtree renders inside the host shell while its public
+  path, query and fragment stay in the address bar. The iframe continues loading
+  through `/apps/example-app/projects/...`; private origins stay server-side.
+- Canonical `/apps/<id>` links resolve to approved public routes without loops.
+- Reserved routes and conflicting active owners fail closed. Disabling an app
+  or removing its claims restores host routing. Profile changes require reload.
+- Host route admission and the existing app gateway both enforce app access.
+- `@caipe-io/app-sdk/iframe-bridge` supplies `createAgenticAppBridge`. Its existing
+  context/open protocol gains a capability handshake and owned-route navigation.
+  The host validates source, origin, app ID and version before handling messages.
+- Apps use `bridge.navigate(href)` for host URL synchronization and dispose the
+  bridge on unmount. Unsupported versions/capabilities report explicit errors.
+- Same-origin iframe hosting is a trust boundary, not JavaScript isolation.
+
+## Shared host assistant
+
+Native and iframe apps with `ui.assistant.overlay: "host"` use the same branded host popup,
+resize behavior, context handling and chat panel. Native packages request it
+through the optional `props.chat.assistant` capability;
+iframe apps use `bridge.openAssistant(context)` after the capability handshake.
+Native packages must guard this capability before calling `open` or `setContext`:
+
+```ts
+const assistant = props.chat?.assistant;
+if (assistant) {
+  assistant.open(context);
+}
+```
+
+The host omits the capability in home slots, when the app has no `ui.assistant`,
+or when it declares `ui.assistant.overlay: "app"`. `assistant.setContext(context)`
+updates context without opening the popup.
+App-owned overlays remain supported explicitly. Context passes the existing
+size/secret filters and stays untrusted data, never an authorization grant.
+The native wrapper resolves the installation's bound agent and agent-use policy
+before mounting the popup; chat dependencies load lazily. Account, subject,
+organization and role changes reset the assistant binding.

@@ -1,9 +1,14 @@
 import { render, screen } from "@testing-library/react";
 
+import type { NativeExtensionProps } from "../../../app-sdk";
 import { NativeExtensionHost } from "../NativeExtensionHost";
 import { installedNativeExtensions } from "../installed.generated";
 
-jest.mock("../host-chat", () => ({ createHostChatCapability: () => ({ Panel: () => null }) }));
+jest.mock("@/lib/api-client", () => ({ apiClient: {} }));
+jest.mock("@/store/chat-store", () => ({ useChatStore: {} }));
+jest.mock("../NativeExtensionAssistant", () => ({
+  NativeExtensionAssistant: () => <div data-testid="native-assistant" />,
+}));
 
 jest.mock("next/navigation", () => ({
   usePathname: () => "/example",
@@ -23,7 +28,9 @@ jest.mock("../installed.generated", () => ({
       },
       module: {
         contractVersion: "2.0",
-        Component: () => null,
+        Component: ({ chat }: NativeExtensionProps) => (
+          <button type="button" disabled={!chat?.assistant}>Open app assistant</button>
+        ),
       },
     },
   ],
@@ -33,6 +40,35 @@ describe("NativeExtensionHost", () => {
   beforeEach(() => {
     installedNativeExtensions[0].manifest.contractVersion = "2.0";
     installedNativeExtensions[0].module.contractVersion = "2.0";
+    delete installedNativeExtensions[0].manifest.assistant;
+  });
+
+  it("advertises the assistant only on a route that mounts its listener, including slot changes", () => {
+    installedNativeExtensions[0].manifest.assistant = {
+      agentId: "example-agent", label: "Ask Example", name: "Example Assistant", overlay: "host",
+    };
+    const view = render(<NativeExtensionHost extensionId="example-app" slot />);
+    expect(screen.getByRole("button", { name: "Open app assistant" })).toBeDisabled();
+    expect(screen.queryByTestId("native-assistant")).not.toBeInTheDocument();
+
+    view.rerender(<NativeExtensionHost extensionId="example-app" />);
+    expect(screen.getByRole("button", { name: "Open app assistant" })).toBeEnabled();
+    expect(screen.getByTestId("native-assistant")).toBeInTheDocument();
+
+    view.rerender(<NativeExtensionHost extensionId="example-app" slot />);
+    expect(screen.getByRole("button", { name: "Open app assistant" })).toBeDisabled();
+    expect(screen.queryByTestId("native-assistant")).not.toBeInTheDocument();
+  });
+
+  it.each(["missing", "app-owned"])("omits the host capability for a %s assistant", (kind) => {
+    if (kind === "app-owned") {
+      installedNativeExtensions[0].manifest.assistant = {
+        agentId: "example-agent", label: "Ask Example", name: "Example Assistant", overlay: "app",
+      };
+    }
+    render(<NativeExtensionHost extensionId="example-app" />);
+    expect(screen.getByRole("button", { name: "Open app assistant" })).toBeDisabled();
+    expect(screen.queryByTestId("native-assistant")).not.toBeInTheDocument();
   });
 
   it("scrolls long native app content inside the fixed CAIPE shell", () => {

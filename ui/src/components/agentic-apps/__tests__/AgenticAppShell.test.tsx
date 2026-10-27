@@ -2,6 +2,10 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 
 import { AgenticAppShell } from "../AgenticAppShell";
 
+jest.mock("next-auth/react", () => ({
+  useSession: () => ({ status: "authenticated", data: { user: { email: "test-user@example.test" } } }),
+}));
+
 const mockResolveUsableChatAgent = jest.fn();
 
 const mockRouter = { push: jest.fn() };

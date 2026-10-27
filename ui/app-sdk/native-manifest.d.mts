@@ -15,7 +15,7 @@ export interface NativeExtensionManifest {
     placement: "after-chat";
     icon?: "book-open" | "layout-grid";
   };
-  assistant?: { agentId: string; label: string; name: string; streamPath?: string; resumePath?: string; cancelPath?: string; statusPath?: string; overlay?: "host" | "app" };
+  assistant?: { agentId: string; label: string; name: string; streamPath?: string; resumePath?: string; cancelPath?: string; statusPath?: string; overlay?: "host" | "app"; supportedClients?: Array<"webui" | "webex">; webexGroupChat?: boolean };
   api: { appId: string; basePath: string; mounts: string[] };
   auth: { mode: "app-scoped-token" | "forward-user-access-token" };
 }

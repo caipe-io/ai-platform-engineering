@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "engines": {
-    "node": ">=24.11.0 <25"
+    "node": ">=24.22.1 <25"
   },
   "scripts": {
     "generate:native-extensions": "node scripts/generate-native-extensions.mjs",
@@ -151,6 +151,7 @@
     "@babel/core": "7.29.7",
     "eslint-plugin-react-hooks": "7.0.1",
     "dompurify": "3.4.17",
-    "postcss-selector-parser": "7.1.6"
+    "postcss-selector-parser": "7.1.6",
+    "fast-uri": "3.1.9"
   }
 }

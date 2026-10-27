@@ -21,7 +21,7 @@ dependencies = [
     "pymilvus==2.6.9",
     # Web framework
     "fastapi[standard]==0.141.1",
-    "fastmcp==3.4.7",
+    "fastmcp==3.4.10",
     # HTTP clients
     "httpx==0.28.1",
     # Data processing
@@ -30,7 +30,7 @@ dependencies = [
     "python-dotenv==1.2.2",
     "PyJWT[crypto]==2.15.1",
     "common",
-    "pypdf==6.21.1",
+    "pypdf==6.21.2",
 ]
 
 [project.scripts]

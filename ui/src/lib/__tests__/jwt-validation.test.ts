@@ -156,6 +156,7 @@ describe('verified service-account client identity', () => {
 
     await expect(validateBearerJWT('example-token')).resolves.toMatchObject({
       sub: 'example-subject', isServiceAccount, serviceAccountClientId,
+      authorizedParty: typeof azp === 'string' ? azp : undefined,
     });
   });
 });

@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import { RESERVED_HOST_PATHS, pathsOverlap } from "../../../app-sdk/reserved-paths.mjs";
+import { agenticAppHostPaths } from "./host-routes";
 import { load as loadYaml } from "js-yaml";
 import {
   normalizeLegacyAgenticAppManifest,
@@ -54,6 +56,8 @@ type RawInstallation = {
   runtime_mount_path?: unknown;
   runtime_origin_override?: unknown;
   access_overrides?: unknown;
+  host_route_claims?: unknown;
+  navigation_overrides?: unknown;
   selected_ui_profile?: unknown;
   app_version?: unknown;
   bindings?: unknown;
@@ -208,6 +212,10 @@ export function loadConfiguredAgenticApps(
             ),
           }
         : {}),
+      ...(raw.host_route_claims !== undefined
+        ? { hostRouteClaims: requiredStringArray(raw.host_route_claims, `${path}.host_route_claims`, true) } : {}),
+      ...(raw.navigation_overrides !== undefined
+        ? { navigationOverrides: parseNavigationOverrides(raw.navigation_overrides, `${path}.navigation_overrides`) } : {}),
       ...(raw.access_overrides !== undefined
         ? {
             accessOverrides: parseAccessOverrides(
@@ -261,6 +269,11 @@ export function loadConfiguredAgenticApps(
       throw new Error(
         `${path}: native package is not compiled into this image`,
       );
+    for (const claim of installation.hostRouteClaims ?? []) {
+      if (!manifest.ui.routes.some(route => route.path === claim) ||
+          RESERVED_HOST_PATHS.some(root => claim === root || claim.startsWith(`${root}/`)))
+        throw new Error(`${path}: host_route_claims must approve non-reserved declared routes`);
+    }
     // Resource identities belong to the installation, not the publisher artifact.
     const assistantId = installation.bindings?.resources?.assistant;
     if (assistantId && !APP_ID_PATTERN.test(assistantId)) throw new Error(`${path}: invalid assistant agent ID`);
@@ -329,25 +342,21 @@ export function loadConfiguredAgenticApps(
     }
   }
 
-  validateAgenticAppOwnership(
-    apps.map((app) => {
-      const profile = app.manifest.ui.profiles.find(
-        (candidate) => candidate.id === app.installation.selectedUiProfile,
-      );
-      return {
-        ...app.manifest,
-        ui: {
-          ...app.manifest.ui,
-          routes:
-            profile?.mode === "iframe"
-              ? [{ id: "home", path: `/apps/${app.manifest.id}` }]
-              : app.manifest.ui.routes,
-          slots:
-            profile?.mode === "native-package" ? app.manifest.ui.slots : [],
-        },
-      };
-    }),
-  );
+  const activeApps = apps.filter(app => app.installation.installed && app.installation.enabled);
+  const claims = activeApps.flatMap(app => agenticAppHostPaths(app).map(path => ({ appId: app.installation.appId, path })));
+  for (let index = 0; index < claims.length; index++) {
+    for (const other of claims.slice(index + 1)) {
+      if (other.appId !== claims[index].appId && pathsOverlap(claims[index].path, other.path))
+        throw new Error("Conflicting application host route claims");
+    }
+  }
+  validateAgenticAppOwnership(activeApps.map(app => ({
+    ...app.manifest,
+    ui: { ...app.manifest.ui,
+      routes: app.manifest.ui.profiles.find(p => p.id === app.installation.selectedUiProfile)?.mode === "iframe"
+        ? [{ id: "home", path: `/apps/${app.manifest.id}` }] : app.manifest.ui.routes,
+    },
+  })));
 
   const sorted = apps.sort((left, right) => {
     const leftOrder =
@@ -687,6 +696,18 @@ function parseAccessOverrides(
           ),
         }
       : {}),
+  };
+}
+
+function parseNavigationOverrides(value: unknown, path: string): AgenticAppInstallation["navigationOverrides"] {
+  const raw = asRecord(value, path);
+  assertKnownKeys(raw, ["visible", "label", "order"], path);
+  if (raw.order !== undefined && (typeof raw.order !== "number" || !Number.isFinite(raw.order)))
+    throw new Error(`${path}.order must be finite`);
+  return {
+    ...(raw.visible !== undefined ? { visible: optionalBoolean(raw.visible, true, `${path}.visible`) } : {}),
+    ...(raw.label !== undefined ? { label: requiredString(raw.label, `${path}.label`) } : {}),
+    ...(raw.order !== undefined ? { order: raw.order as number } : {}),
   };
 }
 

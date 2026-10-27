@@ -27,3 +27,16 @@ test("unrelated, denied and shadowed stream policies fail publication", () => {
     [{ ...allow, path: "/api/other" }, { action: "proxy:POST", defaultEffect: "allow" }],
   ]) assert.throws(() => validateAgenticAppManifest(manifest(policies)), /allowed POST policy/);
 });
+
+test("native bot clients are explicit and group support requires Webex", () => {
+  const make = assistant => {
+    const app = manifest([{ action: "proxy:POST", defaultEffect: "allow" }]);
+    Object.assign(app.ui.assistant, assistant);
+    return app;
+  };
+  assert.doesNotThrow(() => validateAgenticAppManifest(make({ supportedClients: ["webui", "webex"], webexGroupChat: false })));
+  for (const assistant of [
+    { supportedClients: [] }, { supportedClients: ["unknown"] }, { supportedClients: ["webex", "webex"] },
+    { supportedClients: ["webui"], webexGroupChat: true }, { webexGroupChat: "true" },
+  ]) assert.throws(() => validateAgenticAppManifest(make(assistant)), /supportedClients|webexGroupChat/);
+});

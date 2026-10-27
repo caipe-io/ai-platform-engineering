@@ -68,7 +68,7 @@ beforeEach(() => {
   mockCookieAuth.mockResolvedValue({ user: { role: "admin" }, session: { sub: "secondary-subject" } });
   mockAgentPermission.mockResolvedValue(null);
   mockConversationAccess.mockResolvedValue({ conversation: {
-    client_type: "webex", participants: [{ type: "agent", id: "example-agent" }],
+    client_type: "webui", participants: [{ type: "agent", id: "example-agent" }],
   } });
   mockLoadApps.mockReturnValue([app]);
   mockGetApp.mockReturnValue(app);
@@ -121,6 +121,22 @@ it("uses Dynamic Agents when no installed app claims the assistant", async () =>
 });
 
 const operations = [["start", POST], ["resume", RESUME], ["cancel", CANCEL], ["status", STATUS]] as const;
+
+it.each(operations)("requires signed Webex context for app %s", async (operation, handler) => {
+  mockConversationAccess.mockResolvedValue({ conversation: {
+    client_type: "webex", participants: [{ type: "agent", id: "example-agent" }],
+  } });
+  const upstream = jest.spyOn(global, "fetch");
+  const response = await handler(new NextRequest(`https://host.example.test/api/v1/chat/stream/${operation}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: "Hello", agent_id: "example-agent", conversation_id: "example-conversation", resume_data: {} }),
+  }));
+  expect(response.status).toBe(403);
+  expect(await response.json()).toMatchObject({ code: "WEBEX_CONTEXT_REQUIRED" });
+  expect(upstream).not.toHaveBeenCalled();
+  expect(mockResolveHarness).not.toHaveBeenCalled();
+  expect(mockDynamicStream).not.toHaveBeenCalled();
+});
 
 it.each(operations)("preserves the resolved caller for app %s without another runtime", async (operation, handler) => {
   const configured = { ...app, manifest: { ...app.manifest, ui: { ...app.manifest.ui, assistant: {

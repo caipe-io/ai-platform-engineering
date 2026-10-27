@@ -1,5 +1,6 @@
 import { decodeJwt } from "jose";
 import type { NextAuthOptions } from "next-auth";
+import { accessTokenExpiry, getStoredTokens, storeTokens, refreshStoredTokens, resetTokenStore } from './auth-token-store';
 
 /**
  * Auth configuration for OIDC SSO
@@ -315,6 +316,7 @@ type ExchangeResult = {
   id_token?: string;
   refresh_token?: string;
   expires_in?: number;
+  refresh_expires_in?: number;
 } | null; // null = graceful race (see safety net 2)
 
 type OidcExchangeResponse = Exclude<ExchangeResult, null> & {
@@ -328,15 +330,13 @@ const _inflightRefreshes = new Map<string, Promise<ExchangeResult>>();
 // Server-side token store
 // ─────────────────────────────────────────────────────────────────────────────
 // Large OAuth tokens (accessToken, refreshToken, idToken) are offloaded from
-// the JWT cookie into a two-level store (L1 in-memory + L2 MongoDB) so the
+// the JWT cookie into the shared MongoDB store so the
 // encrypted cookie stays under the 4096-byte browser limit.
 //
-// L1: per-pod Map with 60s TTL — zero-latency for the common case.
-// L2: MongoDB collection `auth_token_cache` — shared across all replicas,
+// MongoDB collection `auth_token_cache` — shared across all replicas,
 //     tokens AES-256-GCM encrypted at rest (key derived from NEXTAUTH_SECRET).
 //
 // See: https://github.com/caipe-io/ai-platform-engineering/issues/1986
-import { getStoredTokens, storeTokens, resetTokenStore } from './auth-token-store';
 
 // Claim groups are only needed for in-process authorization checks and are
 // re-populated on login and every token refresh. They stay in L1 only.
@@ -374,12 +374,15 @@ export function _resetServerTokenStore(): void {
  * @param token - The JWT token containing the refresh token
  * @returns Updated token with new access_token and expiry
  */
-async function refreshAccessToken(token: {
+async function exchangeAccessToken(token: {
   accessToken?: string;
   refreshToken?: string;
+  idToken?: string;
+  refreshTokenExpiresAt?: number;
+  error?: string;
   expiresAt?: number;
   [key: string]: unknown;
-}) {
+}, coordinated = false) {
   try {
     const issuer = process.env.OIDC_ISSUER;
     // Server-side calls (discovery + token refresh) prefer OIDC_DISCOVERY_URL so
@@ -407,8 +410,9 @@ async function refreshAccessToken(token: {
 
     const currentRefreshToken = token.refreshToken as string;
 
-    // Safety net 1: join an in-flight exchange for the same refresh token
-    const existing = _inflightRefreshes.get(currentRefreshToken);
+    // Shared exchanges are fenced by record version. They must not join an
+    // unversioned promise left over from an older login with the same token.
+    const existing = coordinated ? undefined : _inflightRefreshes.get(currentRefreshToken);
     if (existing) {
       console.log("[Auth] Joining in-flight token exchange (concurrent refresh detected)");
       const result = await existing;
@@ -420,8 +424,10 @@ async function refreshAccessToken(token: {
         ...token,
         accessToken: result.access_token,
         idToken: result.id_token,
-        expiresAt: Math.floor(Date.now() / 1000) + (result.expires_in || 3600),
+        expiresAt: accessTokenExpiry(result.access_token, Math.floor(Date.now() / 1000) + (result.expires_in || 3600)),
         refreshToken: result.refresh_token ?? currentRefreshToken,
+        refreshTokenExpiresAt: result.refresh_expires_in
+          ? Math.floor(Date.now() / 1000) + result.refresh_expires_in : token.refreshTokenExpiresAt,
         error: undefined,
       };
     }
@@ -434,7 +440,7 @@ async function refreshAccessToken(token: {
       let tokenEndpoint: string;
       try {
         const wellKnownUrl = `${serverIssuer}/.well-known/openid-configuration`;
-        const discoveryResponse = await fetch(wellKnownUrl, { next: { revalidate: 3600 } });
+        const discoveryResponse = await fetch(wellKnownUrl, { next: { revalidate: 3600 }, signal: AbortSignal.timeout(5000) });
         if (discoveryResponse.ok) {
           const discoveryDoc = await discoveryResponse.json();
           tokenEndpoint = discoveryDoc.token_endpoint;
@@ -452,6 +458,7 @@ async function refreshAccessToken(token: {
 
       const response = await fetch(tokenEndpoint, {
         method: "POST",
+        signal: AbortSignal.timeout(10_000),
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
         },
@@ -480,7 +487,7 @@ async function refreshAccessToken(token: {
         // When a peer (another Next.js instance or refetchInterval) already consumed
         // the rotating refresh token, we get invalid_grant back. If the access token
         // is still valid, treat this as a benign race rather than forcing a logout.
-        if (data.error === "invalid_grant") {
+        if (data.error === "invalid_grant" && !coordinated) {
           const now = Math.floor(Date.now() / 1000);
           const expiresAt = token.expiresAt as number | undefined;
           if (expiresAt && expiresAt > now) {
@@ -500,13 +507,13 @@ async function refreshAccessToken(token: {
 
     // Register the exchange Promise so concurrent callers can join it (safety net 1)
     const exchangePromise = doExchange();
-    _inflightRefreshes.set(currentRefreshToken, exchangePromise);
+    if (!coordinated) _inflightRefreshes.set(currentRefreshToken, exchangePromise);
 
     let result: ExchangeResult;
     try {
       result = await exchangePromise;
     } finally {
-      _inflightRefreshes.delete(currentRefreshToken);
+      if (!coordinated) _inflightRefreshes.delete(currentRefreshToken);
     }
 
     if (result === null) {
@@ -518,8 +525,10 @@ async function refreshAccessToken(token: {
       ...token,
       accessToken: result.access_token,
       idToken: result.id_token,
-      expiresAt: Math.floor(Date.now() / 1000) + (result.expires_in || 3600),
+      expiresAt: accessTokenExpiry(result.access_token, Math.floor(Date.now() / 1000) + (result.expires_in || 3600)),
       refreshToken: result.refresh_token ?? currentRefreshToken, // Use new refresh token if provided
+      refreshTokenExpiresAt: result.refresh_expires_in
+        ? Math.floor(Date.now() / 1000) + result.refresh_expires_in : token.refreshTokenExpiresAt,
       error: undefined, // Clear any previous errors
     };
   } catch (error) {
@@ -532,6 +541,38 @@ async function refreshAccessToken(token: {
       ...token,
       error: "RefreshTokenError",
     };
+  }
+}
+
+async function refreshAccessToken(token: {
+  accessToken?: string;
+  refreshToken?: string;
+  idToken?: string;
+  refreshTokenExpiresAt?: number;
+  error?: string;
+  expiresAt?: number;
+  [key: string]: unknown;
+}) {
+  // Self-contained legacy cookies have no shared-record version. Keep their
+  // existing refresh path; normal OAuth logins always publish a shared record.
+  if (typeof token.sub !== 'string' || typeof token.tokenStoreVersion !== 'number') {
+    return exchangeAccessToken(token);
+  }
+  try {
+    const stored = await refreshStoredTokens(token.sub, token.tokenStoreVersion, async (current) => {
+      const refreshed = await exchangeAccessToken({ ...token, ...current }, true);
+      if (refreshed.error) throw new Error(String(refreshed.error));
+      return {
+        accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken,
+        idToken: typeof refreshed.idToken === 'string' ? refreshed.idToken : undefined,
+        expiresAt: refreshed.expiresAt,
+        refreshTokenExpiresAt: typeof refreshed.refreshTokenExpiresAt === 'number' ? refreshed.refreshTokenExpiresAt : undefined,
+      };
+    });
+    return { ...token, ...stored, tokenStoreVersion: stored.version, error: undefined };
+  } catch (error) {
+    return { ...token, error: error instanceof Error && error.message === 'RefreshTokenExpired'
+      ? 'RefreshTokenExpired' : 'RefreshTokenError' };
   }
 }
 
@@ -619,12 +660,21 @@ export const authOptions: NextAuthOptions = {
       if (account) {
         token.accessToken = account.access_token;
         token.refreshToken = account.refresh_token;
-        token.expiresAt = account.expires_at;
+        token.expiresAt = accessTokenExpiry(account.access_token, account.expires_at);
+        token.error = undefined;
 
         // Calculate refresh token expiry if refresh_expires_in is provided
         // Some OIDC providers (like Keycloak) include this field
         if (account.refresh_expires_in) {
           token.refreshTokenExpiresAt = Math.floor(Date.now() / 1000) + (account.refresh_expires_in as number);
+        }
+
+        if (token.sub && token.accessToken) {
+          const stored = await storeTokens(token.sub, {
+            accessToken: token.accessToken, refreshToken: token.refreshToken,
+            expiresAt: token.expiresAt, refreshTokenExpiresAt: token.refreshTokenExpiresAt,
+          });
+          if (stored) Object.assign(token, stored, { tokenStoreVersion: stored.version });
         }
 
         const expiryDate = new Date((account.expires_at || 0) * 1000).toISOString();
@@ -807,6 +857,9 @@ export const authOptions: NextAuthOptions = {
       if (!token.error && token.sub && !token.accessToken) {
         token.error = "AccessTokenMissing";
       }
+      if (!token.error && typeof token.expiresAt === 'number' && token.expiresAt <= Date.now() / 1000) {
+        token.error = "RefreshTokenExpired";
+      }
 
       // Only pass tokens if they're valid (not expired)
       if (!token.error) {
@@ -838,7 +891,8 @@ export const authOptions: NextAuthOptions = {
       if (
         token.error === "RefreshTokenExpired" ||
         token.error === "RefreshTokenError" ||
-        token.error === "AccessTokenMissing"
+        token.error === "AccessTokenMissing" ||
+        token.error === "SharedStoreUnavailable"
       ) {
         console.error(`[Auth] Session invalid due to: ${token.error}`);
         session.error = token.error;
@@ -865,29 +919,20 @@ export const authOptions: NextAuthOptions = {
     strategy: "jwt",
     maxAge: 24 * 60 * 60, // 24 hours
   },
-  // Custom encode/decode: offload large OAuth tokens (refreshToken, idToken)
-  // to server-side memory so the encrypted cookie stays under 4096 bytes.
-  // The JWT callback and session callback are unaffected — tokens are
-  // transparently rehydrated on decode and stripped on encode.
+  // Credentials are published only by login/refresh. Encoding an older cookie
+  // must never write its credentials back over the shared record.
   jwt: {
     async encode({ token, secret, maxAge }) {
-      if (token?.sub) {
-        // Token persistence is deliberately best-effort. The L1 cache is
-        // updated synchronously by storeTokens; waiting for a remote MongoDB
-        // write here would block SSR and App Router navigations when the
-        // database is temporarily unavailable.
-        void storeTokens(token.sub, {
-          accessToken: token.accessToken as string | undefined,
-          refreshToken: token.refreshToken as string | undefined,
-          idToken: token.idToken as string | undefined,
-        }).catch((error) => {
-          console.error("[Auth] Failed to persist token metadata:", error);
-        });
-      }
       const slimToken = { ...(token ?? {}) } as Record<string, unknown>;
-      delete slimToken.accessToken;
-      delete slimToken.refreshToken;
+      // Already self-contained legacy cookies retain their existing format.
+      if (typeof token?.tokenStoreVersion === 'number') {
+        delete slimToken.accessToken;
+        delete slimToken.refreshToken;
+      }
+      // A read outage is request-scoped and must not poison the cookie.
+      if (slimToken.error === 'SharedStoreUnavailable') delete slimToken.error;
       delete slimToken.idToken;
+      delete slimToken.version;
       // Dynamic import avoids top-level ESM/CJS conflict with jose in test environments
       const { encode } = await import("next-auth/jwt");
       return encode({ token: slimToken, secret, maxAge });
@@ -895,22 +940,41 @@ export const authOptions: NextAuthOptions = {
     async decode({ token, secret }) {
       const { decode } = await import("next-auth/jwt");
       const decoded = await decode({ token, secret });
-      // Test and short-lived local cookies may already carry the access token.
-      // Avoid an unnecessary MongoDB lookup in that case; production cookies
-      // created by the custom encoder omit these fields and still rehydrate
-      // from the server-side token store as before.
+      // Existing offloaded cookies acquire a version on their first read.
+      // Self-contained legacy cookies keep their previous authentication path.
       if (
         decoded?.sub &&
-        !decoded.accessToken &&
-        !decoded.refreshToken &&
-        !decoded.idToken
+        (!decoded.accessToken || typeof decoded.tokenStoreVersion === 'number')
       ) {
-        const stored = await getStoredTokens(decoded.sub);
-        if (stored) {
-          if (stored.accessToken) decoded.accessToken = stored.accessToken;
-          if (stored.refreshToken) decoded.refreshToken = stored.refreshToken;
-          if (stored.idToken) decoded.idToken = stored.idToken;
+        try {
+          const stored = await getStoredTokens(decoded.sub);
+          if (stored) {
+            if (decoded.tokenStoreVersion !== stored.version) {
+              delete decoded.error;
+              delete decoded.refreshSuppressedUntil;
+            }
+            decoded.accessToken = stored.accessToken;
+            decoded.refreshToken = stored.refreshToken;
+            decoded.idToken = stored.idToken;
+            // Unknown legacy opaque-token expiry forces refresh, never the
+            // unrelated future expiry carried by a different browser cookie.
+            decoded.expiresAt = stored.expiresAt ?? 1;
+            decoded.refreshTokenExpiresAt = stored.refreshTokenExpiresAt;
+            decoded.tokenStoreVersion = stored.version;
+          } else {
+            decoded.accessToken = undefined;
+            decoded.refreshToken = undefined;
+            decoded.error = 'AccessTokenMissing';
+          }
+        } catch {
+          decoded.accessToken = undefined;
+          decoded.refreshToken = undefined;
+          // Keep genuine refresh failures sticky; a failed read alone is retryable.
+          decoded.error ??= 'SharedStoreUnavailable';
         }
+      }
+      if (decoded?.accessToken) {
+        decoded.expiresAt = accessTokenExpiry(decoded.accessToken, decoded.expiresAt) ?? 1;
       }
       return decoded;
     },
@@ -975,6 +1039,7 @@ declare module "next-auth" {
 
 declare module "next-auth/jwt" {
   interface JWT {
+    tokenStoreVersion?: number;
     accessToken?: string;
     refreshToken?: string;
     expiresAt?: number;

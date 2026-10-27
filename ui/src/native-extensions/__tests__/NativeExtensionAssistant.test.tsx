@@ -1,126 +1,52 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import { NativeExtensionAssistant } from "../NativeExtensionAssistant";
 
-const createConversation = jest.fn();
-
-jest.mock("@/store/chat-store", () => ({
-  useChatStore: { getState: () => ({ createConversation }) },
+const mockResolve = jest.fn();
+const mockOverlay = jest.fn((props: { assistantAgentId: string; open: boolean; onOpenChange: (open: boolean) => void }) =>
+  <button onClick={() => props.onOpenChange(true)} data-open={String(props.open)}>Ask Example</button>);
+jest.mock("next-auth/react", () => ({ useSession: () => ({ status: "authenticated", data: { user: { email: "test-user@example.test" } } }) }));
+jest.mock("@/lib/chat-agent-selection", () => ({ resolveUsableChatAgent: (options: unknown) => mockResolve(options) }));
+jest.mock("@/components/agentic-apps/AgenticAppAssistantOverlay", () => ({
+  AgenticAppAssistantOverlay: (props: Parameters<typeof mockOverlay>[0]) => mockOverlay(props),
 }));
-
-jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
-  ChatPanel: () => <div data-testid="agent-chat" />,
-}));
-
+const props = { assistant: { agentId: "publisher-agent", label: "Ask Example", name: "Example Assistant" }, extensionId: "example-app", pathname: "/example/detail" };
+const app = { appId: "example-app", displayName: "Example", canLaunch: true, assistantAgentId: "bound-agent", assistantOverlay: "host" };
 describe("NativeExtensionAssistant", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockResolve.mockResolvedValue({ id: "bound-agent" });
+    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ item: app }) } as Response);
   });
-
-  afterEach(() => {
-    jest.restoreAllMocks();
-    createConversation.mockReset();
-  });
-
+  afterEach(() => jest.restoreAllMocks());
   it("opens a host-owned assistant for the declared agent", async () => {
-    createConversation.mockResolvedValue("example-conversation");
-    jest.spyOn(global, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({ success: true, data: { enabled: true, name: "Example Assistant" } }),
-    } as Response);
-
-    render(
-      <NativeExtensionAssistant
-        assistant={{ agentId: "agent-example", label: "Ask Example", name: "Example Assistant" }}
-        extensionId="example-app"
-        pathname="/example/detail"
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Ask Example" }));
-    expect(await screen.findByTestId("agent-chat")).toBeInTheDocument();
-    expect(createConversation).toHaveBeenCalledWith("agent-example");
-    expect(global.fetch).toHaveBeenCalledWith(
-      "/api/dynamic-agents/agents/agent-example",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
+    render(<NativeExtensionAssistant {...props} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Ask Example" }));
+    expect(screen.getByRole("button", { name: "Ask Example" })).toHaveAttribute("data-open", "true");
+    expect(mockOverlay.mock.calls.at(-1)?.[0]).toMatchObject({ assistantAgentId: "bound-agent" });
+    expect(mockResolve).toHaveBeenCalledWith(expect.objectContaining({ requestedAgentId: "bound-agent", requireAvailableAgent: true }));
   });
-
   it("does not render a chat when agent access is denied", async () => {
-    createConversation.mockResolvedValue("example-conversation");
-    jest.spyOn(global, "fetch").mockResolvedValue({ ok: false } as Response);
-
-    render(
-      <NativeExtensionAssistant
-        assistant={{ agentId: "agent-example", label: "Ask Example", name: "Example Assistant" }}
-        extensionId="example-app"
-        pathname="/example"
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Ask Example" }));
+    mockResolve.mockRejectedValue(new Error("Assistant access was denied"));
+    render(<NativeExtensionAssistant {...props} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("access was denied");
-    expect(screen.queryByTestId("agent-chat")).not.toBeInTheDocument();
-    expect(createConversation).not.toHaveBeenCalled();
+    expect(mockOverlay).not.toHaveBeenCalled();
   });
-
   it("clears a transient fetch error while reopening and only creates chat after access succeeds", async () => {
-    createConversation.mockResolvedValue("example-conversation");
-    let resolveRetry!: (response: Response) => void;
-    const retry = new Promise<Response>((resolve) => { resolveRetry = resolve; });
-    jest.spyOn(global, "fetch")
-      .mockRejectedValueOnce(new Error("Temporary connection failure"))
-      .mockImplementationOnce(() => retry);
-
-    render(
-      <NativeExtensionAssistant
-        assistant={{ agentId: "agent-example", label: "Ask Example", name: "Example Assistant" }}
-        extensionId="example-app"
-        pathname="/example"
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Ask Example" }));
+    mockResolve.mockRejectedValueOnce(new Error("Temporary connection failure")).mockResolvedValueOnce({ id: "bound-agent" });
+    render(<NativeExtensionAssistant {...props} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Temporary connection failure");
-    expect(createConversation).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Start new assistant chat" })).toBeDisabled();
-
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close assistant" }));
-    fireEvent.click(screen.getByRole("button", { name: "Ask Example" }));
-    expect(global.fetch).toHaveBeenCalledTimes(2);
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText("Starting Ask Example…")).toBeInTheDocument();
-    expect(createConversation).not.toHaveBeenCalled();
-
-    await act(async () => {
-      resolveRetry({
-        ok: true,
-        json: async () => ({ success: true, data: { enabled: true, name: "Example Assistant" } }),
-      } as Response);
-    });
-    expect(await screen.findByTestId("agent-chat")).toBeInTheDocument();
-    expect(createConversation).toHaveBeenCalledTimes(1);
+    expect(mockOverlay).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Retry assistant" }));
+    expect(await screen.findByRole("button", { name: "Ask Example" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
-
   it("never creates conversation history for a disabled agent, including retries", async () => {
-    jest.spyOn(global, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({ success: true, data: { enabled: false } }),
-    } as Response);
-    render(
-      <NativeExtensionAssistant
-        assistant={{ agentId: "agent-example", label: "Ask Example", name: "Example Assistant" }}
-        extensionId="example-app"
-        pathname="/example"
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Ask Example" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("access was denied");
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close assistant" }));
-    fireEvent.click(screen.getByRole("button", { name: "Ask Example" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("access was denied");
-    expect(screen.getByRole("button", { name: "Start new assistant chat" })).toBeDisabled();
-    expect(createConversation).not.toHaveBeenCalled();
+    mockResolve.mockRejectedValue(new Error("Assistant is disabled"));
+    render(<NativeExtensionAssistant {...props} />);
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Retry assistant" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("disabled");
+    expect(mockOverlay).not.toHaveBeenCalled();
   });
 });

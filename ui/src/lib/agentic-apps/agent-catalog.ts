@@ -3,6 +3,7 @@ import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { resolveAgenticAppIcon } from "../../../app-sdk/agentic-app-manifest.mjs";
 import { agenticAppUserContextFromSession, canAccessAgenticApp, canLaunchAgenticApp } from "./access";
 import { loadConfiguredAgenticApps } from "./config";
+import { supportsAssistantClient } from "./assistant-clients";
 
 /** Apply only after the caller's agent CAS check; app metadata never grants agent access. */
 export function projectAgentAppIdentity<T extends DynamicAgentConfig>(
@@ -25,6 +26,8 @@ export function projectAgentAppIdentity<T extends DynamicAgentConfig>(
     byAgent.set(id, app);
   }
   const user = agenticAppUserContextFromSession(session);
+  const client = session.authMethod === "bearer" &&
+    session.authorizedParty === (process.env.KEYCLOAK_WEBEX_BOT_CLIENT_ID?.trim() || "caipe-webex-bot") ? "webex" : "webui";
   return agents.flatMap((agent) => {
     // Ignore any stale or user-supplied projection stored in an agent document.
     const clean = { ...agent };
@@ -33,7 +36,8 @@ export function projectAgentAppIdentity<T extends DynamicAgentConfig>(
     if (!app) return [clean];
     if (!canAccessAgenticApp(app, user)) return [];
     const available = canLaunchAgenticApp(app, user) &&
-      !(app.manifest.ui.assistant?.streamPath && session.isServiceAccount === true);
+      !(app.manifest.ui.assistant?.streamPath && session.isServiceAccount === true) &&
+      (!app.manifest.ui.assistant?.streamPath || supportsAssistantClient(app.manifest.ui.assistant, client));
     if (availableOnly && !available) return [];
     const icon = resolveAgenticAppIcon(app.manifest.id, app.manifest.catalog?.icon);
     return [{ ...clean, presentation: {

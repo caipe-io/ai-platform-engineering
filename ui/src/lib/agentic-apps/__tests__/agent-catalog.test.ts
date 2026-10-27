@@ -59,3 +59,11 @@ it("fails closed on ambiguous ownership and invalid configuration", () => {
   expect(() => projectAgentAppIdentity([agent], user)).toThrow("configuration unavailable");
   log.mockRestore();
 });
+
+it("offers native bot agents only when the app declares Webex support", () => {
+  const session = { ...user, authMethod: "bearer", authorizedParty: "caipe-webex-bot" };
+  expect(projectAgentAppIdentity([agent], session, { availableOnly: true })).toEqual([]);
+  app.manifest.ui.assistant!.supportedClients = ["webui", "webex"];
+  expect(projectAgentAppIdentity([agent], session, { availableOnly: true })).toHaveLength(1);
+  expect(projectAgentAppIdentity([agent], { ...session, isServiceAccount: true }, { availableOnly: true })).toEqual([]);
+});

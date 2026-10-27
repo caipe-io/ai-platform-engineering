@@ -100,9 +100,17 @@ export function validateManifest(moduleName, manifest) {
       || typeof assistant.agentId !== "string" || !ID.test(assistant.agentId)
       || typeof assistant.label !== "string" || !assistant.label.trim() || assistant.label.length > 48
       || typeof assistant.name !== "string" || !assistant.name.trim() || assistant.name.length > 80
-      || Object.keys(assistant).some((key) => !["agentId", "label", "name", "streamPath", "resumePath", "cancelPath", "statusPath", "overlay"].includes(key))) {
+      || Object.keys(assistant).some((key) => !["agentId", "label", "name", "streamPath", "resumePath", "cancelPath", "statusPath", "overlay", "supportedClients", "webexGroupChat"].includes(key))) {
       fail("assistant must declare a valid agentId, label, and name");
     }
+    if (assistant.supportedClients !== undefined &&
+        (!assistant.streamPath || !Array.isArray(assistant.supportedClients) || !assistant.supportedClients.length ||
+         new Set(assistant.supportedClients).size !== assistant.supportedClients.length ||
+         assistant.supportedClients.some(client => !["webui", "webex"].includes(client))))
+      fail("assistant supportedClients must declare distinct webui/webex clients and a streamPath");
+    if (assistant.webexGroupChat !== undefined &&
+        (typeof assistant.webexGroupChat !== "boolean" || !assistant.supportedClients?.includes("webex")))
+      fail("assistant webexGroupChat requires explicit Webex support");
     if (assistant.overlay !== undefined && !["host", "app"].includes(assistant.overlay)) {
       fail("assistant overlay must be host or app");
     }

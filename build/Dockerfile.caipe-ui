@@ -7,7 +7,7 @@
 # ---------- Stage 1: Install dependencies ----------
 # Pin to BUILDPLATFORM so npm ci runs natively (avoids QEMU "Illegal instruction"
 # crashes when cross-compiling arm64 on amd64 CI runners).
-FROM --platform=$BUILDPLATFORM node:24-alpine AS deps
+FROM --platform=$BUILDPLATFORM node:24.22.1-alpine3.24 AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
@@ -48,7 +48,7 @@ RUN --mount=type=cache,id=caipe-ui-npm-cache,target=/root/.npm,sharing=locked \
 # ---------- Stage 2: Build application ----------
 # Also pinned to BUILDPLATFORM — next build uses @next/swc at compile time only;
 # the standalone output is platform-independent JavaScript.
-FROM --platform=$BUILDPLATFORM node:24-alpine AS build
+FROM --platform=$BUILDPLATFORM node:24.22.1-alpine3.24 AS build
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
@@ -85,7 +85,7 @@ RUN BUILD_DATE_VALUE="${BUILD_DATE}"; \
 RUN npm run build
 
 # ---------- Stage 3: Production runtime ----------
-FROM node:24-alpine AS runner
+FROM node:24.22.1-alpine3.24 AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -139,7 +139,7 @@ CMD ["/app/entrypoint.sh"]
 #
 # Anonymous volumes for /app/node_modules and /app/.next must be declared in
 # the compose file so the host bind doesn't shadow the container's installs.
-FROM --platform=$BUILDPLATFORM node:24-alpine AS dev
+FROM --platform=$BUILDPLATFORM node:24.22.1-alpine3.24 AS dev
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 

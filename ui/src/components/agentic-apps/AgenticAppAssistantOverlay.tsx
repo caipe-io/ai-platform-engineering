@@ -3,6 +3,7 @@
 import { Bot, LoaderCircle, MessageCircle, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import Image from "next/image";
 import { ChatPanel } from "@/components/chat/DynamicAgentChatPanel";
 import { buildAssistantClientContext } from "@/lib/agentic-apps/assistant-context";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,7 @@ const AGENTIC_APP_CONVERSATION_KIND = "agentic-app";
 export interface AgenticAppAssistantOverlayProps {
   appId: string;
   appName: string;
+  assistantIcon?: string;
   assistantLabel?: string;
   assistantAgentName?: string;
   activeContext: AgenticAppAssistantContextRecord | null;
@@ -32,6 +34,7 @@ export function AgenticAppAssistantOverlay({
   appId,
   appName,
   assistantLabel,
+  assistantIcon,
   assistantAgentName,
   activeContext,
   onClearContext,
@@ -259,6 +262,13 @@ export function AgenticAppAssistantOverlay({
     deleteConversation,
   ]);
 
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") onOpenChange(false); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [open, onOpenChange]);
+
   const handleResizeStart = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
@@ -293,6 +303,7 @@ export function AgenticAppAssistantOverlay({
     <div className="pointer-events-none fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3">
       {open ? (
         <section
+          role="dialog"
           aria-label={headerTitle}
           className={cn(
             "pointer-events-auto relative flex flex-col overflow-hidden rounded-3xl border shadow-2xl transition-colors",
@@ -319,7 +330,7 @@ export function AgenticAppAssistantOverlay({
           <header className="flex items-center justify-between gap-3 border-b border-white/10 bg-cyan-950/30 py-3 pl-16 pr-4 backdrop-blur-3xl">
             <div className="flex min-w-0 items-center gap-2">
               <span className="rounded-full bg-cyan-300/15 p-2 text-cyan-100">
-                <Bot className="h-4 w-4" aria-hidden />
+                {assistantIcon ? <Image src={assistantIcon} width={20} height={20} alt="" unoptimized /> : <Bot className="h-4 w-4" aria-hidden />}
               </span>
               <div className="min-w-0">
                 <h2 className="truncate text-sm font-semibold text-white">{headerTitle}</h2>
@@ -433,7 +444,7 @@ export function AgenticAppAssistantOverlay({
         className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-cyan-200/30 bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-200"
         onClick={() => onOpenChange(!open)}
       >
-        <MessageCircle className="h-4 w-4" aria-hidden />
+        {assistantIcon ? <Image src={assistantIcon} width={20} height={20} alt="" unoptimized /> : <MessageCircle className="h-4 w-4" aria-hidden />}
         {bubbleLabel}
         {activeContext ? (
           <span className="rounded-full bg-slate-950/15 px-2 py-0.5 text-xs">context</span>

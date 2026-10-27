@@ -460,8 +460,10 @@ class WebexThreadedStreamDispatcher:
                 "source": "webex",
                 "surface": "webex",
                 "webex_space_id": space_id,
+                "webex_room_id": room_id,
+                "webex_is_direct": is_direct,
                 "webex_message_id": message_id,
-                **({"webex_thread_parent_id": parent_id} if thread_parent_id else {}),
+                "webex_thread_parent_id": parent_id,
             }
             # Phase 1: propagate originating space context so RAG/PDP can
             # derive team_id from channel_id (spec FR-016/FR-017). 1:1
