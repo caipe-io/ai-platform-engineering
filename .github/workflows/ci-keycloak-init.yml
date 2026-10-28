@@ -216,7 +216,7 @@ jobs:
           docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
 
   reconcile-test:
-    # End-to-end functional test of init-idp.sh against a real Keycloak 26.3.
+    # End-to-end functional test of init-idp.sh against Keycloak 26.8.1.
     # Catches regressions in the caipe-platform / caipe-ui client_secret
     # reconciliation path that helm template + unit tests cannot see (JSON
     # round-trip of the secret, idempotency, real Admin API response codes,
@@ -281,7 +281,7 @@ jobs:
 
   strict-secrets-test:
     # End-to-end functional test of the production-hardening flag
-    # `keycloak.strictClientSecrets`. Boots a throwaway Keycloak 26.3,
+    # `keycloak.strictClientSecrets`. Boots a throwaway Keycloak 26.8.1,
     # confirms the four dev placeholder client_secrets are initially
     # accepted, then exercises both the strict-mode failure path (no
     # rotation env vars set → init-idp.sh exits non-zero with a loud
@@ -351,7 +351,7 @@ jobs:
     # the OIDC_IDP_HINT (`kc_idp_hint`) forwarding that auth-config.ts
     # injects into the NextAuth authorization params.
     #
-    # Boots a throwaway Keycloak 26.3 + the chart's realm import,
+    # Boots a throwaway Keycloak 26.8.1 + the chart's realm import,
     # runs init-idp.sh against it, then verifies that hitting
     # /realms/caipe/protocol/openid-connect/auth produces a 302/303 to
     # /broker/<alias>/login both with and without an explicit

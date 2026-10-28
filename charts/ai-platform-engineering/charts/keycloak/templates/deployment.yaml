@@ -17,6 +17,11 @@ metadata:
     {{- include "keycloak.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  # Keycloak minor upgrades can change database/cache formats. Stop the old
+  # version before starting the replacement against the shared database.
+  strategy:
+    type: Recreate
+    rollingUpdate: null
   selector:
     matchLabels:
       {{- include "keycloak.selectorLabels" . | nindent 6 }}

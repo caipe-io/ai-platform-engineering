@@ -1,8 +1,8 @@
 # MCP dynamic client registration
 
-MCP dynamic client registration (DCR) is off in the Keycloak chart by default. An
-operator can enable it for a public MCP server after upgrading Keycloak to 26.8.1
-or newer and configuring that server's exact HTTPS resource URL:
+The Keycloak chart ships version 26.8.1 with MCP dynamic client registration
+(DCR) off by default. An operator can enable DCR for a public MCP server by
+configuring that server's exact HTTPS resource URL:
 
 ```yaml
 keycloak:
@@ -14,6 +14,13 @@ keycloak:
     # Add any other first-party clients that need the platform API audience.
     platformClientIds: [caipe-ui, caipe-cli, caipe-platform]
 ```
+
+For existing 26.3 installations, follow the
+[Keycloak upgrade guide](https://www.keycloak.org/docs/26.8.1/upgrading/)
+and back up the database before upgrading the chart. The Deployment uses
+`Recreate` so old and new versions do not run concurrently against the same
+database. A rollback after schema migration requires restoring the database
+backup along with the previous image.
 
 For a hosted app, include its public path in `resourceUrl`, for example
 `https://example.com/apps/example/api/tome/mcp`. It must exactly match the

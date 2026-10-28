@@ -135,7 +135,7 @@ helm show values oci://ghcr.io/caipe-io/charts/keycloak --version 1.1.0
 | idp.secretRef | string | `""` |  |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
 | image.repository | string | `"quay.io/keycloak/keycloak"` |  |
-| image.tag | string | `"26.3"` |  |
+| image.tag | string | `"26.8.1"` |  |
 | ingress.annotations | object | `{}` |  |
 | ingress.className | string | `""` |  |
 | ingress.enabled | bool | `false` |  |

@@ -1549,7 +1549,7 @@ webex-bot:
 keycloak:
   image:
     repository: "quay.io/keycloak/keycloak"
-    tag: "26.3"
+    tag: "26.8.1"
     pullPolicy: IfNotPresent
 
   # Admin credentials — auto-generated random password by default.
