@@ -636,6 +636,29 @@ interface OpenFgaChunkResult {
   applied: { writes: OpenFgaTupleKey[]; deletes: OpenFgaTupleKey[] };
 }
 
+export interface OpenFgaErrorDetails {
+  code?: string;
+  message?: string;
+}
+
+function parseOpenFgaErrorDetails(body: string): OpenFgaErrorDetails | undefined {
+  // Keep bounded diagnostics for server-side callers, not arbitrary response
+  // fields or HTML returned by an intermediary. The public message stays short.
+  if (body.length > 16_384) return undefined;
+  try {
+    const value: unknown = JSON.parse(body);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const { code, message } = value as Record<string, unknown>;
+    const details = {
+      ...(typeof code === "string" && code ? { code: code.slice(0, 128) } : {}),
+      ...(typeof message === "string" && message ? { message: message.slice(0, 4096) } : {}),
+    };
+    return Object.keys(details).length ? Object.freeze(details) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * POST one chunk to OpenFGA's `Write` endpoint. Throws on non-2xx with a
  * shape that callers can detect by name (`OpenFgaWriteError`).
@@ -660,6 +683,7 @@ async function postOpenFgaWriteChunk(
     throw new OpenFgaWriteError(
       `OpenFGA tuple write failed: ${response.status} ${errorBody.slice(0, 200)}`,
       response.status,
+      parseOpenFgaErrorDetails(errorBody),
     );
   }
   return { applied: { writes: chunk.writes, deletes: chunk.deletes } };
@@ -673,10 +697,14 @@ async function postOpenFgaWriteChunk(
  */
 export class OpenFgaWriteError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
+  declare readonly details?: OpenFgaErrorDetails;
+  constructor(message: string, status: number, details?: OpenFgaErrorDetails) {
     super(message);
     this.name = "OpenFgaWriteError";
     this.status = status;
+    // Avoid widening JSON/spread error responses with internal tuple details.
+    // Explicit diagnostic consumers must still treat this data as sensitive.
+    Object.defineProperty(this, "details", { value: details, enumerable: false });
   }
 }
 
