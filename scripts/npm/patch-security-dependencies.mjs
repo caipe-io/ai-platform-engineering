@@ -11,6 +11,9 @@ export const forgeBefore = "            obj.value.length !== 2) {";
 export const forgeAfter = `            obj.value.length !== 2 ||
             obj.value[0].value.length !==
               (('parameters' in capture) ? 2 : 1)) {`;
+export const deepmergeBefore = "return Object.keys(target).concat(getEnumerableOwnPropertySymbols(target))";
+// Both merge loops use getKeys: exclude the prototype setter before reading or copying a value.
+export const deepmergeAfter = "return Object.keys(target).filter(function(key) { return key !== '__proto__' }).concat(getEnumerableOwnPropertySymbols(target))";
 
 export function patchSource(source, before, after, expected, label) {
   // Recognize the complete patched form before searching its shared suffix.
@@ -25,8 +28,9 @@ export function patchSource(source, before, after, expected, label) {
 export function patchDependencies(directory = process.cwd()) {
   const lock = JSON.parse(readFileSync(resolve(directory, "package-lock.json"), "utf8"));
   const patches = {
-    braces: { version: "3.0.3", file: "lib/parse.js", before: braceBefore, after: braceAfter, count: 2 },
-    "node-forge": { version: "1.4.0", file: "lib/rsa.js", before: forgeBefore, after: forgeAfter, count: 1 },
+    braces: { version: "3.0.3", files: ["lib/parse.js"], before: braceBefore, after: braceAfter, count: 2 },
+    "node-forge": { version: "1.4.0", files: ["lib/rsa.js"], before: forgeBefore, after: forgeAfter, count: 1 },
+    deepmerge: { version: "4.3.1", files: ["index.js", "dist/cjs.js", "dist/umd.js"], before: deepmergeBefore, after: deepmergeAfter, count: 1 },
   };
   for (const [packagePath, metadata] of Object.entries(lock.packages)) {
     const name = packagePath.split("node_modules/").at(-1);
@@ -39,10 +43,12 @@ export function patchDependencies(directory = process.cwd()) {
     if (installed.name !== name || installed.version !== patch.version) {
       throw new Error(`Unexpected installed ${name} version`);
     }
-    const file = resolve(directory, packagePath, patch.file);
-    const source = readFileSync(file, "utf8");
-    const result = patchSource(source, patch.before, patch.after, patch.count, name);
-    if (result !== source) writeFileSync(file, result);
+    for (const filename of patch.files) {
+      const file = resolve(directory, packagePath, filename);
+      const source = readFileSync(file, "utf8");
+      const result = patchSource(source, patch.before, patch.after, patch.count, `${name}/${filename}`);
+      if (result !== source) writeFileSync(file, result);
+    }
     console.log(`Security backport verified: ${packagePath}`);
   }
 }

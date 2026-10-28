@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import test from "node:test";
-import { braceBefore, braceAfter, forgeBefore, forgeAfter, patchSource } from "./patch-security-dependencies.mjs";
+import { braceBefore, braceAfter, forgeBefore, forgeAfter, deepmergeBefore, deepmergeAfter, patchSource } from "./patch-security-dependencies.mjs";
 
 const require = createRequire(resolve(process.cwd(), "package.json"));
 const braces = require("braces");
@@ -28,7 +28,7 @@ for (const [open, close] of [["{", "}"], ["(", ")"], ["{(", ")}"]]) {
 }
 
 test("patching is idempotent and rejects partial patches or source drift", () => {
-  for (const [before, after, count] of [[braceBefore, braceAfter, 2], [forgeBefore, forgeAfter, 1]]) {
+  for (const [before, after, count] of [[braceBefore, braceAfter, 2], [forgeBefore, forgeAfter, 1], [deepmergeBefore, deepmergeAfter, 1]]) {
     const original = Array(count).fill(before).join("\n");
     const patched = patchSource(original, before, after, count, "example");
     assert.equal(patchSource(patched, before, after, count, "example"), patched);
