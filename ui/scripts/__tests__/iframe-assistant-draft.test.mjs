@@ -2,9 +2,20 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAgenticAppBridge, parseAssistantDraft } from '../../app-sdk/iframe-bridge.mjs';
 
-test('drafts are bounded plain text with a stable identifier', () => {
+test('text drafts are bounded and have a stable identifier', () => {
   assert.deepEqual(parseAssistantDraft({ id: 'source-1', text: 'Find source\nfor example-worker' }), { id: 'source-1', text: 'Find source\nfor example-worker' });
   for (const value of [null, [], {}, { id: 'x', text: ' ' }, { id: 'x', text: 'x'.repeat(12001) }, { id: 'x', text: 'bad\0text' }, { id: 'bad id', text: 'question' }]) assert.equal(parseAssistantDraft(value), null);
+});
+
+test('drafts can stage a bounded Markdown attachment without submitting', () => {
+  const attachment = { name: 'example-digest.md', content: '# Example digest\n\nA source-backed update.', mimeType: 'text/markdown' };
+  assert.deepEqual(parseAssistantDraft({ id: 'digest-1', text: '', attachment }), { id: 'digest-1', text: '', attachment });
+  for (const invalid of [
+    { ...attachment, name: '../digest.md' },
+    { ...attachment, name: 'digest.txt' },
+    { ...attachment, content: '' },
+    { ...attachment, content: 'x'.repeat(128 * 1024 + 1) },
+  ]) assert.equal(parseAssistantDraft({ id: 'digest-1', text: '', attachment: invalid }), null);
 });
 
 test('bridge publishes a draft only on an explicit call and compatible host', () => {

@@ -31,5 +31,5 @@ export function createAgenticAppBridge(options: {
   timeoutMs?: number;
 }): AgenticAppBridge;
 
-export type AssistantDraft = { id: string; text: string };
+export type AssistantDraft = { id: string; text: string; attachment?: { name: string; content: string; mimeType: "text/markdown" } };
 export function parseAssistantDraft(value: unknown): AssistantDraft | null;

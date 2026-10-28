@@ -86,11 +86,21 @@ export function createAgenticAppBridge({ appId, onNavigate, onStatus, onAssistan
   };
 }
 
-/** Optional plain-text composer handoff; never an instruction to submit. */
+/** Optional composer handoff; a Markdown attachment is staged, never submitted. */
 export function parseAssistantDraft(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const file = value.attachment;
+  const attachment = file && typeof file === "object" && !Array.isArray(file) &&
+    typeof file.name === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._ -]{0,127}\.md$/.test(file.name) &&
+    (file.mimeType === undefined || file.mimeType === "text/markdown") &&
+    typeof file.content === "string" && file.content.length > 0 &&
+    new TextEncoder().encode(file.content).byteLength <= 128 * 1024 &&
+    !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(file.content)
+    ? { name: file.name, content: file.content, mimeType: "text/markdown" }
+    : null;
   if (typeof value.id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(value.id) ||
-      typeof value.text !== "string" || !value.text.trim() || value.text.length > 12000 ||
-      /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value.text)) return null;
-  return { id: value.id, text: value.text };
+      typeof value.text !== "string" || (!value.text.trim() && !attachment) || value.text.length > 12000 ||
+      /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value.text) ||
+      (file !== undefined && !attachment)) return null;
+  return { id: value.id, text: value.text, ...(attachment ? { attachment } : {}) };
 }

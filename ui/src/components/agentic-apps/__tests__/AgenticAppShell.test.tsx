@@ -32,7 +32,7 @@ jest.mock("../AgenticAppAssistantOverlay", () => ({
   }: {
     assistantLabel?: string;
     activeContext: { title?: string } | null;
-    composerDraft?: { id: string; text: string } | null;
+    composerDraft?: { id: string; text: string; attachment?: { name: string; content: string } } | null;
     onComposerDraftApplied?: (id: string) => void;
     open: boolean;
   }) => (
@@ -40,6 +40,7 @@ jest.mock("../AgenticAppAssistantOverlay", () => ({
       data-testid="assistant-overlay"
       data-open={String(open)}
       data-draft={composerDraft?.text ?? ""}
+      data-attachment={composerDraft?.attachment?.name ?? ""}
       data-context={activeContext?.title ?? ""}
     >
       {assistantLabel ?? "Ask CAIPE"}
@@ -334,6 +335,18 @@ describe("AgenticAppShell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Apply draft" }));
     expect(overlay).toHaveAttribute("data-draft", "");
     send(window.location.origin, iframe.contentWindow);
+    expect(overlay).toHaveAttribute("data-draft", "");
+  });
+
+  it("hands a Markdown attachment to the composer only from the app iframe", async () => {
+    render(<AgenticAppShell appId="example-app" path={[]} />);
+    const iframe = (await screen.findByTitle("Example App")) as HTMLIFrameElement;
+    const overlay = await screen.findByTestId("assistant-overlay");
+    const draft = { id: "digest-1", text: "", attachment: { name: "example-digest.md", content: "# Example digest", mimeType: "text/markdown" } };
+    act(() => { window.dispatchEvent(new MessageEvent("message", { origin: window.location.origin, source: iframe.contentWindow, data: {
+      type: "caipe.agenticApp.assistant.open.v1", version: "1.0", appId: "example-app", draft,
+    } })); });
+    expect(overlay).toHaveAttribute("data-attachment", "example-digest.md");
     expect(overlay).toHaveAttribute("data-draft", "");
   });
 

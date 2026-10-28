@@ -594,11 +594,15 @@ export function ChatPanel({
     : false;
   const externalActivity = useChatStore(state => activeConversationId ? state.externalActivity[activeConversationId] : undefined);
   const isRemoteResponse = !!externalActivity && !isThisConversationStreaming;
+  const stageDraftAttachment = useCallback((id: string, file: File) => {
+    setAttachments((current) => current.some((item) => item.id === id) ? current : [...current, { id, file }]);
+  }, []);
   useComposerDraft({
     draft: composerDraft,
     enabled: !readOnly && !isLoadingMessages && !isRemoteResponse,
     setInput,
     inputRef,
+    onAttachment: stageDraftAttachment,
     onApplied: onComposerDraftApplied,
   });
   useEffect(() => {
