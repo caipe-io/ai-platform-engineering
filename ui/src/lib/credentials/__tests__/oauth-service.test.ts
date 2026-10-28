@@ -531,6 +531,59 @@ describe("boundScopes", () => {
 
 describe("ProviderConnectionService", () => {
   it.each([
+    { label: "valid OAuth token", connectorId: "connector-primary", remaining: 3_600_000, renewable: true },
+    { label: "expired OAuth token", connectorId: "connector-primary", remaining: -1, renewable: true },
+    { label: "OAuth token without expiry or refresh", connectorId: "connector-primary", remaining: undefined, renewable: false },
+    { label: "static token", connectorId: "static:example", remaining: undefined, renewable: false },
+  ])("does not use a revoked $label", async ({ connectorId, remaining, renewable }) => {
+    const now = new Date("2026-01-01T00:00:00Z");
+    const owner = { type: "user" as const, id: "user-primary" };
+    const connections = new MemoryCollection<ProviderConnectionDocument>();
+    connections.docs.push({
+      id: "connection-primary", connectorId, owner, status: "connected",
+      accessTokenRef: "access-primary",
+      refreshTokenRef: renewable ? "refresh-primary" : "",
+      ...(remaining !== undefined ? { expiresAt: new Date(now.getTime() + remaining) } : {}),
+    });
+    const connectors = new MemoryCollection<OAuthConnectorDocument>();
+    connectors.docs.push({
+      id: "connector-primary", name: "Example provider", provider: "example",
+      clientId: "client-primary", clientSecretRef: "secret-primary",
+      authorizationUrl: "https://idp.example.test/authorize",
+      tokenUrl: "https://idp.example.test/token", scopes: ["read"],
+      redirectUri: "https://app.example.test/callback", enabled: true,
+      createdAt: now, updatedAt: now,
+    });
+    const connectorLookup = jest.spyOn(connectors, "findOne");
+    const payloadStore = {
+      getSecret: jest.fn(async (ref: string) => {
+        if (!ref) throw new Error("not found");
+        return `${ref}:value`;
+      }),
+      putSecret: mockPutSecret(),
+    };
+    const tokenClient = mockTokenClient({ access_token: "refreshed", expires_in: 3600 });
+    const service = new ProviderConnectionService({
+      providerConnectionsCollection: connections, connectorsCollection: connectors,
+      payloadStore, tokenClient, now: () => now,
+    });
+    await service.revokeConnection({ connectionId: "connection-primary", owner });
+    const connectionUpdate = jest.spyOn(connections, "updateOne");
+
+    await expect(service.refreshConnection("connection-primary")).rejects.toMatchObject({
+      statusCode: 401,
+      code: "CREDENTIAL_REAUTH_REQUIRED",
+    });
+
+    expect(payloadStore.getSecret).not.toHaveBeenCalled();
+    expect(payloadStore.putSecret).not.toHaveBeenCalled();
+    expect(connectorLookup).not.toHaveBeenCalled();
+    expect(tokenClient).not.toHaveBeenCalled();
+    expect(connectionUpdate).not.toHaveBeenCalled();
+    expect(connections.docs[0].status).toBe("disabled");
+  });
+
+  it.each([
     { label: "outside the window", remaining: 300_001, reuse: true },
     { label: "at the boundary", remaining: 300_000, reuse: false },
     { label: "inside the window", remaining: 299_999, reuse: false },

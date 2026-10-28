@@ -773,6 +773,13 @@ export class ProviderConnectionService {
     if (!connection) {
       throw new ApiError("Provider connection was not found", 404, "CREDENTIAL_NOT_FOUND");
     }
+    if (connection.status === "disabled") {
+      throw new ApiError(
+        "Provider connection requires re-authentication",
+        401,
+        "CREDENTIAL_REAUTH_REQUIRED",
+      );
+    }
 
     // The stored access token is the source of truth. Long-lived tokens such as
     // GitHub OAuth-App tokens never expire and are not issued with a refresh
