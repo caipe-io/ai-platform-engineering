@@ -272,6 +272,16 @@ describe('handleApiError', () => {
     mockNextResponseJson.mockClear();
   });
 
+  it('preserves a bounded busy response retry interval', () => {
+    const err = new ApiError('Directory refresh in progress', 503);
+    err.retryAfterSeconds = 2;
+    handleApiError(err);
+    expect(mockNextResponseJson).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'Directory refresh in progress' }),
+      { status: 503, headers: { 'Retry-After': '2' } },
+    );
+  });
+
   it('handles ApiError → returns correct status and body', () => {
     const err = new ApiError('Resource not found', 404, 'NOT_FOUND');
     handleApiError(err);

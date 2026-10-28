@@ -31,7 +31,7 @@ function mockFetch({
   ttl?: number;
   webexTtl?: number;
   patch?: { success: boolean; error?: string };
-  refresh?: { ok?: boolean; status?: number };
+  refresh?: { ok?: boolean; status?: number; retryAfter?: string; refreshing?: boolean };
   onCall?: (href: string, init: FetchInit) => void;
 } = {}) {
   global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -62,7 +62,8 @@ function mockFetch({
       return Promise.resolve({
         ok: refresh.ok ?? true,
         status: refresh.status ?? 200,
-        json: () => Promise.resolve({ success: true }),
+        headers: new Headers(refresh.retryAfter ? { "Retry-After": refresh.retryAfter } : {}),
+        json: () => Promise.resolve({ success: true, data: { refreshing: refresh.refreshing } }),
       } as unknown as Response);
     }
     return Promise.reject(new Error(`Unexpected fetch: ${href}`));
@@ -198,7 +199,7 @@ describe("DiscoveryCacheControls", () => {
     expect(seen.some((h) => h.includes("/api/admin/slack/available-channels"))).toBe(false);
   });
 
-  it("treats 503 from the discovery route as a no-op success (connector not configured)", async () => {
+  it("reports an unconfigured connector as an error without rediscovery", async () => {
     mockFetch({ refresh: { ok: false, status: 503 } });
     const onAfterRefresh = jest.fn();
 
@@ -210,8 +211,23 @@ describe("DiscoveryCacheControls", () => {
 
     fireEvent.click(screen.getByTestId("discovery-cache-refresh-webex"));
 
-    expect(await screen.findByText(/refreshed/i)).toBeInTheDocument();
-    expect(onAfterRefresh).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText(/refresh failed/i)).toBeInTheDocument();
+    expect(onAfterRefresh).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { ok: false, status: 503, retryAfter: "1" },
+    { ok: true, status: 200, refreshing: true },
+  ])("reports a pending refresh without claiming completion: %j", async (refresh) => {
+    mockFetch({ refresh });
+    const onAfterRefresh = jest.fn();
+    render(<DiscoveryCacheControls provider="slack" isAdmin onAfterRefresh={onAfterRefresh} />);
+    fireEvent.click(screen.getByTestId("discovery-cache-controls-trigger-slack"));
+    await screen.findByTestId("discovery-cache-ttl-input-slack");
+    fireEvent.click(screen.getByTestId("discovery-cache-refresh-slack"));
+    expect(await screen.findByText(/refresh in progress/i)).toBeInTheDocument();
+    expect(onAfterRefresh).not.toHaveBeenCalled();
+    expect(screen.queryByText(/^refreshed$/i)).not.toBeInTheDocument();
   });
 
   it("hides Save and Force-refresh for read-only viewers but keeps the TTL visible", async () => {

@@ -49,6 +49,8 @@ serviceAccount:
 #   SLACK_ADMIN_API_PORT:                     Internal admin API port
 #   SLACK_ADMIN_JWT_ISSUER:                   Expected issuer for UI BFF service tokens
 #   SLACK_ADMIN_JWT_AUDIENCE:                 Expected audience for UI BFF service tokens
+#   SLACK_ADMIN_DIRECTORY_SCOPE:             Directory read scope (default slack:directory:read)
+#   SLACK_DISCOVERY_CACHE_TTL_MINUTES:         Channel TTL fallback; platform settings take precedence
 #   SLACK_ADMIN_ALLOWED_CLIENT_IDS:           Comma-separated client IDs allowed to call admin API
 #   CAIPE_PLATFORM_AUDIENCE:                  OBO audience for bot → CAIPE UI BFF access checks
 #
@@ -87,6 +89,8 @@ config:
   SLACK_ADMIN_API_PORT: "3001"
   SLACK_ADMIN_JWT_ISSUER: ""
   SLACK_ADMIN_JWT_AUDIENCE: "caipe-slack-bot-admin"
+  SLACK_ADMIN_DIRECTORY_SCOPE: "slack:directory:read"
+  SLACK_DISCOVERY_CACHE_TTL_MINUTES: "60"
   SLACK_ADMIN_ALLOWED_CLIENT_IDS: "caipe-ui"
   CAIPE_PLATFORM_AUDIENCE: "caipe-platform"
   SLACK_JIT_CREATE_USER: "true"

@@ -1205,7 +1205,12 @@ export function handleApiError(error: unknown): NextResponse {
         reason: apiError.reason,
         action: apiError.action,
       },
-      { status: apiError.statusCode }
+      {
+        status: apiError.statusCode,
+        ...(Number.isFinite(apiError.retryAfterSeconds) && apiError.retryAfterSeconds! >= 0
+          ? { headers: { 'Retry-After': String(Math.ceil(apiError.retryAfterSeconds!)) } }
+          : {}),
+      }
     );
   }
 

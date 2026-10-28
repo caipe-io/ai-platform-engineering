@@ -74,3 +74,24 @@ function response(payload: unknown, ok = true, status = 200): Response {
     json: async () => payload,
   } as Response;
 }
+
+it("forwards only fixed directory parameters to the bot and uses a service token", async () => {
+  const { callSlackBotDirectory } = await import("../slack-bot-admin");
+  fetchMock
+    .mockResolvedValueOnce(response({ access_token: "service-token", expires_in: 300 }))
+    .mockResolvedValueOnce(response({ users: [] }));
+  await callSlackBotDirectory("users", new URLSearchParams("q=example&limit=10&url=https://example.com&token=secret"));
+  expect(fetchMock.mock.calls[1][0]).toBe("http://slack-bot:3001/admin/slack/directory/users?q=example&limit=10");
+  expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer service-token");
+});
+
+it("preserves a bot directory busy response and retry interval", async () => {
+  process.env.SLACK_BOT_ADMIN_DEV_AUTH_ENABLED = "true";
+  process.env.SLACK_BOT_ADMIN_DEV_TOKEN = "local-dev-token";
+  fetchMock.mockResolvedValueOnce({
+    ...response({ error: "Directory refresh in progress" }, false, 503),
+    headers: new Headers({ "Retry-After": "2" }),
+  });
+  await expect(callSlackBotAdmin("/admin/slack/directory/users"))
+    .rejects.toMatchObject({ statusCode: 503, retryAfterSeconds: 2 });
+});

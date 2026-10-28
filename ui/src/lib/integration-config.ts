@@ -23,10 +23,6 @@ function hasComposeProfile(...profileNames: string[]): boolean {
   return profileNames.some((profile) => profiles.has(profile));
 }
 
-export function getSlackIntegrationToken(): string | null {
-  return envValue("SLACK_BOT_TOKEN") ?? envValue("SLACK_INTEGRATION_BOT_TOKEN");
-}
-
 export function isSlackIntegrationEnabled(): boolean {
   return (
     envEnabled("SLACK_INTEGRATION_ENABLED") ||
