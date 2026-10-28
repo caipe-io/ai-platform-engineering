@@ -76,7 +76,7 @@ jobs:
         run: |
           cat > "$RUNNER_TEMP/fga" <<'SCRIPT'
           #!/bin/sh
-          exec docker run --rm -v "$PWD:$PWD" -w "$PWD" openfga/cli@sha256:31a565d14d1c5ca8170d3a2225eb66517d9f490539967bcb3421613c5e2538a4 "$@"
+          exec docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:$PWD" -w "$PWD" openfga/cli@sha256:31a565d14d1c5ca8170d3a2225eb66517d9f490539967bcb3421613c5e2538a4 "$@"
           SCRIPT
           chmod +x "$RUNNER_TEMP/fga"
           echo "FGA_CLI=$RUNNER_TEMP/fga" >> "$GITHUB_ENV"
