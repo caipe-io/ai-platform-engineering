@@ -126,37 +126,8 @@ describe('QuickStartSection', () => {
     expect(screen.getByTestId('quick-start-cta-chat-assistants')).toHaveAttribute('href', '/chat')
   })
 
-  it('loads starred, launchable apps only when Favorites is opened', async () => {
-    const fetchMock = jest.fn().mockImplementation((url: string) => Promise.resolve({
-      ok: true,
-      json: async () => url === '/api/agentic-apps'
-        ? { items: [
-            { appId: 'example', displayName: 'Example app', description: 'A useful app', href: '/apps/example', canLaunch: true, uiMode: 'iframe' },
-            { appId: 'blocked', displayName: 'Blocked app', description: 'Not available', href: '/apps/blocked', canLaunch: false, uiMode: 'iframe' },
-          ] }
-        : { data: { favoriteAppIds: ['example', 'blocked'] } },
-    }))
-    global.fetch = fetchMock
-
+  it('keeps Favorites separate from Quick Start', () => {
     render(<QuickStartSection />)
-    expect(fetchMock).not.toHaveBeenCalled()
-    fireEvent.mouseDown(screen.getByTestId('quick-start-tab-favorites'), { button: 0 })
-
-    expect(await screen.findByRole('link', { name: 'Open Example app' })).toHaveAttribute('href', '/apps/example')
-    expect(screen.queryByText('Blocked app')).not.toBeInTheDocument()
-    expect(fetchMock).toHaveBeenCalledWith('/api/agentic-apps', expect.objectContaining({ cache: 'no-store' }))
-    expect(fetchMock).toHaveBeenCalledWith('/api/settings/preferences/favorite-apps', expect.objectContaining({ cache: 'no-store' }))
-  })
-
-  it('guides users to Apps when there are no accessible favorites', async () => {
-    global.fetch = jest.fn().mockImplementation((url: string) => Promise.resolve({
-      ok: true,
-      json: async () => url === '/api/agentic-apps'
-        ? { items: [] }
-        : { data: { favoriteAppIds: [] } },
-    }))
-    render(<QuickStartSection />)
-    fireEvent.mouseDown(screen.getByTestId('quick-start-tab-favorites'), { button: 0 })
-    expect(await screen.findByRole('link', { name: 'Star an app in Apps' })).toHaveAttribute('href', '/apps')
+    expect(screen.queryByTestId('quick-start-tab-favorites')).not.toBeInTheDocument()
   })
 })

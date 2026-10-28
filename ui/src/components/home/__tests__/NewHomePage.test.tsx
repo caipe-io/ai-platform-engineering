@@ -28,6 +28,14 @@ jest.mock('@/components/home/widget-registry', () => ({
   },
 }))
 
+let mockFavoriteApps: Array<{ appId: string; displayName: string }> = []
+jest.mock('@/components/home/FavoriteAppsWidget', () => ({
+  useHomeFavoriteApps: () => mockFavoriteApps,
+  FavoriteAppsWidget: ({ apps }: { apps: Array<{ appId: string; displayName: string }> }) => (
+    <div data-testid="favorite-apps-widget">{apps.map((app) => app.displayName).join(', ')}</div>
+  ),
+}))
+
 const mockAddWidget = jest.fn()
 const mockRemoveWidget = jest.fn()
 let mockWidgets: string[] = ['heroComposer', 'quickStart']
@@ -98,6 +106,7 @@ import { NewHomePage } from '../NewHomePage'
 describe('NewHomePage', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockFavoriteApps = []
     mockWidgets = ['heroComposer', 'quickStart']
     mockAvailableToAdd = [
       { id: 'shortcuts', label: 'Shortcuts' },
@@ -113,6 +122,26 @@ describe('NewHomePage', () => {
     expect(screen.getByTestId('home-widget-remove-heroComposer')).toBeInTheDocument()
     expect(screen.getByTestId('home-widget-quickStart')).toBeInTheDocument()
     expect(screen.getByTestId('widget-body-quickStart')).toBeInTheDocument()
+  })
+
+  it('hides the Favorites widget and Customize option when no apps are starred', () => {
+    mockWidgets = ['heroComposer', 'quickStart', 'favoriteApps']
+    mockAvailableToAdd = [{ id: 'favoriteApps', label: 'Favorite Apps' }]
+    render(<NewHomePage />)
+    expect(screen.queryByTestId('home-widget-favoriteApps')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('add-widget-favoriteApps')).not.toBeInTheDocument()
+  })
+
+  it('shows starred apps in a draggable widget after Quick Start', () => {
+    mockWidgets = ['heroComposer', 'quickStart', 'favoriteApps']
+    mockFavoriteApps = [{ appId: 'example', displayName: 'Example app' }]
+    render(<NewHomePage />)
+    expect(screen.getByTestId('favorite-apps-widget')).toHaveTextContent('Example app')
+    expect(screen.getByTestId('home-widget-drag-favoriteApps')).toBeInTheDocument()
+    const order = screen.getAllByTestId(/^home-widget-(?!remove-|drag-)/)
+      .map((element) => element.dataset.testid)
+      .filter((id) => id !== 'home-widget-grid')
+    expect(order).toEqual(['home-widget-heroComposer', 'home-widget-quickStart', 'home-widget-favoriteApps'])
   })
 
   it('renders "Powered by caipe.io" footer', () => {
