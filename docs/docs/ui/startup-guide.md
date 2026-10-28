@@ -118,8 +118,8 @@ Expected: `HTTP/1.1 200 OK` or `HTTP/1.1 307` (redirect)
 # UI logs (if using Docker)
 docker logs caipe-ui-dev
 
-# MongoDB logs
-docker logs caipe-mongodb-dev
+# DocumentDB logs
+docker logs caipe-documentdb-dev
 ```
 
 ### Reset Everything:

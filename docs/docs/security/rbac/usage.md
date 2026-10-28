@@ -7,7 +7,7 @@ How to bring up the stack, log in as different roles, verify denials, run the de
 ## Start the Stack
 
 ```bash
-COMPOSE_PROFILES='rbac,caipe-ui,caipe-mongodb' \
+COMPOSE_PROFILES='rbac,caipe-ui,caipe-documentdb' \
   docker compose -f docker-compose.dev.yaml up -d
 
 # Confirm Keycloak is healthy before logging in
