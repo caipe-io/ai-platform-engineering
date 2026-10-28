@@ -52,3 +52,19 @@ access to `platformClientIds`; keep the built-in client IDs your deployment
 uses. Existing anonymous DCR clients should be
 reviewed or revoked during rollout. Turning DCR off later does not undo this
 audience migration or revoke already registered clients.
+
+The first-party `caipe-platform-api` scope is excluded from public OIDC
+`scopes_supported` metadata. Generic clients may request all advertised scopes
+while registering; advertising this restricted scope would cause registration
+to fail with `403 insufficient_scope`. First-party scope assignments and audience
+mappers are retained, and anonymous clients still cannot explicitly request it.
+The reconcile job applies this setting to both new and existing realms.
+
+An opt-in integration check creates and deletes disposable realms to validate
+new-scope creation, existing-scope reconciliation, first-party assignments and
+DCR rejection of the platform scope. Set `KEYCLOAK_DCR_TEST_BASE_URL` and
+`KEYCLOAK_DCR_TEST_ADMIN_TOKEN` for an approved Keycloak test target, then run:
+
+```bash
+uv run pytest tests/integration/test_keycloak_mcp_dcr_discovery.py
+```

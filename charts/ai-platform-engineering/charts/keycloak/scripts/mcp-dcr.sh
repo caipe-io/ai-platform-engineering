@@ -227,7 +227,7 @@ print(next((scope["id"] for scope in json.loads(os.environ["MCP_SCOPES_JSON"])
     if scope.get("name") == "caipe-platform-api"), ""))
 ' 2>/dev/null) || return 1
   if [ -z "${MCP_PLATFORM_SCOPE_ID}" ]; then
-    MCP_PLATFORM_SCOPE_PAYLOAD='{"name":"caipe-platform-api","description":"First-party CAIPE platform API audience","protocol":"openid-connect","attributes":{"include.in.token.scope":"false","display.on.consent.screen":"false"},"protocolMappers":[{"name":"platform-api-audience","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","consentRequired":false,"config":{"included.custom.audience":"caipe-platform","id.token.claim":"false","access.token.claim":"true","introspection.token.claim":"true"}}]}'
+    MCP_PLATFORM_SCOPE_PAYLOAD='{"name":"caipe-platform-api","description":"First-party CAIPE platform API audience","protocol":"openid-connect","attributes":{"include.in.token.scope":"false","display.on.consent.screen":"false","include.in.openid.provider.metadata":"false"},"protocolMappers":[{"name":"platform-api-audience","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","consentRequired":false,"config":{"included.custom.audience":"caipe-platform","id.token.claim":"false","access.token.claim":"true","introspection.token.claim":"true"}}]}'
     if ! curl -sf -o /dev/null -X POST -H "${MCP_AUTH}" -H "Content-Type: application/json" \
       "${KC_URL}/admin/realms/${REALM}/client-scopes" -d "${MCP_PLATFORM_SCOPE_PAYLOAD}"; then
       echo "${MCP_LOG_PREFIX} ERROR: could not create first-party platform audience scope." >&2
@@ -258,6 +258,24 @@ if any(scope.get("id") == os.environ["MCP_PLATFORM_SCOPE_ID"]
   fi
   if [ -z "${MCP_PLATFORM_SCOPE_ID}" ]; then
     echo "${MCP_LOG_PREFIX} ERROR: first-party audience scope was not created." >&2
+    return 1
+  fi
+  # Generic OAuth clients can request every scope in discovery during DCR.
+  # Keep the first-party audience out of discovery without allowing it for DCR
+  # or changing its assignments/mappers on existing first-party clients.
+  MCP_PLATFORM_SCOPE_PAYLOAD=$(curl -sf -H "${MCP_AUTH}" \
+    "${KC_URL}/admin/realms/${REALM}/client-scopes/${MCP_PLATFORM_SCOPE_ID}") || return 1
+  MCP_PLATFORM_SCOPE_PAYLOAD=$(MCP_PLATFORM_SCOPE_PAYLOAD="${MCP_PLATFORM_SCOPE_PAYLOAD}" python3 -c '
+import json
+import os
+
+scope = json.loads(os.environ["MCP_PLATFORM_SCOPE_PAYLOAD"])
+scope.setdefault("attributes", {})["include.in.openid.provider.metadata"] = "false"
+print(json.dumps(scope))
+') || return 1
+  if ! curl -sf -o /dev/null -X PUT -H "${MCP_AUTH}" -H "Content-Type: application/json" \
+    "${KC_URL}/admin/realms/${REALM}/client-scopes/${MCP_PLATFORM_SCOPE_ID}" -d "${MCP_PLATFORM_SCOPE_PAYLOAD}"; then
+    echo "${MCP_LOG_PREFIX} ERROR: could not hide first-party audience scope from discovery." >&2
     return 1
   fi
   MCP_PROFILE_MAPPERS_JSON=$(curl -sf -H "${MCP_AUTH}" \
@@ -345,7 +363,7 @@ except (TypeError, json.JSONDecodeError):
 
   if [ -z "${MCP_BASIC_SCOPE_ID}" ]; then
     echo "${MCP_LOG_PREFIX}   Creating Keycloak's required 'basic' client scope ..."
-    MCP_BASIC_SCOPE_JSON='{"name":"basic","description":"OpenID Connect scope for all basic token claims","protocol":"openid-connect","attributes":{"include.in.token.scope":"false","display.on.consent.screen":"false"},"protocolMappers":[{"name":"auth_time","protocol":"openid-connect","protocolMapper":"oidc-usersessionmodel-note-mapper","consentRequired":false,"config":{"user.session.note":"AUTH_TIME","id.token.claim":"true","introspection.token.claim":"true","access.token.claim":"true","claim.name":"auth_time","jsonType.label":"long"}},{"name":"sub","protocol":"openid-connect","protocolMapper":"oidc-sub-mapper","consentRequired":false,"config":{"introspection.token.claim":"true","access.token.claim":"true"}}]}'
+    MCP_BASIC_SCOPE_JSON='{"name":"basic","description":"OpenID Connect scope for all basic token claims","protocol":"openid-connect","attributes":{"include.in.token.scope":"false","display.on.consent.screen":"false","include.in.openid.provider.metadata":"false"},"protocolMappers":[{"name":"auth_time","protocol":"openid-connect","protocolMapper":"oidc-usersessionmodel-note-mapper","consentRequired":false,"config":{"user.session.note":"AUTH_TIME","id.token.claim":"true","introspection.token.claim":"true","access.token.claim":"true","claim.name":"auth_time","jsonType.label":"long"}},{"name":"sub","protocol":"openid-connect","protocolMapper":"oidc-sub-mapper","consentRequired":false,"config":{"introspection.token.claim":"true","access.token.claim":"true"}}]}'
     if ! curl -sf -o /dev/null -X POST -H "${MCP_AUTH}" -H "Content-Type: application/json" \
       "${KC_URL}/admin/realms/${REALM}/client-scopes" -d "${MCP_BASIC_SCOPE_JSON}"; then
       echo "${MCP_LOG_PREFIX}   ERROR: failed to create the 'basic' client scope." >&2
