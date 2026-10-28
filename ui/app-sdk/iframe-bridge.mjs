@@ -79,7 +79,8 @@ export function createAgenticAppBridge({ appId, onNavigate, onStatus, onAssistan
     navigate(href, options = {}) { send("caipe.agenticApp.navigate.v1", { href, ...(options.history ? { history: options.history } : {}) }); },
     setBreadcrumbs(breadcrumbs, route) {
       if (!capabilities?.breadcrumbs) throw new Error("Host breadcrumbs are unsupported");
-      send("caipe.agenticApp.breadcrumbs.v1", { breadcrumbs, route });
+      const items = capabilities.breadcrumbPresentation ? breadcrumbs : breadcrumbs.map(({ label, href }) => ({ label, ...(href !== undefined ? { href } : {}) }));
+      send("caipe.agenticApp.breadcrumbs.v1", { breadcrumbs: items, route });
     },
     dispose() { clearTimeout(timer); window.removeEventListener("message", receive); window.removeEventListener("keydown", forwardShortcut); disposed = true; },
   };

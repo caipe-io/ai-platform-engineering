@@ -12,6 +12,8 @@ export type { NativeExtensionManifest } from "./native-manifest.mjs";
 export interface NativeExtensionBreadcrumb {
   label: string;
   href?: string;
+  tone?: "primary" | "info";
+  icon?: "target" | "layers";
 }
 
 export interface NativeExtensionProps {

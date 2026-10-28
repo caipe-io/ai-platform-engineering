@@ -9,6 +9,7 @@ export interface AgenticAppBridgeCapabilities {
   queryNavigation?: boolean;
   pathNavigation?: boolean;
   breadcrumbs?: boolean;
+  breadcrumbPresentation?: boolean;
   hostShortcuts?: Array<"search">;
   composerExtensions: string[];
 }
@@ -19,7 +20,7 @@ export interface AgenticAppBridge {
   openAssistant(context?: AppAssistantContext, draft?: AssistantDraft): void;
   setContext(context: AppAssistantContext): void;
   navigate(href: string, options?: { history?: "push" | "replace" }): void;
-  setBreadcrumbs(breadcrumbs: Array<{ label: string; href?: string }>, route: string): void;
+  setBreadcrumbs(breadcrumbs: Array<{ label: string; href?: string; tone?: "primary" | "info"; icon?: "target" | "layers" }>, route: string): void;
   dispose(): void;
 }
 export function createAgenticAppBridge(options: {

@@ -4,13 +4,17 @@ import { HeaderBreadcrumbPortal } from "@/components/layout/HeaderBreadcrumbSlot
 import { useWorkspacePageActionsTarget } from "@/components/layout/WorkspacePageActions";
 import { cn } from "@/lib/utils";
 import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Layers, Target } from "lucide-react";
+import type { NativeExtensionBreadcrumb } from "../../../app-sdk";
 
-export interface WorkspaceBreadcrumbItem {
-  href?: string;
-  label: string;
+export interface WorkspaceBreadcrumbItem extends NativeExtensionBreadcrumb {
   onClick?: React.MouseEventHandler<HTMLAnchorElement>;
 }
+
+const BREADCRUMB_TONES = {
+  primary: "text-primary",
+  info: "text-sky-600 dark:text-sky-400",
+};
 
 interface WorkspacePageHeaderProps {
   actions?: React.ReactNode;
@@ -38,6 +42,12 @@ export function WorkspaceBreadcrumbs({
       <ol className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
         {breadcrumbs.map((item,index) => {
           const current = index === breadcrumbs.length - 1;
+          const Icon = item.icon === "target" ? Target : item.icon === "layers" ? Layers : null;
+          const tone = item.tone ? BREADCRUMB_TONES[item.tone] : undefined;
+          const content = Icon ? <>
+            <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 truncate">{item.label}</span>
+          </> : item.label;
           return (
             <li className="flex min-w-0 items-center gap-1" key={`${item.label}-${index}`}>
               {index > 0 ? (
@@ -47,20 +57,23 @@ export function WorkspaceBreadcrumbs({
                 <NavigationProgressLink
                   aria-current={current ? "page" : undefined}
                   className={cn(
-                    "truncate rounded-sm outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                    current && "font-medium text-foreground",
+                    "min-w-0 truncate rounded-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                    Icon && "inline-flex items-center gap-1",
+                    tone ? [tone, "hover:opacity-80"] : "hover:text-foreground",
+                    current && "font-medium",
+                    current && !tone && "text-foreground",
                   )}
                   href={item.href}
                   onClick={item.onClick}
                 >
-                  {item.label}
+                  {content}
                 </NavigationProgressLink>
               ) : (
                 <span
                   aria-current={current ? "page" : undefined}
-                  className={cn("truncate",current && "font-medium text-foreground")}
+                  className={cn("min-w-0 truncate",Icon && "inline-flex items-center gap-1",tone,current && "font-medium",current && !tone && "text-foreground")}
                 >
-                  {item.label}
+                  {content}
                 </span>
               )}
             </li>

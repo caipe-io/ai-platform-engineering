@@ -219,7 +219,7 @@ export function AgenticAppShell({
     const target = iframeRef.current?.contentWindow;
     const envelope = { version: "1.0", appId };
     target?.postMessage({ ...envelope, type: "caipe.agenticApp.bridge.capabilities.v1",
-      capabilities: { assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured, navigation: true, queryNavigation: true, pathNavigation: true, breadcrumbs: true, hostShortcuts: ["search"], composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
+      capabilities: { assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured, navigation: true, queryNavigation: true, pathNavigation: true, breadcrumbs: true, breadcrumbPresentation: true, hostShortcuts: ["search"], composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
     target?.postMessage({ ...envelope, type: "caipe.agenticApp.navigation.v1",
       href: window.location.pathname + window.location.search + window.location.hash }, window.location.origin);
   }
@@ -235,7 +235,7 @@ export function AgenticAppShell({
       function reply(error?: string) {
         expectedSource.postMessage({ type: error ? "caipe.agenticApp.bridge.error.v1" : "caipe.agenticApp.bridge.capabilities.v1",
           version: "1.0", appId, ...(error ? { error } : { capabilities: {
-            assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured, navigation: true, queryNavigation: true, pathNavigation: true, breadcrumbs: true, hostShortcuts: ["search"], composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: app.assistantOptions,
+            assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured, navigation: true, queryNavigation: true, pathNavigation: true, breadcrumbs: true, breadcrumbPresentation: true, hostShortcuts: ["search"], composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: app.assistantOptions,
           } }) }, window.location.origin);
       }
       if (message.version !== "1.0") { reply("unsupported_version"); setBridgeError("This app uses an unsupported bridge version."); return; }
@@ -318,7 +318,7 @@ export function AgenticAppShell({
     if (!target || state.status !== "ready") return;
     target.postMessage({ type: "caipe.agenticApp.bridge.capabilities.v1", version: "1.0", appId,
       capabilities: { assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured,
-        navigation: true, queryNavigation: true, pathNavigation: true, breadcrumbs: true, hostShortcuts: ["search"], composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
+        navigation: true, queryNavigation: true, pathNavigation: true, breadcrumbs: true, breadcrumbPresentation: true, hostShortcuts: ["search"], composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
   }, [appId, assistantAgent, assistantConfigured, state]);
 
   useEffect(() => {

@@ -5,6 +5,13 @@ it("accepts app-owned links and an initial host Home link", () => {
   const items = [{ label: "Home", href: "/" }, { label: "Example", href: "/example?tab=overview" }, { label: "Page" }];
   expect(parseFrameBreadcrumbs(items, roots)).toEqual(items);
 });
+it("preserves named presentation for hierarchy breadcrumbs", () => {
+  const items = [
+    { label: "Example goal", href: "/example/goal", tone: "primary", icon: "target" },
+    { label: "Example area", href: "/example/area", tone: "info", icon: "layers" },
+  ];
+  expect(parseFrameBreadcrumbs(items, roots)).toEqual(items);
+});
 it.each([
   [{ label: "External", href: "https://example.org" }],
   [{ label: "Escaped", href: "/example/../admin" }],
@@ -15,6 +22,9 @@ it.each([
   [{ label: "" }],
   [{ label: "x".repeat(121) }],
   [{ label: "Page", html: "<script>" }],
+  [{ label: "Page", tone: "red" }],
+  [{ label: "Page", icon: "https://example.test/icon.svg" }],
+  [{ label: "Page", className: "text-primary" }],
   Array.from({ length: 13 }, () => ({ label: "Page" })),
 ].map(items => ({ items })))("rejects invalid or out-of-app breadcrumb data: %j", ({ items }) => {
   expect(parseFrameBreadcrumbs(items, roots)).toBeNull();

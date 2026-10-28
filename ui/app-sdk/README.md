@@ -312,7 +312,11 @@ using installation `host_route_claims`:
   `bridge.setBreadcrumbs([{ label: "Home", href: "/" }, { label: "Example" }], "/example")`
   with the current public route. Hide the app's duplicate row only after the
   host advertises support. Labels are plain text; links must belong to the app,
-  except for the initial host Home link.
+  except for the initial host Home link. Optional `tone` (`primary`, `info`) and
+  `icon` (`target`, `layers`) preserve hierarchy presentation. The host advertises
+  `breadcrumbPresentation`; the SDK sends plain labels/links to older hosts.
+  Native `setBreadcrumbs` accepts the same tokens. Arbitrary CSS, HTML and icon URLs
+  are not accepted across the iframe bridge.
 - Keep one bridge for the lifetime of the app document. Publish page/query
   changes independently of assistant context or visibility. The host preserves
   a connected frame through owned SPA routes; apps without the bridge retain
