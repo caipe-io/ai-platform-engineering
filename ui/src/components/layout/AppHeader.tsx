@@ -154,7 +154,7 @@ export function AppHeader() {
   }, [session, isAdmin]);
 
   const releasePrompt = useReleaseUpgradePrompt();
-  const migrationStatus = useMigrationStatus();
+  const migrationStatus = useMigrationStatus({ enabled: isAdmin });
   // Admin-only Keycloak health summary so the header chip can surface
   // invariant failures (e.g. missing OBO scope binding, AFFIRMATIVE policy
   // misconfiguration) without making the admin navigate to Security &
