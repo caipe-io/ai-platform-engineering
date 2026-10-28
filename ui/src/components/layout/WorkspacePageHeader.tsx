@@ -37,9 +37,9 @@ export function WorkspaceBreadcrumbs({
   const breadcrumb = (
     <nav
       aria-label="Breadcrumb"
-      className={cn("min-w-0",className)}
+      className={cn("min-w-0 max-w-full overflow-x-auto",className)}
     >
-      <ol className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
+      <ol className="flex w-max items-center gap-1 whitespace-nowrap text-sm text-muted-foreground">
         {breadcrumbs.map((item,index) => {
           const current = index === breadcrumbs.length - 1;
           const Icon = item.icon === "target" ? Target : item.icon === "layers" ? Layers : null;
@@ -49,7 +49,7 @@ export function WorkspaceBreadcrumbs({
             <span className="min-w-0 truncate">{item.label}</span>
           </> : item.label;
           return (
-            <li className="flex min-w-0 items-center gap-1" key={`${item.label}-${index}`}>
+            <li className="flex shrink-0 items-center gap-1" key={`${item.label}-${index}`}>
               {index > 0 ? (
                 <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 opacity-60" />
               ) : null}
@@ -57,7 +57,7 @@ export function WorkspaceBreadcrumbs({
                 <NavigationProgressLink
                   aria-current={current ? "page" : undefined}
                   className={cn(
-                    "min-w-0 truncate rounded-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                    "min-w-0 max-w-56 truncate rounded-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                     Icon && "inline-flex items-center gap-1",
                     tone ? [tone, "hover:opacity-80"] : "hover:text-foreground",
                     current && "font-medium",
@@ -71,7 +71,7 @@ export function WorkspaceBreadcrumbs({
               ) : (
                 <span
                   aria-current={current ? "page" : undefined}
-                  className={cn("min-w-0 truncate",Icon && "inline-flex items-center gap-1",tone,current && "font-medium",current && !tone && "text-foreground")}
+                  className={cn("min-w-0 max-w-56 truncate",Icon && "inline-flex items-center gap-1",tone,current && "font-medium",current && !tone && "text-foreground")}
                 >
                   {content}
                 </span>
