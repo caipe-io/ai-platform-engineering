@@ -126,7 +126,7 @@ export const FGA_ENFORCEMENT_MANIFEST: Record<
       "ui/src/app/api/agentic-apps/runtime/[appId]/[[...path]]/route.ts",
     ],
     notes:
-      "Configured External Apps opt into agentic_app CAS checks; startup reconciliation grants visible apps and runtime token minting fails closed.",
+      "Configured apps opt into agentic_app CAS checks; retryable catalog reconciliation gates discovery, navigation, launch, native entry, and runtime token minting.",
   },
   llm_model: {
     status: "rebac_enforced",
