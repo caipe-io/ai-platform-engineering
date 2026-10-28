@@ -91,7 +91,7 @@ export function validateManifest(moduleName, manifest) {
     const nav = manifest.navigation;
     if (!nav || typeof nav.label !== "string" || !nav.label.trim() || nav.placement !== "after-chat"
       || !validPath(nav.href) || !paths.some((path) => ownsPath(path, nav.href))
-      || (nav.icon !== undefined && !["book-open", "layout-grid"].includes(nav.icon))) {
+      || (nav.icon !== undefined && !["book-open", "folder-kanban", "layout-grid"].includes(nav.icon))) {
       fail("navigation must reference an owned route and use a supported placement/icon");
     }
   }

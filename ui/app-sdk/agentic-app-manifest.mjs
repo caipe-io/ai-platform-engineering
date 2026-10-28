@@ -200,7 +200,7 @@ export function validateAgenticAppManifest(value) {
       !routeIds.has(nav.routeRef) ||
       nav.placement !== "after-chat" ||
       (nav.icon !== undefined &&
-        !["book-open", "layout-grid"].includes(nav.icon))
+        !["book-open", "folder-kanban", "layout-grid"].includes(nav.icon))
     )
       throw new Error(
         "navigation must reference an owned route and supported placement/icon",

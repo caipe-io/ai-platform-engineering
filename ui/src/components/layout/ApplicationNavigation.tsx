@@ -85,6 +85,12 @@ interface ApplicationNavigationItem {
   utility?: boolean;
 }
 
+const APP_NAVIGATION_ICONS: Record<string, LucideIcon> = {
+  "book-open": BookOpen,
+  "folder-kanban": FolderKanban,
+  "layout-grid": LayoutGrid,
+};
+
 function activeAreaForPath(pathname: string | null, apps: PublicAgenticApp[]): string | null {
   if (pathname === "/") return "home";
   if (pathname?.startsWith("/chat")) return "chat";
@@ -226,7 +232,7 @@ function ApplicationNavigationContents({
     key: `app-${app.appId}`,
     href: app.navigation!.href,
     label: app.navigation!.label,
-    icon: app.navigation!.icon === "book-open" ? BookOpen : LayoutGrid,
+    icon: APP_NAVIGATION_ICONS[app.navigation!.icon ?? "layout-grid"] ?? LayoutGrid,
   }));
   const projectsClaimedByExtension = sessionStatus === "authenticated" && navigationCatalog?.identity === identity &&
     navigationCatalog.hostPaths.some(path => path === "/projects");

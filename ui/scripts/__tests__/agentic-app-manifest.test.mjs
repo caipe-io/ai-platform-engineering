@@ -159,6 +159,24 @@ test("one manifest projects onto the aligned 2.0 native component contract", () 
   assert.equal(common.grants, undefined);
 });
 
+test("navigation icons survive shared and native manifest validation", () => {
+  for (const icon of ["book-open", "layout-grid", "folder-kanban"]) {
+    const app = exampleManifest();
+    app.ui.navigation.icon = icon;
+    app.ui.profiles.push({ id: "hosted", mode: "iframe" });
+    app.runtime = { kind: "proxied-next-zone", mountPath: "/apps/example-app" };
+    app.access.policyActions = [{ action: "proxy:GET", defaultEffect: "allow" }];
+    const common = validateAgenticAppManifest(app);
+    assert.equal(common.ui.navigation.icon, icon);
+    const native = nativeUiDescriptor(common);
+    assert.equal(validateManifest("@example/native-app", native).navigation.icon, icon);
+  }
+  const invalid = exampleManifest();
+  invalid.ui.navigation.icon = "unsupported-icon";
+  assert.throws(() => validateAgenticAppManifest(invalid), /placement\/icon/);
+  assert.throws(() => validateManifest("@example/native-app", nativeUiDescriptor(invalid)), /placement\/icon/);
+});
+
 test("preserves legacy CAIPE App Contract declarations instead of silently relabeling modules", () => {
   const legacy = exampleManifest();
   legacy.ui.profiles[0].contractVersion = "1.1";

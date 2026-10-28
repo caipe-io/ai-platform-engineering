@@ -233,7 +233,9 @@ the snapshot; a UI restart revalidates it before serving traffic.
   Missing, invalid, or broken logos fall back to a filled app tile with a large
   cutout spark. The hub heading and generic app fallbacks use this same mark.
   Catalog cards also display packaged app branding. The Apps sidebar destination
-  retains the nine-dot launcher; legacy `layout-grid` navigation keeps its grid icon.
+  retains the nine-dot launcher. Sidebar `ui.navigation.icon` supports `book-open`,
+  `folder-kanban` and `layout-grid`; omitted icons use the grid. Use `folder-kanban`
+  for a project workspace.
   The app's internal SDK is not inferred from an absent `execution_harness_id`.
   Legacy platform agents keep their existing Deep Agents fallback.
 - Agent CAS permissions still apply. App role/launch policy further restricts the
