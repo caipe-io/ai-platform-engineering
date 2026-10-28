@@ -13,5 +13,6 @@
   "consumes": {
     "platformApis": [{ "id": "host.access.resources", "version": "1.0", "required": true }]
   },
+  "authorization": { "module": "example-service", "model": "model.fga", "tests": "model.fga.yaml" },
   "requestedPermissions": []
 }

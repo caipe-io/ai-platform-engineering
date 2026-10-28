@@ -127,11 +127,15 @@ data:
     else:
         print(f"reusing store_id={store_id}")
 
-    model = json.loads(Path("/model/authorization-model.json").read_text())
+    bundle_path = os.environ.get("OPENFGA_BUNDLE_PATH", "").strip()
+    model_path = Path(bundle_path) / "authorization-model.json" if bundle_path else Path("/model/authorization-model.json")
+    modules = [entry["module"] for entry in json.loads((Path(bundle_path) / "bundle.json").read_text())["modules"]] if bundle_path else json.loads(os.environ.get("OPENFGA_APPROVED_MODULES", "[]"))
+    model = json.loads(model_path.read_text())
     receipt = publish(request, store_id, model,
                       json.loads(Path("/model/core-authorization-model.json").read_text()),
-                      json.loads(os.environ.get("OPENFGA_APPROVED_MODULES", "[]")),
-                      selected_model_id=os.environ.get("OPENFGA_AUTHORIZATION_MODEL_ID", "").strip() or None)
+                      modules,
+                      selected_model_id=os.environ.get("OPENFGA_AUTHORIZATION_MODEL_ID", "").strip() or None,
+                      require_exact_model=bool(bundle_path))
     model_id = receipt["authorization_model_id"]
     print(json.dumps(receipt))
 

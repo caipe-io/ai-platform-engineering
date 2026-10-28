@@ -141,6 +141,8 @@ jobs:
               ],
               caipe_ui: [
                 'ui/**',
+                'charts/ai-platform-engineering/charts/openfga/authorization-model.json',
+                'deploy/openfga/model.fga',
                 'scripts/npm/**',
                 'build/Dockerfile.caipe-ui',
               ],

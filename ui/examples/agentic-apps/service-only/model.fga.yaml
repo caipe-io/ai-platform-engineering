@@ -1,0 +1,55 @@
+name: example-service
+tests:
+  - name: Owner and service execution have separate authority
+    tuples:
+      - user: user:test-owner
+        relation: owner
+        object: example_agent_sandbox:sandbox-123
+      - user: service_account:test-service
+        relation: executor
+        object: example_agent_sandbox:sandbox-123
+      - user: user:execution-admin
+        relation: execution_grantor
+        object: example_agent_sandbox:sandbox-123
+    check:
+      - user: user:test-owner
+        object: example_agent_sandbox:sandbox-123
+        assertions:
+          can_exec: true
+          can_terminate: true
+          can_grant_executor: true
+          can_grant_terminator: true
+      - user: service_account:test-service
+        object: example_agent_sandbox:sandbox-123
+        assertions:
+          can_exec: true
+          can_terminate: false
+          can_grant_executor: false
+      - user: user:execution-admin
+        object: example_agent_sandbox:sandbox-123
+        assertions:
+          can_grant_executor: true
+          can_grant_terminator: false
+      - user: user:unrelated
+        object: example_agent_sandbox:sandbox-123
+        assertions:
+          can_exec: false
+          can_terminate: false
+  - name: Team members inherit ownership
+    tuples:
+      - user: user:team-user
+        relation: member
+        object: team:example-team
+      - user: team:example-team#member
+        relation: owner
+        object: example_agent_sandbox:sandbox-123
+    check:
+      - user: user:team-user
+        object: example_agent_sandbox:sandbox-123
+        assertions:
+          can_exec: true
+          can_grant_terminator: true
+      - user: user:unrelated
+        object: example_agent_sandbox:sandbox-123
+        assertions:
+          can_exec: false

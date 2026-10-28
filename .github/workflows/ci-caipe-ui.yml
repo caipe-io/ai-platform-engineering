@@ -10,6 +10,8 @@ on:
   pull_request:
     paths:
       - 'ui/**'
+      - 'charts/ai-platform-engineering/charts/openfga/authorization-model.json'
+      - 'deploy/openfga/model.fga'
       - 'build/Dockerfile.caipe-ui'
       - 'scripts/npm/**'
   workflow_dispatch:
@@ -58,6 +60,8 @@ jobs:
           filters: |
             ui:
               - 'ui/**'
+              - 'charts/ai-platform-engineering/charts/openfga/authorization-model.json'
+              - 'deploy/openfga/model.fga'
               - 'build/Dockerfile.caipe-ui'
               - 'scripts/npm/**'
 

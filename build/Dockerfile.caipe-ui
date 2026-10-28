@@ -2,7 +2,9 @@
 # CAIPE UI Dockerfile
 # Multi-stage build for Next.js application with nginx reverse proxy
 # Pattern based on RAG webui Dockerfile
-# assisted-by Codex Codex-sonnet-4-6
+
+# OpenFGA compiler/test runner is used only while building bundled policy modules.
+FROM --platform=$BUILDPLATFORM openfga/cli@sha256:31a565d14d1c5ca8170d3a2225eb66517d9f490539967bcb3421613c5e2538a4 AS openfga-tools
 
 # ---------- Stage 1: Install dependencies ----------
 # Pin to BUILDPLATFORM so npm ci runs natively (avoids QEMU "Illegal instruction"
@@ -61,6 +63,9 @@ ARG CAIPE_NATIVE_EXTENSION_MODULES=""
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY ui .
+COPY --from=openfga-tools /fga /usr/local/bin/fga
+COPY charts/ai-platform-engineering/charts/openfga/authorization-model.json /charts/ai-platform-engineering/charts/openfga/authorization-model.json
+COPY deploy/openfga/model.fga /deploy/openfga/model.fga
 
 # Disable telemetry during build
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -103,10 +108,12 @@ RUN apk update --force-missing-repositories; apk upgrade --no-cache --force-miss
 
 # Create non-root user
 RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+    adduser --system --uid 1001 nextjs && \
+    mkdir /bundled && chown nextjs:nodejs /bundled
 
 # Copy built standalone application
 # public/ must be chown'd so entrypoint.sh can write env-config.js at runtime
+COPY --from=build --chown=nextjs:nodejs /app/authorization ./authorization
 COPY --from=build --chown=nextjs:nodejs /app/public ./public
 COPY --from=build --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
@@ -150,6 +157,9 @@ COPY ui/package.json ui/package-lock.json* ./
 # bind-mount overlays them; the bind-mount then takes precedence on subsequent
 # starts and on file edits.
 COPY ui ./
+COPY --from=openfga-tools /fga /usr/local/bin/fga
+COPY charts/ai-platform-engineering/charts/openfga/authorization-model.json /charts/ai-platform-engineering/charts/openfga/authorization-model.json
+COPY deploy/openfga/model.fga /deploy/openfga/model.fga
 
 ENV NODE_ENV=development
 ENV NEXT_TELEMETRY_DISABLED=1

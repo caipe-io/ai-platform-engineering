@@ -16,8 +16,22 @@ import { POST as query } from "@/app/api/access/query/route";
 import { POST as grant, DELETE as revokeGrant } from "@/app/api/access/grants/route";
 import { createDelegation, authorizeDelegated, revokeDelegation } from "../index";
 import { readRegisteredResource, registeredResourceId, reserveResource } from "../resource-store";
+import { resolveOpenFgaModelId, resetOpenFgaStoreIdCacheForTests } from "../engines/openfga-client";
 import { __resetAdapterStateForTests } from "../engines/openfga";
 
+jest.mock("@/native-extensions/manifests.generated", () => {
+  const primary = jest.requireActual("../../../../examples/agentic-apps/service-only/manifest.json");
+  return { installedAgenticAppManifests: [primary, { ...primary, id: "secondary-service",
+    authorization: { ...primary.authorization, module: "secondary-service" } }], installedLegacyNativeExtensionIds: [] };
+});
+jest.mock("@/native-extensions/authorization.generated", () => {
+  const core = jest.requireActual("../../../../../charts/ai-platform-engineering/charts/openfga/authorization-model.json");
+  const primary = jest.requireActual("../../../../examples/agentic-apps/service-only/model.json");
+  return { bundledAuthorizationModel: { ...core, type_definitions: [...core.type_definitions, primary,
+    { ...primary, type: "secondary_sandbox", metadata: { ...primary.metadata, module: "secondary-service" } }] },
+    installedAuthorizationModules: [{ appId: "example-service", module: "example-service", packageName: "@example/service-policy", version: "1.0.0" },
+      { appId: "secondary-service", module: "secondary-service", packageName: "@example/secondary-policy", version: "1.0.0" }] };
+});
 let mockDb: Db;
 const mockSession = jest.fn(); const mockJwt = jest.fn(); const mockAudit = jest.fn();
 const mockLegacyAuth = jest.fn((...args: unknown[]) => { throw new Error(`Unexpected legacy authentication (${args.length} arguments)`); });
@@ -59,15 +73,17 @@ function request(path: string, body: unknown, bearer = false, method = "POST") {
   });
 }
 function apps(enabled = true) {
-  return { agentic_apps: { packages: [{ package_id: manifest.id, manifest },
-    { package_id: "secondary-service", manifest: { ...manifest, id: "secondary-service" } }],
-  installations: [{ app_id: manifest.id, enabled, visible: false, bindings: { serviceAccountClientId: service.clientId, authorizationModule: "example-service" } },
-    { app_id: "secondary-service", enabled: true, visible: false, bindings: { serviceAccountClientId: "secondary-client", authorizationModule: "secondary-service" } }] } };
+  return { agentic_apps: { packages: [],
+  installations: [{ app_id: manifest.id, enabled, visible: false, bindings: { serviceAccountClientId: service.clientId } },
+    { app_id: "secondary-service", enabled: true, visible: false, bindings: { serviceAccountClientId: "secondary-client" } }] } };
 }
 
 describeIntegration("registered resources with real MongoDB and OpenFGA", () => {
-  let client: MongoClient; let peer: MongoClient; let storeId: string; let directory: string; let configFile: string;
+  let client: MongoClient; let peer: MongoClient; let storeId: string; let directory: string; let configFile: string; let publishedModelId: string;
   async function fga(path: string, body?: unknown, method = "POST") {
+    if (method === "POST" && /\/(write|check|batch-check)$/.test(path)) {
+      body = { ...(body as object), authorization_model_id: publishedModelId };
+    }
     const response = await realFetch(`${fgaUrl}${path}`, { method, headers: { "content-type": "application/json" },
       ...(body ? { body: JSON.stringify(body) } : {}) });
     if (!response.ok) throw new Error(`OpenFGA test setup: ${response.status} ${await response.text()}`);
@@ -81,13 +97,15 @@ describeIntegration("registered resources with real MongoDB and OpenFGA", () => 
     const published = await fga(`/stores/${storeId}/authorization-models`, { ...model,
       type_definitions: [...model.type_definitions, exampleType, { ...exampleType, type: "secondary_sandbox",
         metadata: { ...exampleType.metadata, module: "secondary-service" } }] });
-    process.env.OPENFGA_AUTHORIZATION_MODEL_ID = published.authorization_model_id;
+    publishedModelId = published.authorization_model_id;
+    process.env.OPENFGA_AUTHORIZATION_MODEL_ID = publishedModelId;
     Object.assign(process.env, { OIDC_ISSUER: issuer, OIDC_CLIENT_ID: "browser", NEXTAUTH_URL: "https://example.test",
       OPENFGA_HTTP: fgaUrl, OPENFGA_STORE_ID: storeId, OPENFGA_RECONCILE_ENABLED: "true",
       AGENTIC_APPS_INSTALL_ENABLED: "true", AGENTIC_APPS_CONFIG_PATH: configFile, AUDIT_FULL_FIDELITY_ALLOWS: "true" });
   });
   beforeEach(() => {
     jest.clearAllMocks(); global.fetch = realFetch; __resetAdapterStateForTests();
+    process.env.OPENFGA_AUTHORIZATION_MODEL_ID = publishedModelId; resetOpenFgaStoreIdCacheForTests();
     writeFileSync(configFile, JSON.stringify(apps()));
     mockSession.mockResolvedValue({ session: { principalType: "oidc_user", sub: user.subject.id, role: "user", org: "primary", expiresAt: user.expiresAt } });
     mockJwt.mockResolvedValue(service);
@@ -100,6 +118,15 @@ describeIntegration("registered resources with real MongoDB and OpenFGA", () => 
       if (directory) rmSync(directory, { recursive: true, force: true });
       process.env = originalEnv; __resetAdapterStateForTests();
     }
+  });
+
+  it("resolves the build artifact even when a different model was published later", async () => {
+    await fga(`/stores/${storeId}/authorization-models`, model);
+    delete process.env.OPENFGA_AUTHORIZATION_MODEL_ID;
+    await expect(resolveOpenFgaModelId()).resolves.toBe(publishedModelId);
+    const response = await register(request("resources", { resource: { type: nativeType, id: "auto-selected" } }));
+    expect(response.status).toBe(201);
+    expect(await readRegisteredResource(`${nativeType}:auto-selected`)).toMatchObject({ model_id: publishedModelId });
   });
 
   it("registers a personal resource, reserves namespace identity and never implicitly grants the service", async () => {

@@ -1,8 +1,10 @@
+import { bundledAuthorizationModel, installedAuthorizationModules } from "@/native-extensions/authorization.generated";
+import { authorizationModelsEqual } from "../../../app-sdk/authorization-model.mjs";
 import { loadConfiguredAgenticApps } from "@/lib/agentic-apps/config";
 import { resourceApp } from "@/lib/agentic-apps/service-binding";
 import { UNIVERSAL_REBAC_RESOURCE_TYPE_NAMES } from "@/types/rbac-universal";
 import { HttpAuthzError } from "./errors";
-import { getOpenFgaModelId, getOpenFgaStoreId, OPENFGA_READ_TIMEOUT_MS, requestOpenFga } from "./engines/openfga-client";
+import { resolveOpenFgaModelId, getOpenFgaStoreId, OPENFGA_READ_TIMEOUT_MS, requestOpenFga } from "./engines/openfga-client";
 
 export interface RelationReference {
   type: string;
@@ -24,7 +26,8 @@ let cached: { key: string; model: Promise<SelectedModel> } | undefined;
 
 /** Read exactly the immutable model used by the transport; failed reads may retry. */
 export async function selectedModel(): Promise<SelectedModel> {
-  const id = getOpenFgaModelId(true)!;
+  const id = await resolveOpenFgaModelId();
+  if (!id) throw new Error("No immutable model is selected for this build");
   const storeId = await getOpenFgaStoreId();
   const key = `${process.env.OPENFGA_HTTP}|${storeId}|${id}`;
   if (cached?.key !== key) {
@@ -37,6 +40,9 @@ export async function selectedModel(): Promise<SelectedModel> {
       if (body.authorization_model?.id !== id || !Array.isArray(body.authorization_model.type_definitions)) {
         throw new Error("Selected OpenFGA model response is invalid");
       }
+      if (installedAuthorizationModules.length && !authorizationModelsEqual(body.authorization_model, bundledAuthorizationModel)) {
+        throw new Error("OpenFGA model differs from the compiled host artifact");
+      }
       return body.authorization_model;
     })();
     cached = { key, model };
@@ -46,15 +52,18 @@ export async function selectedModel(): Promise<SelectedModel> {
 }
 
 /** Module metadata establishes schema custody. It grants no resource access. */
-export async function nativeResourceDefinition(type: string) {
+export async function nativeResourceDefinition(typeName: string) {
   try {
+    const compiledType = (bundledAuthorizationModel.type_definitions as ModelType[]).find((type) => type.type === typeName);
+    const bundled = installedAuthorizationModules.find((entry) => entry.module === compiledType?.metadata?.module);
+    if (!bundled) throw new HttpAuthzError(400, "INVALID_REQUEST", "Resource type is not defined by a bundled extension");
     const model = await selectedModel();
-    const definition = model.type_definitions.find((candidate) => candidate.type === type);
-    if (!isNativeResourceType(type) || !definition?.metadata?.module) {
+    const definition = model.type_definitions.find((candidate) => candidate.type === typeName);
+    if (!isNativeResourceType(typeName) || !definition?.metadata?.module) {
       throw new HttpAuthzError(400, "INVALID_REQUEST", "Resource type is not part of an approved application module");
     }
     const installation = loadConfiguredAgenticApps().find((app) =>
-      app.installation.bindings?.authorizationModule === definition.metadata!.module);
+      app.installation.appId === bundled.appId && app.manifest.authorization?.module === bundled.module && app.manifest.version === bundled.version);
     if (!installation) throw new HttpAuthzError(403, "FORBIDDEN", "Resource module has no installed application");
     return { definition, modelId: model.id, appId: installation.installation.appId,
       app: resourceApp(installation.installation.appId) };
@@ -89,21 +98,20 @@ export async function nativeGrantRelation(type: string, relation: string, princi
 
 /** Installation activation is tied to the exact deployment-selected model. */
 export async function validateNativeInstallations(): Promise<void> {
-  const apps = loadConfiguredAgenticApps().filter(({ installation }) =>
-    installation.installed && installation.enabled && installation.bindings?.authorizationModule);
-  if (!apps.length) return;
-  const model = await selectedModel();
-  for (const { installation } of apps) {
-    if (!model.type_definitions.some((type) => isNativeResourceType(type.type) &&
-      type.metadata?.module === installation.bindings!.authorizationModule)) {
-      throw new Error("Enabled app authorization module is absent from the selected OpenFGA model");
+  // Validate the compiled contract locally. Deployment may still be publishing
+  // the artifact in its post-install job; protected requests fail closed until ready.
+  for (const { manifest, installation } of loadConfiguredAgenticApps()) {
+    if (!installation.installed || !manifest.authorization) continue;
+    if (!installedAuthorizationModules.some((entry) => entry.appId === installation.appId &&
+      entry.module === manifest.authorization!.module && entry.version === manifest.version)) {
+      throw new Error("Authorization declarations must come from the compiled extension registry");
     }
   }
 }
 
 /** Admin inventory uses the same selected schema as authorization. */
 export async function listNativeResourceTypeDefinitions() {
-  if (!getOpenFgaModelId()) return [];
+  if (!installedAuthorizationModules.length) return [];
   return (await selectedModel()).type_definitions.filter((type) =>
     isNativeResourceType(type.type) && type.metadata?.module).map((type) => ({
       type: type.type, actions: Object.keys(type.relations ?? {}), description: `Application module: ${type.metadata!.module}`,

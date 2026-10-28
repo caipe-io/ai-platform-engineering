@@ -7,6 +7,8 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, edited]
     paths:
       - 'ui/**'
+      - 'charts/ai-platform-engineering/charts/openfga/authorization-model.json'
+      - 'deploy/openfga/model.fga'
       - 'scripts/npm/**'
       - '.github/workflows/caipe-ui-tests.yml'
       - '!ui/README.md'
@@ -16,6 +18,8 @@ on:
       - main
     paths:
       - 'ui/**'
+      - 'charts/ai-platform-engineering/charts/openfga/authorization-model.json'
+      - 'deploy/openfga/model.fga'
       - 'scripts/npm/**'
       - '.github/workflows/caipe-ui-tests.yml'
       - '!ui/README.md'
@@ -67,6 +71,15 @@ jobs:
       - name: Test npm security backports
         working-directory: ui
         run: node --test ../scripts/npm/*.test.mjs
+
+      - name: Prepare OpenFGA compiler for bundled extension tests
+        run: |
+          cat > "$RUNNER_TEMP/fga" <<'SCRIPT'
+          #!/bin/sh
+          exec docker run --rm -v "$PWD:$PWD" -w "$PWD" openfga/cli@sha256:31a565d14d1c5ca8170d3a2225eb66517d9f490539967bcb3421613c5e2538a4 "$@"
+          SCRIPT
+          chmod +x "$RUNNER_TEMP/fga"
+          echo "FGA_CLI=$RUNNER_TEMP/fga" >> "$GITHUB_ENV"
 
       - name: Test App SDK packed artifact and contracts
         working-directory: ui

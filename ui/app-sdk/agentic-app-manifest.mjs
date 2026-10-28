@@ -107,12 +107,23 @@ export function validateAgenticAppManifest(value) {
       "requestedPermissions",
       "health",
       "catalog",
+      "authorization",
     ],
     "manifest",
   );
   if (app.apiVersion !== "2.0")
     throw new Error("manifest.apiVersion must be 2.0");
   identifier(app.id, "manifest.id");
+  if (app.authorization !== undefined) {
+    const authz = record(app.authorization, ["module", "model", "tests"], "authorization");
+    if (authz.module === "core" || !/^[a-z][a-z0-9_-]{0,49}$/.test(authz.module ?? "")) throw new Error("authorization.module must be an OpenFGA module name");
+    for (const [key, suffix] of [["model", ".fga"], ["tests", ".fga.yaml"]]) {
+      if (typeof authz[key] !== "string" || !/^[a-zA-Z0-9_/-]+(?:\.[a-z]+)+$/.test(authz[key]) ||
+          authz[key].startsWith("/") || authz[key].split("/").includes("..") || !authz[key].endsWith(suffix)) {
+        throw new Error(`authorization.${key} must name a packaged ${suffix} file`);
+      }
+    }
+  }
   const version =
     typeof app.version === "string" ? app.version.match(VERSION) : null;
   if (

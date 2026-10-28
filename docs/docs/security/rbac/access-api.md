@@ -75,14 +75,15 @@ browser logout, but not its expiry, revocation or loss of required permissions.
 ## Register resources for a new app service
 
 Services use native OpenFGA types and permissions, such as
-`example_agent_sandbox:sandbox-123` and `can_exec`. The operator binds the
-App Contract installation to an approved model module and service-account
-client. Installation grants schema custody, not access to users' resources.
+`example_agent_sandbox:sandbox-123` and `can_exec`. Policy modules and tests
+come from pinned extensions compiled into the CAIPE image. The operator selects
+that image and binds the installation to its service-account client. Remote
+iframe installation alone cannot add policy. Installation grants schema custody, not access to users' resources.
 
 ```mermaid
 flowchart LR
     U["Signed-in user"] --> R["CAS reserves native resource in Mongo"]
-    I["Installed module + pinned model"] --> R
+    I["Bundled module + matching published model"] --> R
     R --> F["OpenFGA confirms user or team ownership"]
     F --> A["CAS marks resource active"]
     S["Service enforces CAS result"] --> A

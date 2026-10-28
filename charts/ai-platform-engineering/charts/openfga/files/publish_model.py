@@ -20,13 +20,13 @@ Request = Callable[[str, str, Model | None], Model]
 
 
 def normalized(model: Model, *, include_source_info: bool = True) -> Model:
-    def clean(value: Any) -> Any:
+    def clean(value: Any, context: str = "") -> Any:
         if isinstance(value, dict):
             result = {}
             for key, item in sorted(value.items()):
-                if key == "source_info" and not include_source_info:
+                if key == "source_info" and context == "metadata" and not include_source_info:
                     continue
-                item = clean(item)
+                item = clean(item, key)
                 if key == "metadata" and isinstance(item, dict) and "relations" in item:
                     item["relations"] = {name: info for name, info in item["relations"].items() if info}
                     if not item["relations"]:
@@ -59,9 +59,9 @@ def validate_model(model: Model, core: Model, modules: list[str]) -> None:
     by_type = {item["type"]: item for item in types}
     if len(types) != len(by_type) or len(modules) != len(set(modules)):
         raise ValueError("Duplicate model type or approved module")
-    def policy(value: Any) -> Any:
+    def policy(value: Any, context: str = "") -> Any:
         if isinstance(value, dict):
-            return {key: policy(item) for key, item in value.items() if key not in {"module", "source_info"}}
+            return {key: policy(item, key) for key, item in value.items() if context != "metadata" or key not in {"module", "source_info"}}
         if isinstance(value, list):
             return [policy(item) for item in value]
         return value
@@ -88,11 +88,14 @@ def validate_model(model: Model, core: Model, modules: list[str]) -> None:
 
 
 def publish(request: Request, store_id: str, model: Model, core: Model, modules: list[str],
-            migration: Model | None = None, *, selected_model_id: str | None = None) -> Model:
+            migration: Model | None = None, *, selected_model_id: str | None = None,
+            require_exact_model: bool = False) -> Model:
     if selected_model_id:
         selected = request("GET", f"/stores/{store_id}/authorization-models/{selected_model_id}", None).get("authorization_model", {})
         if selected.get("id") != selected_model_id:
             raise ValueError("Selected authorization model is unavailable")
+        if require_exact_model and model_hash(selected) != model_hash(model):
+            raise ValueError("Selected authorization model does not match the bundled host artifact")
         # The explicit deployment pin is approval of this existing immutable model.
         # Verify core compatibility, but never republish/replace its app modules.
         core_names = {item["type"] for item in core["type_definitions"]}

@@ -1,77 +1,112 @@
 # Native resources through CAS
 
-This service-only App Contract example needs no UI package or proxy origin.
-Iframe and native apps use the same backend APIs. The service stores its business
+This service-only App Contract example is a bundled policy package with no UI
+or proxy origin. Iframe and native apps use the same runtime APIs for installed types. The service stores its business
 data and enforces each CAS decision; it receives no OpenFGA credentials.
 
 | File | Purpose |
 | --- | --- |
-| `manifest.json` | Declares `host.access.resources@1.0` |
+| `manifest.json` | Declares the policy files and `host.access.resources@1.0` |
+| `package.json` | Pinned policy-only package; exports its manifest |
+| `model.fga.yaml` | Permission assertions run against the composed host model |
 | `model.fga` | Native OpenFGA module with separate execution/termination permissions |
 | `model.json` | Equivalent native type used by the API integration tests |
 
-## Operator installation
+## Package and build
 
-Bind the existing App Contract installation to:
+The app developer publishes this package from their own repository. Its
+`./manifest` export declares packaged policy and test files:
+
+```json
+"authorization": {
+  "module": "example-service",
+  "model": "model.fga",
+  "tests": "model.fga.yaml"
+}
+```
+
+A policy-only package needs no React component, styles export or framework peers.
+A package with an iframe UI can use the same bundled-policy contract. An iframe
+manifest installed only at runtime cannot declare policy.
+
+The CAIPE build maintainer reviews the package, pins it in `ui/package.json` and
+the lockfile, then includes it in the existing extension allowlist. For this
+in-repository example, from the CAIPE root:
+
+```bash
+npm pack ./ui/examples/agentic-apps/service-only \
+  --pack-destination ./ui/native-extension-artifacts
+cd ui
+npm install --save-exact ./native-extension-artifacts/example-service-policy-1.0.0.tgz
+cd ..
+docker build -f build/Dockerfile.caipe-ui \
+  --target runner \
+  --build-arg CAIPE_NATIVE_EXTENSION_MODULES=@example/service-policy \
+  -t registry.example.test/caipe-ui:service-1 .
+```
+
+Publish that image through your normal registry workflow. The Docker build
+uses pinned OpenFGA CLI 0.8.2 to combine the host's core policy with packaged
+modules, rejects changes to core types, and runs each package's tests against
+the combined model. A failed permission assertion fails the image build.
+Non-Docker builds need `fga` on PATH (or `FGA_CLI`); builds without policy
+extensions need no compiler.
+
+## Operator deployment
+
+The operator selects the built image in the parent Helm chart:
 
 ```yaml
-bindings:
-  serviceAccountClientId: example-client
-  authorizationModule: example-service
+global:
+  caipeUiImage: registry.example.test/caipe-ui:service-1
 ```
 
-Module names come from OpenFGA metadata. A module may be bound to one installation;
-its type names cannot redefine core policy. `bindings.resources` remains the
-App Contract's resource-reference map, not a model declaration.
+For private registries, `global.imagePullSecrets` supplies the pull-secret list
+to both the UI and the artifact-export job. Configure an installation using
+the existing App Contract configuration source:
 
-Compile the reviewed core and application sources with OpenFGA's
-[modular tooling](https://openfga.dev/docs/modeling/modular-models). In the modular
-project, the core source is `deploy/openfga/model.fga` with its standalone
-`model / schema 1.1` header replaced by `module core`. Keep every approved app in
-that project's `fga.mod`. Run the model's tests, then export the composed artifact:
+```yaml
+agentic_apps:
+  installations:
+    - app_id: example-service
+      enabled: true
+      visible: false
+      bindings:
+        serviceAccountClientId: example-client
+```
+
+No `authorizationModule` setting is needed: the build registry derives module
+custody from the packaged manifest. `bindings.resources` remains a resource-reference
+map. Hosted UIs configure their runtime origin through the existing installation
+contract; this service-only example needs no proxy origin.
+
+The chart runs `export-authorization-model` as an init container of the OpenFGA
+initializer. It copies `/app/authorization` from **the same image** into a shared
+volume. The initializer publishes that model using its bundled module list and
+prints the immutable model ID and hash. Repeated unchanged deployment reuses the
+same model. The BFF resolves exactly that artifact; no manual model-ID transfer
+or app-specific model ConfigMap is needed. If `OPENFGA_AUTHORIZATION_MODEL_ID`
+is explicitly set, it must identify that exact artifact. The BFF starts before
+publication, but protected requests fail closed until publication succeeds.
+
+For the canonical production Compose file, the equivalent override is:
 
 ```bash
-fga model test --tests 'policy-tests/*.fga.yaml'
-fga model transform --file fga.mod --output-format json > composed-model.json
+CAIPE_UI_IMAGE=registry.example.test/caipe-ui:service-1 \
+docker compose -f docker-compose.yaml \
+  -f deploy/openfga/bundled-extensions.compose.yaml up -d
 ```
 
-The implementation was verified with OpenFGA CLI 0.8.2 and OpenFGA server 1.15.1.
-The publisher validates that compilation has preserved the bundled core policy.
-From the CAIPE repository root, against an existing store:
+Keep your normal `.env` and profiles. Recreate `export-authorization-model` and
+`openfga-init` when changing the host image. The named volume is an artifact
+handoff, not a place to edit policy. The default core-only install is unchanged.
 
-```bash
-python3 charts/ai-platform-engineering/charts/openfga/files/publish_model.py \
-  --model composed-model.json \
-  --core charts/ai-platform-engineering/charts/openfga/authorization-model.json \
-  --module example-service \
-  --store-id "$OPENFGA_STORE_ID" \
-  --url "$OPENFGA_HTTP" \
-  --output model-receipt.json
-```
-
-Repeat `--module` for every approved module. Run one deployment-owned publisher
-at a time. Preserve the receipt with the release configuration. It contains the
-store ID, immutable model ID, compiled-model hash and approved modules. Repeating
-unchanged publication reuses the existing ID.
-
-Set `OPENFGA_STORE_ID` and `OPENFGA_AUTHORIZATION_MODEL_ID` on **all BFF replicas**
-from that receipt, then enable the installation. Startup rejects enabled module
-bindings absent from the selected model. Model-dependent BFF requests all carry
-the selected ID; native registration cannot fall back to latest-model selection.
-
-The default Helm/Compose initializers reuse this same publisher. For a controlled
-composed-model rollout, publish first and set `openfga.init.authorizationModelId`
-to that same model ID and `openfga.init.storeId` to the receipt's store ID in the
-parent chart, or disable the initializer. A pinned
-initializer verifies core compatibility and only seeds tuples; it never replaces
-app modules. Compose forwards `OPENFGA_AUTHORIZATION_MODEL_ID` to its initializer
-for the same behavior. Update the BFF pins and app bindings together. Services never publish or repair the shared model.
-
-Changing/removing an existing app's policy, including rollback, requires
-`--migration-receipt path.json` with `from_model_id`, `to_sha256` and a reviewed
-`description`. The receipt records an operator's migration decision; it does not
-run or prove a tuple migration. Keep tuple migration/rollback scripts with the
-release. Publication alone does not activate a model for pinned BFF replicas.
+Policy changes/removal and rollback are controlled upgrades: the publisher
+requires a migration receipt with `from_model_id`, `to_sha256` and `description`.
+Use the repository's publisher CLI and the release's tuple migration in that
+case; the receipt records approval, not proof that migration ran. See
+[#2953](https://github.com/caipe-io/ai-platform-engineering/issues/2953).
+First-time module addition and identical redeployment need no such receipt.
 
 ## Register before storing business data
 

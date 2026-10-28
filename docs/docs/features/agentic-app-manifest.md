@@ -109,7 +109,8 @@ The full reference manifest is
 - `host.access.resources` version `1.0` is an HTTP capability for native,
   iframe and service-only apps. It uses an operator-owned service-client binding
   and the [CAS registration API](../security/rbac/access-api.md#register-resources-for-a-new-app-service);
-  declaring it does not grant access to resource data.
+  declaring it does not grant access to resource data. All rendering modes can
+  use types already installed in the host.
 - Unknown manifest fields, duplicate profiles/routes, ambiguous ownership,
   missing route references, undeclared policy scopes, and unsafe paths fail
   validation.
@@ -121,8 +122,11 @@ CAS integration. It does not change role access, token scopes, HTTP policy,
 credential access, or any OpenFGA relationship. There is no `grants` field in
 the publisher schema. Do not rely on this metadata to enforce resource access.
 
-Phase 2 will add application resources/actions through the approved CAS
-adapter. Existing services must continue enforcing their current resource and
+The separate optional `authorization` declaration names a packaged OpenFGA
+`module`, `model` (`.fga`) and `tests` (`.fga.yaml`). It is accepted only from a
+pinned package compiled into the host, including packages with an iframe UI or
+no UI. The host build compiles/tests the combined policy; runtime catalogs cannot
+introduce policy. See [service-defined resources](../security/rbac/service-defined-resources.md). Existing services must continue enforcing their current resource and
 agent/tool authorization. Forwarded role headers and browser app IDs are not
 proof of permission.
 

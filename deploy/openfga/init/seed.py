@@ -116,7 +116,9 @@ def main() -> None:
         else:
             print(f"reusing store_id={store_id}")
 
-        model_path = Path(__file__).resolve().parent / "authorization-model.json"
+        bundle_path = os.environ.get("OPENFGA_BUNDLE_PATH", "").strip()
+        model_path = Path(bundle_path) / "authorization-model.json" if bundle_path else Path(__file__).resolve().parent / "authorization-model.json"
+        modules = [entry["module"] for entry in json.loads((Path(bundle_path) / "bundle.json").read_text())["modules"]] if bundle_path else json.loads(os.environ.get("OPENFGA_APPROVED_MODULES", "[]"))
         model_body = json.loads(model_path.read_text())
         def request(method: str, path: str, body: dict | None) -> dict:
             response = client.request(method, f"{OPENFGA}{path}", json=body)
@@ -125,8 +127,9 @@ def main() -> None:
 
         receipt = publish(request, store_id, model_body,
                           json.loads(Path("/app/core-authorization-model.json").read_text()),
-                          json.loads(os.environ.get("OPENFGA_APPROVED_MODULES", "[]")),
-                          selected_model_id=os.environ.get("OPENFGA_AUTHORIZATION_MODEL_ID", "").strip() or None)
+                          modules,
+                          selected_model_id=os.environ.get("OPENFGA_AUTHORIZATION_MODEL_ID", "").strip() or None,
+                          require_exact_model=bool(bundle_path))
         model_id = receipt["authorization_model_id"]
         os.environ["OPENFGA_AUTHORIZATION_MODEL_ID"] = model_id
         print(json.dumps(receipt))

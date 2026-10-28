@@ -13,8 +13,12 @@
   "bugs": { "url": "https://github.com/caipe-io/ai-platform-engineering/issues" },
   "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org", "tag": "next" },
   "engines": { "node": ">=24.11.0 <25" },
-  "files": ["index.d.ts", "index.mjs", "checker.mjs", "contract-version.mjs", "contract-version.d.mts", "agentic-app-manifest.mjs", "agentic-app-manifest.d.mts", "native-manifest.d.mts", "reserved-paths.mjs", "iframe-bridge.mjs", "iframe-bridge.d.mts", "assistant-options.mjs", "assistant-options.d.mts", "bin"],
+  "files": ["index.d.ts", "index.mjs", "checker.mjs", "authorization-model.mjs", "authorization-model.d.mts", "contract-version.mjs", "contract-version.d.mts", "agentic-app-manifest.mjs", "agentic-app-manifest.d.mts", "native-manifest.d.mts", "reserved-paths.mjs", "iframe-bridge.mjs", "iframe-bridge.d.mts", "assistant-options.mjs", "assistant-options.d.mts", "bin"],
   "exports": {
+    "./authorization-model": {
+      "types": "./authorization-model.d.mts",
+      "import": "./authorization-model.mjs"
+    },
     ".": { "types": "./index.d.ts", "default": "./index.mjs" },
     "./assistant-options": { "types": "./assistant-options.d.mts", "default": "./assistant-options.mjs" },
     "./iframe-bridge": { "types": "./iframe-bridge.d.mts", "default": "./iframe-bridge.mjs" },

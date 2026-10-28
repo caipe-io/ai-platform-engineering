@@ -129,6 +129,7 @@ export function loadConfiguredAgenticApps(
       );
     }
     const native = compiled.get(packageId);
+    if (manifest.authorization && !native) throw new Error(`${packageId}: authorization policy requires a package bundled in the host build`);
     if (native) {
       const legacy = asRecord(raw.manifest, "manifest").apiVersion === "1.0";
       if (
@@ -291,14 +292,7 @@ export function loadConfiguredAgenticApps(
   const appIds = new Set<string>();
   const mountPaths = new Map<string, string>();
   const serviceAccountClients = new Map<string, string>();
-  const authorizationModules = new Set<string>();
   for (const app of apps) {
-    const authorizationModule = app.installation.bindings?.authorizationModule;
-    if (authorizationModule) {
-      if (authorizationModules.has(authorizationModule)) throw new Error("An authorization module may be bound to only one installation");
-      if (!app.installation.bindings?.serviceAccountClientId) throw new Error("An authorization module requires a service account binding");
-      authorizationModules.add(authorizationModule);
-    }
     const clientId = app.installation.bindings?.serviceAccountClientId;
     if (clientId) {
       const owner = serviceAccountClients.get(clientId);
@@ -718,18 +712,12 @@ function parseNavigationOverrides(value: unknown, path: string): AgenticAppInsta
   };
 }
 
-function requiredAuthorizationModule(value: unknown, path: string): string {
-  const authorizationModule = requiredString(value, path);
-  if (!/^[a-z][a-z0-9_-]{0,49}$/.test(authorizationModule)) throw new Error(`${path} must be an OpenFGA module name of at most 50 characters`);
-  return authorizationModule;
-}
-
 function parseBindings(
   value: unknown,
   path: string,
 ): NonNullable<AgenticAppInstallation["bindings"]> {
   const raw = asRecord(value, path);
-  assertKnownKeys(raw, ["runtimeOrigin", "resources", "serviceAccountClientId", "authorizationModule"], path);
+  assertKnownKeys(raw, ["runtimeOrigin", "resources", "serviceAccountClientId"], path);
   const resources =
     raw.resources === undefined
       ? undefined
@@ -750,9 +738,6 @@ function parseBindings(
             `${path}.serviceAccountClientId`,
           ),
         }
-      : {}),
-    ...(raw.authorizationModule !== undefined
-      ? { authorizationModule: requiredAuthorizationModule(raw.authorizationModule, `${path}.authorizationModule`) }
       : {}),
     ...(resources
       ? {

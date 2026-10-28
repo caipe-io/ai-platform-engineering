@@ -7,3 +7,6 @@ src/native-extensions/*.generated.tsx
 # Test coverage reports
 coverage/
 *.lcov
+
+/authorization/
+/.authorization-build-*/

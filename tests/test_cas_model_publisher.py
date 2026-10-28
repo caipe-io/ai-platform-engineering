@@ -41,6 +41,16 @@ def test_core_module_provenance_is_allowed_but_policy_extensions_are_not() -> No
         publisher.validate_model(model, CORE, ["example-service"])
 
 
+def test_relations_named_module_are_policy_not_provenance() -> None:
+    baseline = {"schema_version": "1.1", "type_definitions": [{"type": "example",
+        "relations": {"module": {"this": {}}},
+        "metadata": {"relations": {"module": {"directly_related_user_types": [{"type": "user"}]}}}}]}
+    changed = copy.deepcopy(baseline)
+    changed["type_definitions"][0]["relations"]["module"] = {"computedUserset": {"relation": "other"}}
+    with pytest.raises(ValueError, match="host-owned type"):
+        publisher.validate_model(changed, baseline, [])
+
+
 def test_duplicate_types_and_cross_module_relation_extensions_are_rejected() -> None:
     model = composed()
     model["type_definitions"].append(copy.deepcopy(EXAMPLE))
@@ -133,6 +143,19 @@ def test_initializer_pin_preserves_app_modules_without_publishing_bundled_core()
     assert receipt["approved_modules"] == ["example-service"]
     assert receipt["published"] is False
     assert calls == [("GET", "/stores/store/authorization-models/selected")]
+
+
+def test_bundled_initializer_rejects_a_pin_for_a_different_artifact() -> None:
+    model = {**composed(), "id": "selected"}
+
+    def request(method: str, path: str, body: dict | None) -> dict:
+        assert method == "GET"
+        return {"authorization_model": model}
+
+    with pytest.raises(ValueError, match="does not match the bundled"):
+        publisher.publish(request, "store", CORE, CORE, [], selected_model_id="selected", require_exact_model=True)
+    assert publisher.publish(request, "store", composed(), CORE, ["example-service"],
+                             selected_model_id="selected", require_exact_model=True)["published"] is False
 
 
 def test_moving_policy_sources_does_not_require_tuple_migration() -> None:

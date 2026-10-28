@@ -1,0 +1,13 @@
+{
+  "name": "@example/service-policy",
+  "version": "1.0.0",
+  "type": "module",
+  "files": [
+    "manifest.json",
+    "model.fga",
+    "model.fga.yaml"
+  ],
+  "exports": {
+    "./manifest": "./manifest.json"
+  }
+}

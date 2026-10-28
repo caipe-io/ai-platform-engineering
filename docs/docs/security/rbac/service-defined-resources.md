@@ -1,99 +1,98 @@
 ---
 title: Service-defined resources
-description: CAS resource registration using native OpenFGA types and permissions.
+description: Bundled policy extensions and native resource permissions through CAS.
 ---
 
 # Service-defined resources
 
-**Implementation revision — 28 October 2026.**
-[PR #3092](https://github.com/caipe-io/ai-platform-engineering/pull/3092) replaces
-the generic-resource contract. Deployment validation and existing-consumer
-migration are tracked separately.
+Apps can define their own OpenFGA types, such as
+`example_agent_sandbox:sandbox-123`, with permissions such as `can_exec`.
+Users or teams own each resource. The service's installation gives it responsibility
+for its types, not permission to use every resource.
 
-## Recommended direction
+**New policy comes from a trusted package built into CAIPE.** A separately
+installed iframe app cannot upload or activate a model at runtime. It can use
+resource types already included in the host. A bundled policy package may have
+a native UI, an iframe UI, or no UI; application services remain separately deployed.
 
-Services define native OpenFGA types and permissions. One identity, such as
-`example_agent_sandbox:sandbox-123`, travels through CAS, delegation and audit.
-There is no mandatory hash or intermediate `app_resource` type.
+## Who does what
 
-The App Contract installation references an operator-approved model module and
-tests. One deployment-owned publisher combines it with CAIPE's core model using
-OpenFGA's [modular model tooling](https://openfga.dev/docs/modeling/modular-models).
-
-CAS stays inside the BFF: authenticated callers, installed-type validation,
-controlled writes, delegation and audit. Services enforce decisions and store
-their business data. App developers author OpenFGA policy, but receive no direct
-OpenFGA credentials.
+| Person | Responsibility |
+| --- | --- |
+| App developer | Publish a versioned package containing the App Contract manifest, OpenFGA module and permission tests. Keep the app's code in its own repository. |
+| CAIPE build maintainer | Review and pin that dependency using the existing native-extension build. The host compiles and tests the combined policy automatically. Adding a type needs no CAS TypeScript changes. |
+| CAIPE operator | Deploy that CAIPE image and configure the app's service identity and any runtime origin. No policy source files are copied into deployment configuration. |
 
 ```mermaid
 flowchart LR
-    S["Application backend"] -->|"Native resource and permission"| C["CAS inside BFF"]
-    C -->|"Same object and relation; pinned model"| F["OpenFGA"]
-    S -->|"Enforces CAS result"| R["Application resource"]
+    P["App package: manifest + policy + tests"] --> B["CAIPE build: combine and test"]
+    C["CAIPE core policy"] --> B
+    B --> I["One CAIPE image"]
+    I --> H["BFF: compiled type registry"]
+    I --> J["OpenFGA init job: publish bundled model"]
+    J --> F["OpenFGA: immutable model"]
+    H -->|"Select that exact model"| F
 ```
 
-MongoDB retains lifecycle/retry state and delegation approvals. Permission rules
-remain in OpenFGA.
+The image contains both the model artifact and the registry associating each
+module with its app. The chart's `global.caipeUiImage` selects the same image for
+the BFF and the initializer's artifact export. The operator does not assemble a
+modular project or set up a second build pipeline.
 
-## Benefits and pitfalls
+## At runtime
 
-| Concern | Previous generic design | Native service types |
-| --- | --- | --- |
-| Domain permissions | Fixed read/use/write/manage profile | Express `can_exec`, `can_terminate` and service-specific relationships directly |
-| Resource identity | Hash plus registry lookup identifies the app/local resource | Native type and stable local ID remain visible throughout the system; IDs must be treated as a durable contract |
-| Adding a service | Configuration reuses the fixed profile | A reviewed module is published; adding a service must not require editing CAS TypeScript unions |
-| Shared model | New apps rarely change the schema | Composition must reject collisions and unauthorized changes to core types; modules are not isolation boundaries |
-| Model rollout | Mostly a bundled-model update | Publisher provenance, model-ID pinning, tuple compatibility and rollback become prerequisites |
-| Relationship writes | Central rules map generic capabilities to tuples | CAS still needs an explicit write-authority contract; a valid model does not make every tuple write acceptable |
+```mermaid
+sequenceDiagram
+    participant U as Signed-in user
+    participant S as App service
+    participant C as CAS inside BFF
+    participant F as OpenFGA
+    U->>C: Register sandbox-123 for user or team
+    C->>F: Write the initial owner relationship
+    U->>C: Grant executor, if can_grant_executor allows it
+    S->>C: Check can_exec on sandbox-123
+    C->>F: Evaluate using the build's model ID
+    F-->>C: Allow or deny
+    C-->>S: Decision + audit reference
+    Note over S: Enforce the decision before executing
+```
 
-Native types better match an extensible platform. The tradeoff is more deliberate
-deployment governance, not a free removal of all integration work.
+MongoDB records registration/retry state and delegation approvals. OpenFGA stores
+relationships and evaluates policy. Services hold business data and enforce the
+answer; they receive no OpenFGA credentials.
 
-## Boundaries that remain explicit
+- Register while a user is present, before creating business data. The service
+  cannot nominate an owner. Pending registration blocks resource access.
+- Grant authority is separate per relationship: `executor` requires
+  `can_grant_executor`; `terminator` requires `can_grant_terminator`. Ownership,
+  computed permissions and structural links are not ordinary grants.
+- Background delegation still requires active approval **and** current user
+  permission **and** current service permission. Audit preserves the actor/user
+  chain, native resource, permission and evaluated model ID.
+- Disabled installations cannot operate on their resources. Runtime enablement
+  does not install code or policy.
 
-- **Custody and ownership:** the installation grants custody of approved type
-  namespaces, not data access. Initial ownership requires a verified user and
-  current team authority; resource operations still require model permission.
-- **Checks and writes:** checking `can_exec` and granting `executor` are different
-  operations. Grant authority is separate per relationship. Write-authority convention:
-  a grant of `executor` requires the model's
-  `can_grant_executor` permission. Missing write authority denies the operation.
-  Ownership and parent links use controlled lifecycle commands. Organization-admin
-  fallbacks must not silently override the app's model.
-- **Delegation:** approval continues to bind the exact native resource,
-  permission, service, job and expiry. Both current user and service permission
-  checks must pass. Audit records that chain and the evaluated model version.
+## Deployment safety
 
-OpenFGA models are immutable: publish a new version, pin CAS and its validation
-to that model ID, and plan any tuple migration. See OpenFGA's
-[model-version guidance](https://openfga.dev/docs/getting-started/immutable-models).
-Runtime services do not publish shared models themselves.
+CAS resolves the published model by comparing it to its compiled artifact. It
+never follows an unrelated latest model. An optional explicit model-ID pin must
+match the same artifact. Before publication completes, protected requests fail
+closed; the BFF can start so the chart's post-install job can run.
 
-## Deployment sequence
+The publisher preserves core policy, reuses unchanged model versions and rejects
+unapproved modules. Changing or removing existing app policy, including rollback,
+requires a reviewed migration receipt and any necessary tuple migration. That
+release process remains separate from adding an extension for the first time.
 
-1. **Publish the approved model.** Compile/test modules with OpenFGA tooling.
-   The deployment publisher rejects changes to host-owned types, rejects
-   unapproved modules, reuses identical models and records a model ID and hash.
-   Changes to existing app policy require an explicit migration receipt.
-2. **Pin and activate.** Configure the BFF's store/model IDs and the installation's
-   module/client binding. Enabled native modules must exist in the selected model.
-   The shared BFF transport pins all model-dependent calls; native resources cannot
-   use an implicitly latest model.
-3. **Register and authorize.** CAS preserves the native type and ID through
-   registration, per-relationship grants, delegation, audit and Admin inventory.
-   Lifecycle gates and fresh graph checks deny access to pending resources or
-   disabled installations. Services enforce the returned decision.
-4. **Migrate deliberately.** If an environment used the unreleased generic draft,
-   inventory its records, tuples and approvals first. A service-provided mapping
-   must identify each native type and ID; hashes cannot safely supply that meaning.
-   Ownership transfer and structural-link commands need their own lifecycle design.
+## References and remaining work
 
-## Follow-on design index
+- [Integration example](https://github.com/caipe-io/ai-platform-engineering/tree/main/ui/examples/agentic-apps/service-only): package, build, deployment and API commands.
+- [#3031](https://github.com/caipe-io/ai-platform-engineering/issues/3031): new-service registration, ownership, relationship grants and delegation.
+- [#2953](https://github.com/caipe-io/ai-platform-engineering/issues/2953): existing-policy upgrades, migration and rollback.
+- [App Contract](../../features/agentic-app-manifest.md): shared manifest and deployment-owned installations.
+- [OpenFGA modular models](https://openfga.dev/docs/modeling/modular-models) and [immutable models](https://openfga.dev/docs/getting-started/immutable-models).
 
-Detailed contracts and rollout references:
-
-- [#2953: composed model publication and upgrades](https://github.com/caipe-io/ai-platform-engineering/issues/2953) — publisher, version pinning, namespace rules and rollback.
-- [#3031: new-service onboarding](https://github.com/caipe-io/ai-platform-engineering/issues/3031) — native registration, ownership, safe relationship management and the reference service.
-- [#2945: app-to-platform APIs](https://github.com/caipe-io/ai-platform-engineering/issues/2945) and the [App Contract discussion](https://github.com/orgs/caipe-io/discussions/2853) — installation metadata and public request contracts.
-- [Service integration reference](https://github.com/caipe-io/ai-platform-engineering/tree/main/ui/examples/agentic-apps/service-only) — native requests, model publication and deployment pins.
-- Original code audit: the [CAS contracts and adapters](https://github.com/caipe-io/ai-platform-engineering/tree/2fd3d1c713bd44472164fcb4ff6a8baa61de559a/ui/src/lib/authz), [closed resource/action definitions](https://github.com/caipe-io/ai-platform-engineering/blob/2fd3d1c713bd44472164fcb4ff6a8baa61de559a/ui/src/types/rbac-universal.ts) and [model publisher](https://github.com/caipe-io/ai-platform-engineering/blob/2fd3d1c713bd44472164fcb4ff6a8baa61de559a/charts/ai-platform-engineering/charts/openfga/templates/configmap-model.yaml) are the main change points.
+Existing-service migrations and explicit ownership/parent-link lifecycle commands
+remain follow-on work. An environment that used the unreleased generic
+`app_resource` draft needs a service-supplied native mapping; CAS cannot infer
+the domain identity from its hash.

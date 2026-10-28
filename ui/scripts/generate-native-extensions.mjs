@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { copyFileSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assembleAuthorization } from "./assemble-authorization.mjs";
 import { tailwindSourceForEntry } from "./native-extension-source.mjs";
 import {
   normalizeNativeExtensionManifest,
@@ -45,8 +46,8 @@ export function generateNativeExtensions(
     if (!/^(?:@[a-z0-9-]+\/)?[a-z0-9-]+$/.test(moduleName)) {
       throw new Error(`Invalid native extension module name: ${moduleName}`);
     }
-    const entryPath = require.resolve(moduleName);
-    const packageRoot = resolveNativePackageRoot(entryPath, moduleName);
+    const manifestPath = require.resolve(`${moduleName}/manifest`);
+    const packageRoot = resolveNativePackageRoot(manifestPath, moduleName);
     const declaration = readPackageManifest(packageRoot);
     const manifest = validateManifest(moduleName, declaration);
     const pkg = validatePackage(packageRoot, manifest);
@@ -58,12 +59,8 @@ export function generateNativeExtensions(
       declaration.apiVersion === "2.0"
         ? validateAgenticAppManifest(declaration)
         : normalizeNativeExtensionManifest(manifest, moduleName, pkg.version);
-    if (
-      appManifest.version !== pkg.version ||
-      appManifest.ui.profiles.find(
-        (profile) => profile.mode === "native-package",
-      )?.package !== moduleName
-    ) {
+    const profile = appManifest.ui.profiles.find((profile) => profile.mode === "native-package");
+    if (appManifest.version !== pkg.version || (profile && profile.package !== moduleName) || (!profile && !appManifest.authorization)) {
       throw new Error(
         `${moduleName}: application version/package must match the artifact`,
       );
@@ -74,20 +71,26 @@ export function generateNativeExtensions(
       manifest,
       appManifest,
       legacy: declaration.apiVersion !== "2.0",
-      entryPath,
+      entryPath: profile ? require.resolve(moduleName) : null,
+      packageRoot,
     };
   });
 
-  validateOwnership(manifests);
+  if (new Set(manifests.map(({ appManifest }) => appManifest.id)).size !== manifests.length) {
+    throw new Error("Duplicate bundled app id");
+  }
+  validateOwnership(manifests.filter(({ manifest }) => manifest));
+  const authorization = assembleAuthorization(uiRoot, manifests);
+  const uiManifests = manifests.filter(({ manifest }) => manifest);
   mkdirSync(outputRoot, { recursive: true });
 
-  const imports = manifests
+  const imports = uiManifests
     .map(
       ({ moduleName }, index) =>
         `import extension${index} from ${JSON.stringify(moduleName)};`,
     )
     .join("\n");
-  const entries = manifests
+  const entries = uiManifests
     .map(
       ({ manifest }, index) =>
         `  { manifest: ${JSON.stringify(manifest)}, module: extension${index} },`,
@@ -104,16 +107,19 @@ export function generateNativeExtensions(
       manifests.map(({ appManifest }) => appManifest),
       null,
       2,
-    )};\n\nexport const installedLegacyNativeExtensionIds: string[] = ${JSON.stringify(manifests.filter(({ legacy }) => legacy).map(({ manifest }) => manifest.id))};\n\nexport const installedNativeExtensionManifests: NativeExtensionManifest[] = ${JSON.stringify(
-      manifests.map(({ manifest }) => manifest),
+    )};\n\nexport const installedLegacyNativeExtensionIds: string[] = ${JSON.stringify(manifests.filter(({ legacy }) => legacy).map(({ appManifest }) => appManifest.id))};\n\nexport const installedNativeExtensionManifests: NativeExtensionManifest[] = ${JSON.stringify(
+      uiManifests.map(({ manifest }) => manifest),
       null,
       2,
     )};\n`,
   );
 
+  writeFileSync(join(outputRoot, "authorization.generated.ts"),
+    `export const bundledAuthorizationModel: Record<string, unknown> = ${JSON.stringify(authorization.model)};\n` +
+    `export const installedAuthorizationModules: Array<{appId:string;module:string;packageName:string;version:string}> = ${JSON.stringify(authorization.modules)};\n`);
   writeFileSync(
     join(outputRoot, "styles.generated.css"),
-    `${manifests.map(({ moduleName, entryPath }) => `@import ${JSON.stringify(`${moduleName}/styles.css`)};\n@source ${JSON.stringify(tailwindSourceForEntry(join(outputRoot, "styles.generated.css"), entryPath))};`).join("\n")}\n`,
+    `${uiManifests.map(({ moduleName, entryPath }) => `@import ${JSON.stringify(`${moduleName}/styles.css`)};\n@source ${JSON.stringify(tailwindSourceForEntry(join(outputRoot, "styles.generated.css"), entryPath))};`).join("\n")}\n`,
   );
 }
 

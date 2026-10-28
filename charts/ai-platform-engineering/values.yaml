@@ -42,9 +42,15 @@ tags:
 
 # Global configuration shared across all subcharts
 global:
+  # -- Full host image reference for a build with bundled extensions. Shared by
+  # the UI and OpenFGA initializer, which extracts this build's tested model.
+  caipeUiImage: ""
+  # -- Registry credentials for the UI and its bundled-model export job.
+  imagePullSecrets: []
   # -- Global image tag override. When set, overrides the default appVersion-based
   # image tag for ALL subcharts (MCP servers, dynamic agents, UI, etc.) in a single place.
   # Individual subchart `image.tag` values still take highest precedence.
+  # For the UI, caipeUiImage overrides both repository and tag when set.
   image:
     tag: ""
 

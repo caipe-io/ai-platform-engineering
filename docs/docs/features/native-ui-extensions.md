@@ -137,6 +137,19 @@ package and host combination; runtime enablement cannot install new code.
 The host reserves its built-in sections; `/projects` is an intentional
 extension point and can be claimed by one package at build time.
 
+## Bundled policy without a native UI
+
+The same trusted extension build accepts packages containing an App Contract
+manifest, an OpenFGA module and permission tests. Such a package can have an
+iframe UI or no UI. It does not need a placeholder React component. The build
+assembles and tests the policy, then includes the model and module registry in
+the CAIPE image. Remote runtime installations cannot contribute policy.
+
+Operators select that image with `global.caipeUiImage`; the chart uses the same
+image to export the initializer's model. See
+[service-defined resources](../security/rbac/service-defined-resources.md) for the
+responsibilities and runtime flow.
+
 ## Authentication and authorization
 
 The browser continues to use the CAIPE session. Claimed API paths are

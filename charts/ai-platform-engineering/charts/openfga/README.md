@@ -4,6 +4,20 @@
 
 OpenFGA authorization service for CAIPE relationship-based access control
 
+## Bundled app policy
+
+The parent chart's `global.caipeUiImage` selects one CAIPE build for the UI and
+this initializer's `export-authorization-model` init container. The container
+exports `/app/authorization` to a shared volume; the initializer publishes the
+compiled model and its bundled module list. `global.imagePullSecrets` supplies
+private-registry credentials. No app-specific model ConfigMap or module binding
+is needed. The default core-only initializer is unchanged when that image is unset.
+
+CAS resolves the immutable model matching its build exactly. It may start before
+the post-install job, but protected requests fail closed until publication.
+Changing/removing existing policy still requires a controlled migration; see the
+[service integration reference](../../../../ui/examples/agentic-apps/service-only/README.md).
+
 ## Values
 
 | Key | Type | Default | Description |
