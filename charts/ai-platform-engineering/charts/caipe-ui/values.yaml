@@ -202,6 +202,13 @@ config:
   BUILTIN_SKILL_IDS: "none"
   # NextAuth URL (non-sensitive)
   NEXTAUTH_URL: "http://localhost:3000"
+  # Optional host-owned secondary auth; every resource requires an audience binding.
+  CAIPE_SECONDARY_OIDC_JWKS_URI: ""
+  CAIPE_SECONDARY_OIDC_ISSUER: ""
+  CAIPE_SECONDARY_OIDC_AUDIENCES: ""
+  CAIPE_SECONDARY_OIDC_PROVIDER_ID: ""
+  CAIPE_SECONDARY_OIDC_REQUIRE_VERIFIED_EMAIL: ""
+  CAIPE_SECONDARY_AUTH_RESOURCES: ""
   # Node environment
   NODE_ENV: "production"
   # Production-safety gate for the BFF admin-token fallback path.

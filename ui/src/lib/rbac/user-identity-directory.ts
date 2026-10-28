@@ -79,6 +79,7 @@ export async function resolveUserIdentitiesBySubject(
 /** Resolve user-directory selections to immutable Keycloak subjects. */
 export async function resolveUserIdentitiesByEmail(
   emails: readonly string[],
+  options: { requireUnique?: boolean } = {},
 ): Promise<Map<string, ResolvedUserIdentity>> {
   const wanted = Array.from(
     new Set(emails.map((email) => email.trim().toLowerCase()).filter(Boolean)),
@@ -91,10 +92,15 @@ export async function resolveUserIdentitiesByEmail(
     .find({ email: { $in: wanted } } as never)
     .project({ email: 1, name: 1, keycloak_sub: 1, "metadata.keycloak_sub": 1 })
     .toArray();
+  const ambiguous = new Set<string>();
   for (const row of rows) {
     const identity = identityOf(row);
-    if (identity?.email) resolved.set(identity.email.toLowerCase(), identity);
+    if (!identity?.email) continue;
+    const email = identity.email.toLowerCase();
+    if (options.requireUnique && resolved.has(email) && resolved.get(email)?.subject !== identity.subject) ambiguous.add(email);
+    resolved.set(email, identity);
   }
+  for (const email of ambiguous) resolved.delete(email);
   return resolved;
 }
 

@@ -1,0 +1,54 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "keycloak.fullname" . }}-secondary-auth-profile
+  labels:
+    {{- include "keycloak.labels" . | nindent 4 }}
+  annotations:
+    # Always run after Keycloak resources exist, including upgrades backed by a
+    # persistent database. This job is deliberately not gated by IdP, token
+    # exchange, or auth-reconcile feature flags.
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        {{- include "keycloak.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: secondary-auth-profile
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: secondary-auth-profile
+          image: "{{ .Values.initImage.repository }}:{{ .Values.initImage.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.initImage.pullPolicy }}
+          command: ["/bin/sh", "/scripts/reconcile-secondary-auth.sh"]
+          env:
+            - name: KC_URL
+              value: "http://{{ include "keycloak.fullname" . }}:{{ .Values.service.port }}"
+            - name: KC_REALM
+              value: {{ .Values.realm.name | quote }}
+            - name: KEYCLOAK_ADMIN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keycloak.adminSecretName" . }}
+                  key: username
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keycloak.adminSecretName" . }}
+                  key: password
+          volumeMounts:
+            - name: init-scripts
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: init-scripts
+          configMap:
+            name: {{ include "keycloak.fullname" . }}-init-scripts
+            defaultMode: 0755

@@ -401,6 +401,12 @@ services:
       # SSO Configuration - set NEXT_PUBLIC_SSO_ENABLED=true to enable
       - NEXT_PUBLIC_SSO_ENABLED=${NEXT_PUBLIC_SSO_ENABLED:-false}
       - OIDC_ISSUER=${OIDC_ISSUER:-}
+      - CAIPE_SECONDARY_OIDC_JWKS_URI=${CAIPE_SECONDARY_OIDC_JWKS_URI:-}
+      - CAIPE_SECONDARY_OIDC_ISSUER=${CAIPE_SECONDARY_OIDC_ISSUER:-}
+      - CAIPE_SECONDARY_OIDC_AUDIENCES=${CAIPE_SECONDARY_OIDC_AUDIENCES:-}
+      - CAIPE_SECONDARY_OIDC_PROVIDER_ID=${CAIPE_SECONDARY_OIDC_PROVIDER_ID:-}
+      - CAIPE_SECONDARY_OIDC_REQUIRE_VERIFIED_EMAIL=${CAIPE_SECONDARY_OIDC_REQUIRE_VERIFIED_EMAIL:-}
+      - CAIPE_SECONDARY_AUTH_RESOURCES=${CAIPE_SECONDARY_AUTH_RESOURCES:-}
       - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
       - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
       - OIDC_DISCOVERY_URL=${OIDC_DISCOVERY_URL:-}
@@ -1309,6 +1315,24 @@ services:
   # broker in Keycloak from IDP_* env vars (set in .env).
   # Skips silently when IDP_ISSUER is unset — local-only users + test
   # personas still work via direct Keycloak login.
+  keycloak-secondary-auth-profile:
+    image: ${KEYCLOAK_INIT_IMAGE:-caipe/keycloak-init:dev}
+    build:
+      context: .
+      dockerfile: build/Dockerfile.keycloak-init
+    entrypoint: ["/bin/sh", "/scripts/reconcile-secondary-auth.sh"]
+    volumes:
+      - ./charts/ai-platform-engineering/charts/keycloak/scripts/reconcile-secondary-auth.sh:/scripts/reconcile-secondary-auth.sh:ro
+    environment:
+      KC_URL: http://keycloak:7080
+      KC_REALM: caipe
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    profiles: [rbac]
+
   keycloak-init:
     image: ${KEYCLOAK_INIT_IMAGE:-caipe/keycloak-init:dev}
     build:

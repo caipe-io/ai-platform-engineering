@@ -288,3 +288,11 @@ helm show values oci://ghcr.io/caipe-io/charts/keycloak --version 1.1.0
 | webexTokenExchange.externalSecret.secretStoreRef.kind | string | `"ClusterSecretStore"` |  |
 | webexTokenExchange.externalSecret.secretStoreRef.name | string | `"vault"` |  |
 | webexTokenExchange.secretRef | string | `""` |  |
+
+### Secondary auth identity attributes
+
+The `secondary-auth-profile` post-install/post-upgrade job protects the six
+`caipe_secondary_oidc_*` attributes with admin-only view/edit permissions. It runs
+independently of IdP, token exchange, and auth-reconcile flags and preserves other
+profile settings. Secondary auth itself remains disabled unless configured in the
+CAIPE UI. See `ui/src/lib/auth/README.md` for provider trust and migration steps.
