@@ -353,6 +353,20 @@ def build_mcp_connections(
             agent_gateway_url
             and server.transport in (TransportType.HTTP, TransportType.SSE)
         )
+
+        # A gitops-configured server with agentgateway_target_endpoint is meant
+        # to route through AgentGateway, but seed's full-document replace wipes
+        # agentgateway_discovered back to False on every restart until a sync
+        # (startup or config-bridge's next poll) confirms the route is live.
+        # Wiring the tool up before that confirmation would just hand the agent
+        # a tool whose calls 404 against AgentGateway's not-yet-programmed
+        # route, so skip it until agentgateway_discovered is True.
+        if use_gateway and server.agentgateway_target_endpoint and not server.agentgateway_discovered:
+            logger.warning(
+                f"MCP server '{server_id}' is pending AgentGateway sync, skipping"
+            )
+            continue
+
         connections[server_id] = build_mcp_connection_config(
             server,
             agent_gateway_url=agent_gateway_url if use_gateway else None,
