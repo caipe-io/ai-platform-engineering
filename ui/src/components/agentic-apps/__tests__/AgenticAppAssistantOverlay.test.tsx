@@ -170,18 +170,24 @@ describe("AgenticAppAssistantOverlay", () => {
   });
 
   it("shows a compact attachment for page context sent by an external app", async () => {
-    render(<AgenticAppAssistantOverlay appId="example-app" appName="Example App"
-      assistantAgentId="agent-example" onClearContext={jest.fn()} open onOpenChange={jest.fn()}
-      activeContext={{ contextId: "context-1", appId: "example-app", sessionId: "browser-session",
+    const onClearContext = jest.fn();
+    const context = { contextId: "context-1", appId: "example-app", sessionId: "browser-session",
         schemaVersion: "1.0", route: "/digest", payloadSizeBytes: 100,
         validationStatus: "accepted", createdAt: "2026-01-01T00:00:00.000Z",
         expiresAt: "2026-01-01T00:10:00.000Z", title: "Today's digest",
-        summary: "The saved digest is included with your question." }} />);
+        summary: "The saved digest is included with your question." } as const;
+    const props = { appId: "example-app", appName: "Example App", assistantAgentId: "agent-example", onClearContext, open: true, onOpenChange: jest.fn() };
+    const view = render(<AgenticAppAssistantOverlay {...props} activeContext={context} />);
 
     const attachment = screen.getByRole("note", { name: "Attached page context" });
     expect(attachment).toHaveTextContent("Today's digest");
     expect(attachment).toHaveTextContent("The saved digest is included with your question.");
     expect(await screen.findByTestId("chat-panel")).toHaveAttribute("data-context", expect.stringContaining('"route":"/digest"'));
+    fireEvent.click(screen.getByRole("button", { name: "Clear context" }));
+    expect(onClearContext).toHaveBeenCalledTimes(1);
+    view.rerender(<AgenticAppAssistantOverlay {...props} activeContext={null} />);
+    expect(screen.queryByRole("note", { name: "Attached page context" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-context", "{}");
   });
 
   it("resizes the popup to the available viewport", async () => {

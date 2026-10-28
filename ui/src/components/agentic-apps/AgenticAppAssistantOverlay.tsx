@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, LoaderCircle, MessageCircle } from "lucide-react";
+import { FileText, LoaderCircle, MessageCircle, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AssistantOptions, AssistantConfiguration } from "../../../app-sdk/assistant-options.mjs";
@@ -53,6 +53,7 @@ export function AgenticAppAssistantOverlay({
   assistantIcon,
   assistantAgentName,
   activeContext,
+  onClearContext,
   assistantAgentId,
   assistantAgent,
   open,
@@ -395,6 +396,10 @@ export function AgenticAppAssistantOverlay({
                 <p className="font-medium text-foreground">{activeContext.title ?? "Page context"}</p>
                 <p className="truncate text-muted-foreground">{activeContext.summary}</p>
               </div>
+              <button type="button" aria-label="Clear context" title="Clear context" onClick={onClearContext}
+                className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
+                <X className="h-4 w-4" aria-hidden />
+              </button>
             </div>
           ) : null}
           <div className="flex min-h-0 flex-1 flex-col">
