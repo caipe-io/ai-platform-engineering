@@ -2285,6 +2285,7 @@ services:
     entrypoint: ["/bin/sh", "/scripts/init-idp.sh"]
     volumes:
       - ./charts/ai-platform-engineering/charts/keycloak/scripts/init-idp.sh:/scripts/init-idp.sh:ro
+      - ./charts/ai-platform-engineering/charts/keycloak/scripts/mcp-dcr.sh:/scripts/mcp-dcr.sh:ro
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
@@ -2331,6 +2332,7 @@ services:
     entrypoint: ["/bin/sh", "/scripts/init-token-exchange.sh"]
     volumes:
       - ./charts/ai-platform-engineering/charts/keycloak/scripts/init-token-exchange.sh:/scripts/init-token-exchange.sh:ro
+      - ./charts/ai-platform-engineering/charts/keycloak/scripts/mcp-dcr.sh:/scripts/mcp-dcr.sh:ro
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin

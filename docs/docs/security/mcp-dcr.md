@@ -11,8 +11,17 @@ keycloak:
   mcpDcr:
     enabled: true
     resourceUrl: "https://example.com/api/tome/mcp"
-    # Add any other first-party clients that need the platform API audience.
-    platformClientIds: [caipe-ui, caipe-cli, caipe-platform]
+    # Helm replaces lists. Retain these defaults and append any additional
+    # first-party clients that need the platform API audience.
+    platformClientIds:
+      - caipe-ui
+      - caipe-cli
+      - caipe-platform
+      - caipe-slack-bot
+      - caipe-webex-bot
+      - caipe-scheduler-runner
+      - caipe-webex-bot-admin
+      - caipe-rag-ingestor
 ```
 
 For existing 26.3 installations, follow the
