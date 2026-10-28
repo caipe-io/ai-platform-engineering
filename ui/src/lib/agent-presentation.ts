@@ -68,7 +68,7 @@ export function getHarnessPresentation(
 ): HarnessPresentation {
   const normalized = normalizeHarnessId(harnessId);
   return (
-    HARNESS_PRESENTATIONS[normalized] ?? {
+    (Object.hasOwn(HARNESS_PRESENTATIONS, normalized) ? HARNESS_PRESENTATIONS[normalized] : undefined) ?? {
       ...FALLBACK_HARNESS,
       id: normalized,
       label: normalized,

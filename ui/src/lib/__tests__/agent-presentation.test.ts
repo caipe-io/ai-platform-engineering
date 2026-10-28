@@ -30,3 +30,14 @@ describe("agent presentation", () => {
     ).toBe(3);
   });
 });
+
+describe("harness identity fallback", () => {
+  it.each(["example-runtime", "constructor", "toString"])(
+    "uses a custom harness fallback for unknown runtime %p",
+    (value) => expect(getHarnessPresentation(value)).toMatchObject({
+      id: value.toLowerCase(),
+      label: value.toLowerCase(),
+      shortLabel: "Custom",
+    }),
+  );
+});

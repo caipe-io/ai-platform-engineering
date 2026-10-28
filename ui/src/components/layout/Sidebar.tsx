@@ -879,7 +879,8 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                   const isLive = isConversationStreaming(conv.id);
                   const isInputRequired = !isLive && isConversationInputRequired(conv.id);
                   const isUnviewed = !isLive && !isInputRequired && hasUnviewedMessages(conv.id);
-                  const titleBadge = getAutonomousBadge(conv) ?? getScheduleBadge(conv);
+                  const scheduleBadge = getScheduleBadge(conv);
+                  const titleBadge = getAutonomousBadge(conv) ?? scheduleBadge;
                   const runKind = getConversationRunKind(conv);
                   const ConversationIcon = conv.source === 'api'
                     ? Code2
@@ -1336,6 +1337,11 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                         {titleBadge ? (
                           <p className="truncate text-[10px] font-normal text-cyan-600 dark:text-cyan-300">
                             {titleBadge.title}
+                          </p>
+                        ) : null}
+                        {scheduleBadge && titleBadge?.kind === "autonomous" ? (
+                          <p className="truncate text-[10px] font-normal text-cyan-600 dark:text-cyan-300">
+                            {scheduleBadge.title}
                           </p>
                         ) : null}
                       </div>
