@@ -2256,4 +2256,87 @@ else
   echo "[init-idp]   WARNING: caipe-webex-bot client not found — Webex RBAC/OBO setup skipped."
 fi
 
+# -------------------------------------------------------------------
+# Ensure caipe-rag-ingestor confidential client exists with its
+# self-audience mapper. Ingestors use client_credentials to obtain a
+# JWT that rag-server validates with audience=caipe-rag-ingestor.
+# The client is NOT in realm-config.json (created imperatively here so
+# it lands on existing realms during upgrades, not only first boot).
+# -------------------------------------------------------------------
+RAG_INGESTOR_CLIENT_ID="${RAG_INGESTOR_OIDC_CLIENT_ID:-caipe-rag-ingestor}"
+RAG_INGESTOR_AUDIENCE_MAPPER="rag-ingestor-self-audience"
+
+echo "[init-idp] Ensuring '${RAG_INGESTOR_CLIENT_ID}' client exists ..."
+RAG_INGESTOR_UUID=$(curl -sf -H "${AUTH}" \
+  "${KC_URL}/admin/realms/${REALM}/clients?clientId=${RAG_INGESTOR_CLIENT_ID}" 2>/dev/null \
+  | grep -o '"id" *: *"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"/\1/')
+
+if [ -z "${RAG_INGESTOR_UUID}" ]; then
+  echo "[init-idp]   Creating '${RAG_INGESTOR_CLIENT_ID}' client ..."
+  if [ -n "${RAG_INGESTOR_OIDC_CLIENT_SECRET:-}" ]; then
+    SECRET_JSON=", \"secret\": \"${RAG_INGESTOR_OIDC_CLIENT_SECRET}\""
+  else
+    SECRET_JSON=""
+  fi
+  curl -sf -X POST -H "${AUTH}" -H "Content-Type: application/json" \
+    "${KC_URL}/admin/realms/${REALM}/clients" \
+    -d "{
+      \"clientId\": \"${RAG_INGESTOR_CLIENT_ID}\",
+      \"enabled\": true,
+      \"publicClient\": false,
+      \"bearerOnly\": false,
+      \"standardFlowEnabled\": false,
+      \"directAccessGrantsEnabled\": false,
+      \"serviceAccountsEnabled\": true,
+      \"protocol\": \"openid-connect\",
+      \"description\": \"Machine-to-machine client for RAG ingestors. Uses client_credentials; rag-server validates aud=caipe-rag-ingestor.\"
+      ${SECRET_JSON}
+    }" && echo "[init-idp]   Created '${RAG_INGESTOR_CLIENT_ID}' client."
+
+  # Re-fetch UUID after creation
+  RAG_INGESTOR_UUID=$(curl -sf -H "${AUTH}" \
+    "${KC_URL}/admin/realms/${REALM}/clients?clientId=${RAG_INGESTOR_CLIENT_ID}" 2>/dev/null \
+    | grep -o '"id" *: *"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"/\1/')
+else
+  echo "[init-idp]   '${RAG_INGESTOR_CLIENT_ID}' client already exists (${RAG_INGESTOR_UUID})."
+fi
+
+if [ -n "${RAG_INGESTOR_UUID}" ]; then
+  # Ensure self-audience mapper so access tokens carry aud=caipe-rag-ingestor
+  RAG_MAPPERS=$(curl -sf -H "${AUTH}" \
+    "${KC_URL}/admin/realms/${REALM}/clients/${RAG_INGESTOR_UUID}/protocol-mappers/models" 2>/dev/null || echo "[]")
+  if echo "${RAG_MAPPERS}" | TARGET_AUD="${RAG_INGESTOR_CLIENT_ID}" python3 -c '
+import sys, json, os
+mappers = json.load(sys.stdin)
+target = os.environ["TARGET_AUD"]
+found = any(
+    m.get("protocolMapper") == "oidc-audience-mapper" and
+    m.get("config", {}).get("included.custom.audience") == target
+    for m in mappers
+)
+sys.exit(0 if found else 1)
+' 2>/dev/null; then
+    echo "[init-idp]   Audience mapper '${RAG_INGESTOR_AUDIENCE_MAPPER}' already correct — skipping."
+  else
+    echo "[init-idp]   Creating/updating audience mapper '${RAG_INGESTOR_AUDIENCE_MAPPER}' ..."
+    curl -sf -X POST -H "${AUTH}" -H "Content-Type: application/json" \
+      "${KC_URL}/admin/realms/${REALM}/clients/${RAG_INGESTOR_UUID}/protocol-mappers/models" \
+      -d "{
+        \"name\": \"${RAG_INGESTOR_AUDIENCE_MAPPER}\",
+        \"protocol\": \"openid-connect\",
+        \"protocolMapper\": \"oidc-audience-mapper\",
+        \"consentRequired\": false,
+        \"config\": {
+          \"included.custom.audience\": \"${RAG_INGESTOR_CLIENT_ID}\",
+          \"id.token.claim\": \"false\",
+          \"access.token.claim\": \"true\",
+          \"introspection.token.claim\": \"true\"
+        }
+      }" && echo "[init-idp]   Mapper '${RAG_INGESTOR_AUDIENCE_MAPPER}' created on '${RAG_INGESTOR_CLIENT_ID}'." || \
+      echo "[init-idp]   WARNING: failed to create audience mapper on '${RAG_INGESTOR_CLIENT_ID}'."
+  fi
+else
+  echo "[init-idp]   WARNING: '${RAG_INGESTOR_CLIENT_ID}' UUID not found after creation attempt — skipping audience mapper."
+fi
+
 echo "[init-idp] Done — IdP '${ALIAS}' is ready (auto-redirect enabled)."
