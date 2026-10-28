@@ -74,78 +74,38 @@ browser logout, but not its expiry, revocation or loss of required permissions.
 
 ## Register resources for a new app service
 
-:::caution Design revision
-The generic `app_resource` implementation below is on hold in draft #3092.
-The proposed replacement uses native service-defined OpenFGA types and permissions;
-see [the design comparison](./service-defined-resources.md). The current branch
-still implements the generic contract until that revision is completed.
-:::
-
-Use the existing [App Contract](../../features/agentic-app-manifest.md), including
-its service-only profile. Operators bind an installation to a service-account
-client; the app ID supplies its resource namespace. Installation does not grant
-the service access to users' resources.
+Services use native OpenFGA types and permissions, such as
+`example_agent_sandbox:sandbox-123` and `can_exec`. The operator binds the
+App Contract installation to an approved model module and service-account
+client. Installation grants schema custody, not access to users' resources.
 
 ```mermaid
 flowchart LR
-    U["Signed-in user"] --> R["CAS reserves resource in Mongo"]
-    I["Configured app installation"] --> R
+    U["Signed-in user"] --> R["CAS reserves native resource in Mongo"]
+    I["Installed module + pinned model"] --> R
     R --> F["OpenFGA confirms user or team ownership"]
     F --> A["CAS marks resource active"]
+    S["Service enforces CAS result"] --> A
 ```
 
-- Reserve **before creating domain content**. Use the returned canonical resource
-  handle as the authorization key; this is not an API for adopting existing records.
-- The first supported kind is `resource`, backed by the reviewed `app_resource`
-  model. An app cannot register agents, teams or arbitrary OpenFGA types.
-- The signed-in user owns a personal resource. Team ownership requires current
-  team membership. Namespace custody never makes the service an owner.
-- Mongo stores identity, ownership and registration state; the app keeps its data.
-  Failed or ambiguous saves remain pending and deny access until retried successfully.
-  The same identity/intent returns the same handle; another creator/owner conflicts.
-- Resource checks and candidate queries use fresh graph and registration-state
-  checks. Grant/revoke and delegated checks share that state gate. Disabling the
-  installation blocks subsequent protected operations without deleting resources.
-- Background work uses the existing delegation API: explicitly grant the service
-  its resource capability, then approve the exact job/resource/action and expiry.
-  The service verifies and enforces CAS's decision at execution.
-- Registration audit records the caller, app namespace, owner and pending/active
-  outcome. Decision and delegation events retain their existing correlation chain.
+- Register before creating business data. Existing relationships cannot be adopted
+  by registering their name. Retries preserve the original owner and native ID.
+- Checks use the model's permission directly. Granting `executor` requires
+  `can_grant_executor`; granting `terminator` has its own authority. There is no
+  organization-admin override of application policy.
+- Background approval binds the exact service, job, native resource, permission
+  and expiry. Current user and service permissions must both pass.
+- Audit retains that identity chain, native permission and selected model ID.
+  Admin inventory derives application types and permissions from the same model.
 
-This slice supports registration and inspection. Resource removal/cleanup,
-ownership transfer, a delegation approval UI and existing-service migration are
-separate work. No namespace CRUD API or namespace-owner role is introduced.
+Ownership transfer and parent-link lifecycle commands remain separate work;
+ordinary grants cannot change ownership or write structural relationships.
+Existing-service migration is also separate. The generic resource contract has
+been removed; no hash alias or parallel resource-kind schema is retained.
 
-<details>
-<summary>API and installation reference</summary>
-
-- Publish the updated bundled OpenFGA model through the existing deployment
-  process before enabling registration. No existing tuples or application data
-  need migration for this additive type. An unavailable model leaves saves pending.
-- Declare `host.access.resources` version `1.0` in `consumes.platformApis` and bind
-  `bindings.serviceAccountClientId` in the operator-owned installation. The
-  [service-only example](https://github.com/caipe-io/ai-platform-engineering/blob/main/ui/examples/agentic-apps/service-only/manifest.json)
-  needs no UI package or proxy origin. Manifest permission requests remain metadata.
-- `POST /api/access/resources` requires a canonical human browser session,
-  matching Origin and JSON. Example body:
-  `{"app_id":"example-service","kind":"resource","local_id":"example-record"}`.
-  Optional `owner_team` selects an authorized team; callers cannot supply a user
-  owner, namespace, subject or OpenFGA resource type.
-- Success returns `resource: {type: "app_resource", id: "<opaque-id>"}` plus the
-  namespace, local ID, owner, creator and registration state. Reuse the same
-  registration after `503`; an unconfirmed save includes its opaque handle and
-  last confirmed reservation state for inspection. Ownership conflicts return `409`.
-- `GET /api/access/resources/<opaque-id>` permits current resource readers.
-  The original creator can also inspect a pending reservation for recovery.
-- Existing `/api/access/check`, `/query` and `/grants` accept the canonical handle.
-  For `app_resource`, they use the strict new-service identity profile directly:
-  verified primary issuer, `caipe-access` audience, canonical subject and signed
-  principal type. A service must match an enabled installation's client binding.
-  Host-to-app scoped tokens are not CAS credentials.
-- Missing resource access is DENY; pending registration or unavailable dependencies
-  return unavailable. Responses are `no-store`; no app-resource decision cache is used.
-
-</details>
+See the [architecture and tradeoffs](./service-defined-resources.md). Detailed
+installation, publication and request examples are in the
+[service integration reference](https://github.com/caipe-io/ai-platform-engineering/tree/main/ui/examples/agentic-apps/service-only).
 
 ## BFF agent execution
 

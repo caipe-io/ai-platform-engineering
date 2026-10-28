@@ -1,13 +1,13 @@
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { ApiError } from "@/lib/api-error";
-import { isSupportedResourceAction } from "@/lib/rbac/resource-model";
+import { parseAccessAction, parseAccessResource } from "./access-validation";
 import { authorizeDelegated, createDelegation, inspectDelegation, revokeDelegation } from "./index";
 import {
   DELEGATION_MAX_LIFETIME_MS, DELEGATION_MAX_SCOPE, delegationSnapshot,
   type DelegatedPermission, type DelegationIntent,
 } from "./delegation-contract";
-import { HttpAuthzError, isValidId, metaErrorResponse, parseAction, parseResource } from "./http";
+import { HttpAuthzError, isValidId, metaErrorResponse } from "./http";
 
 import { authenticatePlatformRequest, readAccessJson } from "./platform-http";
 
@@ -19,12 +19,11 @@ function object(value: unknown, fields: string[]): Record<string, unknown> {
   }
   return value as Record<string, unknown>;
 }
-function permission(value: unknown): DelegatedPermission {
+async function permission(value: unknown): Promise<DelegatedPermission> {
   const item = object(value, ["resource", "action"]);
   object(item.resource, ["type", "id"]);
-  const resource = parseResource(item.resource);
-  const action = parseAction(item.action);
-  if (!isSupportedResourceAction(resource.type, action)) return invalid("Unsupported resource/action");
+  const resource = await parseAccessResource(item.resource);
+  const action = await parseAccessAction(resource.type, item.action);
   return { resource, action };
 }
 
@@ -49,14 +48,14 @@ export async function handleDelegation(request: NextRequest, operation: "create"
       if (!Number.isFinite(expires) || expires <= Date.now() || expires > Date.now() + DELEGATION_MAX_LIFETIME_MS ||
         !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(input.expires_at as string)) return invalid("expires_at must be a future UTC timestamp within seven days");
       const intent: DelegationIntent = { service: { id: service.id, client_id: service.client_id },
-        job_id: input.job_id, scope: input.scope.map(permission), expires_at: new Date(expires).toISOString() };
+        job_id: input.job_id, scope: await Promise.all(input.scope.map(permission)), expires_at: new Date(expires).toISOString() };
       const record = await createDelegation(identity, intent, ctx, key);
       response = NextResponse.json({ delegation_id: record._id, ...delegationSnapshot(record) }, { status: 201 });
     } else if (operation === "check") {
       const input = object(await readAccessJson(request), ["job_id", "resource", "action"]);
       if (!isValidId(input.job_id)) return invalid("Invalid job binding");
       const result = await authorizeDelegated(id!, identity, {
-        ...permission({ resource: input.resource, action: input.action }), job_id: input.job_id,
+        ...await permission({ resource: input.resource, action: input.action }), job_id: input.job_id,
       }, ctx);
       response = NextResponse.json(result, { status: result.reason === "AUTHZ_UNAVAILABLE" ? 503 : result.reason === "NOT_AUTHENTICATED" ? 401 : 200 });
       response.headers.set("x-caipe-decision-id", result.decision_id);

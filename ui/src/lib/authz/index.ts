@@ -4,6 +4,8 @@
 // Everything inside the BFF imports from here — never from engines/,
 // compose.ts, or audit.ts directly. The ESLint boundary rule enforces this.
 
+import { HttpAuthzError } from "./errors";
+import { isNativeResourceType, nativeGrantRelation } from "./model";
 import type {
   Action,
   AuthorizeRequest,
@@ -154,7 +156,7 @@ export async function listAccessible(
 ): Promise<ListAccessibleResult> {
   if (candidateIds.length === 0) return { accessible: [], reason: "OK" };
 
-  if (resourceType === "app_resource" || candidateIds.length <= LIST_OBJECTS_MIN_CANDIDATES) {
+  if (isNativeResourceType(resourceType) || candidateIds.length <= LIST_OBJECTS_MIN_CANDIDATES) {
     const results = await authorizeMany(subject, action, resourceType, candidateIds, ctx);
     const accessible = candidateIds.filter((id) => results.get(id)?.decision === "ALLOW");
     const unavailable = Array.from(results.values()).some((result) => result.reason === "AUTHZ_UNAVAILABLE");
@@ -169,22 +171,33 @@ export async function listAccessible(
 
 // ─── Grant / Revoke (PAP) ─────────────────────────────────────────────────────
 
+async function requireGrantAuthority(intent: GrantIntent, ctx: DecisionContext): Promise<void> {
+  if (!isNativeResourceType(intent.resource.type)) return;
+  if (!ctx.caller || !intent.relationship) throw new Error("A native grant requires a verified caller and relationship");
+  const action = await nativeGrantRelation(intent.resource.type, intent.relationship, intent.grantee.type);
+  const result = await authorize({ subject: ctx.caller, resource: intent.resource, action }, ctx);
+  if (result.decision !== "ALLOW") throw new HttpAuthzError(result.retriable ? 503 : 403,
+    result.retriable ? "AUTHZ_UNAVAILABLE" : "FORBIDDEN", `Permission ${action} is required`);
+}
+
 export async function grant(intent: GrantIntent, ctx: DecisionContext = {}): Promise<void> {
   try {
+    await requireGrantAuthority(intent, ctx);
     await admin.grant(intent);
     await emitGrantAudit("grant", intent, ctx, { outcome: "success" });
   } catch (err) {
-    await emitGrantAudit("grant", intent, ctx, { outcome: "error", reasonCode: "PDP_WRITE_FAILED" });
+    await emitGrantAudit("grant", intent, ctx, { outcome: "error", reasonCode: err instanceof HttpAuthzError ? err.code : "PDP_WRITE_FAILED" });
     throw err;
   }
 }
 
 export async function revoke(intent: GrantIntent, ctx: DecisionContext = {}): Promise<void> {
   try {
+    await requireGrantAuthority(intent, ctx);
     await admin.revoke(intent);
     await emitGrantAudit("revoke", intent, ctx, { outcome: "success" });
   } catch (err) {
-    await emitGrantAudit("revoke", intent, ctx, { outcome: "error", reasonCode: "PDP_WRITE_FAILED" });
+    await emitGrantAudit("revoke", intent, ctx, { outcome: "error", reasonCode: err instanceof HttpAuthzError ? err.code : "PDP_WRITE_FAILED" });
     throw err;
   }
 }
@@ -224,3 +237,5 @@ export type {
   Subject,
   SubjectType,
 } from "./contract";
+
+export { listNativeResourceTypeDefinitions } from "./model";

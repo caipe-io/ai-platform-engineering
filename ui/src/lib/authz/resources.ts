@@ -1,13 +1,13 @@
 import { canLaunchAgenticApp, type AgenticAppUserContext } from "@/lib/agentic-apps/access";
-import { resourceApp } from "@/lib/agentic-apps/service-binding";
+import { nativeResourceDefinition } from "./model";
 import type { PlatformIdentity } from "@/lib/auth/platform-identity";
 import type { DecisionContext } from "./contract";
 import { emitDecisionAudit, emitGrantAudit } from "./audit";
-import { checkDelegationPermission } from "./engines/openfga";
+import { assertEmptyResourceGraph, checkDelegationPermission } from "./engines/openfga";
 import { HttpAuthzError } from "./errors";
 import { reconcileTupleDiff } from "./reconcile";
 import type { RegisteredResource, ResourceRegistration } from "./resource-contract";
-import { activateResource, registeredResourceId, reserveResource } from "./resource-store";
+import { activateResource, registeredResourceId, reserveResource, prepareResource, readRegisteredResource } from "./resource-store";
 
 export class PendingResourceRegistrationError extends HttpAuthzError {
   constructor(readonly record: RegisteredResource, cause: unknown) {
@@ -25,7 +25,13 @@ export async function registerResource(
   if (identity.issuer !== process.env.OIDC_ISSUER?.trim() || !Number.isFinite(identity.expiresAt) || identity.expiresAt * 1000 <= Date.now()) {
     throw new HttpAuthzError(401, "NOT_AUTHENTICATED", "A current platform identity is required");
   }
-  const app = resourceApp(intent.app_id);
+  const { app, appId, definition, modelId } = await nativeResourceDefinition(intent.resource.type);
+  const ownerRefs = definition.metadata?.relations?.owner?.directly_related_user_types ?? [];
+  if (!ownerRefs.some((ref) => !ref.condition && (intent.owner_team
+    ? ref.type === "team" && ref.relation === "member"
+    : ref.type === "user" && !ref.relation && !ref.wildcard))) {
+    throw new HttpAuthzError(400, "INVALID_REQUEST", "The resource model does not support this ownership form");
+  }
   if (!app || !canLaunchAgenticApp(app, userContext)) throw new HttpAuthzError(403, "FORBIDDEN", "Resource integration is not available to this user");
   if (intent.owner_team) {
     const resource = { type: "team" as const, id: intent.owner_team };
@@ -35,21 +41,33 @@ export async function registerResource(
     if (result.decision !== "ALLOW") throw new HttpAuthzError(result.retriable ? 503 : 403,
       result.retriable ? "AUTHZ_UNAVAILABLE" : "FORBIDDEN", "Current team membership is required for team ownership");
   }
-  const id = registeredResourceId(identity.issuer, intent.app_id, intent.kind, intent.local_id);
-  const record = await reserveResource({ _id: id, issuer: identity.issuer, app_id: intent.app_id,
-    kind: intent.kind, local_id: intent.local_id, creator: identity.subject,
+  const id = registeredResourceId(intent.resource.type, intent.resource.id);
+  const record = await reserveResource({ _id: id, issuer: identity.issuer, app_id: appId,
+    resource: intent.resource, model_id: modelId, creator: identity.subject,
     owner: intent.owner_team ? { type: "team", id: intent.owner_team } : { type: "user", id: identity.subject.id },
-    state: "pending", created_at: new Date().toISOString() });
+    state: "pending", prepared: false, created_at: new Date().toISOString() });
   if (record.state === "active") return record;
-  const object = `app_resource:${id}`;
+  if (!record.prepared) {
+    // A new registration cannot adopt graph grants left by another owner/import.
+    try { await assertEmptyResourceGraph(id); }
+    catch (error) {
+      // A concurrent identical registration may have prepared/projected it.
+      // That durable marker proves this reservation verified the empty graph.
+      const current = await readRegisteredResource(id);
+      if (!current?.prepared) throw error;
+      if (current.state === "active") return current;
+    }
+    await prepareResource(id);
+  }
+  const object = id;
   const owner = record.owner.type === "team" ? `team:${record.owner.id}#member` : `user:${record.owner.id}`;
   // Metadata stays pending until the owner projection is confirmed. An ambiguous
   // write is retried toward the same immutable owner, never compensated away.
-  const auditIntent = { resource: { type: "app_resource" as const, id }, grantee: record.owner, capability: "manage" as const };
+  const auditIntent = { resource: intent.resource, grantee: record.owner, relationship: "owner" };
   const auditContext = { ...ctx, caller: identity.subject };
   try {
     const result = await reconcileTupleDiff({ writes: [{ user: owner, relation: "owner", object }], deletes: [] },
-      { ...auditContext, source: "app_resource_register" });
+      { ...auditContext, source: "resource_register" });
     if (!result.enabled) throw new HttpAuthzError(503, "AUTHZ_UNAVAILABLE", "Resource registration requires OpenFGA permission updates");
     const active = await activateResource(id);
     await emitGrantAudit("grant", auditIntent, auditContext, { registration: active });

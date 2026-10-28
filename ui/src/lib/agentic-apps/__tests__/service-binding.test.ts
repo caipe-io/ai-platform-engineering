@@ -51,3 +51,14 @@ it("rejects ambiguous client bindings across installations", () => {
   writeFileSync(file, JSON.stringify(config));
   expect(() => loadConfiguredAgenticApps()).toThrow(/serviceAccountClientId.*bound to both/);
 });
+
+it("loads module custody from the canonical installation and rejects duplicate module owners", () => {
+  const config = configuration();
+  const installation = { ...config.agentic_apps.installations[0], bindings: { serviceAccountClientId: service.clientId, authorizationModule: "example-service" } };
+  writeFileSync(file, JSON.stringify({ agentic_apps: { packages: config.agentic_apps.packages, installations: [installation] } }));
+  expect(loadConfiguredAgenticApps()[0].installation.bindings?.authorizationModule).toBe("example-service");
+  config.agentic_apps.packages.push({ package_id: "secondary-service", manifest: { ...manifest, id: "secondary-service" } });
+  writeFileSync(file, JSON.stringify({ agentic_apps: { packages: config.agentic_apps.packages, installations: [installation,
+    { ...installation, app_id: "secondary-service", bindings: { ...installation.bindings, serviceAccountClientId: "secondary-client" } }] } }));
+  expect(() => loadConfiguredAgenticApps()).toThrow(/authorization module.*only one/);
+});

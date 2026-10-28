@@ -3,15 +3,16 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { ApiError } from "@/lib/api-error";
 import { getAuthFromBearerOrSession } from "@/lib/api-middleware";
-import { isSupportedResourceAction } from "@/lib/rbac/resource-model";
+import { parseAccessAction, parseAccessGrant, parseAccessResource } from "./access-validation";
+import { isNativeResourceType, MODEL_NAME_PATTERN } from "./model";
 import { resolveAppService } from "@/lib/agentic-apps/service-binding";
 import { authenticatePlatformRequest, readAccessJson } from "./platform-http";
 import { authorize, authorizeMany, grant, revoke } from "./index";
 import { ACCESS_QUERY_MAX_IDS, type AccessQueryResponse } from "./access-contract";
-import type { Action, AuthorizeResult, DecisionContext, ResourceType, Subject } from "./contract";
+import type { AuthorizeResult, DecisionContext, Subject } from "./contract";
 import {
   HttpAuthzError, decisionContext, isValidResourceId, metaErrorResponse,
-  parseAction, parseGrantIntent, parseResource, parseResourceType, requireManage, resolveCaller,
+  requireManage, resolveCaller,
 } from "./http";
 
 const ACCESS_API_MAX_BODY_BYTES = 1024 * 1024;
@@ -22,12 +23,6 @@ type AccessHandler = (
 
 function invalid(message: string): never {
   throw new HttpAuthzError(400, "INVALID_REQUEST", message);
-}
-
-function requireAction(resourceType: ResourceType, raw: unknown): Action {
-  const action = parseAction(raw);
-  if (!isSupportedResourceAction(resourceType, action)) invalid("action is not supported for this resource type");
-  return action;
 }
 
 async function authenticate(request: NextRequest): Promise<unknown> {
@@ -59,9 +54,10 @@ async function handle(request: NextRequest, fields: string[], operation: AccessH
     if (Object.keys(body).some((key) => !fields.includes(key))) invalid("Request contains unsupported fields");
     const input = body as Record<string, unknown>;
     const resourceType = (input.resource as { type?: unknown } | undefined)?.type ?? input.resource_type;
+    if (typeof resourceType !== "string" || !MODEL_NAME_PATTERN.test(resourceType)) invalid("A valid resource type is required");
     let caller: Subject;
     let ctx: DecisionContext;
-    if (resourceType === "app_resource") {
+    if (typeof resourceType === "string" && isNativeResourceType(resourceType)) {
       // Select the strict new-service receiver profile directly. Requiring a
       // legacy bearer first would reject correctly audience-bound credentials.
       const { identity, tenantId } = await authenticatePlatformRequest(request);
@@ -110,8 +106,8 @@ async function handle(request: NextRequest, fields: string[], operation: AccessH
 
 export function checkAccess(request: NextRequest): Promise<NextResponse> {
   return handle(request, ["resource", "action"], async (body, caller, ctx) => {
-    const resource = parseResource(body.resource);
-    const action = requireAction(resource.type, body.action);
+    const resource = await parseAccessResource(body.resource);
+    const action = await parseAccessAction(resource.type, body.action);
     const result = await authorize({ subject: caller, resource, action }, ctx);
     if (result.reason === "AUTHZ_UNAVAILABLE") {
       throw new HttpAuthzError(503, "AUTHZ_UNAVAILABLE", "Authorization service temporarily unavailable");
@@ -122,8 +118,8 @@ export function checkAccess(request: NextRequest): Promise<NextResponse> {
 
 export function queryAccess(request: NextRequest): Promise<NextResponse> {
   return handle(request, ["resource_type", "action", "ids"], async (body, caller, ctx) => {
-    const resourceType = parseResourceType(body.resource_type);
-    const action = requireAction(resourceType, body.action);
+    const resourceType = (await parseAccessResource({ type: body.resource_type, id: "validation" })).type;
+    const action = await parseAccessAction(resourceType, body.action);
     if (!Array.isArray(body.ids) || body.ids.length > ACCESS_QUERY_MAX_IDS ||
         !body.ids.every((id) => isValidResourceId(resourceType, id))) {
       invalid(`ids must be an array of at most ${ACCESS_QUERY_MAX_IDS} valid resource identifiers`);
@@ -141,9 +137,9 @@ export function queryAccess(request: NextRequest): Promise<NextResponse> {
 }
 
 export function changeAccess(request: NextRequest, operation: "grant" | "revoke"): Promise<NextResponse> {
-  return handle(request, ["resource", "grantee", "capability"], async (body, caller, ctx) => {
-    const intent = parseGrantIntent(body);
-    await requireManage(caller, intent.resource, ctx, { operation, intent });
+  return handle(request, ["resource", "grantee", "capability", "relationship"], async (body, caller, ctx) => {
+    const intent = await parseAccessGrant(body);
+    if (!isNativeResourceType(intent.resource.type)) await requireManage(caller, intent.resource, ctx, { operation, intent });
     await (operation === "grant" ? grant : revoke)(intent, ctx);
     return NextResponse.json(operation === "grant" ? { granted: true } : { revoked: true });
   });

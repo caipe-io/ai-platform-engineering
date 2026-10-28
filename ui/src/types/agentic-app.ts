@@ -58,6 +58,8 @@ export interface AgenticAppInstallation {
     resources?: Record<string, string>;
     /** Client id of the service account this app uses to call the host. */
     serviceAccountClientId?: string;
+    /** Operator-approved OpenFGA module in the selected composed model. */
+    authorizationModule?: string;
   };
   runtimeMountPath?: string;
   runtimeOriginOverride?: string;

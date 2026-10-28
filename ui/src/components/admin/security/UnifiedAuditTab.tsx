@@ -1417,6 +1417,7 @@ export function UnifiedAuditTab({ isAdmin, view = "audit", initialSubjectRef = "
 	                                <DetailField label="Resource ID" value={evt.resource_id} />
 	                                <DetailField label="Workflow Run ID" value={evt.workflow_run_id} />
 	                                <DetailField label="Raw Decision Path" value={evt.decision_via} />
+                                <DetailField label="Authorization Model" value={evt.authorization_model_id} mono />
                                 <DetailField label="Operation" value={evt.operation} />
                                 <DetailField label="Reconciliation Scope" value={evt.reconcile_scope ? humanizeToken(evt.reconcile_scope) : undefined} />
                                 <DetailField label="Requested Additions" value={evt.requested_writes?.toString()} />

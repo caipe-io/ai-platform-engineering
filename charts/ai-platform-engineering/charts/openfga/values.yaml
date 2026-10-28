@@ -54,11 +54,17 @@ init:
   enabled: true
   # -- Existing same-namespace ConfigMap containing authorization-model.json. Empty uses the bundled model; seed.py remains chart-owned.
   existingModelConfigMap: ""
+  # -- Explicitly approved OpenFGA modules in an external compiled model.
+  approvedModules: []
+  # -- Existing immutable model pin; initializer verifies it and only seeds tuples.
+  authorizationModelId: ""
   image:
     repository: python
     tag: "3.14-slim"
     pullPolicy: IfNotPresent
   storeName: caipe-openfga
+  # -- Existing store ID; set with authorizationModelId for a pinned rollout.
+  storeId: ""
   seedSub: ""
   seedTuples: []
   platformClient:

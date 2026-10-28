@@ -17,10 +17,13 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth-config";
 import { requireRbacPermission, withErrorHandler, ApiError } from "@/lib/api-middleware";
 import { authorize, describeFgaCheck, type Action, type Resource, type Subject } from "@/lib/authz";
-import { HttpAuthzError, parseAction, parseResource, parseSubject } from "@/lib/authz/http";
+import { HttpAuthzError, parseAction, parseSubject } from "@/lib/authz/http";
 import { readOpenFgaTuples, type OpenFgaTupleKey } from "@/lib/rbac/openfga";
 import { isSupportedResourceAction, listResourceTypeDefinitions } from "@/lib/rbac/resource-model";
-import { openFgaObject, openFgaRelation } from "@/lib/rbac/tuple-builders";
+import { openFgaResourceObject } from "@/lib/rbac/openfga-resource-ids";
+import { parseAccessAction, parseAccessResource } from "@/lib/authz/access-validation";
+import { isNativeResourceType, nativeResourceDefinition } from "@/lib/authz/model";
+import { openFgaRelation } from "@/lib/rbac/tuple-builders";
 
 const ALL_ACTIONS = Array.from(
   new Set(listResourceTypeDefinitions().flatMap((definition) => definition.actions)),
@@ -30,7 +33,7 @@ function directGrantTuple(subject: Subject, resource: Resource, action: Action):
   return {
     user: `${subject.type}:${subject.id}`,
     relation: openFgaRelation(action),
-    object: openFgaObject(resource),
+    object: openFgaResourceObject(resource.type, resource.id),
   };
 }
 
@@ -66,7 +69,7 @@ function explainOne(subject: Subject, resource: Resource, action: Action, tenant
   return (async () => {
     const req = { subject, resource, action };
     const fga = describeFgaCheck(req);
-    if (!isSupportedResourceAction(resource.type, action)) {
+    if (!isNativeResourceType(resource.type) && !isSupportedResourceAction(resource.type, action)) {
       return {
         action,
         supported: false,
@@ -80,12 +83,13 @@ function explainOne(subject: Subject, resource: Resource, action: Action, tenant
           relation: fga.relation,
           checked: [`${fga.user} ${fga.relation} ${fga.object}`],
           store: fga.store,
+          authorization_model_id: fga.authorization_model_id,
         },
       };
     }
     const result = await authorize(req, { tenantId });
     const directGrant =
-      result.decision === "ALLOW" && result.via === "tuple"
+      !isNativeResourceType(resource.type) && result.decision === "ALLOW" && result.via === "tuple"
         ? await explainDirectGrant(subject, resource, action)
         : undefined;
     return {
@@ -101,6 +105,7 @@ function explainOne(subject: Subject, resource: Resource, action: Action, tenant
         relation: fga.relation,
         checked: [`${fga.user} ${fga.relation} ${fga.object}`],
         store: fga.store,
+        authorization_model_id: fga.authorization_model_id,
       },
     };
   })();
@@ -146,16 +151,20 @@ export const POST = withErrorHandler(async (request: NextRequest): Promise<NextR
   let actions: Action[];
   try {
     subject = parseSubject(b.subject);
-    resource = parseResource(b.resource);
+    resource = await parseAccessResource(b.resource);
+    const available = isNativeResourceType(resource.type)
+      ? Object.keys((await nativeResourceDefinition(resource.type)).definition.relations ?? {})
+      : ALL_ACTIONS;
     if (Array.isArray(b.actions)) {
       // Matrix mode: validate each requested action (empty → all).
-      actions = (b.actions.length > 0 ? b.actions : ALL_ACTIONS).map(parseAction);
+      actions = await Promise.all((b.actions.length > 0 ? b.actions : available).map((action) =>
+        isNativeResourceType(resource.type) ? parseAccessAction(resource.type, action) : parseAction(action)));
     } else if (b.action != null) {
-      singleAction = parseAction(b.action);
+      singleAction = isNativeResourceType(resource.type) ? await parseAccessAction(resource.type, b.action) : parseAction(b.action);
       actions = [singleAction];
     } else {
       // Neither field → evaluate the full matrix.
-      actions = ALL_ACTIONS;
+      actions = available;
     }
   } catch (err) {
     if (err instanceof HttpAuthzError) {

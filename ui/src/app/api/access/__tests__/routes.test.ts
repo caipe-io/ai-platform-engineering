@@ -177,7 +177,7 @@ it("fails closed and redacts diagnostics when the app catalog cannot load", asyn
     mockPlatformJwt.mockResolvedValue({ issuer, subject: { type: "service_account", id: "example-service" },
       clientId: "example-client", expiresAt: Date.now() / 1000 + 600 });
     mockResolveAppService.mockImplementationOnce(() => { throw new SyntaxError(privateDetail); });
-    const response = await check(request({ resource: { type: "app_resource", id: "a".repeat(64) }, action: "read" },
+    const response = await check(request({ resource: { type: "example_agent_sandbox", id: "example-record" }, action: "can_exec" },
       { authorization: "Bearer example-service-token" }));
     expect(response.status).toBe(503);
     const body = await response.json();
@@ -197,7 +197,7 @@ it("fails closed and redacts diagnostics when the app catalog cannot load", asyn
   }
 });
 
-it.each([{ ...checkBody, action: "ingest" }, { resource: { type: "unknown", id: "example" }, action: "use" },
+it.each([{ ...checkBody, action: "ingest" }, { resource: { type: "unknown#type", id: "example" }, action: "use" },
   { ...checkBody, resource: { type: "agent", id: "example#manager" } }])("rejects unsupported resource/action combinations and tuple syntax", async (body) => {
   expect((await check(request(body))).status).toBe(400);
   expect(mockAuthorize).not.toHaveBeenCalled();

@@ -1,3 +1,4 @@
+import { getOpenFgaModelId } from "./engines/openfga-client";
 // assisted-by Codex Codex-sonnet-4-6
 //
 // CAS decision audit, written through audit-service and conforming to the
@@ -41,6 +42,7 @@ const SUBJECT_SALT = process.env.AUDIT_SUBJECT_SALT ?? "caipe-098-audit";
  * so exports can explain where workflow-scoped CAS decisions came from.
  */
 export interface CasDecisionEvent {
+  authorization_model_id?: string;
   audit_event_id: string;
   ts: Date;
   type: "cas_decision";
@@ -89,6 +91,7 @@ export interface CasDecisionEvent {
  * cannot see is the noise this event exists to remove.
  */
 export interface CasBatchDecisionEvent {
+  authorization_model_id?: string;
   audit_event_id: string;
   ts: Date;
   type: "cas_decision";
@@ -156,6 +159,7 @@ export function buildDecisionEvent(
   trustedContext: TrustedAuthorizeContext = {},
 ): CasDecisionEvent {
   return {
+    ...(getOpenFgaModelId() ? { authorization_model_id: getOpenFgaModelId() } : {}),
     audit_event_id: randomUUID(),
     ts: new Date(),
     type: "cas_decision",
@@ -213,6 +217,7 @@ function rollupKey(event: CasDecisionEvent): string {
   // distinct decisions into one rollup.
   return JSON.stringify([
     event.tenant_id,
+    event.authorization_model_id ?? "",
     event.subject_ref,
     event.action,
     event.resource_ref,
@@ -237,7 +242,8 @@ export function flushAllowRollups(): void {
     delete sample.gateway_policy;
     writeAuditEvent({
       ...sample,
-      audit_event_id: randomUUID(),
+      ...(getOpenFgaModelId() ? { authorization_model_id: getOpenFgaModelId() } : {}),
+    audit_event_id: randomUUID(),
       ts: entry.windowEnd,
       // This row summarizes `count` decisions, not one request, so there is no
       // single correlation_id to attribute it to.
@@ -306,7 +312,8 @@ export function emitDelegationAudit(
   const subject = authority?.effectiveSubject ?? identity.subject;
   try {
     getAuditClient().append({
-      audit_event_id: randomUUID(), ts: new Date(), type: operation === "check" ? "cas_decision" : "cas_delegation",
+      ...(getOpenFgaModelId() ? { authorization_model_id: getOpenFgaModelId() } : {}),
+    audit_event_id: randomUUID(), ts: new Date(), type: operation === "check" ? "cas_decision" : "cas_delegation",
       tenant_id: authority?.auditTenantId ?? ctx.tenantId ?? process.env.TENANT_ID ?? "default", component: "cas", source: "cas",
       actor_ref: principalRef(identity.subject.type, identity.subject.id),
       subject_ref: principalRef(subject.type, subject.id), subject_hash: hashSubject(subject.id),
@@ -341,6 +348,7 @@ export function buildBatchDecisionEvent(
   const deniedCount = results.size - allowedIds.length;
 
   return {
+    ...(getOpenFgaModelId() ? { authorization_model_id: getOpenFgaModelId() } : {}),
     audit_event_id: randomUUID(),
     ts: new Date(),
     type: "cas_decision",
@@ -397,6 +405,7 @@ export function emitBatchDecisionAudit(
  * because the whole lookup failed as a single unit, not per-candidate.
  */
 export interface CasListObjectsEvent {
+  authorization_model_id?: string;
   audit_event_id: string;
   ts: Date;
   type: "cas_decision";
@@ -445,6 +454,7 @@ export function buildListObjectsDecisionEvent(
   const deniedCount = candidateIds.length - allowedIds.length;
 
   return {
+    ...(getOpenFgaModelId() ? { authorization_model_id: getOpenFgaModelId() } : {}),
     audit_event_id: randomUUID(),
     ts: new Date(),
     type: "cas_decision",
@@ -495,7 +505,7 @@ export interface GrantAuditOptions {
   outcome?: GrantAuditOutcome;
   /** Why the attempt failed (meta-authz deny, PDP error, etc.). */
   reasonCode?: string;
-  registration?: Pick<RegisteredResource, "app_id" | "kind" | "local_id" | "owner" | "state">;
+  registration?: Pick<RegisteredResource, "app_id" | "resource" | "model_id" | "owner" | "state">;
 }
 
 function principalRef(type: string, id?: string): string {
@@ -514,6 +524,7 @@ function granteeLabel(g: GrantIntent["grantee"]): string {
  */
 export interface CasGrantEvent {
   registration?: GrantAuditOptions["registration"];
+  authorization_model_id?: string;
   audit_event_id: string;
   ts: Date;
   type: "cas_grant";
@@ -552,6 +563,7 @@ export function buildGrantEvent(
   const outcome = options.outcome ?? "success";
   const callerRef = principalRef(ctx.caller.type, ctx.caller.id);
   return {
+    ...(getOpenFgaModelId() ? { authorization_model_id: getOpenFgaModelId() } : {}),
     audit_event_id: randomUUID(),
     ts: new Date(),
     type: "cas_grant",
@@ -563,10 +575,10 @@ export function buildGrantEvent(
     caller_ref: callerRef,
     grantee_ref: granteeLabel(intent.grantee),
     ...(options.registration ? { registration: {
-      app_id: options.registration.app_id, kind: options.registration.kind, local_id: options.registration.local_id,
+      app_id: options.registration.app_id, resource: options.registration.resource, model_id: options.registration.model_id,
       owner: { type: options.registration.owner.type, id: options.registration.owner.id }, state: options.registration.state,
     } } : {}),
-    action: intent.capability,
+    action: (intent.relationship ?? intent.capability),
     operation,
     outcome,
     resource_ref: `${intent.resource.type}:${intent.resource.id}`,
@@ -591,6 +603,7 @@ export interface ReconcileAuditOptions {
 
 /** Batch tuple reconcile (team resources, MCP ownership, etc.). */
 export interface CasReconcileEvent {
+  authorization_model_id?: string;
   audit_event_id: string;
   ts: Date;
   type: "cas_reconcile";
@@ -649,6 +662,7 @@ export function emitReconcileAudit(
   const callerRef = ctx.caller ? principalRef(ctx.caller.type, ctx.caller.id) : undefined;
   const systemRef = systemPrincipalRef(scope);
   const event: CasReconcileEvent = {
+    ...(getOpenFgaModelId() ? { authorization_model_id: getOpenFgaModelId() } : {}),
     audit_event_id: randomUUID(),
     ts: new Date(),
     type: "cas_reconcile",

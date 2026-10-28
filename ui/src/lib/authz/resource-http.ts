@@ -6,6 +6,8 @@ import { resolveAppService } from "@/lib/agentic-apps/service-binding";
 import { authorize, registerResource, PendingResourceRegistrationError } from "./index";
 import { HttpAuthzError, isValidId, metaErrorResponse } from "./http";
 import { authenticatePlatformRequest, readAccessJson } from "./platform-http";
+import { parseAccessResource } from "./access-validation";
+import { nativeResourceDefinition } from "./model";
 import { resourceSnapshot } from "./resource-contract";
 import { readRegisteredResource } from "./resource-store";
 
@@ -22,28 +24,28 @@ export async function handleResource(request: NextRequest, operation: "register"
     if (operation === "register") {
       const body = await readAccessJson(request);
       if (!body || typeof body !== "object" || Array.isArray(body) ||
-        Object.keys(body).some((key) => !["app_id", "kind", "local_id", "owner_team"].includes(key))) {
+        Object.keys(body).some((key) => !["resource", "owner_team"].includes(key))) {
         throw new HttpAuthzError(400, "INVALID_REQUEST", "Unexpected registration fields");
       }
       const input = body as Record<string, unknown>;
-      if (typeof input.app_id !== "string" || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(input.app_id) ||
-        input.kind !== "resource" || !isValidId(input.local_id) ||
-        (input.owner_team !== undefined && !isValidId(input.owner_team))) {
-        throw new HttpAuthzError(400, "INVALID_REQUEST", "Expected an app ID, kind resource, local ID and optional owner team");
+      const resource = await parseAccessResource(input.resource);
+      if (input.owner_team !== undefined && !isValidId(input.owner_team)) {
+        throw new HttpAuthzError(400, "INVALID_REQUEST", "Invalid owner team");
       }
-      const record = await registerResource(identity, { app_id: input.app_id, kind: "resource", local_id: input.local_id,
+      const record = await registerResource(identity, { resource,
         ...(input.owner_team ? { owner_team: input.owner_team as string } : {}) },
       agenticAppUserContextFromSession(session ?? {}), ctx);
       response = NextResponse.json(resourceSnapshot(record), { status: 201 });
     } else {
-      if (!id || !/^[a-f0-9]{64}$/.test(id)) throw new HttpAuthzError(400, "INVALID_REQUEST", "Invalid registered resource ID");
+      if (!id || !/^[a-z][a-z0-9_]{0,49}:[A-Za-z0-9._%+@-]{1,256}$/.test(id)) throw new HttpAuthzError(400, "INVALID_REQUEST", "Invalid registered resource ID");
       const record = await readRegisteredResource(id);
       // The original creator may inspect a pending registration to recover an
       // ambiguous save. Other callers must pass current resource authorization.
       const creator = record?.state === "pending" && record.issuer === identity.issuer &&
         identity.subject.type === "user" && record.creator.id === identity.subject.id;
       if (record && !creator) {
-        const result = await authorize({ subject: identity.subject, resource: { type: "app_resource", id }, action: "read" }, ctx);
+        await nativeResourceDefinition(record.resource.type);
+        const result = await authorize({ subject: identity.subject, resource: record.resource, action: "owner" }, ctx);
         if (result.reason === "AUTHZ_UNAVAILABLE") throw new HttpAuthzError(503, "AUTHZ_UNAVAILABLE", "Resource authorization is unavailable");
         if (result.decision !== "ALLOW") throw new HttpAuthzError(403, "FORBIDDEN", "Resource access denied");
       }

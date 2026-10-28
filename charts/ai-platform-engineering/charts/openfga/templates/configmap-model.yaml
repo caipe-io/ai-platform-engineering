@@ -10,6 +10,10 @@ data:
   authorization-model.json: |-
 {{ .Files.Get "authorization-model.json" | indent 4 }}
   {{- end }}
+  core-authorization-model.json: |-
+{{ .Files.Get "authorization-model.json" | indent 4 }}
+  publish_model.py: |-
+{{ .Files.Get "files/publish_model.py" | indent 4 }}
   seed.py: |-
     import base64
     import json
@@ -20,6 +24,7 @@ data:
     import urllib.parse
     import urllib.request
     from pathlib import Path
+    from publish_model import publish
 
     OPENFGA = os.environ.get("OPENFGA_HTTP", "http://openfga:8080").rstrip("/")
     STORE_NAME = os.environ.get("OPENFGA_STORE_NAME", "caipe-openfga").strip()
@@ -104,17 +109,18 @@ data:
         raise SystemExit(f"could not resolve platform service-account sub: {last_error}")
 
     def ensure_tuple(store_id, tuple_key):
-        allowed = request("POST", f"/stores/{store_id}/check", {"tuple_key": tuple_key}).get("allowed")
+        allowed = request("POST", f"/stores/{store_id}/check", {"tuple_key": tuple_key, "authorization_model_id": model_id}).get("allowed")
         label = f"{tuple_key['user']} {tuple_key['relation']} {tuple_key['object']}"
         if allowed:
             print(f"tuple already present for {label}")
             return
-        request("POST", f"/stores/{store_id}/write", {"writes": {"tuple_keys": [tuple_key]}})
+        request("POST", f"/stores/{store_id}/write", {"writes": {"tuple_keys": [tuple_key]}, "authorization_model_id": model_id})
         print(f"tuple written for {label}")
 
     wait_ready()
     stores = request("GET", "/stores").get("stores", [])
     store_id = next((store.get("id") for store in stores if store.get("name") == STORE_NAME), None)
+    store_id = os.environ.get("OPENFGA_STORE_ID", "").strip() or store_id
     if not store_id:
         store_id = request("POST", "/stores", {"name": STORE_NAME})["id"]
         print(f"created store_id={store_id}")
@@ -122,8 +128,12 @@ data:
         print(f"reusing store_id={store_id}")
 
     model = json.loads(Path("/model/authorization-model.json").read_text())
-    model_id = request("POST", f"/stores/{store_id}/authorization-models", model)["authorization_model_id"]
-    print(f"authorization_model_id={model_id}")
+    receipt = publish(request, store_id, model,
+                      json.loads(Path("/model/core-authorization-model.json").read_text()),
+                      json.loads(os.environ.get("OPENFGA_APPROVED_MODULES", "[]")),
+                      selected_model_id=os.environ.get("OPENFGA_AUTHORIZATION_MODEL_ID", "").strip() or None)
+    model_id = receipt["authorization_model_id"]
+    print(json.dumps(receipt))
 
     seed_tuples = []
     if SEED_SUB:

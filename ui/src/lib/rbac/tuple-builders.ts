@@ -67,12 +67,12 @@ export function openFgaObject(resource: UniversalRebacResourceRef): string {
   return openFgaResourceObject(resource.type, resource.id);
 }
 
-export function openFgaRelation(action: UniversalRebacResourceAction): string {
-  return ACTION_TO_BASE_RELATION[action];
+export function openFgaRelation(action: string): string {
+  return ACTION_TO_BASE_RELATION[action as UniversalRebacResourceAction];
 }
 
-export function openFgaCheckRelation(action: UniversalRebacResourceAction): string {
-  return ACTION_TO_CHECK_RELATION[action];
+export function openFgaCheckRelation(action: string): string {
+  return ACTION_TO_CHECK_RELATION[action as UniversalRebacResourceAction];
 }
 
 export function buildOpenFgaTuple(relationship: UniversalRebacRelationship): OpenFgaTupleKey {

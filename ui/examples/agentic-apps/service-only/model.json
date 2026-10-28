@@ -1,0 +1,125 @@
+{
+  "type": "example_agent_sandbox",
+  "relations": {
+    "owner": {
+      "this": {}
+    },
+    "executor": {
+      "this": {}
+    },
+    "terminator": {
+      "this": {}
+    },
+    "execution_grantor": {
+      "this": {}
+    },
+    "can_exec": {
+      "union": {
+        "child": [
+          {
+            "computedUserset": {
+              "relation": "executor"
+            }
+          },
+          {
+            "computedUserset": {
+              "relation": "owner"
+            }
+          }
+        ]
+      }
+    },
+    "can_terminate": {
+      "union": {
+        "child": [
+          {
+            "computedUserset": {
+              "relation": "terminator"
+            }
+          },
+          {
+            "computedUserset": {
+              "relation": "owner"
+            }
+          }
+        ]
+      }
+    },
+    "can_grant_executor": {
+      "union": {
+        "child": [
+          {
+            "computedUserset": {
+              "relation": "execution_grantor"
+            }
+          },
+          {
+            "computedUserset": {
+              "relation": "owner"
+            }
+          }
+        ]
+      }
+    },
+    "can_grant_terminator": {
+      "computedUserset": {
+        "relation": "owner"
+      }
+    }
+  },
+  "metadata": {
+    "module": "example-service",
+    "relations": {
+      "owner": {
+        "directly_related_user_types": [
+          {
+            "type": "user"
+          },
+          {
+            "type": "team",
+            "relation": "member"
+          }
+        ]
+      },
+      "executor": {
+        "directly_related_user_types": [
+          {
+            "type": "user"
+          },
+          {
+            "type": "service_account"
+          },
+          {
+            "type": "team",
+            "relation": "member"
+          }
+        ]
+      },
+      "terminator": {
+        "directly_related_user_types": [
+          {
+            "type": "user"
+          },
+          {
+            "type": "service_account"
+          },
+          {
+            "type": "team",
+            "relation": "member"
+          }
+        ]
+      },
+      "execution_grantor": {
+        "directly_related_user_types": [
+          {
+            "type": "user"
+          },
+          {
+            "type": "team",
+            "relation": "member"
+          }
+        ]
+      }
+    }
+  }
+}

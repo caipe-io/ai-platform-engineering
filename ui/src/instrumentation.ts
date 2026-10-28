@@ -22,6 +22,8 @@ export async function register() {
     );
     const apps = loadConfiguredAgenticApps();
     validateAgenticAppTokenConfiguration();
+    const { validateNativeInstallations } = await import("./lib/authz/model");
+    await validateNativeInstallations();
     console.log(`[external-apps] Validated ${apps.length} configured App(s)`);
   }
   const { applySeedConfig } = await import("./lib/seed-config");

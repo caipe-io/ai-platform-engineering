@@ -50,7 +50,7 @@ type anonymous
 type user_profile
   relations
     define owner: [user]
-    define reader: [user, service_account, team#admin, organization#admin]
+    define reader: [user, service_account, team#member, team#admin, organization#admin]
     define manager: [user, service_account, team#admin, organization#admin]
     define can_discover: can_read
     define can_read: owner or reader or can_manage
@@ -297,7 +297,7 @@ type knowledge_base
     define owner: [user, service_account]
     define reader: [user, user:*, service_account, team#member, team#admin, external_group#member, slack_channel, webex_space]
     define ingestor: [user, service_account, team#member, team#admin, external_group#member]
-    define manager: [user, service_account, team#member, team#admin, organization#admin]
+    define manager: [user, service_account, team#member, team#admin]
     define auditor: [user, service_account, team#admin]
     # A source may belong to several RAG collections. `parent_collection` is
     # a curation edge only: it records that a source has been added to a
@@ -341,7 +341,7 @@ type data_source
     define manager: [user, service_account, team#member, team#admin, organization#admin]
     define auditor: [user, service_account, team#admin]
     define can_discover: can_read
-    define can_read: reader or can_manage or owner or can_read from parent_kb
+    define can_read: reader or can_ingest or can_manage or owner or can_read from parent_kb
     define can_use: can_read
     define can_write: can_ingest
     define can_ingest: ingestor or can_manage or owner or can_ingest from parent_kb
@@ -422,23 +422,6 @@ type skill
     define can_manage: manager or owner
     define can_audit: auditor or can_manage
 
-# Registered application objects have their own namespace and lifecycle in CAS.
-# Custody of an installation does not imply access to its users' objects.
-type app_resource
-  relations
-    define owner: [user, team#member]
-    define reader: [user, service_account, team#member, team#admin]
-    define user: [user, service_account, team#member, team#admin]
-    define writer: [user, service_account, team#member, team#admin]
-    define manager: [user, service_account, team#member, team#admin]
-    define auditor: [user, service_account, team#member, team#admin]
-    define can_discover: can_read
-    define can_read: reader or can_use or can_manage
-    define can_use: user or can_write or can_manage
-    define can_write: writer or can_manage
-    define can_manage: manager or owner
-    define can_audit: auditor or can_manage
-
 type task
   relations
     define owner: [user, service_account]
@@ -505,10 +488,10 @@ type audit_log
 
 type secret_ref
   relations
-    define metadata_reader: [user, service_account, team#member, team#admin, organization#member, organization#admin]
-    define user: [user, service_account, team#member, team#admin, organization#member, organization#admin]
-    define manager: [user, service_account, team#admin, organization#admin]
-    define auditor: [user, service_account, team#admin, organization#admin]
+    define metadata_reader: [user, service_account, team#member, team#admin]
+    define user: [user, service_account, team#member, team#admin]
+    define manager: [user, service_account, team#admin]
+    define auditor: [user, service_account, team#admin]
     define can_discover: can_read_metadata
     define can_read_metadata: metadata_reader or can_manage
     define can_use: user or can_manage

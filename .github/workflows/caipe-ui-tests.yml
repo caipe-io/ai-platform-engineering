@@ -76,13 +76,31 @@ jobs:
         working-directory: ui
         run: npm run test:external-app-examples
 
+      - name: Start OpenFGA for CAS resource integration
+        run: |
+          docker run -d --name cas-openfga -p 127.0.0.1:18080:8080 \
+            openfga/openfga@sha256:8543200bf85878c968d73da46c4f0e31ba1f63ed3675b71122f1133b0e9d97eb \
+            run --datastore-engine memory --playground-enabled=false
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/stores >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          docker logs cas-openfga
+          exit 1
+
       - name: Run Jest tests
         id: jest
         working-directory: ui
         continue-on-error: true
         env:
           AUTH_TOKEN_STORE_TEST_MONGODB_URI: mongodb://127.0.0.1:27017
+          CAS_RESOURCE_TEST_MONGODB_URI: mongodb://127.0.0.1:27017
+          CAS_RESOURCE_TEST_OPENFGA_URL: http://127.0.0.1:18080
         run: npm test -- --coverage --coverageReporters=text --coverageReporters=json-summary --forceExit
+
+      - name: Stop CAS integration server
+        if: always()
+        run: docker rm -f cas-openfga >/dev/null 2>&1 || true
 
       - name: Set test results
         id: test-results

@@ -62,7 +62,6 @@ export const UNIVERSAL_REBAC_RESOURCE_TYPE_NAMES = [
   "document",
   "skill",
   "task",
-  "app_resource",
   "conversation",
   "admin_surface",
   "policy",

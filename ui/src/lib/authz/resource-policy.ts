@@ -1,17 +1,18 @@
-import { resourceApp } from "@/lib/agentic-apps/service-binding";
+import { isNativeResourceType, nativeResourceDefinition } from "./model";
 import type { AuthorizeResult, Resource } from "./contract";
 import { HttpAuthzError } from "./errors";
-import { readRegisteredResource } from "./resource-store";
+import { readRegisteredResource, registeredResourceId } from "./resource-store";
 
 /** Shared by fresh checks and policy writes; never cache resource availability. */
 export async function registeredResourceGate(resource: Resource, signal?: AbortSignal): Promise<AuthorizeResult | null> {
-  if (resource.type !== "app_resource") return null;
+  if (!isNativeResourceType(resource.type)) return null;
   try {
-    const record = await readRegisteredResource(resource.id, signal);
+    const { app, appId } = await nativeResourceDefinition(resource.type);
+    const record = await readRegisteredResource(registeredResourceId(resource.type, resource.id), signal);
     const denied = (via: string, unavailable = false): AuthorizeResult => ({ decision: "DENY",
       reason: unavailable ? "AUTHZ_UNAVAILABLE" : "NO_CAPABILITY", retriable: unavailable, ttl_seconds: 0, via });
     if (!record) return denied("resource_not_registered");
-    if (record.issuer !== process.env.OIDC_ISSUER?.trim() || !resourceApp(record.app_id)) return denied("installation_disabled");
+    if (record.issuer !== process.env.OIDC_ISSUER?.trim() || (!app || record.app_id !== appId)) return denied("installation_disabled");
     return record.state === "active" ? null : denied("resource_pending", true);
   } catch (error) {
     console.warn("[cas/resources] Availability check failed", { name: error instanceof Error ? error.name : "UnknownError" });

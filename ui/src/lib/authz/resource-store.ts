@@ -1,4 +1,3 @@
-import { createHash } from "crypto";
 import { MongoServerError } from "mongodb";
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
 import { HttpAuthzError } from "./errors";
@@ -10,8 +9,8 @@ async function collection() {
 }
 
 /** A unique, unambiguous tuple key using Mongo's existing unique _id index. */
-export function registeredResourceId(issuer: string, appId: string, kind: string, localId: string): string {
-  return createHash("sha256").update(JSON.stringify([issuer, appId, kind, localId])).digest("hex");
+export function registeredResourceId(type: string, id: string): string {
+  return `${type}:${id}`;
 }
 
 export async function readRegisteredResource(id: string, signal?: AbortSignal): Promise<RegisteredResource | null> {
@@ -32,8 +31,7 @@ export async function reserveResource(intent: RegisteredResource): Promise<Regis
     stored = await readRegisteredResource(intent._id);
   }
   if (!stored) throw new Error("Resource reservation returned no record");
-  if (stored.issuer !== intent.issuer || stored.app_id !== intent.app_id || stored.kind !== intent.kind ||
-    stored.local_id !== intent.local_id || stored.owner.type !== intent.owner.type || stored.owner.id !== intent.owner.id ||
+  if (stored.issuer !== intent.issuer || stored.app_id !== intent.app_id || stored.resource.type !== intent.resource.type || stored.resource.id !== intent.resource.id || stored.owner.type !== intent.owner.type || stored.owner.id !== intent.owner.id ||
     stored.creator.type !== intent.creator.type || stored.creator.id !== intent.creator.id) {
     throw new HttpAuthzError(409, "INVALID_REQUEST", "Resource identity already belongs to a different registration");
   }
@@ -47,4 +45,10 @@ export async function activateResource(id: string): Promise<RegisteredResource> 
   const result = record ?? await readRegisteredResource(id);
   if (!result || result.state !== "active") throw new Error("Resource activation not confirmed");
   return result;
+}
+
+export async function prepareResource(id: string): Promise<void> {
+  await (await collection()).updateOne({ _id: id, state: "pending" }, { $set: { prepared: true } }, {
+    writeConcern: { w: "majority" }, timeoutMS: 5000,
+  });
 }

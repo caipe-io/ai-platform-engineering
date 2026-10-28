@@ -49,7 +49,7 @@ def test_override_projects_only_model_and_keeps_chart_owned_seed() -> None:
     default = render()
     override = render("init.existingModelConfigMap=example-authorization-model")
     config = resource(override, "ConfigMap", "-model")
-    assert set(config["data"]) == {"seed.py"}
+    assert set(config["data"]) == {"seed.py", "publish_model.py", "core-authorization-model.json"}
     assert config["data"]["seed.py"] == resource(default, "ConfigMap", "-model")["data"]["seed.py"]
     job = resource(override, "Job", "-init")
     pod = job["spec"]["template"]["spec"]
@@ -58,6 +58,8 @@ def test_override_projects_only_model_and_keeps_chart_owned_seed() -> None:
         "projected": {"sources": [
             {"configMap": {"name": "example-openfga-model", "items": [
                 {"key": "seed.py", "path": "seed.py"},
+                {"key": "publish_model.py", "path": "publish_model.py"},
+                {"key": "core-authorization-model.json", "path": "core-authorization-model.json"},
             ]}},
             {"configMap": {"name": "example-authorization-model", "items": [
                 {"key": "authorization-model.json", "path": "authorization-model.json"},

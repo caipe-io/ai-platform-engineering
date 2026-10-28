@@ -198,11 +198,6 @@ export const UNIVERSAL_REBAC_RESOURCE_TYPES: readonly UniversalRebacResourceType
       description: "Task template or execution target.",
     },
     {
-      type: "app_resource",
-      actions: ["discover", "read", "use", "write", "manage", "audit"],
-      description: "User/team-owned resource registered by an installed application.",
-    },
-    {
       type: "conversation",
       actions: ["discover", "read", "write", "share", "delete", "audit"],
       description: "Conversation history and sharing scope.",
@@ -246,16 +241,16 @@ export function listResourceTypeDefinitions(): readonly UniversalRebacResourceTy
   return UNIVERSAL_REBAC_RESOURCE_TYPES;
 }
 export function getResourceTypeDefinition(
-  type: UniversalRebacResourceType,
+  type: string,
 ): UniversalRebacResourceTypeDefinition | undefined {
-  return RESOURCE_TYPES_BY_NAME.get(type);
+  return RESOURCE_TYPES_BY_NAME.get(type as UniversalRebacResourceType);
 }
 
 export function isSupportedResourceAction(
-  resourceType: UniversalRebacResourceType,
-  action: UniversalRebacResourceAction,
+  resourceType: string,
+  action: string,
 ): boolean {
   return Boolean(
-    getResourceTypeDefinition(resourceType)?.actions.includes(action),
+    getResourceTypeDefinition(resourceType)?.actions.includes(action as UniversalRebacResourceAction),
   );
 }

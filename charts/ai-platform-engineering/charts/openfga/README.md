@@ -25,6 +25,8 @@ OpenFGA authorization service for CAIPE relationship-based access control
 | init.argocdHookDeletePolicy | string | `"BeforeHookCreation"` |  |
 | init.backoffLimit | int | `6` |  |
 | init.enabled | bool | `true` |  |
+| init.authorizationModelId | string | `""` | Existing immutable model pin; initializer verifies it and only seeds tuples. |
+| init.approvedModules | list | `[]` | Explicitly approved OpenFGA modules in an external compiled model. |
 | init.existingModelConfigMap | string | `""` | Existing same-namespace ConfigMap containing authorization-model.json. Empty uses the bundled model; seed.py remains chart-owned. |
 | init.helmHookDeletePolicy | string | `"before-hook-creation"` |  |
 | init.image.pullPolicy | string | `"IfNotPresent"` |  |
@@ -42,6 +44,7 @@ OpenFGA authorization service for CAIPE relationship-based access control
 | init.resources.requests.memory | string | `"128Mi"` |  |
 | init.seedSub | string | `""` |  |
 | init.seedTuples | list | `[]` |  |
+| init.storeId | string | `""` | Existing store ID; set with authorizationModelId for a pinned rollout. |
 | init.storeName | string | `"caipe-openfga"` |  |
 | migrate.argocdHookDeletePolicy | string | `"BeforeHookCreation,HookSucceeded"` |  |
 | migrate.backoffLimit | int | `6` |  |

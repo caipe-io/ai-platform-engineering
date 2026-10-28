@@ -35,6 +35,12 @@ spec:
           env:
             - name: OPENFGA_HTTP
               value: "http://{{ include "openfga.fullname" . }}:{{ .Values.service.httpPort }}"
+            - name: OPENFGA_STORE_ID
+              value: {{ .Values.init.storeId | default "" | quote }}
+            - name: OPENFGA_AUTHORIZATION_MODEL_ID
+              value: {{ .Values.init.authorizationModelId | default "" | quote }}
+            - name: OPENFGA_APPROVED_MODULES
+              value: {{ .Values.init.approvedModules | default list | toJson | quote }}
             - name: OPENFGA_STORE_NAME
               value: {{ .Values.init.storeName | quote }}
             {{- if .Values.init.seedSub }}
@@ -76,6 +82,10 @@ spec:
                   items:
                     - key: seed.py
                       path: seed.py
+                    - key: publish_model.py
+                      path: publish_model.py
+                    - key: core-authorization-model.json
+                      path: core-authorization-model.json
               - configMap:
                   name: {{ .Values.init.existingModelConfigMap | quote }}
                   items:

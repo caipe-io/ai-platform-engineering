@@ -398,6 +398,8 @@ services:
       # OpenFGA ReBAC reconciliation for the local RBAC profile.
       - OPENFGA_HTTP=${OPENFGA_HTTP:-http://openfga:8080}
       - OPENFGA_STORE_NAME=${OPENFGA_STORE_NAME:-caipe-openfga}
+      - OPENFGA_STORE_ID=${OPENFGA_STORE_ID:-}
+      - OPENFGA_AUTHORIZATION_MODEL_ID=${OPENFGA_AUTHORIZATION_MODEL_ID:-}
       # SSO Configuration - set NEXT_PUBLIC_SSO_ENABLED=true to enable
       - NEXT_PUBLIC_SSO_ENABLED=${NEXT_PUBLIC_SSO_ENABLED:-false}
       - OIDC_ISSUER=${OIDC_ISSUER:-}
@@ -1476,7 +1478,8 @@ services:
 
   openfga-init:
     build:
-      context: ./deploy/openfga/init
+      context: .
+      dockerfile: deploy/openfga/init/Dockerfile
     container_name: openfga-init
     profiles:
       - rbac
@@ -1485,6 +1488,8 @@ services:
     environment:
       OPENFGA_HTTP: http://openfga:8080
       OPENFGA_STORE_NAME: caipe-openfga
+      OPENFGA_STORE_ID: ${OPENFGA_STORE_ID:-}
+      OPENFGA_AUTHORIZATION_MODEL_ID: ${OPENFGA_AUTHORIZATION_MODEL_ID:-}
       # Seed a dev allow tuple with a Keycloak user `sub`. If unset, OpenFGA
       # starts deny-by-default and you can write tuples later.
       OPENFGA_SEED_SUB: ${OPENFGA_SEED_SUB:-}

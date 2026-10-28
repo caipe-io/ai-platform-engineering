@@ -1,13 +1,12 @@
 // assisted-by Codex Codex-sonnet-4-6
 
-import type { UniversalRebacResourceAction, UniversalRebacResourceType } from "@/types/rbac-universal";
 import type { PlatformPrincipal } from "@/lib/auth/platform-identity";
 
 export type SubjectType = PlatformPrincipal["type"];
 
-export type ResourceType = UniversalRebacResourceType;
+export type ResourceType = string;
 
-export type Action = UniversalRebacResourceAction;
+export type Action = string;
 
 export type DecisionValue = "ALLOW" | "DENY";
 
@@ -73,9 +72,7 @@ export type Grantee =
   | { type: "team"; id: string }
   | { type: "everyone" };
 
-export interface GrantIntent {
+export type GrantIntent = {
   resource: Resource;
   grantee: Grantee;
-  /** The capability to grant — must be a valid Action. */
-  capability: Action;
-}
+} & ({ capability: Action; relationship?: never } | { relationship: string; capability?: never });

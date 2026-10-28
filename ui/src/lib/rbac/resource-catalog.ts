@@ -2,10 +2,7 @@ import { getCollection } from "@/lib/mongodb";
 import { listResourceTypeDefinitions } from "@/lib/rbac/resource-model";
 import { slackWorkspaceRef } from "@/lib/rbac/slack-channel-grant-store";
 import { webexWorkspaceRef } from "@/lib/rbac/webex-space-grant-store";
-import type {
-UniversalRebacResourceType,
-UniversalRebacResourceTypeDefinition,
-} from "@/types/rbac-universal";
+import { listNativeResourceTypeDefinitions } from "@/lib/authz";
 import type { RegisteredResource } from "@/lib/authz/resource-contract";
 
 export type RebacResourceStatus = "active" | "disabled" | "archived" | "deleted" | "unknown";
@@ -17,7 +14,7 @@ export type RebacEnforcementStatus =
   | "deprecated";
 
 export interface RebacCatalogResource {
-  type: UniversalRebacResourceType;
+  type: string;
   id: string;
   display_name: string;
   status: RebacResourceStatus;
@@ -32,7 +29,7 @@ export interface ListRebacCatalogInput {
 }
 
 export interface RebacCatalog {
-  resource_types: readonly UniversalRebacResourceTypeDefinition[];
+  resource_types: readonly { type: string; actions: readonly string[]; description: string }[];
   actions: Record<string, readonly string[]>;
   resources: RebacCatalogResource[];
 }
@@ -67,7 +64,7 @@ const DEFAULT_RESOURCES: readonly RebacCatalogResource[] = [
 ];
 
 function resource(
-  type: UniversalRebacResourceType,
+  type: string,
   id: string,
   displayName: string,
   enforcementStatus: RebacEnforcementStatus,
@@ -119,7 +116,8 @@ function matchesFilter(resourceItem: RebacCatalogResource, input: ListRebacCatal
 }
 
 export async function listRebacCatalog(input: ListRebacCatalogInput = {}): Promise<RebacCatalog> {
-  const definitions = listResourceTypeDefinitions();
+  const native = await listNativeResourceTypeDefinitions();
+  const definitions = [...listResourceTypeDefinitions(), ...native];
   const actions = Object.fromEntries(
     definitions.map((definition) => [definition.type, definition.actions])
   );
@@ -155,8 +153,8 @@ export async function listRebacCatalog(input: ListRebacCatalogInput = {}): Promi
 
   const discovered: RebacCatalogResource[] = [
     ...appResources.map((record) => ({
-      ...resource("app_resource", record._id, record.local_id, "rebac_enforced", {
-        app_id: record.app_id, kind: record.kind, owner: record.owner, registration_state: record.state,
+      ...resource(record.resource.type, record.resource.id, record.resource.id, "rebac_enforced", {
+        app_id: record.app_id, registration_model_id: record.model_id, owner: record.owner, registration_state: record.state,
       }),
       status: record.state === "active" ? "active" as const : "disabled" as const,
     })),

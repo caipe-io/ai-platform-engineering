@@ -116,3 +116,12 @@ Restart `openfga-authz-bridge` with that env.
 
 - Map `jwt.active_team` into OpenFGA checks for team-scoped gateway decisions.
 - Shadow mode (legacy vs OpenFGA disagree metric) — not implemented in this minimal stack.
+
+## Composed models and native service resources
+
+The Helm and Compose initializers share the publisher in
+`charts/ai-platform-engineering/charts/openfga/files/publish_model.py`.
+It preserves host-owned core policy and reuses unchanged immutable models.
+Application modules require explicit approval and BFF model-ID pinning. See the
+[native service integration reference](../../ui/examples/agentic-apps/service-only/README.md)
+for compilation, publication receipts and controlled rollouts.

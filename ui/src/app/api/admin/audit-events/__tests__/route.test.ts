@@ -380,6 +380,7 @@ describe("GET /api/admin/audit-events", () => {
       correlation_id: "request-1", decision_id: "decision-1", failed_gate: "caller_tool",
       gateway_operation: "tools/call", agent_ref: "agent:example", access_token: "must-not-be-returned",
       gateway_policy: "Caller and agent must independently have access.",
+      authorization_model_id: "01K8E0AMP0E000000000000000",
       gateway_checks: [{ gate: "caller_tool", subject_ref: "user:test-user", relation: "can_call", resource_ref: "tool:example/list", decision: "DENY", reason: "NO_CAPABILITY", access_token: "nested-token-must-not-be-returned" }],
     }], limit: 50, cursor: 'first', next_cursor: null, since: '2026-01-01T00:00:00Z', until: '2026-01-02T00:00:00Z', as_of: '2026-01-02T00:00:00Z', })));
     const { GET } = await import("../route");
@@ -389,6 +390,7 @@ describe("GET /api/admin/audit-events", () => {
     expect(body.records[0]).not.toHaveProperty("access_token");
     expect(body.records[0].gateway_checks).toEqual([{ gate: "caller_tool", subject_ref: "user:test-user", relation: "can_call", resource_ref: "tool:example/list", decision: "DENY", reason: "NO_CAPABILITY" }]);
     expect(body.records[0].gateway_policy).toContain("independently");
+    expect(body.records[0].authorization_model_id).toBe("01K8E0AMP0E000000000000000");
     const forwarded = new URL((global.fetch as jest.Mock).mock.calls[0][0]).searchParams;
     expect(Object.fromEntries(forwarded)).toMatchObject({ decision_id: "decision-1", correlation_id: "request-1", subject_ref: "user:test-user", resource_ref: "tool:example/list" });
     expect(mockRequireRbacPermission).toHaveBeenCalledWith(expect.anything(), "admin_ui", "audit.view");

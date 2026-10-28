@@ -25,6 +25,16 @@ function invalidateStoreId(): void {
   cachedStoreId = null;
 }
 
+/** The native service contract never follows an implicitly latest model. */
+export function getOpenFgaModelId(required = false): string | undefined {
+  const id = process.env.OPENFGA_AUTHORIZATION_MODEL_ID?.trim();
+  if (id && !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(id)) throw new Error("Invalid OPENFGA_AUTHORIZATION_MODEL_ID");
+  if (required && (!id || !process.env.OPENFGA_STORE_ID?.trim())) {
+    throw new Error("Native service resources require explicit OpenFGA store and model IDs");
+  }
+  return id;
+}
+
 export async function requestOpenFga(
   path: `/stores${string}`,
   options: { method: "GET" | "POST"; body?: string; signal?: AbortSignal },
@@ -34,7 +44,18 @@ export async function requestOpenFga(
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const traceparent = getCurrentTraceparent();
   if (traceparent) headers.traceparent = traceparent;
-  const response = await fetch(`${baseUrl}${path}`, { ...options, headers });
+  // Pin in the single transport so checks, batch checks, lists and writes cannot drift.
+  const modelId = getOpenFgaModelId();
+  const modelDependent = /\/(check|batch-check|list-objects|list-users|expand|write)$/.test(path);
+  let body = options.body;
+  if (modelId && modelDependent && options.method === "POST") {
+    const payload = JSON.parse(body ?? "{}");
+    if (payload.authorization_model_id && payload.authorization_model_id !== modelId) {
+      throw new Error("OpenFGA request conflicts with the selected authorization model");
+    }
+    body = JSON.stringify({ ...payload, authorization_model_id: modelId });
+  }
+  const response = await fetch(`${baseUrl}${path}`, { ...options, body, headers });
   // Forget a stale discovered store, but never automatically replay a write.
   if (response.status === 404) invalidateStoreId();
   return response;

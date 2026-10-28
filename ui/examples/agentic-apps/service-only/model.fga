@@ -1,0 +1,12 @@
+module example-service
+
+type example_agent_sandbox
+  relations
+    define owner: [user, team#member]
+    define executor: [user, service_account, team#member]
+    define terminator: [user, service_account, team#member]
+    define execution_grantor: [user, team#member]
+    define can_exec: executor or owner
+    define can_terminate: terminator or owner
+    define can_grant_executor: execution_grantor or owner
+    define can_grant_terminator: owner
