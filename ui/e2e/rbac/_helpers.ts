@@ -171,7 +171,11 @@ export async function installChatBootMocks(
     });
   });
 
-  await page.route("**/api/user/preferences", async (route) => {
+  await page.route("**/api/user/preferences**", async (route) => {
+    if (new URL(route.request().url()).pathname !== "/api/user/preferences") {
+      await route.continue();
+      return;
+    }
     if (route.request().method() !== "GET") {
       await route.continue();
       return;
