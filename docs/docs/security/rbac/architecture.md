@@ -29,6 +29,39 @@ Production installs must still supply ExternalSecrets and persistent datastore s
 
 ---
 
+## Optional secondary auth boundary
+
+- `POST /api/auth/secondary` is an explicit host-owned secondary identity resolver.
+  Ordinary platform APIs continue to accept only their existing primary credentials.
+- Secondary auth is disabled when `CAIPE_SECONDARY_OIDC_*` configuration is unset.
+  Operators configure an HTTPS issuer/JWKS, accepted audiences and stable provider ID.
+  `CAIPE_SECONDARY_AUTH_RESOURCES` maps each exact HTTPS resource URL to its allowed
+  secondary audiences; an unbound resource cannot use this trust anchor.
+- Signature, issuer, audience, expiry and subject are validated before linking.
+  First linking requires verified email by default, a unique persisted CAIPE user,
+  and a matching current enabled Keycloak account. The trusted-provider email
+  override is explicit and does not import external roles or permissions.
+- Immutable issuer/subject links use admin-only Keycloak attributes plus the
+  `secondary_auth_identity_links` MongoDB collection. Unique reservations prevent
+  concurrent reassignment of either an external identity or canonical user.
+  Admission checks profile permissions before trusting existing links.
+- The independent `secondary-auth-profile` Helm hook and Compose `rbac` service
+  protect those attributes even without an external IdP. External Keycloak operators
+  must apply the same profile migration before enabling secondary auth.
+- Applications receive canonical subject/email/name and an exact resource echo,
+  never provider roles/groups or platform tokens. Existing OpenFGA grants determine
+  resource access. A `linked:false` identity has no subject and is suitable only
+  for an explicitly restricted application bootstrap flow.
+- Applications retain resource-specific admission and token/resource-bound internal
+  forwarding proofs. They must fail closed on resolver failures. This does not issue
+  delegated JWTs or provide workload identity; distinct secondary audiences are
+  required for cryptographic isolation between resources.
+
+Configuration, migration and reservation-recovery details are maintained in
+`ui/src/lib/auth/README.md` alongside the owning implementation.
+
+---
+
 ## Component 1: Keycloak — HR & The Front Desk
 
 > **Badge analogy:** HR issues ID badges. The front desk verifies them on entry. Every other door in the building trusts the badge's chip — they don't call HR each time. When a contractor arrives via a partner agency (Duo SSO), the front desk checks with the agency once, creates an internal record, and issues a standard building badge. From that point on, the contractor uses the same badge as everyone else.
