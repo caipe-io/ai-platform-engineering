@@ -462,20 +462,6 @@ json.dump(client, sys.stdout)
 
 _reconcile_caipe_platform_client_secret
 
-# MCP DCR is optional for deployments that do not expose Tome. Keep this
-# reconcile best-effort so a transient Keycloak Admin API error cannot abort
-# the broader identity/bootstrap job under set -e.
-MCP_DCR_HELPER="${MCP_DCR_HELPER_PATH:-/scripts/mcp-dcr.sh}"
-if [ -r "${MCP_DCR_HELPER}" ]; then
-  # shellcheck source=./mcp-dcr.sh
-  . "${MCP_DCR_HELPER}"
-  if ! _reconcile_mcp_dynamic_client_registration; then
-    echo "${TAG:-[init-idp]} WARNING: MCP DCR reconcile failed; URL-only MCP clients may not work." >&2
-  fi
-else
-  echo "${TAG:-[init-idp]} WARNING: ${MCP_DCR_HELPER} is missing; skipping MCP DCR reconcile." >&2
-fi
-
 # -------------------------------------------------------------------
 # Reconcile the public CLI client (caipe-cli / forge-cli).
 #
@@ -622,6 +608,24 @@ print(json.dumps(existing))
 
 _reconcile_cli_client
 
+# Reconcile anonymous MCP registration only when the operator enables it.
+# The CLI client is created first so its first token retains platform access
+# after the realm-wide profile audience mapper is moved.
+if [ "${MCP_DCR_ENABLED:-false}" = "true" ]; then
+  MCP_DCR_HELPER="${MCP_DCR_HELPER_PATH:-/scripts/mcp-dcr.sh}"
+  if [ -r "${MCP_DCR_HELPER}" ]; then
+    # shellcheck source=./mcp-dcr.sh
+    . "${MCP_DCR_HELPER}"
+    if ! _reconcile_mcp_dynamic_client_registration; then
+      echo "${TAG:-[init-idp]} ERROR: MCP DCR reconcile failed." >&2
+      exit 1
+    fi
+  else
+    echo "${TAG:-[init-idp]} ERROR: ${MCP_DCR_HELPER} is missing." >&2
+    exit 1
+  fi
+fi
+
 # -------------------------------------------------------------------
 # Ensure offline_access is in the realm default-role composite.
 #
@@ -683,7 +687,9 @@ _ensure_default_role_offline_access() {
     echo "[init-idp]   WARNING: failed to add offline_access to ${DEFAULT_REALM_ROLE}."
 }
 
-_ensure_default_role_offline_access
+if [ "${MCP_DCR_ENABLED:-false}" = "true" ]; then
+  _ensure_default_role_offline_access
+fi
 
 # -------------------------------------------------------------------
 # Strict client-secret mode guard (init-idp scope: caipe-ui + caipe-platform).
@@ -1155,6 +1161,12 @@ echo "[init-idp]   jwks:      ${JWKS_EP}"
 if [ -z "${TOKEN_EP}" ] || [ -z "${AUTHZ_EP}" ]; then
   echo "[init-idp] ERROR: failed to parse discovery document" >&2
   exit 1
+fi
+
+# Preserve the existing brokered-SSO role reconciliation when MCP DCR is off.
+# When enabled, it already ran before the local-Keycloak early exit.
+if [ "${MCP_DCR_ENABLED:-false}" != "true" ]; then
+  _ensure_default_role_offline_access
 fi
 
 # CAIPE business authorization is OpenFGA-backed. Do not add application roles
