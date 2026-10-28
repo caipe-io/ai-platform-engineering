@@ -57,8 +57,8 @@ export function WorkspaceBreadcrumbs({
                 <NavigationProgressLink
                   aria-current={current ? "page" : undefined}
                   className={cn(
-                    "min-w-0 max-w-56 truncate rounded-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                    Icon && "inline-flex items-center gap-1",
+                    "min-w-0 max-w-56 rounded-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                    Icon ? "inline-flex items-center gap-1" : "truncate",
                     tone ? [tone, "hover:opacity-80"] : "hover:text-foreground",
                     current && "font-medium",
                     current && !tone && "text-foreground",
@@ -71,7 +71,7 @@ export function WorkspaceBreadcrumbs({
               ) : (
                 <span
                   aria-current={current ? "page" : undefined}
-                  className={cn("min-w-0 max-w-56 truncate",Icon && "inline-flex items-center gap-1",tone,current && "font-medium",current && !tone && "text-foreground")}
+                  className={cn("min-w-0 max-w-56",Icon ? "inline-flex items-center gap-1" : "truncate",tone,current && "font-medium",current && !tone && "text-foreground")}
                 >
                   {content}
                 </span>
