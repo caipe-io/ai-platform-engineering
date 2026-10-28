@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 
 class UpgradeError(RuntimeError):
@@ -29,7 +30,7 @@ def probe(url: str) -> tuple[int, str | None, str | None]:
     except urllib.error.HTTPError as error:
         response = error
     with response:
-        return response.status, response.headers.get("X-CAIPE-Maintenance"), response.headers.get("X-CAIPE-Worker")
+        return response.status, response.headers.get("X-CAIPE-Maintenance"), response.headers.get("X-CAIPE-Generation")
 
 
 def validate_url(url: str, *, loopback: bool) -> None:
@@ -58,12 +59,12 @@ def wait_ready(urls: list[str], timeout: int) -> None:
         time.sleep(1)
 
 
-def wait_reloaded(url: str, previous_worker: str, timeout: int) -> None:
+def wait_reloaded(url: str, generation: str, timeout: int) -> None:
     deadline = time.monotonic() + timeout
     while True:
         try:
-            status, marker, worker = probe(url)
-            if status == 503 and marker == "1" and worker and worker != previous_worker:
+            status, marker, observed_generation = probe(url)
+            if status == 503 and marker == "1" and observed_generation == generation:
                 return
         except (urllib.error.URLError, TimeoutError, OSError):
             pass
@@ -105,16 +106,22 @@ def upgrade(args: argparse.Namespace) -> None:
         replacing = False
         try:
             # Refuse mutation unless the real public proxy observes the mounted flag.
-            status, marker, worker = probe(args.public_url)
-            if status != 503 or marker != "1" or not worker:
+            status, marker, generation = probe(args.public_url)
+            if status != 503 or marker != "1" or not generation:
                 raise UpgradeError("Public proxy did not confirm maintenance; no containers replaced")
             replacing = True
             run(compose + ["up", "-d", "--no-deps", "--wait", "--wait-timeout", str(args.timeout), *args.service])
             wait_ready(args.ready_url, args.timeout)
+            # An exact generation marker distinguishes the new configuration
+            # from every old worker, even when nginx has several worker PIDs.
+            generation = uuid.uuid4().hex
+            staging = gate.parent / f"generation.{generation}.tmp"
+            staging.write_text(f'set $caipe_upgrade_generation "{generation}";\n')
+            staging.replace(gate.parent / "generation.conf")
             # Reload only after readiness, refreshing Docker upstream DNS as well.
             run(proxy + ["-t"])
             run(proxy + ["-s", "reload"])
-            wait_reloaded(args.public_url, worker, args.timeout)
+            wait_reloaded(args.public_url, generation, args.timeout)
             gate.unlink()
             print("Services are ready; maintenance cleared.")
         except (UpgradeError, OSError, urllib.error.URLError):

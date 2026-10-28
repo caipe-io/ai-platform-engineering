@@ -126,7 +126,7 @@ python3 deploy/compose-safe-upgrade.py \
 - The helper verifies the public proxy returns its maintenance marker before
   replacing anything. Users receive `503`, `Retry-After: 15`, and a clear message.
 - It waits for Compose health and all direct readiness URLs, validates/reloads
-  nginx to refresh upstream DNS, confirms a new worker is serving requests while
+  nginx to refresh upstream DNS, confirms the exact new configuration generation is serving requests while
   the gate is still active, then clears maintenance.
 - Authorization errors are never retried as another user or converted to success.
 - A replacement/readiness/reload failure leaves maintenance enabled. Inspect logs,

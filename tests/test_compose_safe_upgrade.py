@@ -30,7 +30,7 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[argparse.Nam
     )
     commands: list[list[str]] = []
     monkeypatch.setattr(upgrade, "run", lambda command: commands.append(command))
-    monkeypatch.setattr(upgrade, "probe", Mock(return_value=(503, "1", "old-worker")))
+    monkeypatch.setattr(upgrade, "probe", Mock(return_value=(503, "1", "old-generation")))
     monkeypatch.setattr(upgrade, "wait_ready", Mock())
     monkeypatch.setattr(upgrade, "wait_reloaded", Mock())
     return args, commands
@@ -132,9 +132,9 @@ def test_readiness_checks_all_services(monkeypatch: pytest.MonkeyPatch) -> None:
     assert probe.call_count == 2
 
 
-def test_reload_requires_a_new_worker(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(upgrade, "probe", Mock(return_value=(503, "1", "old-worker")))
+def test_reload_requires_the_exact_new_generation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(upgrade, "probe", Mock(return_value=(503, "1", "old-generation")))
     with pytest.raises(upgrade.UpgradeError, match="observable"):
-        upgrade.wait_reloaded("https://example.test/", "old-worker", 0)
-    monkeypatch.setattr(upgrade, "probe", Mock(return_value=(503, "1", "new-worker")))
-    upgrade.wait_reloaded("https://example.test/", "old-worker", 0)
+        upgrade.wait_reloaded("https://example.test/", "new-generation", 0)
+    monkeypatch.setattr(upgrade, "probe", Mock(return_value=(503, "1", "new-generation")))
+    upgrade.wait_reloaded("https://example.test/", "new-generation", 0)

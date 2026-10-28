@@ -32,12 +32,12 @@ def response(url: str) -> tuple[int, dict[str, str]]:
         return result.status, dict(result.headers)
 
 
-def await_response(url: str, expected: int, different_worker: str | None = None) -> dict[str, str]:
+def await_response(url: str, expected: int, generation: str | None = None) -> dict[str, str]:
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         try:
             status, headers = response(url)
-            if status == expected and (different_worker is None or headers.get("X-CAIPE-Worker") not in {None, different_worker}):
+            if status == expected and (generation is None or headers.get("X-CAIPE-Generation") == generation):
                 return headers
         except (urllib.error.URLError, TimeoutError, OSError):
             pass
@@ -75,15 +75,17 @@ def test_nginx_gates_startup_and_observes_reloaded_workers(tmp_path: Path) -> No
         headers = await_response(url, 503)
         assert headers["Retry-After"] == "15"
         assert headers["X-CAIPE-Maintenance"] == "1"
-        old_worker = headers["X-CAIPE-Worker"]
+        old_generation = headers["X-CAIPE-Generation"]
         # Even an unavailable upstream cannot leak a connection-failure 502
         # through the maintenance gate while containers are replaced.
         docker("stop", backend)
         assert response(url)[0] == 503
         docker("start", backend)
+        (gate_dir / "generation.conf").write_text('set $caipe_upgrade_generation "example-new-generation";\n')
+        assert response(url)[1]["X-CAIPE-Generation"] == old_generation
         docker("exec", frontend, "nginx", "-t")
         docker("exec", frontend, "nginx", "-s", "reload")
-        headers = await_response(url, 503, different_worker=old_worker)
+        headers = await_response(url, 503, generation="example-new-generation")
         assert headers["X-CAIPE-Maintenance"] == "1"
         gate.unlink()
         headers = await_response(url, 200)
