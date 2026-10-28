@@ -11,7 +11,11 @@ const mockMany = jest.fn();
 const mockGrant = jest.fn();
 const mockRevoke = jest.fn();
 const mockAudit = jest.fn();
+const mockPlatformJwt = jest.fn();
+const mockResolveAppService = jest.fn();
 jest.mock("@/lib/api-middleware", () => ({ getAuthFromBearerOrSession: (...args: unknown[]) => mockAuth(...args) }));
+jest.mock("@/lib/jwt-validation", () => ({ validatePlatformBearerJWT: (...args: unknown[]) => mockPlatformJwt(...args) }));
+jest.mock("@/lib/agentic-apps/service-binding", () => ({ resolveAppService: (...args: unknown[]) => mockResolveAppService(...args) }));
 jest.mock("@/lib/authz", () => ({
   authorize: (...args: unknown[]) => mockAuthorize(...args),
   authorizeMany: (...args: unknown[]) => mockMany(...args),
@@ -161,6 +165,36 @@ it("distinguishes an authentication dependency outage from an invalid token", as
     expect(response.status).toBe(503);
     expect(await response.text()).not.toContain("private upstream detail");
   } finally { log.mockRestore(); }
+});
+
+it("fails closed and redacts diagnostics when the app catalog cannot load", async () => {
+  const previousIssuer = process.env.OIDC_ISSUER;
+  const issuer = "https://identity.example.test";
+  const privateDetail = "private app configuration content";
+  const log = jest.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    process.env.OIDC_ISSUER = issuer;
+    mockPlatformJwt.mockResolvedValue({ issuer, subject: { type: "service_account", id: "example-service" },
+      clientId: "example-client", expiresAt: Date.now() / 1000 + 600 });
+    mockResolveAppService.mockImplementationOnce(() => { throw new SyntaxError(privateDetail); });
+    const response = await check(request({ resource: { type: "app_resource", id: "a".repeat(64) }, action: "read" },
+      { authorization: "Bearer example-service-token" }));
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body).toMatchObject({ code: "AUTHZ_UNAVAILABLE", retriable: true });
+    expect(log).toHaveBeenCalledWith("[access] App service binding failed", { name: "SyntaxError" });
+    expect(JSON.stringify(log.mock.calls)).not.toContain(privateDetail);
+    expect(JSON.stringify(body)).not.toContain(privateDetail);
+    expect(mockAuth).not.toHaveBeenCalled();
+    expect(mockAuthorize).not.toHaveBeenCalled();
+    expect(mockMany).not.toHaveBeenCalled();
+    expect(mockGrant).not.toHaveBeenCalled();
+    expect(mockRevoke).not.toHaveBeenCalled();
+  } finally {
+    if (previousIssuer === undefined) delete process.env.OIDC_ISSUER;
+    else process.env.OIDC_ISSUER = previousIssuer;
+    log.mockRestore();
+  }
 });
 
 it.each([{ ...checkBody, action: "ingest" }, { resource: { type: "unknown", id: "example" }, action: "use" },

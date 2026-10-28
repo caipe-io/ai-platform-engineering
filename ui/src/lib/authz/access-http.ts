@@ -68,7 +68,8 @@ async function handle(request: NextRequest, fields: string[], operation: AccessH
       if (identity.subject.type === "service_account") {
         let app;
         try { app = resolveAppService(identity); }
-        catch {
+        catch (error) {
+          console.error("[access] App service binding failed", { name: error instanceof Error ? error.name : "UnknownError" });
           throw new HttpAuthzError(503, "AUTHZ_UNAVAILABLE", "App installation configuration is unavailable");
         }
         if (!app) throw new HttpAuthzError(403, "FORBIDDEN", "Service is not bound to an enabled resource integration");
