@@ -74,6 +74,13 @@ browser logout, but not its expiry, revocation or loss of required permissions.
 
 ## Register resources for a new app service
 
+:::caution Design revision
+The generic `app_resource` implementation below is on hold in draft #3092.
+The proposed replacement uses native service-defined OpenFGA types and permissions;
+see [the design comparison](./service-defined-resources.md). The current branch
+still implements the generic contract until that revision is completed.
+:::
+
 Use the existing [App Contract](../../features/agentic-app-manifest.md), including
 its service-only profile. Operators bind an installation to a service-account
 client; the app ID supplies its resource namespace. Installation does not grant

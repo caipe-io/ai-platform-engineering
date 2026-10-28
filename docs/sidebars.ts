@@ -324,6 +324,7 @@ const sidebars: SidebarsConfig = {
                 { type: 'doc', id: 'security/rbac/feature-guide', label: 'Feature Guide' },
                 { type: 'doc', id: 'security/rbac/architecture', label: 'Architecture' },
                 { type: 'doc', id: 'security/rbac/access-api', label: 'Access API' },
+                { type: 'doc', id: 'security/rbac/service-defined-resources', label: 'Service-defined Resources (Proposal)' },
                 { type: 'doc', id: 'security/rbac/gateway-cas', label: 'Gateway through CAS' },
                 { type: 'doc', id: 'security/rbac/pdp-coverage-audit', label: 'PDP Coverage Audit (BFF /api/*)' },
                 { type: 'doc', id: 'security/rbac/comprehensive-rbac-refactor', label: 'Comprehensive Refactor' },
