@@ -127,12 +127,37 @@ spec:
                    NATS_URL, NOTIFICATION_RETENTION_DAYS) go through .Values.config.
                    Secrets are referenced from existing Kubernetes Secrets and are
                    skipped entirely when no secretName is set. */ -}}
-            {{- if .Values.notifications.internalToken.secretName }}
+            {{- if .Values.notifications.webPush.secretName }}
+            - name: NOTIFICATION_WEB_PUSH_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.notifications.webPush.secretName | quote }}
+                  key: publicKey
+            - name: NOTIFICATION_WEB_PUSH_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.notifications.webPush.secretName | quote }}
+                  key: privateKey
+            - name: NOTIFICATION_WEB_PUSH_SUBJECT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.notifications.webPush.secretName | quote }}
+                  key: subject
+            {{- end }}
+            {{- $notificationGlobal := (default dict .Values.global).notifications | default dict }}
+            {{- $notificationSecret := $notificationGlobal.tokenSecret | default dict }}
+            {{- $notificationSecretName := .Values.notifications.internalToken.secretName }}
+            {{- $notificationSecretKey := .Values.notifications.internalToken.secretKey | default "token" }}
+            {{- if and (not $notificationSecretName) $notificationGlobal.enabled }}
+            {{- $notificationSecretName = required "global.notifications.tokenSecret.name is required when enabled" $notificationSecret.name }}
+            {{- $notificationSecretKey = $notificationSecret.key | default "token" }}
+            {{- end }}
+            {{- if $notificationSecretName }}
             - name: NOTIFICATIONS_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.notifications.internalToken.secretName | quote }}
-                  key: {{ .Values.notifications.internalToken.secretKey | default "token" | quote }}
+                  name: {{ $notificationSecretName | quote }}
+                  key: {{ $notificationSecretKey | quote }}
             {{- end }}
             {{- if .Values.notifications.natsToken.secretName }}
             - name: NATS_TOKEN

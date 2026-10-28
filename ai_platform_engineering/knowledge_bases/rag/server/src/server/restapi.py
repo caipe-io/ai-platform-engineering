@@ -1520,6 +1520,7 @@ async def delete_datasource(
 
   await vector_db.adelete(expr=f"datasource_id == {VectorDBQueryService._quote_string(datasource_id)}")
   await metadata_storage.delete_datasource_info(datasource_id)  # remove metadata
+  await jobmanager.forget_notification_recipients(datasource_id)
 
   if graph_rag_enabled and data_graph_db:
     await data_graph_db.remove_entity(None, {DATASOURCE_ID_KEY: datasource_id})  # remove from graph db

@@ -53,7 +53,7 @@ class _Cache:
         return self._runtime
 
 
-AGENT = SimpleNamespace(id="agent-1", name="Helper Agent")
+AGENT = SimpleNamespace(id="agent-1", name="Helper Agent", app_context_prompt=None)
 USER = models.UserContext(email="user@example.com", sub="sub-user-1")
 
 

@@ -57,7 +57,10 @@ function applyPatchSection<K extends string>(
   patch: Partial<Record<K, boolean | null>> | undefined,
 ): Partial<Record<K, boolean>> {
   const next: Partial<Record<K, boolean>> = { ...(current ?? {}) };
-  for (const [key, value] of Object.entries(patch ?? {}) as [K, boolean | null][]) {
+  for (const [key, value] of Object.entries(patch ?? {}) as [
+    K,
+    boolean | null,
+  ][]) {
     if (value === null) delete next[key];
     else next[key] = value;
   }
@@ -73,28 +76,37 @@ export type PreferencePatchResult =
  * event types are accepted, and every value must be a boolean. Anything else is
  * rejected so the stored document can only hold catalog keys.
  */
-export function parseNotificationPreferencePatch(input: unknown): PreferencePatchResult {
+export function parseNotificationPreferencePatch(
+  input: unknown,
+): PreferencePatchResult {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return { ok: false, error: "preferences must be an object" };
   }
   const raw = input as Record<string, unknown>;
   const allowedTop = new Set(["categories", "events"]);
   for (const key of Object.keys(raw)) {
-    if (!allowedTop.has(key)) return { ok: false, error: `unknown preference section: ${key}` };
+    if (!allowedTop.has(key))
+      return { ok: false, error: `unknown preference section: ${key}` };
   }
 
   const patch: NotificationPreferencePatch = {};
 
   if (raw.categories !== undefined) {
     const section = parseBooleanMap(raw.categories, NOTIFICATION_CATEGORIES);
-    if (section.ok === false) return { ok: false, error: `categories: ${section.error}` };
-    patch.categories = section.value as Partial<Record<NotificationCategory, boolean | null>>;
+    if (section.ok === false)
+      return { ok: false, error: `categories: ${section.error}` };
+    patch.categories = section.value as Partial<
+      Record<NotificationCategory, boolean | null>
+    >;
   }
 
   if (raw.events !== undefined) {
     const section = parseBooleanMap(raw.events, NOTIFICATION_EVENT_TYPES);
-    if (section.ok === false) return { ok: false, error: `events: ${section.error}` };
-    patch.events = section.value as Partial<Record<NotificationEventType, boolean | null>>;
+    if (section.ok === false)
+      return { ok: false, error: `events: ${section.error}` };
+    patch.events = section.value as Partial<
+      Record<NotificationEventType, boolean | null>
+    >;
   }
 
   return { ok: true, patch };
@@ -103,13 +115,16 @@ export function parseNotificationPreferencePatch(input: unknown): PreferencePatc
 function parseBooleanMap(
   input: unknown,
   allowed: readonly string[],
-): { ok: true; value: Record<string, boolean | null> } | { ok: false; error: string } {
+):
+  | { ok: true; value: Record<string, boolean | null> }
+  | { ok: false; error: string } {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return { ok: false, error: "must be an object" };
   }
   const value: Record<string, boolean | null> = {};
   for (const [key, flag] of Object.entries(input as Record<string, unknown>)) {
-    if (!allowed.includes(key)) return { ok: false, error: `unknown key: ${key}` };
+    if (!allowed.includes(key))
+      return { ok: false, error: `unknown key: ${key}` };
     if (flag !== null && typeof flag !== "boolean") {
       return { ok: false, error: `${key} must be a boolean or null` };
     }

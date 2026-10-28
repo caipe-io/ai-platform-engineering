@@ -32,7 +32,9 @@ function optionalString(value: unknown): string | undefined | null {
  * both. The older single `recipient_subject`/`recipient_email` pair is still
  * accepted as a one-person list.
  */
-export function parseNotificationEventRequest(input: unknown): NotificationEventRequestResult {
+export function parseNotificationEventRequest(
+  input: unknown,
+): NotificationEventRequestResult {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return { ok: false, error: "request must be an object" };
   }
@@ -51,23 +53,38 @@ export function parseNotificationEventRequest(input: unknown): NotificationEvent
 
   const recipients: RecipientRef[] = [];
   if (rawRecipients !== undefined) {
-    if (!Array.isArray(rawRecipients)) return { ok: false, error: "recipients must be an array" };
+    if (!Array.isArray(rawRecipients))
+      return { ok: false, error: "recipients must be an array" };
     if (rawRecipients.length > MAX_REQUEST_RECIPIENTS) {
-      return { ok: false, error: `recipients may contain at most ${MAX_REQUEST_RECIPIENTS} entries` };
+      return {
+        ok: false,
+        error: `recipients may contain at most ${MAX_REQUEST_RECIPIENTS} entries`,
+      };
     }
     for (const entry of rawRecipients) {
       if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
         return { ok: false, error: "each recipient must be an object" };
       }
-      const subject = optionalString((entry as Record<string, unknown>).subject);
+      const subject = optionalString(
+        (entry as Record<string, unknown>).subject,
+      );
       const email = optionalString((entry as Record<string, unknown>).email);
       if (subject === null || email === null) {
-        return { ok: false, error: "recipient subject and email must be strings" };
+        return {
+          ok: false,
+          error: "recipient subject and email must be strings",
+        };
       }
       if (!subject && !email) {
-        return { ok: false, error: "each recipient needs a subject or an email" };
+        return {
+          ok: false,
+          error: "each recipient needs a subject or an email",
+        };
       }
-      recipients.push({ ...(subject ? { subject } : {}), ...(email ? { email } : {}) });
+      recipients.push({
+        ...(subject ? { subject } : {}),
+        ...(email ? { email } : {}),
+      });
     }
   }
 
@@ -76,7 +93,10 @@ export function parseNotificationEventRequest(input: unknown): NotificationEvent
     email: optionalString(legacyEmail),
   };
   if (legacy.subject === null || legacy.email === null) {
-    return { ok: false, error: "recipient_subject and recipient_email must be strings" };
+    return {
+      ok: false,
+      error: "recipient_subject and recipient_email must be strings",
+    };
   }
   if (legacy.subject || legacy.email) {
     recipients.push({
@@ -87,7 +107,10 @@ export function parseNotificationEventRequest(input: unknown): NotificationEvent
 
   const includeOrgAdmins = rawIncludeAdmins === true;
   if (recipients.length === 0 && !includeOrgAdmins) {
-    return { ok: false, error: "at least one recipient or include_org_admins is required" };
+    return {
+      ok: false,
+      error: "at least one recipient or include_org_admins is required",
+    };
   }
 
   // Validate the event itself now, so a bad envelope is rejected before any

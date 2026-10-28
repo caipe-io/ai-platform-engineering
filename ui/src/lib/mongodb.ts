@@ -357,6 +357,19 @@ async function createIndexes(db: Db) {
     safeCreateIndex(db, 'publication_requests', { 'resource.kind': 1, 'requested_state.channel_defaults.channel_id': 1, status: 1 }),
     safeCreateIndex(db, 'publication_requests', { 'resource.kind': 1, 'requested_state.space_id': 1, status: 1 }),
 
+    // Notification delivery is a separate durable queue for each recipient/channel.
+    safeCreateIndex(db, 'notification_jobs', { expanded: 1, createdAt: 1 }),
+    safeCreateIndex(db, 'notification_jobs', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    safeCreateIndex(db, 'notification_deliveries', { status: 1, availableAt: 1 }),
+    safeCreateIndex(db, 'notification_deliveries', { status: 1, leaseUntil: 1 }),
+    safeCreateIndex(db, 'notification_deliveries', { 'recipient.subject': 1, createdAt: -1 }),
+    safeCreateIndex(db, 'notification_deliveries', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    safeCreateIndex(db, 'notification_push_devices', { subject: 1 }),
+    safeCreateIndex(db, 'notification_push_devices', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    safeCreateIndex(db, 'notification_subscriptions', { subject: 1 }),
+    safeCreateIndex(db, 'notification_publish_limits', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    safeCreateIndex(db, 'notification_test_limits', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+
     // Durable header notifications. Direct, team, organization-admin, and
     // global platform audiences share the feed while read state remains
     // personal to each viewer.

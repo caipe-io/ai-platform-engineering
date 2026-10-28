@@ -1,18 +1,22 @@
 /** @jest-environment node */
 
+import { runNotificationDeliveriesOnce } from "@/lib/notifications/delivery.server";
+import { notificationKey } from "@/lib/notifications/subscriptions.server";
+
 // Runs only against a real MongoDB. Set NOTIFICATIONS_MONGO_TEST=1 and point
 // MONGODB_URI at a scratch database. Writes only documents tagged with the
 // test-verify prefix, and removes them before and after the run.
 //   NOTIFICATIONS_MONGO_TEST=1 MONGODB_URI=... npx jest notifications-mongo
 
-import { getCollection } from "@/lib/mongodb";
-import { publishNotificationEvent } from "@/lib/notifications/consumer.server";
+import { closeConnection, getCollection } from "@/lib/mongodb";
+import { publishNotificationEvent as originalPublish } from "@/lib/notifications/consumer.server";
 import { updateNotificationPreferences } from "@/lib/notifications/preferences.server";
 import type { InAppNotificationDocument } from "@/types/in-app-notification";
 import type { UserSettings } from "@/types/mongodb";
 
 const enabled = process.env.NOTIFICATIONS_MONGO_TEST === "1";
 const describeIfMongo = enabled ? describe : describe.skip;
+jest.setTimeout(60_000);
 
 const EMAIL = "test-verify-user@example.com";
 const SUBJECT = "test-verify-subject";
@@ -37,23 +41,57 @@ function envelope(attempt: string) {
   };
 }
 
+async function publishAndRun(input: unknown) {
+  const outcome = await originalPublish(input);
+  await runNotificationDeliveriesOnce();
+  return outcome;
+}
+function inboxKey(attempt: string) {
+  return notificationKey(
+    "platform",
+    `workflow.completed:workflow_run:${PREFIX}run:${attempt}:${SUBJECT}`,
+    SUBJECT,
+  );
+}
+
 async function cleanup(): Promise<void> {
-  const inbox = await getCollection<InAppNotificationDocument>("in_app_notifications");
-  await inbox.deleteMany({ event_key: { $regex: PREFIX } } as never);
+  const inbox = await getCollection<InAppNotificationDocument>(
+    "in_app_notifications",
+  );
+  await inbox.deleteMany({ recipient_user_subjects: SUBJECT } as never);
+  for (const name of ["notification_jobs", "notification_deliveries"])
+    await (
+      await getCollection(name)
+    ).deleteMany({ "recipient.subject": SUBJECT });
   const settings = await getCollection<UserSettings>("user_settings");
   await settings.deleteMany({ user_id: EMAIL });
 }
 
 describeIfMongo("notification persistence against MongoDB", () => {
-  beforeAll(cleanup);
-  afterAll(cleanup);
+  beforeAll(async () => {
+    await cleanup();
+    await (
+      await getCollection("users")
+    ).updateOne(
+      { keycloak_sub: SUBJECT },
+      { $set: { email: EMAIL, metadata: { role: "user" } } },
+      { upsert: true },
+    );
+  });
+  afterAll(async () => {
+    await cleanup();
+    await (await getCollection("users")).deleteOne({ keycloak_sub: SUBJECT });
+    await closeConnection();
+  });
 
   it("stores one inbox entry with catalog severity and the server-side key", async () => {
-    const outcome = await publishNotificationEvent(envelope("a1"));
-    expect(outcome).toBe("delivered");
+    const outcome = await publishAndRun(envelope("a1"));
+    expect(outcome).toBe("queued");
 
-    const inbox = await getCollection<InAppNotificationDocument>("in_app_notifications");
-    const doc = await inbox.findOne({ event_key: `workflow.completed:workflow_run:${PREFIX}run:a1:${SUBJECT}` } as never);
+    const inbox = await getCollection<InAppNotificationDocument>(
+      "in_app_notifications",
+    );
+    const doc = await inbox.findOne({ event_key: inboxKey("a1") } as never);
     expect(doc).not.toBeNull();
     expect(doc?.recipient_user_subjects).toEqual([SUBJECT]);
     expect(doc?.severity).toBe("success");
@@ -62,12 +100,14 @@ describeIfMongo("notification persistence against MongoDB", () => {
   });
 
   it("does not write a second entry for a redelivered attempt", async () => {
-    await publishNotificationEvent(envelope("a1"));
-    await publishNotificationEvent(envelope("a1"));
+    await publishAndRun(envelope("a1"));
+    await publishAndRun(envelope("a1"));
 
-    const inbox = await getCollection<InAppNotificationDocument>("in_app_notifications");
+    const inbox = await getCollection<InAppNotificationDocument>(
+      "in_app_notifications",
+    );
     const count = await inbox.countDocuments({
-      event_key: `workflow.completed:workflow_run:${PREFIX}run:a1:${SUBJECT}`,
+      event_key: inboxKey("a1"),
     } as never);
     expect(count).toBe(1);
   });
@@ -76,31 +116,52 @@ describeIfMongo("notification persistence against MongoDB", () => {
     const settings = await getCollection<UserSettings>("user_settings");
     await settings.updateOne(
       { user_id: EMAIL },
-      { $set: { notification_preferences: { categories: { workflow: false }, events: {} } } },
+      {
+        $set: {
+          notification_preferences: {
+            categories: { workflow: false },
+            events: {},
+          },
+        },
+      },
       { upsert: true },
     );
 
-    expect(await publishNotificationEvent(envelope("a2"))).toBe("disabled");
+    expect(await publishAndRun(envelope("a2"))).toBe("disabled");
 
     await settings.updateOne(
       { user_id: EMAIL },
       { $set: { notification_preferences: { categories: {}, events: {} } } },
     );
-    expect(await publishNotificationEvent(envelope("a3"))).toBe("delivered");
+    expect(await publishAndRun(envelope("a3"))).toBe("queued");
   });
 
   it("keeps an explicit event opt-in even when its category is off", async () => {
     const settings = await getCollection<UserSettings>("user_settings");
     await settings.updateOne(
       { user_id: EMAIL },
-      { $set: { notification_preferences: { categories: { workflow: false }, events: { "workflow.completed": true } } } },
+      {
+        $set: {
+          notification_preferences: {
+            categories: { workflow: false },
+            events: { "workflow.completed": true },
+          },
+        },
+      },
     );
-    expect(await publishNotificationEvent(envelope("a4"))).toBe("delivered");
+    expect(await publishAndRun(envelope("a4"))).toBe("queued");
   });
 
   describe("concurrent preference edits", () => {
     const RACE_EMAIL = "test-verify-race@example.com";
-    const EVENT_TYPES = ["workflow.failed", "workflow.completed", "agent.failed", "ingestion.failed", "agent.completed", "ingestion.completed"] as const;
+    const EVENT_TYPES = [
+      "workflow.failed",
+      "workflow.completed",
+      "agent.failed",
+      "ingestion.failed",
+      "agent.completed",
+      "ingestion.completed",
+    ] as const;
 
     beforeEach(async () => {
       const settings = await getCollection<UserSettings>("user_settings");
@@ -114,29 +175,53 @@ describeIfMongo("notification persistence against MongoDB", () => {
     });
 
     it("keeps every change when several writers race to create the document", async () => {
-      await Promise.all(EVENT_TYPES.map((type) => updateNotificationPreferences(RACE_EMAIL, { events: { [type]: false } })));
+      await Promise.all(
+        EVENT_TYPES.map((type) =>
+          updateNotificationPreferences(RACE_EMAIL, {
+            events: { [type]: false },
+          }),
+        ),
+      );
 
       const settings = await getCollection<UserSettings>("user_settings");
       const doc = await settings.findOne({ user_id: RACE_EMAIL });
-      expect(Object.keys(doc?.notification_preferences?.events ?? {}).sort()).toEqual([...EVENT_TYPES].sort());
+      expect(
+        Object.keys(doc?.notification_preferences?.events ?? {}).sort(),
+      ).toEqual([...EVENT_TYPES].sort());
       expect(doc?.notification_preferences_rev).toBe(EVENT_TYPES.length);
     });
 
     it("keeps every change when several writers edit an existing document", async () => {
-      await updateNotificationPreferences(RACE_EMAIL, { categories: { platform: false } });
-      await Promise.all(EVENT_TYPES.map((type) => updateNotificationPreferences(RACE_EMAIL, { events: { [type]: true } })));
+      await updateNotificationPreferences(RACE_EMAIL, {
+        categories: { platform: false },
+      });
+      await Promise.all(
+        EVENT_TYPES.map((type) =>
+          updateNotificationPreferences(RACE_EMAIL, {
+            events: { [type]: true },
+          }),
+        ),
+      );
 
       const settings = await getCollection<UserSettings>("user_settings");
       const doc = await settings.findOne({ user_id: RACE_EMAIL });
-      expect(Object.keys(doc?.notification_preferences?.events ?? {}).sort()).toEqual([...EVENT_TYPES].sort());
-      expect(doc?.notification_preferences?.categories).toEqual({ platform: false });
+      expect(
+        Object.keys(doc?.notification_preferences?.events ?? {}).sort(),
+      ).toEqual([...EVENT_TYPES].sort());
+      expect(doc?.notification_preferences?.categories).toEqual({
+        platform: false,
+      });
     });
 
     it("stores event names with dots as literal keys", async () => {
-      await updateNotificationPreferences(RACE_EMAIL, { events: { "workflow.failed": false } });
+      await updateNotificationPreferences(RACE_EMAIL, {
+        events: { "workflow.failed": false },
+      });
       const settings = await getCollection<UserSettings>("user_settings");
       const raw = await settings.findOne({ user_id: RACE_EMAIL });
-      expect(Object.keys(raw?.notification_preferences?.events ?? {})).toEqual(["workflow.failed"]);
+      expect(Object.keys(raw?.notification_preferences?.events ?? {})).toEqual([
+        "workflow.failed",
+      ]);
     });
   });
 });

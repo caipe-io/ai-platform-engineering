@@ -1,4 +1,4 @@
-import { createInAppNotification } from "@/lib/in-app-notifications.server";
+import { enqueueNotification } from "@/lib/notifications/delivery.server";
 import { getCollection } from "@/lib/mongodb";
 import {
   notificationEventKey,
@@ -23,18 +23,14 @@ import type { UserSettings } from "@/types/mongodb";
 import type { JsMsg } from "nats";
 
 export type NotificationPublishOutcome =
-  | "delivered"
-  | "disabled"
-  | "invalid"
-  | "failed"
-  | "queued";
+  "delivered" | "disabled" | "invalid" | "failed" | "queued";
 
 /**
  * Producer entry point. Validates the envelope, then hands it to the active
  * transport:
- * - direct: stores the inbox entry in-process. Storage errors are logged and
+ * - direct: persists a delivery job in MongoDB. Storage errors are logged and
  *   reported as "failed", never thrown.
- * - jetstream: publishes to the durable stream, and the consumer stores it.
+ * - jetstream: publishes to the durable stream, and the consumer queues delivery.
  *   If NATS is unreachable this returns "failed". It does not fall back to
  *   direct, so the operator sees the outage.
  *
@@ -62,7 +58,11 @@ export async function publishNotificationEvent(
   try {
     return await storeNotificationEnvelope(envelope);
   } catch (error) {
-    console.error("[notifications] failed to store event", envelope.type, error);
+    console.error(
+      "[notifications] failed to store event",
+      envelope.type,
+      error,
+    );
     return "failed";
   }
 }
@@ -72,47 +72,61 @@ async function publishToJetStream(
 ): Promise<NotificationPublishOutcome> {
   try {
     const nc = await getNatsConnection();
+    await ensureNotificationStream(nc);
     const js = nc.jetstream();
-    await js.publish(notificationSubject(envelope.type), JSON.stringify(envelope), {
-      // NATS rejects a repeat of this id within the stream's duplicate window,
-      // so a producer retry cannot enqueue the event twice. The recipient is
-      // part of the id because one event fans out to several recipients.
-      msgID: `${envelope.id}:${envelope.attempt_id}:${envelope.recipient_subject}`,
-    });
+    await js.publish(
+      notificationSubject(envelope.type),
+      JSON.stringify(envelope),
+      {
+        // NATS rejects a repeat of this id within the stream's duplicate window,
+        // so a producer retry cannot enqueue the event twice. The recipient is
+        // part of the id because one event fans out to several recipients.
+        msgID: notificationEventKey(envelope, envelope.recipient_subject),
+      },
+    );
     return "queued";
   } catch (error) {
-    console.error("[notifications] JetStream publish failed", envelope.type, error);
+    console.error(
+      "[notifications] JetStream publish failed",
+      envelope.type,
+      error,
+    );
     return "failed";
   }
 }
 
 /**
- * Writes one inbox entry for an already-validated envelope. Throws on storage
+ * Queues delivery for an already-validated envelope. Throws on storage
  * failure, so the JetStream consumer can nak and let NATS redeliver.
  */
 export async function storeNotificationEnvelope(
   envelope: NotificationEnvelope,
 ): Promise<NotificationPublishOutcome> {
-  const preferences = await loadNotificationPreferences(envelope.recipient_email);
+  const preferences = await loadNotificationPreferences(
+    envelope.recipient_email,
+  );
   if (!isNotificationEnabled(envelope.type, preferences)) {
     return "disabled";
   }
 
   const definition = NOTIFICATION_EVENT_CATALOG[envelope.type];
-  await createInAppNotification({
-    eventKey: notificationEventKey(envelope, envelope.recipient_subject),
-    recipientUserSubjects: [envelope.recipient_subject],
+  await enqueueNotification({
+    id: notificationEventKey(envelope, envelope.recipient_subject),
+    sourceId: "platform",
+    sourceLabel: definition.category,
+    eventType: envelope.type,
+    recipient: {
+      subject: envelope.recipient_subject,
+      email: envelope.recipient_email,
+    },
     title: envelope.data.title,
     message: envelope.data.summary,
     href: envelope.data.href,
     severity: definition.severity,
-    category: "general",
-    sourceLabel: definition.category,
-    correlationKey: envelope.correlation_id,
-    eventType: envelope.type,
     retentionDays: notificationRetentionDays(),
+    correlationKey: envelope.correlation_id,
   });
-  return "delivered";
+  return "queued";
 }
 
 /**
@@ -197,7 +211,8 @@ export function notificationRetentionDays(): number | undefined {
   const raw = process.env.NOTIFICATION_RETENTION_DAYS?.trim();
   if (raw === undefined || raw === "") return DEFAULT_RETENTION_DAYS;
   const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > MAX_RETENTION_DAYS) return DEFAULT_RETENTION_DAYS;
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > MAX_RETENTION_DAYS)
+    return DEFAULT_RETENTION_DAYS;
   return parsed === 0 ? undefined : parsed;
 }
 

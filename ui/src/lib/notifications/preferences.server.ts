@@ -5,6 +5,7 @@ import {
   type NotificationPreferencePatch,
   type NotificationPreferences,
 } from "@/lib/notifications/preferences";
+import { DEFAULT_USER_SETTINGS } from "@/types/mongodb";
 import type { UserSettings } from "@/types/mongodb";
 
 const MAX_ATTEMPTS = 8;
@@ -37,21 +38,35 @@ export async function updateNotificationPreferences(
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     const current = await settings.findOne(
       { user_id: userId },
-      { projection: { notification_preferences: 1, notification_preferences_rev: 1 } },
+      {
+        projection: {
+          notification_preferences: 1,
+          notification_preferences_rev: 1,
+        },
+      },
     );
     const revision = current?.notification_preferences_rev ?? 0;
-    const merged = mergeNotificationPreferences(current?.notification_preferences ?? null, patch);
+    const merged = mergeNotificationPreferences(
+      current?.notification_preferences ?? null,
+      patch,
+    );
 
     // Documents written before revisions existed have no field, which counts as 0.
     const guard =
       revision === 0
-        ? { $or: [{ notification_preferences_rev: { $exists: false } }, { notification_preferences_rev: 0 }] }
+        ? {
+            $or: [
+              { notification_preferences_rev: { $exists: false } },
+              { notification_preferences_rev: 0 },
+            ],
+          }
         : { notification_preferences_rev: revision };
 
     try {
       const result = await settings.updateOne(
         { user_id: userId, ...guard } as never,
         {
+          $setOnInsert: { ...DEFAULT_USER_SETTINGS, user_id: userId },
           $set: {
             notification_preferences: merged,
             notification_preferences_rev: revision + 1,

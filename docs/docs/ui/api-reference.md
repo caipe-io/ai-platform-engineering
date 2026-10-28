@@ -88,7 +88,7 @@ curl -N -X POST http://localhost:3000/api/v1/chat/stream/start \
 | `GET` | `/api/settings/notification-preferences` | Effective event preferences for the current user |
 | `PATCH` | `/api/settings/notification-preferences` | Set or clear category and event overrides |
 
-`PATCH` accepts `{ "categories": {...}, "events": {...} }`. Each value is `true`, `false`, or `null`. `null` removes the override, so the event returns to its default. Unknown keys are rejected with `400`. Concurrent edits are merged safely. If the settings keep changing under the request, it returns `409`.
+`PATCH` accepts `{ "categories": {...}, "events": {...} }`. Each value is `true`, `false`, or `null`. `null` removes the override. An event then uses its category setting, if present, followed by its catalog default. Unknown keys are rejected with `400`. Concurrent edits are merged safely. If the settings keep changing under the request, it returns `409`.
 
 ## Internal Service Routes
 
@@ -136,3 +136,23 @@ Route files under `ui/src/app/api` are the implementation source of truth.
 to an installed app's declared assistant status endpoint. It requires the same
 conversation-write and agent-use permissions as stream start. Unsupported
 runtimes return 501; app failures never fall back to another runtime.
+
+### App notification registration and user delivery
+
+| Endpoint | Caller | Purpose |
+|---|---|---|
+| `POST /api/notifications/registrations` | Bound app service account with `host.notifications` | Register the app's notification types |
+| `POST /api/notifications` | Same app service account | Queue a registered notification type for named users |
+| `GET/PATCH /api/notifications/subscriptions` | Current user | Read or update global, source, or event choices; pause/resume and quiet hours |
+| `POST/DELETE /api/notifications/push-subscriptions` | Current user | Add or remove an owned browser subscription |
+| `POST /api/notifications/push-receipts` | Current user | Record browser display for an owned, unexpired web-push delivery |
+| `GET /api/notifications/channels` | Current user | Read channel availability without exposing provider identifiers |
+| `POST /api/notifications/test` | Current user | Queue a test for an enabled channel; limited to three per minute |
+| `GET /api/notifications/deliveries` | Current user | Read the last 50 delivery statuses |
+| `POST /api/notifications/deliveries/:id/retry` | Delivery owner | Retry an unexpired failed delivery |
+
+Subscription patches accept `sourceId` and `eventType` (default `*`), plus
+`enabled`, `pausedUntil` (ISO timestamp or `null`), `channels`, and `quietHours`.
+Channel names are `in_app`, `web_push`, `webex`, and `slack`. Quiet hours use
+`enabled`, `start` and `end` (`HH:mm`), and an IANA `timeZone`.
+A source/event override cannot enable an external channel disabled globally.

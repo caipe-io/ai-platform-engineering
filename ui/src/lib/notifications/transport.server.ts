@@ -12,9 +12,9 @@ import {
  * NATS, and credentials stay in the server environment.
  */
 
-export const NOTIFICATION_STREAM = "CAIPE_EVENTS";
+export const NOTIFICATION_STREAM = "CAIPE_NOTIFICATIONS";
 export const NOTIFICATION_CONSUMER = "caipe-notifications";
-export const NOTIFICATION_SUBJECT_PREFIX = "caipe.events.v1";
+export const NOTIFICATION_SUBJECT_PREFIX = "caipe.notifications.v1";
 
 const NANOS_PER_SECOND = 1_000_000_000;
 const STREAM_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
@@ -27,7 +27,9 @@ export function notificationSubject(eventType: string): string {
 }
 
 export function notificationTransportMode(): "direct" | "jetstream" {
-  return process.env.NOTIFICATIONS_TRANSPORT === "jetstream" ? "jetstream" : "direct";
+  return process.env.NOTIFICATIONS_TRANSPORT === "jetstream"
+    ? "jetstream"
+    : "direct";
 }
 
 let connection: Promise<NatsConnection> | null = null;
@@ -64,7 +66,11 @@ export async function closeNotificationConnection(): Promise<void> {
 
 async function watchStatus(nc: NatsConnection): Promise<void> {
   for await (const status of nc.status()) {
-    if (status.type === "disconnect" || status.type === "reconnect" || status.type === "error") {
+    if (
+      status.type === "disconnect" ||
+      status.type === "reconnect" ||
+      status.type === "error"
+    ) {
       console.warn(`[notifications] NATS ${status.type}`, status.data ?? "");
     }
   }
@@ -74,7 +80,9 @@ async function watchStatus(nc: NatsConnection): Promise<void> {
  * Creates the stream and durable consumer if they are missing. Idempotent:
  * re-running it with the same config is safe, so every replica can call it.
  */
-export async function ensureNotificationStream(nc: NatsConnection): Promise<void> {
+export async function ensureNotificationStream(
+  nc: NatsConnection,
+): Promise<void> {
   const jsm = await nc.jetstreamManager();
   try {
     await jsm.streams.info(NOTIFICATION_STREAM);

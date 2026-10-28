@@ -489,7 +489,7 @@ async function executeSteps(
           },
         },
       );
-      await notifyWorkflowEvent({ kind: "requires_input", runId, workflowName, owner: ownerSubject, stepIndex: i });
+      await notifyWorkflowEvent({ kind: "requires_input", runId, workflowName, owner: ownerSubject, stepIndex: i, interruptionId: result.interrupt?.interruptId });
       return; // Execution pauses until resume
     }
 
@@ -641,7 +641,7 @@ async function resumeAndContinue(
         },
       },
     );
-    await notifyWorkflowEvent({ kind: "requires_input", runId, workflowName, owner: ownerSubject, stepIndex });
+    await notifyWorkflowEvent({ kind: "requires_input", runId, workflowName, owner: ownerSubject, stepIndex, interruptionId: result.interrupt?.interruptId });
     return;
   }
 

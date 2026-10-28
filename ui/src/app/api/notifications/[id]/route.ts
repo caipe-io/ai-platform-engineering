@@ -17,7 +17,7 @@ export const PATCH = withErrorHandler(async (
   const subject = typeof session.sub === "string" ? session.sub.trim() : "";
   if (!subject) throw new ApiError("Your session has expired. Please sign in again.", 401);
   const { id } = await context.params;
-  const viewOptions = await inboxViewOptions(user.email);
+  const viewOptions = await inboxViewOptions(user.email, subject);
   const updated = await markInAppNotificationRead(subject, id, {
     ...viewOptions,
   });

@@ -15,9 +15,11 @@
 ## Send an event from a service
 
 ```bash
-curl -X POST http://localhost:3000/api/internal/notifications/events \\
-  -H "Authorization: Bearer $NOTIFICATIONS_INTERNAL_TOKEN" \\
-  -H "Content-Type: application/json" \\
+# Export the same NOTIFICATIONS_INTERNAL_TOKEN configured for this deployment.
+export NOTIFICATIONS_INTERNAL_TOKEN=example-test-token
+curl -X POST http://localhost:3000/api/internal/notifications/events \
+  -H "Authorization: Bearer $NOTIFICATIONS_INTERNAL_TOKEN" \
+  -H "Content-Type: application/json" \
   -d '{"id":"evt-1","type":"agent.failed","version":1,"occurred_at":"2026-10-14T10:00:00Z",
        "resource":{"type":"autonomous_task","id":"example"},"attempt_id":"run-1",
        "data":{"status":"failed","title":"Agent task failed","summary":"Example task failed."},

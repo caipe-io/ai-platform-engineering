@@ -44,7 +44,16 @@ describe("notifyWorkflowEvent", () => {
     await notifyWorkflowEvent({ kind: "requires_input", runId: "run-1", owner, stepIndex: 2 });
 
     const attempts = mockPublishRequest.mock.calls.map(([r]) => r.base.attempt_id);
-    expect(attempts).toEqual(["run-1:step-0", "run-1:step-2", "run-1:step-2"]);
+    expect(attempts).toEqual(["run-1:step-0:initial", "run-1:step-2:initial", "run-1:step-2:initial"]);
+  });
+
+  it("distinguishes a new interruption in the same step while deduplicating its retry", async () => {
+    for (const interruptionId of ["first", "second", "second"]) {
+      await notifyWorkflowEvent({ kind: "requires_input", runId: "run-1", owner, stepIndex: 2, interruptionId });
+    }
+    expect(mockPublishRequest.mock.calls.map(([request]) => request.base.attempt_id)).toEqual([
+      "run-1:step-2:first", "run-1:step-2:second", "run-1:step-2:second",
+    ]);
   });
 
   it("uses the run id as the attempt id for lifecycle events", async () => {

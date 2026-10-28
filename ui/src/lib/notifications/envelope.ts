@@ -37,8 +37,7 @@ export interface NotificationEnvelope {
 }
 
 export type EnvelopeParseResult =
-  | { ok: true; envelope: NotificationEnvelope }
-  | { ok: false; error: string };
+  { ok: true; envelope: NotificationEnvelope } | { ok: false; error: string };
 
 function nonEmptyString(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
@@ -63,7 +62,10 @@ export function parseNotificationEnvelope(input: unknown): EnvelopeParseResult {
   const raw = input as Record<string, unknown>;
 
   if (raw.version !== NOTIFICATION_ENVELOPE_VERSION) {
-    return { ok: false, error: `unsupported envelope version: ${String(raw.version)}` };
+    return {
+      ok: false,
+      error: `unsupported envelope version: ${String(raw.version)}`,
+    };
   }
   if (!isNotificationEventType(raw.type)) {
     return { ok: false, error: `unknown event type: ${String(raw.type)}` };
@@ -79,7 +81,8 @@ export function parseNotificationEnvelope(input: unknown): EnvelopeParseResult {
   if (!recipient) return { ok: false, error: "recipient_subject is required" };
 
   const recipientEmail = nonEmptyString(raw.recipient_email, MAX_ID_LENGTH);
-  if (!recipientEmail) return { ok: false, error: "recipient_email is required" };
+  if (!recipientEmail)
+    return { ok: false, error: "recipient_email is required" };
 
   if (!isIsoTimestamp(raw.occurred_at)) {
     return { ok: false, error: "occurred_at must be an ISO-8601 timestamp" };
@@ -97,19 +100,28 @@ export function parseNotificationEnvelope(input: unknown): EnvelopeParseResult {
   const title = nonEmptyString(data?.title, MAX_TITLE_LENGTH);
   const summary = nonEmptyString(data?.summary, MAX_SUMMARY_LENGTH);
   if (!status || !title || !summary) {
-    return { ok: false, error: "data.status, data.title, and data.summary are required" };
+    return {
+      ok: false,
+      error: "data.status, data.title, and data.summary are required",
+    };
   }
 
   let href: string | undefined;
   if (data?.href !== undefined) {
     // Only same-app relative links, so an envelope cannot inject external URLs.
-    if (typeof data.href !== "string" || !data.href.startsWith("/") || data.href.startsWith("//")) {
+    if (
+      typeof data.href !== "string" ||
+      !data.href.startsWith("/") ||
+      data.href.startsWith("//") ||
+      /[\\\u0000-\u001f\u007f]/.test(data.href)
+    ) {
       return { ok: false, error: "data.href must be a relative path" };
     }
     href = data.href;
   }
 
-  const correlationId = nonEmptyString(raw.correlation_id, MAX_ID_LENGTH) ?? undefined;
+  const correlationId =
+    nonEmptyString(raw.correlation_id, MAX_ID_LENGTH) ?? undefined;
 
   return {
     ok: true,
@@ -138,7 +150,10 @@ export function parseNotificationEnvelope(input: unknown): EnvelopeParseResult {
  * `attempt_id`, so they create a new entry, while redelivery of the same
  * attempt is ignored.
  */
-export function notificationEventKey(envelope: NotificationEnvelope, recipient: string): string {
+export function notificationEventKey(
+  envelope: NotificationEnvelope,
+  recipient: string,
+): string {
   return [
     envelope.type,
     envelope.resource.type,

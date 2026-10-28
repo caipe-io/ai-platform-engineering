@@ -13,7 +13,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const { user, session } = await getAuthFromBearerOrSession(request);
   const subject = typeof session.sub === "string" ? session.sub.trim() : "";
   if (!subject) throw new ApiError("Your session has expired. Please sign in again.", 401);
-  const viewOptions = await inboxViewOptions(user.email);
+  const viewOptions = await inboxViewOptions(user.email, subject);
   const updated = await markAllInAppNotificationsRead(subject, {
     ...viewOptions,
   });

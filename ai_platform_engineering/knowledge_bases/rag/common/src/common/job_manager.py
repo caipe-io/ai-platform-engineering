@@ -50,8 +50,8 @@ class JobInfo(BaseModel):
   datasource_id: Optional[str] = Field(description="Associated datasource ID", default=None)
   document_count: Optional[int] = Field(description="Number of documents ingested", default=0)
   chunk_count: Optional[int] = Field(description="Number of chunks created", default=0)
-  triggered_by_subject: Optional[str] = Field(description="Keycloak subject of the user who created the job (None for scheduled/reload/service jobs)", default=None)
-  triggered_by_email: Optional[str] = Field(description="Email of the user who created the job (None for scheduled/reload/service jobs)", default=None)
+  triggered_by_subject: Optional[str] = Field(description="Keycloak subject of the user who created the job (None for scheduled/reload/service jobs)", default=None, exclude=True, repr=False)
+  triggered_by_email: Optional[str] = Field(description="Email of the user who created the job (None for scheduled/reload/service jobs)", default=None, exclude=True, repr=False)
 
 
 # Ingestors dequeue their Redis list within ~1s (blpop timeout=1), so a job
@@ -280,6 +280,10 @@ class JobManager:
         await self._emit_job_event(job_id, datasource_id, new_status)
     except Exception as error:  # noqa: BLE001 - notifications must never affect job state
       logger.warning(f"Notification bookkeeping failed for job {job_id} datasource {datasource_id}: {error}")
+
+  async def forget_notification_recipients(self, datasource_id: str) -> None:
+    """Remove notification subscription history when a datasource is deleted."""
+    await self.redis_client.delete(f"{REDIS_JOB_DATASOURCE_TOUCHED_PREFIX}{datasource_id}")
 
   async def _notification_recipients(self, job_id: str, datasource_id: Optional[str], datasource_record: Dict[str, Any]) -> List[Dict[str, str]]:
     """Users who "touched" the datasource: its creator/owner, the job's trigger user, and anyone who created or edited a job for it."""

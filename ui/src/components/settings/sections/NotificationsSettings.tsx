@@ -1,7 +1,7 @@
 "use client";
 
 import { ReleaseNotesPreview } from "@/components/settings/ReleaseNotesPreview";
-import { EventNotificationSettings } from "@/components/settings/sections/EventNotificationSettings";
+import { NotificationDeliverySettings } from "@/components/settings/sections/NotificationDeliverySettings";
 import { AutoSaveStatus } from "@/components/settings/shared/AutoSaveStatus";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
 import { SettingsSwitch } from "@/components/settings/shared/SettingsSwitch";
@@ -18,10 +18,10 @@ import {
   type BrowserNotificationCapability,
 } from "@/lib/agent-completion-notifications";
 import { Activity,Bell,BellRing,ChevronsDownUp,ChevronsUpDown,Loader2,Volume2 } from "lucide-react";
-import { useEffect,useRef,useState } from "react";
+import { useCallback,useEffect,useRef,useState } from "react";
 
 type NotificationKey = "release-notes" | "browser-completions" | "completion-chime" | "platform-health";
-type NotificationSection = "agent-completions" | "release-notes" | "platform-health";
+type NotificationSection = "agent-completions" | "release-notes" | "platform-health" | `delivery:${string}`;
 
 const NOTIFICATION_SECTIONS: NotificationSection[] = ["agent-completions","release-notes","platform-health"];
 
@@ -71,9 +71,9 @@ function permissionDescription(capability: BrowserNotificationCapability): strin
 
 export function NotificationsSettings(): React.ReactElement {
   const { isAdmin } = useAdminRole();
-  const visibleSections: NotificationSection[] = isAdmin
-    ? NOTIFICATION_SECTIONS
-    : ["agent-completions","release-notes"];
+  const [deliverySections, setDeliverySections] = useState<NotificationSection[]>([]);
+  const knownDeliverySections = useRef(new Set<string>());
+  const visibleSections: NotificationSection[] = [...(isAdmin ? NOTIFICATION_SECTIONS : ["agent-completions", "release-notes"] as NotificationSection[]), ...deliverySections];
   const [preferences,setPreferences] = useState<NotificationPreferences>({
     browserEnabled: false,
     chimeEnabled: false,
@@ -255,6 +255,12 @@ export function NotificationsSettings(): React.ReactElement {
     }
     autoSave.retry(key);
   };
+  const onDeliverySectionsLoaded = useCallback((ids: string[]) => {
+    setDeliverySections(ids as NotificationSection[]);
+    const added = ids.filter((id) => !knownDeliverySections.current.has(id));
+    added.forEach((id) => knownDeliverySections.current.add(id));
+    if (added.length) setExpandedSections((current) => new Set([...current, ...added as NotificationSection[]]));
+  }, [setExpandedSections]);
   const setSectionExpanded = (section: NotificationSection,expanded: boolean): void => {
     setExpandedSections((current) => {
       const next = new Set(current);
@@ -309,7 +315,7 @@ export function NotificationsSettings(): React.ReactElement {
         </Button>
       </div>
 
-      <EventNotificationSettings />
+      <NotificationDeliverySettings expandedSections={expandedSections} onSectionChange={(id, expanded) => setSectionExpanded(id as NotificationSection, expanded)} onSectionsLoaded={onDeliverySectionsLoaded} />
 
       <SettingsCard
         collapsibleLabel="Agent completions"

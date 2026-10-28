@@ -69,7 +69,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     },
   });
 
-  if (outcome === "failed") {
+  if (outcome === "failed" || outcome === "invalid") {
     throw new ApiError("The test notification could not be delivered.", 503, "DELIVERY_FAILED");
   }
   return successResponse({ outcome });

@@ -10,7 +10,9 @@ export class DuplicateKeyError extends Error {
   code = 11000;
 }
 
-export function createFakeUserSettings(options: { beforeFindResolves?: () => Promise<void> } = {}) {
+export function createFakeUserSettings(
+  options: { beforeFindResolves?: () => Promise<void> } = {},
+) {
   const docs = new Map<string, Doc>();
 
   function matches(doc: Doc, filter: Filter): boolean {
@@ -19,8 +21,14 @@ export function createFakeUserSettings(options: { beforeFindResolves?: () => Pro
         return (expected as Filter[]).some((clause) => matches(doc, clause));
       }
       const actual = doc[key];
-      if (expected && typeof expected === "object" && "$exists" in (expected as object)) {
-        return (actual !== undefined) === (expected as { $exists: boolean }).$exists;
+      if (
+        expected &&
+        typeof expected === "object" &&
+        "$exists" in (expected as object)
+      ) {
+        return (
+          (actual !== undefined) === (expected as { $exists: boolean }).$exists
+        );
       }
       return actual === expected;
     });
@@ -31,12 +39,18 @@ export function createFakeUserSettings(options: { beforeFindResolves?: () => Pro
     collection: {
       async findOne(filter: Filter): Promise<Doc | null> {
         const snapshot = docs.get(filter.user_id as string);
-        const copy = snapshot ? (JSON.parse(JSON.stringify(snapshot)) as Doc) : null;
+        const copy = snapshot
+          ? (JSON.parse(JSON.stringify(snapshot)) as Doc)
+          : null;
         // Lets a test hold every reader here, so two writers read the same revision.
         await options.beforeFindResolves?.();
         return copy;
       },
-      async updateOne(filter: Filter, update: { $set: Record<string, unknown> }, opts?: { upsert?: boolean }) {
+      async updateOne(
+        filter: Filter,
+        update: { $set: Record<string, unknown> },
+        opts?: { upsert?: boolean },
+      ) {
         const existing = docs.get(filter.user_id as string);
         if (existing) {
           if (matches(existing, filter)) {
@@ -49,7 +63,10 @@ export function createFakeUserSettings(options: { beforeFindResolves?: () => Pro
           return { matchedCount: 0, upsertedCount: 0 };
         }
         if (opts?.upsert) {
-          docs.set(filter.user_id as string, { user_id: filter.user_id as string, ...update.$set });
+          docs.set(filter.user_id as string, {
+            user_id: filter.user_id as string,
+            ...update.$set,
+          });
           return { matchedCount: 0, upsertedCount: 1 };
         }
         return { matchedCount: 0, upsertedCount: 0 };

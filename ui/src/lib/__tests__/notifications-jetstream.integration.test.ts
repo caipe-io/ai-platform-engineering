@@ -14,11 +14,11 @@ import { NOTIFICATION_STREAM } from "@/lib/notifications/transport.server";
 const integrationUrl = process.env.NATS_INTEGRATION_URL;
 const describeIfNats = integrationUrl ? describe : describe.skip;
 
-const mockCreateInAppNotification = jest.fn();
+const mockEnqueueNotification = jest.fn();
 const mockFindOne = jest.fn();
 
-jest.mock("@/lib/in-app-notifications.server", () => ({
-  createInAppNotification: (...args: unknown[]) => mockCreateInAppNotification(...args),
+jest.mock("@/lib/notifications/delivery.server", () => ({
+  enqueueNotification: (...args: unknown[]) => mockEnqueueNotification(...args),
 }));
 
 jest.mock("@/lib/mongodb", () => ({
@@ -60,7 +60,7 @@ describeIfNats("JetStream notification transport", () => {
     process.env.NOTIFICATIONS_TRANSPORT = "jetstream";
     process.env.NOTIFICATION_EVENTS_ENABLED = "true";
     mockFindOne.mockResolvedValue(null);
-    mockCreateInAppNotification.mockResolvedValue(undefined);
+    mockEnqueueNotification.mockResolvedValue(undefined);
     startNotificationConsumer();
     // Give the consumer time to create the stream and durable consumer.
     await new Promise((resolve) => setTimeout(resolve, 1_000));
@@ -72,8 +72,8 @@ describeIfNats("JetStream notification transport", () => {
   });
 
   beforeEach(() => {
-    mockCreateInAppNotification.mockClear();
-    mockCreateInAppNotification.mockResolvedValue(undefined);
+    mockEnqueueNotification.mockClear();
+    mockEnqueueNotification.mockResolvedValue(undefined);
   });
 
   it("publishes, stores once, and ignores a duplicate publish", async () => {
@@ -81,38 +81,38 @@ describeIfNats("JetStream notification transport", () => {
 
     const first = await publishNotificationEvent(envelope(attempt));
     expect(first).toBe("queued");
-    await waitFor(() => mockCreateInAppNotification.mock.calls.length === 1);
+    await waitFor(() => mockEnqueueNotification.mock.calls.length === 1);
 
     // Same id and attempt inside the duplicate window: NATS must reject it.
     await publishNotificationEvent(envelope(attempt));
     await new Promise((resolve) => setTimeout(resolve, 1_500));
-    expect(mockCreateInAppNotification).toHaveBeenCalledTimes(1);
-    expect(mockCreateInAppNotification).toHaveBeenCalledWith(
+    expect(mockEnqueueNotification).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueNotification).toHaveBeenCalledWith(
       expect.objectContaining({
-        eventKey: `workflow.completed:workflow_run:run-integration:${attempt}:subject-integration`,
-        recipientUserSubjects: ["subject-integration"],
+        id: `workflow.completed:workflow_run:run-integration:${attempt}:subject-integration`,
+        recipient: { subject: "subject-integration", email: "test-user@example.com" },
       }),
     );
   });
 
   it("redelivers when storage fails, then stores on the retry", async () => {
     const attempt = `attempt-retry-${Date.now()}`;
-    mockCreateInAppNotification.mockRejectedValueOnce(new Error("mongo unavailable"));
+    mockEnqueueNotification.mockRejectedValueOnce(new Error("mongo unavailable"));
 
     await publishNotificationEvent(envelope(attempt));
     // First delivery fails and is nak'd for 5 seconds, then redelivered.
-    await waitFor(() => mockCreateInAppNotification.mock.calls.length >= 2, 20_000);
-    expect(mockCreateInAppNotification).toHaveBeenCalledTimes(2);
+    await waitFor(() => mockEnqueueNotification.mock.calls.length >= 2, 20_000);
+    expect(mockEnqueueNotification).toHaveBeenCalledTimes(2);
   }, 30_000);
 
   it("terminates malformed messages instead of redelivering them", async () => {
-    mockCreateInAppNotification.mockClear();
+    mockEnqueueNotification.mockClear();
     const { connect } = await import("nats");
-    const nc = await connect({ servers: integrationUrl });
-    nc.jetstream().publish(`caipe.events.v1.workflow.completed`, "not-json");
+    const nc = await connect({ servers: integrationUrl, ...(process.env.NATS_TOKEN ? { token: process.env.NATS_TOKEN } : {}) });
+    nc.jetstream().publish(`caipe.notifications.v1.workflow.completed`, "not-json");
     await nc.flush();
     await new Promise((resolve) => setTimeout(resolve, 1_500));
-    expect(mockCreateInAppNotification).not.toHaveBeenCalled();
+    expect(mockEnqueueNotification).not.toHaveBeenCalled();
     await nc.close();
   });
 
@@ -125,6 +125,6 @@ describeIfNats("JetStream notification transport", () => {
   });
 
   it("uses the expected stream name", () => {
-    expect(NOTIFICATION_STREAM).toBe("CAIPE_EVENTS");
+    expect(NOTIFICATION_STREAM).toBe("CAIPE_NOTIFICATIONS");
   });
 });

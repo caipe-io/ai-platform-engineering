@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import React from "react";
 
 import { Button } from "@/components/ui/button";
+import { NotificationInboxSubscriptions } from "@/components/notifications/NotificationInboxSubscriptions";
 import {
   Popover,
   PopoverContent,
@@ -75,6 +76,7 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
   const [page, setPage] = React.useState(1);
   const [data, setData] = React.useState<InAppNotificationPage>(EMPTY_PAGE);
   const [loading, setLoading] = React.useState(false);
+  const [tab, setTab] = React.useState<"inbox" | "subscriptions">("inbox");
 
   const load = React.useCallback(async (targetPage: number) => {
     if (!enabled) {
@@ -205,7 +207,11 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
           )}
         </div>
 
-        <div className="max-h-[28rem] overflow-y-auto">
+        <div className="flex gap-2 border-b px-3 py-2" aria-label="Notification views">
+          <Button size="sm" variant={tab === "inbox" ? "secondary" : "ghost"} onClick={() => setTab("inbox")}>Inbox</Button>
+          <Button size="sm" variant={tab === "subscriptions" ? "secondary" : "ghost"} onClick={() => setTab("subscriptions")}>Subscriptions</Button>
+        </div>
+        {tab === "subscriptions" ? <div className="max-h-[28rem] overflow-y-auto"><NotificationInboxSubscriptions /></div> : <div className="max-h-[28rem] overflow-y-auto">
           {loading && data.notifications.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-muted-foreground">
               Loading notifications…
@@ -260,9 +266,9 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
               ))}
             </ul>
           )}
-        </div>
+        </div>}
 
-        {data.pagination.total_pages > 1 && (
+        {tab === "inbox" && data.pagination.total_pages > 1 && (
           <div className="flex items-center justify-between border-t px-3 py-2">
             <Button
               type="button"

@@ -13,14 +13,14 @@ import { notificationRetentionDays, publishNotificationEvent } from "@/lib/notif
 import { NOTIFICATION_EVENT_CATALOG } from "@/lib/notifications/taxonomy";
 
 const mockGetCollection = jest.fn();
-const mockCreateInAppNotification = jest.fn();
+const mockEnqueueNotification = jest.fn();
 
 jest.mock("@/lib/mongodb", () => ({
   getCollection: (...args: unknown[]) => mockGetCollection(...args),
 }));
 
-jest.mock("@/lib/in-app-notifications.server", () => ({
-  createInAppNotification: (...args: unknown[]) => mockCreateInAppNotification(...args),
+jest.mock("@/lib/notifications/delivery.server", () => ({
+  enqueueNotification: (...args: unknown[]) => mockEnqueueNotification(...args),
 }));
 
 const validEnvelope = {
@@ -43,7 +43,7 @@ const validEnvelope = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockCreateInAppNotification.mockResolvedValue(undefined);
+  mockEnqueueNotification.mockResolvedValue(undefined);
   mockGetCollection.mockResolvedValue({
     findOne: jest.fn().mockResolvedValue(null),
   });
@@ -200,18 +200,18 @@ describe("event key", () => {
 });
 
 describe("publishNotificationEvent", () => {
-  it("writes an inbox entry using the catalog severity and a deterministic key", async () => {
+  it("queues durable channel delivery using the catalog severity and a deterministic key", async () => {
     const outcome = await publishNotificationEvent(validEnvelope);
 
-    expect(outcome).toBe("delivered");
-    expect(mockCreateInAppNotification).toHaveBeenCalledWith({
-      eventKey: "workflow.completed:workflow_run:run-1:attempt-1:subject-1",
-      recipientUserSubjects: ["subject-1"],
+    expect(outcome).toBe("queued");
+    expect(mockEnqueueNotification).toHaveBeenCalledWith({
+      id: "workflow.completed:workflow_run:run-1:attempt-1:subject-1",
+      sourceId: "platform",
+      recipient: { subject: "subject-1", email: "test-user@example.com" },
       title: "Workflow finished",
       message: "Daily report completed.",
       href: "/workflows/run-1",
       severity: NOTIFICATION_EVENT_CATALOG["workflow.completed"].severity,
-      category: "general",
       sourceLabel: "workflow",
       correlationKey: "corr-1",
       eventType: "workflow.completed",
@@ -229,7 +229,7 @@ describe("publishNotificationEvent", () => {
     const outcome = await publishNotificationEvent(validEnvelope);
 
     expect(outcome).toBe("disabled");
-    expect(mockCreateInAppNotification).not.toHaveBeenCalled();
+    expect(mockEnqueueNotification).not.toHaveBeenCalled();
   });
 
   it("does not let one user's preferences affect another user", async () => {
@@ -254,8 +254,8 @@ describe("publishNotificationEvent", () => {
       { user_id: "test-user@example.com" },
       expect.anything(),
     );
-    expect(mockCreateInAppNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ recipientUserSubjects: ["subject-1"] }),
+    expect(mockEnqueueNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ recipient: { subject: "subject-1", email: "test-user@example.com" } }),
     );
   });
 
@@ -265,7 +265,7 @@ describe("publishNotificationEvent", () => {
       recipient_email: undefined,
     });
     expect(outcome).toBe("invalid");
-    expect(mockCreateInAppNotification).not.toHaveBeenCalled();
+    expect(mockEnqueueNotification).not.toHaveBeenCalled();
   });
 
   it("is a no-op when the operator disables event notifications", async () => {
@@ -275,7 +275,7 @@ describe("publishNotificationEvent", () => {
       const outcome = await publishNotificationEvent(validEnvelope);
       expect(outcome).toBe("disabled");
       expect(mockGetCollection).not.toHaveBeenCalled();
-      expect(mockCreateInAppNotification).not.toHaveBeenCalled();
+      expect(mockEnqueueNotification).not.toHaveBeenCalled();
     } finally {
       if (previous === undefined) delete process.env.NOTIFICATION_EVENTS_ENABLED;
       else process.env.NOTIFICATION_EVENTS_ENABLED = previous;
@@ -287,12 +287,12 @@ describe("publishNotificationEvent", () => {
 
     expect(outcome).toBe("invalid");
     expect(mockGetCollection).not.toHaveBeenCalled();
-    expect(mockCreateInAppNotification).not.toHaveBeenCalled();
+    expect(mockEnqueueNotification).not.toHaveBeenCalled();
   });
 
   it("never throws when storage fails, so the producing job is unaffected", async () => {
     const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
-    mockCreateInAppNotification.mockRejectedValue(new Error("mongo unavailable"));
+    mockEnqueueNotification.mockRejectedValue(new Error("mongo unavailable"));
 
     await expect(publishNotificationEvent(validEnvelope)).resolves.toBe("failed");
     expect(consoleError).toHaveBeenCalled();
@@ -330,6 +330,6 @@ describe("notification retention", () => {
   it("passes the configured retention to the inbox write", async () => {
     process.env.NOTIFICATION_RETENTION_DAYS = "7";
     await publishNotificationEvent(validEnvelope);
-    expect(mockCreateInAppNotification).toHaveBeenCalledWith(expect.objectContaining({ retentionDays: 7 }));
+    expect(mockEnqueueNotification).toHaveBeenCalledWith(expect.objectContaining({ retentionDays: 7 }));
   });
 });

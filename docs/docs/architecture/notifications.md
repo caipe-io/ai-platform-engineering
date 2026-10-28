@@ -75,7 +75,7 @@ The catalog is in `ui/src/lib/notifications/taxonomy.ts`.
 
 - Order of precedence: the event setting, then the category setting, then the default.
 - Settings are stored per user, in `user_settings.notification_preferences`. Only overrides are stored.
-- `null` in an update removes an override, so the event returns to its default.
+- `null` removes an override. Clearing an event override falls back to its category setting, then its catalog default. Clearing a category override falls back to the catalog defaults for events without their own overrides.
 - Turning off an event stops new notifications. It never changes the job, ingestion, or workflow.
 - Preferences are enforced on the server when the event is written. The UI does not filter.
 - Preference edits are guarded by a revision number. Two tabs or replicas editing at once both keep their changes. If the document keeps changing, the API answers `409` and the client should reload and retry.
@@ -87,14 +87,14 @@ Manage them in **Settings → Notifications**, or from the toggle on the workflo
 
 | Mode | Setting | Behavior |
 |---|---|---|
-| Direct | `NOTIFICATIONS_TRANSPORT=direct` (default) | Written in process. No broker. Lost if the process dies mid-write. |
+| Direct | `NOTIFICATIONS_TRANSPORT=direct` (default) | Accepted into the MongoDB notification queue before returning. No broker. |
 | JetStream | `NOTIFICATIONS_TRANSPORT=jetstream` | Published to a durable stream. A consumer in the UI server writes the inbox. |
 
 - NATS is optional and off by default.
 - With JetStream selected and NATS unreachable, publishing reports `failed`. It does not fall back to direct.
-- Stream `CAIPE_EVENTS`: file storage, 7-day retention, 2-minute duplicate window.
+- Stream `CAIPE_NOTIFICATIONS`: file storage, 7-day retention, 2-minute duplicate window.
 - Durable consumer `caipe-notifications`: explicit acks, 5 delivery attempts, 5-second retry delay after a storage failure. Malformed messages are dropped.
-- Subjects are `caipe.events.v1.<event type>`. They never contain user IDs, and browsers never connect to NATS.
+- Subjects are `caipe.notifications.v1.<event type>`. They never contain user IDs, and browsers never connect to NATS.
 - Delivery is at least once. The inbox ignores repeats using a deterministic key, so duplicates are harmless.
 
 ## Duplicates, retries, and replicas
@@ -155,5 +155,126 @@ Known limit: a process that stops between finishing a job and sending its event 
 ## Local testing
 
 - Run `NOTIFICATIONS_MONGO_TEST=1 MONGODB_URI=... npx jest notifications-mongo` for the database tests.
-- Run `NATS_INTEGRATION_URL=nats://localhost:4222 npx jest notifications-jetstream` against a local server started with `docker run -p 4222:4222 nats:2.10-alpine -js`.
-- In Settings, use **Send test** on any event to see it arrive in the bell.
+- Start the optional Compose `nats` profile, then run `NATS_INTEGRATION_URL=nats://127.0.0.1:4222 NATS_TOKEN=<configured-token> npx jest notifications-jetstream`.
+- In Settings, enable a channel and use **Test**. Check the bell or delivery status.
+
+## App registration and subscriptions
+
+Installed native and hosted apps use the same notification contract. The app
+manifest declares `host.notifications` version `1.0` under
+`consumes.platformApis`; the operator binds its service-account client ID in
+`installation.bindings.serviceAccountClientId`. The caller cannot choose another
+app's source identity or publish to teams, administrators, or all users.
+
+1. The app registers up to 30 notification types with
+   `POST /api/notifications/registrations`:
+
+   ```json
+   {"events":[{"id":"report.ready","label":"Report ready","description":"A report you requested has finished."}]}
+   ```
+
+2. The user opens **Notifications → Subscriptions** in the bell, or
+   **Settings → Notifications**, and subscribes to the app. New app sources
+   are off by default. Followed projects and other domain-specific resources
+   remain managed by the app, linked from the source's settings card.
+3. The app calls `POST /api/notifications` with its service-account bearer
+   token and a stable `eventKey`, registered `eventType`, explicit
+   `recipientUserSubjects`, `title`, `message`, optional relative `href`, and
+   optional `severity`. Recipient identities are resolved from host user records.
+4. The host returns `202` after accepting durable notification jobs. Workers
+   recheck app availability, current app roles, and user preferences before
+   delivery. Registering or publishing does not subscribe anyone.
+
+The source ID and label come from the installed app. Updating registrations keeps
+choices for stable event IDs. Removing a type prevents queued delivery of that
+type. The older unregistered app API remains compatible with in-app delivery.
+Apps authorize their own resource-specific recipient list before publishing;
+`host.notifications` is not a grant to read those resources.
+Registration is limited to 10 requests per minute per app. Publishing accepts
+up to 200 recipient deliveries per minute per app and 20 per recipient. Excess
+requests return `429`; retry with the same stable event key.
+
+## Delivery channels and pause controls
+
+- **In-app inbox** keeps unread and read history. Existing shared platform
+  incident entries retain their lifecycle and resolution controls.
+- **Browser web push** uses device subscriptions, VAPID, and the existing
+  service worker. Alerts contain generic copy, not app content or agent output.
+  Devices expire after 30 days without renewal. A `404` or `410` from the push
+  service removes that device. Browser and operating-system restrictions still
+  apply when the page is closed. Settings renews an existing device subscription
+  and lets users subscribe or remove the current browser independently of their
+  account-wide delivery toggle.
+- **Webex** sends a personal plain-text message through the configured bot to
+  the recipient's verified `webex_user_id` link.
+- **Slack** opens a direct conversation for the verified `slack_user_id` link
+  and sends plain text through the existing bot. Its token needs `im:write`
+  and `chat:write`. The provider message identity is stable across retries.
+
+External channels require operator configuration and explicit user enablement.
+Apps cannot supply a Slack channel, Webex space, device endpoint, or bot token.
+Global channel enablement is required before source or event overrides apply.
+Users can subscribe, unsubscribe, pause for an hour, resume, and choose channels
+per source and event. Subscription writes are scoped to the current user and use
+atomic field updates so changes from different tabs do not overwrite each other.
+
+Quiet hours use an IANA time zone and apply to external delivery; the inbox still
+collects updates. Workers defer external attempts until the window ends and
+recheck preferences before sending. Muted or paused deliveries are skipped;
+resuming does not replay them. Existing inbox preferences also filter shared
+platform events at read time.
+
+## Durable acceptance and independent retries
+
+`notification_jobs` is the durable acceptance record for one source event and
+recipient. Expansion into `notification_deliveries` is idempotent and resumable.
+Each channel/device delivery has its own state, attempt count, next attempt,
+lease token, and expiry. Replicas claim work atomically; a stale worker cannot
+complete another worker's lease. Each failed channel gets up to five attempts
+with backoff. Successful channels are not retried with a failed channel.
+
+**Settings → Notifications → Delivery status** shows queued, processing,
+delivered, skipped, and failed attempts. A user can retry their own failed
+attempts. "Delivered" means accepted by the provider, not read by a person.
+Web push also records **Shown by browser** after the service worker's display
+call succeeds. This is a best-effort receipt using the current user session;
+an expired session or a blocked network request can prevent the receipt.
+Neither status confirms that operating-system settings allowed a visible banner.
+A provider can accept a message just before a process exits; external delivery
+is therefore at least once. Webex has no application-level deduplication
+promise across that uncertain outcome. The idempotency window for delivery jobs
+is 90 days.
+
+JetStream, when enabled, hands accepted envelopes to the same Mongo-backed
+notification queue. Its stream is `CAIPE_NOTIFICATIONS`, with subjects under
+`caipe.notifications.v1`. This remains a notification subsystem; generic event
+pub-sub, webhook ingestion, and agent commands are separate work.
+
+The durable queue protects notifications once accepted. A service that exits
+between committing its work and publishing can still lose the notification;
+this change does not introduce distributed transactions or producer outboxes.
+
+## Helm configuration
+
+Producer wiring is optional and disabled by default. In the platform chart:
+
+```yaml
+global:
+  notifications:
+    enabled: true
+    tokenSecret:
+      name: example-notification-token
+      key: token
+```
+
+The existing Secret is shared by the UI, dynamic agents, and autonomous agents.
+For a separate RAG release, configure the same values in `rag-stack` and set
+`global.notifications.internalUrl` to the UI Service URL. The Secret must exist
+in each workload's namespace. Keep the internal endpoint on trusted ingress;
+its bearer token authorizes platform notifications and must never reach browsers.
+
+For web push, set `caipe-ui.notifications.webPush.secretName` to an existing
+Secret with `publicKey`, `privateKey`, and `subject` VAPID keys. Configure bot
+admin authentication through the existing Slack/Webex deployment settings and
+enable `NOTIFICATION_SLACK_ENABLED` or `NOTIFICATION_WEBEX_ENABLED` explicitly.
+Configuring a channel never enables it for a user.

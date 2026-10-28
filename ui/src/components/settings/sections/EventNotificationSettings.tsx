@@ -1,5 +1,7 @@
 "use client";
 
+import { NOTIFICATION_EVENT_COPY as EVENT_COPY } from "@/lib/notifications/copy";
+
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
 import { SettingsSwitch } from "@/components/settings/shared/SettingsSwitch";
 import { Button } from "@/components/ui/button";
@@ -63,20 +65,7 @@ const CATEGORY_COPY: Record<CategoryId, { title: string; description: string }> 
   },
 };
 
-const EVENT_COPY: Record<EventType, { label: string; description: string }> = {
-  "ingestion.completed": { label: "Ingestion finished", description: "A source finished indexing." },
-  "ingestion.failed": { label: "Ingestion failed", description: "A source could not be indexed." },
-  "ingestion.started": { label: "Ingestion started", description: "A source began indexing." },
-  "workflow.completed": { label: "Workflow completed", description: "A workflow run finished successfully." },
-  "workflow.failed": { label: "Workflow failed", description: "A workflow run stopped with an error." },
-  "workflow.requires_input": { label: "Workflow needs input", description: "A workflow is waiting for your answer." },
-  "workflow.started": { label: "Workflow started", description: "A workflow run began." },
-  "agent.completed": { label: "Agent task completed", description: "A background agent task finished." },
-  "agent.failed": { label: "Agent task failed", description: "A background agent task failed." },
-  "agent.started": { label: "Agent task started", description: "A background agent task began." },
-  "service.degraded": { label: "Service degraded", description: "A service is no longer healthy." },
-  "service.recovered": { label: "Service recovered", description: "A degraded service is healthy again." },
-};
+
 
 function isEffectiveView(value: unknown): value is EffectiveView {
   const candidate = value as Partial<EffectiveView> | null;
@@ -326,7 +315,7 @@ export function EventNotificationSettings(): React.ReactElement {
                                 "text-xs text-primary underline-offset-4 hover:underline",
                                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm",
                               )}
-                              onClick={() => setEvent(row.type, null)}
+                              onClick={() => view.preferences.events?.[row.type] !== undefined ? setEvent(row.type, null) : send({ categories: { [row.category]: null } })}
                               type="button"
                             >
                               Reset to default

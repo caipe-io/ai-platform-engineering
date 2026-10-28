@@ -21,6 +21,7 @@ export interface InAppNotificationDocument {
   severity: InAppNotificationSeverity;
   category?: InAppNotificationCategory;
   source_label?: string;
+  source_id?: string;
   correlation_key?: string;
   /** Catalog event type, such as "service.degraded". Lets per-event preferences filter shared entries. */
   event_type?: string;
@@ -45,6 +46,8 @@ export interface InAppNotificationView {
   severity: InAppNotificationSeverity;
   category: InAppNotificationCategory;
   source_label?: string;
+  source_id?: string;
+  event_type?: string;
   lifecycle_status?: InAppNotificationLifecycleStatus;
   resolved_at?: string;
   created_at: string;

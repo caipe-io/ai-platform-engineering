@@ -1,3 +1,4 @@
+import { queuePlatformNotificationChannels } from "@/lib/notifications/platform-channels.server";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -176,6 +177,7 @@ async function openIncident(
     eventType: "service.degraded",
     lifecycleStatus: "active",
   });
+  await queuePlatformNotificationChannels({ id: eventKey, eventType: "service.degraded", title: incidentTitle(capability), message: capability.detail, severity: incidentSeverity(capability) });
   if (state?.active_event_key && state.active_event_key !== eventKey) {
     await resolveInAppNotification({
       eventKey: state.active_event_key,
@@ -233,6 +235,7 @@ async function closeIncident(input: {
     ...(automatic && !monitoringDisabled ? { eventType: "service.recovered" } : {}),
     lifecycleStatus: "resolved",
   });
+  if (automatic && !monitoringDisabled) await queuePlatformNotificationChannels({ id: `${input.state.active_event_key}:resolved`, eventType: "service.recovered", title, message, severity: "success" });
 
   await collection.updateOne(
     { _id: input.state.component_id,active_incident_id: input.state.active_incident_id } as never,

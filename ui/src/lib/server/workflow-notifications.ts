@@ -10,6 +10,7 @@ interface WorkflowNotificationInput {
   owner: Subject | null | undefined;
   /** Distinguishes repeated pauses within one run, such as one per step. */
   stepIndex?: number;
+  interruptionId?: string;
   /** Replaces the default summary. Must stay free of prompts and tool output. */
   summary?: string;
 }
@@ -45,7 +46,7 @@ export async function notifyWorkflowEvent(input: WorkflowNotificationInput): Pro
     const name = input.workflowName?.trim() || "A workflow";
     const attemptId =
       input.kind === "requires_input" && input.stepIndex !== undefined
-        ? `${input.runId}:step-${input.stepIndex}`
+        ? `${input.runId}:step-${input.stepIndex}:${input.interruptionId ?? "initial"}`
         : input.runId;
 
     await publishNotificationRequest({

@@ -29,7 +29,10 @@ function subjectOf(user: UserLookup): string | undefined {
 }
 
 function sameUser(a: UserLookup, b: UserLookup): boolean {
-  return subjectOf(a) === subjectOf(b) && a.email.toLowerCase() === b.email.toLowerCase();
+  return (
+    subjectOf(a) === subjectOf(b) &&
+    a.email.toLowerCase() === b.email.toLowerCase()
+  );
 }
 
 /**
@@ -51,8 +54,12 @@ export async function resolveRecipients(
   }
 
   const users = await getCollection<UserLookup>("users");
-  const subjects = wanted.map((ref) => ref.subject).filter((v): v is string => Boolean(v));
-  const emails = wanted.map((ref) => ref.email).filter((v): v is string => Boolean(v));
+  const subjects = wanted
+    .map((ref) => ref.subject)
+    .filter((v): v is string => Boolean(v));
+  const emails = wanted
+    .map((ref) => ref.email)
+    .filter((v): v is string => Boolean(v));
 
   const matches =
     subjects.length > 0 || emails.length > 0
@@ -60,7 +67,10 @@ export async function resolveRecipients(
           .find({
             $or: [
               ...(subjects.length > 0
-                ? [{ keycloak_sub: { $in: subjects } }, { "metadata.keycloak_sub": { $in: subjects } }]
+                ? [
+                    { keycloak_sub: { $in: subjects } },
+                    { "metadata.keycloak_sub": { $in: subjects } },
+                  ]
                 : []),
               ...(emails.length > 0 ? [{ email: { $in: emails } }] : []),
             ],
@@ -81,12 +91,20 @@ export async function resolveRecipients(
   let rejected = 0;
   for (const ref of wanted) {
     const bySubjectMatch = ref.subject ? bySubject.get(ref.subject) : undefined;
-    const byEmailMatch = ref.email ? byEmail.get(ref.email.toLowerCase()) : undefined;
+    const byEmailMatch = ref.email
+      ? byEmail.get(ref.email.toLowerCase())
+      : undefined;
 
     if (ref.subject && ref.email) {
       // A complete pair is only trusted when both halves find the same user.
-      if (bySubjectMatch && byEmailMatch && !sameUser(bySubjectMatch, byEmailMatch)) {
-        console.warn("[notifications] rejected recipient: subject and email belong to different users");
+      if (
+        bySubjectMatch &&
+        byEmailMatch &&
+        !sameUser(bySubjectMatch, byEmailMatch)
+      ) {
+        console.warn(
+          "[notifications] rejected recipient: subject and email belong to different users",
+        );
         rejected += 1;
         continue;
       }
