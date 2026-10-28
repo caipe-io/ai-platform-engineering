@@ -38,5 +38,5 @@ jobs:
           uv run --no-project --python 3.14
           --with fastapi==0.141.1 --with httpx==0.28.1
           --with pymongo==4.16.0 --with mongomock==4.3.0
-          --with pyarrow==25.0.1 --with boto3==1.43.80 --with pytest==9.1.1
+          --with pyarrow==25.0.1 --with boto3==1.43.80 --with pytest==9.1.1 --with PyYAML==6.0.3
           pytest -q ai_platform_engineering/audit_service

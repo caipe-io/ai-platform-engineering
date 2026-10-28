@@ -1,0 +1,63 @@
+# Copy and configure before applying; REPLACE_WITH_* values are not deployable.
+# Use the same released audit-service image/digest as the collector rollout.
+# CAS release Job; its only migration today is the audit-query backfill.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cas-migration-job
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 7200
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cas-migration-job
+    spec:
+      serviceAccountName: REPLACE_WITH_ARCHIVE_READER_SERVICE_ACCOUNT
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: migrate
+          # Future-release placeholder, not a published image.
+          image: ghcr.io/caipe-io/caipe-audit-service:REPLACE_WITH_CAS_RELEASE@sha256:REPLACE_WITH_DIGEST
+          command:
+            - python
+            - -m
+            - ai_platform_engineering.audit_service.scripts.cas_migration.migrate_query_store
+          args:
+            - --since
+            - REPLACE_WITH_UTC_START
+            - --until
+            - REPLACE_WITH_UTC_END
+            # Default is validation-only. Add --apply for an approved write Job.
+            # - --apply
+          env:
+            - name: AUDIT_SERVICE_MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: REPLACE_WITH_MONGODB_SECRET
+                  key: MONGODB_URI
+            - name: AUDIT_SERVICE_MONGODB_DATABASE
+              value: REPLACE_WITH_DATABASE
+            - name: AUDIT_SERVICE_QUERY_RETENTION_DAYS
+              value: "7"
+            - name: AUDIT_SERVICE_BACKEND
+              value: s3
+            - name: AUDIT_SERVICE_S3_BUCKET
+              value: REPLACE_WITH_ARCHIVE_BUCKET
+            - name: AUDIT_SERVICE_S3_PREFIX
+              value: REPLACE_WITH_ARCHIVE_PREFIX
+            - name: AUDIT_SERVICE_S3_REGION
+              value: REPLACE_WITH_REGION
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 500m, memory: 1Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
