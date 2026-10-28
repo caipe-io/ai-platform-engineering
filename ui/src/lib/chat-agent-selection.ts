@@ -48,7 +48,7 @@ export async function fetchChatDefaultAgentIds(signal?: AbortSignal): Promise<Ch
       web_default_agent_id?: unknown;
       platform_default_agent_id?: unknown;
     }>
-  >("/api/user/preferences", signal);
+  >("/api/user/preferences?include_webex=false", signal);
   const data = payload.success ? payload.data : null;
   return {
     userDefaultAgentId: normalizedAgentId(data?.web_default_agent_id),

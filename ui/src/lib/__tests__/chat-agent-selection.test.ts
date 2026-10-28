@@ -22,6 +22,10 @@ describe("chat agent selection", () => {
       id: "primary", name: "Primary", source: "first-available",
       config: { _id: "primary", name: "Primary", enabled: true },
     });
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/user/preferences?include_webex=false",
+      expect.objectContaining({ cache: "no-store" }),
+    );
   });
 
   it("requires available-agent evidence for strict defaults", async () => {
