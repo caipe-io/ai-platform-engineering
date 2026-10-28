@@ -169,6 +169,21 @@ describe("AgenticAppAssistantOverlay", () => {
     expect(await screen.findByTestId("chat-panel")).toHaveAttribute("data-suggestions", '["Explain this example"]');
   });
 
+  it("shows a compact attachment for page context sent by an external app", async () => {
+    render(<AgenticAppAssistantOverlay appId="example-app" appName="Example App"
+      assistantAgentId="agent-example" onClearContext={jest.fn()} open onOpenChange={jest.fn()}
+      activeContext={{ contextId: "context-1", appId: "example-app", sessionId: "browser-session",
+        schemaVersion: "1.0", route: "/digest", payloadSizeBytes: 100,
+        validationStatus: "accepted", createdAt: "2026-01-01T00:00:00.000Z",
+        expiresAt: "2026-01-01T00:10:00.000Z", title: "Today's digest",
+        summary: "The saved digest is included with your question." }} />);
+
+    const attachment = screen.getByRole("note", { name: "Attached page context" });
+    expect(attachment).toHaveTextContent("Today's digest");
+    expect(attachment).toHaveTextContent("The saved digest is included with your question.");
+    expect(await screen.findByTestId("chat-panel")).toHaveAttribute("data-context", expect.stringContaining('"route":"/digest"'));
+  });
+
   it("resizes the popup to the available viewport", async () => {
     renderExampleOverlay();
     await screen.findByTestId("chat-panel");

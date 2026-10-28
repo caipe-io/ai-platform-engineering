@@ -1,6 +1,6 @@
 "use client";
 
-import { LoaderCircle, MessageCircle } from "lucide-react";
+import { FileText, LoaderCircle, MessageCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AssistantOptions, AssistantConfiguration } from "../../../app-sdk/assistant-options.mjs";
@@ -388,6 +388,15 @@ export function AgenticAppAssistantOverlay({
               chatHref={hasSelectedConversation && assistantConversation ? `/chat/${encodeURIComponent(assistantConversation.id)}` : undefined}
               onMinimize={() => onOpenChange(false)} />
           </header>
+          {activeContext?.summary && view === "chat" ? (
+            <div role="note" aria-label="Attached page context" className="flex items-start gap-2 border-b border-border bg-muted/30 px-4 py-2 text-xs">
+              <FileText className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
+              <div className="min-w-0">
+                <p className="font-medium text-foreground">{activeContext.title ?? "Page context"}</p>
+                <p className="truncate text-muted-foreground">{activeContext.summary}</p>
+              </div>
+            </div>
+          ) : null}
           <div className="flex min-h-0 flex-1 flex-col">
           <TabsContent value="history" className="m-0 min-h-0 flex-1">
             <AppAssistantHistory key={`${appId}:${assistantAgentId}`} appId={appId} agentId={assistantAgentId} includeLegacy={options?.includeLegacyAgentHistory}
