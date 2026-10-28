@@ -7,6 +7,7 @@ import tempfile
 import boto3
 from typing import List, Any, Dict, Optional
 
+from common.ingestor_listener import run_standalone_ingestion
 from common.ingestor import IngestorBuilder, Client
 from common.models.rag import StructuredEntity
 from common.models.rag import DataSourceInfo
@@ -199,7 +200,7 @@ def create_session(profile_name: Optional[str] = None) -> boto3.Session:
 async def get_account_id(session: boto3.Session) -> str:
   """Get AWS account ID using the given session."""
   sts_client = session.client("sts", region_name=AWS_REGION)
-  return sts_client.get_caller_identity()["Account"]
+  return (await asyncio.to_thread(sts_client.get_caller_identity))["Account"]
 
 
 async def get_all_regions(session: boto3.Session) -> List[str]:
@@ -214,7 +215,7 @@ async def get_all_regions(session: boto3.Session) -> List[str]:
   """
   ec2_client = session.client("ec2", region_name=AWS_REGION)
   try:
-    response = ec2_client.describe_regions()
+    response = (await asyncio.to_thread(ec2_client.describe_regions))
     regions = [region["RegionName"] for region in response["Regions"]]
     return regions
   except Exception as e:
@@ -239,7 +240,7 @@ async def fetch_resources(session: boto3.Session, resource_type: str, region: st
   response_iterator = paginator.paginate(ResourceTypeFilters=[resource_type])
 
   resource_arns = []
-  for page in response_iterator:
+  for page in await asyncio.to_thread(list, response_iterator):
     for resource in page.get("ResourceTagMappingList", []):
       resource_arns.append(resource["ResourceARN"])
 
@@ -261,7 +262,7 @@ async def get_ec2_details(session: boto3.Session, resource_arns: List[str], regi
   instance_ids = list(instance_id_arn_map.keys())
 
   try:
-    response = ec2_client.describe_instances(InstanceIds=instance_ids)
+    response = (await asyncio.to_thread(ec2_client.describe_instances, InstanceIds=instance_ids))
     ec2_instances = []
     for reservation in response["Reservations"]:
       for instance in reservation["Instances"]:
@@ -289,7 +290,7 @@ async def get_eks_details(session: boto3.Session, resource_arns: List[str], regi
   for cluster_name in cluster_names:
     logging.debug(f"Fetching details for EKS cluster: {cluster_name}")
     try:
-      response = eks_client.describe_cluster(name=cluster_name)
+      response = (await asyncio.to_thread(eks_client.describe_cluster, name=cluster_name))
       clusters.append(response["cluster"])
     except Exception as e:
       logging.error(f"Error fetching details for EKS cluster {cluster_name}: {e}")
@@ -318,7 +319,7 @@ async def get_s3_details(session: boto3.Session, resource_arns: List[str], regio
 
       # Try to fetch encryption config
       try:
-        bucket_data["Encryption"] = s3_client.get_bucket_encryption(Bucket=bucket_name).get("ServerSideEncryptionConfiguration", {})
+        bucket_data["Encryption"] = (await asyncio.to_thread(s3_client.get_bucket_encryption, Bucket=bucket_name)).get("ServerSideEncryptionConfiguration", {})
       except s3_client.exceptions.ServerSideEncryptionConfigurationNotFoundError:
         bucket_data["Encryption"] = {}
       except Exception as e:
@@ -326,7 +327,7 @@ async def get_s3_details(session: boto3.Session, resource_arns: List[str], regio
 
       # Try to fetch tags
       try:
-        bucket_data["Tagging"] = s3_client.get_bucket_tagging(Bucket=bucket_name).get("TagSet", [])
+        bucket_data["Tagging"] = (await asyncio.to_thread(s3_client.get_bucket_tagging, Bucket=bucket_name)).get("TagSet", [])
       except s3_client.exceptions.NoSuchTagSet:
         bucket_data["Tagging"] = []
       except Exception as e:
@@ -355,7 +356,7 @@ async def get_elb_details(session: boto3.Session, resource_arns: List[str], regi
     logging.debug(f"Fetching {len(elbv2_arns)} ALB/NLB in region {region}")
     try:
       elbv2_client = session.client("elbv2", region_name=region)
-      response = elbv2_client.describe_load_balancers(LoadBalancerArns=elbv2_arns)
+      response = (await asyncio.to_thread(elbv2_client.describe_load_balancers, LoadBalancerArns=elbv2_arns))
       for lb in response["LoadBalancers"]:
         # Ensure LoadBalancerArn is present for consistency
         if "LoadBalancerArn" not in lb:
@@ -372,7 +373,7 @@ async def get_elb_details(session: boto3.Session, resource_arns: List[str], regi
       lb_names = [arn.split("/")[-1] for arn in clb_arns]
       lb_name_arn_map = {name: arn for name, arn in zip(lb_names, clb_arns)}
 
-      response = elb_client.describe_load_balancers(LoadBalancerNames=lb_names)
+      response = (await asyncio.to_thread(elb_client.describe_load_balancers, LoadBalancerNames=lb_names))
       for lb in response["LoadBalancerDescriptions"]:
         lb_name = lb.get("LoadBalancerName", "")
         # Add ARN for consistency
@@ -394,7 +395,7 @@ async def get_ebs_details(session: boto3.Session, resource_arns: List[str], regi
   volume_ids = list(volume_id_arn_map.keys())
 
   try:
-    response = ec2_client.describe_volumes(VolumeIds=volume_ids)
+    response = (await asyncio.to_thread(ec2_client.describe_volumes, VolumeIds=volume_ids))
     volumes = []
     for volume in response["Volumes"]:
       volume["Arn"] = volume_id_arn_map[volume["VolumeId"]]
@@ -419,7 +420,7 @@ async def get_route53_hostedzone_details(session: boto3.Session, resource_arns: 
       continue
 
     try:
-      response = route53_client.get_hosted_zone(Id=hosted_zone_id)
+      response = (await asyncio.to_thread(route53_client.get_hosted_zone, Id=hosted_zone_id))
       zone = response["HostedZone"]
       zone["Arn"] = arn
       zone["ZoneId"] = hosted_zone_id
@@ -435,7 +436,7 @@ async def list_iam_users(session: boto3.Session, resource_arns: Optional[List[st
   iam_client = session.client("iam")
 
   try:
-    response = iam_client.list_users()
+    response = (await asyncio.to_thread(iam_client.list_users))
     users = response.get("Users", [])
 
     if not users:
@@ -458,7 +459,7 @@ async def get_natgateway_details(session: boto3.Session, resource_arns: List[str
   natgateway_ids = list(natgateway_id_arn_map.keys())
 
   try:
-    response = ec2_client.describe_nat_gateways(NatGatewayIds=natgateway_ids)
+    response = (await asyncio.to_thread(ec2_client.describe_nat_gateways, NatGatewayIds=natgateway_ids))
     natgateways = []
     for natgateway in response["NatGateways"]:
       natgateway["Arn"] = natgateway_id_arn_map[natgateway["NatGatewayId"]]
@@ -479,7 +480,7 @@ async def get_vpc_details(session: boto3.Session, resource_arns: List[str], regi
   vpc_ids = list(vpc_id_arn_map.keys())
 
   try:
-    response = ec2_client.describe_vpcs(VpcIds=vpc_ids)
+    response = (await asyncio.to_thread(ec2_client.describe_vpcs, VpcIds=vpc_ids))
     vpcs = []
     for vpc in response["Vpcs"]:
       vpc["Arn"] = vpc_id_arn_map[vpc["VpcId"]]
@@ -500,7 +501,7 @@ async def get_subnet_details(session: boto3.Session, resource_arns: List[str], r
   subnet_ids = list(subnet_id_arn_map.keys())
 
   try:
-    response = ec2_client.describe_subnets(SubnetIds=subnet_ids)
+    response = (await asyncio.to_thread(ec2_client.describe_subnets, SubnetIds=subnet_ids))
     subnets = []
     for subnet in response["Subnets"]:
       subnet["Arn"] = subnet_id_arn_map[subnet["SubnetId"]]
@@ -521,7 +522,7 @@ async def get_security_group_details(session: boto3.Session, resource_arns: List
   sg_ids = list(sg_id_arn_map.keys())
 
   try:
-    response = ec2_client.describe_security_groups(GroupIds=sg_ids)
+    response = (await asyncio.to_thread(ec2_client.describe_security_groups, GroupIds=sg_ids))
     security_groups = []
     for sg in response["SecurityGroups"]:
       sg["Arn"] = sg_id_arn_map[sg["GroupId"]]
@@ -541,7 +542,7 @@ async def get_rds_details(session: boto3.Session, resource_arns: List[str], regi
   db_instance_ids = [arn.split(":")[-1] for arn in resource_arns]
 
   try:
-    response = rds_client.describe_db_instances()
+    response = (await asyncio.to_thread(rds_client.describe_db_instances))
     db_instances = []
     for db in response["DBInstances"]:
       if db["DBInstanceIdentifier"] in db_instance_ids:
@@ -564,7 +565,7 @@ async def get_lambda_details(session: boto3.Session, resource_arns: List[str], r
   for function_name in function_names:
     logging.debug(f"Fetching details for Lambda function: {function_name}")
     try:
-      response = lambda_client.get_function(FunctionName=function_name)
+      response = (await asyncio.to_thread(lambda_client.get_function, FunctionName=function_name))
       function_config = response.get("Configuration", {})
       if function_config:
         functions.append(function_config)
@@ -586,7 +587,7 @@ async def get_dynamodb_details(session: boto3.Session, resource_arns: List[str],
   for table_name in table_names:
     logging.debug(f"Fetching details for DynamoDB table: {table_name}")
     try:
-      response = dynamodb_client.describe_table(TableName=table_name)
+      response = (await asyncio.to_thread(dynamodb_client.describe_table, TableName=table_name))
       table = response.get("Table", {})
       if table:
         tables.append(table)
@@ -768,52 +769,55 @@ async def sync_account(client: Client, session: boto3.Session, account_name: str
       "resource_types": RESOURCE_TYPES,
     },
   )
-  await client.upsert_datasource(datasource_info)
-  logging.info(f"Created/updated datasource: {datasource_id}")
+  async def sync_datasource() -> None:
+    await client.upsert_datasource(datasource_info)
+    logging.info(f"Created/updated datasource: {datasource_id}")
 
-  # Get all AWS regions
-  regions = await get_all_regions(session)
-  logging.info(f"Found {len(regions)} AWS regions for account {account_name}")
+    # Get all AWS regions
+    regions = await get_all_regions(session)
+    logging.info(f"Found {len(regions)} AWS regions for account {account_name}")
 
-  # Calculate total work for job tracking
-  regional_resource_types = [rt for rt in RESOURCE_TYPES if RESOURCE_CONFIG.get(rt, {}).get("regional", True)]
-  global_resource_types = [rt for rt in RESOURCE_TYPES if not RESOURCE_CONFIG.get(rt, {}).get("regional", True)]
-  total_work_items = len(regional_resource_types) * len(regions) + len(global_resource_types)
+    # Calculate total work for job tracking
+    regional_resource_types = [rt for rt in RESOURCE_TYPES if RESOURCE_CONFIG.get(rt, {}).get("regional", True)]
+    global_resource_types = [rt for rt in RESOURCE_TYPES if not RESOURCE_CONFIG.get(rt, {}).get("regional", True)]
+    total_work_items = len(regional_resource_types) * len(regions) + len(global_resource_types)
 
-  # Create job
-  job_response = await client.create_job(datasource_id=datasource_id, job_status=JobStatus.IN_PROGRESS, message=f"Syncing AWS resources for account {account_name} across {len(regions)} regions", total=total_work_items)
-  job_id = job_response["job_id"]
-  logging.info(f"Created job {job_id} with {total_work_items} work items for account {account_name}")
+    # Create job
+    job_response = await client.create_job(datasource_id=datasource_id, job_status=JobStatus.IN_PROGRESS, message=f"Syncing AWS resources for account {account_name} across {len(regions)} regions", total=total_work_items)
+    job_id = job_response["job_id"]
+    logging.info(f"Created job {job_id} with {total_work_items} work items for account {account_name}")
 
-  try:
-    # Ensure account entity exists
-    await ensure_account_entity_exists(client, account_id, datasource_id, job_id)
+    try:
+      # Ensure account entity exists
+      await ensure_account_entity_exists(client, account_id, datasource_id, job_id)
 
-    total_entities = 0
+      total_entities = 0
 
-    # Process global resources (IAM, Route53)
-    for resource_type in global_resource_types:
-      logging.info(f"[{account_name}] Processing global resource type: {resource_type}")
-      count = await sync_resource_type(client, session, account_id, resource_type, "us-east-1", job_id, datasource_id)
-      total_entities += count
-
-    # Process regional resources
-    for resource_type in regional_resource_types:
-      logging.info(f"[{account_name}] Processing regional resource type: {resource_type}")
-      for region in regions:
-        count = await sync_resource_type(client, session, account_id, resource_type, region, job_id, datasource_id)
+      # Process global resources (IAM, Route53)
+      for resource_type in global_resource_types:
+        logging.info(f"[{account_name}] Processing global resource type: {resource_type}")
+        count = await sync_resource_type(client, session, account_id, resource_type, "us-east-1", job_id, datasource_id)
         total_entities += count
 
-    # Mark job as completed
-    await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully synced {total_entities} AWS resources for account {account_name}")
-    logging.info(f"Sync completed for account {account_name}. Total entities ingested: {total_entities}")
+      # Process regional resources
+      for resource_type in regional_resource_types:
+        logging.info(f"[{account_name}] Processing regional resource type: {resource_type}")
+        for region in regions:
+          count = await sync_resource_type(client, session, account_id, resource_type, region, job_id, datasource_id)
+          total_entities += count
 
-  except Exception as e:
-    error_msg = f"AWS resource sync failed for account {account_name}: {str(e)}"
-    await client.add_job_error(job_id, [error_msg])
-    await client.update_job(job_id=job_id, job_status=JobStatus.FAILED, message=error_msg)
-    logging.error(error_msg, exc_info=True)
-    raise
+      # Mark job as completed
+      await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully synced {total_entities} AWS resources for account {account_name}")
+      logging.info(f"Sync completed for account {account_name}. Total entities ingested: {total_entities}")
+
+    except Exception as e:
+      error_msg = f"AWS resource sync failed for account {account_name}: {str(e)}"
+      await client.add_job_error(job_id, [error_msg])
+      await client.update_job(job_id=job_id, job_status=JobStatus.FAILED, message=error_msg)
+      logging.error(error_msg, exc_info=True)
+      raise
+
+  await run_standalone_ingestion(datasource_info.datasource_id, sync_datasource)
 
 
 async def sync_aws_resources(client: Client) -> None:

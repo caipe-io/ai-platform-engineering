@@ -4,7 +4,7 @@ import os
 import time
 import traceback
 from typing import List, Dict, Optional, Any
-from redis.asyncio import Redis
+from common.mongo_storage import MongoStorage
 from common.ingestor import IngestorBuilder, Client
 from common.ingestor_listener import reload_persisted_datasources, run_ingestor_listener
 from common.models.rag import DataSourceInfo
@@ -26,8 +26,7 @@ from loader import ConfluenceLoader, generate_datasource_id
 logger = get_logger(__name__)
 
 # Redis configuration
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-redis_client = Redis.from_url(REDIS_URL, decode_responses=True)
+redis_client = MongoStorage()
 
 # Confluence configuration
 CONFLUENCE_URL = os.environ.get("CONFLUENCE_URL")
@@ -392,6 +391,7 @@ async def reload_datasource(
 
 async def periodic_reload(client: Client) -> None:
   """Refresh persisted Confluence datasources whose interval is due."""
+  await redis_client.ensure_setup()
   await reload_persisted_datasources(
     client,
     reload_datasource,
@@ -401,6 +401,7 @@ async def periodic_reload(client: Client) -> None:
 
 async def redis_listener(client: Client):
   """Run Confluence commands through the shared per-ingestor listener."""
+  await redis_client.ensure_setup()
 
   await run_ingestor_listener(
     client,
@@ -423,6 +424,7 @@ async def redis_listener(client: Client):
 
 async def reload_all_confluence_spaces(client: Client) -> None:
   """Force a reload of every Confluence datasource assigned to this worker."""
+  await redis_client.ensure_setup()
   await reload_persisted_datasources(
     client,
     reload_datasource,

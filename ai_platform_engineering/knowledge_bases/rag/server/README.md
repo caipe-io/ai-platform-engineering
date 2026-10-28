@@ -36,7 +36,7 @@ The server will be available at `http://localhost:9446`
 
 | Service | Default Connection | Purpose |
 |---------|-------------------|---------|
-| Redis | `redis://localhost:6379` | Metadata storage and job queue |
+| MongoDB | `mongodb://localhost:27017` | Metadata, jobs, commands, and ontology state |
 | Milvus | `http://localhost:19530` | Vector database for hybrid search |
 | Neo4j | `bolt://localhost:7687` | Graph database (optional, if Graph RAG enabled) |
 
@@ -127,8 +127,9 @@ This table shows how different authentication methods map to roles and which env
 ### Core Connection Settings
 
 ```bash
-# Redis
-REDIS_URL=redis://localhost:6379
+# Application MongoDB
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DATABASE=caipe
 
 # Milvus Vector Database
 MILVUS_URI=http://localhost:19530
@@ -324,7 +325,7 @@ Run with environment variables:
 ```bash
 docker run -d \
   -p 9446:9446 \
-  -e REDIS_URL=redis://redis:6379 \
+  -e MONGODB_URI=mongodb://mongodb:27017 \
   -e MILVUS_URI=http://milvus:19530 \
   -e NEO4J_ADDR=bolt://neo4j:7687 \
   -e AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY} \
