@@ -1,6 +1,8 @@
 import type { AppAssistantContext } from "./index.js";
 export const INTERFACE_SHADOWS_CSS: string;
 export interface AgenticAppBridgeCapabilities {
+  /** Metadata from the running host, never the application's build baseline. */
+  hostBuild?: { version: string | null; gitCommit: string | null };
   assistantOptions?: import("./assistant-options.mjs").AssistantOptions;
   assistant: boolean;
   assistantDraft?: boolean;

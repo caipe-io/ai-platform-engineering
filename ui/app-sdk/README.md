@@ -296,6 +296,11 @@ using installation `host_route_claims`:
   The host validates source, origin, app ID and version before handling messages.
 - Apps use `bridge.navigate(href)` for host URL synchronization and dispose the
   bridge on unmount. Unsupported versions/capabilities report explicit errors.
+- `bridge.getCapabilities()?.hostBuild` contains the running host's `version`
+  and `gitCommit`, read from its `/api/version` endpoint. It updates after the
+  lookup completes. Older hosts omit this optional field; show an unavailable
+  state rather than substituting the app's pinned build baseline. No Helm
+  version override or application rebuild is required when the host changes.
 - Same-origin iframe hosting is a trust boundary, not JavaScript isolation.
 
 ## Shared host assistant

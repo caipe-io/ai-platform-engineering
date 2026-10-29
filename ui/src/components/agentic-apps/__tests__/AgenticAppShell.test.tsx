@@ -9,6 +9,8 @@ jest.mock("next-auth/react", () => ({
 let mockSearch = "";
 
 const mockResolveUsableChatAgent = jest.fn();
+let mockHostVersion: { version: string; gitCommit: string } | null = null;
+jest.mock("@/hooks/use-version", () => ({ useVersion: () => ({ versionInfo: mockHostVersion }) }));
 
 const mockRouter = { push: jest.fn() };
 
@@ -85,6 +87,7 @@ describe("AgenticAppShell", () => {
   });
   beforeEach(() => {
     jest.clearAllMocks();
+    mockHostVersion = null;
     mockSearch = "";
     window.history.replaceState(null, "", "/apps/example-app");
     global.fetch = jest.fn().mockResolvedValue({
@@ -163,6 +166,34 @@ describe("AgenticAppShell", () => {
     for (const [message] of replies) expect(message.capabilities).toMatchObject({
       assistant: true, queryNavigation: true, composerExtensions: expect.arrayContaining(["configuration.v1"]),
     });
+    post.mockRestore();
+  });
+
+  it("publishes the running host build after lookup without reloading the app", async () => {
+    const view = render(<AgenticAppShell appId="example-app" path={[]} />);
+    const iframe = await screen.findByTitle("Example App") as HTMLIFrameElement;
+    const post = jest.spyOn(iframe.contentWindow!, "postMessage");
+    const connect = () => act(() => window.dispatchEvent(new MessageEvent("message", {
+      source: iframe.contentWindow, origin: window.location.origin,
+      data: { type: "caipe.agenticApp.bridge.connect.v1", appId: "example-app", version: "1.0" },
+    })));
+    connect();
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({
+      capabilities: expect.objectContaining({ hostBuild: { version: null, gitCommit: null } }),
+    }), window.location.origin);
+    mockHostVersion = { version: "2.4.1", gitCommit: "a".repeat(40) };
+    post.mockClear();
+    view.rerender(<AgenticAppShell appId="example-app" path={[]} />);
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({
+      capabilities: expect.objectContaining({ hostBuild: mockHostVersion }),
+    }), window.location.origin);
+    post.mockClear();
+    connect();
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({
+      capabilities: expect.objectContaining({ hostBuild: mockHostVersion }),
+    }), window.location.origin);
+    expect(screen.getByTitle("Example App")).toBe(iframe);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
     post.mockRestore();
   });
 
