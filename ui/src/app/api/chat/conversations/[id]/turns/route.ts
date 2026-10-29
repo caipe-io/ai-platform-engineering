@@ -26,6 +26,7 @@ withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
 import { requireResourcePermission } from "@/lib/rbac/resource-authz";
+import { reserveConversationMessageWrite } from "@/lib/conversation-evidence-privacy";
 import type { Conversation,Turn,UpsertTurnRequest } from "@/types/mongodb";
 import { NextRequest } from "next/server";
 
@@ -95,7 +96,7 @@ export const POST = withErrorHandler(
       validateRequired(body, ["turn_id", "client_type", "payload"]);
 
       // Verify user has write access
-      const { access_level } = await requireConversationAccess(
+      const { conversation, access_level } = await requireConversationAccess(
         conversationId,
         user.email,
         getCollection,
@@ -114,6 +115,8 @@ export const POST = withErrorHandler(
           "FORBIDDEN",
         );
       }
+
+      await reserveConversationMessageWrite(conversation, session, user.email);
 
       const turns = await getCollection<Turn>("turns");
       const now = new Date();

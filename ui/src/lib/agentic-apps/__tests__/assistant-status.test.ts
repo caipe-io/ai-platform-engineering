@@ -1,11 +1,11 @@
 /** @jest-environment node */
 import { readAssistantStatus, persistAssistantCompletion } from "../assistant-status";
 import { getCollection } from "@/lib/mongodb";
-import { upsertChatMessage } from "@/lib/chat-message-persistence";
+import { reconcileAppConversationMessageCount, upsertChatMessage } from "@/lib/chat-message-persistence";
 import type { Conversation } from "@/types/mongodb";
 
 jest.mock("@/lib/mongodb", () => ({ getCollection: jest.fn() }));
-jest.mock("@/lib/chat-message-persistence", () => ({ upsertChatMessage: jest.fn() }));
+jest.mock("@/lib/chat-message-persistence", () => ({ upsertChatMessage: jest.fn(), reconcileAppConversationMessageCount: jest.fn() }));
 const turn = { turnId: "example-turn", content: "Accepted final answer", completedAt: "2026-01-01T12:00:00.000Z" };
 const input = { subject: "example-subject", email: "owner@example.test", conversationId: "example-chat",
   agentId: "example-agent", appId: "example-app", turn };
@@ -62,5 +62,6 @@ it("fills only the requested user turn without moving conversation activity or p
     }) }),
   }));
   expect(updateConversation).not.toHaveBeenCalled();
+  expect(reconcileAppConversationMessageCount).toHaveBeenCalledWith(expect.anything(), expect.anything(), input.conversationId);
   expect(conversation.personal_context).toBe("private");
 });

@@ -1,11 +1,12 @@
 /** @jest-environment node */
-import { MongoClient, ObjectId, type Db } from "mongodb";
-import { upsertChatMessage } from "../chat-message-persistence";
+import { MongoClient, ObjectId, type Collection, type Db } from "mongodb";
+import { reconcileAppConversationMessageCount, upsertChatMessage } from "../chat-message-persistence";
 import { persistAssistantCompletion } from "../agentic-apps/assistant-status";
 import type { Conversation, Message } from "@/types/mongodb";
 
 let db: Db;
-jest.mock("@/lib/mongodb", () => ({ getCollection: async (name: string) => db.collection(name) }));
+let mockConversations: Collection<Conversation>;
+jest.mock("@/lib/mongodb", () => ({ getCollection: async (name: string) => name === "conversations" ? mockConversations : db.collection(name) }));
 
 // Integration qualification: use an isolated MongoDB, never a deployed database.
 const integration = process.env.CAIPE_TEST_MONGODB_URI ? describe : describe.skip;
@@ -20,8 +21,7 @@ integration("app completion persistence on MongoDB", () => {
     fields: { content: "Interrupted placeholder", metadata: { turn_id: id, is_final: false, turn_status: "interrupted" } },
     insert: { message_id: `browser-${id}`, conversation_id: conversationId, role: "assistant", created_at: new Date() },
   });
-    if (write.result.upsertedCount) await db.collection("conversations").updateOne({ _id: conversationId } as never,
-      { $inc: { "metadata.total_messages": 1 } });
+    await reconcileAppConversationMessageCount(db.collection<Message>("messages"), mockConversations, conversationId);
     return write;
   };
   beforeAll(async () => {
@@ -30,6 +30,8 @@ integration("app completion persistence on MongoDB", () => {
   });
   afterAll(async () => { await db.dropDatabase(); await client.close(); });
   beforeEach(async () => {
+    jest.restoreAllMocks();
+    mockConversations = db.collection<Conversation>("conversations");
     await db.collection("messages").deleteMany({}); await db.collection("conversations").deleteMany({});
     await db.collection<Conversation>("conversations").insertOne({ _id: conversationId, owner_id: completion.email,
       owner_subject: completion.subject, client_type: "webui", personal_context: "private",
@@ -38,6 +40,34 @@ integration("app completion persistence on MongoDB", () => {
       metadata: { total_messages: 1 } } as Conversation);
     await db.collection("messages").insertOne({ conversation_id: conversationId, role: "user",
       content: "Question", metadata: { turn_id: turnId }, created_at: new Date("2026-01-01") });
+  });
+
+  it("repairs a failed count write on the next status poll without resending or reinserting", async () => {
+    const update = jest.spyOn(mockConversations, "updateOne").mockRejectedValueOnce(new Error("Transient count failure"));
+    await expect(persistAssistantCompletion(completion)).rejects.toThrow("Transient count failure");
+    expect(await db.collection("messages").countDocuments({ role: "assistant" })).toBe(1);
+    expect((await mockConversations.findOne({ _id: conversationId }))!.metadata.total_messages).toBe(1);
+    await persistAssistantCompletion(completion);
+    expect(await db.collection("messages").countDocuments({ role: "assistant" })).toBe(1);
+    expect((await mockConversations.findOne({ _id: conversationId }))!.metadata.total_messages).toBe(2);
+    expect(update).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not lower a newer browser insertion count when an older recount completes later", async () => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const counted = new Promise<void>(resolve => { entered = resolve; });
+    const update = mockConversations.updateOne.bind(mockConversations);
+    jest.spyOn(mockConversations, "updateOne").mockImplementationOnce(async (...args) => {
+      entered(); await held; return update(...args);
+    });
+    const pending = persistAssistantCompletion(completion);
+    await counted;
+    await browserWrite("newer-turn");
+    release(); await pending;
+    expect(await db.collection("messages").countDocuments()).toBe(3);
+    expect((await mockConversations.findOne({ _id: conversationId }))!.metadata.total_messages).toBe(3);
   });
 
   it("reconciles concurrent polls and browser writes to exactly one accepted result", async () => {

@@ -462,8 +462,11 @@ export function matchesAgenticAppHttpPath(pattern, path) {
     const absolute = value.startsWith("/") ? value : `/${value}`;
     return absolute.length > 1 ? absolute.replace(/\/+$/, "") : absolute;
   };
-  const actual = normalize(path).split("/").filter(Boolean);
-  const expected = normalize(pattern).split("/").filter(Boolean);
+  const actual = normalize(path).split("/").slice(1);
+  const expected = normalize(pattern).split("/").slice(1);
+  if (actual.some(segment => !segment) || expected.some(segment => !segment)) {
+    return normalize(path) === "/" && normalize(pattern) === "/";
+  }
   return expected.length === actual.length && expected.every(
     (segment, index) => segment.startsWith(":") || segment === actual[index],
   );

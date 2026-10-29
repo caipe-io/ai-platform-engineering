@@ -1,6 +1,6 @@
 /** @jest-environment node */
 import { admitPersonalEvidenceConversation, assertPrivateConversationIdempotencyAccess,
-  claimConversationShareable, isPersonalEvidenceConversationEligible } from "../conversation-evidence-privacy";
+  claimConversationShareable, isPersonalEvidenceConversationEligible, reserveConversationMessageWrite } from "../conversation-evidence-privacy";
 import type { Conversation } from "@/types/mongodb";
 
 const mockGetCollection = jest.fn();
@@ -68,4 +68,29 @@ it("rejects idempotent repairs for a foreign subject or service account despite 
     expect(() => assertPrivateConversationIdempotencyAccess(conversation, caller, "owner@example.test"))
       .toThrow("Private personal research");
   }
+});
+
+it("reports a missing sharing target separately from a private chat", async () => {
+  mockGetCollection.mockResolvedValue({ updateOne: async () => ({ matchedCount: 0 }), findOne: async () => null });
+  await expect(claimConversationShareable("missing-conversation")).rejects.toMatchObject({ statusCode: 404, code: "NOT_FOUND" });
+});
+
+it("does not turn an owner-only write into a sharing reservation", async () => {
+  await reserveConversationMessageWrite(conversation, { sub: "subject-primary" }, "owner@example.test");
+  expect(update).not.toHaveBeenCalled();
+  await admit();
+});
+
+it.each([{ sub: "other-subject" }, { sub: "subject-primary", isServiceAccount: true }])
+  ("reserves a non-owner writer before legacy sharing can disappear: %j", async caller => {
+    await reserveConversationMessageWrite(conversation, caller, "owner@example.test");
+    expect(conversation.personal_context).toBe("shareable");
+    await expect(admit()).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+it("rejects a delayed non-owner write after personal admission wins", async () => {
+  const stale = { ...conversation };
+  await admit();
+  await expect(reserveConversationMessageWrite(stale, { sub: "other-subject" }, "owner@example.test"))
+    .rejects.toMatchObject({ statusCode: 403, code: "PRIVATE_CONVERSATION_OWNER_REQUIRED" });
 });

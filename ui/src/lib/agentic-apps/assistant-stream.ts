@@ -83,7 +83,7 @@ export async function proxyAgenticAppAssistantStream(
   } else if (conversation.client_type !== "webui") {
     return NextResponse.json({ error: "This app assistant does not support this client", code: "ASSISTANT_CLIENT_UNSUPPORTED" }, { status: 403 });
   }
-  if (!supportsAssistantClient({ agentId: savedAgentId!, name: "", label: "", ...target },
+  if (!supportsAssistantClient(target,
       clientContext ? "webex" : "webui", clientContext?.kind)) {
     return NextResponse.json({ error: "The app has not enabled this assistant client or group-space support", code: "ASSISTANT_CLIENT_UNSUPPORTED" }, { status: 403 });
   }

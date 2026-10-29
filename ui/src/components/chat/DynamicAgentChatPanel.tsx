@@ -54,7 +54,7 @@ import { useSlashCommands } from "./useSlashCommands";
 import { RunFollowUpButton } from "@/components/autonomous/RunFollowUpButton";
 import { useAutonomousFollowUps } from "@/hooks/use-autonomous-follow-ups";
 
-type ReadOnlyReason = 'admin_audit' | 'shared_readonly' | 'agent_deleted' | 'agent_disabled';
+type ReadOnlyReason = 'admin_audit' | 'shared_readonly' | 'agent_deleted' | 'agent_disabled' | 'app_unavailable';
 
 /**
  * A message waiting in the composer queue while a turn streams. Carries any
@@ -2683,6 +2683,11 @@ export function ChatPanel({
                 <>
                   <span className="text-sm font-medium">Agent Disabled</span>
                   <span className="text-xs text-red-600 dark:text-red-500">— This agent has been disabled by an administrator. You can view the history but cannot send new messages.</span>
+                </>
+              ) : panelReadOnlyReason === 'app_unavailable' ? (
+                <>
+                  <span className="text-sm font-medium">Application Unavailable</span>
+                  <span className="text-xs text-amber-600 dark:text-amber-500">The application is unavailable or access has changed. You can view this history but cannot send new messages.</span>
                 </>
               ) : (
                 <>

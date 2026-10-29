@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getCollection } from "@/lib/mongodb";
 import { ownsPersonalEvidenceConversation } from "@/lib/conversation-evidence-privacy";
-import { upsertChatMessage } from "@/lib/chat-message-persistence";
+import { reconcileAppConversationMessageCount, upsertChatMessage } from "@/lib/chat-message-persistence";
 import { getAgentId } from "@/types/a2a";
 import type { Conversation, Message } from "@/types/mongodb";
 import type { AgenticAppAssistantStatus, AgenticAppCompletedTurn } from "@/types/agentic-app";
@@ -60,7 +60,7 @@ export async function persistAssistantCompletion(input: {
     role: "user", "metadata.turn_id": input.turn.turnId });
   if (!user) return false;
   const now = new Date();
-  const { result } = await upsertChatMessage(messages, {
+  await upsertChatMessage(messages, {
     conversationId: conversation._id, role: "assistant", turnId: input.turn.turnId, appTurn: true, trustedCompletion: true,
     fields: { content: input.turn.content, updated_at: now, metadata: {
       source: "web", turn_id: input.turn.turnId, agent_id: input.agentId,
@@ -73,7 +73,9 @@ export async function persistAssistantCompletion(input: {
       role: "assistant", owner_id: conversation.owner_id,
       created_at: new Date(new Date(user.created_at).getTime() + 1) },
   });
-  if (result.upsertedCount) await conversations.updateOne({ _id: conversation._id },
-    { $inc: { "metadata.total_messages": 1 } });
+  // Reconcile even on an idempotent retry: a prior insert may have succeeded
+  // before its count update failed. An older observation cannot lower a newer
+  // insert count, and replay does not move conversation activity timestamps.
+  await reconcileAppConversationMessageCount(messages, conversations, conversation._id);
   return true;
 }

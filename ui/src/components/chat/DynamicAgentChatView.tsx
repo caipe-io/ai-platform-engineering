@@ -72,7 +72,8 @@ export function ChatView({
       appOwnedRuntime={appOwnedRuntime}
       conversationId={conversationId}
       readOnly={readOnly || isDisabled}
-      readOnlyReason={agentNotFound ? 'agent_deleted' : agent?.enabled === false ? 'agent_disabled' : readOnlyReason}
+      readOnlyReason={agentNotFound ? 'agent_deleted' : agent?.enabled === false ? 'agent_disabled' : readOnlyReason ??
+        (agent?.presentation?.available === false ? 'app_unavailable' : undefined)}
       apiConversation={apiConversation}
       agentId={selectedAgentId}
       agent={agent}

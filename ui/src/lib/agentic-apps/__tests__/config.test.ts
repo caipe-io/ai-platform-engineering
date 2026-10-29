@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { getAgenticAppRoutingSnapshot, loadConfiguredAgenticApps } from "../config";
+import { projectAgentAppIdentity } from "../agent-catalog";
+import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 
 describe("External Apps deployment config", () => {
   const previousEnabled = process.env.AGENTIC_APPS_INSTALL_ENABLED;
@@ -43,6 +45,36 @@ describe("External Apps deployment config", () => {
       else process.env.AGENTIC_APPS_CONFIG_PATH = previous;
       process.env.AGENTIC_APPS_INSTALL_ENABLED = "true";
     }
+  });
+
+  it("does not require a missing catalog when app launch is disabled", () => {
+    const directory = mkdtempSync(join(tmpdir(), "disabled-apps-"));
+    const previous = process.env.AGENTIC_APPS_CONFIG_PATH;
+    try {
+      process.env.AGENTIC_APPS_INSTALL_ENABLED = "false";
+      process.env.AGENTIC_APPS_CONFIG_PATH = join(directory, "missing.yaml");
+      expect(loadConfiguredAgenticApps(undefined, { includeDisabledIdentity: true })).toEqual([]);
+      const native = { _id: "native-agent", name: "Native", enabled: true } as DynamicAgentConfig;
+      expect(projectAgentAppIdentity([native], { sub: "example-subject" })).toEqual([native]);
+    } finally {
+      if (previous === undefined) delete process.env.AGENTIC_APPS_CONFIG_PATH;
+      else process.env.AGENTIC_APPS_CONFIG_PATH = previous;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("retains validated identity through an invalid disabled catalog without breaking native agents", () => {
+    withConfig(validConfig(), path => {
+      const apps = loadConfiguredAgenticApps(path);
+      writeFileSync(path, "invalid: catalog");
+      process.env.AGENTIC_APPS_INSTALL_ENABLED = "false";
+      expect(loadConfiguredAgenticApps(path, { includeDisabledIdentity: true })).toEqual(apps);
+    });
+    withConfig("invalid: catalog", path => {
+      expect(loadConfiguredAgenticApps(path, { includeDisabledIdentity: true })).toEqual([]);
+      process.env.AGENTIC_APPS_INSTALL_ENABLED = "true";
+      expect(() => loadConfiguredAgenticApps(path)).toThrow();
+    });
   });
 
   it("loads and joins generic packages and installations", () => {

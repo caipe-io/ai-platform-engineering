@@ -17,7 +17,8 @@ withErrorHandler,
 } from '@/lib/api-middleware';
 import type { ConversationAccessLevel } from '@/lib/api-middleware';
 import { getCollection } from '@/lib/mongodb';
-import { upsertChatMessage } from '@/lib/chat-message-persistence';
+import { reconcileAppConversationMessageCount, upsertChatMessage } from '@/lib/chat-message-persistence';
+import { reserveConversationMessageWrite } from '@/lib/conversation-evidence-privacy';
 import { requireConversationResourcePermission } from '@/lib/rbac/conversation-implicit-authz';
 import type { AddMessageRequest,Conversation,Message } from '@/types/mongodb';
 import { NextRequest } from 'next/server';
@@ -126,6 +127,8 @@ export const POST = withErrorHandler(async (
     throw new ApiError('Read-only access — cannot add messages', 403, 'FORBIDDEN');
   }
 
+  await reserveConversationMessageWrite(conversation, session, user.email);
+
   const conversations = await getCollection<Conversation>('conversations');
   const ownerId = conversation?.owner_id || user.email;
 
@@ -218,7 +221,9 @@ export const POST = withErrorHandler(async (
   });
 
   // Only increment total_messages on new inserts (not updates)
-  if (result.upsertedId) {
+  if (conversation.app_binding) {
+    await reconcileAppConversationMessageCount(messages, conversations, conversationId, now);
+  } else if (result.upsertedId) {
     await conversations.updateOne(
       { _id: conversationId },
       {

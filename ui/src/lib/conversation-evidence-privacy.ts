@@ -19,12 +19,46 @@ export async function claimConversationShareable(conversationId: string): Promis
     ],
   }, { $set: { [CONVERSATION_EVIDENCE_VISIBILITY_PATH]: "shareable" } });
   if (claimed.matchedCount !== 1) {
+    if (!await conversations.findOne({ _id: conversationId }, { projection: { _id: 1 } })) {
+      throw new ApiError("Conversation not found", 404, "NOT_FOUND");
+    }
     throw new ApiError(
       "This chat contains private personal evidence and cannot be shared. Start a separate chat to share agent answers.",
       409,
       "PERSONAL_CONTEXT_PRIVATE",
     );
   }
+}
+
+/** A non-owner write and private admission compete on the same durable CAS. */
+export async function reserveConversationMessageWrite(
+  conversation: Conversation,
+  caller: { sub?: unknown; isServiceAccount?: unknown },
+  email: string,
+): Promise<void> {
+  const subject = typeof caller.sub === "string" ? caller.sub.trim() : "";
+  if (caller.isServiceAccount !== true && ownsPersonalEvidenceConversation(conversation, subject, email)) return;
+  try {
+    await claimConversationShareable(conversation._id);
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "PERSONAL_CONTEXT_PRIVATE") {
+      throw new ApiError("Private personal research can only be updated by its owner.", 403, "PRIVATE_CONVERSATION_OWNER_REQUIRED");
+    }
+    throw error;
+  }
+}
+
+/** Removing legacy sharing cannot make previously collaborative history private. */
+export async function removeConversationTeamShares(teamId: string): Promise<void> {
+  const conversations = await getCollection<Conversation>("conversations");
+  await conversations.updateMany({ "sharing.shared_with_teams": teamId }, [{ $set: {
+    "sharing.shared_with_teams": { $filter: {
+      input: "$sharing.shared_with_teams", as: "team", cond: { $ne: ["$$team", { $literal: teamId }] },
+    } },
+    [CONVERSATION_EVIDENCE_VISIBILITY_PATH]: { $cond: [
+      { $eq: [{ $type: "$personal_context" }, "missing"] }, "shareable", "$personal_context",
+    ] },
+  } }]);
 }
 
 /** A normalized owner subject is authoritative; only legacy rows fall back to email. */

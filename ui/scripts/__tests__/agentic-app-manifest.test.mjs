@@ -20,9 +20,17 @@ import {
   normalizeLegacyAgenticAppManifest,
   nativeUiDescriptor,
   resolveAgenticAppIcon,
+  matchesAgenticAppHttpPath,
 } from "../../app-sdk/agentic-app-manifest.mjs";
 import { validateManifest } from "../../app-sdk/checker.mjs";
 import { generateNativeExtensions, installAppIcon } from "../generate-native-extensions.mjs";
+
+test("HTTP policies do not collapse empty interior path segments", () => {
+  assert.equal(matchesAgenticAppHttpPath("/api/items/delete", "/api/items//delete"), false);
+  assert.equal(matchesAgenticAppHttpPath("/api/items/:item/delete", "/api/items//delete"), false);
+  assert.equal(matchesAgenticAppHttpPath("/api/items/:item/delete", "/api/items/example/delete"), true);
+  assert.equal(matchesAgenticAppHttpPath("/", "/"), true);
+});
 
 export function exampleManifest() {
   return {

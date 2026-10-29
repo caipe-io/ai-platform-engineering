@@ -84,13 +84,27 @@ export function loadConfiguredAgenticApps(
   configPath = process.env.AGENTIC_APPS_CONFIG_PATH?.trim(),
   options: { includeDisabledIdentity?: boolean } = {},
 ): ConfiguredAgenticApp[] {
-  if (!isAgenticAppsEnabled() && !options.includeDisabledIdentity) return [];
-  if (!isAgenticAppsEnabled() && !configPath) return [];
+  const enabled = isAgenticAppsEnabled();
+  if (!enabled && !options.includeDisabledIdentity) return [];
+  if (!enabled && !configPath) return [];
   if (!configPath) {
     throw new Error(
       "AGENTIC_APPS_CONFIG_PATH is required when AGENTIC_APPS_INSTALL_ENABLED=true",
     );
   }
+  try {
+    return loadAgenticAppCatalog(configPath);
+  } catch (error) {
+    if (enabled) throw error;
+    // Disabled app launch must not take unrelated native agents offline. Keep
+    // previously validated identities pinned while a catalog mount is repaired.
+    console.error("[AgenticApps] Disabled application catalog is unavailable", error instanceof Error ? error.message : String(error));
+    const snapshot = routingState.__caipeAgenticAppRoutingSnapshot;
+    return snapshot?.path === configPath ? snapshot.apps : [];
+  }
+}
+
+function loadAgenticAppCatalog(configPath: string): ConfiguredAgenticApp[] {
   if (!fs.existsSync(configPath)) {
     throw new Error(`External Apps config does not exist: ${configPath}`);
   }

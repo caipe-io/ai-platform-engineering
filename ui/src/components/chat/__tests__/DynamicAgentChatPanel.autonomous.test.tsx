@@ -142,9 +142,16 @@ it("uses ordinary shared chat for an app stream without native runtime side requ
     await waitFor(() => expect(mockStreamMessage).toHaveBeenCalled());
     expect(mockCreateStreamAdapter).toHaveBeenCalledWith({ protocol: "agui" });
     const paths = jest.mocked(global.fetch).mock.calls.map(([url]) => String(url));
-    expect(paths.filter(path => /dynamic-agents.*(?:files|interrupt|agents$|capabilities)/.test(path))).toEqual([]);
+    expect(paths.filter(path => /dynamic-agents.*(?:files|interrupt|agents$|capabilities)|\/api\/files\//.test(path))).toEqual([]);
     expect(mockPush).not.toHaveBeenCalled();
   } finally { global.fetch = savedFetch; }
+});
+
+it("explains application unavailability without claiming the owner's history was shared", () => {
+  mockConversation = { ...mockConversation, source: "web", task_id: undefined, messages: [] };
+  render(<ChatPanel agentId="example-agent" conversationId="task-chat" readOnly readOnlyReason="app_unavailable" />);
+  expect(screen.getByText("Application Unavailable")).toBeInTheDocument();
+  expect(screen.queryByText(/shared with you as read-only/)).toBeNull();
 });
 
 it("filters blank suggestions before limiting them, and fills the composer without sending", () => {

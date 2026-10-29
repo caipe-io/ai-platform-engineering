@@ -41,5 +41,11 @@ it("waits for server-projected agent identity before mounting native controls", 
 it("preserves read-only access when app launch is unavailable", () => {
   render(<ChatView conversationId="example-chat" selectedAgentId="example-agent" agent={{ ...agent,
     presentation: { ...agent.presentation!, available: false } }} />);
-  expect(mockPanel).toHaveBeenCalledWith(expect.objectContaining({ readOnly: true }));
+  expect(mockPanel).toHaveBeenCalledWith(expect.objectContaining({ readOnly: true, readOnlyReason: "app_unavailable" }));
+});
+
+it("preserves the actual audit reason when an application is also unavailable", () => {
+  render(<ChatView conversationId="example-chat" selectedAgentId="example-agent" readOnly readOnlyReason="admin_audit"
+    agent={{ ...agent, presentation: { ...agent.presentation!, available: false } }} />);
+  expect(mockPanel).toHaveBeenCalledWith(expect.objectContaining({ readOnlyReason: "admin_audit" }));
 });

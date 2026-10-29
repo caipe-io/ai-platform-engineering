@@ -114,6 +114,21 @@ describe("External App runtime route", () => {
       headers: { "sec-fetch-site": "cross-site" },
     }), { params: Promise.resolve({ appId: "example-app", path: [] }) });
     expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "same_origin_browser_request_required" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("rejects an unsafe browser-context request with a mismatched Origin", async () => {
+    mockBrowserContextPath.mockReturnValue(true);
+    mockGetConfiguredAgenticApp.mockReturnValueOnce({ ...configuredApp, manifest: { ...configuredApp.manifest,
+      access: { ...configuredApp.manifest.access, policyActions: [{ action: "proxy:POST", defaultEffect: "allow" }] } } });
+    const fetchMock = jest.spyOn(global, "fetch");
+    const response = await proxyAgenticAppRequest(new Request("https://host.example/api/agentic-apps/runtime/example-app/api/research", {
+      method: "POST", body: "{}", headers: { origin: "https://other.example" },
+    }), { params: Promise.resolve({ appId: "example-app", path: ["api", "research"] }) });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "same_origin_browser_request_required" });
     expect(fetchMock).not.toHaveBeenCalled();
     fetchMock.mockRestore();
   });

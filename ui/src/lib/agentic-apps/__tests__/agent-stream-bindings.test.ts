@@ -46,6 +46,14 @@ it("preserves the canonical deployment binding and explicit per-agent clients", 
     agentStreams: [{ ...stream, supportedClients: ["webex"], webexGroupChat: false }] });
   expect(getAgenticAppAgentStreams(app)[0].agentId).toBe("team/primary-agent");
   expect(getAgenticAppAgentStreams(app)[1]).toMatchObject({ supportedClients: ["webex"], webexGroupChat: false });
+  expect(buildPublicAgenticApp(app, true).chatAgentIds).toEqual(["team/primary-agent"]);
+});
+
+it("does not advertise a Webex-only primary or additional stream as a browser assistant", () => {
+  const [app] = load({ agentStreams: [{ ...stream, supportedClients: ["webex"] }] }, {
+    ...manifest, ui: { ...manifest.ui, assistant: { ...manifest.ui.assistant, supportedClients: ["webex"] } },
+  });
+  expect(buildPublicAgenticApp(app, true)).toMatchObject({ assistantEnabled: false, chatAgentIds: [] });
 });
 
 it.each([

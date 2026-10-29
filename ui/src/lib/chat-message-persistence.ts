@@ -1,7 +1,21 @@
 import { createHash } from "node:crypto";
 import { ObjectId, type Collection, type Document } from "mongodb";
 
-import type { Message } from "@/types/mongodb";
+import type { Conversation, Message } from "@/types/mongodb";
+
+/** Monotonic insert-count repair for app writes; rewind owns count decrements. */
+export async function reconcileAppConversationMessageCount(
+  messages: Collection<Message>,
+  conversations: Collection<Conversation>,
+  conversationId: string,
+  updatedAt?: Date,
+): Promise<void> {
+  const total = await messages.countDocuments({ conversation_id: conversationId });
+  await conversations.updateOne({ _id: conversationId }, {
+    $max: { "metadata.total_messages": total },
+    ...(updatedAt ? { $set: { updated_at: updatedAt } } : {}),
+  });
+}
 
 /** One assistant row per app turn, including browser saves racing a status recovery. */
 export async function upsertChatMessage(

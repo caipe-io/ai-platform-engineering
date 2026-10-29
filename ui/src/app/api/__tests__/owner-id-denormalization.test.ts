@@ -88,7 +88,7 @@ function createMockCollection() {
     updateOne: jest.fn().mockResolvedValue({
       upsertedId: new ObjectId(),
       upsertedCount: 1,
-      matchedCount: 0,
+      matchedCount: 1,
       modifiedCount: 0,
       acknowledged: true,
     }),
