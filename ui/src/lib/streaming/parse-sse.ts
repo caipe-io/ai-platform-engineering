@@ -25,7 +25,7 @@ export interface RawSSEEvent {
 /**
  * Parse an SSE stream from a fetch Response.
  *
- * Yields one RawSSEEvent per SSE frame (delimited by `\n\n`).
+ * Yields one RawSSEEvent per data-bearing frame (delimited by `\n\n`).
  * Handles multi-line `data:` fields per the SSE spec.
  * Uses getReader() for Safari compatibility.
  */
@@ -68,6 +68,10 @@ export async function* parseSSEStream(
             dataLines.push(line.slice(5));
           }
         }
+
+        // Comments and event-only keep-alives do not dispatch application data.
+        // An explicit empty data field still counts as a data-bearing frame.
+        if (dataLines.length === 0) continue;
 
         // Join multiple data lines with newlines (SSE spec)
         const eventData = dataLines.join("\n");
