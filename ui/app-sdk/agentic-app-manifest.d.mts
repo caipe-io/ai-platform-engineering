@@ -11,6 +11,7 @@ export interface AgenticAppPolicyAction {
   requiredScopes?: string[];
   method?: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
   path?: string;
+  casAction?: "read" | "use" | "write" | "approve" | "manage";
 }
 export interface AgenticAppUiProfile {
   id: string;
@@ -24,6 +25,7 @@ export interface AgenticAppManifest {
   description: string;
   apiVersion: "2.0";
   version?: string;
+  authorization?: { resourceType: "agentic_app"; launchAction: "use" };
   ui: {
     profiles: AgenticAppUiProfile[];
     routes: Array<{ id: string; path: string }>;

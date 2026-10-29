@@ -45,6 +45,7 @@ const DEFAULT_RESOURCES: readonly RebacCatalogResource[] = [
   resource("webex_workspace", "workspace-default", "Default Webex Workspace", "role_gated"),
   resource("webex_space", "workspace-default--platform", "Platform Space", "role_gated"),
   resource("agent", "platform-engineer", "Platform Engineer", "rebac_shadowed"),
+  resource("agentic_app", "example-app", "Example External App", "rebac_enforced"),
   resource("llm_model", "default", "Default LLM Model", "rebac_enforced"),
   resource("mcp_gateway", "list", "AgentGateway MCP list", "rebac_shadowed"),
   resource("mcp_server", "argocd", "Argo CD MCP Server", "role_gated"),

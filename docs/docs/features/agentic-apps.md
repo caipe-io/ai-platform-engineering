@@ -40,15 +40,20 @@ sequenceDiagram
     participant Browser
     participant Host as CAIPE UI/BFF
     participant IdP as OIDC provider
+    participant CAS as Capability authorization
     participant App as External App
 
     Browser->>Host: Open /apps
     Host->>IdP: Validate the existing session
-    Host-->>Browser: Visible, role-eligible Apps
+    Host->>CAS: Check agentic_app read/use (when configured)
+    CAS-->>Host: Allow or deny
+    Host-->>Browser: Visible, authorized Apps
     Browser->>Host: Open /apps/example-app
     Browser->>Host: Load iframe and assets at /apps/example-app/...
     Host->>Host: Rewrite embedded traffic to the private runtime route
     Host->>Host: Require stable subject and match route policy
+    Host->>CAS: Check the route's agentic_app action
+    CAS-->>Host: Allow or deny
     Host->>Host: Mint short-lived app-bound JWT
     Host->>App: Proxy request with Bearer JWT
     App->>App: Verify signature, issuer, audience, expiry, app_id, sub, and scopes
@@ -127,6 +132,7 @@ AGENTIC_APPS_INSTALL_ENABLED=true
 AGENTIC_APPS_CONFIG_PATH=/etc/caipe-ui/agentic-apps.yaml
 AGENTIC_APP_TOKEN_SECRET=<dedicated-shared-secret>
 AGENTIC_APP_TOKEN_ISSUER=caipe-agentic-apps
+AGENTIC_APPS_CAS_MODE=enforce
 ```
 
 The catalog is deployment-owned. It is not written to MongoDB and contains no
@@ -172,6 +178,10 @@ agentic_apps:
               path: /api/reports
               defaultEffect: allow
               requiredScopes: [example-app:run]
+              casAction: write
+        authorization:
+          resourceType: agentic_app
+          launchAction: use
         health:
           endpoint: /health
         catalog:
@@ -222,6 +232,7 @@ Then start the UI with the committed opt-in catalog:
 AGENTIC_APPS_INSTALL_ENABLED=true \
 AGENTIC_APPS_CONFIG_PATH="$PWD/examples/external-apps/weather/agentic-apps.yaml" \
 AGENTIC_APP_TOKEN_SECRET='paste-the-same-generated-secret-here' \
+AGENTIC_APPS_CAS_MODE=off \
   npm run dev
 ```
 
@@ -344,12 +355,50 @@ authorized hidden apps can now launch through direct lookup. Role and request
 policy checks remain enforced. Permission requests and capability references
 are metadata; they do not create CAS grants or provision agents/tools.
 
-This first forward-port provides deployment flags, OIDC identity continuity,
-role launch gates, per-route policy, app-bound tokens, and the protected
-runtime proxy. It does not create `agentic_app` objects in OpenFGA and does not
-call an external capability authorization service. A later authorization
-adapter can add that outer launch/discovery decision without changing the
-external application's token-verification contract.
+Local role and route policies remain mandatory. The opt-in authorization
+adapter below adds an outer CAS gate without replacing the 2.0 manifest,
+native component contract, or application-specific authorization.
+External Apps can opt into host-level capability authorization by declaring an
+`authorization` block. The host then checks the configured `agentic_app`
+resource before listing, launching, or proxying requests. `launchAction`
+defaults the launch decision; individual route policies can select a narrower
+`casAction` such as `read`, `write`, `approve`, or `manage`.
+
+Visible and enabled opted-in apps receive the deployment-wide
+`user:*` grant for `use` plus the organization-admin management relation. This
+keeps deployment-configured apps globally available while making every access
+decision pass through the shared authorization boundary. Private and team
+sharing require a persistence-backed installation policy and are outside this
+deployment-owned catalog contract.
+
+The reconciler runs at startup and every 30 seconds. Protected requests also
+wait for a successful reconciliation of the current catalog; an unavailable
+model/PDP remains fail-closed and a later request retries after the model hook
+completes. Concurrent requests are coalesced. The catalog is still read on
+demand; a changed catalog invalidates the reconciliation cache.
+
+A persistent `catalog_managed` relation marks catalog-owned objects. Removal,
+disablement, hiding, or authorization opt-out revokes only their wildcard-use
+and organization-admin grants and removes the marker. Explicit user/team
+grants and unmarked, independently managed app objects are not deleted. Keep
+all UI replicas on the same catalog revision; config projection is eventually
+consistent, not an atomic cross-replica policy transaction. Disablement must
+remain enforced in each request's installation lookup.
+
+Route `casAction` declarations require the app-level authorization block.
+The example preferences route requests `use`, not `write`; a deployment that
+selects `write` must explicitly provision writer permissions for non-admins.
+
+`AGENTIC_APPS_CAS_MODE` controls enforcement:
+
+- `enforce` (default) fails closed when authorization denies or is unavailable;
+- `shadow` evaluates CAS while allowing the request; and
+- `off` skips the external authorization call, which is useful for the
+  standalone Weather example without OpenFGA.
+
+The external application's JWT verification and domain-specific authorization
+remain mandatory. The host CAS decision is an outer discovery and proxy gate;
+it does not replace authorization inside the application.
 
 The parser accepts existing `health.blockLaunchWhen` and installation
 `health_policy` metadata for catalog compatibility, but this first slice does
