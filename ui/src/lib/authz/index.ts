@@ -43,6 +43,7 @@ export type { GatewayRequest, GatewayResult, GatewayCheck } from "./gateway-cont
 
 export { createDelegation, inspectDelegation, revokeDelegation, authorizeDelegated } from "./delegations";
 export { registerResource, PendingResourceRegistrationError } from "./resources";
+export { transferResourceOwner, retireResource } from "./resource-lifecycle";
 export type { ResourceRegistration, RegisteredResource } from "./resource-contract";
 
 // ─── Public API ───────────────────────────────────────────────────────────────

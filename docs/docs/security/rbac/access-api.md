@@ -96,6 +96,23 @@ is built into CAIPE.
 [Architecture](./service-defined-resources.md) ·
 [Registration, grant and deployment examples](https://github.com/caipe-io/ai-platform-engineering/tree/main/ui/examples/agentic-apps/service-only).
 
+Resource snapshots include an opaque `owner_version`. Both lifecycle mutations
+require a same-origin human browser session and current ownership:
+
+| Operation | Endpoint | Body |
+| --- | --- | --- |
+| Transfer | `POST /api/access/resources/{id}/owner` | `expected_owner_version`, `owner: {type: "user" \| "team", id}` |
+| Retire | `DELETE /api/access/resources/{id}` | `expected_owner_version` |
+| Inspect | `GET /api/access/resources/{id}` | None; includes retirement receipt for the last owners |
+
+A successful mutation returns the resource snapshot (200). Stale ownership or
+re-registering a retired business identity returns 409; unauthorized callers get
+403. Dependency failures or an unconfirmed outcome return 503. Inspect before
+retrying an unconfirmed mutation. Transfer preserves explicit grants and approved
+jobs; CAS still rechecks current permissions. Retirement permanently blocks the
+handle without deleting the app's data. Lifecycle audit records the actor,
+previous/new ownership versions, owner and outcome.
+
 ## BFF agent execution
 
 ```text

@@ -55,7 +55,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const req = { subject, resource, action };
     const result = await authorize(req, ctx);
-    const fga = describeFgaCheck(req);
+    const fga = await describeFgaCheck(req);
 
     return NextResponse.json(
       {

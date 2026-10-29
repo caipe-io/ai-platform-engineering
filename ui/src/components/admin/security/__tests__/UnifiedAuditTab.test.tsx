@@ -440,6 +440,23 @@ describe('UnifiedAuditTab', () => {
     expect(screen.getByText(/^grant$/i)).toBeInTheDocument();
   });
 
+  it.each(['transfer', 'retire'])('renders %s lifecycle context as an ownership change or retirement', async (operation) => {
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => ({ records: [{
+      ts: '2026-10-29T12:00:00Z', type: 'cas_grant', outcome: 'success', action: 'owner', tenant_id: 'primary',
+      correlation_id: 'lifecycle-example', source: 'cas', caller_ref: 'user:test-user', resource_ref: 'app_resource:example',
+      operation: operation === 'transfer' ? 'grant' : 'revoke', lifecycle: { operation, previous_owner: { type: 'user', id: 'test-user' },
+        owner: { type: 'team', id: 'example-team' }, previous_owner_version: '12345678-1234-4000-8000-123456789012',
+        owner_version: '12345678-1234-4000-8000-123456789013' },
+    }], cursor: 'first', next_cursor: null, since: '2026-10-29T00:00:00Z', until: '2026-10-30T00:00:00Z', as_of: '2026-10-30T00:00:00Z', limit: 30 }) });
+    render(<UnifiedAuditTab isAdmin />);
+    fireEvent.click(await screen.findByText(operation === 'transfer' ? /Transfer ownership of/ : /Retire .*confirmed/));
+    expect(await screen.findByText('Previous owner:')).toBeInTheDocument();
+    expect(screen.getByText('Resulting owner:')).toBeInTheDocument();
+    expect(screen.getByTitle('Principal: team:example-team')).toBeInTheDocument();
+    expect(screen.getByText('12345678-1234-4000-8000-123456789013')).toBeInTheDocument();
+    expect(screen.getByText(operation === 'transfer' ? /preserved explicit action grants/ : /permanently retired this handle/)).toBeInTheDocument();
+  });
+
   it('renders reconcile events as applied policy changes without unknown fields', async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,

@@ -106,6 +106,30 @@ ownership. Domain action names cannot contain `:` and `owner` is reserved.
 Ownership, structural relationships and wildcard/public grants are unavailable
 through the app grant API.
 
+## Transfer and retire
+
+Use the `owner_version` from registration or `GET /api/access/resources/{id}`.
+Only an interactive current owner can send these same-origin requests:
+
+```http
+POST /api/access/resources/12345678-1234-4000-8000-123456789012/owner
+Content-Type: application/json
+
+{"expected_owner_version":"12345678-1234-4000-8000-123456789012","owner":{"type":"user","id":"next-user"}}
+```
+
+The target must be an enabled human Keycloak ID, or a team the caller currently
+belongs to. The response contains the new version. Transfer preserves explicit
+action grants and grantors, while owner-inherited rights move to the new owner.
+Approved jobs continue only while their user and service retain permission.
+
+To retire, send `DELETE /api/access/resources/{id}` with
+`{"expected_owner_version":"<current version>"}`. Retirement is permanent:
+the handle and business identity remain reserved and all action checks deny.
+The last owners can inspect the receipt and repeat the same retirement request.
+CAS does not delete business data or stop work already authorized. A stale
+version returns 409; an unconfirmed 503 requires inspecting the resource first.
+
 `POST /api/access/query` accepts `resource_type: "app_resource"`, `action` and
 candidate `ids`; it returns permitted handles. Checks use fresh registry and
 graph reads. Invalid actions return 400; dependency/pending-state failures return
@@ -121,7 +145,8 @@ service_account:test-service grantee app_permission:R/execute
 user:execution-admin       grantor  app_permission:R/execute
 ```
 
-At check time CAS supplies this **contextual**, non-persisted structural link:
+At check time CAS supplies this **contextual**, non-persisted structural link
+for initial ownership:
 
 ```text
 app_resource:R             resource app_permission:R/execute
@@ -130,6 +155,11 @@ app_resource:R             resource app_permission:R/execute
 The standard model evaluates `can_use` or `can_grant` on that permission object.
 Only CAS derives the link from registered identity; request JSON cannot inject
 contextual tuples. The business type and local ID are not OpenFGA schema names.
+After transfer, the owner tuple and contextual link select
+`app_resource:R/owners/<owner_version>` instead. The permission object stays
+`app_permission:R/execute`, so its explicit grants are unchanged. Old ownership
+nodes and retired action tuples are retained but cannot authorize the resource;
+physical graph cleanup is separate maintenance work.
 
 ## Background jobs and audit
 

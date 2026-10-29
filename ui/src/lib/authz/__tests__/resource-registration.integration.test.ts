@@ -4,28 +4,31 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
-import { MongoClient, type Db } from "mongodb";
+import { Collection, MongoClient, type Db } from "mongodb";
 import { NextRequest } from "next/server";
 import manifest from "../../../../examples/agentic-apps/service-only/manifest.json";
 import model from "../../../../../charts/ai-platform-engineering/charts/openfga/authorization-model.json";
 import { POST as register } from "@/app/api/access/resources/route";
-import { GET as inspect } from "@/app/api/access/resources/[id]/route";
+import { GET as inspect, DELETE as retire } from "@/app/api/access/resources/[id]/route";
+import { POST as transfer } from "@/app/api/access/resources/[id]/owner/route";
 import { POST as check } from "@/app/api/access/check/route";
 import { POST as query } from "@/app/api/access/query/route";
 import { POST as grant, DELETE as revokeGrant } from "@/app/api/access/grants/route";
 import { createDelegation, authorizeDelegated, revokeDelegation } from "../index";
 import { readRegisteredResource, reserveResource } from "../resource-store";
-import { permissionObject, RESOURCE_ID_PATTERN, type RegisteredResource } from "../resource-contract";
+import { permissionObject, resourceOwnerObject, RESOURCE_ID_PATTERN, type RegisteredResource } from "../resource-contract";
 import { __resetAdapterStateForTests, describeFgaCheck } from "../engines/openfga";
 
 let mockDb: Db;
 const mockSession = jest.fn(); const mockJwt = jest.fn(); const mockAudit = jest.fn();
+const mockUser = jest.fn();
 const mockLegacyAuth = jest.fn(() => { throw new Error("Unexpected legacy authentication"); });
 jest.mock("@/lib/mongodb", () => ({ isMongoDBConfigured: true, getCollection: (name: string) => mockDb.collection(name) }));
 jest.mock("@/lib/api-middleware", () => ({ getAuthenticatedUser: (...args: unknown[]) => mockSession(...args),
   getAuthFromBearerOrSession: (...args: unknown[]) => mockLegacyAuth(...args) }));
 jest.mock("@/lib/jwt-validation", () => ({ validatePlatformBearerJWT: (...args: unknown[]) => mockJwt(...args) }));
 jest.mock("@/lib/audit", () => ({ getAuditClient: () => ({ append: (...args: unknown[]) => mockAudit(...args) }) }));
+jest.mock("@/lib/rbac/keycloak-admin", () => ({ getRealmUserByIdOrNull: (...args: unknown[]) => mockUser(...args) }));
 const mongoUri = process.env.CAS_RESOURCE_TEST_MONGODB_URI;
 const fgaUrl = process.env.CAS_RESOURCE_TEST_OPENFGA_URL;
 const describeIntegration = mongoUri && fgaUrl ? describe : describe.skip;
@@ -91,6 +94,7 @@ describeIntegration("runtime iframe app resources with real MongoDB and OpenFGA"
   beforeEach(() => {
     jest.clearAllMocks(); global.fetch = realFetch; __resetAdapterStateForTests(); session();
     writeFileSync(configFile, JSON.stringify(apps())); mockJwt.mockResolvedValue(service);
+    mockUser.mockImplementation(async (id: string) => ({ id, enabled: true }));
   });
   afterAll(async () => {
     global.fetch = originalFetch;
@@ -156,7 +160,7 @@ describeIntegration("runtime iframe app resources with real MongoDB and OpenFGA"
     expect(await (await check(request("check", { resource, action: "terminate" }, true))).json()).toMatchObject({ decision: "DENY" });
     expect((await revokeGrant(request("grants", intent, false, "DELETE"))).status).toBe(200);
     expect(await (await check(request("check", { resource, action: "execute" }, true))).json()).toMatchObject({ decision: "DENY" });
-    const debug = describeFgaCheck({ resource, subject: service.subject, action: "execute" });
+    const debug = await describeFgaCheck({ resource, subject: service.subject, action: "execute" });
     expect(debug).toMatchObject({ relation: "can_use", object: permissionObject(resource.id, "execute"),
       contextual_tuples: [{ user: `app_resource:${resource.id}`, relation: "resource", object: permissionObject(resource.id, "execute") }] });
     expect((await fga(`/stores/${storeId}/read`, { tuple_key: { object: permissionObject(resource.id, "execute"), relation: "resource" } })).tuples).toEqual([]);
@@ -239,5 +243,177 @@ describeIntegration("runtime iframe app resources with real MongoDB and OpenFGA"
     await reserveResource(record);
     await fga(`/stores/${storeId}/write`, { writes: { tuple_keys: [{ user: "user:prior-user", relation: "owner", object: `app_resource:${record._id}` }] } });
     expect((await register(request("resources", { ...businessKey, local_id: record.local_id }))).status).toBe(409);
+  });
+
+  function params(id: string) { return { params: Promise.resolve({ id }) }; }
+  const nextOwner = { type: "user", id: "next-owner" };
+  async function move(saved: { resource: { id: string }; owner_version: string }, owner = nextOwner) {
+    return transfer(request("resources/owner", { owner, expected_owner_version: saved.owner_version }), params(saved.resource.id));
+  }
+
+  it("transfers only ownership, preserves action grants/grantors, and rechecks approved jobs", async () => {
+    const saved = await create("owner-transfer");
+    const { resource } = saved;
+    for (const [grantee, authority] of [[service.subject, "use"], [user.subject, "use"], [{ type: "user", id: "action-grantor" }, "grant"]]) {
+      expect((await grant(request("grants", { resource, capability: "execute", grantee, authority }))).status).toBe(200);
+    }
+    const approval = await createDelegation(user, { service: { id: service.subject.id, client_id: service.clientId }, job_id: "transfer-job",
+      expires_at: new Date(Date.now() + 3600000).toISOString(), scope: [{ resource, action: "execute" }] }, ctx, randomUUID());
+    const moved = await move(saved); expect(moved.status).toBe(200);
+    const next = await moved.json(); expect(next.resource).toEqual(resource); expect(next.owner).toEqual(nextOwner);
+    expect(next.owner_version).not.toBe(saved.owner_version);
+    expect(await peer.db(mockDb.databaseName).collection("access_resources").findOne({ _id: resource.id })).toMatchObject({ owner: nextOwner, owner_version: next.owner_version });
+    expect(await (await check(request("check", { resource, action: "owner" }))).json()).toMatchObject({ decision: "DENY" });
+    const work = { resource, action: "execute", job_id: "transfer-job" };
+    expect(await authorizeDelegated(approval._id, service, work, {})).toMatchObject({ decision: "ALLOW" });
+    session("action-grantor");
+    expect(await (await check(request("check", { resource, action: "grant:execute" }))).json()).toMatchObject({ decision: "ALLOW" });
+    expect((await move(next)).status).toBe(403);
+    session(nextOwner.id);
+    expect(await (await check(request("check", { resource, action: "terminate" }))).json()).toMatchObject({ decision: "ALLOW" });
+    expect((await move(saved)).status).toBe(409);
+    expect((await revokeGrant(request("grants", { resource, capability: "execute", grantee: user.subject }, false, "DELETE"))).status).toBe(200);
+    expect(await authorizeDelegated(approval._id, service, work, {})).toMatchObject({ reason: "USER_NOT_ALLOWED" });
+    const record = (await readRegisteredResource(resource.id))!;
+    expect(await describeFgaCheck({ resource, subject: service.subject, action: "execute" })).toMatchObject({
+      object: permissionObject(resource.id, "execute"), contextual_tuples: [{ user: resourceOwnerObject(record), relation: "resource", object: permissionObject(resource.id, "execute") }],
+    });
+    // Old ownership nodes remain inert, even if a delayed old write lands again.
+    expect((await fga(`/stores/${storeId}/check`, { tuple_key: { user: `user:${user.subject.id}`, relation: "owner", object: `app_resource:${resource.id}` } })).allowed).toBe(true);
+    expect(mockAudit.mock.calls.some(([event]) => event.lifecycle?.operation === "transfer" && event.lifecycle.previous_owner.id === user.subject.id && event.grantee_ref === `user:${nextOwner.id}`)).toBe(true);
+  });
+
+  it("requires membership in the receiving team and rejects invalid human owners", async () => {
+    const saved = await create("transfer-team");
+    expect((await move(saved, { type: "team", id: "receiving-team" })).status).toBe(403);
+    for (const owner of [null, { id: nextOwner.id, enabled: false }, { id: nextOwner.id, enabled: true, serviceAccountClientId: "example-client" }, { id: nextOwner.id }]) {
+      mockUser.mockResolvedValueOnce(owner); expect((await move(saved)).status).toBe(400);
+    }
+    await fga(`/stores/${storeId}/write`, { writes: { tuple_keys: [{ user: `user:${user.subject.id}`, relation: "member", object: "team:receiving-team" }] } });
+    const moved = await move(saved, { type: "team", id: "receiving-team" });
+    expect(moved.status).toBe(200); expect((await moved.json()).owner).toEqual({ type: "team", id: "receiving-team" });
+    expect(await (await check(request("check", { resource: saved.resource, action: "owner" }))).json()).toMatchObject({ decision: "ALLOW" });
+  });
+
+  it("leaves live ownership unchanged when preparing OpenFGA fails or is disabled", async () => {
+    const saved = await create("transfer-prepare-failure");
+    global.fetch = async (url, options) => String(url).endsWith("/write") ? new Response("unavailable", { status: 503 }) : realFetch(url, options);
+    expect((await move(saved)).status).toBe(503);
+    global.fetch = realFetch;
+    expect(await readRegisteredResource(saved.resource.id)).toMatchObject({ owner: user.subject, state: "active" });
+    expect(await (await check(request("check", { resource: saved.resource, action: "owner" }))).json()).toMatchObject({ decision: "ALLOW" });
+    process.env.OPENFGA_RECONCILE_ENABLED = "false";
+    try { expect((await move(saved)).status).toBe(503); }
+    finally { process.env.OPENFGA_RECONCILE_ENABLED = "true"; }
+  });
+
+  it("does not publish a prepared owner after an ambiguous graph write or failed Mongo publication", async () => {
+    const saved = await create("unpublished-owner");
+    global.fetch = async (url, options) => {
+      const response = await realFetch(url, options);
+      if (String(url).endsWith("/write")) throw new Error("Ownership write acknowledgement lost");
+      return response;
+    };
+    expect((await move(saved)).status).toBe(503);
+    global.fetch = realFetch;
+    const publication = jest.spyOn(Collection.prototype, "findOneAndUpdate").mockRejectedValueOnce(new Error("Mongo publication failed"));
+    try { expect((await move(saved)).status).toBe(503); }
+    finally { publication.mockRestore(); }
+    expect(await readRegisteredResource(saved.resource.id)).toMatchObject({ owner: user.subject, state: "active" });
+    session(nextOwner.id);
+    expect(await (await check(request("check", { resource: saved.resource, action: "owner" }))).json()).toMatchObject({ decision: "DENY" });
+    session(); expect((await move(saved)).status).toBe(200);
+  });
+
+  it("cannot publish a transfer over a retirement committed by another replica", async () => {
+    const saved = await create("transfer-retirement-race");
+    let retired = false;
+    global.fetch = async (url, options) => {
+      const response = await realFetch(url, options);
+      if (!retired && String(url).endsWith("/write")) {
+        retired = true;
+        await peer.db(mockDb.databaseName).collection("access_resources").updateOne({ _id: saved.resource.id }, { $set: { state: "retired" } });
+      }
+      return response;
+    };
+    expect((await move(saved)).status).toBe(409);
+    expect(await readRegisteredResource(saved.resource.id)).toMatchObject({ owner: user.subject, state: "retired" });
+    expect(await (await check(request("check", { resource: saved.resource, action: "execute" }))).json()).toMatchObject({ via: "resource_retired" });
+  });
+
+  it("publishes one winner across replicas and rejects a check begun against the old owner", async () => {
+    const saved = await create("transfer-concurrent");
+    const responses = await Promise.all([move(saved), move(saved)]);
+    expect(responses.filter(response => response.status === 200)).toHaveLength(1);
+    expect(responses.every(response => [200, 403, 409, 503].includes(response.status))).toBe(true);
+    session(nextOwner.id);
+    const current = await (await inspect(request("resources", undefined, false, "GET"), params(saved.resource.id))).json();
+    let changed = false;
+    global.fetch = async (url, options) => {
+      const response = await realFetch(url, options);
+      if (!changed && String(url).endsWith("/check")) {
+        changed = true;
+        // Simulate another replica publishing its already-prepared ownership node.
+        await peer.db(mockDb.databaseName).collection("access_resources").updateOne({ _id: saved.resource.id }, { $set: { owner_version: randomUUID() } });
+      }
+      return response;
+    };
+    const stale = await check(request("check", { resource: saved.resource, action: "owner" }));
+    expect(stale.status).toBe(503);
+    expect(await stale.json()).toMatchObject({ code: "AUTHZ_UNAVAILABLE", retriable: true });
+    expect(mockAudit.mock.calls.some(([event]) => event.decision_via === "resource_ownership_changed")).toBe(true);
+    expect(current.owner_version).not.toBe(saved.owner_version);
+  });
+
+  it("permanently retires the handle across checks, queries, grants and approved jobs", async () => {
+    const saved = await create("retirement"); const { resource } = saved;
+    expect((await grant(request("grants", { resource, capability: "execute", grantee: service.subject }))).status).toBe(200);
+    const approval = await createDelegation(user, { service: { id: service.subject.id, client_id: service.clientId }, job_id: "retirement-job",
+      expires_at: new Date(Date.now() + 3600000).toISOString(), scope: [{ resource, action: "execute" }] }, ctx, randomUUID());
+    const retirement = () => retire(request("resources", { expected_owner_version: saved.owner_version }, false, "DELETE"), params(resource.id));
+    const response = await retirement(); expect(response.status).toBe(200);
+    const receipt = await response.json(); expect(receipt).toMatchObject({ state: "retired", retired_by: user.subject, retired_at: expect.any(String) });
+    expect(await (await retirement()).json()).toEqual(receipt);
+    expect(await (await inspect(request("resources", undefined, false, "GET"), params(resource.id))).json()).toEqual(receipt);
+    for (const action of ["execute", "owner", "grant:execute"]) {
+      expect(await (await check(request("check", { resource, action }))).json()).toMatchObject({ decision: "DENY", via: "resource_retired", retriable: false });
+    }
+    expect(await (await query(request("query", { resource_type: "app_resource", action: "execute", ids: [resource.id] }, true))).json()).toEqual({ ids: [] });
+    expect((await grant(request("grants", { resource, capability: "execute", grantee: service.subject }))).status).toBe(403);
+    expect(await authorizeDelegated(approval._id, service, { resource, action: "execute", job_id: "retirement-job" }, {})).toMatchObject({ decision: "DENY" });
+    expect((await register(request("resources", { ...businessKey, local_id: "retirement" }))).status).toBe(409);
+    expect((await move(saved)).status).toBe(409);
+    session("unrelated-user"); expect((await retirement()).status).toBe(403);
+    expect((await inspect(request("resources", undefined, false, "GET"), params(resource.id))).status).toBe(403);
+    expect(mockAudit.mock.calls.some(([event]) => event.lifecycle?.operation === "retire" && event.registration?.state === "retired")).toBe(true);
+  });
+
+  it("does not publish a graph allow if another replica retires the resource in flight", async () => {
+    const saved = await create("retirement-in-flight");
+    let retired = false;
+    global.fetch = async (url, options) => {
+      const response = await realFetch(url, options);
+      if (!retired && String(url).endsWith("/check")) {
+        retired = true;
+        await peer.db(mockDb.databaseName).collection("access_resources").updateOne({ _id: saved.resource.id }, { $set: { state: "retired" } });
+      }
+      return response;
+    };
+    expect(await (await check(request("check", { resource: saved.resource, action: "execute" }))).json()).toMatchObject({ decision: "DENY", via: "resource_retired" });
+  });
+
+  it("requires an interactive same-origin owner and strictly validates lifecycle input", async () => {
+    const saved = await create("lifecycle-validation");
+    for (const body of [{}, { expected_owner_version: "invalid", owner: nextOwner },
+      { expected_owner_version: saved.owner_version, owner: service.subject },
+      { expected_owner_version: saved.owner_version, owner: { ...nextOwner, extra: true } },
+      { expected_owner_version: saved.owner_version, owner: nextOwner, contextual_tuples: [] }]) {
+      expect((await transfer(request("resources/owner", body), params(saved.resource.id))).status).toBe(400);
+    }
+    const body = { expected_owner_version: saved.owner_version, owner: nextOwner };
+    expect((await transfer(request("resources/owner", body, true), params(saved.resource.id))).status).toBe(403);
+    expect((await transfer(new NextRequest("https://example.test/api/access/resources/owner", { method: "POST", headers: { origin: "https://other.example.test", "content-type": "application/json" }, body: JSON.stringify(body) }), params(saved.resource.id))).status).toBe(403);
+    session("unrelated-user"); expect((await move(saved)).status).toBe(403);
+    expect((await retire(request("resources", { expected_owner_version: saved.owner_version }, false, "DELETE"), params(saved.resource.id))).status).toBe(403);
   });
 });

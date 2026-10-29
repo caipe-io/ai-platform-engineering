@@ -9,6 +9,7 @@
 
 import type { GatewayCheck } from "@/lib/authz";
 import type { DelegationCheck, DelegationEvidence, DelegationSnapshot } from "@/lib/authz/delegation-contract";
+import type { ResourceLifecycleAudit } from "@/lib/authz/resource-contract";
 
 /** Protected components from the 098 permission matrix (FR-008, FR-014) */
 export type RbacResource =
@@ -210,6 +211,7 @@ export interface UnifiedAuditEvent {
   grantee_display?: string;
   /** CAS grant/revoke: grant | revoke. */
   operation?: "grant" | "revoke";
+  lifecycle?: ResourceLifecycleAudit;
   /** CAS reconcile: logical operation that requested the tuple projection. */
   reconcile_scope?: string;
   /** CAS reconcile: requested tuple additions before OpenFGA no-op filtering. */

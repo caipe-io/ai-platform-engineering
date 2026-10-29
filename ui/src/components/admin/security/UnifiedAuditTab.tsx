@@ -516,6 +516,10 @@ function requestStory(evt: UnifiedAuditEvent): string {
       : `Reconciled ${target}`;
   }
   if (evt.type === "cas_grant") {
+    if (evt.lifecycle) {
+      const op = evt.lifecycle.operation === "transfer" ? "Transfer ownership of" : "Retire";
+      return `${op} ${resource} — ${evt.outcome === "success" ? "confirmed" : "unconfirmed"}`;
+    }
     const op = evt.operation === "revoke" ? "Revoked" : "Granted";
     return `${op} ${action} on ${resource}`;
   }
@@ -578,6 +582,11 @@ function reasonPhrase(evt: UnifiedAuditEvent): string {
     return `${service} ${decision} this request because ${pdp} returned ${reason}${via}.`;
   }
   if (evt.type === "cas_grant") {
+    if (evt.lifecycle) {
+      if (evt.outcome === "error") return "CAS could not confirm this resource lifecycle change. Inspect the current resource before retrying.";
+      return evt.lifecycle.operation === "transfer" ? "CAS changed the owner and preserved explicit action grants. Background jobs still require current user and service permission." :
+        "CAS permanently retired this handle. Future actions and grants are denied; application data is managed separately.";
+    }
     const op = evt.operation === "revoke" ? "revoke" : "grant";
     return `CAS recorded a ${op} attempt with result ${evt.outcome}.`;
   }
@@ -1418,6 +1427,11 @@ export function UnifiedAuditTab({ isAdmin, view = "audit", initialSubjectRef = "
 	                                <DetailField label="Workflow Run ID" value={evt.workflow_run_id} />
 	                                <DetailField label="Raw Decision Path" value={evt.decision_via} />
                                 <DetailField label="Operation" value={evt.operation} />
+                                <DetailField label="Resource lifecycle" value={evt.lifecycle?.operation} />
+                                <DetailField label="Previous owner" value={evt.lifecycle ? `${evt.lifecycle.previous_owner.type}:${evt.lifecycle.previous_owner.id}` : undefined} referenceKind="principal" />
+                                <DetailField label={evt.outcome === "success" ? "Resulting owner" : "Requested owner"} value={evt.lifecycle ? `${evt.lifecycle.owner.type}:${evt.lifecycle.owner.id}` : undefined} referenceKind="principal" />
+                                <DetailField label="Previous ownership version" value={evt.lifecycle?.previous_owner_version} />
+                                <DetailField label={evt.outcome === "success" ? "Resulting ownership version" : "Requested ownership version"} value={evt.lifecycle?.owner_version} />
                                 <DetailField label="Reconciliation Scope" value={evt.reconcile_scope ? humanizeToken(evt.reconcile_scope) : undefined} />
                                 <DetailField label="Requested Additions" value={evt.requested_writes?.toString()} />
                                 <DetailField label="Requested Removals" value={evt.requested_deletes?.toString()} />

@@ -91,12 +91,57 @@ remain scoped to their named actions. Removing an action blocks its use but does
 not delete historical grants. Reusing a name for a different operation requires
 an explicit grant/data migration.
 
+## Ownership transfer and retirement
+
+Only an interactive current owner can transfer or retire a resource. A transfer
+to a user requires an enabled human Keycloak account; a transfer to a team
+requires the caller's current membership in that team. Organization admins and
+action grantors have no additional ownership authority.
+
+```mermaid
+flowchart LR
+    R["Stable resource handle"] --> P["Unchanged action grants / grantors"]
+    M["Mongo: current ownership version"] --> O["OpenFGA: selected owner node"]
+    P -->|"CAS supplies the current ownership link"| O
+    T["Transfer"] -->|"Prepare new owner, then atomically select it"| M
+    X["Retire"] -->|"Keep permanent tombstone; deny future actions"| M
+```
+
+- **Transfer:** CAS first writes an isolated ownership node in OpenFGA, then
+  publishes it with one compare-and-swap Mongo update. The resource handle and
+  action objects stay unchanged. Existing explicit use grants, grant authority
+  and delegation approvals are preserved. The former owner loses inherited
+  authority; a job continues only if both its user and service still have access.
+- **Failure/concurrency:** preparation alone grants no live resource access. A
+  crash before publication leaves the old owner active; a crash after publication
+  leaves the new owner active. Competing updates require the current
+  `owner_version`; a check spanning a transfer returns unavailable for retry.
+  An unconfirmed response requires inspecting the current resource before retry.
+- **Retirement:** one Mongo update permanently blocks checks, grants, queries and
+  delegated use of this handle. Old graph grants cannot reactivate it. The last
+  owners may inspect/retry the retirement receipt; the normal `owner` action
+  remains denied. The app must separately delete or retain its business data.
+
+Retirement does not stop an operation already authorized and in progress, delete
+immutable job approvals, or cancel unrelated resources in a multi-resource job.
+The app/type/local-ID mapping cannot be reused, and there is no restore endpoint.
+Unselected ownership nodes and retired action tuples are inert and retained;
+bounded physical graph cleanup is separate follow-on work, never required for
+denial. The current ownership node is retained for receipt authorization.
+
+Deploy the lifecycle-aware BFF to **all replicas before using transfer**. Older
+BFFs do not understand ownership versions and must not serve these resources
+after a transfer. Rolling back to that code requires an explicit ownership/data
+migration; there is no automatic compatibility path. Existing initial
+registrations require no rewrite. If a transfer response is lost, the former
+owner may receive 403 on inspection; the new owner can confirm the current state.
+
 ## Boundaries and follow-on work
 
 - Apps declare resource/action names, not arbitrary OpenFGA types, relationships
   or policy expressions. Broader business-policy language remains separate work.
-- Ownership transfer, resource retirement/cleanup and existing-service adoption
-  remain explicit lifecycle/migration work.
+- Physical graph cleanup and existing-service adoption remain explicit
+  lifecycle/migration work. Dev deployment acceptance is still required.
 - If an environment tested an earlier unreleased registration contract, inventory
   its records, tuples and delegation scopes before deploying this revision.
   No compatibility aliases or automatic data conversion are retained.

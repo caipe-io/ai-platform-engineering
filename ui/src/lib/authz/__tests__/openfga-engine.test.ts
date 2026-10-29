@@ -498,14 +498,14 @@ describe("OpenFGA engine adapter", () => {
   });
   });
 
-  it("describeFgaCheck exposes the relation actually used (single source of truth)", () => {
-    expect(describeFgaCheck(req)).toMatchObject({
+  it("describeFgaCheck exposes the relation actually used (single source of truth)", async () => {
+    expect(await describeFgaCheck(req)).toMatchObject({
       engine: "openfga",
       relation: "can_use",
       user: "user:alice",
       object: "agent:pe",
     });
     // create maps to can_manage — explain reflects the real check
-    expect(describeFgaCheck({ ...req, action: "create" }).relation).toBe("can_manage");
+    expect((await describeFgaCheck({ ...req, action: "create" })).relation).toBe("can_manage");
   });
 });

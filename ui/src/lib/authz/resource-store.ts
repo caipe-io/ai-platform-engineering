@@ -1,10 +1,11 @@
 import { MongoServerError } from "mongodb";
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
 import { HttpAuthzError } from "./errors";
-import type { RegisteredResource } from "./resource-contract";
+import type { RegisteredResource, ResourceOwner } from "./resource-contract";
+import type { Subject } from "./contract";
 
 async function collection() {
-  if (!isMongoDBConfigured) throw new Error("MongoDB is required for resource registration");
+  if (!isMongoDBConfigured) throw new Error("MongoDB is required for the resource registry");
   return getCollection<RegisteredResource>("access_resources");
 }
 export async function readRegisteredResource(id: string, signal?: AbortSignal): Promise<RegisteredResource | null> {
@@ -29,6 +30,7 @@ export async function reserveResource(intent: RegisteredResource): Promise<Regis
     stored = await records.findOne(key, { readConcern: { level: "majority" }, timeoutMS: 5000 });
   }
   if (!stored) throw new Error("Resource reservation returned no record");
+  if (stored.state === "retired") throw new HttpAuthzError(409, "INVALID_REQUEST", "Resource is permanently retired; its identity cannot be registered again");
   if (stored.issuer !== intent.issuer || stored.owner.type !== intent.owner.type || stored.owner.id !== intent.owner.id ||
     stored.creator.type !== intent.creator.type || stored.creator.id !== intent.creator.id) {
     throw new HttpAuthzError(409, "INVALID_REQUEST", "Resource identity already belongs to a different registration");
@@ -47,4 +49,15 @@ export async function prepareResource(id: string): Promise<void> {
   await (await collection()).updateOne({ _id: id, state: "pending" }, { $set: { prepared: true } }, {
     writeConcern: { w: "majority" }, timeoutMS: 5000,
   });
+}
+
+/** Ownership publication and retirement race on the same active snapshot. */
+export async function updateResourceLifecycle(
+  previous: RegisteredResource, change: { owner: ResourceOwner; owner_version: string } | { state: "retired"; retired_at: string; retired_by: Subject },
+): Promise<RegisteredResource> {
+  const stored = await (await collection()).findOneAndUpdate({ _id: previous._id, state: "active",
+    owner_version: previous.owner_version ?? { $exists: false },
+  }, { $set: change }, { returnDocument: "after", writeConcern: { w: "majority" }, timeoutMS: 5000 });
+  if (!stored) throw new HttpAuthzError(409, "INVALID_REQUEST", "Resource ownership or lifecycle changed; reload before retrying");
+  return stored;
 }

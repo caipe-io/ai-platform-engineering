@@ -19,23 +19,31 @@ export class PendingResourceRegistrationError extends HttpAuthzError {
   }
 }
 
+export function requireResourceUser(identity: PlatformIdentity): void {
+  if (identity.subject.type !== "user") throw new HttpAuthzError(403, "FORBIDDEN", "Resource ownership requires a signed-in user");
+  if (identity.issuer !== process.env.OIDC_ISSUER?.trim() || !Number.isFinite(identity.expiresAt) || identity.expiresAt * 1000 <= Date.now()) {
+    throw new HttpAuthzError(401, "NOT_AUTHENTICATED", "A current platform identity is required");
+  }
+}
+
+export async function requireResourceTeamMember(identity: PlatformIdentity, teamId: string, ctx: DecisionContext): Promise<void> {
+  const resource = { type: "team" as const, id: teamId };
+  const result = await checkDelegationPermission({ subject: identity.subject, resource, action: "read" }, AbortSignal.timeout(5000));
+  emitDecisionAudit(identity.subject, resource, "read", result, ctx);
+  if (result.decision !== "ALLOW") throw new HttpAuthzError(result.retriable ? 503 : 403,
+    result.retriable ? "AUTHZ_UNAVAILABLE" : "FORBIDDEN", "Current team membership is required for team ownership");
+}
+
 /** The interactive adapter supplies the verified user; services cannot select an owner. */
 export async function registerResource(
   identity: PlatformIdentity, intent: ResourceRegistration, userContext: AgenticAppUserContext, ctx: DecisionContext,
 ): Promise<RegisteredResource> {
-  if (identity.subject.type !== "user") throw new HttpAuthzError(403, "FORBIDDEN", "Register resources through a signed-in user session");
-  if (identity.issuer !== process.env.OIDC_ISSUER?.trim() || !Number.isFinite(identity.expiresAt) || identity.expiresAt * 1000 <= Date.now()) {
-    throw new HttpAuthzError(401, "NOT_AUTHENTICATED", "A current platform identity is required");
-  }
+  requireResourceUser(identity);
   const { app } = appResourceDefinition(intent.app_id, intent.resource_type);
   if (!app || !canLaunchAgenticApp(app, userContext)) throw new HttpAuthzError(403, "FORBIDDEN", "Resource integration is not available to this user");
   if (intent.owner_team) {
-    const resource = { type: "team" as const, id: intent.owner_team };
     // Fresh team membership includes team admins through the model's member relation.
-    const result = await checkDelegationPermission({ subject: identity.subject, resource, action: "read" }, AbortSignal.timeout(5000));
-    emitDecisionAudit(identity.subject, resource, "read", result, ctx);
-    if (result.decision !== "ALLOW") throw new HttpAuthzError(result.retriable ? 503 : 403,
-      result.retriable ? "AUTHZ_UNAVAILABLE" : "FORBIDDEN", "Current team membership is required for team ownership");
+    await requireResourceTeamMember(identity, intent.owner_team, ctx);
   }
   const record = await reserveResource({ _id: randomUUID(), issuer: identity.issuer, app_id: intent.app_id,
     resource_type: intent.resource_type, local_id: intent.local_id, creator: identity.subject,
@@ -43,6 +51,7 @@ export async function registerResource(
     state: "pending", prepared: false, created_at: new Date().toISOString() });
   const id = record._id;
   if (record.state === "active") return record;
+  if (record.state !== "pending") throw new HttpAuthzError(409, "INVALID_REQUEST", "Resource cannot be registered again");
   if (!record.prepared) {
     // A new registration cannot adopt graph grants left by another owner/import.
     try { await assertEmptyResourceGraph(`app_resource:${id}`); }

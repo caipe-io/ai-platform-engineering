@@ -3,6 +3,7 @@ import { authOptions } from "@/lib/auth-config";
 import { AuditServiceError, getAuditClient, type AuditQuery } from "@/lib/audit";
 import type { GatewayCheck } from "@/lib/authz";
 import { safeDelegationChecks, safeDelegationEvidence, safeDelegationSnapshot } from "@/lib/authz/delegation-contract";
+import { safeResourceLifecycle } from "@/lib/authz/resource-contract";
 import type {
   AuditEventType,
   UnifiedAuditEvent,
@@ -86,6 +87,7 @@ interface AuditEventDocument {
   caller_ref?: string;
   grantee_ref?: string;
   operation?: "grant" | "revoke";
+  lifecycle?: unknown;
   reconcile_scope?: string;
   requested_writes?: number;
   requested_deletes?: number;
@@ -430,6 +432,7 @@ function documentToEvent(doc: AuditEventDocument): UnifiedAuditEvent {
     caller_ref: doc.caller_ref,
     grantee_ref: doc.grantee_ref,
     operation: doc.operation,
+    lifecycle: safeResourceLifecycle(doc.lifecycle),
     reconcile_scope: reconcileScope(doc),
     requested_writes: doc.requested_writes,
     requested_deletes: doc.requested_deletes,

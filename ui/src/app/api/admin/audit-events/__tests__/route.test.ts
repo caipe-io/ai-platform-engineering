@@ -339,6 +339,23 @@ beforeEach(() => {
 });
 
 describe("GET /api/admin/audit-events", () => {
+  it("preserves bounded resource lifecycle evidence without returning producer secrets", async () => {
+    const lifecycle = { operation: "transfer", previous_owner: { type: "user", id: "test-user", token: "nested-secret" },
+      owner: { type: "team", id: "example-team" }, previous_owner_version: "12345678-1234-4000-8000-123456789012",
+      owner_version: "12345678-1234-4000-8000-123456789013", access_token: "secret" };
+    global.fetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({ records: [
+      { ts: "2026-10-29T12:00:00Z", type: "cas_grant", outcome: "success", tenant_id: "primary", action: "owner", source: "cas", correlation_id: "transfer-example", lifecycle },
+      { ts: "2026-10-29T12:00:00Z", type: "cas_grant", outcome: "error", tenant_id: "primary", action: "owner", source: "cas", correlation_id: "malformed-example", lifecycle: { ...lifecycle, owner: { type: "service_account", id: "example-service" } } },
+    ], limit: 50, cursor: "first", next_cursor: null, since: "2026-10-29T00:00:00Z", until: "2026-10-30T00:00:00Z", as_of: "2026-10-30T00:00:00Z" })));
+    const { GET } = await import("../route");
+    const response = await GET(request("/api/admin/audit-events?type=cas_grant"));
+    const body = await response.json();
+    expect(body.records[0].lifecycle).toEqual({ operation: "transfer", previous_owner: { type: "user", id: "test-user" },
+      owner: { type: "team", id: "example-team" }, previous_owner_version: lifecycle.previous_owner_version, owner_version: lifecycle.owner_version });
+    expect(body.records[1]).not.toHaveProperty("lifecycle");
+    expect(JSON.stringify(body)).not.toContain("secret");
+  });
+
   it('surfaces rejected service cursors as a query error rather than empty history', async () => {
     global.fetch = jest.fn().mockResolvedValue(new Response('invalid cursor', { status: 400 }));
     const { GET } = await import('../route');
