@@ -23,7 +23,7 @@ async function permission(value: unknown): Promise<DelegatedPermission> {
   const item = object(value, ["resource", "action"]);
   object(item.resource, ["type", "id"]);
   const resource = await parseAccessResource(item.resource);
-  const action = await parseAccessAction(resource.type, item.action);
+  const action = await parseAccessAction(resource, item.action);
   return { resource, action };
 }
 

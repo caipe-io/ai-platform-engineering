@@ -9,8 +9,6 @@ on:
       - '.github/actions/prebuild-status/**'
       - '.github/actions/publish-prebuild-manifest/**'
       - 'ui/**'
-      - 'charts/ai-platform-engineering/charts/openfga/authorization-model.json'
-      - 'deploy/openfga/model.fga'
       - 'build/Dockerfile.caipe-ui'
       - 'scripts/npm/**'
   workflow_call:
@@ -83,8 +81,6 @@ jobs:
               .github/actions/publish-prebuild-manifest \
               ui \
               scripts/npm \
-              charts/ai-platform-engineering/charts/openfga/authorization-model.json \
-              deploy/openfga/model.fga \
               build/Dockerfile.caipe-ui | grep -q .; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           else

@@ -104,7 +104,7 @@ describe("listAccessible", () => {
   it("keeps registered resources on lifecycle-aware candidate checks above the reverse-lookup threshold", async () => {
     const ids = Array.from({ length: 101 }, (_, index) => `resource-${index}`);
     mockBatch.mockResolvedValue(new Map(ids.map((id) => [id, DENY])));
-    expect(await listAccessible({ type: "user", id: "test-user" }, "read", "example_agent_sandbox", ids))
+    expect(await listAccessible({ type: "user", id: "test-user" }, "read", "app_resource", ids))
       .toEqual({ accessible: [], reason: "OK" });
     expect(mockBatch).toHaveBeenCalled();
     expect(mockListObjects).not.toHaveBeenCalled();

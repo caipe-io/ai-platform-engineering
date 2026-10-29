@@ -1,3 +1,5 @@
+import type { UniversalRebacResourceType } from "@/types/rbac-universal";
+
 const OPENFGA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}$/;
 
 function base64UrlEncode(value: string): string {
@@ -20,14 +22,14 @@ function isOpenFgaSafeObjectId(value: string): boolean {
   return OPENFGA_ID_PATTERN.test(value) && !value.includes(":") && !value.includes("#");
 }
 
-export function openFgaResourceId(type: string, id: string): string {
+export function openFgaResourceId(type: UniversalRebacResourceType | "app_resource", id: string): string {
   if (type !== "llm_model" || isOpenFgaSafeObjectId(id)) {
     return id;
   }
   return `b64_${base64UrlEncode(id)}`;
 }
 
-export function openFgaResourceObject(type: string, id: string): string {
+export function openFgaResourceObject(type: UniversalRebacResourceType | "app_resource", id: string): string {
   return `${type}:${openFgaResourceId(type, id)}`;
 }
 
@@ -45,5 +47,5 @@ export function parseOpenFgaResourceId(fgaId: string): string {
 export function parseOpenFgaObject(fgaObject: string): string {
   const separatorIndex = fgaObject.indexOf(":");
   const rawId = separatorIndex === -1 ? fgaObject : fgaObject.slice(separatorIndex + 1);
-  return fgaObject.startsWith("llm_model:") ? parseOpenFgaResourceId(rawId) : rawId;
+  return parseOpenFgaResourceId(rawId);
 }

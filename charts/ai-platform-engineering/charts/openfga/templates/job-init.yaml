@@ -1,8 +1,4 @@
 {{- if .Values.init.enabled }}
-{{- $bundledImage := ((.Values.global | default dict).caipeUiImage | default "") }}
-{{- if and $bundledImage .Values.init.existingModelConfigMap }}
-{{- fail "Select global.caipeUiImage or init.existingModelConfigMap, not both" }}
-{{- end }}
 {{- if eq (.Values.init.existingModelConfigMap | default "") (printf "%s-model" (include "openfga.fullname" .)) }}
 {{- fail "init.existingModelConfigMap must not refer to the chart-owned model ConfigMap" }}
 {{- end }}
@@ -26,44 +22,19 @@ spec:
       labels:
         {{- include "openfga.selectorLabels" . | nindent 8 }}
     spec:
-      {{- with (.Values.global | default dict).imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
       serviceAccountName: {{ include "openfga.serviceAccountName" . }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
       restartPolicy: OnFailure
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      {{- if $bundledImage }}
-      initContainers:
-        - name: export-authorization-model
-          image: {{ $bundledImage | quote }}
-          command: ["node", "-e", "require('fs').cpSync('/app/authorization', '/bundled', {recursive:true});"]
-          securityContext:
-            {{- toYaml .Values.securityContext | nindent 12 }}
-          volumeMounts:
-            - name: bundled-model
-              mountPath: /bundled
-      {{- end }}
       containers:
         - name: openfga-init
           image: "{{ .Values.init.image.repository }}:{{ .Values.init.image.tag }}"
           imagePullPolicy: {{ .Values.init.image.pullPolicy }}
           command: ["python", "/model/seed.py"]
           env:
-            {{- if $bundledImage }}
-            - name: OPENFGA_BUNDLE_PATH
-              value: /bundled
-            {{- end }}
             - name: OPENFGA_HTTP
               value: "http://{{ include "openfga.fullname" . }}:{{ .Values.service.httpPort }}"
-            - name: OPENFGA_STORE_ID
-              value: {{ .Values.init.storeId | default "" | quote }}
-            - name: OPENFGA_AUTHORIZATION_MODEL_ID
-              value: {{ .Values.init.authorizationModelId | default "" | quote }}
-            - name: OPENFGA_APPROVED_MODULES
-              value: {{ .Values.init.approvedModules | default list | toJson | quote }}
             - name: OPENFGA_STORE_NAME
               value: {{ .Values.init.storeName | quote }}
             {{- if .Values.init.seedSub }}
@@ -88,11 +59,6 @@ spec:
                   key: {{ .Values.init.platformClient.clientSecretRef.key | quote }}
             {{- end }}
           volumeMounts:
-            {{- if $bundledImage }}
-            - name: bundled-model
-              mountPath: /bundled
-              readOnly: true
-            {{- end }}
             - name: openfga-model
               mountPath: /model
               readOnly: true
@@ -101,10 +67,6 @@ spec:
           resources:
             {{- toYaml .Values.init.resources | nindent 12 }}
       volumes:
-        {{- if $bundledImage }}
-        - name: bundled-model
-          emptyDir: {}
-        {{- end }}
         - name: openfga-model
           {{- if .Values.init.existingModelConfigMap }}
           projected:
@@ -114,10 +76,6 @@ spec:
                   items:
                     - key: seed.py
                       path: seed.py
-                    - key: publish_model.py
-                      path: publish_model.py
-                    - key: core-authorization-model.json
-                      path: core-authorization-model.json
               - configMap:
                   name: {{ .Values.init.existingModelConfigMap | quote }}
                   items:

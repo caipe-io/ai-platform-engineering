@@ -16,13 +16,12 @@ import { getReasonMeta } from "../reasons";
 import { registeredResourceGate, requireRegisteredResource } from "../resource-policy";
 import { openFgaRelation, openFgaCheckRelation } from "@/lib/rbac/tuple-builders";
 import { openFgaResourceObject, parseOpenFgaObject } from "@/lib/rbac/openfga-resource-ids";
-import { isNativeResourceType, nativeGrantRelation, requireNativePermission } from "../model";
+import { APP_NAME_PATTERN, isAppResource, permissionObject } from "../resource-contract";
 import { isOpenFgaReconciliationEnabled } from "@/lib/rbac/openfga";
 import { HttpAuthzError } from "../errors";
 
 import {
   getCachedOpenFgaStoreId,
-  getOpenFgaModelId,
   getOpenFgaStoreId,
   OPENFGA_READ_TIMEOUT_MS,
   requestOpenFga,
@@ -35,12 +34,13 @@ const BATCH_CONCURRENCY = 10;
 
 async function fgaCheck(
   storeId: string, user: string, relation: string, object: string,
-  options: { consistency?: "HIGHER_CONSISTENCY"; signal?: AbortSignal } = {},
+  options: { consistency?: "HIGHER_CONSISTENCY"; signal?: AbortSignal; contextualTuples?: FgaTuple[] } = {},
 ): Promise<boolean> {
   const res = await requestOpenFga(`/stores/${storeId}/check`, {
     method: "POST",
     body: JSON.stringify({
       tuple_key: { user, relation, object },
+      ...(options.contextualTuples ? { contextual_tuples: { tuple_keys: options.contextualTuples } } : {}),
       ...(options.consistency ? { consistency: options.consistency } : {}),
     }),
     ...(options.signal ? { signal: options.signal } : {}),
@@ -158,7 +158,7 @@ let cacheMisses = 0;
 
 function cacheKey(subject: Subject, resource: Resource, action: Action, context?: Record<string, unknown>): string {
   const contextKey = context ? `|ctx:${stableContextKey(context)}` : "";
-  return `${getOpenFgaModelId() ?? "core"}|${subject.type}:${subject.id}|${resource.type}:${resource.id}|${action}${contextKey}`;
+  return `${subject.type}:${subject.id}|${resource.type}:${resource.id}|${action}${contextKey}`;
 }
 
 function stableContextKey(context: Record<string, unknown>): string {
@@ -223,19 +223,18 @@ function deny(reason: AuthorizeResult["reason"] = "NO_CAPABILITY"): AuthorizeRes
 
 async function runCheck(req: AuthorizeRequest, fresh = false, deadline?: AbortSignal): Promise<AuthorizeResult> {
   const signal = deadline ?? (fresh ? AbortSignal.timeout(OPENFGA_READ_TIMEOUT_MS) : undefined);
-  if (isNativeResourceType(req.resource.type)) {
-    try { await requireNativePermission(req.resource.type, req.action); }
-    catch (error) { return deny(error instanceof HttpAuthzError && error.status === 400 ? "INVALID_REQUEST" : "AUTHZ_UNAVAILABLE"); }
-    const resourceState = await registeredResourceGate(req.resource, signal);
+  if (isAppResource(req.resource.type)) {
+    const resourceState = await registeredResourceGate(req.resource, signal, req.action);
     if (resourceState) return resourceState;
   }
   if (deadline?.aborted) return deny("AUTHZ_UNAVAILABLE");
   if (!circuitAllows()) return deny("AUTHZ_UNAVAILABLE");
   const halfOpenProbe = circuitState === "half_open";
 
-  const relation = checkRelation(req.resource.type, req.action);
+  const mapped = mapFgaCheck(req.resource, req.action);
+  const relation = mapped.relation;
   const user = `${req.subject.type}:${req.subject.id}`;
-  const object = openFgaResourceObject(req.resource.type, req.resource.id);
+  const object = mapped.object;
 
   try {
     // Start before discovery so it consumes the same execution-check budget.
@@ -243,13 +242,13 @@ async function runCheck(req: AuthorizeRequest, fresh = false, deadline?: AbortSi
     const storeId = await getOpenFgaStoreId();
     signal?.throwIfAborted();
     const allowed = await fgaCheck(storeId, user, relation, object,
-      fresh ? { consistency: "HIGHER_CONSISTENCY", signal } : {});
+      { ...(fresh ? { consistency: "HIGHER_CONSISTENCY" as const, signal } : {}), contextualTuples: mapped.contextualTuples });
     signal?.throwIfAborted();
     recordSuccess();
     // Do not publish an allow after another replica disabled the integration
     // or changed the lifecycle state while the graph check was in flight.
-    if (isNativeResourceType(req.resource.type)) {
-      const latestState = await registeredResourceGate(req.resource, signal);
+    if (isAppResource(req.resource.type)) {
+      const latestState = await registeredResourceGate(req.resource, signal, req.action);
       if (latestState) return latestState;
     }
     const result = allowed ? allow() : deny("NO_CAPABILITY");
@@ -295,7 +294,7 @@ export async function checkGatewayPermission(
 async function runListObjects(subject: Subject, action: Action, resourceType: ResourceType): Promise<ListObjectsResult> {
   if (!circuitAllows()) return { ids: new Set(), reason: "AUTHZ_UNAVAILABLE" };
 
-  const relation = checkRelation(resourceType, action);
+  const relation = openFgaCheckRelation(action);
   const user = `${subject.type}:${subject.id}`;
 
   try {
@@ -315,7 +314,7 @@ async function listObjectsWithCache(
   action: Action,
   resourceType: ResourceType,
 ): Promise<ListObjectsResult> {
-  const key = `${getOpenFgaModelId() ?? "core"}|${subject.type}:${subject.id}|${resourceType}|${action}`;
+  const key = `${subject.type}:${subject.id}|${resourceType}|${action}`;
   const cached = listObjectsCache.get(key);
   if (cached) {
     cacheHits++;
@@ -332,7 +331,7 @@ async function listObjectsWithCache(
 }
 
 async function checkWithCache(req: AuthorizeRequest): Promise<AuthorizeResult> {
-  if (isNativeResourceType(req.resource.type)) return runCheck(req, true);
+  if (isAppResource(req.resource.type)) return runCheck(req, true);
   const key = cacheKey(req.subject, req.resource, req.action, req.context);
   const cached = decisionCache.get(key);
   if (cached) {
@@ -380,7 +379,7 @@ export function createOpenFgaEngine(): PolicyEngine {
     listObjects(subject: Subject, action: Action, resourceType: ResourceType): Promise<ListObjectsResult> {
       // Registered resources have a second, authoritative availability gate.
       // The public candidate query uses fresh checks instead of graph-only lookup.
-      if (isNativeResourceType(resourceType)) return Promise.resolve({ ids: new Set(), reason: "AUTHZ_UNAVAILABLE" });
+      if (isAppResource(resourceType)) return Promise.resolve({ ids: new Set(), reason: "AUTHZ_UNAVAILABLE" });
       return listObjectsWithCache(subject, action, resourceType);
     },
   };
@@ -410,8 +409,8 @@ function granteeRef(g: Grantee): string {
 function grantTuple(intent: GrantIntent): FgaTuple {
   return {
     user: granteeRef(intent.grantee),
-    relation: intent.relationship ?? openFgaRelation(intent.capability),
-    object: openFgaResourceObject(intent.resource.type, intent.resource.id),
+    relation: isAppResource(intent.resource.type) ? intent.authority === "grant" ? "grantor" : "grantee" : openFgaRelation(intent.capability),
+    object: isAppResource(intent.resource.type) ? permissionObject(intent.resource.id, intent.capability) : openFgaResourceObject(intent.resource.type, intent.resource.id),
   };
 }
 
@@ -453,17 +452,23 @@ export async function assertEmptyResourceGraph(object: string): Promise<void> {
   if (graph.tuples.length) throw new HttpAuthzError(409, "INVALID_REQUEST", "Resource already has relationships; an explicit migration is required");
 }
 
-function checkRelation(type: string, action: string): string {
-  return isNativeResourceType(type) ? action : openFgaCheckRelation(action);
+/** The structural link is trusted registry identity, never caller-supplied authorization. */
+function mapFgaCheck(resource: Resource, action: string): { object: string; relation: string; contextualTuples?: FgaTuple[] } {
+  const object = openFgaResourceObject(resource.type, resource.id);
+  if (!isAppResource(resource.type)) return { object, relation: openFgaCheckRelation(action) };
+  if (action === "owner") return { object, relation: "owner" };
+  const granting = action.startsWith("grant:");
+  const permission = permissionObject(resource.id, granting ? action.slice(6) : action);
+  return { object: permission, relation: granting ? "can_grant" : "can_use",
+    contextualTuples: [{ user: object, relation: "resource", object: permission }] };
 }
-
 async function validateGrant(intent: GrantIntent): Promise<void> {
-  if (isNativeResourceType(intent.resource.type)) {
-    if (!intent.relationship) throw new HttpAuthzError(400, "INVALID_REQUEST", "A native relationship is required");
-    await nativeGrantRelation(intent.resource.type, intent.relationship, intent.grantee.type);
-    await requireRegisteredResource(intent.resource);
+  if (isAppResource(intent.resource.type)) {
+    if (!APP_NAME_PATTERN.test(intent.capability) || intent.capability === "owner" || intent.grantee.type === "everyone" ||
+      (intent.authority !== undefined && intent.authority !== "use" && intent.authority !== "grant")) throw new HttpAuthzError(400, "INVALID_REQUEST", "Invalid app grant");
+    await requireRegisteredResource(intent.resource, intent.capability);
     if (!isOpenFgaReconciliationEnabled()) throw new HttpAuthzError(503, "AUTHZ_UNAVAILABLE", "Permission updates are disabled");
-  } else if (intent.relationship) throw new HttpAuthzError(400, "INVALID_REQUEST", "Core grants use capabilities");
+  } else if (intent.authority !== undefined) throw new HttpAuthzError(400, "INVALID_REQUEST", "Core grants use capabilities");
 }
 
 export function createOpenFgaAdmin(): PolicyAdmin {
@@ -484,8 +489,7 @@ export function createOpenFgaAdmin(): PolicyAdmin {
 }
 
 /**
- * Admin explanation uses the same native relation/core adapter as live checks
- * and includes the deployment model pin when configured.
+ * Admin explanation uses the same generic action mapping as live checks.
  */
 export function describeFgaCheck(req: AuthorizeRequest): {
   engine: "openfga";
@@ -493,14 +497,14 @@ export function describeFgaCheck(req: AuthorizeRequest): {
   user: string;
   object: string;
   store: string;
-  authorization_model_id?: string;
+  contextual_tuples?: FgaTuple[];
 } {
   return {
-    ...(getOpenFgaModelId() ? { authorization_model_id: getOpenFgaModelId() } : {}),
     engine: "openfga",
-    relation: checkRelation(req.resource.type, req.action),
+    relation: mapFgaCheck(req.resource, req.action).relation,
     user: `${req.subject.type}:${req.subject.id}`,
-    object: openFgaResourceObject(req.resource.type, req.resource.id),
+    object: mapFgaCheck(req.resource, req.action).object,
+    contextual_tuples: mapFgaCheck(req.resource, req.action).contextualTuples,
     store: getCachedOpenFgaStoreId() || "(resolved at boot)",
   };
 }

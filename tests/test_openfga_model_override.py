@@ -49,7 +49,7 @@ def test_override_projects_only_model_and_keeps_chart_owned_seed() -> None:
     default = render()
     override = render("init.existingModelConfigMap=example-authorization-model")
     config = resource(override, "ConfigMap", "-model")
-    assert set(config["data"]) == {"seed.py", "publish_model.py", "core-authorization-model.json"}
+    assert set(config["data"]) == {"seed.py"}
     assert config["data"]["seed.py"] == resource(default, "ConfigMap", "-model")["data"]["seed.py"]
     job = resource(override, "Job", "-init")
     pod = job["spec"]["template"]["spec"]
@@ -58,8 +58,6 @@ def test_override_projects_only_model_and_keeps_chart_owned_seed() -> None:
         "projected": {"sources": [
             {"configMap": {"name": "example-openfga-model", "items": [
                 {"key": "seed.py", "path": "seed.py"},
-                {"key": "publish_model.py", "path": "publish_model.py"},
-                {"key": "core-authorization-model.json", "path": "core-authorization-model.json"},
             ]}},
             {"configMap": {"name": "example-authorization-model", "items": [
                 {"key": "authorization-model.json", "path": "authorization-model.json"},
@@ -110,49 +108,3 @@ def test_override_cannot_shadow_chart_owned_configmap() -> None:
     )
     assert result.returncode != 0
     assert "must not refer to the chart-owned" in result.stderr
-
-
-def test_bundled_image_supplies_model_and_module_registry_to_initializer() -> None:
-    documents = render("global.caipeUiImage=registry.example.test/host:policy-1",
-                       "global.imagePullSecrets[0].name=example-registry")
-    pod = resource(documents, "Job", "-init")["spec"]["template"]["spec"]
-    exporter = pod["initContainers"][0]
-    assert exporter["image"] == "registry.example.test/host:policy-1"
-    assert exporter["command"] == ["node", "-e", "require('fs').cpSync('/app/authorization', '/bundled', {recursive:true});"]
-    assert exporter["securityContext"]["runAsNonRoot"] is True
-    assert pod["securityContext"]["fsGroup"] == 1001
-    assert pod["imagePullSecrets"] == [{"name": "example-registry"}]
-    assert {"name": "bundled-model", "emptyDir": {}} in pod["volumes"]
-    initializer = pod["containers"][0]
-    assert {"name": "OPENFGA_BUNDLE_PATH", "value": "/bundled"} in initializer["env"]
-    assert {"name": "bundled-model", "mountPath": "/bundled", "readOnly": True} in initializer["volumeMounts"]
-    source = resource(documents, "ConfigMap", "-model")["data"]["seed.py"]
-    compile(source, "seed.py", "exec")
-    assert 'entry["module"]' in source and '"bundle.json"' in source
-
-
-def test_parent_image_selection_is_shared_by_ui_and_model_exporter(tmp_path: Path) -> None:
-    if not shutil.which("helm"):
-        pytest.skip("helm is required")
-    # Exercise actual subcharts/global inheritance without fetching unrelated RAG dependencies.
-    parent = tmp_path / "host"
-    (parent / "charts").mkdir(parents=True)
-    for name in ["caipe-ui", "openfga"]:
-        shutil.copytree(CHART.parent / name, parent / "charts" / name)
-    shutil.copy(CHART.parents[1] / "values.yaml", parent / "values.yaml")
-    (parent / "Chart.yaml").write_text(yaml.safe_dump({
-        "apiVersion": "v2", "name": "host", "version": "1.0.0", "dependencies": [
-            {"name": name, "version": yaml.safe_load((CHART.parent / name / "Chart.yaml").read_text())["version"]}
-            for name in ["caipe-ui", "openfga"]],
-    }))
-    output = subprocess.run([
-        "helm", "template", "example", str(parent),
-        "--set", "tags.caipe-ui=true", "--set", "openfga.enabled=true",
-        "--set", "global.caipeUiImage=registry.example.test/host:policy-1",
-        "--set", "global.imagePullSecrets[0].name=example-registry",
-    ], check=True, capture_output=True, text=True).stdout
-    documents = [doc for doc in yaml.safe_load_all(output) if doc]
-    ui = resource(documents, "Deployment", "-caipe-ui")["spec"]["template"]["spec"]
-    exporter = resource(documents, "Job", "-openfga-init")["spec"]["template"]["spec"]
-    assert ui["containers"][0]["image"] == exporter["initContainers"][0]["image"]
-    assert ui["imagePullSecrets"] == exporter["imagePullSecrets"]

@@ -22,7 +22,9 @@ import { readOpenFgaTuples, type OpenFgaTupleKey } from "@/lib/rbac/openfga";
 import { isSupportedResourceAction, listResourceTypeDefinitions } from "@/lib/rbac/resource-model";
 import { openFgaResourceObject } from "@/lib/rbac/openfga-resource-ids";
 import { parseAccessAction, parseAccessResource } from "@/lib/authz/access-validation";
-import { isNativeResourceType, nativeResourceDefinition } from "@/lib/authz/model";
+import { isAppResource } from "@/lib/authz/resource-contract";
+import { readRegisteredResource } from "@/lib/authz/resource-store";
+import { declaredResourceActions } from "@/lib/authz/resource-types";
 import { openFgaRelation } from "@/lib/rbac/tuple-builders";
 
 const ALL_ACTIONS = Array.from(
@@ -69,7 +71,7 @@ function explainOne(subject: Subject, resource: Resource, action: Action, tenant
   return (async () => {
     const req = { subject, resource, action };
     const fga = describeFgaCheck(req);
-    if (!isNativeResourceType(resource.type) && !isSupportedResourceAction(resource.type, action)) {
+    if (!isAppResource(resource.type) && !isSupportedResourceAction(resource.type, action)) {
       return {
         action,
         supported: false,
@@ -83,13 +85,14 @@ function explainOne(subject: Subject, resource: Resource, action: Action, tenant
           relation: fga.relation,
           checked: [`${fga.user} ${fga.relation} ${fga.object}`],
           store: fga.store,
-          authorization_model_id: fga.authorization_model_id,
+        contextual_tuples: fga.contextual_tuples,
+
         },
       };
     }
     const result = await authorize(req, { tenantId });
     const directGrant =
-      !isNativeResourceType(resource.type) && result.decision === "ALLOW" && result.via === "tuple"
+      !isAppResource(resource.type) && result.decision === "ALLOW" && result.via === "tuple"
         ? await explainDirectGrant(subject, resource, action)
         : undefined;
     return {
@@ -105,7 +108,8 @@ function explainOne(subject: Subject, resource: Resource, action: Action, tenant
         relation: fga.relation,
         checked: [`${fga.user} ${fga.relation} ${fga.object}`],
         store: fga.store,
-        authorization_model_id: fga.authorization_model_id,
+        contextual_tuples: fga.contextual_tuples,
+
       },
     };
   })();
@@ -152,15 +156,15 @@ export const POST = withErrorHandler(async (request: NextRequest): Promise<NextR
   try {
     subject = parseSubject(b.subject);
     resource = await parseAccessResource(b.resource);
-    const available = isNativeResourceType(resource.type)
-      ? Object.keys((await nativeResourceDefinition(resource.type)).definition.relations ?? {})
-      : ALL_ACTIONS;
+    const record = isAppResource(resource.type) ? await readRegisteredResource(resource.id) : null;
+    if (isAppResource(resource.type) && !record) throw new HttpAuthzError(404, "INVALID_REQUEST", "Resource is not registered");
+    const available = record ? declaredResourceActions(record) : ALL_ACTIONS;
     if (Array.isArray(b.actions)) {
       // Matrix mode: validate each requested action (empty → all).
       actions = await Promise.all((b.actions.length > 0 ? b.actions : available).map((action) =>
-        isNativeResourceType(resource.type) ? parseAccessAction(resource.type, action) : parseAction(action)));
+        isAppResource(resource.type) ? parseAccessAction(resource, action) : parseAction(action)));
     } else if (b.action != null) {
-      singleAction = isNativeResourceType(resource.type) ? await parseAccessAction(resource.type, b.action) : parseAction(b.action);
+      singleAction = isAppResource(resource.type) ? await parseAccessAction(resource, b.action) : parseAction(b.action);
       actions = [singleAction];
     } else {
       // Neither field → evaluate the full matrix.

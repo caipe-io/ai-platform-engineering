@@ -276,8 +276,6 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | global.createLlmSecret | bool | `false` |  |
 | global.externalSecrets.apiVersion | string | `"v1beta1"` |  |
 | global.externalSecrets.enabled | bool | `false` |  |
-| global.caipeUiImage | string | `""` | Full UI image shared with the bundled-policy exporter; overrides the UI repository/tag. |
-| global.imagePullSecrets | list | `[]` | Registry credentials for the UI and bundled-policy exporter. |
 | global.image | object | `{"tag":""}` | Global image tag override. When set, overrides the default appVersion-based image tag for ALL subcharts (MCP servers, dynamic agents, UI, etc.) in a single place. Individual subchart `image.tag` values still take highest precedence. |
 | global.llmSecrets.create | bool | `false` |  |
 | global.llmSecrets.secretName | string | `"llm-secret"` |  |

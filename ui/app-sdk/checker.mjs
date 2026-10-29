@@ -1,6 +1,6 @@
 import { validateAssistantOptions } from "./assistant-options.mjs";
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { nativeUiDescriptor, validateAgenticAppManifest } from "./agentic-app-manifest.mjs";
 import { RESERVED_HOST_PATHS, RESERVED_API_PATHS } from "./reserved-paths.mjs";
 import { CONTRACT_VERSION, LEGACY_NATIVE_CONTRACT_VERSION, isSupportedNativeContractVersion } from "./contract-version.mjs";
@@ -65,7 +65,6 @@ export function validateManifest(moduleName, manifest) {
   if (apiVersion === "2.0") {
     const app = validateAgenticAppManifest(manifest);
     const profile = app.ui.profiles.find((candidate) => candidate.mode === "native-package");
-    if (!profile && app.authorization) return null;
     if (!profile || (moduleName.startsWith("@") && profile.package !== moduleName)) throw new Error(`${moduleName}: native package binding mismatch`);
     manifest = nativeUiDescriptor(app);
   }
@@ -167,50 +166,26 @@ export function validateOwnership(entries) {
 export function validatePackage(packageRoot, manifest) {
   const pkg = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
   if (typeof pkg.name !== "string" || typeof pkg.version !== "string") throw new Error("package name and version are required");
-  const policyOnly = manifest === null;
-  const fields = policyOnly ? ["./manifest"] : [".", "./manifest", "./styles.css"];
-  for (const field of fields) {
+  for (const field of [".", "./manifest", "./styles.css"]) {
     exportTarget(pkg, field);
   }
-  if (Object.keys(pkg.exports).some((field) => !fields.includes(field))) {
+  if (Object.keys(pkg.exports).some((field) => ![".", "./manifest", "./styles.css"].includes(field))) {
     throw new Error(`${pkg.name}: native packages may not export a server or undeclared entry point`);
   }
   if (pkg.main || pkg.bin || pkg.scripts?.start || pkg.scripts?.postinstall) {
     throw new Error(`${pkg.name}: native packages must be browser-only build artifacts`);
   }
-  for (const peer of policyOnly ? [] : PEERS) {
+  for (const peer of PEERS) {
     if (!pkg.peerDependencies?.[peer] || pkg.dependencies?.[peer]) {
       throw new Error(`${pkg.name}: ${peer} must be a peer, not a dependency`);
     }
   }
-  if (!policyOnly && !isSupportedNativeContractVersion(manifest.contractVersion)) throw new Error(`${pkg.name}: incompatible contract version`);
-  if (policyOnly && !validateAgenticAppManifest(readPackageManifest(packageRoot)).authorization) throw new Error("Policy-only package requires authorization declaration");
+  if (!isSupportedNativeContractVersion(manifest.contractVersion)) throw new Error(`${pkg.name}: incompatible contract version`);
   return pkg;
-}
-
-/** Policy files are data inside the pinned package, never remote runtime URLs. */
-export function readAuthorizationFiles(packageRoot, app) {
-  if (!app.authorization) return null;
-  const files = {};
-  for (const key of ["model", "tests"]) {
-    const path = realpathSync(join(packageRoot, app.authorization[key]));
-    const location = relative(realpathSync(packageRoot), path);
-    if (isAbsolute(location) || location.startsWith("..") || !statSync(path).isFile() || statSync(path).size > 1024 * 1024) {
-      throw new Error(`${app.id}: authorization files must be packaged regular files of at most 1 MiB`);
-    }
-    files[key] = readFileSync(path, "utf8");
-  }
-  return files;
 }
 
 /** Check the published artifact, not only its source manifest. */
 export function validateBuiltArtifact(packageRoot, pkg) {
-  if (!pkg.exports["."]) {
-    const app = validateAgenticAppManifest(readPackageManifest(packageRoot));
-    if (!app.authorization) throw new Error("A policy-only artifact requires authorization");
-    readAuthorizationFiles(packageRoot, app);
-    return { entryBytes: 0, javascriptBytes: 0 };
-  }
   const entry = join(packageRoot, pkg.exports["."]);
   const entrySource = readFileSync(entry, "utf8");
   if (!/^\s*["']use client["'];/.test(entrySource)) {

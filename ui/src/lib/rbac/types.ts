@@ -151,7 +151,6 @@ export type AuditEventSource =
 
 /** Unified audit event emitted to audit-service (FR-037) */
 export interface UnifiedAuditEvent {
-  authorization_model_id?: string;
   audit_event_id?: string;
   ts: string;
   type: AuditEventType;

@@ -26,7 +26,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
-      {{- with (.Values.imagePullSecrets | default ((.Values.global | default dict).imagePullSecrets)) }}
+      {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -46,7 +46,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          image: {{ ((.Values.global | default dict).caipeUiImage | default (printf "%s:%s" .Values.image.repository (.Values.image.tag | default (include "caipe-ui.appVersion" .)))) | quote }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (include "caipe-ui.appVersion" .) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- if .Values.image.command }}
           command:

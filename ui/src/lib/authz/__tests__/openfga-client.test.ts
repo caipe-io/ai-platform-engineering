@@ -20,7 +20,6 @@ beforeEach(() => {
   process.env.OPENFGA_HTTP = " http://openfga.example.test:8080/// ";
   process.env.OPENFGA_STORE_NAME = "example";
   delete process.env.OPENFGA_STORE_ID;
-  delete process.env.OPENFGA_AUTHORIZATION_MODEL_ID;
   delete process.env.CAIPE_UNSAFE_RBAC_BYPASS;
   delete process.env.AUTHZ_TRACING_ENABLED;
   __resetAdapterStateForTests();
@@ -30,7 +29,7 @@ beforeEach(() => {
 
 afterEach(() => {
   global.fetch = originalFetch;
-  for (const key of ["OPENFGA_HTTP", "OPENFGA_STORE_NAME", "OPENFGA_STORE_ID", "OPENFGA_AUTHORIZATION_MODEL_ID", "CAIPE_UNSAFE_RBAC_BYPASS", "AUTHZ_TRACING_ENABLED"]) {
+  for (const key of ["OPENFGA_HTTP", "OPENFGA_STORE_NAME", "OPENFGA_STORE_ID", "CAIPE_UNSAFE_RBAC_BYPASS", "AUTHZ_TRACING_ENABLED"]) {
     if (originalEnv[key] === undefined) delete process.env[key];
     else process.env[key] = originalEnv[key];
   }
@@ -114,19 +113,5 @@ it("does not inherit the legacy unsafe bypass in the CAS engine", async () => {
 it("rejects a missing endpoint without making a request", async () => {
   delete process.env.OPENFGA_HTTP;
   await expect(requestOpenFga("/stores", { method: "GET" })).rejects.toThrow("OPENFGA_HTTP is not set");
-  expect(fetchMock).not.toHaveBeenCalled();
-});
-
-it.each(["check", "batch-check", "list-objects", "list-users", "expand", "write"])("pins %s to the selected model through the shared transport", async (operation) => {
-  const model = "01K8E0AMP0E000000000000000";
-  process.env.OPENFGA_AUTHORIZATION_MODEL_ID = model;
-  fetchMock.mockResolvedValue(response({}));
-  await requestOpenFga(`/stores/example/${operation}`, { method: "POST", body: JSON.stringify({ consistency: "HIGHER_CONSISTENCY" }) });
-  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ authorization_model_id: model, consistency: "HIGHER_CONSISTENCY" });
-});
-it("rejects attempts to override the deployment's model pin", async () => {
-  process.env.OPENFGA_AUTHORIZATION_MODEL_ID = "01K8E0AMP0E000000000000000";
-  await expect(requestOpenFga("/stores/example/check", { method: "POST", body: JSON.stringify({ authorization_model_id: "other" }) }))
-    .rejects.toThrow("conflicts");
   expect(fetchMock).not.toHaveBeenCalled();
 });

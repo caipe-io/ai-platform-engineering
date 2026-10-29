@@ -177,7 +177,7 @@ it("fails closed and redacts diagnostics when the app catalog cannot load", asyn
     mockPlatformJwt.mockResolvedValue({ issuer, subject: { type: "service_account", id: "example-service" },
       clientId: "example-client", expiresAt: Date.now() / 1000 + 600 });
     mockResolveAppService.mockImplementationOnce(() => { throw new SyntaxError(privateDetail); });
-    const response = await check(request({ resource: { type: "example_agent_sandbox", id: "example-record" }, action: "can_exec" },
+    const response = await check(request({ resource: { type: "app_resource", id: "12345678-1234-4000-8000-123456789012" }, action: "execute" },
       { authorization: "Bearer example-service-token" }));
     expect(response.status).toBe(503);
     const body = await response.json();

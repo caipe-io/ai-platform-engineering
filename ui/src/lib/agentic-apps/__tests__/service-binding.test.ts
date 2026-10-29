@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import manifest from "../../../../examples/agentic-apps/service-only/manifest.json";
 import { loadConfiguredAgenticApps } from "../config";
+import { appResourceDefinition, listAppResourceTypeDefinition } from "@/lib/authz/resource-types";
 import { resourceApp, resolveAppService } from "../service-binding";
 
-const consumerManifest = { ...manifest, authorization: undefined };
+const consumerManifest = manifest;
 const originalEnv = { ...process.env };
 const directory = mkdtempSync(join(tmpdir(), "cas-app-binding-"));
 const file = join(directory, "apps.json");
@@ -53,14 +54,28 @@ it("rejects ambiguous client bindings across installations", () => {
   expect(() => loadConfiguredAgenticApps()).toThrow(/serviceAccountClientId.*bound to both/);
 });
 
-it("rejects remotely supplied policy declarations and installation module claims", () => {
+it("loads declared types and actions from a runtime catalog without a compiled package", () => {
+  writeFileSync(file, JSON.stringify(configuration()));
+  expect(loadConfiguredAgenticApps()[0].manifest.resourceTypes).toEqual([{ name: "agent-sandbox", actions: ["execute", "terminate"] }]);
+});
+it("rejects unsupported policy/module fields instead of keeping old contracts alive", () => {
   const config = configuration();
-  config.agentic_apps.packages[0].manifest = manifest;
-  writeFileSync(file, JSON.stringify(config));
-  expect(() => loadConfiguredAgenticApps()).toThrow(/bundled in the host build/);
-  const forged = configuration();
-  writeFileSync(file, JSON.stringify({ agentic_apps: { ...forged.agentic_apps, installations: [{
-    ...forged.agentic_apps.installations[0], bindings: { serviceAccountClientId: service.clientId, authorizationModule: "example-service" },
+  writeFileSync(file, JSON.stringify({ agentic_apps: { ...config.agentic_apps, packages: [{ package_id: manifest.id,
+    manifest: { ...manifest, authorization: { module: "example-service", model: "policy.fga", tests: "policy.fga.yaml" } } }] } }));
+  expect(() => loadConfiguredAgenticApps()).toThrow(/unknown field/);
+  writeFileSync(file, JSON.stringify({ agentic_apps: { ...config.agentic_apps, installations: [{
+    ...config.agentic_apps.installations[0], bindings: { serviceAccountClientId: service.clientId, authorizationModule: "example-service" },
   }] } }));
-  expect(() => loadConfiguredAgenticApps()).toThrow(/authorizationModule|unknown/);
+  expect(() => loadConfiguredAgenticApps()).toThrow(/unknown/);
+});
+
+it("keeps admin inventory available on malformed config while permission enforcement stays closed", () => {
+  writeFileSync(file, "not: an app configuration");
+  const log = jest.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    expect(listAppResourceTypeDefinition()).toMatchObject({ type: "app_resource", actions: ["owner"] });
+    expect(() => appResourceDefinition(manifest.id, "agent-sandbox")).toThrow();
+    expect(log).toHaveBeenCalledWith("[cas/resources] App declarations unavailable for admin inventory", { name: "Error" });
+    expect(JSON.stringify(log.mock.calls)).not.toContain("not: an app configuration");
+  } finally { log.mockRestore(); }
 });

@@ -241,13 +241,13 @@ export function listResourceTypeDefinitions(): readonly UniversalRebacResourceTy
   return UNIVERSAL_REBAC_RESOURCE_TYPES;
 }
 export function getResourceTypeDefinition(
-  type: string,
+  type: UniversalRebacResourceType,
 ): UniversalRebacResourceTypeDefinition | undefined {
-  return RESOURCE_TYPES_BY_NAME.get(type as UniversalRebacResourceType);
+  return RESOURCE_TYPES_BY_NAME.get(type);
 }
 
 export function isSupportedResourceAction(
-  resourceType: string,
+  resourceType: UniversalRebacResourceType,
   action: string,
 ): boolean {
   return Boolean(

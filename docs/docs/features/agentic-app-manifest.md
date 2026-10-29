@@ -104,16 +104,23 @@ The full reference manifest is
   are rejected; optional future references can remain descriptive metadata.
 - Currently recognized native host references are `host.navigation`,
   `host.breadcrumbs`, `host.theme`, `host.session`, `host.chat`, and `app.gateway`, version
-  `1.0`. UI host references require a native profile. A required
-  `app.gateway` reference needs a declared runtime.
-- `host.access.resources` version `1.0` is an HTTP capability for native,
-  iframe and service-only apps. It uses an operator-owned service-client binding
-  and the [CAS registration API](../security/rbac/access-api.md#register-resources-for-a-new-app-service);
-  declaring it does not grant access to resource data. All rendering modes can
-  use types already installed in the host.
+  `1.0`. Required host references cannot be satisfied by selecting the current
+  iframe profile. A required gateway reference needs a declared runtime.
 - Unknown manifest fields, duplicate profiles/routes, ambiguous ownership,
   missing route references, undeclared policy scopes, and unsafe paths fail
   validation.
+
+### Resource types and action names
+
+`resourceTypes` optionally declares app-local names and actions, for example
+`[{ "name": "agent-sandbox", "actions": ["execute", "terminate"] }]`.
+The app also declares `host.access.resources@1.0` in `consumes.platformApis`;
+its installation binds `serviceAccountClientId`.
+
+This HTTP contract supports separately deployed iframe apps and backend services.
+It does not require a native UI package, add OpenFGA schema, or grant permissions.
+CAIPE owns the standard model; Mongo maps registered business identities to stable
+handles. See [app resources through CAS](../security/rbac/service-defined-resources.md).
 
 ### Permission requests are declarations
 
@@ -122,11 +129,8 @@ CAS integration. It does not change role access, token scopes, HTTP policy,
 credential access, or any OpenFGA relationship. There is no `grants` field in
 the publisher schema. Do not rely on this metadata to enforce resource access.
 
-The separate optional `authorization` declaration names a packaged OpenFGA
-`module`, `model` (`.fga`) and `tests` (`.fga.yaml`). It is accepted only from a
-pinned package compiled into the host, including packages with an iframe UI or
-no UI. The host build compiles/tests the combined policy; runtime catalogs cannot
-introduce policy. See [service-defined resources](../security/rbac/service-defined-resources.md). Existing services must continue enforcing their current resource and
+Phase 2 will add application resources/actions through the approved CAS
+adapter. Existing services must continue enforcing their current resource and
 agent/tool authorization. Forwarded role headers and browser app IDs are not
 proof of permission.
 

@@ -1,5 +1,7 @@
+import { randomUUID } from "crypto";
 import { canLaunchAgenticApp, type AgenticAppUserContext } from "@/lib/agentic-apps/access";
-import { nativeResourceDefinition } from "./model";
+import { appResourceDefinition } from "./resource-types";
+import { registeredResource } from "./resource-contract";
 import type { PlatformIdentity } from "@/lib/auth/platform-identity";
 import type { DecisionContext } from "./contract";
 import { emitDecisionAudit, emitGrantAudit } from "./audit";
@@ -7,7 +9,7 @@ import { assertEmptyResourceGraph, checkDelegationPermission } from "./engines/o
 import { HttpAuthzError } from "./errors";
 import { reconcileTupleDiff } from "./reconcile";
 import type { RegisteredResource, ResourceRegistration } from "./resource-contract";
-import { activateResource, registeredResourceId, reserveResource, prepareResource, readRegisteredResource } from "./resource-store";
+import { activateResource, reserveResource, prepareResource, readRegisteredResource } from "./resource-store";
 
 export class PendingResourceRegistrationError extends HttpAuthzError {
   constructor(readonly record: RegisteredResource, cause: unknown) {
@@ -25,13 +27,7 @@ export async function registerResource(
   if (identity.issuer !== process.env.OIDC_ISSUER?.trim() || !Number.isFinite(identity.expiresAt) || identity.expiresAt * 1000 <= Date.now()) {
     throw new HttpAuthzError(401, "NOT_AUTHENTICATED", "A current platform identity is required");
   }
-  const { app, appId, definition, modelId } = await nativeResourceDefinition(intent.resource.type);
-  const ownerRefs = definition.metadata?.relations?.owner?.directly_related_user_types ?? [];
-  if (!ownerRefs.some((ref) => !ref.condition && (intent.owner_team
-    ? ref.type === "team" && ref.relation === "member"
-    : ref.type === "user" && !ref.relation && !ref.wildcard))) {
-    throw new HttpAuthzError(400, "INVALID_REQUEST", "The resource model does not support this ownership form");
-  }
+  const { app } = appResourceDefinition(intent.app_id, intent.resource_type);
   if (!app || !canLaunchAgenticApp(app, userContext)) throw new HttpAuthzError(403, "FORBIDDEN", "Resource integration is not available to this user");
   if (intent.owner_team) {
     const resource = { type: "team" as const, id: intent.owner_team };
@@ -41,15 +37,15 @@ export async function registerResource(
     if (result.decision !== "ALLOW") throw new HttpAuthzError(result.retriable ? 503 : 403,
       result.retriable ? "AUTHZ_UNAVAILABLE" : "FORBIDDEN", "Current team membership is required for team ownership");
   }
-  const id = registeredResourceId(intent.resource.type, intent.resource.id);
-  const record = await reserveResource({ _id: id, issuer: identity.issuer, app_id: appId,
-    resource: intent.resource, model_id: modelId, creator: identity.subject,
+  const record = await reserveResource({ _id: randomUUID(), issuer: identity.issuer, app_id: intent.app_id,
+    resource_type: intent.resource_type, local_id: intent.local_id, creator: identity.subject,
     owner: intent.owner_team ? { type: "team", id: intent.owner_team } : { type: "user", id: identity.subject.id },
     state: "pending", prepared: false, created_at: new Date().toISOString() });
+  const id = record._id;
   if (record.state === "active") return record;
   if (!record.prepared) {
     // A new registration cannot adopt graph grants left by another owner/import.
-    try { await assertEmptyResourceGraph(id); }
+    try { await assertEmptyResourceGraph(`app_resource:${id}`); }
     catch (error) {
       // A concurrent identical registration may have prepared/projected it.
       // That durable marker proves this reservation verified the empty graph.
@@ -59,11 +55,11 @@ export async function registerResource(
     }
     await prepareResource(id);
   }
-  const object = id;
+  const object = `app_resource:${id}`;
   const owner = record.owner.type === "team" ? `team:${record.owner.id}#member` : `user:${record.owner.id}`;
   // Metadata stays pending until the owner projection is confirmed. An ambiguous
   // write is retried toward the same immutable owner, never compensated away.
-  const auditIntent = { resource: intent.resource, grantee: record.owner, relationship: "owner" };
+  const auditIntent = { resource: registeredResource(record), grantee: record.owner, capability: "owner" };
   const auditContext = { ...ctx, caller: identity.subject };
   try {
     const result = await reconcileTupleDiff({ writes: [{ user: owner, relation: "owner", object }], deletes: [] },

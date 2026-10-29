@@ -265,7 +265,7 @@ export function parseGrantIntent(raw: unknown): GrantIntent {
   const resource = parseResource(b.resource);
   const grantee = parseGrantee(b.grantee);
   const capability = parseAction(b.capability);
-  if (!isSupportedResourceAction(resource.type, capability)) {
+  if (resource.type === "app_resource" || !isSupportedResourceAction(resource.type, capability)) {
     throw new HttpAuthzError(400, "INVALID_REQUEST", "capability is not supported for this resource type");
   }
   if (grantee.type === "everyone" && !isPublicEveryoneGrantable(resource, capability)) {

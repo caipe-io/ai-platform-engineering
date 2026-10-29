@@ -4,15 +4,45 @@
   "description": "A headless service using CAS resource registration and delegated jobs.",
   "apiVersion": "2.0",
   "version": "1.0.0",
-  "ui": { "profiles": [], "routes": [] },
-  "api": { "mounts": [] },
-  "auth": { "mode": "app-scoped-token" },
-  "surfaces": { "showInHub": false },
-  "access": { "tokenScopes": [], "policyActions": [] },
-  "provides": { "mcp": [], "agents": [], "workflows": [] },
-  "consumes": {
-    "platformApis": [{ "id": "host.access.resources", "version": "1.0", "required": true }]
+  "ui": {
+    "profiles": [],
+    "routes": []
   },
-  "authorization": { "module": "example-service", "model": "model.fga", "tests": "model.fga.yaml" },
-  "requestedPermissions": []
+  "api": {
+    "mounts": []
+  },
+  "auth": {
+    "mode": "app-scoped-token"
+  },
+  "surfaces": {
+    "showInHub": false
+  },
+  "access": {
+    "tokenScopes": [],
+    "policyActions": []
+  },
+  "provides": {
+    "mcp": [],
+    "agents": [],
+    "workflows": []
+  },
+  "consumes": {
+    "platformApis": [
+      {
+        "id": "host.access.resources",
+        "version": "1.0",
+        "required": true
+      }
+    ]
+  },
+  "requestedPermissions": [],
+  "resourceTypes": [
+    {
+      "name": "agent-sandbox",
+      "actions": [
+        "execute",
+        "terminate"
+      ]
+    }
+  ]
 }

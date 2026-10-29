@@ -4,20 +4,6 @@
 
 OpenFGA authorization service for CAIPE relationship-based access control
 
-## Bundled app policy
-
-The parent chart's `global.caipeUiImage` selects one CAIPE build for the UI and
-this initializer's `export-authorization-model` init container. The container
-exports `/app/authorization` to a shared volume; the initializer publishes the
-compiled model and its bundled module list. `global.imagePullSecrets` supplies
-private-registry credentials. No app-specific model ConfigMap or module binding
-is needed. The default core-only initializer is unchanged when that image is unset.
-
-CAS resolves the immutable model matching its build exactly. It may start before
-the post-install job, but protected requests fail closed until publication.
-Changing/removing existing policy still requires a controlled migration; see the
-[service integration reference](../../../../ui/examples/agentic-apps/service-only/README.md).
-
 ## Values
 
 | Key | Type | Default | Description |
@@ -39,8 +25,6 @@ Changing/removing existing policy still requires a controlled migration; see the
 | init.argocdHookDeletePolicy | string | `"BeforeHookCreation"` |  |
 | init.backoffLimit | int | `6` |  |
 | init.enabled | bool | `true` |  |
-| init.authorizationModelId | string | `""` | Existing immutable model pin; initializer verifies it and only seeds tuples. |
-| init.approvedModules | list | `[]` | Explicitly approved OpenFGA modules in an external compiled model. |
 | init.existingModelConfigMap | string | `""` | Existing same-namespace ConfigMap containing authorization-model.json. Empty uses the bundled model; seed.py remains chart-owned. |
 | init.helmHookDeletePolicy | string | `"before-hook-creation"` |  |
 | init.image.pullPolicy | string | `"IfNotPresent"` |  |
@@ -58,7 +42,6 @@ Changing/removing existing policy still requires a controlled migration; see the
 | init.resources.requests.memory | string | `"128Mi"` |  |
 | init.seedSub | string | `""` |  |
 | init.seedTuples | list | `[]` |  |
-| init.storeId | string | `""` | Existing store ID; set with authorizationModelId for a pinned rollout. |
 | init.storeName | string | `"caipe-openfga"` |  |
 | migrate.argocdHookDeletePolicy | string | `"BeforeHookCreation,HookSucceeded"` |  |
 | migrate.backoffLimit | int | `6` |  |

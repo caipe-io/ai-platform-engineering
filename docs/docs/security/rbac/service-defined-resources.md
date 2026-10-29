@@ -1,98 +1,106 @@
 ---
-title: Service-defined resources
-description: Bundled policy extensions and native resource permissions through CAS.
+title: App resources through CAS
+description: Runtime app registration with a standard OpenFGA model and a Mongo resource registry.
 ---
 
-# Service-defined resources
+# App resources through CAS
 
-Apps can define their own OpenFGA types, such as
-`example_agent_sandbox:sandbox-123`, with permissions such as `can_exec`.
-Users or teams own each resource. The service's installation gives it responsibility
-for its types, not permission to use every resource.
+An iframe app declares its resource types and action names in the App Contract.
+The operator installs the app and binds its service identity. Adding an app
+changes configuration and data; it requires no CAIPE rebuild or app-specific
+OpenFGA model.
 
-**New policy comes from a trusted package built into CAIPE.** A separately
-installed iframe app cannot upload or activate a model at runtime. It can use
-resource types already included in the host. A bundled policy package may have
-a native UI, an iframe UI, or no UI; application services remain separately deployed.
+## Who owns what
 
-## Who does what
-
-| Person | Responsibility |
+| Component | Responsibility |
 | --- | --- |
-| App developer | Publish a versioned package containing the App Contract manifest, OpenFGA module and permission tests. Keep the app's code in its own repository. |
-| CAIPE build maintainer | Review and pin that dependency using the existing native-extension build. The host compiles and tests the combined policy automatically. Adding a type needs no CAS TypeScript changes. |
-| CAIPE operator | Deploy that CAIPE image and configure the app's service identity and any runtime origin. No policy source files are copied into deployment configuration. |
+| App | Business data, local resource IDs, and enforcement of CAS decisions |
+| Mongo registry | Maps app + resource type + local ID to an immutable CAS handle; records registration state |
+| OpenFGA | User/team ownership, action grants and grant authority under CAIPE's standard rules |
+| CAS in the BFF | Verified caller, mapping validation, fresh permission checks, delegation and audit |
+
+Users or teams own resources. Installing an app grants its service no resource
+permissions. The app developer publishes a manifest and separately deployed
+service; the operator configures its origin and service-account client. CAIPE
+maintains the shared model/API, with no per-app type or policy code changes.
 
 ```mermaid
 flowchart LR
-    P["App package: manifest + policy + tests"] --> B["CAIPE build: combine and test"]
-    C["CAIPE core policy"] --> B
-    B --> I["One CAIPE image"]
-    I --> H["BFF: compiled type registry"]
-    I --> J["OpenFGA init job: publish bundled model"]
-    J --> F["OpenFGA: immutable model"]
-    H -->|"Select that exact model"| F
+    A["Iframe UI / app service"] -->|"Registered handle + action"| C["CAS inside BFF"]
+    C -->|"App identity and resource availability"| M["Mongo registry"]
+    C -->|"Mapped permission check"| F["OpenFGA: standard model + grants"]
+    F -->|"Allow / deny"| C
+    C --> L["Decision audit"]
+    C -->|"Decision"| A
 ```
 
-The image contains both the model artifact and the registry associating each
-module with its app. The chart's `global.caipeUiImage` selects the same image for
-the BFF and the initializer's artifact export. The operator does not assemble a
-modular project or set up a second build pipeline.
+## One resource, separate actions
 
-## At runtime
+An app can declare `agent-sandbox` with `execute` and `terminate` actions.
+Mongo maps that business resource to `app_resource:<R>`, where `R` is a generated
+UUID. It is a stable handle, not a hash of the business identity.
+
+The host model has two fixed types:
+
+- **`app_resource`:** user/team ownership.
+- **`app_permission`:** one object per resource/action, such as
+  `app_permission:<R>/execute`, with separate use and grant authority.
+
+An execution grant does not imply termination permission. An execution grantor
+can grant/revoke execution access but cannot grant termination access or assign
+new grantors. Only the resource owner can assign/revoke grant authority. Owners
+inherit use/grant permission for all actions declared for their resource type.
+There is no organization-admin override of these app permissions.
+
+CAS supplies the permission-to-resource link as an OpenFGA contextual tuple,
+derived from the verified registry mapping. Ownership and grants stay stored in
+OpenFGA. Browser/service requests cannot supply that link. A check does not write
+relationships or repair permissions.
+
+## Registration and background work
 
 ```mermaid
 sequenceDiagram
     participant U as Signed-in user
-    participant S as App service
-    participant C as CAS inside BFF
+    participant C as CAS
+    participant M as Mongo
     participant F as OpenFGA
-    U->>C: Register sandbox-123 for user or team
-    C->>F: Write the initial owner relationship
-    U->>C: Grant executor, if can_grant_executor allows it
-    S->>C: Check can_exec on sandbox-123
-    C->>F: Evaluate using the build's model ID
-    F-->>C: Allow or deny
-    C-->>S: Decision + audit reference
-    Note over S: Enforce the decision before executing
+    participant S as App service
+    U->>C: Register app/type/local ID
+    C->>M: Reserve stable handle (pending)
+    C->>F: Establish verified user/team owner
+    C->>M: Mark active after confirmed write
+    C-->>U: Return handle
+    U->>C: Grant service action access and approve bounded job
+    S->>C: Check delegated action on handle
+    C->>M: Verify mapping, installation and approval
+    C->>F: Check current service AND user permission
+    C-->>S: Audited decision
+    Note over S: Enforce before the protected operation
 ```
 
-MongoDB records registration/retry state and delegation approvals. OpenFGA stores
-relationships and evaluates policy. Services hold business data and enforce the
-answer; they receive no OpenFGA credentials.
+A retry preserves the original handle, creator and owner. An ambiguous owner
+write leaves registration pending and returns a retriable 503. Pending resources
+cannot be used. Logout alone does not cancel approved background work; approval
+expiry/revocation and current user/service permissions still apply.
 
-- Register while a user is present, before creating business data. The service
-  cannot nominate an owner. Pending registration blocks resource access.
-- Grant authority is separate per relationship: `executor` requires
-  `can_grant_executor`; `terminator` requires `can_grant_terminator`. Ownership,
-  computed permissions and structural links are not ordinary grants.
-- Background delegation still requires active approval **and** current user
-  permission **and** current service permission. Audit preserves the actor/user
-  chain, native resource, permission and evaluated model ID.
-- Disabled installations cannot operate on their resources. Runtime enablement
-  does not install code or policy.
+Checks revalidate installation/action availability and registration state.
+Disabling an app blocks its resources. Actions are stable identifiers: adding a
+new action grants only the existing owners inherited authority; explicit grants
+remain scoped to their named actions. Removing an action blocks its use but does
+not delete historical grants. Reusing a name for a different operation requires
+an explicit grant/data migration.
 
-## Deployment safety
+## Boundaries and follow-on work
 
-CAS resolves the published model by comparing it to its compiled artifact. It
-never follows an unrelated latest model. An optional explicit model-ID pin must
-match the same artifact. Before publication completes, protected requests fail
-closed; the BFF can start so the chart's post-install job can run.
+- Apps declare resource/action names, not arbitrary OpenFGA types, relationships
+  or policy expressions. Broader business-policy language remains separate work.
+- Ownership transfer, resource retirement/cleanup and existing-service adoption
+  remain explicit lifecycle/migration work.
+- If an environment tested an earlier unreleased registration contract, inventory
+  its records, tuples and delegation scopes before deploying this revision.
+  No compatibility aliases or automatic data conversion are retained.
 
-The publisher preserves core policy, reuses unchanged model versions and rejects
-unapproved modules. Changing or removing existing app policy, including rollback,
-requires a reviewed migration receipt and any necessary tuple migration. That
-release process remains separate from adding an extension for the first time.
-
-## References and remaining work
-
-- [Integration example](https://github.com/caipe-io/ai-platform-engineering/tree/main/ui/examples/agentic-apps/service-only): package, build, deployment and API commands.
-- [#3031](https://github.com/caipe-io/ai-platform-engineering/issues/3031): new-service registration, ownership, relationship grants and delegation.
-- [#2953](https://github.com/caipe-io/ai-platform-engineering/issues/2953): existing-policy upgrades, migration and rollback.
-- [App Contract](../../features/agentic-app-manifest.md): shared manifest and deployment-owned installations.
-- [OpenFGA modular models](https://openfga.dev/docs/modeling/modular-models) and [immutable models](https://openfga.dev/docs/getting-started/immutable-models).
-
-Existing-service migrations and explicit ownership/parent-link lifecycle commands
-remain follow-on work. An environment that used the unreleased generic
-`app_resource` draft needs a service-supplied native mapping; CAS cannot infer
-the domain identity from its hash.
+[API reference](./access-api.md) · [Concrete app example](https://github.com/caipe-io/ai-platform-engineering/tree/main/ui/examples/agentic-apps/service-only)
+· [#3031: new-service integration](https://github.com/caipe-io/ai-platform-engineering/issues/3031)
+· [#2953: model upgrades and migration](https://github.com/caipe-io/ai-platform-engineering/issues/2953).

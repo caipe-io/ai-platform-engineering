@@ -1,7 +1,7 @@
 import type { Subject } from "./contract";
 import type { DelegatedRequest, DelegationAuthority, DelegationCheck, DelegationReason } from "./delegation-contract";
 import { checkDelegationPermission } from "./engines/openfga";
-import { isNativeResourceType, nativeResourceDefinition } from "./model";
+import { isAppResource } from "./resource-contract";
 import { resolveAppService } from "@/lib/agentic-apps/service-binding";
 
 export function approvalReason(approval: DelegationAuthority["approval"]): DelegationReason {
@@ -36,12 +36,11 @@ export async function evaluateDelegationAuthority(
   authority: DelegationAuthority, request: DelegatedRequest, checks: DelegationCheck[],
 ): Promise<DelegationReason> {
   const approval = authority.approval;
-  if (isNativeResourceType(request.resource.type)) {
+  if (isAppResource(request.resource.type)) {
     try {
-      const { app } = await nativeResourceDefinition(request.resource.type);
       const actorApp = resolveAppService({ issuer: authority.issuer,
         subject: authority.actor, clientId: authority.clientId, expiresAt: authority.credentialExpiresAt });
-      if (!app || !actorApp) {
+      if (!actorApp) {
         checks.push({ gate: "binding", decision: "DENY", reason: "SERVICE_NOT_ALLOWED" });
         return "SERVICE_NOT_ALLOWED";
       }

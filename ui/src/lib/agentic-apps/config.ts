@@ -129,7 +129,6 @@ export function loadConfiguredAgenticApps(
       );
     }
     const native = compiled.get(packageId);
-    if (manifest.authorization && !native) throw new Error(`${packageId}: authorization policy requires a package bundled in the host build`);
     if (native) {
       const legacy = asRecord(raw.manifest, "manifest").apiVersion === "1.0";
       if (

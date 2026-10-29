@@ -2,7 +2,7 @@ import { getCollection } from "@/lib/mongodb";
 import { listResourceTypeDefinitions } from "@/lib/rbac/resource-model";
 import { slackWorkspaceRef } from "@/lib/rbac/slack-channel-grant-store";
 import { webexWorkspaceRef } from "@/lib/rbac/webex-space-grant-store";
-import { listNativeResourceTypeDefinitions } from "@/lib/authz";
+import { listAppResourceTypeDefinition } from "@/lib/authz";
 import type { RegisteredResource } from "@/lib/authz/resource-contract";
 
 export type RebacResourceStatus = "active" | "disabled" | "archived" | "deleted" | "unknown";
@@ -116,8 +116,7 @@ function matchesFilter(resourceItem: RebacCatalogResource, input: ListRebacCatal
 }
 
 export async function listRebacCatalog(input: ListRebacCatalogInput = {}): Promise<RebacCatalog> {
-  const native = await listNativeResourceTypeDefinitions();
-  const definitions = [...listResourceTypeDefinitions(), ...native];
+  const definitions = [...listResourceTypeDefinitions(), listAppResourceTypeDefinition()];
   const actions = Object.fromEntries(
     definitions.map((definition) => [definition.type, definition.actions])
   );
@@ -153,8 +152,8 @@ export async function listRebacCatalog(input: ListRebacCatalogInput = {}): Promi
 
   const discovered: RebacCatalogResource[] = [
     ...appResources.map((record) => ({
-      ...resource(record.resource.type, record.resource.id, record.resource.id, "rebac_enforced", {
-        app_id: record.app_id, registration_model_id: record.model_id, owner: record.owner, registration_state: record.state,
+      ...resource("app_resource", record._id, record.local_id, "rebac_enforced", {
+        app_id: record.app_id, resource_type: record.resource_type, local_id: record.local_id, owner: record.owner, registration_state: record.state,
       }),
       status: record.state === "active" ? "active" as const : "disabled" as const,
     })),

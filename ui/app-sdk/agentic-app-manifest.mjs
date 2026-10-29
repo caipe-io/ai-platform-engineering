@@ -105,23 +105,25 @@ export function validateAgenticAppManifest(value) {
       "provides",
       "consumes",
       "requestedPermissions",
+      "resourceTypes",
       "health",
       "catalog",
-      "authorization",
     ],
     "manifest",
   );
   if (app.apiVersion !== "2.0")
     throw new Error("manifest.apiVersion must be 2.0");
   identifier(app.id, "manifest.id");
-  if (app.authorization !== undefined) {
-    const authz = record(app.authorization, ["module", "model", "tests"], "authorization");
-    if (authz.module === "core" || !/^[a-z][a-z0-9_-]{0,49}$/.test(authz.module ?? "")) throw new Error("authorization.module must be an OpenFGA module name");
-    for (const [key, suffix] of [["model", ".fga"], ["tests", ".fga.yaml"]]) {
-      if (typeof authz[key] !== "string" || !/^[a-zA-Z0-9_/-]+(?:\.[a-z]+)+$/.test(authz[key]) ||
-          authz[key].startsWith("/") || authz[key].split("/").includes("..") || !authz[key].endsWith(suffix)) {
-        throw new Error(`authorization.${key} must name a packaged ${suffix} file`);
-      }
+  if (app.resourceTypes !== undefined) {
+    const definitions = list(app.resourceTypes, "resourceTypes");
+    if (definitions.length > 32) throw new Error("resourceTypes supports at most 32 types");
+    const names = new Set();
+    for (const definition of definitions) {
+      record(definition, ["name", "actions"], "resourceType");
+      if (!/^[a-z][a-z0-9_-]{0,49}$/.test(definition.name ?? "") || names.has(definition.name)) throw new Error("resourceType.name must be distinct and valid");
+      names.add(definition.name);
+      const actions = strings(definition.actions, "resourceType.actions");
+      if (!actions.length || actions.length > 32 || actions.some((action) => action === "owner" || !/^[a-z][a-z0-9_-]{0,49}$/.test(action))) throw new Error("resourceType.actions must contain 1–32 distinct action names; owner is reserved");
     }
   }
   const version =

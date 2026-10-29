@@ -72,41 +72,29 @@ See the [delegation architecture](./architecture.md#cas-job-delegation--new-serv
 Existing background consumers are not migrated. Explicit authorization may outlive
 browser logout, but not its expiry, revocation or loss of required permissions.
 
-## Register resources for a new app service
+## Register resources for an external app
 
-Services use native OpenFGA types and permissions, such as
-`example_agent_sandbox:sandbox-123` and `can_exec`. Policy modules and tests
-come from pinned extensions compiled into the CAIPE image. The operator selects
-that image and binds the installation to its service-account client. Remote
-iframe installation alone cannot add policy. Installation grants schema custody, not access to users' resources.
+An app declares `resourceTypes` and named actions in its runtime App Contract.
+The operator binds its installation to a service-account client. CAS uses the
+same standard OpenFGA model for every app; no app package or custom policy model
+is built into CAIPE.
 
-```mermaid
-flowchart LR
-    U["Signed-in user"] --> R["CAS reserves native resource in Mongo"]
-    I["Bundled module + matching published model"] --> R
-    R --> F["OpenFGA confirms user or team ownership"]
-    F --> A["CAS marks resource active"]
-    S["Service enforces CAS result"] --> A
-```
+- A signed-in user registers app + resource type + local ID. Mongo reserves a
+  stable `app_resource:<UUID>` mapping and OpenFGA establishes user/team ownership.
+- Pending registration returns 503 and blocks use until the same request confirms
+  ownership. The installation gives its service no resource permission.
+- `check`/`query` use the handle and domain action. Separate `app_permission`
+  objects keep actions independently grantable under standard host rules.
+- `grants` uses `capability` plus optional `authority: "use" | "grant"`.
+  Action use requires its current grant authority; assigning grant authority
+  requires ownership. `owner` and `grant:<action>` are supported check names.
+- Background delegation binds handle/action/service/job/expiry and rechecks
+  current user **and** service permission. Audit records the same actor chain.
+- Registry availability and live app declarations are checked around graph
+  evaluation. Failed decisions remain visible in CAS audit.
 
-- Register before creating business data. Existing relationships cannot be adopted
-  by registering their name. Retries preserve the original owner and native ID.
-- Checks use the model's permission directly. Granting `executor` requires
-  `can_grant_executor`; granting `terminator` has its own authority. There is no
-  organization-admin override of application policy.
-- Background approval binds the exact service, job, native resource, permission
-  and expiry. Current user and service permissions must both pass.
-- Audit retains that identity chain, native permission and selected model ID.
-  Admin inventory derives application types and permissions from the same model.
-
-Ownership transfer and parent-link lifecycle commands remain separate work;
-ordinary grants cannot change ownership or write structural relationships.
-Existing-service migration is also separate. The generic resource contract has
-been removed; no hash alias or parallel resource-kind schema is retained.
-
-See the [architecture and tradeoffs](./service-defined-resources.md). Detailed
-installation, publication and request examples are in the
-[service integration reference](https://github.com/caipe-io/ai-platform-engineering/tree/main/ui/examples/agentic-apps/service-only).
+[Architecture](./service-defined-resources.md) ·
+[Registration, grant and deployment examples](https://github.com/caipe-io/ai-platform-engineering/tree/main/ui/examples/agentic-apps/service-only).
 
 ## BFF agent execution
 

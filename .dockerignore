@@ -165,8 +165,6 @@ docs/_build/
 ui/node_modules
 ui/.next
 ui/.turbo
-ui/authorization/
-ui/.authorization-build-*/
 **/node_modules
 **/.next
 ui/.env

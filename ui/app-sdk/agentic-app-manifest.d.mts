@@ -23,8 +23,6 @@ export interface AgenticAppManifest {
   displayName: string;
   description: string;
   apiVersion: "2.0";
-  /** Schema extension data; accepted only from packages bundled in the host build. */
-  authorization?: { module: string; model: string; tests: string };
   version?: string;
   ui: {
     profiles: AgenticAppUiProfile[];
@@ -60,6 +58,7 @@ export interface AgenticAppManifest {
   consumes: {
     platformApis: Array<{ id: string; version: string; required: boolean }>;
   };
+  resourceTypes?: Array<{ name: string; actions: string[] }>;
   requestedPermissions: Array<{
     resourceType: string;
     resourceRef: string;

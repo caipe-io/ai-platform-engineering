@@ -75,7 +75,7 @@ beforeEach(() => {
     { _id: "agent-1", name: "Incident Agent", enabled: true },
   ]);
   mockCollections.access_resources = createMockCollection([
-    { _id: "example_agent_sandbox:example-record", app_id: "example-service", resource: { type: "example_agent_sandbox", id: "example-record" }, model_id: "01K8E0AMP0E000000000000000",
+    { _id: "12345678-1234-4000-8000-123456789012", app_id: "example-service", resource_type: "agent-sandbox", local_id: "example-record",
       owner: { type: "user", id: "test-user" }, state: "active" },
   ]);
   // Spec 098 added `user` + `user_profile` to the universal resource model,
@@ -102,10 +102,10 @@ describe("GET /api/admin/rebac/catalog", () => {
 
     expect(response.status).toBe(200);
     expect(body.data.resource_types.map((item: unknown) => item.type)).toEqual(
-      listResourceTypeDefinitions().map((definition) => definition.type)
+      [...listResourceTypeDefinitions().map((definition) => definition.type), "app_resource"]
     );
-    expect(body.data.resources).toContainEqual(expect.objectContaining({ type: "example_agent_sandbox", id: "example-record",
-      metadata: expect.objectContaining({ app_id: "example-service", registration_model_id: "01K8E0AMP0E000000000000000", owner: { type: "user", id: "test-user" } }) }));
+    expect(body.data.resources).toContainEqual(expect.objectContaining({ type: "app_resource", id: "12345678-1234-4000-8000-123456789012",
+      metadata: expect.objectContaining({ app_id: "example-service", resource_type: "agent-sandbox", local_id: "example-record", owner: { type: "user", id: "test-user" } }) }));
     expect(body.data.actions.tool).toContain("call");
     expect(body.data.actions.knowledge_base).toContain("ingest");
 

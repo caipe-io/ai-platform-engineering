@@ -63,7 +63,6 @@ interface AuditEventDocument {
   resource_id?: string;
   workflow_run_id?: string;
   decision_via?: string;
-  authorization_model_id?: string;
   decision_id?: string;
   failed_gate?: string;
   gateway_operation?: string;
@@ -412,8 +411,6 @@ function documentToEvent(doc: AuditEventDocument): UnifiedAuditEvent {
     resource_id: doc.resource_id,
     workflow_run_id: doc.workflow_run_id,
     decision_via: doc.decision_via,
-    authorization_model_id: typeof doc.authorization_model_id === "string" && /^[0-9A-HJKMNP-TV-Z]{26}$/.test(doc.authorization_model_id)
-      ? doc.authorization_model_id : undefined,
     decision_id: doc.decision_id,
     failed_gate: doc.failed_gate,
     gateway_operation: doc.gateway_operation,

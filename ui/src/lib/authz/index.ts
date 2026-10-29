@@ -5,7 +5,7 @@
 // compose.ts, or audit.ts directly. The ESLint boundary rule enforces this.
 
 import { HttpAuthzError } from "./errors";
-import { isNativeResourceType, nativeGrantRelation } from "./model";
+import { isAppResource } from "./resource-contract";
 import type {
   Action,
   AuthorizeRequest,
@@ -156,7 +156,7 @@ export async function listAccessible(
 ): Promise<ListAccessibleResult> {
   if (candidateIds.length === 0) return { accessible: [], reason: "OK" };
 
-  if (isNativeResourceType(resourceType) || candidateIds.length <= LIST_OBJECTS_MIN_CANDIDATES) {
+  if (isAppResource(resourceType) || candidateIds.length <= LIST_OBJECTS_MIN_CANDIDATES) {
     const results = await authorizeMany(subject, action, resourceType, candidateIds, ctx);
     const accessible = candidateIds.filter((id) => results.get(id)?.decision === "ALLOW");
     const unavailable = Array.from(results.values()).some((result) => result.reason === "AUTHZ_UNAVAILABLE");
@@ -172,12 +172,12 @@ export async function listAccessible(
 // ─── Grant / Revoke (PAP) ─────────────────────────────────────────────────────
 
 async function requireGrantAuthority(intent: GrantIntent, ctx: DecisionContext): Promise<void> {
-  if (!isNativeResourceType(intent.resource.type)) return;
-  if (!ctx.caller || !intent.relationship) throw new Error("A native grant requires a verified caller and relationship");
-  const action = await nativeGrantRelation(intent.resource.type, intent.relationship, intent.grantee.type);
+  if (!isAppResource(intent.resource.type)) return;
+  if (!ctx.caller) throw new HttpAuthzError(403, "FORBIDDEN", "A verified caller is required for app grants");
+  const action = intent.authority === "grant" ? "owner" : `grant:${intent.capability}`;
   const result = await authorize({ subject: ctx.caller, resource: intent.resource, action }, ctx);
-  if (result.decision !== "ALLOW") throw new HttpAuthzError(result.retriable ? 503 : 403,
-    result.retriable ? "AUTHZ_UNAVAILABLE" : "FORBIDDEN", `Permission ${action} is required`);
+  if (result.decision !== "ALLOW") throw new HttpAuthzError(result.retriable ? 503 : result.reason === "INVALID_REQUEST" ? 400 : 403,
+    result.retriable ? "AUTHZ_UNAVAILABLE" : result.reason === "INVALID_REQUEST" ? "INVALID_REQUEST" : "FORBIDDEN", `Permission ${action} is required`);
 }
 
 export async function grant(intent: GrantIntent, ctx: DecisionContext = {}): Promise<void> {
@@ -238,4 +238,5 @@ export type {
   SubjectType,
 } from "./contract";
 
-export { listNativeResourceTypeDefinitions } from "./model";
+
+export { listAppResourceTypeDefinition } from "./resource-types";

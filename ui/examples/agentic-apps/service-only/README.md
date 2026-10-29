@@ -1,72 +1,37 @@
-# Native resources through CAS
+# Register app resources through CAS
 
-This service-only App Contract example is a bundled policy package with no UI
-or proxy origin. Iframe and native apps use the same runtime APIs for installed types. The service stores its business
-data and enforces each CAS decision; it receives no OpenFGA credentials.
+This manifest describes the backend resource contract. It can be supplied in the
+operator's runtime app catalog, with no npm package or CAIPE build integration.
+An iframe UI uses the same APIs through the CAIPE origin; add its normal iframe
+profile/runtime and origin binding using the App Contract.
 
-| File | Purpose |
-| --- | --- |
-| `manifest.json` | Declares the policy files and `host.access.resources@1.0` |
-| `package.json` | Pinned policy-only package; exports its manifest |
-| `model.fga.yaml` | Permission assertions run against the composed host model |
-| `model.fga` | Native OpenFGA module with separate execution/termination permissions |
-| `model.json` | Equivalent native type used by the API integration tests |
+## Install the app
 
-## Package and build
+The first platform rollout must include the updated standard OpenFGA model:
+use the normal `<release>-openfga-init` Helm hook or `openfga-init` Compose service.
+Deploy the matching BFF/model release before enabling resource integrations.
+Subsequent app installs require only runtime configuration.
 
-The app developer publishes this package from their own repository. Its
-`./manifest` export declares packaged policy and test files:
+The app developer declares names in `manifest.json`:
 
 ```json
-"authorization": {
-  "module": "example-service",
-  "model": "model.fga",
-  "tests": "model.fga.yaml"
-}
+"resourceTypes": [{
+  "name": "agent-sandbox",
+  "actions": ["execute", "terminate"]
+}]
 ```
 
-A policy-only package needs no React component, styles export or framework peers.
-A package with an iframe UI can use the same bundled-policy contract. An iframe
-manifest installed only at runtime cannot declare policy.
+It also declares `host.access.resources@1.0` in `consumes.platformApis`. These
+are data declarations, not authorization grants or policy source.
 
-The CAIPE build maintainer reviews the package, pins it in `ui/package.json` and
-the lockfile, then includes it in the existing extension allowlist. For this
-in-repository example, from the CAIPE root:
-
-```bash
-npm pack ./ui/examples/agentic-apps/service-only \
-  --pack-destination ./ui/native-extension-artifacts
-cd ui
-npm install --save-exact ./native-extension-artifacts/example-service-policy-1.0.0.tgz
-cd ..
-docker build -f build/Dockerfile.caipe-ui \
-  --target runner \
-  --build-arg CAIPE_NATIVE_EXTENSION_MODULES=@example/service-policy \
-  -t registry.example.test/caipe-ui:service-1 .
-```
-
-Publish that image through your normal registry workflow. The Docker build
-uses pinned OpenFGA CLI 0.8.2 to combine the host's core policy with packaged
-modules, rejects changes to core types, and runs each package's tests against
-the combined model. A failed permission assertion fails the image build.
-Non-Docker builds need `fga` on PATH (or `FGA_CLI`); builds without policy
-extensions need no compiler.
-
-## Operator deployment
-
-The operator selects the built image in the parent Helm chart:
-
-```yaml
-global:
-  caipeUiImage: registry.example.test/caipe-ui:service-1
-```
-
-For private registries, `global.imagePullSecrets` supplies the pull-secret list
-to both the UI and the artifact-export job. Configure an installation using
-the existing App Contract configuration source:
+The operator puts the manifest in `agentic_apps.packages` and enables its
+installation in the existing app configuration file:
 
 ```yaml
 agentic_apps:
+  packages:
+    - package_id: example-service
+      manifest: # contents of manifest.json
   installations:
     - app_id: example-service
       enabled: true
@@ -75,107 +40,112 @@ agentic_apps:
         serviceAccountClientId: example-client
 ```
 
-No `authorizationModule` setting is needed: the build registry derives module
-custody from the packaged manifest. `bindings.resources` remains a resource-reference
-map. Hosted UIs configure their runtime origin through the existing installation
-contract; this service-only example needs no proxy origin.
+For an iframe, also select its declared UI profile and set
+`bindings.runtimeOrigin`. The backend remains separately deployed. Its Keycloak
+credential must meet the platform's service identity profile and `caipe-access`
+audience. App-scoped host-to-app proxy tokens are not CAS credentials.
 
-The chart runs `export-authorization-model` as an init container of the OpenFGA
-initializer. It copies `/app/authorization` from **the same image** into a shared
-volume. The initializer publishes that model using its bundled module list and
-prints the immutable model ID and hash. Repeated unchanged deployment reuses the
-same model. The BFF resolves exactly that artifact; no manual model-ID transfer
-or app-specific model ConfigMap is needed. If `OPENFGA_AUTHORIZATION_MODEL_ID`
-is explicitly set, it must identify that exact artifact. The BFF starts before
-publication, but protected requests fail closed until publication succeeds.
+## Register while the user is present
 
-For the canonical production Compose file, the equivalent override is:
-
-```bash
-CAIPE_UI_IMAGE=registry.example.test/caipe-ui:service-1 \
-docker compose -f docker-compose.yaml \
-  -f deploy/openfga/bundled-extensions.compose.yaml up -d
-```
-
-Keep your normal `.env` and profiles. Recreate `export-authorization-model` and
-`openfga-init` when changing the host image. The named volume is an artifact
-handoff, not a place to edit policy. The default core-only install is unchanged.
-
-Policy changes/removal and rollback are controlled upgrades: the publisher
-requires a migration receipt with `from_model_id`, `to_sha256` and `description`.
-Use the repository's publisher CLI and the release's tuple migration in that
-case; the receipt records approval, not proof that migration ran. See
-[#2953](https://github.com/caipe-io/ai-platform-engineering/issues/2953).
-First-time module addition and identical redeployment need no such receipt.
-
-## Register before storing business data
-
-A human browser session calls `POST /api/access/resources` from the BFF's origin:
+The browser calls `POST /api/access/resources` with its CAIPE session and origin:
 
 ```json
-{"resource":{"type":"example_agent_sandbox","id":"sandbox-123"}}
+{
+  "app_id": "example-service",
+  "resource_type": "agent-sandbox",
+  "local_id": "sandbox-123"
+}
 ```
 
-Optional `owner_team` selects a team the user currently belongs to. Otherwise the
-verified user owns it. A service cannot nominate a user owner. The native model
-must admit that user or `team#member` on its `owner` relationship.
-
-Registration and native grants require permission updates to be enabled
-(`OPENFGA_RECONCILE_ENABLED=true`). CAS reserves `example_agent_sandbox:sandbox-123` in Mongo, verifies that the graph
-is empty, writes the owner tuple and marks the reservation active. A retry must
-match the same resource, owner and creator. A different registration returns
-409; pre-existing graph relationships require an explicit migration. An
-unconfirmed owner projection remains pending and returns 503 with its native
-handle. Check it with `GET /api/access/resources/example_agent_sandbox:sandbox-123`
-or retry the same registration. Inspection requires the current owner; the
-original creator may also inspect a pending reservation.
-
-## Permissions and relationships
-
-`POST /api/access/check` uses the exact model permission:
+The response includes:
 
 ```json
-{"resource":{"type":"example_agent_sandbox","id":"sandbox-123"},"action":"can_exec"}
+{
+  "resource": {"type": "app_resource", "id": "12345678-1234-4000-8000-123456789012"},
+  "app_id": "example-service",
+  "resource_type": "agent-sandbox",
+  "local_id": "sandbox-123",
+  "owner": {"type": "user", "id": "test-user"},
+  "state": "active"
+}
 ```
 
-`POST /api/access/query` filters caller-supplied candidate IDs for that native type
-and permission. `POST /api/access/grants` writes a direct relationship:
+Optional `owner_team` selects a team the verified user currently belongs to.
+Services cannot nominate owners. Mongo enforces uniqueness of app/type/local ID;
+retries by the same creator/owner return the same opaque handle. Store that handle
+with the app's business data and send it to background jobs.
+
+Registration requires permission writes enabled (`OPENFGA_RECONCILE_ENABLED=true`).
+Until ownership is confirmed it remains pending: a 503 includes the handle and
+state. Retry the same registration or inspect
+`GET /api/access/resources/12345678-1234-4000-8000-123456789012`. The current owner
+can inspect; the original creator can also inspect a pending reservation.
+
+## Check, grant and query
+
+`POST /api/access/check`:
 
 ```json
-{"resource":{"type":"example_agent_sandbox","id":"sandbox-123"},"relationship":"executor","grantee":{"type":"service_account","id":"example-service-subject"}}
+{"resource":{"type":"app_resource","id":"12345678-1234-4000-8000-123456789012"},"action":"execute"}
 ```
 
-`DELETE` with the same body revokes it. CAS checks `can_grant_executor` on the
-resource first. Granting `terminator` instead checks `can_grant_terminator`. Missing
-authority denies the write; organization-admin status supplies no override.
-Only model-admitted user, service-account, `team#member` and explicitly declared
-wildcard grants are writable. Conditioned tuple grants, ownership changes,
-computed permissions and structural object links cannot be written this way.
+`POST /api/access/grants` grants action use:
 
-Service callers present a verified Keycloak bearer credential for `caipe-access`
-and match an enabled installation's client binding. App-scoped host-to-app tokens
-are not CAS credentials. User requests use the existing strict user identity
-profile. Request JSON cannot choose an effective user.
+```json
+{"resource":{"type":"app_resource","id":"12345678-1234-4000-8000-123456789012"},"capability":"execute","grantee":{"type":"service_account","id":"test-service"}}
+```
 
-## Background work and audit
+`DELETE` with the same body revokes it. The caller must have the resource's
+`grant:execute` permission. `authority: "use"` is the default. To assign an
+execution grantor, the **owner** sends the same shape with `authority: "grant"`
+and the intended user/team/service grantee. Assigning grant authority for one
+action does not authorize another action or allow assigning more grantors.
 
-Grant the service its native permission, then approve the exact resource,
-permission, service, job and expiry using `/api/access/delegations`. Its existing
-request shapes remain unchanged; the scope's `action` is now the native
-permission. Execution uses `/api/access/delegations/{id}/check`.
+`action: "grant:execute"` checks grant authority; `action: "owner"` checks
+ownership. Domain action names cannot contain `:` and `owner` is reserved.
+Ownership, structural relationships and wildcard/public grants are unavailable
+through the app grant API.
 
-CAS requires active approval **AND** current service permission **AND** current
-user permission. Logout alone does not cancel approved work. Expiry, revocation,
-loss of either permission, pending resource state or disabled installation does.
-Audit preserves the actor/user chain, approval scope, native resource and selected
-model ID. The Admin resource inventory uses that same selected model; the audit
-item shows its model ID.
+`POST /api/access/query` accepts `resource_type: "app_resource"`, `action` and
+candidate `ids`; it returns permitted handles. Checks use fresh registry and
+graph reads. Invalid actions return 400; dependency/pending-state failures return
+503 rather than a successful empty result.
 
-## Existing environments
+## What OpenFGA stores
 
-This replaces the unreleased generic draft, with no permanent `app_resource` or
-hash aliases. If that draft was deployed, stop and inventory its records, tuples
-and delegation scopes. A migration needs an explicit service-supplied native
-mapping; CAS cannot infer the domain type from a hash. Existing core-service
-migrations and controlled ownership/parent-link lifecycle commands are separate
-work items.
+For handle `R`, these are ordinary persisted relationships:
+
+```text
+user:test-user              owner    app_resource:R
+service_account:test-service grantee app_permission:R/execute
+user:execution-admin       grantor  app_permission:R/execute
+```
+
+At check time CAS supplies this **contextual**, non-persisted structural link:
+
+```text
+app_resource:R             resource app_permission:R/execute
+```
+
+The standard model evaluates `can_use` or `can_grant` on that permission object.
+Only CAS derives the link from registered identity; request JSON cannot inject
+contextual tuples. The business type and local ID are not OpenFGA schema names.
+
+## Background jobs and audit
+
+After granting the service access, the user approves `/api/access/delegations`
+for the exact handle, domain action, service, job and expiry. The service calls
+`/api/access/delegations/{id}/check` before each protected operation. CAS requires
+active approval **AND** current service permission **AND** current user permission.
+Logout alone does not cancel it. Revocation, expiry, lost permission or a disabled
+installation blocks the next check.
+
+Audit retains caller, grantee, handle, action, grant authority and delegated
+actor/user chain. Registration events include the business mapping and owner;
+Admin inventory resolves handles to app/type/local ID. The app enforces the result.
+
+New apps/actions require no shared-model publication. CAIPE releases maintain the
+fixed model through the normal initializer. Action names are durable contracts;
+removal blocks access without destroying grants, and repurposing a name requires
+migration review. Older unreleased registration records need an explicit release
+migration if they exist; this API provides no old-contract aliases.

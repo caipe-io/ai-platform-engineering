@@ -20,8 +20,6 @@ from pathlib import Path
 
 import httpx
 
-from publish_model import publish
-
 OPENFGA = os.environ.get("OPENFGA_HTTP", "http://openfga:8080").rstrip("/")
 STORE_NAME = os.environ.get("OPENFGA_STORE_NAME", "caipe-openfga").strip()
 SEED_OBJECT = os.environ.get("OPENFGA_SEED_OBJECT", "mcp_gateway:list").strip()
@@ -85,7 +83,7 @@ def platform_service_account_sub(client: httpx.Client) -> str:
 
 def ensure_tuple(client: httpx.Client, store_id: str, tuple_key: dict[str, str]) -> None:
     """Write a tuple unless an equivalent grant already holds (idempotent)."""
-    r = client.post(f"{OPENFGA}/stores/{store_id}/check", json={"tuple_key": tuple_key, "authorization_model_id": os.environ["OPENFGA_AUTHORIZATION_MODEL_ID"]})
+    r = client.post(f"{OPENFGA}/stores/{store_id}/check", json={"tuple_key": tuple_key})
     r.raise_for_status()
     label = f"{tuple_key['user']} {tuple_key['relation']} {tuple_key['object']}"
     if r.json().get("allowed"):
@@ -93,7 +91,7 @@ def ensure_tuple(client: httpx.Client, store_id: str, tuple_key: dict[str, str])
         return
     r = client.post(
         f"{OPENFGA}/stores/{store_id}/write",
-        json={"writes": {"tuple_keys": [tuple_key]}, "authorization_model_id": os.environ["OPENFGA_AUTHORIZATION_MODEL_ID"]},
+        json={"writes": {"tuple_keys": [tuple_key]}},
     )
     r.raise_for_status()
     print(f"tuple written for {label}")
@@ -107,7 +105,6 @@ def main() -> None:
         r.raise_for_status()
         stores = r.json().get("stores", [])
         store_id = next((s["id"] for s in stores if s.get("name") == STORE_NAME), None)
-        store_id = os.environ.get("OPENFGA_STORE_ID", "").strip() or store_id
         if not store_id:
             r = client.post(f"{OPENFGA}/stores", json={"name": STORE_NAME})
             r.raise_for_status()
@@ -116,23 +113,15 @@ def main() -> None:
         else:
             print(f"reusing store_id={store_id}")
 
-        bundle_path = os.environ.get("OPENFGA_BUNDLE_PATH", "").strip()
-        model_path = Path(bundle_path) / "authorization-model.json" if bundle_path else Path(__file__).resolve().parent / "authorization-model.json"
-        modules = [entry["module"] for entry in json.loads((Path(bundle_path) / "bundle.json").read_text())["modules"]] if bundle_path else json.loads(os.environ.get("OPENFGA_APPROVED_MODULES", "[]"))
+        model_path = Path(__file__).resolve().parent / "authorization-model.json"
         model_body = json.loads(model_path.read_text())
-        def request(method: str, path: str, body: dict | None) -> dict:
-            response = client.request(method, f"{OPENFGA}{path}", json=body)
-            response.raise_for_status()
-            return response.json()
-
-        receipt = publish(request, store_id, model_body,
-                          json.loads(Path("/app/core-authorization-model.json").read_text()),
-                          modules,
-                          selected_model_id=os.environ.get("OPENFGA_AUTHORIZATION_MODEL_ID", "").strip() or None,
-                          require_exact_model=bool(bundle_path))
-        model_id = receipt["authorization_model_id"]
-        os.environ["OPENFGA_AUTHORIZATION_MODEL_ID"] = model_id
-        print(json.dumps(receipt))
+        r = client.post(
+            f"{OPENFGA}/stores/{store_id}/authorization-models",
+            json=model_body,
+        )
+        r.raise_for_status()
+        model_id = r.json()["authorization_model_id"]
+        print(f"authorization_model_id={model_id}")
 
         if SEED_SUB:
             ensure_tuple(client, store_id, {

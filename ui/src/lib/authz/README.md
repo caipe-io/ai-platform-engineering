@@ -407,15 +407,21 @@ This exercises the real guard, CAS and chart model, with only audit delivery moc
 It creates and deletes its own test store. Use an isolated server, never a tunnel
 to a shared deployment. Without the URL, ordinary unit runs skip this suite.
 
-## App resource registration
+## External app resources
 
-- `resources.ts` establishes user/team ownership through the shared App Contract
-  installation. `resource-store.ts` reserves immutable identities in MongoDB.
-- `resource-policy.ts` gates fresh decisions and grant writes on current
-  registration/installation state. Pending records never authorize operations.
-- `platform-http.ts` shares the strict identity boundary with delegation;
-  `resource-http.ts` accepts interactive registration and authorized inspection.
-- API and rollout boundaries: [Access API](../../../../docs/docs/security/rbac/access-api.md).
+- Runtime App Contract `resourceTypes` declares app-local types/actions.
+- `resource-contract.ts` defines stable handles; `resource-store.ts` owns the
+  Mongo business-key mapping and registration state.
+- `resource-types.ts` reads current installation declarations;
+  `resource-policy.ts` enforces availability around fresh graph checks.
+- `resources.ts` establishes verified user/team ownership. The OpenFGA adapter
+  maps actions to generic permission objects and supplies the trusted contextual
+  resource link. Grants/owners remain in the graph; checks never write them.
+- `access-validation.ts` validates public shapes; CAS owns and audits decisions.
+  Delegation retains exact scope and both current principal checks.
+
+[Architecture](../../../../docs/docs/security/rbac/service-defined-resources.md) ·
+[Concrete API example](../../../examples/agentic-apps/service-only/README.md).
 
 The real dependency test requires isolated MongoDB and OpenFGA, creates its own
 database/store and removes them afterward:

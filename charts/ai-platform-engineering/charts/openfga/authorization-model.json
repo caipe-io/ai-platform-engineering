@@ -5120,6 +5120,124 @@
           }
         }
       }
+    },
+    {
+      "type": "app_resource",
+      "relations": {
+        "owner": {
+          "this": {}
+        }
+      },
+      "metadata": {
+        "relations": {
+          "owner": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              },
+              {
+                "type": "team",
+                "relation": "member"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "app_permission",
+      "relations": {
+        "resource": {
+          "this": {}
+        },
+        "grantee": {
+          "this": {}
+        },
+        "grantor": {
+          "this": {}
+        },
+        "can_use": {
+          "union": {
+            "child": [
+              {
+                "computedUserset": {
+                  "relation": "grantee"
+                }
+              },
+              {
+                "tupleToUserset": {
+                  "tupleset": {
+                    "relation": "resource"
+                  },
+                  "computedUserset": {
+                    "relation": "owner"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "can_grant": {
+          "union": {
+            "child": [
+              {
+                "computedUserset": {
+                  "relation": "grantor"
+                }
+              },
+              {
+                "tupleToUserset": {
+                  "tupleset": {
+                    "relation": "resource"
+                  },
+                  "computedUserset": {
+                    "relation": "owner"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "metadata": {
+        "relations": {
+          "resource": {
+            "directly_related_user_types": [
+              {
+                "type": "app_resource"
+              }
+            ]
+          },
+          "grantee": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              },
+              {
+                "type": "service_account"
+              },
+              {
+                "type": "team",
+                "relation": "member"
+              }
+            ]
+          },
+          "grantor": {
+            "directly_related_user_types": [
+              {
+                "type": "user"
+              },
+              {
+                "type": "service_account"
+              },
+              {
+                "type": "team",
+                "relation": "member"
+              }
+            ]
+          }
+        }
+      }
     }
   ]
 }
