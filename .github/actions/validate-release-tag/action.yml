@@ -5,7 +5,7 @@ description: >
   Two modes, chosen by whether `base_version` is set:
 
   - Stable mode (base_version empty): `version` must be a plain semver
-    (x.y.z) or an rc (x.y.z-rc.N), and its bare x.y.z must be strictly
+    (x.y.z), and its version must be strictly
     greater than the latest existing stable tag. Used for tags cut from
     main (release-manual.yml).
 
@@ -92,8 +92,9 @@ runs:
           echo "✅ ${VERSION} is valid (series max was ${SUFFIX_TYPE}.${MAX_N})"
         else
           # ── Stable mode ──────────────────────────────────────────────
-          if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$ ]]; then
-            echo "❌ ERROR: '${VERSION}' must be a final or RC semver (e.g. 1.0.0 or 1.0.0-rc.1)"
+          if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "❌ ERROR: '${VERSION}' must be a stable semver (e.g. 1.0.0)"
+            echo "   Use release-prerelease.yml for RC/hotfix builds."
             exit 1
           fi
 

@@ -54,6 +54,7 @@ jobs:
     outputs:
       should_build: ${{ steps.set-matrix.outputs.should_build }}
       tag_version: ${{ steps.version.outputs.tag_version }}
+      is_final_release: ${{ steps.version.outputs.is_final_release }}
       build_matrix: ${{ steps.set-matrix.outputs.build_matrix }}
       build_groups: ${{ steps.set-matrix.outputs.build_groups }}
     steps:
@@ -250,7 +251,7 @@ jobs:
           flavor: |
             suffix=${{ matrix.variant != 'default' && format('-{0}', matrix.variant) || '' }}
           tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.')) }}
+            type=raw,value=latest,enable=${{ needs.determine-changes.outputs.is_final_release == 'true' }}
             type=raw,value=${{ needs.determine-changes.outputs.tag_version }},enable=${{ needs.determine-changes.outputs.tag_version != '' }}
             type=ref,event=tag,prefix=
             type=sha,format=short,prefix=,enable=${{ github.ref != 'refs/heads/main' }}
@@ -353,7 +354,7 @@ jobs:
           flavor: |
             suffix=${{ matrix.variant != 'default' && format('-{0}', matrix.variant) || '' }}
           tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.')) }}
+            type=raw,value=latest,enable=${{ needs.determine-changes.outputs.is_final_release == 'true' }}
             type=raw,value=${{ needs.determine-changes.outputs.tag_version }},enable=${{ needs.determine-changes.outputs.tag_version != '' }}
             type=ref,event=tag,prefix=
             type=sha,format=short,prefix=,enable=${{ github.ref != 'refs/heads/main' }}

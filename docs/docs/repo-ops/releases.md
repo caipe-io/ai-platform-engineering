@@ -16,7 +16,14 @@ Releases follow this sequence:
 main → release/x.y.z branch → RC tags → final x.y.z tag → Helm publish + docs
 ```
 
-The `auto-tag.yml` workflow handles tag creation automatically. A human triggers `release-finalize.yml` to promote an RC to a stable release.
+`auto-tag.yml` creates RC tags on release branches. Use `release-manual.yml` to cut
+the final stable tag; `release-finalize.yml` publishes its draft GitHub Release
+automatically after the required builds pass.
+
+RC images and charts remain prerelease artifacts. They do not create entries in
+GitHub Releases or `CHANGELOG.md`, and they never update the `latest` image alias.
+RC Git tags are retained after stable releases and remain available in GitHub's
+Tags tab.
 
 ---
 
@@ -46,18 +53,20 @@ If fixes are needed, merge them into the release branch — `auto-tag.yml` creat
 
 ## Step 3 — Finalize the release
 
-Trigger `release-finalize.yml` via GitHub Actions or CLI:
+Merge the series release post and release branch into `main` before cutting the
+stable version. The release-branch merge dispatches `release-manual.yml`; when a
+manual dispatch is needed, run:
 
 ```bash
-gh workflow run release-finalize.yml \
+gh workflow run release-manual.yml \
   --repo caipe-io/ai-platform-engineering \
   -f version=x.y.z
 ```
 
-This workflow:
-- Promotes `x.y.z-rc.N` → `x.y.z`
-- Publishes the Helm chart to `oci://ghcr.io/caipe-io/charts/ai-platform-engineering`
-- Creates a GitHub Release with auto-generated notes
+This workflow accepts only stable `x.y.z` versions. It creates the stable tag and
+a draft GitHub Release, and folds candidate changes into the stable changelog
+section. Tag-triggered CI builds the images and Helm chart; `release-finalize.yml`
+publishes the release after those builds pass.
 
 ---
 
@@ -122,5 +131,5 @@ git checkout -b release/x.y.z-hotfix tags/x.y.z
 # apply fix, push
 # auto-tag creates x.y.z-hotfix.1
 # when ready:
-gh workflow run release-manual.yml -f version=x.y.z.1
+gh workflow run release-manual.yml -f version=1.2.1 # for a fix to 1.2.0
 ```

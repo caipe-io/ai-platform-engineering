@@ -69,6 +69,10 @@ tag_format = "$version"
 version_scheme = "semver"
 version_provider = "uv"
 update_changelog_on_bump = true
+changelog_merge_prerelease = true
+changelog_incremental = true
+# Prerelease tags must not define changelog boundaries, even when HEAD is tagged.
+ignored_tag_formats = ["*-rc.*", "*-dev.*", "*-hotfix.*", "*-chart.*"]
 major_version_zero = true
 
 [dependency-groups]

@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'New version to release (e.g., 1.0.0 or 1.0.0-rc.1)'
+        description: 'Stable version to release (e.g., 1.0.0)'
         required: true
         type: string
 
@@ -54,13 +54,6 @@ jobs:
           set -euo pipefail
 
           VERSION="$RELEASE_VERSION"
-
-          # Release candidates ship before their series post is written; only a
-          # final release must have published notes to link to.
-          if [[ "$VERSION" == *-rc.* ]]; then
-            echo "⏭️  $VERSION is a release candidate — series post not required yet"
-            exit 0
-          fi
 
           BASE_VERSION="${VERSION%%-*}"
           SERIES_MAJOR_MINOR="${BASE_VERSION%.*}"
