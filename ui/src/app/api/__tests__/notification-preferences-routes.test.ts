@@ -66,7 +66,8 @@ describe("GET /api/settings/notification-preferences", () => {
 
   it("returns every catalog event with its default for a user with no settings", async () => {
     const data = await view(await GET(req("GET")));
-    expect(data.events).toHaveLength(12);
+    expect(data.events).toHaveLength(13);
+    expect(data.events.find((event) => event.type === "agent.requires_input")?.enabled).toBe(true);
     expect(data.events.every((event) => event.explicit === false)).toBe(true);
     expect(data.events.find((e) => e.type === "workflow.completed")?.enabled).toBe(true);
     expect(data.events.find((e) => e.type === "workflow.started")?.enabled).toBe(false);

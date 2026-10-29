@@ -21,6 +21,7 @@ export const NOTIFICATION_EVENT_TYPES = [
   "workflow.started",
   "agent.completed",
   "agent.failed",
+  "agent.requires_input",
   "agent.started",
   "service.degraded",
   "service.recovered",
@@ -99,6 +100,12 @@ export const NOTIFICATION_EVENT_CATALOG: Record<
     category: "agent",
     defaultEnabled: false,
     severity: "info",
+  },
+  "agent.requires_input": {
+    type: "agent.requires_input",
+    category: "agent",
+    defaultEnabled: true,
+    severity: "warning",
   },
   "service.degraded": {
     type: "service.degraded",

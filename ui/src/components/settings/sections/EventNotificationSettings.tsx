@@ -20,6 +20,7 @@ type EventType =
   | "workflow.started"
   | "agent.completed"
   | "agent.failed"
+  | "agent.requires_input"
   | "agent.started"
   | "service.degraded"
   | "service.recovered";

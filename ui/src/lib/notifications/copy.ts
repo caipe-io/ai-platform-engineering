@@ -44,6 +44,10 @@ export const NOTIFICATION_EVENT_COPY: Record<
     label: "Agent task started",
     description: "A background agent task began.",
   },
+  "agent.requires_input": {
+    label: "Agent needs input",
+    description: "An agent is waiting for your answer in a conversation.",
+  },
   "service.degraded": {
     label: "Service degraded",
     description: "A service is no longer healthy.",

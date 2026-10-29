@@ -377,3 +377,31 @@ Publish a **host-visible** `callbackUri` with each actionable app notification:
   Notifications without a destination open notification settings.
 - Existing inbox rows and legacy producers keep their direct links. The host
   creates a sparse callback-marker index automatically; no data rewrite is required. Collector exports continue to omit destinations and recipients.
+
+## User-delegated agent notifications
+
+- `POST /api/notifications/agent-events` accepts `conversation_id`, `event_id`, and
+  `event_type` (`input_required`, `completed`, or `failed`). The Platform MCP tool
+  `caipe_notification_raise` forwards to this route using the caller's own credentials.
+- Requires a user session or bearer identity and ownership of the saved CAIPE chat.
+  Service accounts, other recipients, shared-chat access, and admin audit access
+  cannot publish through this route. App publishers keep using their registered,
+  installation-bound API; agents cannot select or impersonate app sources.
+- The host supplies generic copy and the `/chat/<conversation_id>` callback.
+  Prompts, input questions, arbitrary URLs, delivery channels, and bot destinations
+  are not accepted as arguments. Questions remain in the conversation.
+- Reuse the same `event_id` when retrying one event; use a new ID for a new pause
+  or attempt. Events deduplicate by type, conversation, attempt, and recipient.
+  Publishing is limited to 20 attempts per user per minute across publishers.
+- `input_required` maps to the registered platform type `agent.requires_input`.
+  It raises an alert only: it does not pause execution, create an approval, or
+  resume a run. Do not duplicate an alert already emitted by the runtime.
+- `202` means queued, not delivered. `200` with `status: "disabled"` means the
+  framework or user's event preference disabled it. Storage or transport failures
+  return `503`; retry with the same ID. Normal subscriptions, channel opt-ins,
+  pause controls, callback markers, and delivery retries still apply.
+- No extra application registration is needed for this built-in platform type.
+  The MCP tool requires Platform MCP support from #2866 and remains behind
+  `CAIPE_MCP_ENABLED`. The REST endpoint does not require enabling MCP.
+- This owner-only API does not implement general delegated workload identities
+  or the pending project/document CAS recheck at delivery time.
