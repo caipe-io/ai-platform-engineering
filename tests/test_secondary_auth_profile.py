@@ -60,6 +60,8 @@ def test_user_profile_reconcile_job_is_unconditional_and_upgrade_safe() -> None:
     assert container["command"] == ["/bin/sh", "/scripts/reconcile-secondary-auth.sh"]
     environment = {item["name"]: item for item in container["env"]}
     assert environment["KC_REALM"]["value"] == "caipe"
+    attributes = json.loads(environment["KEYCLOAK_USER_PROFILE_ATTRIBUTES_JSON"]["value"])
+    assert {attribute["name"] for attribute in attributes} == {"slack_user_id", "webex_user_id"}
 
 
 
@@ -79,8 +81,16 @@ def test_user_profile_reconcile_script_is_packaged_and_fail_closed() -> None:
     assert 'Secondary auth attributes protected successfully.' in script
 
 
+@pytest.mark.parametrize("custom_attributes", [
+    [{"name": "example_attribute", "displayName": "Example Attribute"},
+     {"name": "caipe_secondary_oidc_identity_key", "permissions": {"view": ["user"], "edit": ["user"]}}],
+    {"name": "invalid_object"},
+    [{"name": ""}],
+    [{"displayName": "Missing name"}],
+])
 def test_user_profile_reconcile_script_merges_idempotently_with_symbolic_admin_password(
     tmp_path: Path,
+    custom_attributes: Any,
 ) -> None:
     profile_path = tmp_path / "profile.json"
     profile_path.write_text(
@@ -91,7 +101,8 @@ def test_user_profile_reconcile_script_merges_idempotently_with_symbolic_admin_p
                         "name": "existing_attribute",
                         "displayName": "Existing Attribute",
                     }
-                ]
+                ],
+                "unmanagedAttributePolicy": "DISABLED",
             }
         )
     )
@@ -138,18 +149,19 @@ else:
         "KEYCLOAK_ADMIN_PASSWORD": "alpha&beta+gamma%delta",
         "EXPECTED_ADMIN_USER": "admin+user@example.test",
         "EXPECTED_ADMIN_PASSWORD": "alpha&beta+gamma%delta",
-        "KEYCLOAK_USER_PROFILE_ATTRIBUTES_JSON": json.dumps(
-            [
-                {
-                    "name": "caipe_secondary_oidc_identity_key",
-                    "displayName": "CAIPE Secondary OIDC Identity Key",
-                    "permissions": {"view": ["admin"], "edit": ["admin"]},
-                }
-            ]
-        ),
-        "KEYCLOAK_USER_PROFILE_UNMANAGED_ATTRIBUTE_POLICY": "ADMIN_EDIT",
+        "KEYCLOAK_USER_PROFILE_ATTRIBUTES_JSON": json.dumps(custom_attributes),
     }
     script = CHART_PATH / "scripts" / "reconcile-secondary-auth.sh"
+
+    if not isinstance(custom_attributes, list) or not custom_attributes[0].get("name"):
+        result = subprocess.run(
+            ["/bin/sh", str(script)], text=True, capture_output=True, env=environment,
+        )
+        assert result.returncode != 0
+        assert json.loads(profile_path.read_text())["attributes"] == [
+            {"name": "existing_attribute", "displayName": "Existing Attribute"}
+        ]
+        return
 
     for _ in range(2):
         subprocess.run(
@@ -164,7 +176,8 @@ else:
     names = [attribute["name"] for attribute in reconciled["attributes"]]
     assert names.count("existing_attribute") == 1
     assert names.count("caipe_secondary_oidc_identity_key") == 1
-    assert "unmanagedAttributePolicy" not in reconciled
+    assert names.count("example_attribute") == 1
+    assert reconciled["unmanagedAttributePolicy"] == "DISABLED"
     for attribute in reconciled["attributes"]:
         if attribute["name"].startswith("caipe_secondary_oidc_"):
             assert attribute["permissions"] == {"view": ["admin"], "edit": ["admin"]}
