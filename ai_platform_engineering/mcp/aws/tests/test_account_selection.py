@@ -1,23 +1,8 @@
-import asyncio
-import importlib.util
-from pathlib import Path
 from types import ModuleType
-from typing import Optional
+from typing import Any, Optional
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-
-
-@pytest.fixture
-def server(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
-    spec = importlib.util.spec_from_file_location("aws_account_server", Path(__file__).parents[1] / "server.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    monkeypatch.setenv("AWS_ACCOUNT_LIST", "primary:000000000001,secondary:000000000002")
-    module._aws_cli_semaphore = asyncio.Semaphore(1)
-    module._kubectl_semaphore = asyncio.Semaphore(1)
-    return module
 
 
 def test_discovery_does_not_write_config(server: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -42,7 +27,7 @@ def test_parse_accounts_preserves_bare_ids(server: ModuleType, monkeypatch: pyte
 async def test_invalid_selectors_never_execute(server: ModuleType, monkeypatch: pytest.MonkeyPatch, profile: Optional[str], account: Optional[str]) -> None:
     spawn = AsyncMock(side_effect=AssertionError("must not invoke AWS"))
     run = Mock(side_effect=AssertionError("must not invoke kubectl"))
-    monkeypatch.setattr(server.asyncio, "create_subprocess_shell", spawn)
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", spawn)
     monkeypatch.setattr(server, "_run_kubectl", run)
     assert "❌" in await server.aws_cli_execute("sts get-caller-identity", profile=profile, account=account)
     assert "❌" in await server.eks_kubectl_execute("example", "get pods", profile=profile, account=account)
@@ -83,8 +68,11 @@ async def test_eks_legacy_alias_reaches_executor(server: ModuleType, monkeypatch
 @pytest.mark.asyncio
 async def test_aws_legacy_alias_reaches_cli(server: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     process = Mock(returncode=0)
-    process.communicate = AsyncMock(return_value=(b"{}", b""))
-    spawn = AsyncMock(return_value=process)
-    monkeypatch.setattr(server.asyncio, "create_subprocess_shell", spawn)
+    process.wait = AsyncMock(return_value=0)
+    async def spawn_process(*args: str, **kwargs: Any) -> Mock:
+        kwargs["stdout"].write(b"{}")
+        return process
+    spawn = AsyncMock(side_effect=spawn_process)
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", spawn)
     assert await server.aws_cli_execute("sts get-caller-identity", account="primary") == "{}"
-    assert "--profile primary" in spawn.call_args.args[0]
+    assert spawn.call_args.args[:3] == ("aws", "--profile", "primary")
