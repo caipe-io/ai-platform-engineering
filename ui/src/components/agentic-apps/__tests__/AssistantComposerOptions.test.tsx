@@ -81,10 +81,12 @@ const checkboxOptions: AssistantOptions = { version: "1.0", controls: [{
   choices: [{ id: "disabled", label: "Disabled", value: false }, { id: "enabled", label: "Enabled", value: true }],
 }] };
 
-function CheckboxComposer({ scope = "primary", available = true }: { scope?: string; available?: boolean }) {
+function CheckboxComposer({ scope = "primary", available = true, options = checkboxOptions }: {
+  scope?: string; available?: boolean; options?: AssistantOptions;
+}) {
   const configuration = available ? undefined : { version: "1.0" as const, visible: true,
     controls: { research: { choices: ["disabled"], defaultChoice: "disabled" } } };
-  const { requestOptions, composerHeader } = useAssistantComposerOptions(checkboxOptions, configuration, scope);
+  const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration, scope);
   return <div>{composerHeader}<output>{JSON.stringify(requestOptions)}</output></div>;
 }
 
@@ -99,6 +101,15 @@ it("starts an opt-in checkbox unchecked and forwards boolean choices on explicit
   fireEvent.click(checkbox);
   expect(checkbox).not.toBeChecked();
   expect(screen.getByRole("status")).toHaveTextContent('{"personal_research":false}');
+});
+
+it("starts a checkbox checked when its declared default choice is true", () => {
+  const options: AssistantOptions = { ...checkboxOptions,
+    controls: checkboxOptions.controls.map(control => ({ ...control, defaultChoice: "enabled" })),
+  };
+  render(<CheckboxComposer options={options} />);
+  expect(screen.getByRole("checkbox", { name: "Personal research (Beta)" })).toBeChecked();
+  expect(screen.getByRole("status")).toHaveTextContent('{"personal_research":true}');
 });
 
 it("resets checkbox consent when the conversation scope changes", () => {
