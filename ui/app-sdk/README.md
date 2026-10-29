@@ -432,6 +432,11 @@ Declare `ui.assistant.overlay: "host"` to use CAIPE's popup. Optional
   expand and reset size through the common display menu. Audit presentation
   does not disable logging. One remaining choice applies without a selector.
 - Choice values are scalar, publisher-declared `forwarded_props` entries.
+  Controls use a Select by default. Set `kind: "checkbox"` for a labeled boolean
+  control, with exactly two choices whose values are `false` and `true`.
+  `defaultChoice` selects its initial state; app and conversation scope changes
+  reset it to that default. Runtime narrowing and BFF validation apply equally
+  to both kinds, in the popup and full-page app chat.
   Runtime messages cannot add keys/values. Routing, identity, authorization and
   other protected keys are rejected; the BFF revalidates choices for app streams.
   App backends must still validate settings and enforce resource permissions.

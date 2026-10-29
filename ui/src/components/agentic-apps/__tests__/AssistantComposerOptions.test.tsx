@@ -75,3 +75,47 @@ it("uses the popup's current source availability rather than offering unavailabl
   expect(screen.queryByLabelText("Search sources")).toBeNull();
   expect(screen.getByRole("status")).toHaveTextContent('{"verify_sources":false}');
 });
+
+const checkboxOptions: AssistantOptions = { version: "1.0", controls: [{
+  id: "research", kind: "checkbox", label: "Personal research (Beta)", requestKey: "personal_research", defaultChoice: "disabled",
+  choices: [{ id: "disabled", label: "Disabled", value: false }, { id: "enabled", label: "Enabled", value: true }],
+}] };
+
+function CheckboxComposer({ scope = "primary", available = true }: { scope?: string; available?: boolean }) {
+  const configuration = available ? undefined : { version: "1.0" as const, visible: true,
+    controls: { research: { choices: ["disabled"], defaultChoice: "disabled" } } };
+  const { requestOptions, composerHeader } = useAssistantComposerOptions(checkboxOptions, configuration, scope);
+  return <div>{composerHeader}<output>{JSON.stringify(requestOptions)}</output></div>;
+}
+
+it("starts an opt-in checkbox unchecked and forwards boolean choices on explicit changes", () => {
+  render(<CheckboxComposer />);
+  const checkbox = screen.getByRole("checkbox", { name: "Personal research (Beta)" });
+  expect(checkbox).not.toBeChecked();
+  expect(screen.getByRole("status")).toHaveTextContent('{"personal_research":false}');
+  fireEvent.click(checkbox);
+  expect(checkbox).toBeChecked();
+  expect(screen.getByRole("status")).toHaveTextContent('{"personal_research":true}');
+  fireEvent.click(checkbox);
+  expect(checkbox).not.toBeChecked();
+  expect(screen.getByRole("status")).toHaveTextContent('{"personal_research":false}');
+});
+
+it("resets checkbox consent when the conversation scope changes", () => {
+  const view = render(<CheckboxComposer />);
+  fireEvent.click(screen.getByRole("checkbox"));
+  expect(screen.getByRole("checkbox")).toBeChecked();
+  view.rerender(<CheckboxComposer scope="secondary" />);
+  expect(screen.getByRole("checkbox")).not.toBeChecked();
+  expect(screen.getByRole("status")).toHaveTextContent('{"personal_research":false}');
+  view.rerender(<CheckboxComposer />);
+  expect(screen.getByRole("checkbox")).not.toBeChecked();
+});
+
+it("applies narrowed checkbox choices without retaining a previously enabled value", () => {
+  const view = render(<CheckboxComposer />);
+  fireEvent.click(screen.getByRole("checkbox"));
+  view.rerender(<CheckboxComposer available={false} />);
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect(screen.getByRole("status")).toHaveTextContent('{"personal_research":false}');
+});
