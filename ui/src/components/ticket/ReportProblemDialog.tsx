@@ -10,7 +10,6 @@ DialogDescription,
 DialogHeader,
 DialogTitle,
 } from "@/components/ui/dialog";
-import { getConfig } from "@/lib/config";
 import {
 createTicketViaAgent,
 type FeedbackContext,
@@ -80,9 +79,6 @@ export function ReportProblemDialog({
   const debugEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileInputId = useId();
-
-  const provider = getConfig("ticketProvider");
-  const providerLabel = provider === "jira" ? "Jira" : provider === "github" ? "GitHub" : "";
 
   const contextUrl =
     typeof window !== "undefined"
@@ -206,7 +202,7 @@ export function ReportProblemDialog({
 
     const userEmail = session?.user?.email || "unknown";
 
-    appendLog(`Creating ${providerLabel} ticket...`);
+    appendLog("Submitting feedback...");
     appendLog(`Reporter: ${userEmail}`);
     appendLog(`Context: ${contextUrl}`);
 
@@ -256,7 +252,6 @@ export function ReportProblemDialog({
     feedbackContext,
     session,
     contextUrl,
-    providerLabel,
     screenshotDataUrl,
     includeChatContext,
     chatContext,
@@ -287,7 +282,7 @@ export function ReportProblemDialog({
               ? "Ticket Created"
               : status === "error"
                 ? "Something Went Wrong"
-                : `Report a Problem${providerLabel ? ` via ${providerLabel}` : ""}`}
+                : "Report a Problem"}
           </DialogTitle>
           <DialogDescription>
             {status === "idle" &&
@@ -522,7 +517,7 @@ export function ReportProblemDialog({
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-1"
                 >
-                  Open in {providerLabel}
+                  Open in {{ jira: "Jira", github: "GitHub", gitlab: "GitLab", webex: "Webex" }[ticketResult.provider]}
                   <ExternalLink className="h-3 w-3" />
                 </a>
               )}
