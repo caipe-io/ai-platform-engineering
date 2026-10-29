@@ -6,7 +6,7 @@ import type { Conversation } from "@/types/a2a";
 import { applyAssistantFontScale } from "@/lib/appearance-preferences";
 import { AgenticAppAssistantOverlay } from "../AgenticAppAssistantOverlay";
 
-jest.mock("../AssistantConnectionGuidance", () => ({ AssistantConnectionGuidance: () => null }));
+jest.mock("../AssistantConnectionGuidance", () => ({ AssistantConnectionGuidance: () => <button type="button">Connect</button> }));
 
 jest.mock("@/native-extensions/HostConversationActions", () => ({ __esModule: true, default: () => <h2>Saved app chat</h2> }));
 
@@ -109,6 +109,16 @@ describe("AgenticAppAssistantOverlay", () => {
   });
 
   afterEach(() => jest.restoreAllMocks());
+
+  it("keeps the view tabs and connection guidance in the assistant header", async () => {
+    renderExampleOverlay();
+    await screen.findByTestId("chat-panel");
+    const header = screen.getByRole("tablist", { name: "Ask Example views" }).closest("header");
+    expect(header).toContainElement(screen.getByRole("tab", { name: "Chat" }));
+    expect(header).toContainElement(screen.getByRole("tab", { name: "History" }));
+    expect(header).toContainElement(screen.getByRole("button", { name: "Connect" }));
+    expect(header).toContainElement(screen.getByRole("button", { name: "Conversation actions" }));
+  });
 
   it("renders a floating launcher and opens an opaque shared chat panel", async () => {
     const onOpenChange = jest.fn();
