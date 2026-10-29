@@ -13,10 +13,11 @@ import type {
 import type { ListObjectsResult, PolicyAdmin, PolicyEngine } from "../engine";
 import { BoundedTtlCache } from "../cache";
 import { getReasonMeta } from "../reasons";
-import { registeredResourceGate, requireRegisteredResource } from "../resource-policy";
+import { registeredResourceGate, registeredResourcePolicy, requireRegisteredResource } from "../resource-policy";
 import { openFgaRelation, openFgaCheckRelation } from "@/lib/rbac/tuple-builders";
 import { openFgaResourceObject, parseOpenFgaObject } from "@/lib/rbac/openfga-resource-ids";
-import { APP_NAME_PATTERN, isAppResource, permissionObject } from "../resource-contract";
+import { APP_NAME_PATTERN, isAppResource, permissionObject, resourceOwnerObject, resourceOwnerVersion, type RegisteredResource } from "../resource-contract";
+import { readRegisteredResource } from "../resource-store";
 import { isOpenFgaReconciliationEnabled } from "@/lib/rbac/openfga";
 import { HttpAuthzError } from "../errors";
 
@@ -223,15 +224,17 @@ function deny(reason: AuthorizeResult["reason"] = "NO_CAPABILITY"): AuthorizeRes
 
 async function runCheck(req: AuthorizeRequest, fresh = false, deadline?: AbortSignal): Promise<AuthorizeResult> {
   const signal = deadline ?? (fresh ? AbortSignal.timeout(OPENFGA_READ_TIMEOUT_MS) : undefined);
+  let record: RegisteredResource | undefined;
   if (isAppResource(req.resource.type)) {
-    const resourceState = await registeredResourceGate(req.resource, signal, req.action);
-    if (resourceState) return resourceState;
+    const policy = await registeredResourcePolicy(req.resource, signal, req.action);
+    if (policy.denied) return policy.denied;
+    record = policy.record;
   }
   if (deadline?.aborted) return deny("AUTHZ_UNAVAILABLE");
   if (!circuitAllows()) return deny("AUTHZ_UNAVAILABLE");
   const halfOpenProbe = circuitState === "half_open";
 
-  const mapped = mapFgaCheck(req.resource, req.action);
+  const mapped = mapFgaCheck(req.resource, req.action, record);
   const relation = mapped.relation;
   const user = `${req.subject.type}:${req.subject.id}`;
   const object = mapped.object;
@@ -248,7 +251,7 @@ async function runCheck(req: AuthorizeRequest, fresh = false, deadline?: AbortSi
     // Do not publish an allow after another replica disabled the integration
     // or changed the lifecycle state while the graph check was in flight.
     if (isAppResource(req.resource.type)) {
-      const latestState = await registeredResourceGate(req.resource, signal, req.action);
+      const latestState = await registeredResourceGate(req.resource, signal, req.action, record && resourceOwnerVersion(record));
       if (latestState) return latestState;
     }
     const result = allowed ? allow() : deny("NO_CAPABILITY");
@@ -260,6 +263,23 @@ async function runCheck(req: AuthorizeRequest, fresh = false, deadline?: AbortSi
       if (halfOpenProbe && circuitState === "half_open") probeInFlight = false;
     } else recordFailure();
     console.warn("[cas/openfga] check error:", err instanceof Error ? err.message : String(err));
+    return deny("AUTHZ_UNAVAILABLE");
+  }
+}
+
+/** Metadata receipt only: retirement never authorizes a resource action or grant. */
+export async function checkRetiredResourceOwner(record: RegisteredResource, subject: Subject): Promise<AuthorizeResult> {
+  if (record.state !== "retired" || record.issuer !== process.env.OIDC_ISSUER?.trim()) return deny();
+  const signal = AbortSignal.timeout(OPENFGA_READ_TIMEOUT_MS);
+  try {
+    const storeId = await getOpenFgaStoreId();
+    const allowed = await fgaCheck(storeId, `${subject.type}:${subject.id}`, "owner", resourceOwnerObject(record),
+      { consistency: "HIGHER_CONSISTENCY", signal });
+    const latest = await readRegisteredResource(record._id, signal);
+    if (!latest || latest.issuer !== record.issuer || latest.state !== "retired" || resourceOwnerVersion(latest) !== resourceOwnerVersion(record)) return deny("AUTHZ_UNAVAILABLE");
+    return { ...(allowed ? allow() : deny()), ttl_seconds: 0, via: "retired_resource_receipt" };
+  } catch (error) {
+    console.warn("[cas/resources] Retired receipt check unavailable", { name: error instanceof Error ? error.name : "UnknownError" });
     return deny("AUTHZ_UNAVAILABLE");
   }
 }
@@ -453,8 +473,8 @@ export async function assertEmptyResourceGraph(object: string): Promise<void> {
 }
 
 /** The structural link is trusted registry identity, never caller-supplied authorization. */
-function mapFgaCheck(resource: Resource, action: string): { object: string; relation: string; contextualTuples?: FgaTuple[] } {
-  const object = openFgaResourceObject(resource.type, resource.id);
+function mapFgaCheck(resource: Resource, action: string, record?: RegisteredResource): { object: string; relation: string; contextualTuples?: FgaTuple[] } {
+  const object = record ? resourceOwnerObject(record) : openFgaResourceObject(resource.type, resource.id);
   if (!isAppResource(resource.type)) return { object, relation: openFgaCheckRelation(action) };
   if (action === "owner") return { object, relation: "owner" };
   const granting = action.startsWith("grant:");
@@ -491,20 +511,22 @@ export function createOpenFgaAdmin(): PolicyAdmin {
 /**
  * Admin explanation uses the same generic action mapping as live checks.
  */
-export function describeFgaCheck(req: AuthorizeRequest): {
+export async function describeFgaCheck(req: AuthorizeRequest): Promise<{
   engine: "openfga";
   relation: string;
   user: string;
   object: string;
   store: string;
   contextual_tuples?: FgaTuple[];
-} {
+}> {
+  const { record } = await registeredResourcePolicy(req.resource, undefined, req.action);
+  const mapped = mapFgaCheck(req.resource, req.action, record);
   return {
     engine: "openfga",
-    relation: mapFgaCheck(req.resource, req.action).relation,
+    relation: mapped.relation,
     user: `${req.subject.type}:${req.subject.id}`,
-    object: mapFgaCheck(req.resource, req.action).object,
-    contextual_tuples: mapFgaCheck(req.resource, req.action).contextualTuples,
+    object: mapped.object,
+    contextual_tuples: mapped.contextualTuples,
     store: getCachedOpenFgaStoreId() || "(resolved at boot)",
   };
 }

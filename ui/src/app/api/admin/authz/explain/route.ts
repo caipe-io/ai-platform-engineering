@@ -70,7 +70,7 @@ async function explainDirectGrant(subject: Subject, resource: Resource, action: 
 function explainOne(subject: Subject, resource: Resource, action: Action, tenantId?: string) {
   return (async () => {
     const req = { subject, resource, action };
-    const fga = describeFgaCheck(req);
+    const fga = await describeFgaCheck(req);
     if (!isAppResource(resource.type) && !isSupportedResourceAction(resource.type, action)) {
       return {
         action,
