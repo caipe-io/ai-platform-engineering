@@ -22,14 +22,14 @@ function isOpenFgaSafeObjectId(value: string): boolean {
   return OPENFGA_ID_PATTERN.test(value) && !value.includes(":") && !value.includes("#");
 }
 
-export function openFgaResourceId(type: UniversalRebacResourceType, id: string): string {
+export function openFgaResourceId(type: UniversalRebacResourceType | "app_resource", id: string): string {
   if (type !== "llm_model" || isOpenFgaSafeObjectId(id)) {
     return id;
   }
   return `b64_${base64UrlEncode(id)}`;
 }
 
-export function openFgaResourceObject(type: UniversalRebacResourceType, id: string): string {
+export function openFgaResourceObject(type: UniversalRebacResourceType | "app_resource", id: string): string {
   return `${type}:${openFgaResourceId(type, id)}`;
 }
 

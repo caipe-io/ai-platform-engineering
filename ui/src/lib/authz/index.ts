@@ -4,6 +4,8 @@
 // Everything inside the BFF imports from here — never from engines/,
 // compose.ts, or audit.ts directly. The ESLint boundary rule enforces this.
 
+import { HttpAuthzError } from "./errors";
+import { isAppResource } from "./resource-contract";
 import type {
   Action,
   AuthorizeRequest,
@@ -40,6 +42,8 @@ export { signGatewayContext, gatewayCasEnabled } from "./gateway-context";
 export type { GatewayRequest, GatewayResult, GatewayCheck } from "./gateway-contract";
 
 export { createDelegation, inspectDelegation, revokeDelegation, authorizeDelegated } from "./delegations";
+export { registerResource, PendingResourceRegistrationError } from "./resources";
+export type { ResourceRegistration, RegisteredResource } from "./resource-contract";
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -152,7 +156,7 @@ export async function listAccessible(
 ): Promise<ListAccessibleResult> {
   if (candidateIds.length === 0) return { accessible: [], reason: "OK" };
 
-  if (candidateIds.length <= LIST_OBJECTS_MIN_CANDIDATES) {
+  if (isAppResource(resourceType) || candidateIds.length <= LIST_OBJECTS_MIN_CANDIDATES) {
     const results = await authorizeMany(subject, action, resourceType, candidateIds, ctx);
     const accessible = candidateIds.filter((id) => results.get(id)?.decision === "ALLOW");
     const unavailable = Array.from(results.values()).some((result) => result.reason === "AUTHZ_UNAVAILABLE");
@@ -167,22 +171,33 @@ export async function listAccessible(
 
 // ─── Grant / Revoke (PAP) ─────────────────────────────────────────────────────
 
+async function requireGrantAuthority(intent: GrantIntent, ctx: DecisionContext): Promise<void> {
+  if (!isAppResource(intent.resource.type)) return;
+  if (!ctx.caller) throw new HttpAuthzError(403, "FORBIDDEN", "A verified caller is required for app grants");
+  const action = intent.authority === "grant" ? "owner" : `grant:${intent.capability}`;
+  const result = await authorize({ subject: ctx.caller, resource: intent.resource, action }, ctx);
+  if (result.decision !== "ALLOW") throw new HttpAuthzError(result.retriable ? 503 : result.reason === "INVALID_REQUEST" ? 400 : 403,
+    result.retriable ? "AUTHZ_UNAVAILABLE" : result.reason === "INVALID_REQUEST" ? "INVALID_REQUEST" : "FORBIDDEN", `Permission ${action} is required`);
+}
+
 export async function grant(intent: GrantIntent, ctx: DecisionContext = {}): Promise<void> {
   try {
+    await requireGrantAuthority(intent, ctx);
     await admin.grant(intent);
     await emitGrantAudit("grant", intent, ctx, { outcome: "success" });
   } catch (err) {
-    await emitGrantAudit("grant", intent, ctx, { outcome: "error", reasonCode: "PDP_WRITE_FAILED" });
+    await emitGrantAudit("grant", intent, ctx, { outcome: "error", reasonCode: err instanceof HttpAuthzError ? err.code : "PDP_WRITE_FAILED" });
     throw err;
   }
 }
 
 export async function revoke(intent: GrantIntent, ctx: DecisionContext = {}): Promise<void> {
   try {
+    await requireGrantAuthority(intent, ctx);
     await admin.revoke(intent);
     await emitGrantAudit("revoke", intent, ctx, { outcome: "success" });
   } catch (err) {
-    await emitGrantAudit("revoke", intent, ctx, { outcome: "error", reasonCode: "PDP_WRITE_FAILED" });
+    await emitGrantAudit("revoke", intent, ctx, { outcome: "error", reasonCode: err instanceof HttpAuthzError ? err.code : "PDP_WRITE_FAILED" });
     throw err;
   }
 }
@@ -222,3 +237,6 @@ export type {
   Subject,
   SubjectType,
 } from "./contract";
+
+
+export { listAppResourceTypeDefinition } from "./resource-types";

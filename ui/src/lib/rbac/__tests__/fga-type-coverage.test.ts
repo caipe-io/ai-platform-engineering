@@ -47,6 +47,10 @@ const SUBJECT_ONLY_TYPES: Record<string, string> = {
   webex_bot_installation: "Bot-in-space identity used as an authorization subject.",
 };
 
+/** Registered app objects have their own CAS registry; internal permission
+ * objects are never accepted as public Access API resources. */
+const REGISTERED_APP_TYPES = new Set(["app_resource", "app_permission"]);
+
 function parseModelFgaTypes(text: string): Set<string> {
   const types = new Set<string>();
   for (const rawLine of text.split("\n")) {
@@ -89,9 +93,17 @@ describe("fga type coverage", () => {
   });
 
   it("every non-subject model type is in BOTH the TS union and the runtime registry", () => {
-    const actionable = sorted([...modelTypes].filter((t) => !(t in SUBJECT_ONLY_TYPES)));
+    const actionable = sorted([...modelTypes].filter((t) => !(t in SUBJECT_ONLY_TYPES) && !REGISTERED_APP_TYPES.has(t)));
     expect(sorted(unionTypes)).toEqual(actionable);
     expect(sorted(registryTypes)).toEqual(actionable);
+  });
+
+  it("contains the fixed CAS app graph types outside the core capability registry", () => {
+    for (const type of REGISTERED_APP_TYPES) {
+      expect(modelTypes.has(type)).toBe(true);
+      expect(chartTypes.has(type)).toBe(true);
+      expect(unionTypes.has(type)).toBe(false);
+    }
   });
 
   it("the TS union and the runtime registry are identical", () => {

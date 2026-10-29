@@ -406,3 +406,28 @@ OPENFGA_AGENT_USE_TEST_URL=http://127.0.0.1:18080 npm test -- --config jest.open
 This exercises the real guard, CAS and chart model, with only audit delivery mocked.
 It creates and deletes its own test store. Use an isolated server, never a tunnel
 to a shared deployment. Without the URL, ordinary unit runs skip this suite.
+
+## External app resources
+
+- Runtime App Contract `resourceTypes` declares app-local types/actions.
+- `resource-contract.ts` defines stable handles; `resource-store.ts` owns the
+  Mongo business-key mapping and registration state.
+- `resource-types.ts` reads current installation declarations;
+  `resource-policy.ts` enforces availability around fresh graph checks.
+- `resources.ts` establishes verified user/team ownership. The OpenFGA adapter
+  maps actions to generic permission objects and supplies the trusted contextual
+  resource link. Grants/owners remain in the graph; checks never write them.
+- `access-validation.ts` validates public shapes; CAS owns and audits decisions.
+  Delegation retains exact scope and both current principal checks.
+
+[Architecture](../../../../docs/docs/security/rbac/service-defined-resources.md) ·
+[Concrete API example](../../../examples/agentic-apps/service-only/README.md).
+
+The real dependency test requires isolated MongoDB and OpenFGA, creates its own
+database/store and removes them afterward:
+
+```sh
+CAS_RESOURCE_TEST_MONGODB_URI=mongodb://127.0.0.1:27118 \
+CAS_RESOURCE_TEST_OPENFGA_URL=http://127.0.0.1:18118 \
+npm test -- --runInBand src/lib/authz/__tests__/resource-registration.integration.test.ts
+```

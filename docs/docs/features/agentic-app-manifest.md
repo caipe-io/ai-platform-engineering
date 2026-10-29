@@ -110,6 +110,18 @@ The full reference manifest is
   missing route references, undeclared policy scopes, and unsafe paths fail
   validation.
 
+### Resource types and action names
+
+`resourceTypes` optionally declares app-local names and actions, for example
+`[{ "name": "agent-sandbox", "actions": ["execute", "terminate"] }]`.
+The app also declares `host.access.resources@1.0` in `consumes.platformApis`;
+its installation binds `serviceAccountClientId`.
+
+This HTTP contract supports separately deployed iframe apps and backend services.
+It does not require a native UI package, add OpenFGA schema, or grant permissions.
+CAIPE owns the standard model; Mongo maps registered business identities to stable
+handles. See [app resources through CAS](../security/rbac/service-defined-resources.md).
+
 ### Permission requests are declarations
 
 `requestedPermissions` describes resource/action intent for review and future

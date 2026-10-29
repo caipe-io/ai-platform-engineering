@@ -58,6 +58,7 @@ export interface AgenticAppManifest {
   consumes: {
     platformApis: Array<{ id: string; version: string; required: boolean }>;
   };
+  resourceTypes?: Array<{ name: string; actions: string[] }>;
   requestedPermissions: Array<{
     resourceType: string;
     resourceRef: string;

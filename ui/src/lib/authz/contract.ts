@@ -1,13 +1,12 @@
-// assisted-by Codex Codex-sonnet-4-6
-
-import type { UniversalRebacResourceAction, UniversalRebacResourceType } from "@/types/rbac-universal";
+import type { UniversalRebacResourceType } from "@/types/rbac-universal";
 import type { PlatformPrincipal } from "@/lib/auth/platform-identity";
 
 export type SubjectType = PlatformPrincipal["type"];
 
-export type ResourceType = UniversalRebacResourceType;
+export type ResourceType = UniversalRebacResourceType | "app_resource";
 
-export type Action = UniversalRebacResourceAction;
+// App action names are data; core actions are validated by their existing adapter.
+export type Action = string;
 
 export type DecisionValue = "ALLOW" | "DENY";
 
@@ -78,4 +77,6 @@ export interface GrantIntent {
   grantee: Grantee;
   /** The capability to grant — must be a valid Action. */
   capability: Action;
+  /** App resources only: permission to use the action or to grant its use. */
+  authority?: "use" | "grant";
 }

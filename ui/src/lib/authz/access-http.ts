@@ -1,15 +1,22 @@
+import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 
+import { UNIVERSAL_REBAC_RESOURCE_TYPE_NAMES } from "@/types/rbac-universal";
 import { ApiError } from "@/lib/api-error";
 import { getAuthFromBearerOrSession } from "@/lib/api-middleware";
-import { isSupportedResourceAction } from "@/lib/rbac/resource-model";
+import { parseAccessAction, parseAccessGrant, parseAccessResource } from "./access-validation";
+import { APP_NAME_PATTERN, isAppResource } from "./resource-contract";
+import { resolveAppService } from "@/lib/agentic-apps/service-binding";
+import { authenticatePlatformRequest, readAccessJson } from "./platform-http";
 import { authorize, authorizeMany, grant, revoke } from "./index";
 import { ACCESS_QUERY_MAX_IDS, type AccessQueryResponse } from "./access-contract";
-import type { Action, AuthorizeResult, DecisionContext, ResourceType, Subject } from "./contract";
+import type { AuthorizeResult, DecisionContext, Subject } from "./contract";
 import {
   HttpAuthzError, decisionContext, isValidResourceId, metaErrorResponse,
-  parseAction, parseGrantIntent, parseResource, parseResourceType, requireManage, resolveCaller,
+  requireManage, resolveCaller,
 } from "./http";
+
+const ACCESS_API_MAX_BODY_BYTES = 1024 * 1024;
 
 type AccessHandler = (
   body: Record<string, unknown>, caller: Subject, ctx: DecisionContext,
@@ -17,12 +24,6 @@ type AccessHandler = (
 
 function invalid(message: string): never {
   throw new HttpAuthzError(400, "INVALID_REQUEST", message);
-}
-
-function requireAction(resourceType: ResourceType, raw: unknown): Action {
-  const action = parseAction(raw);
-  if (!isSupportedResourceAction(resourceType, action)) invalid("action is not supported for this resource type");
-  return action;
 }
 
 async function authenticate(request: NextRequest): Promise<unknown> {
@@ -49,28 +50,53 @@ async function authenticate(request: NextRequest): Promise<unknown> {
 async function handle(request: NextRequest, fields: string[], operation: AccessHandler): Promise<NextResponse> {
   let response: NextResponse;
   try {
-    const session = await authenticate(request);
-    const caller = resolveCaller(session);
-    if (!caller) throw new HttpAuthzError(401, "NOT_AUTHENTICATED", "A stable authenticated subject is required");
-
-    // Cookie-authenticated requests must come from the BFF's own browser origin.
-    if (!request.headers.has("authorization")) {
-      const expectedOrigin = new URL(process.env.NEXTAUTH_URL || request.url).origin;
-      if (request.headers.get("origin") !== expectedOrigin) {
-        throw new HttpAuthzError(403, "FORBIDDEN", "Same-origin requests are required for session authentication");
-      }
-    }
-    if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
-      invalid("Content-Type must be application/json");
-    }
-    let body: unknown;
-    try { body = await request.json(); } catch { invalid("Request body must be valid JSON"); }
+    const body = await readAccessJson(request, ACCESS_API_MAX_BODY_BYTES);
     if (!body || typeof body !== "object" || Array.isArray(body)) invalid("Request body must be an object");
     if (Object.keys(body).some((key) => !fields.includes(key))) invalid("Request contains unsupported fields");
-    response = await operation(body as Record<string, unknown>, caller, decisionContext(session, caller, request));
+    const input = body as Record<string, unknown>;
+    const resourceType = (input.resource as { type?: unknown } | undefined)?.type ?? input.resource_type;
+    if (typeof resourceType !== "string" || !/^[a-z][a-z0-9_]{0,49}$/.test(resourceType)) invalid("A valid resource type is required");
+    if (!isAppResource(resourceType) && !(UNIVERSAL_REBAC_RESOURCE_TYPE_NAMES as readonly string[]).includes(resourceType)) invalid("Unsupported resource type");
+    let caller: Subject;
+    let ctx: DecisionContext;
+    if (typeof resourceType === "string" && isAppResource(resourceType)) {
+      // Select the strict new-service receiver profile directly. Requiring a
+      // legacy bearer first would reject correctly audience-bound credentials.
+      const { identity, tenantId } = await authenticatePlatformRequest(request);
+      if (identity.subject.type === "service_account") {
+        let app;
+        try { app = resolveAppService(identity); }
+        catch (error) {
+          console.error("[access] App service binding failed", { name: error instanceof Error ? error.name : "UnknownError" });
+          throw new HttpAuthzError(503, "AUTHZ_UNAVAILABLE", "App installation configuration is unavailable");
+        }
+        if (!app) throw new HttpAuthzError(403, "FORBIDDEN", "Service is not bound to an enabled resource integration");
+      }
+      caller = identity.subject;
+      ctx = { caller, tenantId, correlationId: randomUUID() };
+    } else {
+      const session = await authenticate(request);
+      const resolved = resolveCaller(session);
+      if (!resolved) throw new HttpAuthzError(401, "NOT_AUTHENTICATED", "A stable authenticated subject is required");
+
+      // Cookie-authenticated requests must come from the BFF's own browser origin.
+      if (!request.headers.has("authorization")) {
+        const expectedOrigin = new URL(process.env.NEXTAUTH_URL || request.url).origin;
+        if (request.headers.get("origin") !== expectedOrigin) {
+          throw new HttpAuthzError(403, "FORBIDDEN", "Same-origin requests are required for session authentication");
+        }
+      }
+      caller = resolved;
+      ctx = decisionContext(session, caller, request);
+    }
+    response = await operation(input, caller, ctx);
   } catch (error) {
     if (error instanceof HttpAuthzError) response = metaErrorResponse(error);
-    else {
+    else if (error instanceof ApiError && [401, 403, 503].includes(error.statusCode)) {
+      response = metaErrorResponse(new HttpAuthzError(error.statusCode,
+        error.statusCode === 503 ? "AUTHZ_UNAVAILABLE" : error.statusCode === 403 ? "FORBIDDEN" : "NOT_AUTHENTICATED",
+        "Authentication unavailable or rejected"));
+    } else {
       // A failed write may have reached OpenFGA: do not promise safe automatic retries.
       console.error("[access] Operation failed", { name: error instanceof Error ? error.name : "UnknownError" });
       response = NextResponse.json({ error: "Access operation failed", code: "INTERNAL_ERROR", retriable: false }, { status: 500 });
@@ -82,9 +108,10 @@ async function handle(request: NextRequest, fields: string[], operation: AccessH
 
 export function checkAccess(request: NextRequest): Promise<NextResponse> {
   return handle(request, ["resource", "action"], async (body, caller, ctx) => {
-    const resource = parseResource(body.resource);
-    const action = requireAction(resource.type, body.action);
+    const resource = await parseAccessResource(body.resource);
+    const action = await parseAccessAction(resource, body.action);
     const result = await authorize({ subject: caller, resource, action }, ctx);
+    if (result.reason === "INVALID_REQUEST") throw new HttpAuthzError(400, "INVALID_REQUEST", "Action is not declared for this resource");
     if (result.reason === "AUTHZ_UNAVAILABLE") {
       throw new HttpAuthzError(503, "AUTHZ_UNAVAILABLE", "Authorization service temporarily unavailable");
     }
@@ -94,12 +121,20 @@ export function checkAccess(request: NextRequest): Promise<NextResponse> {
 
 export function queryAccess(request: NextRequest): Promise<NextResponse> {
   return handle(request, ["resource_type", "action", "ids"], async (body, caller, ctx) => {
-    const resourceType = parseResourceType(body.resource_type);
-    const action = requireAction(resourceType, body.action);
-    if (!Array.isArray(body.ids) || body.ids.length > ACCESS_QUERY_MAX_IDS ||
-        !body.ids.every((id) => isValidResourceId(resourceType, id))) {
+    if (!Array.isArray(body.ids) || body.ids.length > ACCESS_QUERY_MAX_IDS) {
       invalid(`ids must be an array of at most ${ACCESS_QUERY_MAX_IDS} valid resource identifiers`);
     }
+    const placeholder = "00000000-0000-4000-8000-000000000000";
+    const resource = await parseAccessResource({ type: body.resource_type, id: body.ids[0] ?? placeholder });
+    const resourceType = resource.type;
+    if (!body.ids.every((id) => isValidResourceId(resourceType, id))) invalid("Invalid resource identifier");
+    await Promise.all(body.ids.map((id) => parseAccessResource({ type: resourceType, id })));
+    if (isAppResource(resourceType) && !body.ids.length) {
+      const name = typeof body.action === "string" ? body.action.replace(/^grant:/, "") : "";
+      if (!APP_NAME_PATTERN.test(name)) invalid("A valid app action is required");
+      return NextResponse.json({ ids: [] });
+    }
+    const action = await parseAccessAction(resource, body.action);
     const ids = [...new Set(body.ids as string[])];
     const results = ids.length
       ? await authorizeMany(caller, action, resourceType, ids, ctx)
@@ -107,15 +142,16 @@ export function queryAccess(request: NextRequest): Promise<NextResponse> {
     if (ids.some((id) => !results.has(id) || results.get(id)?.reason === "AUTHZ_UNAVAILABLE")) {
       throw new HttpAuthzError(503, "AUTHZ_UNAVAILABLE", "Authorization service temporarily unavailable");
     }
+    if (ids.some((id) => results.get(id)?.reason === "INVALID_REQUEST")) invalid("Action is not declared for a candidate resource");
     const result: AccessQueryResponse = { ids: ids.filter((id) => results.get(id)?.decision === "ALLOW") };
     return NextResponse.json(result);
   });
 }
 
 export function changeAccess(request: NextRequest, operation: "grant" | "revoke"): Promise<NextResponse> {
-  return handle(request, ["resource", "grantee", "capability"], async (body, caller, ctx) => {
-    const intent = parseGrantIntent(body);
-    await requireManage(caller, intent.resource, ctx, { operation, intent });
+  return handle(request, ["resource", "grantee", "capability", "authority"], async (body, caller, ctx) => {
+    const intent = await parseAccessGrant(body);
+    if (!isAppResource(intent.resource.type)) await requireManage(caller, intent.resource, ctx, { operation, intent });
     await (operation === "grant" ? grant : revoke)(intent, ctx);
     return NextResponse.json(operation === "grant" ? { granted: true } : { revoked: true });
   });

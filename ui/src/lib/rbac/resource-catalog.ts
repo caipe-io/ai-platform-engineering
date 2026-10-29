@@ -2,10 +2,8 @@ import { getCollection } from "@/lib/mongodb";
 import { listResourceTypeDefinitions } from "@/lib/rbac/resource-model";
 import { slackWorkspaceRef } from "@/lib/rbac/slack-channel-grant-store";
 import { webexWorkspaceRef } from "@/lib/rbac/webex-space-grant-store";
-import type {
-UniversalRebacResourceType,
-UniversalRebacResourceTypeDefinition,
-} from "@/types/rbac-universal";
+import { listAppResourceTypeDefinition } from "@/lib/authz";
+import type { RegisteredResource } from "@/lib/authz/resource-contract";
 
 export type RebacResourceStatus = "active" | "disabled" | "archived" | "deleted" | "unknown";
 export type RebacEnforcementStatus =
@@ -16,7 +14,7 @@ export type RebacEnforcementStatus =
   | "deprecated";
 
 export interface RebacCatalogResource {
-  type: UniversalRebacResourceType;
+  type: string;
   id: string;
   display_name: string;
   status: RebacResourceStatus;
@@ -31,7 +29,7 @@ export interface ListRebacCatalogInput {
 }
 
 export interface RebacCatalog {
-  resource_types: readonly UniversalRebacResourceTypeDefinition[];
+  resource_types: readonly { type: string; actions: readonly string[]; description: string }[];
   actions: Record<string, readonly string[]>;
   resources: RebacCatalogResource[];
 }
@@ -66,7 +64,7 @@ const DEFAULT_RESOURCES: readonly RebacCatalogResource[] = [
 ];
 
 function resource(
-  type: UniversalRebacResourceType,
+  type: string,
   id: string,
   displayName: string,
   enforcementStatus: RebacEnforcementStatus,
@@ -118,12 +116,12 @@ function matchesFilter(resourceItem: RebacCatalogResource, input: ListRebacCatal
 }
 
 export async function listRebacCatalog(input: ListRebacCatalogInput = {}): Promise<RebacCatalog> {
-  const definitions = listResourceTypeDefinitions();
+  const definitions = [...listResourceTypeDefinitions(), listAppResourceTypeDefinition()];
   const actions = Object.fromEntries(
     definitions.map((definition) => [definition.type, definition.actions])
   );
 
-  const [teams, users, agents, llmModels, mcpServers, ragCollections, slackMappings, webexMappings] =
+  const [teams, users, agents, llmModels, mcpServers, ragCollections, slackMappings, webexMappings, appResources] =
     await Promise.all([
       readCollection<{ _id: unknown; slug?: string; name?: string; status?: string }>("teams"),
       readCollection<{ _id?: unknown; email?: string; name?: string; role?: string; keycloak_sub?: string; metadata?: { keycloak_sub?: string } }>("users"),
@@ -149,9 +147,16 @@ export async function listRebacCatalog(input: ListRebacCatalogInput = {}): Promi
         space_name?: string;
         space_title?: string;
       }>("webex_space_team_mappings"),
+      readCollection<RegisteredResource>("access_resources"),
     ]);
 
   const discovered: RebacCatalogResource[] = [
+    ...appResources.map((record) => ({
+      ...resource("app_resource", record._id, record.local_id, "rebac_enforced", {
+        app_id: record.app_id, resource_type: record.resource_type, local_id: record.local_id, owner: record.owner, registration_state: record.state,
+      }),
+      status: record.state === "active" ? "active" as const : "disabled" as const,
+    })),
     ...teams.map((team) =>
       resource("team", team.slug || String(team._id), team.name || String(team._id), "rebac_shadowed")
     ),

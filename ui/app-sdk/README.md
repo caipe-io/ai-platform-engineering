@@ -78,6 +78,13 @@ and `ui/examples/agentic-apps/shared/manifest.json` for the reference contract.
 Both the publisher CLI and host generator read the `./manifest` export;
 the JSON may be at the package root or in a compiled directory such as `dist/`.
 
+An optional `resourceTypes` declaration lists app-local resource type/action names.
+With `host.access.resources@1.0` and an installation service-client binding, iframe
+apps and backend services can register user/team-owned resources through CAS.
+These are runtime data declarations, independent of native component packaging;
+CAIPE's standard OpenFGA model supplies the rules. See the
+[resource integration example](../examples/agentic-apps/service-only/README.md).
+
 An optional `assistant` claim (`agentId`, `label`, `name`) lets the host render
 its own floating chat for a config-driven agent. The host fetches the agent
 through its RBAC-protected API and sends bounded route context with turns. The

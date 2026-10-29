@@ -248,9 +248,9 @@ export function getResourceTypeDefinition(
 
 export function isSupportedResourceAction(
   resourceType: UniversalRebacResourceType,
-  action: UniversalRebacResourceAction,
+  action: string,
 ): boolean {
   return Boolean(
-    getResourceTypeDefinition(resourceType)?.actions.includes(action),
+    getResourceTypeDefinition(resourceType)?.actions.includes(action as UniversalRebacResourceAction),
   );
 }

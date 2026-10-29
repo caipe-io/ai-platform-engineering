@@ -510,3 +510,18 @@ type system_config
     define can_write: writer or can_manage
     define can_manage: manager
     define can_audit: auditor or can_manage
+
+
+# App namespaces and action names are registered data. CAS supplies the trusted
+# permission-to-resource link; users/teams and grants remain stored relationships.
+type app_resource
+  relations
+    define owner: [user, team#member]
+
+type app_permission
+  relations
+    define resource: [app_resource]
+    define grantee: [user, service_account, team#member]
+    define grantor: [user, service_account, team#member]
+    define can_use: grantee or owner from resource
+    define can_grant: grantor or owner from resource

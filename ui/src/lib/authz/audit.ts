@@ -17,6 +17,7 @@
 import { createHash, randomUUID } from "crypto";
 
 import { getAuditClient } from "@/lib/audit";
+import type { RegisteredResource } from "./resource-contract";
 
 import type {
   Action,
@@ -494,6 +495,7 @@ export interface GrantAuditOptions {
   outcome?: GrantAuditOutcome;
   /** Why the attempt failed (meta-authz deny, PDP error, etc.). */
   reasonCode?: string;
+  registration?: Pick<RegisteredResource, "_id" | "app_id" | "resource_type" | "local_id" | "owner" | "state">;
 }
 
 function principalRef(type: string, id?: string): string {
@@ -511,6 +513,8 @@ function granteeLabel(g: GrantIntent["grantee"]): string {
  * operation, outcome, reason, and tenant/correlation context are explicit.
  */
 export interface CasGrantEvent {
+  registration?: GrantAuditOptions["registration"];
+  authority?: "use" | "grant";
   audit_event_id: string;
   ts: Date;
   type: "cas_grant";
@@ -559,7 +563,12 @@ export function buildGrantEvent(
     actor_ref: callerRef,
     caller_ref: callerRef,
     grantee_ref: granteeLabel(intent.grantee),
+    ...(options.registration ? { registration: {
+      _id: options.registration._id, app_id: options.registration.app_id, resource_type: options.registration.resource_type, local_id: options.registration.local_id,
+      owner: { type: options.registration.owner.type, id: options.registration.owner.id }, state: options.registration.state,
+    } } : {}),
     action: intent.capability,
+    ...(intent.authority ? { authority: intent.authority } : {}),
     operation,
     outcome,
     resource_ref: `${intent.resource.type}:${intent.resource.id}`,

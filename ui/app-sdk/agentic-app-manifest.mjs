@@ -22,6 +22,7 @@ const HOST_APIS = new Set([
   "host.session",
   "host.chat",
   "host.notifications",
+  "host.access.resources",
   "app.gateway",
 ]);
 
@@ -104,6 +105,7 @@ export function validateAgenticAppManifest(value) {
       "provides",
       "consumes",
       "requestedPermissions",
+      "resourceTypes",
       "health",
       "catalog",
     ],
@@ -112,6 +114,18 @@ export function validateAgenticAppManifest(value) {
   if (app.apiVersion !== "2.0")
     throw new Error("manifest.apiVersion must be 2.0");
   identifier(app.id, "manifest.id");
+  if (app.resourceTypes !== undefined) {
+    const definitions = list(app.resourceTypes, "resourceTypes");
+    if (definitions.length > 32) throw new Error("resourceTypes supports at most 32 types");
+    const names = new Set();
+    for (const definition of definitions) {
+      record(definition, ["name", "actions"], "resourceType");
+      if (!/^[a-z][a-z0-9_-]{0,49}$/.test(definition.name ?? "") || names.has(definition.name)) throw new Error("resourceType.name must be distinct and valid");
+      names.add(definition.name);
+      const actions = strings(definition.actions, "resourceType.actions");
+      if (!actions.length || actions.length > 32 || actions.some((action) => action === "owner" || !/^[a-z][a-z0-9_-]{0,49}$/.test(action))) throw new Error("resourceType.actions must contain 1–32 distinct action names; owner is reserved");
+    }
+  }
   const version =
     typeof app.version === "string" ? app.version.match(VERSION) : null;
   if (
@@ -377,7 +391,7 @@ export function validateAgenticAppManifest(value) {
       api.required &&
       (!HOST_APIS.has(api.id) ||
         api.version !== "1.0" ||
-        (api.id !== "app.gateway" && api.id !== "host.notifications" && !modes.has("native-package")))
+        (api.id !== "app.gateway" && api.id !== "host.notifications" && api.id !== "host.access.resources" && !modes.has("native-package")))
     )
       throw new Error(
         `unsupported required platform capability: ${api.id}@${api.version}`,

@@ -42,6 +42,8 @@ commitment to maintain two public contracts permanently.
   callers must not treat it as permission to proceed.
 - Queries filter at most 200 supplied IDs using the same per-resource CAS
   policy as checks. Any unavailable result fails the whole query.
+- Check, query and grant/revoke JSON bodies are capped at 1 MiB while reading,
+  before authentication. Registration and delegation retain a 16 KiB limit.
 - Grant/revoke uses the existing CAS rule: manage the resource, or manage
   the configured organization. Public-grant restrictions and auditing remain
   in place. Revoking a direct grant does not remove access inherited elsewhere.
@@ -54,7 +56,7 @@ CAS owns the decisions and changes to relationships.
 
 - Normalized identity and verified delegation across every ingress.
 - Complete gateway cutover and migration of RAG, bots and older BFF paths.
-- Resource registration, unbounded discovery or a generic resource catalog.
+- Registration of existing domain objects, unbounded discovery or a generic resource catalog.
 - System-wide model pinning, bounded dependency calls and revocation freshness.
   Single agent-use checks are fresh; other decision and query caches still apply.
   HTTP `no-store` does not disable those caches.
@@ -69,6 +71,30 @@ permissions. Audit shows both identities and the approval, including denied uses
 See the [delegation architecture](./architecture.md#cas-job-delegation--new-service-api).
 Existing background consumers are not migrated. Explicit authorization may outlive
 browser logout, but not its expiry, revocation or loss of required permissions.
+
+## Register resources for an external app
+
+An app declares `resourceTypes` and named actions in its runtime App Contract.
+The operator binds its installation to a service-account client. CAS uses the
+same standard OpenFGA model for every app; no app package or custom policy model
+is built into CAIPE.
+
+- A signed-in user registers app + resource type + local ID. Mongo reserves a
+  stable `app_resource:<UUID>` mapping and OpenFGA establishes user/team ownership.
+- Pending registration returns 503 and blocks use until the same request confirms
+  ownership. The installation gives its service no resource permission.
+- `check`/`query` use the handle and domain action. Separate `app_permission`
+  objects keep actions independently grantable under standard host rules.
+- `grants` uses `capability` plus optional `authority: "use" | "grant"`.
+  Action use requires its current grant authority; assigning grant authority
+  requires ownership. `owner` and `grant:<action>` are supported check names.
+- Background delegation binds handle/action/service/job/expiry and rechecks
+  current user **and** service permission. Audit records the same actor chain.
+- Registry availability and live app declarations are checked around graph
+  evaluation. Failed decisions remain visible in CAS audit.
+
+[Architecture](./service-defined-resources.md) ·
+[Registration, grant and deployment examples](https://github.com/caipe-io/ai-platform-engineering/tree/main/ui/examples/agentic-apps/service-only).
 
 ## BFF agent execution
 

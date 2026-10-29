@@ -11,7 +11,11 @@ const mockMany = jest.fn();
 const mockGrant = jest.fn();
 const mockRevoke = jest.fn();
 const mockAudit = jest.fn();
+const mockPlatformJwt = jest.fn();
+const mockResolveAppService = jest.fn();
 jest.mock("@/lib/api-middleware", () => ({ getAuthFromBearerOrSession: (...args: unknown[]) => mockAuth(...args) }));
+jest.mock("@/lib/jwt-validation", () => ({ validatePlatformBearerJWT: (...args: unknown[]) => mockPlatformJwt(...args) }));
+jest.mock("@/lib/agentic-apps/service-binding", () => ({ resolveAppService: (...args: unknown[]) => mockResolveAppService(...args) }));
 jest.mock("@/lib/authz", () => ({
   authorize: (...args: unknown[]) => mockAuthorize(...args),
   authorizeMany: (...args: unknown[]) => mockMany(...args),
@@ -84,6 +88,36 @@ describe.each([
   it("requires JSON rather than accepting cross-site form bodies", async () => {
     expect((await handler(request(body, { "content-type": "text/plain" }))).status).toBe(400);
   });
+  it.each([undefined, "1"])("bounds streamed JSON before authentication with Content-Length %s", async (contentLength) => {
+    const cancel = jest.fn();
+    const chunk = new TextEncoder().encode(" ".repeat(64 * 1024));
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ < 20) controller.enqueue(chunk);
+        else {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify(body)));
+          controller.close();
+        }
+      },
+      cancel,
+    });
+    const req = new NextRequest("https://example.test/api/access/check", {
+      method: "POST", body: stream, duplex: "half",
+      headers: { "content-type": "application/json", origin: "https://example.test",
+        ...(contentLength ? { "content-length": contentLength } : {}) },
+    } as RequestInit & { duplex: "half" });
+    const response = await handler(req);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: "INVALID_REQUEST", retriable: false });
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(mockAuth).not.toHaveBeenCalled();
+    expect(mockAuthorize).not.toHaveBeenCalled();
+    expect(mockMany).not.toHaveBeenCalled();
+    expect(mockGrant).not.toHaveBeenCalled();
+    expect(mockRevoke).not.toHaveBeenCalled();
+  });
   it.each([null, [], "example"].map((body) => [body]))("rejects a non-object body", async (invalidBody) => {
     expect((await handler(request(invalidBody))).status).toBe(400);
   });
@@ -133,7 +167,37 @@ it("distinguishes an authentication dependency outage from an invalid token", as
   } finally { log.mockRestore(); }
 });
 
-it.each([{ ...checkBody, action: "ingest" }, { resource: { type: "unknown", id: "example" }, action: "use" },
+it("fails closed and redacts diagnostics when the app catalog cannot load", async () => {
+  const previousIssuer = process.env.OIDC_ISSUER;
+  const issuer = "https://identity.example.test";
+  const privateDetail = "private app configuration content";
+  const log = jest.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    process.env.OIDC_ISSUER = issuer;
+    mockPlatformJwt.mockResolvedValue({ issuer, subject: { type: "service_account", id: "example-service" },
+      clientId: "example-client", expiresAt: Date.now() / 1000 + 600 });
+    mockResolveAppService.mockImplementationOnce(() => { throw new SyntaxError(privateDetail); });
+    const response = await check(request({ resource: { type: "app_resource", id: "12345678-1234-4000-8000-123456789012" }, action: "execute" },
+      { authorization: "Bearer example-service-token" }));
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body).toMatchObject({ code: "AUTHZ_UNAVAILABLE", retriable: true });
+    expect(log).toHaveBeenCalledWith("[access] App service binding failed", { name: "SyntaxError" });
+    expect(JSON.stringify(log.mock.calls)).not.toContain(privateDetail);
+    expect(JSON.stringify(body)).not.toContain(privateDetail);
+    expect(mockAuth).not.toHaveBeenCalled();
+    expect(mockAuthorize).not.toHaveBeenCalled();
+    expect(mockMany).not.toHaveBeenCalled();
+    expect(mockGrant).not.toHaveBeenCalled();
+    expect(mockRevoke).not.toHaveBeenCalled();
+  } finally {
+    if (previousIssuer === undefined) delete process.env.OIDC_ISSUER;
+    else process.env.OIDC_ISSUER = previousIssuer;
+    log.mockRestore();
+  }
+});
+
+it.each([{ ...checkBody, action: "ingest" }, { resource: { type: "unknown#type", id: "example" }, action: "use" },
   { ...checkBody, resource: { type: "agent", id: "example#manager" } }])("rejects unsupported resource/action combinations and tuple syntax", async (body) => {
   expect((await check(request(body))).status).toBe(400);
   expect(mockAuthorize).not.toHaveBeenCalled();
@@ -155,6 +219,19 @@ it("filters candidates, preserves order, deduplicates and never returns other re
 
 it("returns only allowed candidates", async () => {
   expect(await (await query(request(queryBody))).json()).toEqual({ ids: ["example"] });
+});
+
+it("accepts a full query page of maximum-length JSON-escaped model IDs", async () => {
+  const ids = Array.from({ length: 200 }, (_, i) => {
+    const prefix = `${i}-`;
+    return prefix + "\u0001".repeat(512 - prefix.length);
+  });
+  const body = { resource_type: "llm_model", action: "discover", ids };
+  expect(Buffer.byteLength(JSON.stringify(body))).toBeGreaterThan(16 * 1024);
+  mockMany.mockResolvedValue(new Map(ids.map((id) => [id, allow])));
+  const response = await query(request(body));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ ids });
 });
 
 it("accepts an empty candidate page without calling the engine", async () => {

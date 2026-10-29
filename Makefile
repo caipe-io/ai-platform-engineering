@@ -509,7 +509,7 @@ E2E_KC_URL     ?= http://localhost:7080
 E2E_KC_REALM   ?= cnoe
 E2E_KC_RESOURCE_SERVER_ID ?= caipe-resource-server
 E2E_WAIT_SECS  ?= 120
-RBAC_PYTEST_DIRS ?= tests/rbac/unit/py tests/rbac/fixtures
+RBAC_PYTEST_DIRS ?= tests/rbac/unit/py tests/rbac/fixtures tests/test_openfga_model_override.py tests/test_openfga_single_model_artifact.py
 RBAC_E2E_DIRS    ?= tests/rbac/e2e
 
 # E2E port band — host-side ports for the e2e lane. Container ports unchanged.
@@ -644,7 +644,7 @@ test-rbac-jest: ## Run RBAC Jest matrix-driver tests (TS helper parity + UI BFF)
 	   echo "[test-rbac-jest] running ui/ jest suite filtered to rbac…"; \
 	   mkdir -p ui/test-results; \
 	   cd ui && JEST_JUNIT_OUTPUT_DIR=test-results JEST_JUNIT_OUTPUT_NAME=junit.xml \
-	     npx jest \
+	     npm test -- \
 	       'src/__tests__/rbac-matrix-driver.test.ts' \
 	       'src/lib/rbac/__tests__/' \
 	       'src/app/api/__tests__/rag-rbac.test.ts' \
