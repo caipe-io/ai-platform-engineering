@@ -63,6 +63,9 @@ export interface AgenticAppInstallation {
   };
   runtimeMountPath?: string;
   runtimeOriginOverride?: string;
+  /** Explicit operator approval of declared iframe host routes. */
+  hostRouteClaims?: string[];
+  navigationOverrides?: { visible?: boolean; label?: string; order?: number };
   accessOverrides?: {
     requiredRoles?: string[];
   };
@@ -99,6 +102,9 @@ export interface PublicAgenticApp {
   capabilities: string[];
   uiMode?: "native-package" | "iframe";
   hostPaths?: string[];
+  navigation?: { label: string; href: string; icon?: "book-open" | "folder-kanban" | "layout-grid"; order?: number };
+  assistantOptions?: import("../../app-sdk/assistant-options.mjs").AssistantOptions;
+  assistantOverlay?: "host" | "app";
   assistantEnabled?: boolean;
   assistantUsesAppRuntime?: boolean;
   assistantAgentId?: string;
@@ -124,4 +130,16 @@ export interface AgenticAppAssistantContextRecord {
   resourceRefs?: Array<Record<string, string>>;
   suggestedPrompts?: string[];
   reasonCode?: string;
+}
+
+/** Bounded, caller-authorized status for app-owned shared chat. */
+export interface AgenticAppCompletedTurn {
+  turnId: string;
+  content: string;
+  completedAt: string;
+}
+export interface AgenticAppAssistantStatus {
+  running: boolean;
+  turnId?: string;
+  completedTurn?: AgenticAppCompletedTurn;
 }

@@ -17,6 +17,7 @@ withErrorHandler,
 } from '@/lib/api-middleware';
 import type { ConversationAccessLevel } from '@/lib/api-middleware';
 import { getCollection } from '@/lib/mongodb';
+import { upsertChatMessage } from '@/lib/chat-message-persistence';
 import { requireConversationResourcePermission } from '@/lib/rbac/conversation-implicit-authz';
 import type { AddMessageRequest,Conversation,Message } from '@/types/mongodb';
 import { NextRequest } from 'next/server';
@@ -167,16 +168,18 @@ export const POST = withErrorHandler(async (
   // Upsert: update if message_id exists, insert otherwise.
   // $set updates content/metadata/events on every call (idempotent).
   // $setOnInsert sets immutable fields only on first insert.
-  const result = await messages.updateOne(
-    { message_id: body.message_id, conversation_id: conversationId },
-    {
-      $set: {
+  const turnId = body.metadata?.turn_id || `turn-${Date.now()}`;
+  const { result, message: upserted } = await upsertChatMessage(messages, {
+    conversationId, messageId: body.message_id, role: body.role,
+    turnId,
+    appTurn: Boolean(conversation.app_binding),
+    fields: {
         content: body.content ?? '',
         metadata: {
           // Source defaults to 'web' for backward compat; integrations (Slack
           // bot, scheduler) pass their own so stats can attribute per-surface.
           source: body.metadata?.source || 'web',
-          turn_id: body.metadata?.turn_id || `turn-${Date.now()}`,
+          turn_id: turnId,
           model: body.metadata?.model,
           latency_ms: body.metadata?.latency_ms,
           agent_name: agentName,
@@ -201,7 +204,7 @@ export const POST = withErrorHandler(async (
         ...(body.artifacts !== undefined && { artifacts: body.artifacts }),
         updated_at: now,
       },
-      $setOnInsert: {
+    insert: {
         message_id: body.message_id,
         conversation_id: conversationId,
         owner_id: ownerId,
@@ -211,10 +214,8 @@ export const POST = withErrorHandler(async (
         ...(senderEmail && { sender_email: senderEmail }),
         ...(senderName && { sender_name: senderName }),
         ...(senderImage && { sender_image: senderImage }),
-      },
     },
-    { upsert: true }
-  );
+  });
 
   // Only increment total_messages on new inserts (not updates)
   if (result.upsertedId) {
@@ -232,10 +233,6 @@ export const POST = withErrorHandler(async (
       { $set: { updated_at: now } }
     );
   }
-
-  const upserted = await messages.findOne(
-    { message_id: body.message_id, conversation_id: conversationId }
-  );
 
   return successResponse(upserted, result.upsertedId ? 201 : 200);
 });

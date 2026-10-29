@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import uuid
 from contextvars import ContextVar
 from typing import Any, Dict, Iterator, Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -18,6 +20,7 @@ from .utils.native_assistant_context import native_assistant_headers
 logger = logging.getLogger("caipe.webex_bot.a2a_client")
 
 _SSE_ERROR_BODY_MAX_LEN = 200
+_AGENT_NAME_LOOKUP_DEADLINE_SECONDS = 5.0
 _SENSITIVE_SSE_ERROR_RE = re.compile(
     r"(?i)(authorization|bearer\s+\S+|access_token|refresh_token|client_secret)",
 )
@@ -220,6 +223,43 @@ class WebexSSEClient:
         url = f"{self.base_url}/api/v1/chat/stream/start"
         yield from self._stream_sse(url, payload, bearer_token=bearer_token)
 
+    def get_agent_name(
+        self,
+        *,
+        agent_id: str,
+        bearer_token: Optional[str] = None,
+    ) -> Optional[str]:
+        """Read the agent display name through the caller-authorized BFF API."""
+
+        caller_token = bearer_token or get_obo_token()
+        if not caller_token:
+            return None
+
+        async def lookup() -> Optional[str]:
+            # Bound the complete response, including a peer that keeps sending
+            # bytes often enough to avoid an individual read timeout.
+            async with asyncio.timeout(_AGENT_NAME_LOOKUP_DEADLINE_SECONDS):
+                async with httpx.AsyncClient(timeout=_AGENT_NAME_LOOKUP_DEADLINE_SECONDS) as client:
+                    headers = self._get_headers(bearer_token=caller_token)
+                    headers["Accept"] = "application/json"
+                    response = await client.get(
+                        f"{self.base_url}/api/dynamic-agents/agents/{quote(agent_id, safe='')}",
+                        headers=headers,
+                    )
+                    if response.status_code != 200:
+                        logger.debug("Agent display-name lookup returned status=%s", response.status_code)
+                        return None
+                    payload = response.json()
+                    data = payload.get("data", payload) if isinstance(payload, dict) else None
+                    name = data.get("name") if isinstance(data, dict) else None
+                    return name.strip() if isinstance(name, str) and name.strip() else None
+
+        try:
+            return asyncio.run(lookup())
+        except (httpx.HTTPError, ValueError, TimeoutError) as exc:
+            logger.warning("Agent display-name lookup failed (type=%s)", type(exc).__name__)
+            return None
+
     def create_conversation(
         self,
         *,
@@ -329,14 +369,14 @@ class WebexSSEClient:
         content: str = "",
         bearer_token: Optional[str] = None,
     ) -> None:
-        """Persist a single message row via the shared API (metadata-only).
+        """Persist a single message row via the caller-authorized shared API.
 
         Calls ``POST /api/chat/conversations/{id}/messages``. Mirrors the
         Slack bot's ``SSEClient.add_message``: records per-turn message
         metadata (source, agent, latency, linking) so admin stats count
-        Webex messages the same way as web and Slack — WITHOUT duplicating
-        the message content that already lives in Webex. ``content``
-        defaults to empty.
+        Webex messages the same way as web and Slack. The Webex dispatcher
+        supplies full turn content so truncated responses can be read in the
+        browser. Other callers may omit ``content`` for metadata-only rows.
 
         The upsert is keyed on ``message_id``, so this is idempotent — a
         retried dispatch updates the row instead of duplicating it.

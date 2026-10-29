@@ -33,7 +33,6 @@ async function getRbacHeaders(): Promise<Record<string, string> | null> {
       hasUser: !!session?.user,
       userEmail: session?.user?.email,
       hasAccessToken: !!session?.accessToken,
-      accessTokenPrefix: session?.accessToken ? session.accessToken.substring(0, 20) + '...' : 'MISSING',
       expiresAt: session?.expiresAt ? new Date((session.expiresAt as number) * 1000).toISOString() : 'N/A'
     });
     
@@ -93,4 +92,3 @@ export async function GET() {
     );
   }
 }
-

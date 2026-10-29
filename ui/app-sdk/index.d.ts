@@ -12,6 +12,8 @@ export type { NativeExtensionManifest } from "./native-manifest.mjs";
 export interface NativeExtensionBreadcrumb {
   label: string;
   href?: string;
+  tone?: "primary" | "info";
+  icon?: "target" | "layers";
 }
 
 export interface NativeExtensionProps {
@@ -32,6 +34,8 @@ export interface NativeExtensionModule {
 
 /** Host owns streaming, canonical history and permissions for each installed app agent. */
 export interface NativeHostChat {
+  /** Optional: request the host-owned popup instead of bundling an overlay. */
+  assistant?: HostAssistantCapability;
   Panel: ComponentType<NativeHostChatPanelProps>;
   /** Optional controls reuse host sharing and recoverable archive. */
   ConversationActions?: ComponentType<NativeHostConversationActionsProps>;
@@ -52,6 +56,7 @@ export interface NativeHostChatPanelProps {
   clientContext?: Record<string, unknown>;
   requestOptions?: Record<string, unknown>;
   composerHeader?: import("react").ReactNode;
+  suggestedPrompts?: string[];
   placeholder?: string;
   emptyStateTitle?: string;
   /** Whether to show the agent identity row. Defaults to true; embedded surfaces may opt out. */
@@ -60,4 +65,23 @@ export interface NativeHostChatPanelProps {
   showAuditNotice?: boolean;
   /** App-owned copy linking to the host feedback form when reporting is enabled. */
   feedbackPrompt?: { message: string; actionLabel: string; trailingText?: string };
+}
+
+/** User-visible context is untrusted input, never an authorization grant. */
+export interface AppAssistantContext {
+  route: string;
+  title?: string;
+  summary?: string;
+  selection?: string;
+  resourceRefs?: Array<Record<string, string>>;
+  suggestedPrompts?: string[];
+}
+export type { AssistantOptions, AssistantConfiguration } from "./assistant-options.mjs";
+export interface HostAssistantCapability {
+  extensions?: readonly string[];
+  configure?(configuration: import("./assistant-options.mjs").AssistantConfiguration): void;
+  open(context?: AppAssistantContext): void;
+  close?(): void;
+  subscribe?(onOpenChange: (open: boolean) => void): () => void;
+  setContext(context: AppAssistantContext): void;
 }

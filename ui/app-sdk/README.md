@@ -249,7 +249,9 @@ the snapshot; a UI restart revalidates it before serving traffic.
   Missing, invalid, or broken logos fall back to a filled app tile with a large
   cutout spark. The hub heading and generic app fallbacks use this same mark.
   Catalog cards also display packaged app branding. The Apps sidebar destination
-  retains the nine-dot launcher; legacy `layout-grid` navigation keeps its grid icon.
+  retains the nine-dot launcher. Sidebar `ui.navigation.icon` supports `book-open`,
+  `folder-kanban` and `layout-grid`; omitted icons use the grid. Use `folder-kanban`
+  for a project workspace.
   The app's internal SDK is not inferred from an absent `execution_harness_id`.
   Legacy platform agents keep their existing Deep Agents fallback.
 - Agent CAS permissions still apply. App role/launch policy further restricts the
@@ -265,3 +267,214 @@ the snapshot; a UI restart revalidates it before serving traffic.
 - The host checks app launch access, agent availability and conversation binding before restoring the panel or its actions. Server authorization still applies to every mutation.
 - Closing a native view restores the previous selection while the host retains the stream. Native packages do not own another chat store.
 - Hosts without `ConversationActions` continue to support `chat.Panel`; older native packages need no changes.
+
+## Assistant overlay ownership
+
+`ui.assistant.overlay` defaults to `host`. Set it to `app` when the app owns
+its launcher and popup. Native and iframe renderers both honor this declaration.
+App ownership suppresses only the host popup; assistant registration, agent-use
+authorization and app-defined stream routing remain available.
+
+## Application sidebar contributions
+
+`ui.navigation` contributes one authorized entry after Chat in expanded and
+collapsed navigation. Disabled, hidden, uninstalled and unauthorized apps are
+omitted. Installation `navigation_overrides` supports `visible`, `label` and
+numeric `order`; overrides cannot move a link outside the app's entry route.
+Native and iframe profiles share the catalog, preventing duplicate entries.
+Canonical `/apps/<id>` entries use document navigation through the existing
+unsaved-change guard; compiled native host paths keep client navigation.
+
+## Iframe host routes and bridge
+
+Publishers declare `ui.routes`; operators explicitly approve iframe takeover
+using installation `host_route_claims`:
+
+```yaml
+- app_id: example-app
+  installed: true
+  enabled: true
+  selected_ui_profile: hosted
+  host_route_claims: [/projects]
+  bindings:
+    runtimeOrigin: http://example-app.example.svc:3000
+```
+
+- The declared `/projects` subtree renders inside the host shell while its public
+  path, query and fragment stay in the address bar. The iframe continues loading
+  through `/apps/example-app/projects/...`; private origins stay server-side.
+- Canonical `/apps/<id>` links resolve to approved public routes without loops.
+- Reserved routes and conflicting active owners fail closed. Disabling an app
+  or removing its claims restores host routing. Profile changes require reload.
+- Host route admission and the existing app gateway both enforce app access.
+- `@caipe-io/app-sdk/iframe-bridge` supplies `createAgenticAppBridge`. Its existing
+  context/open protocol gains a capability handshake and owned-route navigation.
+  The host validates source, origin, app ID and version before handling messages.
+- Apps use `bridge.navigate(href)` for host URL synchronization and dispose the
+  bridge on unmount. Unsupported versions/capabilities report explicit errors.
+- `bridge.getCapabilities()?.hostBuild` contains the running host's `version`
+  and `gitCommit`, read from its `/api/version` endpoint. It updates after the
+  lookup completes. Older hosts omit this optional field; show an unavailable
+  state rather than substituting the app's pinned build baseline. No Helm
+  version override or application rebuild is required when the host changes.
+- Same-origin iframe hosting is a trust boundary, not JavaScript isolation.
+
+## Shared host assistant
+
+- The iframe bridge accepts the host's boolean
+  `caipe.microfrontend.initialize.v1.context.preferences.shadows_enabled`
+  presentation preference after checking origin, parent window, version and app
+  ID. It removes decorative box/text shadows while preserving focus rings.
+  Missing preferences leave the app's appearance unchanged. Native apps inherit
+  the host setting directly.
+
+- Iframes can publish the same host breadcrumb row as native packages when
+  `bridge.getCapabilities()?.breadcrumbs` is true. Call
+  `bridge.setBreadcrumbs([{ label: "Home", href: "/" }, { label: "Example" }], "/example")`
+  with the current public route. Hide the app's duplicate row only after the
+  host advertises support. Labels are plain text; links must belong to the app,
+  except for the initial host Home link. Optional `tone` (`primary`, `info`) and
+  `icon` (`target`, `layers`) preserve hierarchy presentation. The host advertises
+  `breadcrumbPresentation`; the SDK sends plain labels/links to older hosts.
+  Native `setBreadcrumbs` accepts the same tokens. Arbitrary CSS, HTML and icon URLs
+  are not accepted across the iframe bridge.
+- Keep one bridge for the lifetime of the app document. Publish page/query
+  changes independently of assistant context or visibility. The host preserves
+  a connected frame through owned SPA routes; apps without the bridge retain
+  document-navigation fallback. Host Back/Forward updates the child URL rather
+  than replacing its iframe document. `navigate(href, { history: "replace" })`
+  supports query edits without adding history entries.
+
+Native and iframe apps with `ui.assistant.overlay: "host"` use the same branded host popup,
+resize behavior, context handling and chat panel. Native packages request it
+through the optional `props.chat.assistant` capability;
+iframe apps use `bridge.openAssistant(context)` after the capability handshake.
+Native packages must guard this capability before calling `open` or `setContext`:
+
+```ts
+const assistant = props.chat?.assistant;
+if (assistant) {
+  assistant.open(context);
+}
+```
+
+The host omits the capability in home slots, when the app has no `ui.assistant`,
+or when it declares `ui.assistant.overlay: "app"`. `assistant.setContext(context)`
+updates context without opening the popup.
+App-owned overlays remain supported explicitly. Context passes the existing
+size/secret filters and stays untrusted data, never an authorization grant.
+The native wrapper resolves the installation's bound agent and agent-use policy
+before mounting the popup; chat dependencies load lazily. Account, subject,
+organization and role changes reset the assistant binding.
+
+## Shared assistant history and conversation controls
+
+- Native and iframe assistants use the same compact conversation title,
+  inline rename dialog, Chat/History tabs, actions menu, open-in-chat link,
+  and minimize button. The full-page link opens the same conversation in a
+  new tab; it does not create or copy a chat.
+- New chat, expand, reset size, recoverable clear, text size, glass mode,
+  and current-page context controls are in the actions menu. Light and dark
+  appearance follow the host theme. Text size and glass preferences persist.
+- Chat stays mounted while History is visible, preserving the draft and live
+  stream. Closing the popup retains the host conversation and stream lifecycle.
+- History shows conversation dates and selected state, loads older pages on
+  demand, and provides loading, retry, and empty states. A page containing only
+  unrelated chats still offers Load more when older history exists.
+- The popup and full-page chat reuse the same chat panel for messages, tool
+  timelines, citations, attachments, queued turns, stop/retry, editing, feedback,
+  and authorized agent model/skills controls. App-specific source choices and
+  presentation text remain declarative options rather than a separate renderer.
+- Opening full-page chat carries over the app's validated runtime source choices
+  across tabs for up to five minutes, scoped to account, organization, role,
+  app, and agent. Updates from an open app refresh those choices. When required
+  configuration is unavailable or expires, controls stay hidden and the backend
+  chooses its default. This presentation cache never grants access; conversation,
+  app, agent, and request-option checks still run at the server boundary.
+- The host popup provides Chat/History views with the existing rename, share and
+  recoverable archive controls on each history item. No archive browser is added.
+- History selection revalidates the installation, bound agent and conversation.
+- Open a history row's actions to validate and load its rename/share/archive controls.
+- History and deep links require an explicit app/agent conversation binding;
+  unrelated or unbound same-agent chats are not implicitly adopted.
+- `?assistant_chat=<conversation-id>` restores that exact authorized conversation;
+  invalid links report an error instead of silently creating another chat.
+- Changing the link on the current page revalidates the new chat and hides the
+  previous chat while loading. Local history restores and renames through the
+  browser store; sharing controls require MongoDB storage.
+- Context suggestions fill the composer; the user explicitly sends the message.
+- Host-owned popups support validated context and suggestions. App-specific source
+  selectors remain available through native `chat.Panel` composer composition.
+  Unsupported iframe composer extensions are rejected explicitly. Apps requiring
+  their own controls can retain `overlay: "app"`.
+
+### Shared assistant configuration
+
+Declare `ui.assistant.overlay: "host"` to use CAIPE's popup. Optional
+`ui.assistant.hostOptions` is a validated `AssistantOptions` declaration:
+
+```json
+{
+  "version": "1.0",
+  "requireConfiguration": true,
+  "includeLegacyAgentHistory": true,
+  "legacyConversationQueryParams": ["example_chat"],
+  "controls": [{
+    "id": "sources", "label": "Search sources", "requestKey": "verify_sources",
+    "defaultChoice": "local",
+    "choices": [{"id": "local", "label": "Local only", "value": false},
+                {"id": "verify", "label": "Verify sources", "value": true}]
+  }]
+}
+```
+
+- Native: check `chat.assistant.extensions`, then call `configure`,
+  `setContext`, `open`, `close`, and optionally `subscribe` to synchronize app buttons.
+- Iframe: use `createAgenticAppBridge` from `@caipe-io/app-sdk/iframe-bridge`.
+  Wait for capabilities; use `configureAssistant`, `setContext`, `openAssistant`,
+  `closeAssistant`, and `onAssistantState`. Call `dispose` on unmount.
+- `configuration.v1`, `choices.v1`, and `presentation.v1` advertise support.
+  Missing capabilities must produce an explicit unavailable state; do not render
+  a second popup as an embedded fallback.
+- Runtime configuration supplies `{version: "1.0", visible: boolean}` and may
+  narrow declared controls with `{choices: [id], defaultChoice: id}`. With
+  `requireConfiguration`, the launcher stays hidden until configuration arrives.
+  Hide it during settings loading/failure and release visibility on app unmount.
+- `presentation` declares placeholder, feedback wording, audit-notice visibility,
+  font scale, and bounded default width/height. Suggestions are hidden unless
+  `showSuggestions: true`; `suggestedPrompts` supplies up to eight default chips,
+  and a page can replace them through its context (including `[]` to hide them).
+  Users can change text size,
+  expand and reset size through the common display menu. Audit presentation
+  does not disable logging. One remaining choice applies without a selector.
+- Choice values are scalar, publisher-declared `forwarded_props` entries.
+  Runtime messages cannot add keys/values. Routing, identity, authorization and
+  other protected keys are rejected; the BFF revalidates choices for app streams.
+  App backends must still validate settings and enforce resource permissions.
+- Legacy history is an explicit opt-in for the installation-bound agent.
+  Personal history contains owned chats only; every selection refreshes access.
+  Explicit shared links retain existing conversation permissions. App metadata
+  never grants access; conversations marked for another app are rejected.
+- Declared query aliases resolve exact chats and become `assistant_chat` only
+  after successful restoration. Invalid/conflicting/denied links show errors.
+  Chat query parameters stay outside the iframe URL to avoid reloading the app.
+- Account changes remount the controllers. Context is untrusted data; iframe
+  messages validate source/origin/app/version and never carry host credentials.
+  Browser authentication consistency for restricted apps is tracked separately
+  by the session-stream authentication fix.
+- Standalone apps can retain their own assistant when no host exists. Keep it
+  outside native bundles; host-owned embedded apps use the host renderer/store.
+
+### Open the assistant with a question draft
+
+- Wait for both `getCapabilities()?.assistant` and `getCapabilities()?.assistantDraft`
+  before calling `bridge.openAssistant(context, { id: crypto.randomUUID(), text: question })`.
+  Draft support may be advertised while the assistant agent is still loading.
+- The host validates the iframe source and origin, shows Chat, waits for its
+  conversation and enabled composer, appends the question to existing text, and
+  focuses it. It never submits the question.
+- IDs contain 1–128 ASCII letters, digits, `_` or `-`. Text is plain text with a
+  12,000-character limit. The SDK reports invalid or unsupported drafts before opening;
+  the host ignores invalid drafts.
+- Existing `openAssistant(context)` calls remain compatible. The wire format is
+  the optional `draft: { id, text }` field on `caipe.agenticApp.assistant.open.v1`.

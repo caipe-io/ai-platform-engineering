@@ -29,6 +29,39 @@ Production installs must still supply ExternalSecrets and persistent datastore s
 
 ---
 
+## Optional secondary auth boundary
+
+- `POST /api/auth/secondary` is an explicit host-owned secondary identity resolver.
+  Ordinary platform APIs continue to accept only their existing primary credentials.
+- Secondary auth is disabled when `CAIPE_SECONDARY_OIDC_*` configuration is unset.
+  Operators configure an HTTPS issuer/JWKS, accepted audiences and stable provider ID.
+  `CAIPE_SECONDARY_AUTH_RESOURCES` maps each exact HTTPS resource URL to its allowed
+  secondary audiences; an unbound resource cannot use this trust anchor.
+- Signature, issuer, audience, expiry and subject are validated before linking.
+  First linking requires verified email by default, a unique persisted CAIPE user,
+  and a matching current enabled Keycloak account. The trusted-provider email
+  override is explicit and does not import external roles or permissions.
+- Immutable issuer/subject links use admin-only Keycloak attributes plus the
+  `secondary_auth_identity_links` MongoDB collection. Unique reservations prevent
+  concurrent reassignment of either an external identity or canonical user.
+  Admission checks profile permissions before trusting existing links.
+- The independent `secondary-auth-profile` Helm hook and Compose `rbac` service
+  protect those attributes even without an external IdP. External Keycloak operators
+  must apply the same profile migration before enabling secondary auth.
+- Applications receive canonical subject/email/name and an exact resource echo,
+  never provider roles/groups or platform tokens. Existing OpenFGA grants determine
+  resource access. A `linked:false` identity has no subject and is suitable only
+  for an explicitly restricted application bootstrap flow.
+- Applications retain resource-specific admission and token/resource-bound internal
+  forwarding proofs. They must fail closed on resolver failures. This does not issue
+  delegated JWTs or provide workload identity; distinct secondary audiences are
+  required for cryptographic isolation between resources.
+
+Configuration, migration and reservation-recovery details are maintained in
+`ui/src/lib/auth/README.md` alongside the owning implementation.
+
+---
+
 ## Component 1: Keycloak — HR & The Front Desk
 
 > **Badge analogy:** HR issues ID badges. The front desk verifies them on entry. Every other door in the building trusts the badge's chip — they don't call HR each time. When a contractor arrives via a partner agency (Duo SSO), the front desk checks with the agency once, creates an internal record, and issues a standard building badge. From that point on, the contractor uses the same badge as everyone else.
@@ -479,23 +512,29 @@ The collection, env, and naming details are in the BFF library README at
 
 ## Component 2: CAIPE UI — The Reception Desk
 
-> **Badge analogy:** The reception desk at each department entrance. When you badge in, it reads your chip (JWT), checks your clearance level for this department, and either waves you through or says "sorry, you don't have access here." It doesn't phone HR — the badge chip already carries everything needed to make the decision.
+> **Badge analogy:** Any reception desk can look up your current login in the same register. Your badge identifies you; a separate permission check decides which doors you can open.
 
-**Technically:** Next.js App Router with NextAuth (Auth.js v5) for OIDC session management. Every API route handler runs `requireRbacPermission()` which validates the server-side session and enforces role requirements before proxying to backend services.
+**Technically:** Next.js App Router with NextAuth for OIDC session management. The BFF session module owns shared login credentials; authorization helpers enforce permissions before protected operations.
 
 ### Authentication Flow
 
 ```
 1. Browser visits http://localhost:3000
 2. NextAuth detects no session → 302 to Keycloak (OIDC auth code flow)
-3. Keycloak → Duo SSO (kc_idp_hint=duo-sso auto-redirects, user never sees KC)
-4. Duo SSO login → auth code returned to Keycloak
+3. Keycloak optionally redirects to a configured upstream identity provider
+4. Upstream login completes through Keycloak
 5. Keycloak issues JWT → NextAuth exchanges code for tokens
-6. NextAuth stores small session metadata in the encrypted httpOnly cookie
-7. Large OAuth tokens (access, refresh, ID token) stay in the UI server's in-process token cache and are rehydrated server-side
+6. The BFF persists encrypted credentials, expiry and version in MongoDB auth_sessions
+7. NextAuth issues an encrypted httpOnly cookie identifying that login
+8. Any BFF replica reads the same record; refresh is coordinated through a MongoDB lease
 ```
 
-**Security note:** The session cookie is httpOnly, Secure, SameSite=Lax, and encrypted with `NEXTAUTH_SECRET`. Large OAuth tokens are kept out of the browser cookie to avoid oversized request headers when Keycloak emits RBAC scopes, groups, or relationship-derived claims. If the UI process restarts and the in-process token cache is lost while a browser still has a valid slim session cookie, the session is marked `AccessTokenMissing` and the token-expiry guard sends the user back through login instead of allowing tokenless backend proxy calls. For multi-replica deployments, use sticky sessions or replace the in-process token cache with a shared store.
+- There is no per-replica credential/session cache and no sticky-session requirement.
+- SSO requires MongoDB and a common `NEXTAUTH_SECRET`. Each login has its own record; the user subject and grants are unchanged.
+- Missing/revoked/expired sessions require sign-in. Store outages return retryable errors, without exposing a usable identity or clearing the cookie.
+- Logout durably revokes that login after CSRF validation. Fenced refresh writes cannot restore it.
+- Definitely retryable refresh rejections use a shared retry delay and may retain an unexpired token after rereading the session. Database outages and ambiguous provider failures do not use that fallback.
+- Existing cookies require a fresh login at coordinated cutover. See [browser sessions](../browser-sessions.md) for failure handling and rollout details.
 
 ### Server-Side Authorization (`api-middleware.ts`)
 

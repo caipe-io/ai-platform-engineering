@@ -773,6 +773,13 @@ export class ProviderConnectionService {
     if (!connection) {
       throw new ApiError("Provider connection was not found", 404, "CREDENTIAL_NOT_FOUND");
     }
+    if (connection.status === "disabled") {
+      throw new ApiError(
+        "Provider connection requires re-authentication",
+        401,
+        "CREDENTIAL_REAUTH_REQUIRED",
+      );
+    }
 
     // The stored access token is the source of truth. Long-lived tokens such as
     // GitHub OAuth-App tokens never expire and are not issued with a refresh
@@ -808,6 +815,20 @@ export class ProviderConnectionService {
         : undefined;
       return { accessToken: storedAccessToken, expiresIn };
     };
+
+    // Reuse a valid token outside the refresh window. Re-read it from the
+    // credential store each time; no process-local token or authorization cache.
+    const expiresAt = connection.expiresAt
+      ? new Date(connection.expiresAt).getTime()
+      : Number.NaN;
+    if (
+      connection.status === "connected" &&
+      storedAccessToken &&
+      Number.isFinite(expiresAt) &&
+      expiresAt - this.now().getTime() > 5 * 60 * 1000
+    ) {
+      return reuseStoredToken();
+    }
 
     // `connector` is intentionally null in two distinct cases, BOTH of which
     // reuse the stored access token rather than attempting an OAuth refresh:

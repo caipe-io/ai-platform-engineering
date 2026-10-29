@@ -129,7 +129,7 @@ helm show values oci://ghcr.io/caipe-io/charts/keycloak --version 1.1.0
 | idp.secretRef | string | `""` |  |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
 | image.repository | string | `"quay.io/keycloak/keycloak"` |  |
-| image.tag | string | `"26.3"` |  |
+| image.tag | string | `"26.8.1"` |  |
 | ingress.annotations | object | `{}` |  |
 | ingress.className | string | `""` |  |
 | ingress.enabled | bool | `false` |  |
@@ -155,6 +155,17 @@ helm show values oci://ghcr.io/caipe-io/charts/keycloak --version 1.1.0
 | jobSecurityContext.runAsNonRoot | bool | `true` |  |
 | jobSecurityContext.runAsUser | int | `65532` |  |
 | jobSecurityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
+| mcpDcr.enabled | bool | `false` |  |
+| mcpDcr.platformClientIds[0] | string | `"caipe-ui"` |  |
+| mcpDcr.platformClientIds[1] | string | `"caipe-cli"` |  |
+| mcpDcr.platformClientIds[2] | string | `"caipe-platform"` |  |
+| mcpDcr.platformClientIds[3] | string | `"caipe-slack-bot"` |  |
+| mcpDcr.platformClientIds[4] | string | `"caipe-webex-bot"` |  |
+| mcpDcr.platformClientIds[5] | string | `"caipe-scheduler-runner"` |  |
+| mcpDcr.platformClientIds[6] | string | `"caipe-webex-bot-admin"` |  |
+| mcpDcr.platformClientIds[7] | string | `"caipe-rag-ingestor"` |  |
+| mcpDcr.resourceClientId | string | `"caipe-mcp-dcr"` |  |
+| mcpDcr.resourceUrl | string | `""` |  |
 | nameOverride | string | `""` |  |
 | nodeSelector | object | `{}` |  |
 | platformClient.externalSecret.enabled | bool | `false` |  |
@@ -166,6 +177,9 @@ helm show values oci://ghcr.io/caipe-io/charts/keycloak --version 1.1.0
 | platformClient.secretKey | string | `"OIDC_CLIENT_SECRET"` |  |
 | platformClient.secretRef | string | `""` |  |
 | podAnnotations | object | `{}` |  |
+| podDisruptionBudget.annotations | object | `{}` |  |
+| podDisruptionBudget.enabled | bool | `false` |  |
+| podDisruptionBudget.maxUnavailable | int | `1` |  |
 | podSecurityContext.runAsNonRoot | bool | `true` |  |
 | realm.accessTokenLifespan | int | `3600` |  |
 | realm.accessTokenLifespanForImplicitFlow | int | `900` |  |
@@ -274,3 +288,11 @@ helm show values oci://ghcr.io/caipe-io/charts/keycloak --version 1.1.0
 | webexTokenExchange.externalSecret.secretStoreRef.kind | string | `"ClusterSecretStore"` |  |
 | webexTokenExchange.externalSecret.secretStoreRef.name | string | `"vault"` |  |
 | webexTokenExchange.secretRef | string | `""` |  |
+
+### Secondary auth identity attributes
+
+The `secondary-auth-profile` post-install/post-upgrade job protects the six
+`caipe_secondary_oidc_*` attributes with admin-only view/edit permissions. It runs
+independently of IdP, token exchange, and auth-reconcile flags and preserves other
+profile settings. Secondary auth itself remains disabled unless configured in the
+CAIPE UI. See `ui/src/lib/auth/README.md` for provider trust and migration steps.

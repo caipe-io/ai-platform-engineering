@@ -29,6 +29,8 @@ jest.mock('lucide-react', () => {
     { get: (_target, prop: string) => stub(prop) },
   )
 })
+jest.mock('@/components/shared/AgenticAppIcon', () => ({ AgenticAppIcon: () => <svg aria-hidden /> }))
+jest.mock('@/components/shared/AppIcon', () => ({ AppIcon: () => <svg aria-hidden /> }))
 
 import { QuickStartSection } from '../QuickStartSection'
 import { QUICK_START_TABS } from '../quickStartCards'
@@ -122,5 +124,10 @@ describe('QuickStartSection', () => {
 
     fireEvent.mouseDown(screen.getByTestId('quick-start-tab-explore'), { button: 0 })
     expect(screen.getByTestId('quick-start-cta-chat-assistants')).toHaveAttribute('href', '/chat')
+  })
+
+  it('keeps Favorites separate from Quick Start', () => {
+    render(<QuickStartSection />)
+    expect(screen.queryByTestId('quick-start-tab-favorites')).not.toBeInTheDocument()
   })
 })

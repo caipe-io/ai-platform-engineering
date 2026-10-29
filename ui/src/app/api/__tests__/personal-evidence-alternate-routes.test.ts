@@ -118,7 +118,7 @@ describe("private evidence direct message-ID update", () => {
 
   it("allows the owner and retains the original resource check", async () => {
     expect((await updateMessage({ content: "Changed" })).status).toBe(200);
-    expect(messages.updateOne).toHaveBeenCalledWith({ message_id: "message-id" }, { $set: { content: "Changed" } });
+    expect(messages.updateOne).toHaveBeenCalledWith({ message_id: "message-id", "metadata.app_completion": { $exists: false } }, { $set: { content: "Changed" } });
     expect(mockResourcePermission).toHaveBeenCalledWith(mockSession, { type: "conversation", id: privateChat._id, action: "write" });
   });
 

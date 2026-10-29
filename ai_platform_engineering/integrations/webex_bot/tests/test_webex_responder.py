@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -28,6 +30,7 @@ from ai_platform_engineering.integrations.webex_bot.webex_responder import (
     _format_thread_context,
     _is_webex_bot_reply,
     _message_with_thread_context,
+    _public_conversation_url,
 )
 
 
@@ -95,6 +98,9 @@ class FakeSseClient:
     conversation_metadata: dict[str, Any] = field(default_factory=dict)
     metadata_updates: list[dict[str, Any]] = field(default_factory=list)
     messages: list[dict[str, Any]] = field(default_factory=list)
+
+    def get_agent_name(self, *, agent_id: str, bearer_token: str | None = None) -> str:
+        return "Original Agent" if agent_id == "original-agent" else "Example Agent"
 
     def create_conversation(self, **kwargs: Any) -> dict[str, Any]:
         self.conversations.append(kwargs)
@@ -489,7 +495,7 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
             "parent_id": "message-public-id",
             "markdown": (
                 "Working on it...\n\n"
-                "_Agent: incident-agent_ • **Mention @CAIPE to continue**"
+                "Agent: Example Agent • **Mention @CAIPE to continue**"
                 f"{_BOT_REPLY_MARKER}"
             ),
         }
@@ -499,7 +505,7 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
         "room_id": "room-public-id",
         "markdown": (
             "hello world\n\n"
-            "_Agent: incident-agent_ • **Mention @CAIPE to continue**"
+            "Agent: Example Agent • **Mention @CAIPE to continue**"
             f"{_BOT_REPLY_MARKER}"
         ),
     }
@@ -534,6 +540,107 @@ def test_threaded_stream_dispatcher_updates_reply_from_sse_events() -> None:
         "channel_id": "6f91b070-531a-11f1-926d-6fd3c20dfdc4",
         "surface_kind": "channel",
     }
+
+
+@pytest.mark.parametrize("is_direct", [False, True])
+def test_dispatcher_uses_distinct_agent_and_catalog_bot_names(
+    monkeypatch: pytest.MonkeyPatch, is_direct: bool
+) -> None:
+    monkeypatch.setenv("APP_NAME", "Fallback App")
+    monkeypatch.setenv(
+        "WEBEX_INTEGRATION_BOTS_JSON",
+        json.dumps(
+            [
+                {
+                    "id": "secondary",
+                    "name": "Example Bot (example-bot@example.com)",
+                    "tokenEnv": "SECONDARY_TOKEN",
+                    "spaces": {"accessMode": "allowlist"},
+                    "directMessages": {"accessMode": "allowlist"},
+                }
+            ]
+        ),
+    )
+    api = FakeWebexApi()
+    sse = FakeSseClient(
+        events=[
+            SSEEvent(SSEEventType.TEXT_MESSAGE_CONTENT, delta="hello "),
+            SSEEvent(SSEEventType.TEXT_MESSAGE_CONTENT, delta="world"),
+            SSEEvent(SSEEventType.RUN_FINISHED),
+        ]
+    )
+    dispatcher = WebexThreadedStreamDispatcher(
+        webex_api=api, sse_client=sse, update_every_chars=1
+    )
+
+    asyncio.run(
+        dispatcher(
+            {
+                "bot_id": "secondary",
+                "person_id": "example-person-id",
+                "space_id": "example-space-id",
+                "webex_room_id": "example-room-id",
+                "message_id": "example-message-id",
+                "text": "hello",
+                "agent_id": "example-agent",
+                "obo_token": "example-access-token",
+                "is_direct": is_direct,
+            }
+        )
+    )
+
+    footer = "Agent: Example Agent"
+    if not is_direct:
+        footer += " • **Mention @Example Bot to continue**"
+    footer += _BOT_REPLY_MARKER
+    assert api.created[0]["markdown"] == f"Working on it...\n\n{footer}"
+    assert api.updated[-1]["markdown"] == f"hello world\n\n{footer}"
+    for reply in [*api.created, *api.updated]:
+        assert reply["markdown"].endswith(footer)
+        assert "example-bot@example.com" not in reply["markdown"]
+        assert "Fallback App" not in reply["markdown"]
+        assert "example-agent" not in reply["markdown"]
+        if is_direct:
+            assert "Mention @" not in reply["markdown"]
+    assert sse.conversations[0]["agent_id"] == "example-agent"
+    assert sse.calls[0]["agent_id"] == "example-agent"
+
+
+def test_dispatcher_continues_when_agent_name_lookup_raises(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    api = FakeWebexApi()
+    sse = FakeSseClient(events=[
+        SSEEvent(SSEEventType.TEXT_MESSAGE_CONTENT, delta="hello world"),
+        SSEEvent(SSEEventType.RUN_FINISHED),
+    ])
+
+    def fail_lookup(**kwargs: Any) -> str:
+        raise RuntimeError("example-sensitive-detail")
+
+    monkeypatch.setattr(sse, "get_agent_name", fail_lookup)
+    dispatcher = WebexThreadedStreamDispatcher(webex_api=api, sse_client=sse)
+    asyncio.run(dispatcher({
+        "space_id": "example-space-id",
+        "webex_room_id": "example-room-id",
+        "message_id": "example-message-id",
+        "text": "hello",
+        "agent_id": "example-agent",
+        "obo_token": "example-access-token",
+        "is_direct": True,
+    }))
+
+    assert sse.calls[0]["agent_id"] == "example-agent"
+    assert api.created[0]["markdown"] == f"Working on it...\n\nAgent: Assistant{_BOT_REPLY_MARKER}"
+    assert api.updated[-1]["markdown"] == f"hello world\n\nAgent: Assistant{_BOT_REPLY_MARKER}"
+    assert len(sse.messages) == 2
+    assert "Agent display-name lookup failed (type=RuntimeError)" in caplog.text
+    assert "example-sensitive-detail" not in caplog.text
+
+
+def test_reply_footer_collapses_line_breaks_in_the_agent_name() -> None:
+    reply = _agent_reply_markdown(" Example\nAgent\r\n\t", "Answer", bot_name="Example Bot")
+    assert reply == f"Answer\n\nAgent: Example Agent • **Mention @Example Bot to continue**{_BOT_REPLY_MARKER}"
 
 
 def test_threaded_stream_dispatcher_tags_message_turns_with_webex_source() -> None:
@@ -674,7 +781,7 @@ def test_threaded_stream_dispatcher_reuses_root_parent_for_thread_replies() -> N
         "parent_id": "root-message-public-id",
         "markdown": (
             "Working on it...\n\n"
-            "_Agent: incident-agent_ • **Mention @CAIPE to continue**"
+            "Agent: Example Agent • **Mention @CAIPE to continue**"
             f"{_BOT_REPLY_MARKER}"
         ),
     }
@@ -804,13 +911,12 @@ def test_threaded_stream_dispatcher_overrides_reconfigured_space_route_for_exist
     )
 
     assert sse.calls[0]["agent_id"] == "original-agent"
-    # Placeholder reply was created with the owner's agent from the start —
-    # never shows the requested/reconfigured agent, so nothing needs correcting.
+    # The bot identity stays visible while routing uses the pinned agent.
     assert len(api.created) == 1
     assert api.created[0]["markdown"].startswith(
-        "Working on it...\n\n_Agent: original-agent_"
+        "Working on it...\n\nAgent: Original Agent • **Mention @CAIPE to continue**"
     )
-    assert api.updated[-1]["markdown"].startswith("Done.\n\n_Agent: original-agent_")
+    assert api.updated[-1]["markdown"].startswith("Done.\n\nAgent: Original Agent • **Mention @CAIPE to continue**")
     # Ownership was already persisted — no redundant metadata write.
     assert sse.metadata_updates == []
 
@@ -1119,7 +1225,7 @@ def test_bot_reply_recognized_after_app_name_changes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("APP_NAME", "OldName")
-    reply_markdown = _agent_reply_markdown("incident-agent", "prior bot answer")
+    reply_markdown = _agent_reply_markdown("Example Agent", "prior bot answer", bot_name="Example Bot")
 
     monkeypatch.setenv("APP_NAME", "NewName")
 
@@ -1144,3 +1250,105 @@ def test_bot_reply_recognized_via_legacy_app_name_pattern_pre_upgrade(
     message = {"markdown": legacy_markdown, "personEmail": "bot@example.com"}
     assert _is_webex_bot_reply(message) is True
     assert _format_thread_context([message]) == ""
+
+
+@pytest.mark.parametrize("max_edits", [1, 2, 10, 20])
+@pytest.mark.parametrize("failure", [None, "edit", "persistence", "run"])
+@pytest.mark.parametrize("oversized", [False, True])
+def test_stream_limits_preserve_completion(
+    monkeypatch: pytest.MonkeyPatch, max_edits: int, failure: str | None, oversized: bool,
+) -> None:
+    """Exhausting/rejecting previews must still consume the stream and deliver its outcome."""
+    monkeypatch.setenv("APP_NAME", "Example")
+    monkeypatch.setenv("CAIPE_UI_BASE_URL", "https://chat.example.com")
+
+    class LimitedApi(FakeWebexApi):
+        def update_message(self, *, message_id: str, room_id: str, markdown: str) -> None:
+            super().update_message(message_id=message_id, room_id=room_id, markdown=markdown)
+            if failure == "edit":
+                raise httpx.HTTPStatusError(
+                    "edit rejected", request=httpx.Request("PUT", "https://example.com/messages"),
+                    response=httpx.Response(400),
+                )
+
+    class RecordingClient(FakeSseClient):
+        consumed: int = 0
+
+        def stream_chat(self, **kwargs: Any):
+            self.calls.append(kwargs)
+            for event in self.events:
+                self.consumed += 1
+                yield event
+
+        def add_message(self, **kwargs: Any) -> None:
+            if failure == "persistence":
+                raise RuntimeError("save failed")
+            super().add_message(**kwargs)
+
+    api = LimitedApi()
+    chunks = [f"Part {i}: " + ("😀" if oversized else "a") * 100 for i in range(40)]
+    sse = RecordingClient(events=[
+        *[SSEEvent(SSEEventType.TEXT_MESSAGE_CONTENT, delta=chunk) for chunk in chunks],
+        SSEEvent(SSEEventType.RUN_ERROR, message="Run failed") if failure == "run"
+        else SSEEvent(SSEEventType.RUN_FINISHED),
+    ])
+    dispatcher = WebexThreadedStreamDispatcher(
+        webex_api=api, sse_client=sse, update_every_chars=1,
+        update_interval_seconds=0, max_message_edits=max_edits,
+        thread_owner_cache=ThreadOwnerCache(),
+    )
+    dispatcher._dispatch_sync({
+        "space_id": "test-space", "webex_room_id": "test-room", "message_id": "test-message",
+        "thread_parent_id": "test-root", "text": "test request", "agent_id": "test-agent",
+        "obo_token": "test-token",
+    })
+    assert sse.consumed == len(sse.events)
+    assert len(api.updated) <= max_edits
+    assert all(len(row["markdown"].encode("utf-8")) <= 7439 for row in [*api.created, *api.updated])
+    assert all(row["parent_id"] == "test-root" for row in api.created)
+    final = (api.created if failure == "edit" else api.updated)[-1]["markdown"]
+    if failure == "run":
+        assert "Run failed" in final
+        assert not sse.messages
+    elif failure == "persistence" and oversized:
+        assert "link is unavailable" in final
+        assert "https://chat.example.com" not in final
+    else:
+        if oversized:
+            assert "https://chat.example.com/chat/server-conversation-id" in final
+        else:
+            assert final.startswith("".join(chunks))
+            if failure is None:
+                assert len(api.updated) == max_edits
+        if failure == "persistence":
+            return
+        assert sse.messages[0]["content"] == "test request"
+        assert sse.messages[1]["content"] == "".join(chunks)
+        assert sse.messages[1]["bearer_token"] == "test-token"
+    if failure == "edit":
+        assert len(api.updated) == 1
+        assert len(api.created) == 2
+
+
+def test_stream_preview_updates_are_coalesced(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Deterministic elapsed times: start, first preview, suppressed preview, next preview, finish.
+    clock = iter([0.0, 0.0, 0.5, 1.0, 2.0])
+    monkeypatch.setattr("ai_platform_engineering.integrations.webex_bot.webex_responder.time", SimpleNamespace(monotonic=lambda: next(clock)))
+    api = FakeWebexApi()
+    sse = FakeSseClient(events=[SSEEvent(SSEEventType.TEXT_MESSAGE_CONTENT, delta="a" * 240) for _ in range(3)])
+    dispatcher = WebexThreadedStreamDispatcher(webex_api=api, sse_client=sse)
+    dispatcher._dispatch_sync({
+        "space_id": "test-space", "webex_room_id": "test-room", "message_id": "test-message",
+        "text": "test request", "agent_id": "test-agent", "obo_token": "test-token",
+    })
+    assert len(api.updated) == 2
+    assert api.updated[0]["markdown"].startswith("a" * 240 + "\n")
+    assert api.updated[1]["markdown"].startswith("a" * 720 + "\n")
+
+
+@pytest.mark.parametrize("base", ["", "https://user:secret@example.com", "https://example.com?token=secret", "https://example.com:bad", "https://example.com/a b"])
+def test_full_response_url_rejects_invalid_public_origins(monkeypatch: pytest.MonkeyPatch, base: str) -> None:
+    monkeypatch.setenv("CAIPE_UI_BASE_URL", base)
+    monkeypatch.delenv("WEBEX_LINKING_BASE_URL", raising=False)
+    monkeypatch.setenv("CAIPE_API_URL", "https://internal.example.test")
+    assert _public_conversation_url("test-conversation") is None

@@ -363,6 +363,43 @@ describe('PUT /api/settings', () => {
 describe('PATCH /api/settings/preferences', () => {
   beforeEach(resetMocks);
 
+  it.each(['favorite_agentic_apps.0', 'favorite_agentic_apps.$[]', 'chat_history.folders.0'])(
+    'rejects the dotted preference key %s without writing any changes',
+    async (key) => {
+      mockGetServerSession.mockResolvedValue(authenticatedSession());
+      const col = createMockCollection();
+      mockCollections['user_settings'] = col;
+      const req = makeRequest('/api/settings/preferences', {
+        method: 'PATCH',
+        body: JSON.stringify({ theme: 'dark', [key]: '../other' }),
+      });
+
+      const res = await PATCHPreferences(req);
+
+      expect(res.status).toBe(400);
+      expect(col.updateOne).not.toHaveBeenCalled();
+    },
+  );
+
+  it('validates and deduplicates favorite IDs before updating preferences', async () => {
+    mockGetServerSession.mockResolvedValue(authenticatedSession());
+    const col = createMockCollection();
+    mockCollections['user_settings'] = col;
+    const req = makeRequest('/api/settings/preferences', {
+      method: 'PATCH',
+      body: JSON.stringify({ favorite_agentic_apps: ['example-app', 'example-app', 'secondary'] }),
+    });
+
+    const res = await PATCHPreferences(req);
+
+    expect(res.status).toBe(200);
+    expect(col.updateOne).toHaveBeenCalledWith(
+      { user_id: 'user@example.com' },
+      { $set: { updated_at: expect.any(Date), 'preferences.favorite_agentic_apps': ['example-app', 'secondary'] } },
+      { upsert: true },
+    );
+  });
+
   it('returns 401 when not authenticated', async () => {
     mockGetServerSession.mockResolvedValue(null);
     const req = makeRequest('/api/settings/preferences', {

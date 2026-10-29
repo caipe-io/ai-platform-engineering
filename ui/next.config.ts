@@ -3,6 +3,10 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
 
+  // The app gateway must carry the embedded Next app's routing headers through
+  // proxy.ts before the host consumes them while resolving its own routes.
+  skipProxyUrlNormalize: true,
+
   // Keep the Okta SDK as a native Node require instead of bundling it. The SDK
   // does `const nodeFetch = require('node-fetch')` and calls it directly;
   // when bundled, CJS/ESM interop turns that into `{ default: fn }`, so the call

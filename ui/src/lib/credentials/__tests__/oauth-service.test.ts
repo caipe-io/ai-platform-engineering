@@ -530,6 +530,117 @@ describe("boundScopes", () => {
 });
 
 describe("ProviderConnectionService", () => {
+  it.each([
+    { label: "valid OAuth token", connectorId: "connector-primary", remaining: 3_600_000, renewable: true },
+    { label: "expired OAuth token", connectorId: "connector-primary", remaining: -1, renewable: true },
+    { label: "OAuth token without expiry or refresh", connectorId: "connector-primary", remaining: undefined, renewable: false },
+    { label: "static token", connectorId: "static:example", remaining: undefined, renewable: false },
+  ])("does not use a revoked $label", async ({ connectorId, remaining, renewable }) => {
+    const now = new Date("2026-01-01T00:00:00Z");
+    const owner = { type: "user" as const, id: "user-primary" };
+    const connections = new MemoryCollection<ProviderConnectionDocument>();
+    connections.docs.push({
+      id: "connection-primary", connectorId, owner, status: "connected",
+      accessTokenRef: "access-primary",
+      refreshTokenRef: renewable ? "refresh-primary" : "",
+      ...(remaining !== undefined ? { expiresAt: new Date(now.getTime() + remaining) } : {}),
+    });
+    const connectors = new MemoryCollection<OAuthConnectorDocument>();
+    connectors.docs.push({
+      id: "connector-primary", name: "Example provider", provider: "example",
+      clientId: "client-primary", clientSecretRef: "secret-primary",
+      authorizationUrl: "https://idp.example.test/authorize",
+      tokenUrl: "https://idp.example.test/token", scopes: ["read"],
+      redirectUri: "https://app.example.test/callback", enabled: true,
+      createdAt: now, updatedAt: now,
+    });
+    const connectorLookup = jest.spyOn(connectors, "findOne");
+    const payloadStore = {
+      getSecret: jest.fn(async (ref: string) => {
+        if (!ref) throw new Error("not found");
+        return `${ref}:value`;
+      }),
+      putSecret: mockPutSecret(),
+    };
+    const tokenClient = mockTokenClient({ access_token: "refreshed", expires_in: 3600 });
+    const service = new ProviderConnectionService({
+      providerConnectionsCollection: connections, connectorsCollection: connectors,
+      payloadStore, tokenClient, now: () => now,
+    });
+    await service.revokeConnection({ connectionId: "connection-primary", owner });
+    const connectionUpdate = jest.spyOn(connections, "updateOne");
+
+    await expect(service.refreshConnection("connection-primary")).rejects.toMatchObject({
+      statusCode: 401,
+      code: "CREDENTIAL_REAUTH_REQUIRED",
+    });
+
+    expect(payloadStore.getSecret).not.toHaveBeenCalled();
+    expect(payloadStore.putSecret).not.toHaveBeenCalled();
+    expect(connectorLookup).not.toHaveBeenCalled();
+    expect(tokenClient).not.toHaveBeenCalled();
+    expect(connectionUpdate).not.toHaveBeenCalled();
+    expect(connections.docs[0].status).toBe("disabled");
+  });
+
+  it.each([
+    { label: "outside the window", remaining: 300_001, reuse: true },
+    { label: "at the boundary", remaining: 300_000, reuse: false },
+    { label: "inside the window", remaining: 299_999, reuse: false },
+    { label: "expired", remaining: -1, reuse: false },
+    { label: "unknown expiry", remaining: undefined, reuse: false },
+    { label: "invalid expiry", remaining: NaN, reuse: false },
+    { label: "missing stored token", remaining: 3_600_000, missing: true, reuse: false },
+  ])("refreshes only when necessary: $label", async ({ remaining, missing, reuse }) => {
+    const now = new Date("2026-01-01T00:00:00Z");
+    const connections = new MemoryCollection<ProviderConnectionDocument>();
+    connections.docs.push({
+      id: "connection-primary", connectorId: "connector-primary",
+      owner: { type: "user", id: "user-primary" }, status: "connected",
+      accessTokenRef: "access-primary", refreshTokenRef: "refresh-primary",
+      ...(remaining !== undefined ? { expiresAt: new Date(now.getTime() + remaining) } : {}),
+    });
+    const connectors = new MemoryCollection<OAuthConnectorDocument>();
+    connectors.docs.push({
+      id: "connector-primary", name: "Example provider", provider: "example",
+      clientId: "client-primary", clientSecretRef: "secret-primary",
+      authorizationUrl: "https://idp.example.test/authorize",
+      tokenUrl: "https://idp.example.test/token", scopes: ["read"],
+      redirectUri: "https://app.example.test/callback", enabled: true,
+      createdAt: now, updatedAt: now,
+    });
+    const connectorLookup = jest.spyOn(connectors, "findOne");
+    const payloadStore = {
+      getSecret: jest.fn(async (ref: string) => {
+        if (missing && ref === "access-primary") throw new Error("not found");
+        return `${ref}:value`;
+      }),
+      putSecret: mockPutSecret(),
+    };
+    const tokenClient = mockTokenClient({ access_token: "refreshed", expires_in: 3600 });
+    const service = new ProviderConnectionService({
+      providerConnectionsCollection: connections, connectorsCollection: connectors,
+      payloadStore, tokenClient, now: () => now,
+    });
+
+    const result = await service.refreshConnection("connection-primary");
+
+    if (reuse) {
+      expect(result).toEqual({ accessToken: "access-primary:value", expiresIn: 300 });
+      expect(tokenClient).not.toHaveBeenCalled();
+      expect(connectorLookup).not.toHaveBeenCalled();
+      expect(payloadStore.putSecret).not.toHaveBeenCalled();
+      // Repeated callers still consult the store; rotated/deleted credentials
+      // must not be hidden behind a process-local token cache.
+      await service.refreshConnection("connection-primary");
+      expect(payloadStore.getSecret.mock.calls.filter(([ref]) => ref === "access-primary")).toHaveLength(2);
+    } else {
+      expect(result.accessToken).toBe("refreshed");
+      expect(tokenClient).toHaveBeenCalledTimes(1);
+      expect(payloadStore.putSecret).toHaveBeenCalled();
+    }
+  });
+
   it("refreshes provider tokens using connector metadata and stores rotated tokens encrypted", async () => {
     const providerConnections = new MemoryCollection<ProviderConnectionDocument>();
     providerConnections.docs.push({

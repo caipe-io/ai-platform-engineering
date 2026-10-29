@@ -1,6 +1,7 @@
 "use client";
 
 import { ChatPanel } from "@/components/chat/DynamicAgentChatPanel";
+import { useAppAssistantPresentation, useAssistantComposerOptions } from "@/components/agentic-apps/AssistantComposerOptions";
 import { DynamicAgentContext } from "@/components/dynamic-agents/DynamicAgentContext";
 import { ResizableHandle,ResizablePanel,ResizablePanelGroup } from "@/components/ui/resizable";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
@@ -46,6 +47,10 @@ export function ChatView({
   const [contextPanelCollapsed, setContextPanelCollapsed] = useState(true);
   const [isAnimating, setIsAnimating] = useState(false);
   const contextPanelRef = usePanelRef();
+  const { app, configuration } = useAppAssistantPresentation(agent?.presentation?.available ? agent.presentation.app.id : undefined, selectedAgentId);
+  const options = app?.assistantOptions;
+  const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration, app?.appId);
+  const assistantLabel = app ? app.assistantLabel?.trim() || "Ask CAIPE" : undefined;
 
   const handleCollapse = useCallback((collapsed: boolean) => {
     // Enable transition for programmatic expand/collapse, disable after animation
@@ -62,11 +67,26 @@ export function ChatView({
   const isDisabled = agentNotFound || agent?.enabled === false || agent?.presentation?.available === false;
   const appOwnedRuntime = agent?.presentation?.app?.ownsRuntime === true;
 
-  if (appOwnedRuntime) {
-    return <ChatPanel conversationId={conversationId} agentId={selectedAgentId} agent={agent}
-      readOnly={readOnly || isDisabled} readOnlyReason={readOnlyReason} apiConversation={apiConversation}
-      isLoadingMessages={isLoadingMessages} onAgentRelinked={onAgentRelinked} appOwnedRuntime />;
-  }
+  const panel = (
+    <ChatPanel
+      appOwnedRuntime={appOwnedRuntime}
+      conversationId={conversationId}
+      readOnly={readOnly || isDisabled}
+      readOnlyReason={agentNotFound ? 'agent_deleted' : agent?.enabled === false ? 'agent_disabled' : readOnlyReason}
+      apiConversation={apiConversation}
+      agentId={selectedAgentId}
+      agent={agent}
+      isLoadingMessages={isLoadingMessages}
+      onAgentRelinked={onAgentRelinked}
+      requestOptions={app ? requestOptions : undefined}
+      composerHeader={composerHeader}
+      placeholder={options?.presentation?.placeholder ?? (assistantLabel ? `${assistantLabel}…` : undefined)}
+      emptyStateTitle={assistantLabel}
+      showAuditNotice={options?.presentation?.showAuditNotice}
+      feedbackPrompt={options?.presentation?.feedbackPrompt}
+    />
+  );
+  if (appOwnedRuntime) return panel;
 
   return (
     <ResizablePanelGroup
@@ -77,16 +97,7 @@ export function ChatView({
       {/* Chat Panel */}
       <ResizablePanel minSize={40}>
         <div className="flex-1 min-w-0 flex flex-col overflow-hidden h-full">
-          <ChatPanel
-            conversationId={conversationId}
-            readOnly={readOnly || isDisabled}
-            readOnlyReason={agentNotFound ? 'agent_deleted' : agent?.enabled === false ? 'agent_disabled' : readOnlyReason}
-            apiConversation={apiConversation}
-            agentId={selectedAgentId}
-            agent={agent}
-            isLoadingMessages={isLoadingMessages}
-            onAgentRelinked={onAgentRelinked}
-          />
+          {panel}
         </div>
       </ResizablePanel>
 

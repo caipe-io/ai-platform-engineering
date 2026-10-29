@@ -98,6 +98,7 @@ export class AGUIStreamAdapter implements StreamAdapter {
       ...(params.reasoningEffort && { reasoning_effort: params.reasoningEffort }),
       resume_data: params.resumeData,
       protocol: "agui",
+      ...(params.forwardedProps && { forwarded_props: params.forwardedProps }),
       ...(params.clientContext && { client_context: params.clientContext }),
     });
 

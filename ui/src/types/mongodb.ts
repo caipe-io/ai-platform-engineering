@@ -169,6 +169,8 @@ export interface Message {
   sender_image?: string;
   metadata: {
     turn_id: string;
+    /** Server-accepted app result; client message APIs cannot write this marker. */
+    app_completion?: { app_id: string; agent_id: string; turn_id: string; completed_at: string };
     source?: string;
     model?: string;
     latency_ms?: number;
@@ -254,6 +256,9 @@ export interface UserSettings {
     gradient_theme: 'default' | 'minimal' | 'professional' | 'ocean' | 'sunset' | 'cyberpunk' | 'tron' | 'matrix';
     font_family: 'inter' | 'source-sans' | 'ibm-plex' | 'system';
     font_size: 'small' | 'medium' | 'large' | 'x-large';
+    shadows_enabled?: boolean;
+    assistant_glass_enabled?: boolean;
+    assistant_font_scale?: "auto" | "compact" | "default" | "large";
     sidebar_collapsed: boolean;
     context_panel_visible: boolean;
     debug_mode: boolean;
@@ -279,6 +284,8 @@ export interface UserSettings {
     home_widgets_version?: number;
     /** Which Home page layout the user sees — the new default, or the previous fixed layout. */
     home_experience?: "new" | "classic";
+    /** Favorite app IDs shown in the Apps catalog. */
+    favorite_agentic_apps?: string[];
   };
   notifications: {
     email_enabled: boolean;
@@ -311,6 +318,9 @@ export const DEFAULT_USER_SETTINGS: Omit<
     gradient_theme: "default",
     font_family: "inter",
     font_size: "medium",
+    shadows_enabled: false,
+    assistant_glass_enabled: true,
+    assistant_font_scale: "auto",
     sidebar_collapsed: false,
     context_panel_visible: true,
     debug_mode: false,

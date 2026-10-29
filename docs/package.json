@@ -47,17 +47,17 @@
     ]
   },
   "engines": {
-    "node": ">=24.11.0 <25"
+    "node": ">=24.22.1 <25"
   },
   "overrides": {
     "brace-expansion": "1.1.21",
-    "serialize-javascript": "7.1.0",
+    "serialize-javascript": "7.1.4",
     "lodash-es": "4.18.1",
     "uuid": "14.0.2",
     "gray-matter": {
       "js-yaml": "5.4.1"
     },
-    "fast-uri": "3.1.8",
+    "fast-uri": "3.1.9",
     "js-yaml": "5.4.1",
     "mermaid": "11.17.2",
     "nanoid": "3.3.18",
@@ -67,6 +67,7 @@
     "http-proxy-middleware": "3.0.7",
     "tinypool": "2.2.0",
     "katex": "0.18.2",
-    "postcss-selector-parser": "7.1.6"
+    "postcss-selector-parser": "7.1.6",
+    "qs": "6.16.1"
   }
 }

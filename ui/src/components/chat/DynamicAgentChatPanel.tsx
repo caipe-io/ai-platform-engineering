@@ -1,5 +1,7 @@
 "use client";
 
+import { useComposerDraft } from "@/hooks/use-composer-draft";
+import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
 import { ContextUsageIndicator } from "@/components/chat/ContextUsageIndicator";
 import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
@@ -113,10 +115,14 @@ interface ChatPanelProps {
   onAgentRelinked?: (agentId: string) => void;
   /** Bounded, host-validated metadata attached to each app-assistant turn. */
   clientContext?: Record<string, unknown>;
+  composerDraft?: AssistantDraft | null;
+  onComposerDraftApplied?: (id: string) => void;
   requestOptions?: Record<string, unknown>;
   /** The installed app owns execution; do not inspect Dynamic Agents state. */
   appOwnedRuntime?: boolean;
   composerHeader?: React.ReactNode;
+  /** App suggestions only fill the composer; sending remains an explicit user action. */
+  suggestedPrompts?: string[];
   placeholder?: string;
   emptyStateTitle?: string;
   showAgentHeader?: boolean;
@@ -136,7 +142,9 @@ export function ChatPanel({
   isLoadingMessages,
   onAgentRelinked,
   clientContext: suppliedClientContext,
-  requestOptions, composerHeader, placeholder, emptyStateTitle, showAgentHeader = true, showAuditNotice = true, feedbackPrompt, appOwnedRuntime: suppliedAppOwnedRuntime = false,
+  composerDraft,
+  onComposerDraftApplied,
+  requestOptions, composerHeader, suggestedPrompts, placeholder, emptyStateTitle, showAgentHeader = true, showAuditNotice = true, feedbackPrompt, appOwnedRuntime: suppliedAppOwnedRuntime = false,
 }: ChatPanelProps) {
   const appOwnedRuntime = suppliedAppOwnedRuntime || agent?.presentation?.app?.ownsRuntime === true;
   // Derive display values from agent object
@@ -385,6 +393,7 @@ export function ChatPanel({
     .find((item) => item.id === (conversationId ?? state.activeConversationId))
     ?.title?.trim()) || "New chat";
   const isAutonomousHistory = conversation?.source === "autonomous";
+  const promptSuggestions = suggestedPrompts?.filter(prompt => prompt.trim()).slice(0, 8) ?? [];
   const autonomousFollowUps = useAutonomousFollowUps(
     isAutonomousHistory && !panelReadOnly ? conversation?.task_id : undefined,
   );
@@ -588,6 +597,17 @@ export function ChatPanel({
     : false;
   const externalActivity = useChatStore(state => activeConversationId ? state.externalActivity[activeConversationId] : undefined);
   const isRemoteResponse = !!externalActivity && !isThisConversationStreaming;
+  const stageDraftAttachment = useCallback((id: string, file: File) => {
+    setAttachments((current) => current.some((item) => item.id === id) ? current : [...current, { id, file }]);
+  }, []);
+  useComposerDraft({
+    draft: composerDraft,
+    enabled: !readOnly && !isLoadingMessages && !isRemoteResponse,
+    setInput,
+    inputRef,
+    onAttachment: stageDraftAttachment,
+    onApplied: onComposerDraftApplied,
+  });
   useEffect(() => {
     if (isRemoteResponse) setIsRewindConfirmationOpen(false);
   }, [isRemoteResponse]);
@@ -2015,7 +2035,7 @@ export function ChatPanel({
       const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName);
 
       await adapter.resumeStream(
-        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData: formDataJson, reasoningEffort: requestReasoningEffort, clientContext },
+        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData: formDataJson, reasoningEffort: requestReasoningEffort, clientContext, forwardedProps: requestOptions },
         callbacks,
       );
 
@@ -2032,7 +2052,7 @@ export function ChatPanel({
   }, [pendingUserInput, activeConversationId, agentProtocol, addMessage, updateMessage,
       appendToMessage, addStreamEvent, setConversationStreaming,
       clearStreamEvents, getActiveConversation, buildStreamCallbacks, finalizeStreamLoop,
-      suppliedClientContext, requestReasoningEffort]);
+      suppliedClientContext, requestReasoningEffort, requestOptions]);
 
   // Handle tool approval decisions (approve/reject/edit)
   // Shows cards sequentially; only resumes after all tools are decided.
@@ -2136,7 +2156,7 @@ export function ChatPanel({
     try {
       const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName);
       await adapter.resumeStream(
-        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData, reasoningEffort: requestReasoningEffort, clientContext },
+        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData, reasoningEffort: requestReasoningEffort, clientContext, forwardedProps: requestOptions },
         callbacks,
       );
       finalizeStreamLoop(activeConversationId, assistantMsgId, loopState);
@@ -2150,7 +2170,7 @@ export function ChatPanel({
     }
   }, [pendingToolApproval, activeConversationId, agentProtocol, addMessage, updateMessage,
       addStreamEvent, setConversationStreaming, clearStreamEvents, getActiveConversation,
-      buildStreamCallbacks, finalizeStreamLoop, suppliedClientContext, requestReasoningEffort]);
+      buildStreamCallbacks, finalizeStreamLoop, suppliedClientContext, requestReasoningEffort, requestOptions]);
 
   // Handle slash command detection in input
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -2357,6 +2377,12 @@ export function ChatPanel({
                       useGlobalTheme
                     />
                     <h2 className="text-2xl font-bold mb-4">{emptyStateTitle ?? `Welcome to ${getConfig('appName')}`}</h2>
+                    {!panelReadOnly && !isAutonomousHistory && promptSuggestions.length ? <div role="group" aria-label="Suggested prompts" className="mx-auto mb-4 flex max-w-lg flex-wrap justify-center gap-2">
+                      {promptSuggestions.map((prompt, index) => <Button key={index} type="button" variant="outline" size="sm"
+                        disabled={isThisConversationStreaming || isRemoteResponse || Boolean(pendingUserInput || pendingToolApproval)}
+                        onClick={() => { setInput(prompt); inputRef.current?.focus(); }}
+                        className="h-auto whitespace-normal">{prompt}</Button>)}
+                    </div> : null}
                     {!emptyStateTitle && <>
                     <p className="text-muted-foreground mb-3">
                       Start your conversation with
@@ -2551,6 +2577,7 @@ export function ChatPanel({
                           conversationId: activeConversationId,
                           agentId: pendingUserInput.agentId,
                           resumeData: dismissalPayload,
+                          forwardedProps: requestOptions,
                           reasoningEffort: requestReasoningEffort,
                         },
                         {}, // No callbacks — we don't render the response
@@ -2850,6 +2877,7 @@ export function ChatPanel({
             />
 
             <div
+              data-testid="message-composer"
               className={cn(
                 "relative flex flex-col gap-1 rounded-3xl border bg-card px-3 py-2.5 shadow-sm transition-all duration-200 focus-within:border-foreground/30",
                 isDraggingFiles
@@ -2859,6 +2887,11 @@ export function ChatPanel({
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
+              onClick={(event) => {
+                if (!(event.target as HTMLElement).closest("button, input, textarea, select, a, [role='button']")) {
+                  inputRef.current?.focus();
+                }
+              }}
             >
               {maxEffortAnimationKey > 0 && (
                 <div

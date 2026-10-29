@@ -100,6 +100,8 @@ export interface MessageFeedback {
 }
 
 export interface ChatMessage {
+  /** Hydrated from canonical server metadata, never sent as client admission. */
+  appCompletion?: boolean;
   id: string;
   role: "user" | "assistant";
   content: string;

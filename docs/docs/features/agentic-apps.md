@@ -278,7 +278,64 @@ registered app from CAIPE. Do not register arbitrary or less-trusted websites.
 Use a separate-origin or sandbox/message-channel design before widening the
 publisher trust boundary.
 
+### External MCP clients
+
+- Declare `api.mcp` to expose an app-owned MCP authentication boundary:
+
+  ```json
+  {
+    "path": "/api/example/mcp",
+    "metadataPath": "/.well-known/oauth-protected-resource/api/example/mcp",
+    "apiKeyHeader": "x-example-token"
+  }
+  ```
+
+- Declare allowed POST protocol and GET metadata policies. Installed/enabled state, method policy, private origin binding, and body limits still apply.
+- The app validates external bearer/API credentials and enforces resource authorization. External MCP access is independent of the host's browser-session/UI-role policy; enable it only when the app owns that complete authorization boundary.
+- The gateway forwards external credentials only to the exact declared protocol path. It strips host cookies and identity headers, preserves OAuth challenges, and never substitutes a browser identity for an invalid external credential.
+- GET/HEAD requests to metadata and the protocol's `openapi.json` document bypass host-session authentication only when an applicable allow policy exists. Declare each desired method/path policy or a `proxy:GET`/`proxy:HEAD` fallback.
+- Manifest validation requires POST protocol and GET metadata policies; it does not automatically allow `openapi.json` or HEAD requests.
+- No credentials are forwarded to metadata or schema routes. Other runtime paths retain host-session admission.
+- The iframe resource URL is `/apps/<app-id>/api/example/mcp`; compiled native API mounts retain their declared public URL. The app's metadata must advertise that exact resource URL and a public authorization server.
+- Path-derived RFC 9728 discovery is available at `/.well-known/oauth-protected-resource` followed by the resource path. Disabled, unknown, or ambiguous resources fail closed.
+
+#### Preserve saved external MCP connections
+
+- The declared root `api.mcp.path` and its `openapi.json` schema remain available when an app moves to an iframe installation. CAIPE proxies these exact routes through the existing app gateway without redirecting clients or rewriting saved connections.
+- Root discovery remains available at `/.well-known/oauth-protected-resource` followed by `api.mcp.path`. A root MCP claim cannot overlap another app's MCP path or API mount.
+- For root protocol, metadata, and schema requests, CAIPE supplies `x-caipe-mcp-resource-path` with the declared root MCP path. Caller-supplied values are stripped. This selects a public resource URL; it does not authenticate a caller or supply host identity.
+- The app must recognize that fixed root selector, advertise the matching root `resource` and metadata URL, and validate tokens against that resource. Hosted requests continue using the hosted resource. Apps that ignore the selector may accept existing credentials but still fail OAuth rediscovery.
+- Retain the OAuth issuer, client registrations, refresh grants, and authorization-server resource registrations for both URLs. With resource indicators enabled, removing the old permitted resource can cause token issuance or refresh to fail even when routing works. Revoked grants still require sign-in.
+- For secondary OIDC, retain both public URL keys in the host's `CAIPE_SECONDARY_AUTH_RESOURCES` bindings. Restoring routing does not grant an undeclared resource access to a secondary trust anchor.
+- Deploy matching host and app changes before asking users to reconnect. Check an existing token, a refresh, and a fresh authorization against the saved root URL. No client configuration or CAIPE database migration is required.
+
+### Host keyboard shortcuts
+
+- A connected iframe can receive `hostShortcuts: ["search"]` in its bridge capabilities.
+- The SDK forwards Cmd+K/Ctrl+K as a search intent. It does not transmit typed text or arbitrary key events.
+- The host accepts the intent only from the active app frame with the expected origin, app ID, and bridge version. The existing search component owns result authorization.
+- Without the advertised capability, the SDK leaves the key event untouched. Already handled events, repeats, composition, and alternate modifiers are not forwarded.
+
 ## Current authorization scope
+
+### Hosted presentation context
+
+The iframe host sends `caipe.microfrontend.initialize.v1` messages on document
+load and live theme changes. The envelope has `version: "1.0"`, `appId`, and a
+`context` containing the host pathname, resolved light/dark theme, locale,
+timezone, `surface: "hosted"`, and an empty preferences object. This existing
+presentation-message version is independent of manifest API 2.0.
+
+A child can request initialization after hydration with
+`{ type: "caipe.microfrontend.ready.v1", version: "1.0", appId }`. Both sides
+must validate the exact origin, window source, app ID, and message version.
+The host replies at most once per document load to avoid acknowledgement
+loops. Children that do not implement this protocol keep their own styling.
+
+This channel carries no JWT, session cookie, credential, user identity, or
+permission grant. Authentication and authorization stay in the server-side
+gateway. Theme synchronization does not sandbox a same-origin iframe or make
+its code less privileged.
 
 New declarations use [AgenticAppManifest 2.0](./agentic-app-manifest.md), shared
 with native UI packages. Existing hosted v1.0 manifests are normalized through
@@ -440,3 +497,37 @@ server adapter, not authority granted by a manifest or a browser. The protected
 HTTP endpoint is the integration path for apps without database access. Migrate
 existing private-history markers before activating a host that enforces the new
 field; do not dual-write independent privacy state.
+
+## Query navigation in embedded apps
+
+- An app connects with `caipe.agenticApp.bridge.connect.v1` (`version: "1.0"`,
+  its `appId`). The host advertises `queryNavigation: true` in
+  `caipe.agenticApp.bridge.capabilities.v1`.
+- `caipe.agenticApp.navigate.v1` accepts a public `href` and optional
+  `history: "push" | "replace"`. Only query/hash changes on the current app's
+  exact path are allowed. Cross-app, API, and external routes are rejected.
+- The host validates iframe source, same origin, app ID, and version. This
+  capability works independently of assistant availability and grants no API access.
+- The host owns browser history and publishes `caipe.agenticApp.navigation.v1`
+  on navigation and Back/Forward. A connected frame keeps its original `src`;
+  it restores local state and replaces its runtime query without adding a second
+  history entry. Older apps retain their existing iframe behavior.
+- Only display state belongs in query parameters. Credentials, approvals, and
+  operations that change resources must never be restored from a URL.
+
+### Recovering a completed shared-chat turn
+
+An app's authenticated `statusPath` returns `{ running, turnId? }`. It may also
+return `completedTurn: { turnId, content, completedAt }` when that exact turn has
+successfully committed. The final content is limited to 12,000 characters;
+`completedAt` is an ISO timestamp. Never return intermediate output, SDK session
+IDs, grants or provider state. Recheck the caller's current resource and personal
+evidence access before returning a retained result.
+
+The shared composer sends its current `turn_id` to the existing status endpoint.
+The host accepts a completion only for that requested turn, the canonical agent,
+and the conversation owner. It fills the existing assistant history row, or
+creates its deterministic replacement only if the user turn still exists. A
+repeated poll cannot duplicate it; a delayed browser placeholder cannot overwrite
+it. Retrying creates a new turn; editing rewinds the old turn before starting a
+new one. Status recovery never invokes or resends a model/provider request.

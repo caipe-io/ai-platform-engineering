@@ -82,7 +82,7 @@ export const PUT = withErrorHandler(async (
       return successResponse(message);
     }
 
-    await messages.updateOne(filter, { $set: update });
+    await messages.updateOne({ ...filter, "metadata.app_completion": { $exists: false } }, { $set: update });
 
     const updated = await messages.findOne(filter);
 

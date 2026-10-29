@@ -17,8 +17,9 @@ export function useChatSessionRecovery(): void {
     if (status !== "authenticated" || !identity) return;
     const controller = new AbortController();
     const watches = new Map<string, { agentId: string; deadline: number; next: number;
-      running: boolean; savingSince?: number; turnId?: string; busy: boolean }>();
+      running: boolean; savingSince?: number; turnId?: string; completedTurnId?: string; observedTurnId?: string; busy: boolean }>();
     const unsupported = new Set<string>();
+    const expiredTurns = new Map<string, string | undefined>();
     async function check(id: string, watch: NonNullable<ReturnType<typeof watches.get>>) {
       const currentWatch = () => !controller.signal.aborted && watches.get(id) === watch &&
         useChatStore.getState().conversations.some(c => c.id === id);
@@ -34,12 +35,18 @@ export function useChatSessionRecovery(): void {
           watch.next = Date.now() + 2000;
           return;
         }
+        const currentMessages = state.conversations.find(c => c.id === id)?.messages ?? [];
+        const requestedTurnId = [...currentMessages].reverse().find(m => m.role === "user" && m.turnId)?.turnId ?? watch.turnId;
         const response = await fetch("/api/v1/chat/stream/status", {
           method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-          body: JSON.stringify({ conversation_id: id, agent_id: watch.agentId }),
+          body: JSON.stringify({ conversation_id: id, agent_id: watch.agentId, ...(requestedTurnId ? { turn_id: requestedTurnId } : {}) }),
           signal: request.signal,
         });
         if (!response.ok) {
+          if (response.status === 429 || response.status >= 500 && response.status !== 501) {
+            watch.next = Date.now() + 10_000;
+            return; // Retry observation only; never start or resend execution.
+          }
           // Unknown runtime and revoked access both stop this observer. Reads still enforce RBAC.
           unsupported.add(id);
           useChatStore.getState().setExternalActivity(id, null);
@@ -49,6 +56,13 @@ export function useChatSessionRecovery(): void {
         if (typeof data.running !== "boolean" || data.turnId !== undefined &&
             (typeof data.turnId !== "string" || data.turnId.length > 128)) throw new Error("Invalid app turn status");
         if (!currentWatch() || Date.now() > watch.deadline || useChatStore.getState().streamingConversations.has(id)) return;
+        if (data.completedTurn && data.completedTurn.turnId === requestedTurnId &&
+            watch.completedTurnId !== requestedTurnId) {
+          await useChatStore.getState().loadMessagesFromServer(id);
+          const answer = useChatStore.getState().conversations.find(c => c.id === id)?.messages
+            .find(m => m.role === "assistant" && m.turnId === requestedTurnId && m.appCompletion);
+          if (answer?.isFinal) watch.completedTurnId = requestedTurnId;
+        }
         if (data.running) {
           watch.running = true;
           watch.turnId = data.turnId;
@@ -88,14 +102,22 @@ export function useChatSessionRecovery(): void {
       const id = state.activeConversationId;
       const conversation = state.conversations.find(c => c.id === id);
       const agentId = conversation && getAgentId(conversation);
-      if (id && agentId && !unsupported.has(id) && !watches.has(id)) watches.set(id,
-        { agentId, deadline: Date.now() + MAX_WATCH_MS, next: 0, busy: false, running: false });
+      const latestTurnId = [...(conversation?.messages ?? [])].reverse().find(m => m.role === "user" && m.turnId)?.turnId;
+      if (id && agentId && !unsupported.has(id) && !watches.has(id) &&
+          (!expiredTurns.has(id) || expiredTurns.get(id) !== latestTurnId)) watches.set(id,
+        { agentId, deadline: Date.now() + MAX_WATCH_MS, next: 0, busy: false, running: false, observedTurnId: latestTurnId });
+      const activeWatch = id ? watches.get(id) : undefined;
+      if (activeWatch && activeWatch.observedTurnId !== latestTurnId) {
+        activeWatch.observedTurnId = latestTurnId;
+        activeWatch.deadline = Date.now() + MAX_WATCH_MS;
+        activeWatch.next = 0;
+      }
       for (const [key, watch] of watches) {
         if (!state.conversations.some(c => c.id === key)) {
           watches.delete(key);
           state.setExternalActivity(key, null);
         } else if (unsupported.has(key) || Date.now() > watch.deadline) {
-          unsupported.add(key);
+          if (!unsupported.has(key)) expiredTurns.set(key, watch.observedTurnId);
           watches.delete(key);
           state.setExternalActivity(key, null);
         } else if (!watch.busy && Date.now() >= watch.next && (key === id || watch.running || watch.savingSince)) {

@@ -1,10 +1,12 @@
 "use client";
 
 import { HomeWidgetFrame } from "@/components/home/HomeWidgetFrame";
+import { FavoriteAppsWidget, useHomeFavoriteApps } from "@/components/home/FavoriteAppsWidget";
 import { HOME_WIDGET_COMPONENTS } from "@/components/home/widget-registry";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { getHomeWidgetDefinition, useHomeWidgetsStore } from "@/store/home-widgets-store";
+import { getStorageMode } from "@/lib/storage-config";
 import {
   DndContext,
   KeyboardSensor,
@@ -21,12 +23,13 @@ import {
 } from "@dnd-kit/sortable";
 import { computeReorder } from "@/lib/reorder";
 import { SlidersHorizontal } from "lucide-react";
-import { useMemo } from "react";
 
 export function NewHomePage() {
   const widgets = useHomeWidgetsStore((s) => s.widgets);
   const addWidget = useHomeWidgetsStore((s) => s.addWidget);
   const reorderWidgets = useHomeWidgetsStore((s) => s.reorderWidgets);
+  const favoriteApps = useHomeFavoriteApps(getStorageMode() === "mongodb");
+  const visibleWidgets = widgets.filter((id) => id !== "favoriteApps" || favoriteApps.length > 0);
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -38,16 +41,8 @@ export function NewHomePage() {
     const next = computeReorder(widgets, String(active.id), String(over.id));
     if (next) reorderWidgets(next);
   };
-  // `availableToAdd()` computes a fresh array each call — only re-derive it
-  // when `widgets` actually changes, rather than calling it inline in the
-  // selector (a new array reference every render trips Zustand's
-  // getServerSnapshot infinite-loop guard).
-  // `widgets` isn't read inside the callback (it goes through getState()) but
-  // is the trigger for recomputing — calling availableToAdd() directly in a
-  // selector returns a fresh array every render and trips Zustand's
-  // getServerSnapshot loop guard.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const availableToAdd = useMemo(() => useHomeWidgetsStore.getState().availableToAdd(), [widgets]);
+  const availableToAdd = useHomeWidgetsStore.getState().availableToAdd()
+    .filter((widget) => widget.id !== "favoriteApps" || favoriteApps.length > 0);
 
   return (
     <div className="space-y-3 [@media(max-height:800px)]:space-y-2">
@@ -86,12 +81,19 @@ export function NewHomePage() {
       </div>
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={widgets} strategy={rectSortingStrategy}>
+        <SortableContext items={visibleWidgets} strategy={rectSortingStrategy}>
           <div
             className="grid grid-cols-1 gap-4 lg:grid-cols-2 [@media(max-height:800px)]:gap-3"
             data-testid="home-widget-grid"
           >
-            {widgets.map((widgetId) => {
+            {visibleWidgets.map((widgetId) => {
+              if (widgetId === "favoriteApps") {
+                return (
+                  <HomeWidgetFrame key={widgetId} widgetId={widgetId} fullWidth>
+                    <FavoriteAppsWidget apps={favoriteApps} />
+                  </HomeWidgetFrame>
+                );
+              }
               const Widget = HOME_WIDGET_COMPONENTS[widgetId];
               if (!Widget) return null;
               const definition = getHomeWidgetDefinition(widgetId);

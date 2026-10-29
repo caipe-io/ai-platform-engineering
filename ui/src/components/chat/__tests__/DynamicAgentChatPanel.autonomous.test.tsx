@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ChatMessage, Conversation } from "@/types/a2a";
 import { ChatPanel } from "../DynamicAgentChatPanel";
 
@@ -115,6 +115,14 @@ it("keeps normal streaming available in the independent manual chat", async () =
   expect(mockOpenChat).not.toHaveBeenCalled();
 });
 
+it("focuses the message field when the lower composer area is clicked", () => {
+  mockConversation = { ...mockConversation, source: "web", task_id: undefined, messages: [] };
+  render(<ChatPanel agentId="example-agent" conversationId="task-chat" />);
+  const input = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.click(screen.getByTestId("composer-model-effort"));
+  expect(input).toHaveFocus();
+});
+
 it("does not offer continuation in a conversation shared as read-only", () => {
   render(<ChatPanel agentId="example-agent" conversationId="task-chat" readOnly readOnlyReason="shared_readonly" />);
   expect(screen.queryByRole("button", { name: "Continue this run" })).toBeNull();
@@ -137,4 +145,23 @@ it("uses ordinary shared chat for an app stream without native runtime side requ
     expect(paths.filter(path => /dynamic-agents.*(?:files|interrupt|agents$|capabilities)/.test(path))).toEqual([]);
     expect(mockPush).not.toHaveBeenCalled();
   } finally { global.fetch = savedFetch; }
+});
+
+it("filters blank suggestions before limiting them, and fills the composer without sending", () => {
+  mockConversation = { ...mockConversation, source: "web", messages: [] };
+  render(<ChatPanel agentId="example-agent" conversationId="task-chat"
+    suggestedPrompts={["", "  ", ...Array.from({ length: 9 }, (_, i) => `Suggestion ${i}`)]} />);
+  const buttons = within(screen.getByRole("group", { name: "Suggested prompts" })).getAllByRole("button");
+  expect(buttons).toHaveLength(8);
+  expect(buttons.map(button => button.textContent)).toEqual(Array.from({ length: 8 }, (_, i) => `Suggestion ${i}`));
+  fireEvent.click(buttons[0]);
+  expect(screen.getByPlaceholderText(/Ask anything/)).toHaveValue("Suggestion 0");
+  expect(mockStreamMessage).not.toHaveBeenCalled();
+});
+
+it.each(["autonomous", "read-only", "blank"])("omits prompt controls for %s chat", kind => {
+  mockConversation = { ...mockConversation, source: kind === "autonomous" ? "autonomous" : "web", messages: [] };
+  render(<ChatPanel agentId="example-agent" conversationId="task-chat" readOnly={kind === "read-only"}
+    suggestedPrompts={kind === "blank" ? ["", "  "] : ["Suggested question"]} />);
+  expect(screen.queryByRole("group", { name: "Suggested prompts" })).toBeNull();
 });

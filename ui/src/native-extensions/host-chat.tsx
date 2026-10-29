@@ -4,8 +4,12 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 
 import type { NativeHostChat, NativeHostChatPanelProps, NativeHostConversationActionsProps } from "../../app-sdk";
+import { ASSISTANT_EXTENSIONS, validateAssistantConfiguration, type AssistantOptions } from "../../app-sdk/assistant-options.mjs";
+import { configureHostAssistant, HOST_ASSISTANT_EVENT, HOST_ASSISTANT_STATE_EVENT, requestHostAssistant } from "@/lib/agentic-apps/assistant-events";
 import { apiClient } from "@/lib/api-client";
 import { hasStoredAppConversationIdentity, matchesAppConversation } from "@/lib/agentic-apps/app-conversation-binding";
+import { getStorageMode } from "@/lib/storage-config";
+import { mergeAppConversation } from "@/lib/agentic-apps/assistant-conversations";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { getAgentId } from "@/types/a2a";
 import { useChatStore } from "@/store/chat-store";
@@ -14,7 +18,7 @@ const ChatPanel = lazy(() => import("@/components/chat/DynamicAgentChatPanel").t
 const ConversationActions = lazy(() => import("./HostConversationActions"));
 
 /** Resolve the installation and agent-use policy before restoring app chat UI. */
-export async function loadHostConversation(appId: string, agentId: string, conversationId: string) {
+export async function loadHostConversation(appId: string, agentId: string, conversationId: string, personalHistory = false) {
   const response = await fetch(`/api/agentic-apps/${encodeURIComponent(appId)}`, { cache: "no-store" });
   if (!response.ok) throw new Error("Assistant app is unavailable or access was denied");
   const { item } = await response.json();
@@ -28,17 +32,29 @@ export async function loadHostConversation(appId: string, agentId: string, conve
   if (!agent || agent.presentation?.app?.id !== appId || agent.presentation.available !== true) {
     throw new Error("Assistant is unavailable or access was denied");
   }
-  const saved = await apiClient.getConversation(conversationId);
-  if (saved._id !== conversationId || getAgentId(saved) !== agentId) throw new Error("Agent does not match this conversation");
   const appOwnedRuntime = !primary || item.assistantUsesAppRuntime === true;
+  if (appOwnedRuntime && getStorageMode() !== "mongodb") throw new Error("App-owned chat requires canonical server history");
+  const saved = getStorageMode() === "mongodb"
+    ? await apiClient.getConversation(conversationId) : loadLocalConversation(conversationId);
+  if (saved._id !== conversationId || getAgentId(saved) !== agentId) throw new Error("Agent does not match this conversation");
+  if (saved.metadata?.agentic_app_id && saved.metadata.agentic_app_id !== appId) throw new Error("Conversation belongs to another app");
+  if (personalHistory && saved.access_level !== "owner") throw new Error("Personal history requires its owner");
   if ((appOwnedRuntime || hasStoredAppConversationIdentity(saved)) && !matchesAppConversation(saved, appId, agentId)) {
     throw new Error("Conversation app binding is unavailable");
   }
   return { saved, agent, appOwnedRuntime };
 }
 
+function loadLocalConversation(id: string) {
+  const local = useChatStore.getState().conversations.find(item => item.id === id);
+  if (!local) throw new Error("Conversation not found in local history");
+  return { _id: local.id, title: local.title, participants: local.participants,
+    created_at: local.createdAt, updated_at: local.updatedAt, metadata: local.metadata,
+    owner_id: local.owner_id, access_level: local.accessLevel ?? "owner", sharing: local.sharing };
+}
+
 /** A native package receives a renderer, never a second copy of the host store. */
-export function createHostChatCapability(appId: string): NativeHostChat {
+export function createHostChatCapability(appId: string, assistantAvailable = false, options?: AssistantOptions): NativeHostChat {
   function Panel(props: NativeHostChatPanelProps) {
     const { data: session } = useSession();
     const [loaded, setLoaded] = useState<{
@@ -54,12 +70,7 @@ export function createHostChatCapability(appId: string): NativeHostChat {
       async function open() {
         const { saved, agent, appOwnedRuntime } = await loadHostConversation(appId, props.agentId, props.conversationId);
         if (cancelled) return;
-        useChatStore.setState((state) => ({ conversations: state.conversations.some(c => c.id === saved._id)
-          ? state.conversations.map(c => c.id === saved._id ? { ...c, metadata: saved.metadata,
-            participants: saved.participants, owner_id: saved.owner_id, accessLevel: saved.access_level } : c)
-          : [...state.conversations, { id: saved._id, title: saved.title,
-            participants: saved.participants, createdAt: new Date(saved.created_at), updatedAt: new Date(saved.updated_at),
-            metadata: saved.metadata, owner_id: saved.owner_id, accessLevel: saved.access_level, sharing: saved.sharing, messages: [], streamEvents: [] }] }));
+        useChatStore.setState(state => ({ conversations: mergeAppConversation(state.conversations, saved) }));
         activated = true;
         useChatStore.getState().setActiveConversation(saved._id);
         await useChatStore.getState().loadMessagesFromServer(saved._id);
@@ -88,7 +99,24 @@ export function createHostChatCapability(appId: string): NativeHostChat {
   function Actions(props: NativeHostConversationActionsProps) {
     return <Suspense fallback={null}><ConversationActions key={`${props.conversationId}:${props.agentId}`} {...props} appId={appId} /></Suspense>;
   }
-  return { Panel, ConversationActions: Actions };
+  return { Panel, ConversationActions: Actions, ...(assistantAvailable ? { assistant: {
+    extensions: ASSISTANT_EXTENSIONS,
+    configure: configuration => {
+      validateAssistantConfiguration(configuration, options);
+      configureHostAssistant(appId, structuredClone(configuration));
+    },
+    close: () => window.dispatchEvent(new CustomEvent(HOST_ASSISTANT_EVENT, { detail: { appId, close: true } })),
+    subscribe: onOpenChange => {
+      const listener = (event: Event) => {
+        const detail = (event as CustomEvent).detail;
+        if (detail?.appId === appId && typeof detail.open === "boolean") onOpenChange(detail.open);
+      };
+      window.addEventListener(HOST_ASSISTANT_STATE_EVENT, listener);
+      return () => window.removeEventListener(HOST_ASSISTANT_STATE_EVENT, listener);
+    },
+    open: context => requestHostAssistant(appId, context),
+    setContext: context => requestHostAssistant(appId, context, false),
+  } } : {}) };
 }
 
 /** Additional installed agent streams use ordinary Chat without mounting app UI. */

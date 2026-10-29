@@ -10,6 +10,12 @@ jest.mock("@/components/ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   ResizableHandle: () => null,
 }));
+jest.mock("@/components/agentic-apps/AssistantComposerOptions", () => ({
+  useAppAssistantPresentation: () => ({ app: { appId: "example-app", assistantLabel: "Example assistant",
+    assistantOptions: { presentation: { placeholder: "Ask example", showAuditNotice: false } } } }),
+  useAssistantComposerOptions: () => ({ requestOptions: { personal_research: false },
+    composerHeader: <label><input type="checkbox" />Personal research</label> }),
+}));
 const agent = { _id: "example-agent", name: "Example", enabled: true,
   presentation: { app: { id: "example-app", name: "Example App", ownsRuntime: true }, available: true },
 } as DynamicAgentConfig;
@@ -18,7 +24,10 @@ it("renders a registered app in ordinary chat without native runtime controls", 
   render(<ChatView conversationId="example-chat" selectedAgentId="example-agent" agent={agent} />);
   expect(screen.getByText("Shared chat")).toBeInTheDocument();
   expect(screen.queryByText("Native context")).toBeNull();
-  expect(mockPanel).toHaveBeenCalledWith(expect.objectContaining({ appOwnedRuntime: true, conversationId: "example-chat" }));
+  expect(mockPanel).toHaveBeenCalledWith(expect.objectContaining({ appOwnedRuntime: true, conversationId: "example-chat",
+    requestOptions: { personal_research: false }, composerHeader: expect.anything(),
+    placeholder: "Ask example", emptyStateTitle: "Example assistant", showAuditNotice: false,
+  }));
 });
 it("keeps native controls for a Managed overlay with no app stream", () => {
   render(<ChatView conversationId="example-chat" selectedAgentId="example-agent" agent={{ ...agent,

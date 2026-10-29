@@ -202,6 +202,13 @@ config:
   BUILTIN_SKILL_IDS: "none"
   # NextAuth URL (non-sensitive)
   NEXTAUTH_URL: "http://localhost:3000"
+  # Optional host-owned secondary auth; every resource requires an audience binding.
+  CAIPE_SECONDARY_OIDC_JWKS_URI: ""
+  CAIPE_SECONDARY_OIDC_ISSUER: ""
+  CAIPE_SECONDARY_OIDC_AUDIENCES: ""
+  CAIPE_SECONDARY_OIDC_PROVIDER_ID: ""
+  CAIPE_SECONDARY_OIDC_REQUIRE_VERIFIED_EMAIL: ""
+  CAIPE_SECONDARY_AUTH_RESOURCES: ""
   # Node environment
   NODE_ENV: "production"
   # Production-safety gate for the BFF admin-token fallback path.
@@ -319,6 +326,8 @@ config:
   KEYCLOAK_RESOURCE_SERVER_ID: "caipe-platform"
   # Internal OIDC discovery URL for server-side token validation
   OIDC_DISCOVERY_URL: ""
+  # Optional refresh endpoint override; blank uses Keycloak realm routing or provider discovery.
+  OIDC_TOKEN_ENDPOINT: ""
   OIDC_CLIENT_ID: "caipe-ui"
   # Slack bot admin token URL (in-cluster Keycloak token endpoint)
   SLACK_BOT_ADMIN_TOKEN_URL: ""

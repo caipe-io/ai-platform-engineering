@@ -93,6 +93,7 @@ helm show values oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.1.0
 | config.NODE_ENV | string | `"production"` |  |
 | config.OIDC_CLIENT_ID | string | `"caipe-ui"` |  |
 | config.OIDC_DISCOVERY_URL | string | `""` |  |
+| config.OIDC_TOKEN_ENDPOINT | string | `""` |  |
 | config.OIDC_ENABLE_REFRESH_TOKEN | string | `"true"` |  |
 | config.OIDC_REQUIRED_ADMIN_GROUP | string | `""` |  |
 | config.OIDC_REQUIRED_GROUP | string | `""` |  |

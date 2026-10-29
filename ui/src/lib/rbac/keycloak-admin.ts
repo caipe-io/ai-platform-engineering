@@ -2056,3 +2056,46 @@ export function getServiceAccountTokenUrl(): string {
   // Single-URL deployments: KEYCLOAK_URL is already host-reachable.
   return getRealmTokenEndpoint();
 }
+
+/** Return every Keycloak user id with the exact custom-attribute value. */
+export async function findRealmUserIdsByAttribute(
+  attributeName: string,
+  attributeValue: string
+): Promise<string[]> {
+  const trimmed = attributeValue.trim();
+  if (!trimmed) return [];
+
+  const q = `${attributeName}:${trimmed}`;
+  const response = await adminFetch(
+    `/users?q=${encodeURIComponent(q)}&max=100`,
+    { method: "GET" }
+  );
+  await assertOk(response, `findRealmUserIdsByAttribute(${attributeName})`);
+  const users = await parseJsonArray<Record<string, unknown>>(response);
+  const ids: string[] = [];
+
+  for (const user of users) {
+    const value = readAttributeValue(user.attributes, attributeName);
+    if (value !== trimmed) continue;
+    const id = user.id;
+    if (id !== undefined && id !== null) {
+      ids.push(String(id));
+    }
+  }
+  return ids;
+}
+
+/** Fail closed before trusting immutable identity attributes as an auth boundary. */
+export async function assertAdminOnlyUserAttributes(names: readonly string[]): Promise<void> {
+  const response = await adminFetch("/users/profile", { method: "GET" });
+  await assertOk(response, "assertAdminOnlyUserAttributes");
+  const profile = await response.json() as { attributes?: Array<{ name?: string; permissions?: { view?: string[]; edit?: string[] } }> };
+  for (const name of names) {
+    const matches = profile.attributes?.filter(attribute => attribute.name === name) || [];
+    const permissions = matches[0]?.permissions;
+    if (matches.length !== 1 || permissions?.edit?.length !== 1 || permissions.edit[0] !== "admin" ||
+        permissions.view?.length !== 1 || permissions.view[0] !== "admin") {
+      throw new Error("Secondary identity attributes require the admin-only profile migration");
+    }
+  }
+}

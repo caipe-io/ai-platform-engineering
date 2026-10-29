@@ -11,8 +11,9 @@ import {
   isAgenticAppsEnabled,
 } from "@/lib/agentic-apps/config";
 import { deriveAgenticAppSubjectId } from "@/lib/agentic-apps/identity";
+import { externalMcpRoute } from "@/lib/agentic-apps/mcp-routing";
 import { resolveAgenticAppHttpPolicyAction } from "@/lib/agentic-apps/policy-routing";
-import { isHostControlledAgenticAppRequestHeader } from "@/lib/agentic-apps/request-headers";
+import { isHostControlledAgenticAppRequestHeader, RUNTIME_NEXT_URL_HEADER } from "@/lib/agentic-apps/request-headers";
 import {
   buildAgenticAppPublicPath,
   buildAgenticAppTargetUrl,
@@ -46,6 +47,8 @@ const BLOCKED_RESPONSE_HEADERS = new Set([
 
 export type ProxyContext = {
   params: Promise<{ appId: string; path?: string[] }>;
+  /** Selected by the host's root MCP routes, never by a caller header. */
+  legacyMcpResource?: boolean;
 };
 
 export async function proxyAgenticAppRequest(
@@ -59,22 +62,6 @@ export async function proxyAgenticAppRequest(
     return Response.json({ error: "app_not_found" }, { status: 404 });
   }
 
-  const nextRequest = request instanceof NextRequest
-    ? request
-    : new NextRequest(request.url, { headers: request.headers });
-  let auth: Awaited<ReturnType<typeof getAuthenticatedUser>>;
-  try {
-    auth = authenticatedUser ?? await getAuthenticatedUser(nextRequest, { allowAnonymous: false });
-  } catch (error) {
-    if (error instanceof ApiError) {
-      if (error.statusCode === 401 && isDocumentNavigation(request)) {
-        return redirectToLogin(request);
-      }
-      return Response.json({ error: error.message }, { status: error.statusCode });
-    }
-    throw error;
-  }
-
   const { appId, path = [] } = await context.params;
   let app: ReturnType<typeof getConfiguredAgenticApp>;
   try { app = getConfiguredAgenticApp(appId); }
@@ -86,6 +73,33 @@ export async function proxyAgenticAppRequest(
   if (nativeExtension && nativeExtension.auth.mode !== app.manifest.auth.mode) {
     return Response.json({ error: "native_extension_auth_mismatch" }, { status: 500 });
   }
+  const mcpRoute = externalMcpRoute(app.manifest, request.method, `/${path.join("/")}`);
+  const explicitMcpCredential = request.headers.has("authorization") ||
+    Boolean(app.manifest.api.mcp?.apiKeyHeader && request.headers.has(app.manifest.api.mcp.apiKeyHeader));
+  if (!authenticatedUser && mcpRoute &&
+      (mcpRoute !== "protocol" || explicitMcpCredential || !request.headers.has("cookie"))) {
+    return proxyExternalMcpRequest(request, app, path, mcpRoute === "protocol", context.legacyMcpResource);
+  }
+
+  const nextRequest = request instanceof NextRequest
+    ? request
+    : new NextRequest(request.url, { headers: request.headers });
+  let auth: Awaited<ReturnType<typeof getAuthenticatedUser>>;
+  try {
+    auth = authenticatedUser ?? await getAuthenticatedUser(nextRequest, { allowAnonymous: false });
+  } catch (error) {
+    if (error instanceof ApiError) {
+      if (error.statusCode === 401 && mcpRoute) {
+        return proxyExternalMcpRequest(request, app, path, mcpRoute === "protocol", context.legacyMcpResource);
+      }
+      if (error.statusCode === 401 && isDocumentNavigation(request)) {
+        return redirectToLogin(request);
+      }
+      return Response.json({ error: error.message }, { status: error.statusCode });
+    }
+    throw error;
+  }
+
   const session = auth.session as Record<string, unknown>;
   if (
     !canLaunchAgenticApp(
@@ -193,6 +207,9 @@ export async function proxyAgenticAppRequest(
       return Response.json({ error: "browser_context_unavailable" }, { status: 503 });
     }
   }
+  if (mcpRoute && context.legacyMcpResource && app.manifest.api.mcp) {
+    forwardHeaders.set("x-caipe-mcp-resource-path", app.manifest.api.mcp.path);
+  }
   if (assistantClientContext) {
     try {
       const proof = await mintAgenticAppToken({
@@ -240,6 +257,80 @@ export async function proxyAgenticAppRequest(
   });
 }
 
+/** The declared MCP server owns credential validation and domain authorization. */
+async function proxyExternalMcpRequest(
+  request: Request,
+  app: NonNullable<ReturnType<typeof getConfiguredAgenticApp>>,
+  path: string[],
+  forwardCredentials: boolean,
+  legacyMcpResource = false,
+): Promise<Response> {
+  const policy = resolveAgenticAppHttpPolicyAction(app.manifest, request.method, `/${path.join("/")}`);
+  if (!policy || policy.defaultEffect !== "allow") return Response.json({ error: "policy_denied" }, { status: 403 });
+  if (!resolveAgenticAppOrigin(app)) return Response.json({ error: "app_runtime_unavailable" }, { status: 503 });
+  const limit = app.manifest.runtime?.maxRequestBodyBytes ?? DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES;
+  const length = parseContentLength(request.headers.get("content-length"));
+  if (length !== null && length > limit) return requestBodyTooLarge(limit);
+  const body = shouldForwardBody(request.method) ? await readBodyWithLimit(request, limit) : undefined;
+  if (body === null) return requestBodyTooLarge(limit);
+  const headers = new Headers();
+  const names = ["accept", "content-type", "origin", "mcp-protocol-version", "mcp-session-id", "last-event-id"];
+  if (forwardCredentials) names.push("authorization", ...(app.manifest.api.mcp?.apiKeyHeader ? [app.manifest.api.mcp.apiKeyHeader] : []));
+  for (const name of names) {
+    const value = request.headers.get(name);
+    if (value !== null) headers.set(name, value);
+  }
+  // Preserve the OAuth resource identity when a saved client uses the root URL.
+  // This is a fixed resource selector, not an assertion of caller identity.
+  if (legacyMcpResource && app.manifest.api.mcp) {
+    headers.set("x-caipe-mcp-resource-path", app.manifest.api.mcp.path);
+  }
+  // No cookies, gateway identity assertions, or shared app token are supplied.
+  // An invalid external bearer must never fall back to a browser's identity.
+  const target = buildAgenticAppTargetUrl(app, path, request.url);
+  let upstream: Response;
+  try {
+    upstream = await fetch(target, { method: request.method, headers, ...(body ? { body } : {}),
+      redirect: "manual", signal: request.signal });
+  } catch { return Response.json({ error: "upstream_unavailable" }, { status: 502 }); }
+  const responseHeaders = filterResponseHeaders(upstream.headers);
+  // Do not follow an app redirect with the client's credential or expose an internal address.
+  const location = rewriteAgenticAppResponseLocation(app, app.installation.appId, target, upstream.headers.get("location"));
+  if (location) responseHeaders.set("location", location);
+  responseHeaders.set("cache-control", "no-store");
+  return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
+}
+
+async function readBodyWithLimit(request: Request, limit: number): Promise<ArrayBuffer | null> {
+  if (!request.body) return new ArrayBuffer(0);
+  const reader = request.body.getReader();
+  let body = new Uint8Array(0);
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value.byteLength > limit - total) {
+        await reader.cancel();
+        return null;
+      }
+      const nextTotal = total + value.byteLength;
+      if (nextTotal > body.byteLength) {
+        // Storage grows with payload bytes, independently of transport chunk count.
+        const capacity = Math.min(limit, Math.max(nextTotal, body.byteLength * 2, 1024));
+        const nextBody = new Uint8Array(capacity);
+        nextBody.set(body.subarray(0, total));
+        body = nextBody;
+      }
+      body.set(value, total);
+      total = nextTotal;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return total === body.byteLength ? body.buffer : body.buffer.slice(0, total);
+}
+
 function buildForwardHeaders(input: {
   request: Request;
   appId: string;
@@ -265,6 +356,11 @@ function buildForwardHeaders(input: {
       headers.set(key, value);
     }
   });
+  // Next removes Next-Url when resolving the host's non-intercepting API
+  // route. Restore the child's original value so its _rsc hash still matches.
+  // The transport header itself is excluded by the host-controlled filter.
+  const nextUrl = input.request.headers.get(RUNTIME_NEXT_URL_HEADER);
+  if (nextUrl !== null) headers.set("next-url", nextUrl);
   headers.set("authorization", `Bearer ${input.bearerToken}`);
   headers.set("x-caipe-app-id", input.appId);
   headers.set("x-caipe-auth-mode", input.authMode);

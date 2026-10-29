@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { config,getLogoFilterClass } from "@/lib/config";
 import { motion } from "framer-motion";
 import { ArrowRight,CheckCircle2,Loader2,LogOut } from "lucide-react";
-import { signOut,useSession } from "next-auth/react";
+import { useSession } from "next-auth/react";
+import { signOutWithFeedback } from "@/lib/sign-out";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect,useState } from "react";
@@ -15,21 +16,22 @@ export default function LogoutPage() {
   const router = useRouter();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [isLoggedOut, setIsLoggedOut] = useState(false);
+  const [attempted, setAttempted] = useState(false);
 
   // Auto logout if user is authenticated
   useEffect(() => {
-    if (status === "authenticated" && !isLoggingOut && !isLoggedOut) {
+    if (status === "authenticated" && !attempted && !isLoggingOut && !isLoggedOut) {
       handleLogout();
     } else if (status === "unauthenticated") {
       setIsLoggedOut(true);
     }
-  }, [status, isLoggingOut, isLoggedOut]);
+  }, [status, attempted, isLoggingOut, isLoggedOut]);
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
+    setAttempted(true);
     try {
-      await signOut({ redirect: false });
-      setIsLoggedOut(true);
+      setIsLoggedOut(await signOutWithFeedback({ redirect: false }));
     } catch (err) {
       console.error("Logout error:", err);
     } finally {

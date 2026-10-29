@@ -1,5 +1,6 @@
 /** @jest-environment node */
 import { createHash, createHmac } from "node:crypto";
+import { persistAssistantCompletion } from "../assistant-status";
 import { proxyAgenticAppAssistantStream } from "../assistant-stream";
 import { getAgenticAppRoutingSnapshot } from "../config";
 import { proxyAgenticAppRequest } from "../proxy";
@@ -7,6 +8,7 @@ import type { AuthResult } from "@/lib/da-proxy";
 import type { Conversation } from "@/types/mongodb";
 import type { ConfiguredAgenticApp } from "@/types/agentic-app";
 
+jest.mock("../assistant-status", () => ({ ...jest.requireActual("../assistant-status"), persistAssistantCompletion: jest.fn() }));
 jest.mock("../config", () => ({ ...jest.requireActual("../config"), getAgenticAppRoutingSnapshot: jest.fn() }));
 jest.mock("../proxy", () => ({ proxyAgenticAppRequest: jest.fn() }));
 const secret = "example-key-".repeat(4);
@@ -68,6 +70,22 @@ describe("additional registered agents", () => {
     app.installation.bindings = { agentStreams: [{ id: "secondary", agentId: "example-agent", streamPath: "/api/example/secondary/start",
       cancelPath: "/api/example/secondary/cancel", statusPath: "/api/example/secondary/status" }] };
   });
+  it.each([true, false])("reconciles only an exact requested completion turn, match=%s", async matches => {
+    const persistence = jest.mocked(persistAssistantCompletion).mockResolvedValue(true);
+    const completedTurn = { turnId: "accepted-turn", content: "Accepted final", completedAt: "2026-01-01T00:00:00Z" };
+    jest.mocked(proxyAgenticAppRequest).mockResolvedValue(Response.json({ running: false, completedTurn }));
+    const response = await proxyAgenticAppAssistantStream(request(), browser, chat,
+      { ...JSON.parse(body), turn_id: matches ? "accepted-turn" : "other-turn" }, "status");
+    const value = await response!.json();
+    if (matches) {
+      expect(persistence).toHaveBeenCalledWith(expect.objectContaining({ conversationId: chat._id,
+        agentId: "example-agent", subject: browser.subject, turn: completedTurn }));
+      expect(value.completedTurn).toEqual(completedTurn);
+    } else {
+      expect(persistence).not.toHaveBeenCalled(); expect(value).not.toHaveProperty("completedTurn");
+    }
+
+  });
   it("dispatches an enabled registered agent with the exact caller and publisher route", async () => {
     const response = await proxyAgenticAppAssistantStream(request(), browser, chat, JSON.parse(body), "start");
     expect(response!.status).toBe(200);
@@ -92,7 +110,7 @@ describe("additional registered agents", () => {
   });
   it.each(["cancel", "status"] as const)("permits %s for an existing run after disabling its agent", async (operation) => {
     mockFindAgent.mockResolvedValue(null);
-    jest.mocked(proxyAgenticAppRequest).mockResolvedValue(Response.json({ success: true }));
+    jest.mocked(proxyAgenticAppRequest).mockResolvedValue(Response.json(operation === "status" ? { running: false } : { success: true }));
     const response = await proxyAgenticAppAssistantStream(request(), browser, chat, JSON.parse(body), operation);
     expect(response!.status).toBe(200);
     expect(response!.headers.get("cache-control")).toBe("private, no-store");

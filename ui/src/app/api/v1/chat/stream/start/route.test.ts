@@ -156,7 +156,7 @@ it.each(operations)("preserves the resolved caller for app %s without another ru
   mockGetApp.mockReturnValue(configured);
   const body = { message: "Hello", conversation_id: "example-conversation", agent_id: "example-agent", resume_data: {} };
   const contentType = operation === "start" || operation === "resume" ? "text/event-stream" : "application/json";
-  const upstream = jest.spyOn(global, "fetch").mockResolvedValue(new Response("{}", { headers: { "content-type": contentType } }));
+  const upstream = jest.spyOn(global, "fetch").mockResolvedValue(new Response(operation === "status" ? JSON.stringify({ running: false }) : "{}", { headers: { "content-type": contentType } }));
   const response = await handler(new NextRequest(`https://host.example.test/api/v1/chat/stream/${operation}`, {
     method: "POST", headers: { "Content-Type": "application/json", cookie: "secondary-session=example", "x-caipe-user": "untrusted-user" },
     body: JSON.stringify(body),

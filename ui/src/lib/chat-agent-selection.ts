@@ -12,6 +12,8 @@ export interface ResolvedChatAgent {
   id: string;
   name: string;
   source: "configured" | "user-default" | "platform-default" | "first-available";
+  /** Viewer-authorized metadata already returned by the available-agent lookup. */
+  config?: DynamicAgentConfig;
 }
 
 export interface ResolveUsableChatAgentOptions {
@@ -46,7 +48,7 @@ export async function fetchChatDefaultAgentIds(signal?: AbortSignal): Promise<Ch
       web_default_agent_id?: unknown;
       platform_default_agent_id?: unknown;
     }>
-  >("/api/user/preferences", signal);
+  >("/api/user/preferences?include_webex=false", signal);
   const data = payload.success ? payload.data : null;
   return {
     userDefaultAgentId: normalizedAgentId(data?.web_default_agent_id),
@@ -114,6 +116,7 @@ export async function resolveUsableChatAgent(
         id: configuredAgent._id,
         name: configuredAgent.name,
         source: "configured",
+        config: configuredAgent,
       };
     }
     throw new Error(
@@ -131,6 +134,7 @@ export async function resolveUsableChatAgent(
         id: userAgent._id,
         name: userAgent.name,
         source: "user-default",
+        config: userAgent,
       };
     }
   }
@@ -142,6 +146,7 @@ export async function resolveUsableChatAgent(
         id: defaultAgent._id,
         name: defaultAgent.name,
         source: "platform-default",
+        config: defaultAgent,
       };
     }
 
@@ -160,6 +165,7 @@ export async function resolveUsableChatAgent(
       id: fallbackAgent._id,
       name: fallbackAgent.name,
       source: "first-available",
+      config: fallbackAgent,
     };
   }
 

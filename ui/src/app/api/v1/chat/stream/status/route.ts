@@ -1,4 +1,4 @@
-/** Read-only app turn status; same caller and conversation boundary as start. */
+/** App status and accepted-result reconciliation; same caller/conversation gate as start. */
 import { NextRequest, NextResponse } from "next/server";
 
 import { dispatchChatStream } from "../../_stream-gateway";

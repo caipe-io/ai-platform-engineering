@@ -4,6 +4,9 @@
 
 import {
   applyColorTheme,
+  getDefaultAppearancePreferences,
+  applyInterfaceShadows,
+  normalizeServerAppearancePreferences,
   markAppearanceInteraction,
   mergeUnchangedServerAppearance,
   readCachedAppearancePreferences,
@@ -16,6 +19,9 @@ const CURRENT: AppearancePreferences = {
   fontSize: "large",
   gradientTheme: "default",
   theme: "dark",
+  shadowsEnabled: true,
+  assistantGlassEnabled: true,
+  assistantFontScale: "auto",
 };
 
 describe("appearance preference hydration",() => {
@@ -23,6 +29,10 @@ describe("appearance preference hydration",() => {
     localStorage.clear();
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.style.removeProperty("color-scheme");
+  });
+
+  it("defaults to glass on and shadows off", () => {
+    expect(getDefaultAppearancePreferences()).toMatchObject({ assistantGlassEnabled: false, shadowsEnabled: false, assistantFontScale: "auto" });
   });
 
   it("applies explicit themes to the root and clears stale native color schemes",() => {
@@ -65,6 +75,23 @@ describe("appearance preference hydration",() => {
       fontSize: "large",
       gradientTheme: "ocean",
       theme: "light",
+      shadowsEnabled: true,
+  assistantGlassEnabled: true,
+  assistantFontScale: "auto",
     });
+  });
+
+  it("persists an explicit shadow opt-out and hydrates false from the account", () => {
+    applyInterfaceShadows(false);
+    expect(document.documentElement).toHaveAttribute("data-interface-shadows", "off");
+    expect(readCachedAppearancePreferences()).toMatchObject({ shadowsEnabled: false });
+    expect(mergeUnchangedServerAppearance(CURRENT, normalizeServerAppearancePreferences({ shadows_enabled: false }), snapshotAppearanceInteractions())).toMatchObject({ shadowsEnabled: false });
+    expect(normalizeServerAppearancePreferences({ shadows_enabled: "false" })).not.toHaveProperty("shadowsEnabled");
+  });
+
+  it("does not overwrite a shadow toggle made while account preferences are loading", () => {
+    const snapshot = snapshotAppearanceInteractions();
+    markAppearanceInteraction("shadowsEnabled");
+    expect(mergeUnchangedServerAppearance({ ...CURRENT, shadowsEnabled: false }, { shadowsEnabled: true }, snapshot)).toMatchObject({ shadowsEnabled: false });
   });
 });

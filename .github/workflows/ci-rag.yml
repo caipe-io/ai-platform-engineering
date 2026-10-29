@@ -10,6 +10,7 @@ on:
   pull_request:
     paths:
       - 'ai_platform_engineering/knowledge_bases/rag/**'
+      - 'ai_platform_engineering/llm_wrapper/**'
   workflow_dispatch:
     inputs:
       tag_version:
@@ -77,6 +78,7 @@ jobs:
             agent-ontology:
               - 'ai_platform_engineering/knowledge_bases/rag/agent_ontology/**'
               - 'ai_platform_engineering/knowledge_bases/rag/build/Dockerfile.agent-ontology'
+              - 'ai_platform_engineering/llm_wrapper/**'
             server:
               - 'ai_platform_engineering/knowledge_bases/rag/server/**'
               - 'ai_platform_engineering/knowledge_bases/rag/build/Dockerfile.server'
@@ -192,6 +194,7 @@ jobs:
       # For slim variant, append -slim to image name suffix in tags (not the image name itself)
       IMAGE_NAME: ${{ github.repository_owner }}/caipe-rag-${{ matrix.component }}
       DOCKERFILE: ai_platform_engineering/knowledge_bases/rag/build/Dockerfile.${{ matrix.component }}
+      BUILD_CTX: ${{ matrix.component == 'agent-ontology' && '.' || 'ai_platform_engineering/knowledge_bases/rag' }}
 
     steps:
       - name: 🔒 harden runner
@@ -266,7 +269,7 @@ jobs:
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
-          context: ai_platform_engineering/knowledge_bases/rag
+          context: ${{ env.BUILD_CTX }}
           file: ${{ env.DOCKERFILE }}
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}

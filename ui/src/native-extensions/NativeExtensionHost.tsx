@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { isSupportedNativeContractVersion } from "../../app-sdk/contract-version.mjs";
 
@@ -22,8 +23,9 @@ export function NativeExtensionHost({
   extensionId: string;
   slot?: boolean;
 }): React.ReactElement {
-  const chat = useMemo(() => createHostChatCapability(extensionId), [extensionId]);
   const router = useRouter();
+  const { data: session, status } = useSession();
+  const identity = JSON.stringify([status, session?.sub, session?.user?.email, session?.org, session?.role]);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const search = searchParams.toString();
@@ -34,6 +36,8 @@ export function NativeExtensionHost({
       ),
     [extensionId],
   );
+  const chat = useMemo(() => createHostChatCapability(extensionId,
+    !slot && Boolean(extension?.manifest.assistant && extension.manifest.assistant.overlay !== "app"), extension?.manifest.assistant?.hostOptions), [extensionId, extension, slot]);
   const [breadcrumbs, setBreadcrumbs] = useState<
     NativeExtensionBreadcrumb[]
   >(() =>
@@ -78,7 +82,15 @@ export function NativeExtensionHost({
       {!slot && <HeaderBreadcrumbPortal>
         <WorkspaceBreadcrumbs breadcrumbs={breadcrumbs} portal={false} />
       </HeaderBreadcrumbPortal>}
-      <Component
+      {!slot && extension.manifest.assistant && extension.manifest.assistant.overlay !== "app" && (
+        <NativeExtensionAssistant
+          assistant={extension.manifest.assistant}
+          extensionId={extensionId}
+          pathname={pathname}
+          search={search}
+        />
+      )}
+      <Component key={identity}
         apiBasePath={extension.manifest.api.basePath}
         pathname={pathname}
         search={search}
@@ -87,13 +99,6 @@ export function NativeExtensionHost({
         setBreadcrumbs={setBreadcrumbs}
         chat={chat}
       />
-      {!slot && extension.manifest.assistant && extension.manifest.assistant.overlay !== "app" && (
-        <NativeExtensionAssistant
-          assistant={extension.manifest.assistant}
-          extensionId={extensionId}
-          pathname={pathname}
-        />
-      )}
       {children}
     </div>
   );

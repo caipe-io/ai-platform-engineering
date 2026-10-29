@@ -36,6 +36,11 @@ export function NavigationProgressLink({
     beginNavigationProgress(href);
   };
 
+  // Embedded app mounts share their path with a proxied runtime. A document
+  // request selects the host shell; an RSC prefetch would select the iframe.
+  if (href.startsWith("/apps/")) {
+    return <a href={href} onClick={handleClick} {...props}>{children}</a>;
+  }
   return (
     <Link href={href} onClick={handleClick} prefetch={prefetch} {...props}>
       {children}

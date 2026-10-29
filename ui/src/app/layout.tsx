@@ -10,6 +10,7 @@ import { IBM_Plex_Sans,Inter,JetBrains_Mono,Source_Sans_3 } from "next/font/goog
 import { headers } from "next/headers";
 import Script from "next/script";
 import "./globals.css";
+import { INTERFACE_SHADOWS_CSS } from "../../app-sdk/iframe-bridge.mjs";
 
 // Primary font: Inter - Used by OpenAI, clean and highly readable
 const inter = Inter({
@@ -88,11 +89,12 @@ export default async function RootLayout({
   // Only client-safe values are included (no secrets).
   const configScript = getClientConfigScript();
   const initialTheme = JSON.stringify(cfg.defaultTheme).replace(/</g,"\\u003c");
-  const themeScript = `(function(){try{var preference=localStorage.getItem("theme")||${initialTheme};var theme=preference;if(theme==="system"){theme=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}document.documentElement.setAttribute("data-theme-preference",preference);document.documentElement.setAttribute("data-theme",theme);document.documentElement.style.removeProperty("color-scheme");}catch(_error){}})();`;
+  const themeScript = `(function(){try{var preference=localStorage.getItem("theme")||${initialTheme};var theme=preference;if(theme==="system"){theme=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}document.documentElement.setAttribute("data-theme-preference",preference);document.documentElement.setAttribute("data-theme",theme);document.documentElement.style.removeProperty("color-scheme");document.documentElement.setAttribute("data-interface-shadows",localStorage.getItem("caipe-shadows-enabled")==="true"?"on":"off");}catch(_error){}})();`;
 
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        <style id="caipe-interface-shadows">{INTERFACE_SHADOWS_CSS}</style>
         {/* Inject client config synchronously before any JS runs */}
         <Script
           dangerouslySetInnerHTML={{

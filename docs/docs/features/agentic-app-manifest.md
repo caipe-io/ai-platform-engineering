@@ -187,6 +187,15 @@ of requiring an entry in the public catalog. The catalog omits hidden and
 service-only apps. Selecting native UI redirects the app's hosted entry to its
 native entry point.
 
+Catalog cards use the first declared `catalog.categories` value for their badge
+and color treatment. Valid packaged `catalog.icon` assets take precedence over
+the category fallback icon. Each user can favorite visible apps in the Apps
+catalog; favorites are stored in user preferences and do not change app access
+or sharing permissions. Home shows a separate, reorderable Favorite Apps widget
+below Quick Start when the user has at least one starred app they can launch.
+The widget stays hidden when there are no accessible favorites. Home reads the
+favorite IDs first and skips the catalog request when none are saved.
+
 ### UI-only and service-only apps
 
 - UI-only native app: omit `runtime`, keep only its native profile, and use empty
@@ -263,7 +272,9 @@ declarations, and integrity pins remain checked.
 - App agents use the shared App spark mark (application window + sparkle), with
   an `App: Example App` tooltip. The Apps destination, hub heading and generic
   app fallbacks use the same mark. Catalog cards may display packaged app branding.
-  The legacy navigation value `layout-grid` now renders App spark.
+  Sidebar `ui.navigation.icon` supports `book-open`, `folder-kanban` and
+  `layout-grid`. Use `folder-kanban` for a project workspace. Existing book/grid
+  declarations retain their icons; omitted icons use the grid.
   The app's internal SDK is not inferred from an absent `execution_harness_id`.
   Legacy platform agents keep their existing Deep Agents fallback.
 - Agent CAS permissions still apply. App role/launch policy further restricts the

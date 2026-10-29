@@ -575,6 +575,12 @@ services:
       - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
       - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
       - OIDC_ISSUER=${OIDC_ISSUER:-}
+      - CAIPE_SECONDARY_OIDC_JWKS_URI=${CAIPE_SECONDARY_OIDC_JWKS_URI:-}
+      - CAIPE_SECONDARY_OIDC_ISSUER=${CAIPE_SECONDARY_OIDC_ISSUER:-}
+      - CAIPE_SECONDARY_OIDC_AUDIENCES=${CAIPE_SECONDARY_OIDC_AUDIENCES:-}
+      - CAIPE_SECONDARY_OIDC_PROVIDER_ID=${CAIPE_SECONDARY_OIDC_PROVIDER_ID:-}
+      - CAIPE_SECONDARY_OIDC_REQUIRE_VERIFIED_EMAIL=${CAIPE_SECONDARY_OIDC_REQUIRE_VERIFIED_EMAIL:-}
+      - CAIPE_SECONDARY_AUTH_RESOURCES=${CAIPE_SECONDARY_AUTH_RESOURCES:-}
       # Spec 104 — Slack-bot OBO tokens are minted with `aud=agentgateway` so they
       # can hit AGW directly. The same token also flows through the BFF on its
       # way to AGW, so the BFF must accept that audience too. Adding it here
@@ -603,6 +609,7 @@ services:
       # fetch the well-known doc without going via the host. Browser still uses
       # OIDC_ISSUER (localhost:7080) for the auth redirect.
       - OIDC_DISCOVERY_URL=${OIDC_DISCOVERY_URL:-http://keycloak:7080/realms/caipe}
+      - OIDC_TOKEN_ENDPOINT=${OIDC_TOKEN_ENDPOINT:-}
       - OIDC_GROUP_CLAIM=${OIDC_GROUP_CLAIM:-}
       - OIDC_REQUIRED_GROUP=${OIDC_REQUIRED_GROUP:-}
       - OIDC_REQUIRED_ADMIN_GROUP=${OIDC_REQUIRED_ADMIN_GROUP:-}
@@ -851,6 +858,12 @@ services:
       - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
       - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
       - OIDC_ISSUER=${OIDC_ISSUER:-}
+      - CAIPE_SECONDARY_OIDC_JWKS_URI=${CAIPE_SECONDARY_OIDC_JWKS_URI:-}
+      - CAIPE_SECONDARY_OIDC_ISSUER=${CAIPE_SECONDARY_OIDC_ISSUER:-}
+      - CAIPE_SECONDARY_OIDC_AUDIENCES=${CAIPE_SECONDARY_OIDC_AUDIENCES:-}
+      - CAIPE_SECONDARY_OIDC_PROVIDER_ID=${CAIPE_SECONDARY_OIDC_PROVIDER_ID:-}
+      - CAIPE_SECONDARY_OIDC_REQUIRE_VERIFIED_EMAIL=${CAIPE_SECONDARY_OIDC_REQUIRE_VERIFIED_EMAIL:-}
+      - CAIPE_SECONDARY_AUTH_RESOURCES=${CAIPE_SECONDARY_AUTH_RESOURCES:-}
       - OIDC_EXTRA_AUDIENCES=${OIDC_EXTRA_AUDIENCES:-agentgateway}
       - OIDC_ACCEPTED_AUDIENCES=${OIDC_ACCEPTED_AUDIENCES:-caipe-platform}
       - OPENFGA_RECONCILE_ENABLED=${OPENFGA_RECONCILE_ENABLED:-true}
@@ -864,6 +877,7 @@ services:
       - AUTHZ_TRACING_ENABLED=${AUTHZ_TRACING_ENABLED:-false}
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
       - OIDC_DISCOVERY_URL=${OIDC_DISCOVERY_URL:-http://keycloak:7080/realms/caipe}
+      - OIDC_TOKEN_ENDPOINT=${OIDC_TOKEN_ENDPOINT:-}
       - OIDC_GROUP_CLAIM=${OIDC_GROUP_CLAIM:-}
       - OIDC_REQUIRED_GROUP=${OIDC_REQUIRED_GROUP:-}
       - OIDC_REQUIRED_ADMIN_GROUP=${OIDC_REQUIRED_ADMIN_GROUP:-}
@@ -1347,16 +1361,17 @@ services:
 
   agent_ontology:
     build:
-      context: ./ai_platform_engineering/knowledge_bases/rag
-      dockerfile: ./build/Dockerfile.agent-ontology
+      context: .
+      dockerfile: ./ai_platform_engineering/knowledge_bases/rag/build/Dockerfile.agent-ontology
     image: ghcr.io/caipe-io/caipe-rag-agent-ontology:${IMAGE_TAG:-localtag}
     container_name: agent_ontology
     volumes:
-      - ./ai_platform_engineering/knowledge_bases/rag/agent_ontology/src/agent_ontology:/app/agent_ontology/src/agent_ontology
-      - ./ai_platform_engineering/knowledge_bases/rag/common/src/common:/app/common/src/common
+      - ./ai_platform_engineering/knowledge_bases/rag/agent_ontology/src/agent_ontology:/app/ai_platform_engineering/knowledge_bases/rag/agent_ontology/src/agent_ontology
+      - ./ai_platform_engineering/knowledge_bases/rag/common/src/common:/app/ai_platform_engineering/knowledge_bases/rag/common/src/common
+      - ./ai_platform_engineering/llm_wrapper/src/llm_wrapper:/app/ai_platform_engineering/llm_wrapper/src/llm_wrapper
     ports: ["8098:8098"]
     environment:
-      - PYTHONPATH=/app/common/src:/app/agent_ontology/src
+      - PYTHONPATH=/app/ai_platform_engineering/knowledge_bases/rag/common/src:/app/ai_platform_engineering/llm_wrapper/src:/app/ai_platform_engineering/knowledge_bases/rag/agent_ontology/src
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REDIS_URL=redis://rag-redis:6379/0
       - NEO4J_ADDR=neo4j://neo4j:7687
@@ -2275,6 +2290,24 @@ services:
   # broker in Keycloak from IDP_* env vars (set in .env).
   # Skips silently when IDP_ISSUER is unset — local-only users + test
   # personas still work via direct Keycloak login.
+  keycloak-secondary-auth-profile:
+    image: ${KEYCLOAK_INIT_IMAGE:-caipe/keycloak-init:dev}
+    build:
+      context: .
+      dockerfile: build/Dockerfile.keycloak-init
+    entrypoint: ["/bin/sh", "/scripts/reconcile-secondary-auth.sh"]
+    volumes:
+      - ./charts/ai-platform-engineering/charts/keycloak/scripts/reconcile-secondary-auth.sh:/scripts/reconcile-secondary-auth.sh:ro
+    environment:
+      KC_URL: http://keycloak:7080
+      KC_REALM: caipe
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    profiles: [rbac]
+
   keycloak-init:
     image: ${KEYCLOAK_INIT_IMAGE:-caipe/keycloak-init:dev}
     build:
@@ -2284,6 +2317,7 @@ services:
     entrypoint: ["/bin/sh", "/scripts/init-idp.sh"]
     volumes:
       - ./charts/ai-platform-engineering/charts/keycloak/scripts/init-idp.sh:/scripts/init-idp.sh:ro
+      - ./charts/ai-platform-engineering/charts/keycloak/scripts/mcp-dcr.sh:/scripts/mcp-dcr.sh:ro
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
@@ -2330,6 +2364,7 @@ services:
     entrypoint: ["/bin/sh", "/scripts/init-token-exchange.sh"]
     volumes:
       - ./charts/ai-platform-engineering/charts/keycloak/scripts/init-token-exchange.sh:/scripts/init-token-exchange.sh:ro
+      - ./charts/ai-platform-engineering/charts/keycloak/scripts/mcp-dcr.sh:/scripts/mcp-dcr.sh:ro
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin

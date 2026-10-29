@@ -13,11 +13,12 @@ From the repository root:
 make caipe-ui-dev
 ```
 
-Or run directly:
+Or run directly (requires Node.js 24.22.1 or newer, below 25):
 
 ```bash
 cd ui
-npm install
+nvm use   # if available
+npm ci
 npm run dev
 ```
 
@@ -25,10 +26,20 @@ Open http://localhost:3000.
 
 ## Runtime Configuration
 
+Settings > Appearance > Interface shadows lets each user turn decorative box
+and text shadows off. Shadows are disabled by default; the preference saves to
+the account and applies immediately, including shared chat and SDK-connected
+iframe apps. Borders, focus rings, theme colors, and glass transparency remain.
+Glass (enabled by default) and chat text size are user Appearance preferences,
+not conversation actions. Existing device choices are retained until a saved
+account preference is available. App default text size follows each app’s
+presentation configuration.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `DYNAMIC_AGENTS_URL` | `http://localhost:8100` in local dev, `http://dynamic-agents:8100` in production | Server-side Dynamic Agents runtime URL |
-| `MONGODB_URI` | unset | Enables MongoDB-backed conversations and admin state |
+| `MONGODB_URI` | unset | Required for SSO sessions; also enables conversations and admin state |
+| `MONGODB_DATABASE` | unset | Required with `MONGODB_URI` for SSO |
 | `PROMETHEUS_URL` | unset | Server-side Prometheus-compatible query URL for Admin metrics and health. In HA deployments, use a deduplicating query frontend such as Thanos rather than a load-balanced service over independent Prometheus replicas. |
 | `RAG_SERVER_URL` | unset | Server-side RAG API URL |
 | `NEXTAUTH_SECRET` | unset | Required for authenticated deployments |
@@ -37,6 +48,29 @@ Open http://localhost:3000.
 Browser chat traffic goes through the BFF routes under
 `/api/v1/chat/stream/*`; the browser does not call the Dynamic Agents service
 directly.
+
+SSO sessions use the shared `auth_sessions` collection, not process-local token
+caches. All BFF replicas need the same `NEXTAUTH_SECRET`. Session-format upgrades
+require a coordinated cutover and a fresh login; existing grants are unchanged.
+See [browser-session architecture and rollout](../docs/docs/security/browser-sessions.md).
+
+`OIDC_TOKEN_ENDPOINT` optionally overrides the server-side refresh endpoint.
+Without an override, an internal Keycloak realm URL in `OIDC_DISCOVERY_URL` uses
+its local token path; other providers use their discovery document. Generic
+provider discovery failures never fall back to a Keycloak URL.
+
+Rejected refresh credentials are suppressed across replicas while a still-valid
+access token finishes its lifetime. Definite retryable failures use a shared
+60-second cooldown. A lost or ambiguous refresh response retains the existing
+lease protection against replaying a potentially consumed rotating token.
+
+Run the real MongoDB coordination tests with
+`AUTH_SESSION_TEST_MONGODB_URI=mongodb://127.0.0.1:27017 npm test -- --runInBand src/lib/__tests__/auth-session-mongo.test.ts`.
+
+Browser fixtures must seed a session record through `e2e/rbac/_session-cookie.ts`.
+Self-contained cookies, including those from the older `mint-test-session.mjs`
+benchmark helper, are deliberately rejected. Benchmarks should use a real OIDC
+login session until that helper is migrated.
 
 ### Agent Builder harness controls
 
@@ -111,6 +145,13 @@ its tooltip shows the full local timestamp.
 3. Dynamic Agents streams AG-UI/SSE events back through the BFF.
 4. The UI stores conversation messages and stream events in MongoDB-backed state.
 5. MCP tools are reached through configured MCP server rows, usually via AgentGateway.
+
+External app MCP clients can retain a saved root `api.mcp.path` URL after the app
+moves behind `/apps/<id>`. The API fallback and protected-resource discovery
+route delegate to the existing gateway and select the root OAuth resource with
+`x-caipe-mcp-resource-path`. The app must support that fixed selector. See
+[saved external MCP connections](../docs/docs/features/agentic-apps.md#preserve-saved-external-mcp-connections)
+for OAuth resource registration and rollout requirements.
 
 ## Existing AgentCore agents
 

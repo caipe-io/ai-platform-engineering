@@ -22,7 +22,7 @@ from langchain_core.messages import HumanMessage
 import gc
 import redis.asyncio as redis
 import common.utils as utils
-from cnoe_agent_utils import LLMFactory
+from llm_wrapper.build import build_chat_model
 from langfuse import get_client as get_langfuse_client
 from langfuse.langchain import CallbackHandler
 
@@ -61,6 +61,7 @@ class OntologyAgent:
     # status flags
     self.is_processing = False  # Avoid parallel processing/evaluation
     self.is_evaluating = False
+    self.is_generating = False  # Held for a whole process_and_evaluate_all run
 
     self.agent_status_msg = "Idle"
     self.evaluation_count = 0  # Track number of evaluations made
@@ -77,7 +78,24 @@ class OntologyAgent:
       self.agent_status_msg = f"Syncing [{idx}/{len(candidates)}] relation {candidate.relation_id}"
       await rc_manager.sync_relation(candidate.relation_id)
 
-  async def process_and_evaluate_all(self):
+  @property
+  def is_busy(self) -> bool:
+    """Whether a generation or any of its phases is running."""
+    return self.is_generating or self.is_processing or self.is_evaluating
+
+  async def process_and_evaluate_all(self) -> None:
+    # Check and set before the first await so two runs cannot both pass. The
+    # phase flags alone leave gaps between phases, and a second run's phase
+    # cleanup could release the first run's guard.
+    if self.is_generating:
+      raise RuntimeError("Ontology generation is already in progress")
+    self.is_generating = True
+    try:
+      await self._process_and_evaluate_all()
+    finally:
+      self.is_generating = False
+
+  async def _process_and_evaluate_all(self) -> None:
     self.logger.info("Running heuristics processing and the evaluation...")
     # self.last_evaluation_run_timestamp = time.time()
 
@@ -98,38 +116,36 @@ class OntologyAgent:
       self.logger.info("No current ontology version found, this seems to be the first run.")
 
     await self.process_all(rc_manager_new_version)
-    if new_ontology_version_id is None:
-      self.logger.error("Heuristics processing failed, skipping evaluation")
-      return
 
     # Evaluate the new heuristics version
     self.agent_status_msg = "Evaluating relations..."
     await self.evaluate_all(rc_manager_current_version, rc_manager_new_version)
 
-    # set the new ontology version as the current ontology version
+    # Publish only after heuristics and every evaluation worker succeed.
     self.logger.info(f"Setting new ontology version: {new_ontology_version_id}")
     await self.redis.set(constants.KV_ONTOLOGY_VERSION_ID_KEY, new_ontology_version_id)
 
     self.agent_status_msg = "Syncing relations..."
     self.is_processing = True
-    await self.sync_all_relations(rc_manager_new_version)  # sync all relations with the graph database, just in case some relations were not updated
-    await rc_manager_new_version.cleanup()  # Clear all previous ontology
-
-    self.agent_status_msg = "Idle"
-    self.is_processing = False
+    try:
+      await self.sync_all_relations(rc_manager_new_version)  # sync all relations with the graph database, just in case some relations were not updated
+      await rc_manager_new_version.cleanup()  # Clear all previous ontology
+    finally:
+      # Release the guard so a failed sync or cleanup does not block later runs.
+      self.agent_status_msg = "Idle"
+      self.is_processing = False
 
     # invoke the garbage collector to free up memory
     gc.collect()
 
-  async def process_all(self, rc_manager: RelationCandidateManager) -> str | None:
+  async def process_all(self, rc_manager: RelationCandidateManager) -> None:
     """
     Processes all entities in the database to compute heuristics.
     This is meant to be run periodically to update the heuristics based on the entities in the database.
     """
     self.logger.info("Processing all entities for heuristics")
     if self.is_processing:
-      self.logger.warning("Processing is already in progress, skipping this run")
-      return None
+      raise RuntimeError("Heuristics processing is already in progress")
 
     self.is_processing = True
     self.processing_tasks_total = 0
@@ -165,6 +181,7 @@ class OntologyAgent:
     except Exception as e:
       self.logger.error(traceback.format_exc())
       self.logger.error(f"Error during heuristics processing: {e}")
+      raise
     finally:
       self.is_processing = False
 
@@ -450,7 +467,7 @@ class OntologyAgent:
 
     return sub_entities
 
-  async def evaluate_all(self, rc_manager_current: RelationCandidateManager | None, rc_manager_new: RelationCandidateManager):
+  async def evaluate_all(self, rc_manager_current: RelationCandidateManager | None, rc_manager_new: RelationCandidateManager) -> None:
     """
     Evaluates all relation candidate groups using isolated agent workers.
     Each worker gets its own queue of groups and processes them independently.
@@ -460,8 +477,7 @@ class OntologyAgent:
     """
     self.evaluation_logger.info("Evaluating all relations for ontology_version_id: %s", rc_manager_new.ontology_version_id)
     if self.is_evaluating:
-      self.evaluation_logger.warning("Evaluation is already in progress, skipping this run")
-      return
+      raise RuntimeError("Ontology evaluation is already in progress")
 
     self.is_evaluating = True
     self.evaluation_count = 0
@@ -512,14 +528,33 @@ class OntologyAgent:
       system_prompt = SYSTEM_PROMPT_1.format(entity_types=entity_types_str)
 
       # Get base LLM
-      base_llm = LLMFactory().get_llm()
+      provider = os.getenv("LLM_PROVIDER")
+      if not provider:
+        raise ValueError("LLM_PROVIDER environment variable is required to evaluate ontology relations")
+      temperature_env = {
+        "azure-openai": "AZURE_TEMPERATURE",
+        "openai": "OPENAI_TEMPERATURE",
+        "anthropic-claude": "ANTHROPIC_TEMPERATURE",
+        "aws-bedrock": "BEDROCK_TEMPERATURE",
+        "bedrock": "BEDROCK_TEMPERATURE",
+        "google-gemini": "GOOGLE_TEMPERATURE",
+        "gcp-vertexai": "VERTEXAI_TEMPERATURE",
+        "groq": "GROQ_TEMPERATURE",
+      }.get(provider.lower().replace("_", "-"))
+      try:
+        # Accept inline comments such as "0.7  # creative", as LLMFactory did.
+        temperature = float(os.getenv(temperature_env, "0.0").split("#", 1)[0]) if temperature_env else 0.0
+      except ValueError:
+        self.logger.warning("Invalid LLM temperature setting in %s; using 0.0", temperature_env)
+        temperature = 0.0
+      base_llm = build_chat_model(provider, temperature=max(0.0, min(2.0, temperature)))
 
       # Create shared progress tracker (dict is thread-safe for simple increments in Python)
       # Using a dict instead of separate variables so workers can update the same object
       progress_tracker = {"completed_groups": 0, "total_groups": total_groups}
 
       # Step 5: Create isolated worker instances and launch them
-      async def run_worker(worker_id: int, worker_queue: list[CandidateGroupData]):
+      async def run_worker(worker_id: int, worker_queue: list[CandidateGroupData]) -> None:
         """Run a single worker with its own isolated state"""
         worker_logger = utils.get_logger(f"eval-worker-{worker_id}")
 
@@ -612,12 +647,18 @@ class OntologyAgent:
         except Exception as e:
           worker_logger.error(f"Worker {worker_id} error: {e}")
           worker_logger.error(traceback.format_exc())
+          raise
 
       # Launch all workers concurrently
       worker_tasks = [run_worker(i, worker_queues[i]) for i in range(num_workers)]
 
       self.evaluation_logger.info(f"Launching {len(worker_tasks)} concurrent evaluation workers")
-      await asyncio.gather(*worker_tasks, return_exceptions=True)
+      # Wait for all workers before releasing the evaluation guard, then
+      # propagate any failure so this version cannot become current.
+      worker_results = await asyncio.gather(*worker_tasks, return_exceptions=True)
+      for result in worker_results:
+        if isinstance(result, BaseException):
+          raise result
 
       self.evaluation_logger.info(f"All evaluation workers completed - Total evaluations made: {self.evaluation_count}")
       self.agent_status_msg = f"Evaluation complete - {self.evaluation_count} relations evaluated"
@@ -625,5 +666,6 @@ class OntologyAgent:
     except Exception as e:
       self.evaluation_logger.error(f"Error during evaluation: {e}")
       self.evaluation_logger.error(traceback.format_exc())
+      raise
     finally:
       self.is_evaluating = False

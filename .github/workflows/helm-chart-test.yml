@@ -1,5 +1,4 @@
 name: "[Tests][Helm] Helm Chart"
-description: "Test Helm charts"
 
 on:
   push:
@@ -7,11 +6,13 @@ on:
     paths:
       - 'charts/**'
       - '.github/workflows/helm-chart-test.yml'
+      - 'tests/test_caipe_ui_oidc_endpoint.py'
   pull_request:
     branches: [ main, develop, 'release/**' ]
     paths:
       - 'charts/**'
       - '.github/workflows/helm-chart-test.yml'
+      - 'tests/test_caipe_ui_oidc_endpoint.py'
   schedule:
     # Run tests daily at 2 AM UTC
     - cron: '0 2 * * *'
@@ -41,6 +42,15 @@ jobs:
       uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
       with:
         version: ${{ matrix.helm-version }}
+
+    - name: Install uv for chart regression tests
+      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      with:
+        python-version: "3.14"
+        enable-cache: false
+
+    - name: Test UI OIDC endpoint routing
+      run: uv run --no-project --with pytest==9.1.1 --with PyYAML==6.0.3 pytest -q tests/test_caipe_ui_oidc_endpoint.py
 
     - name: Add required Helm repositories
       run: |

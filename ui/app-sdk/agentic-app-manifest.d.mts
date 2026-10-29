@@ -33,11 +33,15 @@ export interface AgenticAppManifest {
       routeRef: string;
       href?: string;
       placement: "after-chat";
-      icon?: "book-open" | "layout-grid";
+      icon?: "book-open" | "folder-kanban" | "layout-grid";
     };
-    assistant?: { agentId: string; label: string; name: string; streamPath?: string; resumePath?: string; cancelPath?: string; statusPath?: string; overlay?: "host" | "app"; supportedClients?: Array<"webui" | "webex">; webexGroupChat?: boolean };
+    assistant?: { agentId: string; label: string; name: string; streamPath?: string; resumePath?: string; cancelPath?: string; statusPath?: string; overlay?: "host" | "app"; supportedClients?: Array<"webui" | "webex">; webexGroupChat?: boolean; hostOptions?: import("./assistant-options.mjs").AssistantOptions };
   };
-  api: { mounts: string[] };
+  api: {
+    mounts: string[];
+    /** Explicit app-owned authentication boundary for external MCP clients. */
+    mcp?: { path: string; metadataPath: string; apiKeyHeader?: string };
+  };
   auth: { mode: AgenticAppAuthMode };
   runtime?: {
     kind: "proxied-next-zone";

@@ -1,3 +1,113 @@
+## 1.3.2 (2026-10-29)
+
+### Fix
+
+- **webex-bot**: bound streamed replies and preserve full responses (#3046)
+- **webex-bot**: separate agent display name from bot mention (#2979)
+
+## 1.3.1 (2026-10-29)
+
+### Fix
+
+- **apps**: preserve saved root MCP connections (#3129)
+
+## 1.3.0 (2026-10-28)
+
+## 1.3.0-rc.26 (2026-10-28)
+
+### Feat
+
+- **home**: show starred apps in movable Favorites widget (#3125)
+- **chat**: stage app Markdown attachments in assistant composer (#3124)
+
+### Fix
+
+- **security**: block deepmerge prototype poisoning (#3126)
+- **ui**: gate and suspend denied admin migration polling (#3118)
+- **ui**: avoid Webex lookup when resolving chat defaults (#3123)
+- **chat**: show attached page context in assistant (#3122)
+- **ui**: keep breadcrumb icons beside labels (#3121)
+
+## 1.3.0-rc.25 (2026-10-28)
+
+### Fix
+
+- **ui**: keep host breadcrumbs on one line (#3120)
+
+## 1.3.0-rc.24 (2026-10-28)
+
+### Fix
+
+- **apps**: bundle Tome catalog logo in host (#3119)
+
+## 1.3.0-rc.23 (2026-10-28)
+
+### Feat
+
+- **auth**: add host-owned secondary authentication (#3116)
+
+## 1.3.0-rc.22 (2026-10-28)
+
+### Fix
+
+- **ui**: preserve project app navigation appearance (#3114)
+- **keycloak**: hide platform scope from OAuth discovery (#3115)
+- **credentials**: reject revoked provider connections (#3113)
+
+## 1.3.0-rc.21 (2026-10-28)
+
+### Feat
+
+- **agentic-apps**: bring catalog presentation and favorites upstream (#3109)
+- **keycloak**: make MCP DCR opt-in with resource isolation (#2661)
+
+### Fix
+
+- **credentials**: reuse OAuth tokens outside refresh window (#3002)
+- **auth**: prevent OIDC refresh retry loops (#2774)
+
+## 1.3.0-rc.20 (2026-10-27)
+
+### Fix
+
+- **chat**: avoid false interrupted banner for pending turns (#3095)
+- **agentic-apps**: improve shared assistant popup usability (#3107)
+
+## 1.3.0-rc.19 (2026-10-27)
+
+### Feat
+
+- **ui**: align hosted navigation and preferences (#3105)
+- **chat**: unify hosted chat and breadcrumbs (#3104)
+- **apps**: stabilize assistant drafts and iframe navigation (#3102)
+- **ui**: improve app catalog cards and metadata search (#2977)
+- **agentic-apps**: complete shared assistant adoption behavior (#3067)
+- **app-sdk**: declare shared assistant extension contracts (#3066)
+- **agentic-apps**: add shared assistant history and actions (#3064)
+- **agentic-apps**: include iframe apps in sidebar navigation (#3061)
+
+### Fix
+
+- **apps**: restore external MCP auth and iframe shortcuts (#3099)
+- **docs**: patch qs serialization denial of service (#3106)
+- **ui**: synchronize hosted theme and dark utilities (#3103)
+- **auth**: port consistent browser sessions to main (#3084)
+- **skills**: refetch catalog after deleting a skill so its card disappears (#3077)
+- **deps**: resolve current dependency scanning alerts (#3089)
+- **runtime**: pin patched Node releases for Node2Shell (#3088)
+- **agentic-apps**: honor iframe assistant overlay ownership (#3060)
+
+### Refactor
+
+- **rag**: remove cnoe-agent-utils from ontology (#3050)
+- **agentic-apps**: share assistant popup across renderers (#3063)
+
+## 1.3.0-rc.18 (2026-10-26)
+
+### Fix
+
+- **auth**: preserve shared token consistency across replicas (#3085)
+
 ## 1.3.0-rc.17 (2026-10-26)
 
 ### Feat

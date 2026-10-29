@@ -29,6 +29,14 @@ jobs:
   test:
     if: github.actor != 'github-actions[bot]' && github.actor != 'caipe-ci-release[bot]'
     runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 5s --health-timeout 5s --health-retries 12
     permissions:
       contents: read
       pull-requests: write
@@ -44,7 +52,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
-          node-version: '24'
+          node-version: '24.22.1'
           cache: 'npm'
           cache-dependency-path: ui/package-lock.json
 
@@ -68,6 +76,8 @@ jobs:
         id: jest
         working-directory: ui
         continue-on-error: true
+        env:
+          AUTH_SESSION_TEST_MONGODB_URI: mongodb://127.0.0.1:27017
         run: npm test -- --coverage --coverageReporters=text --coverageReporters=json-summary --forceExit
 
       - name: Set test results
@@ -316,6 +326,15 @@ jobs:
       packages: read
     container:
       image: mcr.microsoft.com/playwright:v1.62.1-noble
+    services:
+      mongodb:
+        image: mongo:7.0
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      MONGODB_URI: 'mongodb://mongodb:27017'
+      MONGODB_DATABASE: 'session_regression'
 
     steps:
       - name: 🔒 Harden runner
@@ -329,7 +348,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
-          node-version: '24'
+          node-version: '24.22.1'
           cache: 'npm'
           cache-dependency-path: ui/package-lock.json
 
@@ -354,13 +373,7 @@ jobs:
           # This public setting is compiled into the client bundle, so set it
           # while building as well as when serving the app below.
           NEXT_PUBLIC_SSO_ENABLED: 'true'
-          # The specs mock every API, so no real database is contacted. But the
-          # home page gates shared-conversation / insights UI on server-side
-          # storage mode (getStorageMode reads MONGODB_URI + MONGODB_DATABASE at
-          # render time). Set dummy values so SSR renders in "mongodb" mode and
-          # those components exist in the server markup for the mocks to drive.
-          MONGODB_URI: 'mongodb://mock:27017'
-          MONGODB_DATABASE: 'mock'
+          # Business APIs are mocked; SSR authentication uses real shared sessions.
           NEXTAUTH_SECRET: 'ci-nextauth-secret-for-playwright-regression-2026'
           CAIPE_UNSAFE_RBAC_BYPASS: 'true'
           CAIPE_CREDENTIALS_ENABLED: 'true'
@@ -372,23 +385,27 @@ jobs:
         env:
           WORKFLOWS_ENABLED: 'true'
           NEXT_PUBLIC_SSO_ENABLED: 'true'
-          MONGODB_URI: 'mongodb://mock:27017'
-          MONGODB_DATABASE: 'mock'
           NEXTAUTH_SECRET: 'ci-nextauth-secret-for-playwright-regression-2026'
           CAIPE_UNSAFE_RBAC_BYPASS: 'true'
           CAIPE_CREDENTIALS_ENABLED: 'true'
           CAIPE_USER_CONNECTIONS_ENABLED: 'true'
+          # Empty operator catalog: browser specs supply their own public DTOs.
+          # No app runtimes, authorization grants, or production keys are loaded.
+          AGENTIC_APPS_INSTALL_ENABLED: 'true'
+          AGENTIC_APPS_CONFIG_PATH: 'e2e/fixtures/agentic-apps-empty.yaml'
+          AGENTIC_APP_TOKEN_SECRET: 'ci-agentic-app-secret-for-playwright-regression-only'
         run: |
           # Run the production server, not `next dev`: React StrictMode
           # double-invokes effects only in dev, which breaks exact
           # request-count assertions in several specs.
           npx next start --port 3000 > /tmp/caipe-ui-dev.log 2>&1 &
           echo $! > /tmp/caipe-ui-dev.pid
+          npx next start --port 3001 > /tmp/caipe-ui-peer.log 2>&1 &
 
       - name: Wait for CAIPE UI
         run: |
           for i in $(seq 1 60); do
-            if curl -sf http://localhost:3000 >/dev/null; then
+            if curl -sf http://localhost:3000 >/dev/null && curl -sf http://localhost:3001 >/dev/null; then
               echo "CAIPE UI is up"
               exit 0
             fi
@@ -397,6 +414,12 @@ jobs:
           echo "CAIPE UI failed to start"
           tail -n 200 /tmp/caipe-ui-dev.log || true
           exit 1
+
+      - name: Validate shared-session MongoDB coordination
+        working-directory: ui
+        env:
+          AUTH_SESSION_TEST_MONGODB_URI: 'mongodb://mongodb:27017'
+        run: npx jest --runInBand src/lib/__tests__/auth-session-mongo.test.ts
 
       - name: Run mocked RBAC Playwright regression
         id: playwright
@@ -407,6 +430,7 @@ jobs:
         env:
           RUN_RBAC_REGRESSION: '1'
           CAIPE_UI_BASE_URL: http://localhost:3000
+          SESSION_TEST_PEER_URL: http://localhost:3001
           WORKFLOWS_ENABLED: 'true'
           NEXTAUTH_SECRET: 'ci-nextauth-secret-for-playwright-regression-2026'
           # The mocked credentials specs exercise protected personal pages. In
@@ -470,7 +494,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
-          node-version: '24'
+          node-version: '24.22.1'
           cache: 'npm'
           cache-dependency-path: ui/package-lock.json
 

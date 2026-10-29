@@ -20,7 +20,12 @@ describe("chat agent selection", () => {
       ]));
     await expect(resolveUsableChatAgent({ requireAvailableAgent: true })).resolves.toEqual({
       id: "primary", name: "Primary", source: "first-available",
+      config: { _id: "primary", name: "Primary", enabled: true },
     });
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/user/preferences?include_webex=false",
+      expect.objectContaining({ cache: "no-store" }),
+    );
   });
 
   it("requires available-agent evidence for strict defaults", async () => {
@@ -38,6 +43,7 @@ describe("chat agent selection", () => {
     global.fetch = jest.fn(async () => response([{ _id: "primary", name: "Primary", enabled: true }]));
     await expect(resolveUsableChatAgent({ requestedAgentId: " primary " })).resolves.toEqual({
       id: "primary", name: "Primary", source: "configured",
+      config: { _id: "primary", name: "Primary", enabled: true },
     });
     expect(global.fetch).toHaveBeenCalledTimes(1);
     expect(global.fetch).toHaveBeenCalledWith("/api/dynamic-agents/available", expect.any(Object));

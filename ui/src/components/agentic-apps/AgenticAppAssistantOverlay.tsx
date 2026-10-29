@@ -1,50 +1,86 @@
 "use client";
 
-import { Bot, LoaderCircle, MessageCircle, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { FileText, LoaderCircle, MessageCircle, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import type { AssistantOptions, AssistantConfiguration } from "../../../app-sdk/assistant-options.mjs";
+import { useAssistantComposerOptions } from "./AssistantComposerOptions";
+import { AssistantConversationToolbar } from "./AssistantConversationToolbar";
+import HostConversationActions from "@/native-extensions/HostConversationActions";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useSearchParams } from "next/navigation";
+import { readAssistantDeepLink } from "@/lib/agentic-apps/assistant-links";
+import Image from "next/image";
+import { AppAssistantHistory } from "./AppAssistantHistory";
+import { loadHostConversation } from "@/native-extensions/host-chat";
+import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { ChatPanel } from "@/components/chat/DynamicAgentChatPanel";
 import { buildAssistantClientContext } from "@/lib/agentic-apps/assistant-context";
-import { cn } from "@/lib/utils";
+import { useAssistantAppearance } from "@/hooks/use-assistant-appearance";
 import { useChatStore } from "@/store/chat-store";
-import { findLatestAppConversation } from "@/lib/agentic-apps/assistant-conversations";
+import { findLatestAppConversation, matchesAssistantConversation, mergeAppConversation } from "@/lib/agentic-apps/assistant-conversations";
+import { getAgentId } from "@/types/a2a";
 import type { AgenticAppAssistantContextRecord } from "@/types/agentic-app";
+import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 
 const DEFAULT_PANEL_SIZE = { width: 720, height: 780 };
 const MIN_PANEL_SIZE = { width: 480, height: 560 };
-const MAX_PANEL_SIZE = { width: 1180, height: 940 };
-const GLASS_MODE_STORAGE_KEY = "agentic-app-assistant-glass";
 const AGENTIC_APP_CONVERSATION_KIND = "agentic-app";
 
 export interface AgenticAppAssistantOverlayProps {
+  options?: AssistantOptions;
+  configuration?: AssistantConfiguration;
   appId: string;
   appName: string;
+  assistantIcon?: string;
   assistantLabel?: string;
   assistantAgentName?: string;
   activeContext: AgenticAppAssistantContextRecord | null;
   onClearContext: () => void;
   assistantAgentId: string;
+  assistantAgent?: DynamicAgentConfig;
+  composerDraft?: AssistantDraft | null;
+  onComposerDraftApplied?: (id: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
 export function AgenticAppAssistantOverlay({
+  options, configuration,
   appId,
   appName,
   assistantLabel,
+  assistantIcon,
   assistantAgentName,
   activeContext,
   onClearContext,
   assistantAgentId,
+  assistantAgent,
   open,
   onOpenChange,
+  composerDraft,
+  onComposerDraftApplied,
 }: AgenticAppAssistantOverlayProps): React.ReactElement {
   const bubbleLabel = (assistantLabel?.trim() || "Ask CAIPE").slice(0, 32);
   const headerTitle = (
     assistantAgentName?.trim() || `CAIPE assistant for ${appName}`
   ).slice(0, 64);
-  const [panelSize, setPanelSize] = useState(DEFAULT_PANEL_SIZE);
-  const [glassMode, setGlassMode] = useState(readStoredGlassMode);
+  const [view, setView] = useState<"chat" | "history">("chat");
+  const incomingDraftId = composerDraft?.id;
+  useEffect(() => {
+    if (incomingDraftId) queueMicrotask(() => setView("chat"));
+  }, [incomingDraftId]);
+  const defaultSize = { width: options?.presentation?.width ?? DEFAULT_PANEL_SIZE.width, height: options?.presentation?.height ?? DEFAULT_PANEL_SIZE.height };
+  const [panelSize, setPanelSize] = useState(defaultSize);
+  const [expanded, setExpanded] = useState(false);
+  const [displayMenuOpen, setDisplayMenuOpen] = useState(false);
+  const { fontScale } = useAssistantAppearance(options?.presentation?.fontScale);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const launcherRef = useRef<HTMLButtonElement>(null);
+  const resizeRef = useRef<{ pointerId: number; x: number; y: number; width: number; height: number; maxWidth: number; maxHeight: number } | null>(null);
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration);
   const [assistantConversation, setAssistantConversation] = useState<{
     key: string;
     id: string;
@@ -54,16 +90,23 @@ export function AgenticAppAssistantOverlay({
     message: string;
   } | null>(null);
   const [conversationActionPending, setConversationActionPending] = useState(false);
+  const selectedTitle = useChatStore(state => state.conversations.find(c => c.id === assistantConversation?.id)?.title);
+  const selectedAccess = useChatStore(state => state.conversations.find(c => c.id === assistantConversation?.id)?.accessLevel);
   const selectionSessionRef = useRef<{ previous: string | null; owned: string | null } | null>(null);
   const conversationRequestRef = useRef<{
     key: string;
     promise: Promise<string>;
   } | null>(null);
   const createConversation = useChatStore((state) => state.createConversation);
-  const deleteConversation = useChatStore((state) => state.deleteConversation);
   const loadMessagesFromServer = useChatStore((state) => state.loadMessagesFromServer);
   const setActiveConversation = useChatStore((state) => state.setActiveConversation);
+  const searchParams = useSearchParams();
+  const deepLink = readAssistantDeepLink(searchParams.toString(), options);
   const conversationKey = `${appId}:${assistantAgentId}`;
+  const requestedId = deepLink.id;
+  const requestKey = JSON.stringify([conversationKey, deepLink.error ?? requestedId]);
+  const hasSelectedConversation = !deepLink.error && assistantConversation?.key === conversationKey &&
+    (!requestedId || assistantConversation.id === requestedId);
   const conversationTitle = `${appName} Assistant`.slice(0, 120);
   const conversationMetadata = useMemo(
     () => ({
@@ -77,12 +120,13 @@ export function AgenticAppAssistantOverlay({
     () => buildAssistantClientContext(activeContext),
     [activeContext],
   );
+  const suggestedPrompts = options?.presentation?.showSuggestions
+    ? (activeContext?.suggestedPrompts ?? options.presentation.suggestedPrompts ?? [])
+    : [];
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(GLASS_MODE_STORAGE_KEY, String(glassMode));
-    }
-  }, [glassMode]);
+    if (deepLink.requested) queueMicrotask(() => setView("chat"));
+  }, [deepLink.requested, deepLink.id, deepLink.error]);
 
   useEffect(() => {
     if (!open) return;
@@ -115,33 +159,46 @@ export function AgenticAppAssistantOverlay({
     [assistantAgentId, conversationMetadata, conversationTitle, createConversation],
   );
 
+  const restoreConversation = useCallback(async (id: string, personalHistory = false): Promise<string> => {
+    const session = selectionSessionRef.current;
+    const { saved } = await loadHostConversation(appId, assistantAgentId, id, personalHistory);
+    if (!matchesAssistantConversation(appId, assistantAgentId, getAgentId(saved), saved.metadata, options?.includeLegacyAgentHistory))
+      throw new Error("Conversation is not bound to this app assistant");
+    if (!session || selectionSessionRef.current !== session) throw new Error("Assistant session changed");
+    useChatStore.setState(state => ({ conversations: mergeAppConversation(state.conversations, saved) }));
+    await loadMessagesFromServer(saved._id, { force: true });
+    return saved._id;
+  }, [appId, assistantAgentId, loadMessagesFromServer, options?.includeLegacyAgentHistory]);
+
   const findOrCreateAppConversation = useCallback(async (): Promise<string> => {
+    const session = selectionSessionRef.current;
+    if (deepLink.error) throw new Error(deepLink.error);
+    // Invalid/unauthorized deep links report an error; never fall back to another chat.
+    if (requestedId) return restoreConversation(requestedId);
     const existing = await findLatestAppConversation(
       useChatStore.getState().conversations,
       appId,
       assistantAgentId,
+      options?.includeLegacyAgentHistory,
     );
+    if (!session || selectionSessionRef.current !== session) throw new Error("Assistant session changed");
     if (!existing) return createAppConversation();
 
-    useChatStore.setState((state) => ({
-      conversations: state.conversations.some((item) => item.id === existing.id)
-        ? state.conversations : [existing, ...state.conversations],
-    }));
-    await loadMessagesFromServer(existing.id);
-    return existing.id;
+    return restoreConversation(existing.id, true);
   }, [
     appId,
     assistantAgentId,
     createAppConversation,
-    loadMessagesFromServer,
+    restoreConversation,
+    requestedId, deepLink.error, options?.includeLegacyAgentHistory,
   ]);
 
   useEffect(() => {
-    if (!open || conversationActionPending || conversationError?.key === conversationKey) return;
+    if (!open || view === "history" || conversationActionPending || conversationError?.key === requestKey) return;
     let cancelled = false;
     const session = selectionSessionRef.current;
 
-    if (assistantConversation?.key === conversationKey) {
+    if (hasSelectedConversation && assistantConversation) {
       activate(assistantConversation.id, session);
       return () => {
         cancelled = true;
@@ -149,9 +206,9 @@ export function AgenticAppAssistantOverlay({
     }
 
     let request = conversationRequestRef.current;
-    if (!request || request.key !== conversationKey) {
+    if (!request || request.key !== requestKey) {
       request = {
-        key: conversationKey,
+        key: requestKey,
         promise: findOrCreateAppConversation(),
       };
       conversationRequestRef.current = request;
@@ -161,6 +218,7 @@ export function AgenticAppAssistantOverlay({
       .then((id) => {
         if (cancelled || conversationRequestRef.current !== request || !activate(id, session)) return;
         setAssistantConversation({ key: conversationKey, id });
+        if (deepLink.requested) updateAssistantDeepLink(id, options?.legacyConversationQueryParams);
       })
       .catch((error: unknown) => {
         // A rejected lookup is not a cached result. Reopening can safely retry
@@ -168,7 +226,7 @@ export function AgenticAppAssistantOverlay({
         if (conversationRequestRef.current === request) conversationRequestRef.current = null;
         if (!cancelled && selectionSessionRef.current === session) {
           setConversationError({
-            key: conversationKey,
+            key: requestKey,
             message: error instanceof Error ? error.message : "Could not start assistant chat",
           });
         }
@@ -183,278 +241,239 @@ export function AgenticAppAssistantOverlay({
     conversationActionPending,
     conversationError,
     conversationKey,
+    requestKey,
+    hasSelectedConversation,
     findOrCreateAppConversation,
     activate,
     open,
+    view,
+    deepLink.requested, options?.legacyConversationQueryParams,
     setActiveConversation,
   ]);
 
   const handleNewChat = useCallback(async (): Promise<void> => {
-    if (assistantConversation?.key !== conversationKey || conversationActionPending) return;
+    if ((view !== "history" && !hasSelectedConversation) || conversationActionPending) return;
     const session = selectionSessionRef.current;
     setConversationActionPending(true);
     setConversationError(null);
     try {
       const id = await createAppConversation();
       if (selectionSessionRef.current !== session) return;
-      conversationRequestRef.current = { key: conversationKey, promise: Promise.resolve(id) };
-      if (activate(id, session)) setAssistantConversation({ key: conversationKey, id });
+      setView("chat");
+      conversationRequestRef.current = { key: requestKey, promise: Promise.resolve(id) };
+      if (activate(id, session)) {
+        setAssistantConversation({ key: conversationKey, id });
+        updateAssistantDeepLink(id, options?.legacyConversationQueryParams);
+      }
     } catch (error: unknown) {
       if (selectionSessionRef.current !== session) return;
       setConversationError({
-        key: conversationKey,
+        key: requestKey,
         message: error instanceof Error ? error.message : "Could not start a new chat",
       });
     } finally {
       setConversationActionPending(false);
     }
   }, [
-    assistantConversation,
     conversationActionPending,
     activate,
     conversationKey,
+    requestKey,
+    hasSelectedConversation,
     createAppConversation,
+    options?.legacyConversationQueryParams,
+    view,
   ]);
 
-  const handleClearChat = useCallback(async (): Promise<void> => {
-    if (assistantConversation?.key !== conversationKey || conversationActionPending) return;
-    if (
-      !window.confirm(
-        "Clear this chat? The current conversation will move to Trash and a new chat will start.",
-      )
-    ) {
-      return;
-    }
-
+  async function selectHistory(id: string): Promise<void> {
     const session = selectionSessionRef.current;
-    setConversationActionPending(true);
+    const restoredId = await restoreConversation(id, true);
+    if (!activate(restoredId, session)) return;
+    conversationRequestRef.current = { key: requestKey, promise: Promise.resolve(restoredId) };
     setConversationError(null);
-    try {
-      const priorRequest = conversationRequestRef.current;
-      await deleteConversation(assistantConversation.id, { selectNext: false });
-      if (conversationRequestRef.current === priorRequest) conversationRequestRef.current = null;
-      setAssistantConversation(previous => previous?.id === assistantConversation.id ? null : previous);
-      if (selectionSessionRef.current !== session) return;
-      // Deletion leaves no active conversation; this operation owns that transition.
-      if (session && useChatStore.getState().activeConversationId === null) session.owned = null;
-      const id = await createAppConversation();
-      if (selectionSessionRef.current !== session) return;
-      conversationRequestRef.current = { key: conversationKey, promise: Promise.resolve(id) };
-      if (activate(id, session)) setAssistantConversation({ key: conversationKey, id });
-    } catch (error: unknown) {
-      if (selectionSessionRef.current !== session) return;
-      setConversationError({
-        key: conversationKey,
-        message: error instanceof Error ? error.message : "Could not clear this chat",
-      });
-    } finally {
-      setConversationActionPending(false);
-    }
-  }, [
-    assistantConversation,
-    conversationActionPending,
-    activate,
-    conversationKey,
-    createAppConversation,
-    deleteConversation,
-  ]);
+    setAssistantConversation({ key: conversationKey, id: restoredId });
+    updateAssistantDeepLink(restoredId, options?.legacyConversationQueryParams);
+    setView("chat");
+  }
+  function onArchived(id: string) {
+    setHistoryRevision(value => value + 1);
+    if (assistantConversation?.id !== id) return;
+    updateAssistantDeepLink(null, options?.legacyConversationQueryParams);
+    conversationRequestRef.current = null;
+    setAssistantConversation(null);
+    if (selectionSessionRef.current) selectionSessionRef.current.owned = null;
+  }
+  useEffect(() => {
+    if (!open) queueMicrotask(() => setDisplayMenuOpen(false));
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented && !displayMenuOpen) onOpenChange(false);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [open, onOpenChange, displayMenuOpen]);
 
   const handleResizeStart = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0 || !containerRef.current || !panelRef.current) return;
       event.preventDefault();
-      const startPoint = { x: event.clientX, y: event.clientY };
-      const startSize = panelSize;
+      const panel = panelRef.current.getBoundingClientRect();
+      const container = containerRef.current.getBoundingClientRect();
+      resizeRef.current = {
+        pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+        width: panel.width, height: panel.height,
+        maxWidth: container.width,
+        maxHeight: container.height - (launcherRef.current?.offsetHeight ?? 0) - 12,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setExpanded(false);
+      setPanelSize({ width: panel.width, height: panel.height });
       document.body.style.cursor = "nwse-resize";
       document.body.style.userSelect = "none";
-
-      function handlePointerMove(moveEvent: PointerEvent): void {
-        setPanelSize(
-          clampPanelSize({
-            width: startSize.width + (startPoint.x - moveEvent.clientX),
-            height: startSize.height + (startPoint.y - moveEvent.clientY),
-          }),
-        );
-      }
-
-      function handlePointerUp(): void {
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-        window.removeEventListener("pointermove", handlePointerMove);
-        window.removeEventListener("pointerup", handlePointerUp);
-      }
-
-      window.addEventListener("pointermove", handlePointerMove);
-      window.addEventListener("pointerup", handlePointerUp);
     },
-    [panelSize],
+    [],
   );
+  const handleResizeMove = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = resizeRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    setPanelSize(clampPanelSize({
+      width: drag.width + drag.x - event.clientX,
+      height: drag.height + drag.y - event.clientY,
+    }, { width: drag.maxWidth, height: drag.maxHeight }));
+  }, []);
+  const handleResizeEnd = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (resizeRef.current?.pointerId !== event.pointerId) return;
+    resizeRef.current = null;
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
 
   return (
-    <div className="pointer-events-none fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3">
+    <div ref={containerRef} className="pointer-events-none fixed inset-x-4 bottom-4 top-18 z-40 flex min-h-0 flex-col items-end justify-end gap-3 sm:inset-x-6 sm:bottom-6" style={{ bottom: configuration?.bottomInset }}>
       {open ? (
+        <Tabs value={view} onValueChange={value => setView(value as typeof view)} asChild>
         <section
+          ref={panelRef}
+          role="dialog"
           aria-label={headerTitle}
-          className={cn(
-            "pointer-events-auto relative flex flex-col overflow-hidden rounded-3xl border shadow-2xl transition-colors",
-            glassMode
-              ? "border-cyan-200/55 bg-cyan-950/30 shadow-[0_24px_120px_rgba(34,211,238,0.22),inset_0_1px_0_rgba(255,255,255,0.18),inset_0_0_64px_rgba(34,211,238,0.10)] ring-1 ring-cyan-200/45 backdrop-blur-3xl backdrop-saturate-200"
-              : "border-cyan-300/20 bg-slate-950/95 shadow-cyan-950/40",
-          )}
+          className="pointer-events-auto relative flex min-h-0 flex-col overflow-hidden rounded-3xl border border-border bg-background text-foreground shadow-2xl dark:bg-slate-950"
           style={{
-            width: `min(${panelSize.width}px, calc(100vw - 2rem))`,
-            height: `min(${panelSize.height}px, calc(100vh - 7rem))`,
+            width: expanded ? "100%" : `min(${panelSize.width}px, 100%)`,
+            height: expanded ? "100%" : `min(${panelSize.height}px, 100%)`,
           }}
         >
-          <button
-            type="button"
-            aria-label={`Resize ${bubbleLabel} assistant`}
-            onPointerDown={handleResizeStart}
-            className="absolute left-3 top-3 z-10 flex h-10 w-10 cursor-nwse-resize touch-none items-center justify-center rounded-full border border-cyan-200/30 bg-slate-950/35 shadow-lg backdrop-blur-md transition hover:border-cyan-200/60 hover:bg-cyan-300/10"
-          >
-            <span className="absolute h-7 w-7 rounded-full border border-cyan-200/30" aria-hidden />
-            <span className="absolute h-4 w-4 rounded-full border border-cyan-300/40" aria-hidden />
-            <span className="h-1.5 w-1.5 rounded-full bg-cyan-200 shadow-[0_0_14px_rgba(34,211,238,0.8)]" aria-hidden />
-          </button>
-
-          <header className="flex items-center justify-between gap-3 border-b border-white/10 bg-cyan-950/30 py-3 pl-16 pr-4 backdrop-blur-3xl">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="rounded-full bg-cyan-300/15 p-2 text-cyan-100">
-                <Bot className="h-4 w-4" aria-hidden />
-              </span>
+          <button type="button" aria-label={`Resize ${bubbleLabel} assistant`} onPointerDown={handleResizeStart}
+            onPointerMove={handleResizeMove} onPointerUp={handleResizeEnd} onPointerCancel={handleResizeEnd} onLostPointerCapture={handleResizeEnd}
+            className="absolute left-1 top-1 z-10 flex h-6 w-6 cursor-nwse-resize touch-none items-center justify-center rounded-md text-muted-foreground hover:bg-accent"
+          ><span aria-hidden className="h-2 w-2 border-l border-t border-current" /></button>
+          <header className="flex items-center justify-between gap-3 border-b border-border bg-background py-3 pl-9 pr-4">
+            {hasSelectedConversation && assistantConversation ? <HostConversationActions key={assistantConversation.id}
+              appId={appId} agentId={assistantAgentId} conversationId={assistantConversation.id}
+              variant="title" conversationTitle={selectedTitle} disabled={conversationActionPending}
+              onHistoryChange={() => setHistoryRevision(value => value + 1)} onArchived={() => onArchived(assistantConversation.id)} />
+              : <h2 className="min-w-0 truncate text-sm font-semibold">New chat</h2>}
+            <AssistantConversationToolbar
+              viewTabs={<TabsList aria-label={`${bubbleLabel} views`} indicator="none" className="h-8 w-fit shrink-0 overflow-hidden border border-foreground/30 bg-transparent p-0">
+                <TabsTrigger value="chat" className="h-full rounded-none px-4 py-1 data-[state=active]:bg-foreground data-[state=active]:text-background">Chat</TabsTrigger>
+                <TabsTrigger value="history" className="h-full rounded-none border-l border-foreground/30 px-4 py-1 data-[state=active]:bg-foreground data-[state=active]:text-background">History</TabsTrigger>
+              </TabsList>}
+              menuOpen={displayMenuOpen} onMenuOpenChange={setDisplayMenuOpen}
+              expanded={expanded} pending={conversationActionPending}
+              canStart={view === "history" || hasSelectedConversation}
+              onNewChat={() => void handleNewChat()}
+              onExpand={() => setExpanded(true)} onResetSize={() => { setExpanded(false); setPanelSize(defaultSize); }}
+              chatHref={hasSelectedConversation && assistantConversation ? `/chat/${encodeURIComponent(assistantConversation.id)}` : undefined}
+              onMinimize={() => onOpenChange(false)} />
+          </header>
+          {activeContext?.summary && view === "chat" ? (
+            <div role="note" aria-label="Attached page context" className="flex items-start gap-2 border-b border-border bg-muted/30 px-4 py-2 text-xs">
+              <FileText className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
               <div className="min-w-0">
-                <h2 className="truncate text-sm font-semibold text-white">{headerTitle}</h2>
-                <p className="truncate text-xs text-slate-400">
-                  {activeContext
-                    ? `${activeContext.route} context active`
-                    : `Waiting for ${appId} context`}
-                </p>
+                <p className="font-medium text-foreground">{activeContext.title ?? "Page context"}</p>
+                <p className="truncate text-muted-foreground">{activeContext.summary}</p>
               </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                aria-label="Start new assistant chat"
-                title="New chat"
-                disabled={assistantConversation?.key !== conversationKey || conversationActionPending}
-                onClick={() => void handleNewChat()}
-                className="rounded-full p-2 text-slate-400 transition hover:bg-white/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
-              >
-                {conversationActionPending ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden />
-                ) : (
-                  <Plus className="h-4 w-4" aria-hidden />
-                )}
-              </button>
-              <button
-                type="button"
-                aria-label="Clear assistant chat"
-                title="Clear chat"
-                disabled={assistantConversation?.key !== conversationKey || conversationActionPending}
-                onClick={() => void handleClearChat()}
-                className="rounded-full p-2 text-slate-400 transition hover:bg-red-400/10 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <Trash2 className="h-4 w-4" aria-hidden />
-              </button>
-              <button
-                type="button"
-                aria-label={glassMode ? "Disable translucent assistant mode" : "Enable translucent assistant mode"}
-                aria-pressed={glassMode}
-                onClick={() => setGlassMode((value) => !value)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] font-medium transition",
-                  glassMode
-                    ? "border-cyan-200/70 bg-cyan-300/25 text-cyan-50"
-                    : "border-white/10 bg-slate-950/40 text-slate-300 hover:text-white",
-                )}
-              >
-                <Sparkles className="h-3.5 w-3.5" aria-hidden /> Glass
-              </button>
-              <button
-                type="button"
-                className="rounded-full p-2 text-slate-400 transition hover:bg-white/10 hover:text-white"
-                aria-label="Close assistant"
-                onClick={() => onOpenChange(false)}
-              >
+              <button type="button" aria-label="Clear context" title="Clear context" onClick={onClearContext}
+                className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
                 <X className="h-4 w-4" aria-hidden />
               </button>
             </div>
-          </header>
-
-          <div className="border-b border-white/10 bg-cyan-300/15 px-4 py-3 text-xs text-slate-300 backdrop-blur-2xl">
-            {activeContext ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium text-cyan-100">
-                    {activeContext.title ?? "Published app context"}
-                  </span>
-                  <button
-                    type="button"
-                    className="rounded-full border border-white/10 px-2 py-1 text-[11px] text-slate-200 transition hover:bg-white/10"
-                    onClick={onClearContext}
-                  >
-                    Clear context
-                  </button>
-                </div>
-                {activeContext.summary ? (
-                  <p className="line-clamp-2 text-slate-400">{activeContext.summary}</p>
-                ) : null}
-              </div>
-            ) : (
-              <p>App context is treated as untrusted data, not instructions.</p>
-            )}
-          </div>
-
-          <div className="min-h-0 flex-1 [&>div]:bg-transparent">
-            {conversationError?.key === conversationKey ? (
-              <div role="alert" className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-red-200">
+          ) : null}
+          <div className="flex min-h-0 flex-1 flex-col">
+          <TabsContent value="history" className="m-0 min-h-0 flex-1">
+            <AppAssistantHistory key={`${appId}:${assistantAgentId}`} appId={appId} agentId={assistantAgentId} includeLegacy={options?.includeLegacyAgentHistory}
+              revision={historyRevision} disabled={conversationActionPending}
+              selectedId={assistantConversation?.id} onSelect={selectHistory} onArchived={onArchived} />
+          </TabsContent>
+          <TabsContent value="chat" forceMount className="m-0 min-h-0 flex-1 bg-background data-[state=inactive]:hidden [&>div]:bg-background" style={{
+            "--text-sm": fontScale === "large" ? "1rem" : fontScale === "compact" ? "0.8125rem" : "0.875rem",
+            "--text-base": fontScale === "large" ? "1.125rem" : fontScale === "compact" ? "0.875rem" : "1rem",
+          } as React.CSSProperties}>
+            {conversationError?.key === requestKey ? (
+              <div role="alert" className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-destructive">
                 {conversationError.message}
                 <button type="button" className="underline" onClick={() => setConversationError(null)}>Retry</button>
               </div>
-            ) : assistantConversation?.key === conversationKey ? (
+            ) : hasSelectedConversation && assistantConversation ? (
               <ChatPanel
                 key={assistantConversation.id}
                 conversationId={assistantConversation.id}
                 agentId={assistantAgentId}
+                agent={assistantAgent}
+                readOnly={selectedAccess === "shared_readonly"} readOnlyReason={selectedAccess === "shared_readonly" ? "shared_readonly" : undefined}
+                requestOptions={requestOptions} composerHeader={composerHeader}
+                placeholder={options?.presentation?.placeholder ?? `${bubbleLabel}…`}
+                emptyStateTitle={bubbleLabel}
+                showAuditNotice={options?.presentation?.showAuditNotice}
+                feedbackPrompt={options?.presentation?.feedbackPrompt}
                 clientContext={clientContext}
+                suggestedPrompts={suggestedPrompts}
+                composerDraft={composerDraft}
+                onComposerDraftApplied={onComposerDraftApplied}
               />
             ) : (
-              <div className="flex h-full items-center justify-center gap-2 text-sm text-slate-300">
+              <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
                 <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden />
                 Starting {bubbleLabel}…
               </div>
             )}
+          </TabsContent>
           </div>
         </section>
+        </Tabs>
       ) : null}
 
       <button
+        ref={launcherRef}
         type="button"
         aria-label={`Open ${bubbleLabel}`}
-        className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-cyan-200/30 bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-200"
+        className="pointer-events-auto inline-flex shrink-0 items-center gap-2 rounded-full border border-cyan-200/30 bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-200"
         onClick={() => onOpenChange(!open)}
       >
-        <MessageCircle className="h-4 w-4" aria-hidden />
+        {assistantIcon ? <Image src={assistantIcon} width={20} height={20} alt="" unoptimized /> : <MessageCircle className="h-4 w-4" aria-hidden />}
         {bubbleLabel}
-        {activeContext ? (
-          <span className="rounded-full bg-slate-950/15 px-2 py-0.5 text-xs">context</span>
-        ) : null}
       </button>
     </div>
   );
 }
 
-function clampPanelSize(size: { width: number; height: number }): {
+function clampPanelSize(size: { width: number; height: number }, maximum: { width: number; height: number }): {
   width: number;
   height: number;
 } {
   return {
-    width: Math.max(MIN_PANEL_SIZE.width, Math.min(MAX_PANEL_SIZE.width, size.width)),
-    height: Math.max(MIN_PANEL_SIZE.height, Math.min(MAX_PANEL_SIZE.height, size.height)),
+    width: Math.min(maximum.width, Math.max(MIN_PANEL_SIZE.width, size.width)),
+    height: Math.min(maximum.height, Math.max(MIN_PANEL_SIZE.height, size.height)),
   };
 }
 
-function readStoredGlassMode(): boolean {
-  if (typeof window === "undefined") return true;
-  const raw = window.localStorage.getItem(GLASS_MODE_STORAGE_KEY);
-  return raw === null ? true : raw === "true";
+function updateAssistantDeepLink(id: string | null, aliases: string[] = []): void {
+  const url = new URL(window.location.href);
+  for (const alias of aliases) url.searchParams.delete(alias);
+  if (id) url.searchParams.set("assistant_chat", id);
+  else url.searchParams.delete("assistant_chat");
+  window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
 }

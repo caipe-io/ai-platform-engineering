@@ -1180,3 +1180,13 @@ Both paths require a populated `session.sub`; without it `filterSkillsByOpenFga`
 **Q: Where do I look to change something?**
 
 See [the file map](./file-map.md). Every auth-relevant file is listed with what changing it actually does.
+
+## Admin migration-status polling
+
+- The header requests migration status only for an authenticated session with
+  confirmed admin eligibility. Non-admin sessions do not poll the admin endpoint.
+- A 401 or 403 suspends timer, focus and migration-refresh requests until admin
+  eligibility or the authenticated principal changes, or the page reloads.
+- Disabling the feature or changing accounts aborts in-flight requests and clears
+  stale status. Transient service failures remain retryable; server authorization
+  checks are unchanged.

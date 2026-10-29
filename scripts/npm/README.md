@@ -12,6 +12,13 @@ The UI Docker dependency stage copies this script before installing packages.
   when verifying RSA signatures, including optional algorithm parameters.
   Advisory: [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv).
   Backport source: [digitalbazaar/forge#1152](https://github.com/digitalbazaar/forge/pull/1152).
+- `deepmerge@4.3.1`: exclude `__proto__` from key enumeration for both merge
+  operands, including nested objects and cloned array elements. Patch the source
+  and both published bundles (`dist/cjs.js` and `dist/umd.js`). This blocks the
+  prototype setter even when the target has a null prototype, a primitive
+  placeholder, or an own `__proto__` property, while retaining symbol keys.
+  Advisory: [GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4).
+  Proposed upstream guards: [TehShrike/deepmerge#274](https://github.com/TehShrike/deepmerge/pull/274).
 
 Each installed copy listed in the npm lockfile is patched. Unexpected versions
 or source contents fail installation. Repeated runs verify the existing patch.

@@ -1,4 +1,6 @@
+import { validateAssistantRequestOptions } from "../../../app-sdk/assistant-options.mjs";
 import { NextResponse } from "next/server";
+import { readAssistantStatus, persistAssistantCompletion } from "./assistant-status";
 
 import type { AuthResult } from "@/lib/da-proxy";
 import { getAgentId } from "@/types/a2a";
@@ -101,6 +103,11 @@ export async function proxyAgenticAppAssistantStream(
       return NextResponse.json({ success: false, error: "Agent registry is temporarily unavailable" }, { status: 503 });
     }
   }
+  const options = getAgenticAppRoutingSnapshot().find(app => app.installation.appId === target.appId)?.manifest.ui.assistant?.hostOptions;
+  if (options && body.forwarded_props !== undefined) {
+    try { validateAssistantRequestOptions(body.forwarded_props, options); }
+    catch { return NextResponse.json({ success: false, error: "Invalid assistant request options" }, { status: 400 }); }
+  }
   const response = await proxyAgenticAppRequest(request, {
     params: Promise.resolve({ appId: target.appId, path: target.path }),
   }, auth.authenticatedUser, clientContext,
@@ -112,6 +119,21 @@ export async function proxyAgenticAppAssistantStream(
   if (contentType !== expected) {
     await response.body?.cancel();
     return NextResponse.json({ success: false, error: `Assistant response must be ${expected}` }, { status: 502 });
+  }
+  if (operation === "status") {
+    try {
+      const status = await readAssistantStatus(response);
+      if (status.completedTurn) {
+        const currentTarget = findAgenticAppAssistantStream(savedAgentId!, "status");
+        if (body.turn_id !== status.completedTurn.turnId || currentTarget?.appId !== target.appId ||
+            !await persistAssistantCompletion({ subject: auth.subject, email: auth.email,
+              conversationId: conversation._id, agentId: savedAgentId!, appId: target.appId,
+              turn: status.completedTurn })) delete status.completedTurn;
+      }
+      return NextResponse.json(status, { headers: { "Cache-Control": "private, no-store" } });
+    } catch {
+      return NextResponse.json({ error: "Assistant returned invalid status" }, { status: 502 });
+    }
   }
   const headers = new Headers(response.headers);
   headers.set("Cache-Control", expected === "text/event-stream" ? "no-cache, no-transform" : "private, no-store");
