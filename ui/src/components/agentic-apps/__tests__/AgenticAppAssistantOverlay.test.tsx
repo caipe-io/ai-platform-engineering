@@ -6,6 +6,8 @@ import type { Conversation } from "@/types/a2a";
 import { applyAssistantFontScale } from "@/lib/appearance-preferences";
 import { AgenticAppAssistantOverlay } from "../AgenticAppAssistantOverlay";
 
+jest.mock("../AssistantConnectionGuidance", () => ({ AssistantConnectionGuidance: () => null }));
+
 jest.mock("@/native-extensions/HostConversationActions", () => ({ __esModule: true, default: () => <h2>Saved app chat</h2> }));
 
 function action(name: string): HTMLElement {
