@@ -7,6 +7,7 @@ AWS MCP Server that exposes `aws_cli_execute` and `eks_kubectl_execute` as
 
 | Tool | Description |
 |------|-------------|
+| `list_aws_accounts` | Discover configured account names and IDs before calling account-scoped tools. |
 | `aws_cli_execute` | Execute read-only AWS CLI commands (`describe-*`, `list-*`, `get-*`). Write/destructive operations are blocked by default. Supports cross-account profiles via `AWS_ACCOUNT_LIST`. |
 | `eks_kubectl_execute` | Execute kubectl commands against an EKS cluster. Handles `aws eks update-kubeconfig` automatically. Secret data is redacted from output before returning to the LLM. |
 
@@ -25,6 +26,16 @@ AWS MCP Server that exposes `aws_cli_execute` and `eks_kubectl_execute` as
 | `RESTRICT_KUBECTL_SECRETS` | `true` | Block `kubectl get/describe secret(s)` |
 | `RESTRICT_KUBECTL_PROXY` | `true` | Block `kubectl proxy` |
 | `RESTRICT_KUBECTL_EXEC` | `false` | Block `kubectl exec` |
+
+When `AWS_ACCOUNT_LIST` is configured, `aws_cli_execute` and
+`eks_kubectl_execute` require a configured profile name. Missing or unknown
+selectors return the available names rather than silently using the server's
+bootstrap credentials. `account` is accepted as a legacy alias; conflicting
+`account` and `profile` values are rejected. Without `AWS_ACCOUNT_LIST`, tools
+continue to use the default credential chain without a profile argument.
+
+Account selection is routing, not authorization. Restrict the server's IAM
+permissions and role trust policies independently.
 
 ## Running locally
 

@@ -10,7 +10,6 @@ operations. Exposes read-only AWS CLI execute logic as MCP tools.
 """
 
 import asyncio
-import functools
 import json
 import logging
 import os
@@ -74,8 +73,8 @@ logger = logging.getLogger(__name__)
 # AWS profile setup
 # ---------------------------------------------------------------------------
 
-def _setup_aws_profiles() -> list[dict]:
-    """Read AWS_ACCOUNT_LIST and write ~/.aws/config with assume-role profiles."""
+def _parse_aws_accounts() -> list[dict[str, str]]:
+    """Read account selectors without modifying the AWS configuration file."""
     aws_account_list = os.getenv("AWS_ACCOUNT_LIST", "")
     if not aws_account_list:
         return []
@@ -91,6 +90,12 @@ def _setup_aws_profiles() -> list[dict]:
         else:
             accounts.append({"name": entry, "id": entry})
 
+    return accounts
+
+
+def _setup_aws_profiles() -> list[dict]:
+    """Read AWS_ACCOUNT_LIST and write ~/.aws/config with assume-role profiles."""
+    accounts = _parse_aws_accounts()
     if not accounts:
         return []
 
@@ -113,10 +118,35 @@ def _setup_aws_profiles() -> list[dict]:
     return accounts
 
 
-@functools.lru_cache(maxsize=None)
 def _get_configured_profiles() -> list[str]:
-    """Return profile names from AWS_ACCOUNT_LIST. Cached after first call."""
-    return [a["name"] for a in _setup_aws_profiles()]
+    """Read profile names using the same current configuration as discovery."""
+    return [a["name"] for a in _parse_aws_accounts()]
+
+
+def list_aws_accounts() -> dict:
+    """List account names and IDs configured for account-scoped AWS tools.
+
+    Use the account name as `profile`. For all accounts, call the tool once per
+    profile. An empty list means the server uses its default credential chain.
+    """
+    return {"accounts": _parse_aws_accounts()}
+
+
+def _resolve_account_profile(
+    profile: Optional[str], account: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Reject ambiguous or unknown selectors before invoking either CLI."""
+    profile = (profile or "").strip()
+    account = (account or "").strip()
+    if profile and account and profile != account:
+        return None, "profile and account must select the same account."
+    profiles = _get_configured_profiles()
+    if not profiles:
+        return None, None
+    selected = profile or account
+    if selected not in profiles:
+        return None, f"Select a valid profile. Available profiles: {', '.join(profiles)}"
+    return selected, None
 
 
 # ---------------------------------------------------------------------------
@@ -151,10 +181,11 @@ def _validate_aws_command(command: str) -> tuple[bool, str]:
 
 async def aws_cli_execute(
     command: str,
-    profile: str,
+    profile: Optional[str] = None,
     region: Optional[str] = None,
     output_format: Optional[str] = "json",
     jq_filter: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> str:
     """
     Execute an AWS CLI read-only command against a specific AWS account.
@@ -167,16 +198,18 @@ async def aws_cli_execute(
         command: AWS CLI command without the 'aws' prefix.
             Examples: 'ec2 describe-instances', 's3 ls', 'iam list-roles',
             'eks list-clusters --region us-west-2'.
-        profile: AWS profile name for the target account. REQUIRED — when the
-            user asks for 'all accounts', make separate calls with each profile.
-            If AWS_ACCOUNT_LIST is not configured, pass an empty string to use
-            environment-variable credentials directly.
+        profile: Configured account name returned by list_aws_accounts. Required
+            (or supply account) when AWS_ACCOUNT_LIST contains accounts. For
+            'all accounts', make separate calls with each configured profile.
+            Without configured accounts, omit profile and account to use the
+            server's default credential chain.
         region: AWS region override. Defaults to AWS_REGION / AWS_DEFAULT_REGION
             environment variable, or 'us-west-2' if neither is set.
         output_format: CLI output format — json (default), text, table, or yaml.
         jq_filter: Optional jq expression applied to JSON output. Useful for
             extracting specific fields, e.g.
             '.Reservations[].Instances[] | {ID: .InstanceId, State: .State.Name}'.
+        account: Legacy alias for profile. If both are set, they must match.
     """
     is_valid, error_msg = _validate_aws_command(command)
     if not is_valid:
@@ -186,8 +219,10 @@ async def aws_cli_execute(
     aws_region = region or os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-west-2"))
     output_fmt = "json" if jq_filter else (output_format if output_format in ["json", "text", "table", "yaml"] else "json")
 
-    configured_profiles = _get_configured_profiles()
-    profile_prefix = f"--profile {profile} " if (configured_profiles and profile) else ""
+    selected_profile, profile_error = _resolve_account_profile(profile, account)
+    if profile_error:
+        return f"❌ {profile_error}"
+    profile_prefix = f"--profile {shlex.quote(selected_profile)} " if selected_profile else ""
 
     if "--region" in command:
         full_command = f"aws {profile_prefix}{command} --output {output_fmt}"
@@ -370,8 +405,9 @@ def _sanitize_kubectl_output(output: str) -> str:
 async def eks_kubectl_execute(
     cluster_name: str,
     kubectl_command: str,
-    profile: str,
+    profile: Optional[str] = None,
     region: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> str:
     """
     Execute a kubectl command against an Amazon EKS cluster.
@@ -386,28 +422,35 @@ async def eks_kubectl_execute(
       - exec / attach / cp / port-forward — default: false (opt-in)
 
     Args:
-        cluster_name: EKS cluster name, e.g. 'eks-gitops-1'.
+        cluster_name: EKS cluster name, e.g. 'example-cluster'.
         kubectl_command: kubectl subcommand without the 'kubectl' prefix.
             Examples: 'get nodes', 'get pods -n kube-system --all-namespaces',
             'describe node <name>', 'logs <pod> -n <ns> --tail 100',
             'top nodes', 'get events --sort-by=.lastTimestamp'.
-        profile: AWS profile name for the account containing the cluster.
-            Pass an empty string to use environment-variable credentials.
+        profile: Configured account name returned by list_aws_accounts for the
+            account containing the cluster. Required (or supply account) when
+            AWS_ACCOUNT_LIST contains accounts. Without configured accounts,
+            omit profile and account to use the server's default credential chain.
         region: AWS region where the cluster resides. Defaults to the profile
             default or AWS_REGION / AWS_DEFAULT_REGION env var.
+        account: Legacy alias for profile. If both are set, they must match.
     """
     is_valid, error_msg = _validate_kubectl_command(kubectl_command)
     if not is_valid:
         return f"❌ Command blocked: {error_msg}"
 
-    logger.info("EKS kubectl: cluster=%s profile=%s command='%s'", cluster_name, profile, kubectl_command)
+    selected_profile, profile_error = _resolve_account_profile(profile, account)
+    if profile_error:
+        return f"❌ {profile_error}"
+
+    logger.info("EKS kubectl: cluster=%s profile=%s command='%s'", cluster_name, selected_profile, kubectl_command)
 
     async with _kubectl_semaphore:
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, _run_kubectl, cluster_name, kubectl_command, profile, region)
+        return await loop.run_in_executor(None, _run_kubectl, cluster_name, kubectl_command, selected_profile, region)
 
 
-def _run_kubectl(cluster_name: str, kubectl_command: str, profile: str, region: Optional[str]) -> str:
+def _run_kubectl(cluster_name: str, kubectl_command: str, profile: Optional[str], region: Optional[str]) -> str:
     """Synchronous kubectl execution (run in executor to avoid blocking the event loop)."""
     import subprocess
 
@@ -495,6 +538,7 @@ def main():
         logger.info("Configured AWS profiles: %s", [a["name"] for a in accounts])
 
     mcp = FastMCP(f"{SERVER_NAME} MCP Server")
+    mcp.tool()(list_aws_accounts)
     mcp.tool()(aws_cli_execute)
     mcp.tool()(eks_kubectl_execute)
 
