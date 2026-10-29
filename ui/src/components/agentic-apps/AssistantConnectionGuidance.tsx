@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageCircle, X } from "lucide-react";
+import { X } from "lucide-react";
 import Image from "next/image";
 import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -32,14 +32,12 @@ export function ConnectionGuideButtons({ guides }: { guides: AssistantConnection
       const open = selectedId === guide.id;
       const titleId = `${instanceId}-${guide.id}-title`;
       const panelId = `${instanceId}-${guide.id}-panel`;
-      const identity = `${guide.id} ${guide.label}`;
-      const logo = /\bwebex\b/i.test(identity) ? "/provider-logos/webex.svg" : /\bslack\b/i.test(identity) ? "/slack.svg" : null;
       return <Popover key={guide.id} open={open} onOpenChange={(next) => { if (next) setSelectedId(guide.id); }}>
         <PopoverTrigger asChild>
-          <Button ref={(node) => { triggerRefs.current[guide.id] = node; }} type="button" size="icon" variant="outline"
-            className="h-8 w-8" aria-label={guide.label} title={guide.label} aria-haspopup="dialog"
+          <Button ref={(node) => { triggerRefs.current[guide.id] = node; }} type="button" size={guide.logo === "webex" ? "icon" : "sm"} variant="outline"
+            className={guide.logo === "webex" ? "h-8 w-8" : "h-8"} aria-label={guide.label} title={guide.label} aria-haspopup="dialog"
             aria-expanded={open} aria-controls={open ? panelId : undefined}>
-            {logo ? <Image src={logo} width={20} height={20} alt="" unoptimized className="h-5 w-5 object-contain" /> : <MessageCircle className="h-5 w-5" aria-hidden />}
+            {guide.logo === "webex" ? <Image src="/provider-logos/webex.svg" width={20} height={20} alt="" unoptimized className="h-5 w-5 object-contain" /> : guide.label}
           </Button>
         </PopoverTrigger>
         <PopoverContent align="end" className="max-h-[70vh] w-80 max-w-[calc(100vw-1rem)] overflow-y-auto p-4">

@@ -56,6 +56,7 @@ jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
     readOnly,
     composerDraft,
     emptyStateTitle,
+    showAgentHeader,
     suggestedPrompts,
   }: {
     conversationId?: string;
@@ -64,6 +65,7 @@ jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
     readOnly?: boolean;
     composerDraft?: { text: string } | null;
     emptyStateTitle?: string;
+    showAgentHeader?: boolean;
     suggestedPrompts?: string[];
   }) => (
     <div
@@ -71,6 +73,7 @@ jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
       data-conversation-id={conversationId}
       data-agent-id={agentId}
       data-empty-title={emptyStateTitle}
+      data-agent-header={String(showAgentHeader)}
       data-suggestions={JSON.stringify(suggestedPrompts ?? [])}
       data-draft={composerDraft?.text ?? ""}
       data-context={JSON.stringify(clientContext ?? {})}
@@ -170,6 +173,7 @@ describe("AgenticAppAssistantOverlay", () => {
     expect(chat).toHaveAttribute("data-conversation-id", "assistant-conversation");
     expect(chat).toHaveAttribute("data-agent-id", "agent-example");
     expect(chat).toHaveAttribute("data-empty-title", "Ask Example");
+    expect(chat).toHaveAttribute("data-agent-header", "false");
     expect(chat).toHaveAttribute("data-suggestions", "[]");
   });
 

@@ -3,7 +3,7 @@ import { ConnectionGuideButtons } from "../AssistantConnectionGuidance";
 
 jest.mock("@/components/shared/timeline/MarkdownRenderer", () => ({ MarkdownRenderer: ({ content }: { content: string }) => <p>{content}</p> }));
 
-const guide = { id: "channel-1", enabled: true, label: "Connect via Webex", title: "Webex instructions", markdown: "Search for example-bot@example.test", action_label: "Link identity", action_url: "/api/auth/webex-link/start" };
+const guide = { id: "channel-1", enabled: true, label: "Connect via Webex", logo: "webex" as const, title: "Webex instructions", markdown: "Search for example-bot@example.test", action_label: "Link identity", action_url: "/api/auth/webex-link/start" };
 
 test("opens Webex instructions from a logo and keeps them open until closed", async () => {
   render(<ConnectionGuideButtons guides={[guide, { ...guide, id: "slack", enabled: false, label: "Connect to Slack" }]} />);
@@ -42,11 +42,12 @@ test("Escape closes the instructions without closing the surrounding assistant",
   }
 });
 
-test("uses the Slack logo and a generic icon for other channels", () => {
+test("shows the button label when no Webex logo is configured", () => {
   render(<ConnectionGuideButtons guides={[
-    { ...guide, id: "slack", label: "Connect to Slack" },
-    { ...guide, id: "other", label: "Connect to another channel" },
+    { ...guide, id: "webex", logo: undefined },
+    { ...guide, id: "slack", label: "Connect to Slack", logo: undefined },
   ]} />);
-  expect(screen.getByRole("button", { name: "Connect to Slack" }).querySelector("img")).toHaveAttribute("src", "/slack.svg");
-  expect(screen.getByRole("button", { name: "Connect to another channel" }).querySelector("svg")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Connect via Webex" })).toHaveTextContent("Connect via Webex");
+  expect(screen.getByRole("button", { name: "Connect to Slack" })).toHaveTextContent("Connect to Slack");
+  expect(screen.getByRole("button", { name: "Connect to Slack" }).querySelector("img")).toBeNull();
 });

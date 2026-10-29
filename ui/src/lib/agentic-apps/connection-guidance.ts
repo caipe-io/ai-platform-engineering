@@ -2,6 +2,7 @@ export interface AssistantConnectionGuide {
   id: string;
   enabled: boolean;
   label: string;
+  logo?: "webex";
   title: string;
   markdown: string;
   action_label: string;
@@ -21,11 +22,12 @@ export function validateConnectionGuidance(value: unknown): AssistantConnectionG
   return value.map((raw: unknown) => {
     if (!raw || typeof raw !== "object") throw new Error("Invalid connection guide.");
     const item = raw as Record<string, unknown>;
+    if (item.logo !== undefined && item.logo !== "webex") throw new Error("Unsupported connection guide logo.");
     const text = (key: string, max: number) => {
       if (typeof item[key] !== "string" || (item[key] as string).length > max) throw new Error(`Invalid guide ${key}.`);
       return (item[key] as string).trim();
     };
-    const guide = { id: text("id", 64), enabled: item.enabled === true, label: text("label", 60), title: text("title", 120), markdown: text("markdown", 8192), action_label: text("action_label", 60), action_url: text("action_url", 2048) };
+    const guide = { id: text("id", 64), enabled: item.enabled === true, label: text("label", 60), ...(item.logo === "webex" ? { logo: "webex" as const } : {}), title: text("title", 120), markdown: text("markdown", 8192), action_label: text("action_label", 60), action_url: text("action_url", 2048) };
     if (!/^[a-z0-9-]+$/.test(guide.id) || ids.has(guide.id) || typeof item.enabled !== "boolean") throw new Error("Guide IDs must be unique and use lowercase letters, digits, or hyphens.");
     ids.add(guide.id);
     if (guide.enabled && (!guide.label || !guide.title || !guide.markdown)) throw new Error("Enabled guides need a label, title, and instructions.");

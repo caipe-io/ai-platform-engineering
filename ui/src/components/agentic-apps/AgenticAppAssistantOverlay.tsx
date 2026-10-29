@@ -431,6 +431,7 @@ export function AgenticAppAssistantOverlay({
                 requestOptions={requestOptions} composerHeader={composerHeader}
                 placeholder={options?.presentation?.placeholder ?? `${bubbleLabel}…`}
                 emptyStateTitle={bubbleLabel}
+                showAgentHeader={false}
                 showAuditNotice={options?.presentation?.showAuditNotice}
                 feedbackPrompt={options?.presentation?.feedbackPrompt}
                 clientContext={clientContext}

@@ -63,6 +63,7 @@ function GuideEditor({ appId, readOnly }: { appId: string; readOnly: boolean }) 
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={guide.enabled} onChange={(event) => edit(index, { enabled: event.target.checked })} />Show this connection guide</label>
         <label className="block text-sm">Channel ID<Input value={guide.id} onChange={(event) => edit(index, { id: event.target.value })} placeholder="webex" /></label>
         <label className="block text-sm">Button label<Input value={guide.label} maxLength={60} onChange={(event) => edit(index, { label: event.target.value })} /></label>
+        <label className="block text-sm">Button logo<Select value={guide.logo ?? ""} onChange={(event) => edit(index, { logo: event.target.value === "webex" ? "webex" : undefined })}><option value="">None</option><option value="webex">Webex</option></Select></label>
         <label className="block text-sm">Popup title<Input value={guide.title} maxLength={120} onChange={(event) => edit(index, { title: event.target.value })} /></label>
         <label className="block text-sm">Instructions (Markdown)<Textarea rows={6} value={guide.markdown} maxLength={8192} onChange={(event) => edit(index, { markdown: event.target.value })} placeholder="Search for the configured bot address and start a direct conversation." /></label>
         <label className="block text-sm">Action label (optional)<Input value={guide.action_label} onChange={(event) => edit(index, { action_label: event.target.value })} /></label>
