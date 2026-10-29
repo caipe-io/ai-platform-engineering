@@ -32,6 +32,7 @@ from jinja2.sandbox import ImmutableSandboxedEnvironment, SecurityError
 from langchain.agents.middleware.pii import PIIMiddleware
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.mongodb.saver import MongoDBSaver
+from langgraph.config import get_stream_writer
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 from llm_wrapper.bedrock_family import resolve_bedrock_client
@@ -93,6 +94,7 @@ from dynamic_agents.services.model_capabilities import (
 from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
 from dynamic_agents.services.structured_response import (
+    STRUCTURED_OUTPUT_EVENT,
     StructuredResponseFormat,
     build_structured_response_instruction,
     create_submit_structured_response_tool,
@@ -719,8 +721,6 @@ class AgentRuntime:
         self._failed_skills_error: str = ""  # Error message for display
         self._failed_workflows: list[str] = []  # Workflow config IDs not found
         self._failed_workflows_error: str = ""  # Error message for display
-        self._structured_response: dict[str, Any] | None = None
-        self._structured_response_schema_id: str | None = None
         self._mcp_credential_warnings: list[str] = []
         self._mcp_credential_failed_server_ids: set[str] = set()
         self._valid_workflow_configs: list[str] = []  # Validated workflow config IDs
@@ -969,7 +969,8 @@ class AgentRuntime:
 
         # 2. Add built-in tools
         client_ctx = self._client_context.model_dump() if self._client_context else None
-        builtin_tools = self._build_builtin_tools(self._user, client_context=client_ctx)
+        response_format = self._get_allowed_structured_response_format(client_ctx)
+        builtin_tools = self._build_builtin_tools(self._user, client_context=client_ctx, response_format=response_format)
         builtin_tool_names = {t.name for t in builtin_tools}
         if builtin_tools:
             tools = tools + builtin_tools
@@ -995,7 +996,6 @@ class AgentRuntime:
             logger.error(f"Agent '{self.config.name}' failed to initialize: {exc}")
             raise RuntimeError(f"Agent '{self.config.name}' failed to initialize: {exc}") from exc
 
-        response_format = self._get_allowed_structured_response_format(client_ctx)
         if response_format:
             system_prompt += build_structured_response_instruction(response_format)
 
@@ -1322,32 +1322,24 @@ class AgentRuntime:
         )
         return tools
 
-    def _capture_structured_response(
-        self, payload: dict[str, Any], schema_id: str | None
-    ) -> None:
-        """Capture the latest validated structured response submitted by the agent."""
-        self._structured_response = payload
-        self._structured_response_schema_id = schema_id
-
-    def get_structured_response(self) -> dict[str, Any] | None:
-        """Return the latest validated structured response for this runtime turn."""
-        return self._structured_response
-
-    def get_structured_response_schema_id(self) -> str | None:
-        """Return the schema ID for the captured structured response."""
-        return self._structured_response_schema_id
+    @staticmethod
+    def _emit_structured_response(payload: dict[str, Any], schema_id: str | None) -> None:
+        """Publish on the current graph invocation, without shared runtime state."""
+        get_stream_writer()({"type": STRUCTURED_OUTPUT_EVENT, "payload": payload, "schema_id": schema_id})
 
     def _get_allowed_structured_response_format(
         self, client_context: dict | None
     ) -> StructuredResponseFormat | None:
         """Return requested structured output only when the agent allows it."""
-        response_format = extract_response_format(client_context)
-        if response_format is None or self.config.features is None:
+        if self.config.features is None:
             return None
 
         for entry in self.config.features.middleware:
             if entry.type != "structured_response" or not entry.enabled:
                 continue
+            response_format = extract_response_format(client_context)
+            if response_format is None:
+                return None
 
             allowed_schema_ids = str(entry.params.get("allowed_schema_ids", "")).strip()
             if not allowed_schema_ids:
@@ -1371,6 +1363,8 @@ class AgentRuntime:
         user: UserContext | None = None,
         agent_config: DynamicAgentConfig | None = None,
         client_context: dict | None = None,
+        *,
+        response_format: StructuredResponseFormat | None = None,
     ) -> list:
         """Build list of built-in tools based on agent config.
 
@@ -1379,6 +1373,7 @@ class AgentRuntime:
             agent_config: Agent config to use. Defaults to self.config (parent agent).
                           Pass subagent config to build tools for a subagent.
             client_context: Optional client context dict for the user_info tool.
+            response_format: Prevalidated structured response request for the root agent.
 
         Returns:
             List of LangChain tools to add to the agent.
@@ -1387,13 +1382,11 @@ class AgentRuntime:
         tools = []
         config_summary: dict[str, Any] = {}
 
-        response_format = self._get_allowed_structured_response_format(client_context)
-        is_parent_agent = agent_config is None or config.id == self.config.id
-        if response_format and is_parent_agent:
+        if response_format is not None and agent_config is None:
             tools.append(
                 create_submit_structured_response_tool(
                     response_format=response_format,
-                    on_submit=lambda payload: self._capture_structured_response(
+                    on_submit=lambda payload: self._emit_structured_response(
                         payload,
                         response_format.schema_id,
                     ),
@@ -1404,8 +1397,6 @@ class AgentRuntime:
             }
 
         if not config.builtin_tools:
-            if tools:
-                logger.info(f"Agent '{config.name}': added built-in tools: {config_summary}")
             return tools
 
         # fetch_url tool (disabled by default)
@@ -2037,8 +2028,6 @@ class AgentRuntime:
         assert encoder is not None, "encoder must be provided"
 
         self._cancelled = False
-        self._structured_response = None
-        self._structured_response_schema_id = None
 
         config = self._build_stream_config(session_id, user_id, trace_id)
         run_id = f"run-{uuid4().hex[:12]}"
@@ -2173,16 +2162,6 @@ class AgentRuntime:
             for frame in self._emit_interrupt(encoder, interrupt_data):
                 yield frame
             return
-
-        structured_response = self.get_structured_response()
-        if structured_response is not None:
-            on_structured_output = getattr(encoder, "on_structured_output", None)
-            if callable(on_structured_output):
-                for frame in on_structured_output(
-                    structured_response,
-                    self.get_structured_response_schema_id(),
-                ):
-                    yield frame
 
         # ── Core lifecycle: run finish ──
         logger.info(
@@ -2466,8 +2445,6 @@ class AgentRuntime:
         assert encoder is not None, "encoder must be provided"
 
         self._cancelled = False
-        self._structured_response = None
-        self._structured_response_schema_id = None
 
         config = self._build_stream_config(session_id, user_id, trace_id)
         run_id = f"run-{uuid4().hex[:12]}"
@@ -2520,16 +2497,6 @@ class AgentRuntime:
             for frame in self._emit_interrupt(encoder, interrupt_data):
                 yield frame
             return
-
-        structured_response = self.get_structured_response()
-        if structured_response is not None:
-            on_structured_output = getattr(encoder, "on_structured_output", None)
-            if callable(on_structured_output):
-                for frame in on_structured_output(
-                    structured_response,
-                    self.get_structured_response_schema_id(),
-                ):
-                    yield frame
 
         # ── Core lifecycle: run finish ──
         logger.info(

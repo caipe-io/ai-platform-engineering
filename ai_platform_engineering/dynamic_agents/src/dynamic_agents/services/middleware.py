@@ -414,14 +414,13 @@ MIDDLEWARE_REGISTRY: dict[str, MiddlewareSpec] = {
     ),
     "structured_response": MiddlewareSpec(
         cls=object,
-        default_params={"allowed_schema_ids": "", "require_tool_submission": True},
+        default_params={"allowed_schema_ids": ""},
         enabled_by_default=False,
         allow_multiple=False,
         label="Structured Response",
         description="Allows app clients to request validated structured JSON output",
         param_schema={
             "allowed_schema_ids": "string",
-            "require_tool_submission": "boolean",
         },
     ),
     "tool_call_limit": MiddlewareSpec(
