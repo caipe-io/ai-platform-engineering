@@ -967,10 +967,10 @@ export function SkillsGallery({
                 aria-label="Open Skills Gateway — OpenAPI, auth, and agent integration"
                 title="Skills Gateway: OpenAPI, API keys, and coding-agent setup"
                 className={cn(
-                  "gap-2 h-9 text-sm px-4 font-medium border border-sky-500/20",
-                  "text-sky-50/95 shadow-md shadow-black/25",
-                  "bg-gradient-to-r from-slate-800 via-cyan-950/85 to-teal-950",
-                  "hover:border-sky-400/30 hover:brightness-[1.04]",
+                  "gap-2 h-9 text-sm px-4 font-medium border border-sky-300 bg-sky-50 text-sky-900 shadow-sm",
+                  "dark:border-sky-500/20 dark:text-sky-50/95 dark:shadow-md dark:shadow-black/25",
+                  "dark:bg-gradient-to-r dark:from-slate-800 dark:via-cyan-950/85 dark:to-teal-950",
+                  "hover:bg-sky-100 hover:border-sky-400 dark:hover:bg-transparent dark:hover:border-sky-400/30 hover:brightness-[1.04]",
                   "focus-visible:ring-2 focus-visible:ring-sky-500/40 focus-visible:ring-offset-2 ring-offset-background",
                   "transition-all duration-200",
                 )}
@@ -986,10 +986,10 @@ export function SkillsGallery({
                   onClick={openImportModal}
                   title="Import packaged disk templates into MongoDB as system skills"
                   className={cn(
-                    "gap-2 h-9 text-sm px-4 font-medium border border-violet-500/20",
-                    "text-violet-50/95 shadow-md shadow-black/25",
-                    "bg-gradient-to-r from-slate-800 via-violet-950/90 to-purple-950",
-                    "hover:border-violet-400/30 hover:brightness-[1.04]",
+                    "gap-2 h-9 text-sm px-4 font-medium border border-violet-300 bg-violet-50 text-violet-900 shadow-sm",
+                    "dark:border-violet-500/20 dark:text-violet-50/95 dark:shadow-md dark:shadow-black/25",
+                    "dark:bg-gradient-to-r dark:from-slate-800 dark:via-violet-950/90 dark:to-purple-950",
+                    "hover:bg-violet-100 hover:border-violet-400 dark:hover:bg-transparent dark:hover:border-violet-400/30 hover:brightness-[1.04]",
                     "focus-visible:ring-2 focus-visible:ring-violet-500/40 focus-visible:ring-offset-2 ring-offset-background",
                     "transition-all duration-200",
                   )}
@@ -1010,10 +1010,10 @@ export function SkillsGallery({
                 title="Import skills from a .zip archive"
                 data-testid="gallery-import-zip"
                 className={cn(
-                  "gap-2 h-9 text-sm px-4 font-medium border border-amber-500/25",
-                  "text-amber-50/95 shadow-md shadow-black/25",
-                  "bg-gradient-to-r from-slate-800 via-amber-950/85 to-orange-950",
-                  "hover:border-amber-400/35 hover:brightness-[1.04]",
+                  "gap-2 h-9 text-sm px-4 font-medium border border-amber-300 bg-amber-50 text-amber-900 shadow-sm",
+                  "dark:border-amber-500/25 dark:text-amber-50/95 dark:shadow-md dark:shadow-black/25",
+                  "dark:bg-gradient-to-r dark:from-slate-800 dark:via-amber-950/85 dark:to-orange-950",
+                  "hover:bg-amber-100 hover:border-amber-400 dark:hover:bg-transparent dark:hover:border-amber-400/35 hover:brightness-[1.04]",
                   "focus-visible:ring-2 focus-visible:ring-amber-500/40 focus-visible:ring-offset-2 ring-offset-background",
                   "transition-all duration-200",
                 )}
