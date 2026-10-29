@@ -176,6 +176,7 @@ export async function runNotificationDeliveriesOnce(): Promise<number> {
               title: delivery.title,
               message: delivery.message,
               href: delivery.href,
+              callbackMarker: delivery._id,
               severity: delivery.severity,
               sourceLabel: delivery.sourceLabel,
               sourceId: delivery.sourceId,

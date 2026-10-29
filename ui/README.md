@@ -214,5 +214,9 @@ access token to the selected runtime. The browser does not attach a bearer token
   `NOTIFICATION_SPLUNK_ENABLED` and `NOTIFICATION_OTEL_ENABLED`. Both default off;
   endpoints and secrets are deployment-owned, separate from personal channels.
 
+- Publish a host-relative `callbackUri` (legacy `href` also works) to return to
+  an exact page, query, and section anchor. Recipient-bound launch markers survive
+  sign-in and recheck app access before navigating.
+
 See [notification architecture](../docs/docs/architecture/notifications.md) for
 acceptance, retry, idempotency, and authorization behavior.

@@ -18,7 +18,7 @@ self.addEventListener("push", (event) => {
   try { payload = event.data.json(); } catch { return; }
   event.waitUntil((async () => {
     await self.registration.showNotification(String(payload.title || "New CAIPE notification").slice(0, 200), {
-    body: String(payload.body || "Open your inbox to view this update.").slice(0, 500),
+    body: String(payload.body || "Open CAIPE to view this update.").slice(0, 500),
     tag: String(payload.tag || "caipe-notification").slice(0, 200),
     data: { href: notificationPath(payload.data?.href) },
     });
@@ -61,6 +61,8 @@ self.addEventListener("notificationclick",(event) => {
     const targetUrl = new URL(notificationPath(targetPath),self.location.origin).href;
 
     for (const client of windows) {
+      // Reuse the host tab, never a nested app iframe.
+      if (client.frameType === "nested") continue;
       if ("navigate" in client) await client.navigate(targetUrl);
       if ("focus" in client) return client.focus();
     }

@@ -1,3 +1,4 @@
+import { notificationCallbackPath } from "./callback";
 import { getCollection } from "@/lib/mongodb";
 import { sendBrowserPush, type BrowserPushDevice } from "./web-push.server";
 import { sendSlackNotification } from "./slack.server";
@@ -19,7 +20,7 @@ export async function sendExternalNotification(
     });
     if (!device)
       throw new Error("Browser subscription has expired or was removed");
-    await sendBrowserPush(device, delivery._id);
+    await sendBrowserPush(device, delivery._id, notificationCallbackPath(delivery._id));
   } else if (delivery.channel === "slack")
     await sendSlackNotification(delivery);
   else if (delivery.channel === "webex") await sendWebexNotification(delivery);

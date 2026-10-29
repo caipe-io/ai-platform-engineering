@@ -18,6 +18,8 @@ export interface InAppNotificationDocument {
   title: string;
   message: string;
   href?: string;
+  /** Recipient-bound launch marker; the destination remains in href. */
+  callback_marker?: string;
   severity: InAppNotificationSeverity;
   category?: InAppNotificationCategory;
   source_label?: string;

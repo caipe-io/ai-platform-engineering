@@ -1,3 +1,4 @@
+import { notificationCallbackPath } from "@/lib/notifications/callback";
 import { randomUUID } from "node:crypto";
 
 import { forwardAdminNotificationToSlack } from "@/lib/admin-notification-forwarding.server";
@@ -93,6 +94,7 @@ export async function createInAppNotification(input: {
   title: string;
   message: string;
   href?: string;
+  callbackMarker?: string;
   severity?: InAppNotificationSeverity;
   category?: InAppNotificationCategory;
   sourceLabel?: string;
@@ -132,6 +134,7 @@ export async function createInAppNotification(input: {
         title: input.title,
         message: input.message,
         ...(input.href ? { href: input.href } : {}),
+        ...(input.callbackMarker ? { callback_marker: input.callbackMarker } : {}),
         severity,
         category: input.category ?? "general",
         ...(input.sourceLabel ? { source_label: input.sourceLabel } : {}),
@@ -245,7 +248,7 @@ export async function listInAppNotifications(
       id: row._id,
       title: row.title,
       message: row.message,
-      ...(row.href ? { href: row.href } : {}),
+      ...(row.callback_marker ? { href: notificationCallbackPath(row.callback_marker) } : row.href ? { href: row.href } : {}),
       severity: row.severity,
       category: row.category ?? "general",
       ...(row.source_label ? { source_label: row.source_label } : {}),

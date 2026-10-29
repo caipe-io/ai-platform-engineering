@@ -1,3 +1,4 @@
+import { notificationCallbackUri } from "@/lib/notifications/callback";
 import { enqueueNotificationExports } from "@/lib/notifications/exports.server";
 import { consumeNotificationQuota } from "@/lib/notifications/limits.server";
 import { canLaunchAgenticApp, agenticAppUserContextFromSession } from "@/lib/agentic-apps/access";
@@ -78,18 +79,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   ) {
     throw new ApiError(`recipientUserSubjects needs 1 to ${MAX_RECIPIENTS} subjects`, 400, "BAD_REQUEST");
   }
-  const href = body.href === undefined ? undefined : text(body.href, "href");
-  if (href !== undefined) {
-    const origin = "https://example.invalid";
-    if (
-      !href.startsWith("/") ||
-      href.startsWith("//") ||
-      /[\\\u0000-\u001f\u007f]/.test(href) ||
-      new URL(href, origin).origin !== origin
-    ) {
-      throw new ApiError("href must be a relative path", 400, "BAD_REQUEST");
-    }
-  }
+  let href: string | undefined;
+  try { href = notificationCallbackUri(body.callbackUri, body.href); }
+  catch { throw new ApiError("callbackUri/href must be matching relative application paths", 400, "BAD_REQUEST"); }
   const severity = body.severity ?? "info";
   if (!SEVERITIES.includes(severity as Severity)) {
     throw new ApiError("severity is not recognised", 400, "BAD_REQUEST");

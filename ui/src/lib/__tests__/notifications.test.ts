@@ -150,6 +150,14 @@ describe("envelope validation", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("normalizes callbackUri to the existing destination without losing query or fragment", () => {
+    const callbackUri = "/projects/example/wiki/overview.md?view=changes#decision-42";
+    const result = parseNotificationEnvelope({ ...validEnvelope, data: { ...validEnvelope.data, href: undefined, callbackUri } });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.envelope.data.href).toBe(callbackUri);
+    expect(parseNotificationEnvelope({ ...validEnvelope, data: { ...validEnvelope.data, callbackUri } }).ok).toBe(false);
+  });
+
   it("rejects external hrefs", () => {
     const result = parseNotificationEnvelope({
       ...validEnvelope,

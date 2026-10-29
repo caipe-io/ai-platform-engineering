@@ -105,7 +105,7 @@ async function safeCreateIndex(
   db: Db,
   collectionName: string,
   keys: Record<string, 1 | -1>,
-  options?: { unique?: boolean; expireAfterSeconds?: number },
+  options?: { unique?: boolean; expireAfterSeconds?: number; sparse?: boolean },
 ): Promise<boolean> {
   try {
     await db.collection(collectionName).createIndex(keys, options ?? {});
@@ -374,6 +374,7 @@ async function createIndexes(db: Db) {
     // global platform audiences share the feed while read state remains
     // personal to each viewer.
     safeCreateIndex(db, 'in_app_notifications', { event_key: 1 }, { unique: true }),
+    safeCreateIndex(db, 'in_app_notifications', { callback_marker: 1 }, { sparse: true }),
     safeCreateIndex(db, 'in_app_notifications', { recipient_user_subjects: 1, created_at: -1 }),
     safeCreateIndex(db, 'in_app_notifications', { recipient_team_slugs: 1, created_at: -1 }),
     safeCreateIndex(db, 'in_app_notifications', { recipient_organization_admins: 1, created_at: -1 }),

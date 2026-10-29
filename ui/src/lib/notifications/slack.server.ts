@@ -1,3 +1,4 @@
+import { absoluteNotificationCallback } from "./callback.server";
 import { callSlackBotAdmin } from "@/lib/slack-bot-admin";
 import { linkedNotificationAccounts } from "./destinations.server";
 import type { NotificationDelivery } from "./delivery.server";
@@ -14,7 +15,7 @@ export async function sendSlackNotification(
     method: "POST",
     body: {
       user_id: linked.slack,
-      text: `${delivery.title}\n${delivery.message}`,
+      text: `${delivery.title}\n${delivery.message}\n<${absoluteNotificationCallback(delivery._id)}|Open in CAIPE>`,
       notification_id: delivery._id,
     },
     signal: AbortSignal.timeout(15_000),

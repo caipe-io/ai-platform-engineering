@@ -1,5 +1,6 @@
 /** @jest-environment node */
 
+import { resolveNotificationCallback } from "@/lib/notifications/callback.server";
 import {
   enqueueNotificationExports,
   enqueuePlatformNotificationExports,
@@ -162,6 +163,48 @@ run("durable notification deliveries against MongoDB", () => {
         .countDocuments({ status: "pending", attempts: 0 }),
     ).toBe(2);
   });
+  it("resolves a persisted section callback for its recipient and refuses another user", async () => {
+    const href = "/projects/example/wiki/overview.md?view=changes#decision-42";
+    await enqueueNotification({ ...input, href, channels: ["in_app"] });
+    await runNotificationDeliveriesOnce();
+    const delivery = await mockDb
+      .collection("notification_deliveries")
+      .findOne({ channel: "in_app" });
+    expect(mockCreateInbox).toHaveBeenCalledWith(
+      expect.objectContaining({ href, callbackMarker: delivery?._id }),
+    );
+    const marker = String(delivery?._id);
+    expect(
+      await resolveNotificationCallback(marker, input.recipient.subject, {}),
+    ).toBe(href);
+    await expect(
+      resolveNotificationCallback(marker, "other-user", {}),
+    ).rejects.toMatchObject({ statusCode: 404 });
+    await mockDb
+      .collection("notification_deliveries")
+      .updateOne({ _id: delivery?._id }, { $set: { expiresAt: new Date(0) } });
+    await mockDb
+      .collection("in_app_notifications")
+      .insertOne({
+        callback_marker: marker,
+        recipient_user_subjects: [input.recipient.subject],
+        href,
+        source_id: "platform",
+      });
+    expect(
+      await resolveNotificationCallback(marker, input.recipient.subject, {}),
+    ).toBe(href);
+    await mockDb
+      .collection("in_app_notifications")
+      .updateOne(
+        { callback_marker: marker },
+        { $set: { archived_at: new Date().toISOString() } },
+      );
+    await expect(
+      resolveNotificationCallback(marker, input.recipient.subject, {}),
+    ).rejects.toMatchObject({ statusCode: 404 });
+  });
+
   const exported = {
     key: ["example-run"],
     sourceId: "platform",
@@ -232,16 +275,14 @@ run("durable notification deliveries against MongoDB", () => {
     collectors();
     await enqueueNotificationExports(exported);
     mockAllowed.mockResolvedValue(false);
-    global.fetch = jest
-      .fn()
-      .mockImplementation(async (url) =>
-        String(url).includes("/v1/logs")
-          ? new Response("busy", {
-              status: 503,
-              headers: { "Retry-After": "120" },
-            })
-          : Response.json({ code: 0 }),
-      );
+    global.fetch = jest.fn().mockImplementation(async (url) =>
+      String(url).includes("/v1/logs")
+        ? new Response("busy", {
+            status: 503,
+            headers: { "Retry-After": "120" },
+          })
+        : Response.json({ code: 0 }),
+    );
     const started = Date.now();
     await runNotificationDeliveriesOnce();
     expect(mockAllowed).not.toHaveBeenCalled();

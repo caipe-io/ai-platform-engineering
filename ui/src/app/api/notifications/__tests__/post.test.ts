@@ -184,6 +184,13 @@ describe("POST /api/notifications", () => {
     expect(mockCreate.mock.calls[0][0]).toMatchObject({ severity: "info", href: undefined });
   });
 
+  it("accepts callbackUri for native or iframe routes and preserves its section marker", async () => {
+    const callbackUri = "/projects/example/wiki/overview.md?view=changes#decision-42";
+    expect((await post({ ...valid, href: undefined, callbackUri })).status).toBe(201);
+    expect(mockCreate.mock.calls[0][0].href).toBe(callbackUri);
+    expect((await post({ ...valid, callbackUri })).status).toBe(400);
+  });
+
   it("accepts a local link with a query and fragment", async () => {
     const href = "/example/report?view=summary#results";
     expect((await post({ ...valid, href })).status).toBe(201);

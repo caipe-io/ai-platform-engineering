@@ -71,7 +71,7 @@ function currentNotificationHref(href: string): string {
 
 export function NotificationBell({ enabled }: { enabled: boolean }) {
   const router = useRouter();
-  const { hasUnsavedChanges, requestNavigation } = useUnsavedChangesStore();
+  const { hasUnsavedChanges, requestNavigation, requestDeferredAction } = useUnsavedChangesStore();
   const [open, setOpen] = React.useState(false);
   const [page, setPage] = React.useState(1);
   const [data, setData] = React.useState<InAppNotificationPage>(EMPTY_PAGE);
@@ -139,6 +139,10 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
     setOpen(false);
     if (!notification.href) return;
     const href = currentNotificationHref(notification.href);
+    if (href.startsWith("/notifications/open/")) {
+      requestDeferredAction(() => window.location.assign(href));
+      return;
+    }
     if (hasUnsavedChanges) requestNavigation(href);
     else router.push(href);
   };

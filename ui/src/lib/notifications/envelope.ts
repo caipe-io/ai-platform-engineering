@@ -1,3 +1,4 @@
+import { notificationCallbackUri } from "./callback";
 import {
   isNotificationEventType,
   type NotificationEventType,
@@ -33,11 +34,14 @@ export interface NotificationEnvelope {
     title: string;
     summary: string;
     href?: string;
+    /** Host-visible destination, including query and section anchor. Legacy href remains supported. */
+    callbackUri?: string;
   };
 }
 
 export type EnvelopeParseResult =
-  { ok: true; envelope: NotificationEnvelope } | { ok: false; error: string };
+  | { ok: true; envelope: NotificationEnvelope }
+  | { ok: false; error: string };
 
 function nonEmptyString(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
@@ -107,17 +111,14 @@ export function parseNotificationEnvelope(input: unknown): EnvelopeParseResult {
   }
 
   let href: string | undefined;
-  if (data?.href !== undefined) {
-    // Only same-app relative links, so an envelope cannot inject external URLs.
-    if (
-      typeof data.href !== "string" ||
-      !data.href.startsWith("/") ||
-      data.href.startsWith("//") ||
-      /[\\\u0000-\u001f\u007f]/.test(data.href)
-    ) {
-      return { ok: false, error: "data.href must be a relative path" };
-    }
-    href = data.href;
+  try {
+    href = notificationCallbackUri(data?.callbackUri, data?.href);
+  } catch {
+    return {
+      ok: false,
+      error:
+        "data.callbackUri/href must be matching relative application paths",
+    };
   }
 
   const correlationId =

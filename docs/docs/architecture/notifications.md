@@ -339,3 +339,41 @@ policy; configure those at the collector.
 
 Protocol references: [Splunk HEC event format](https://help.splunk.com/en/data-management/collect-http-event-data/use-hec-in-splunk-cloud-platform/format-events-for-http-event-collector)
 and [OTLP/HTTP logs](https://opentelemetry.io/docs/specs/otlp/).
+
+
+## Return to the exact app location
+
+Publish a **host-visible** `callbackUri` with each actionable app notification:
+
+```json
+{
+  "eventKey": "example-decision-42",
+  "eventType": "decision.updated",
+  "recipientUserSubjects": ["example-user-subject"],
+  "title": "Decision updated",
+  "message": "An example decision changed.",
+  "callbackUri": "/projects/example/wiki/overview.md?view=changes#decision-42"
+}
+```
+
+- Platform envelopes accept the same field under `data.callbackUri`.
+  The existing `href` field remains supported; supplying both with different
+  destinations is rejected. Paths are relative to the host, limited to 500
+  characters, and may include query parameters and a section anchor.
+- For native and iframe apps, use the public host route or app alias, not a
+  private runtime origin or an API endpoint. The destination app must support
+  the supplied route and anchor. Keep tokens and sensitive content out of URLs.
+- Inbox entries, browser pushes, and bot messages use a recipient-bound marker
+  such as `/notifications/open/<delivery-id>`. Slack and Webex use the public
+  origin configured by `NEXTAUTH_URL`. Push text remains generic.
+- The host resolves the marker after sign-in, preserving the original query
+  and fragment through authentication, then navigates to the destination.
+  Resolution checks the recipient, expiry, and current app launch access.
+  Normal destination authorization still applies; the link grants no access.
+- User pause/unsubscribe settings do not invalidate previously received links.
+  Links survive while the delivery record or its personal inbox entry is retained.
+  Missing, expired, or inaccessible records show an unavailable message.
+  Archived inbox rows are not used as a fallback after delivery expiry.
+  Notifications without a destination open notification settings.
+- Existing inbox rows and legacy producers keep their direct links. The host
+  creates a sparse callback-marker index automatically; no data rewrite is required. Collector exports continue to omit destinations and recipients.

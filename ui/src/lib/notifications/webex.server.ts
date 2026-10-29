@@ -1,3 +1,4 @@
+import { absoluteNotificationCallback } from "./callback.server";
 import { callWebexBotAdmin } from "@/lib/webex-bot-admin";
 import { linkedNotificationAccounts } from "./destinations.server";
 import type { NotificationDelivery } from "./delivery.server";
@@ -14,7 +15,7 @@ export async function sendWebexNotification(
     method: "POST",
     body: {
       person_id: linked.webex,
-      markdown: `${delivery.title}\n${delivery.message}`,
+      markdown: `${delivery.title}\n${delivery.message}\n\n[Open in CAIPE](${absoluteNotificationCallback(delivery._id)})`,
     },
     signal: AbortSignal.timeout(15_000),
   });

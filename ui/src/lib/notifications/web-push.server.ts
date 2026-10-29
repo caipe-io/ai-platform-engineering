@@ -1,3 +1,4 @@
+import { notificationCallbackUri, NOTIFICATION_CALLBACK_FALLBACK } from "./callback";
 import webPush from "web-push";
 
 import { ApiError } from "@/lib/api-error";
@@ -122,10 +123,10 @@ export async function sendBrowserPush(
       { endpoint: device.endpoint, keys: device.keys },
       JSON.stringify({
         title: "New CAIPE notification",
-        body: "Open your inbox to view this update.",
+        body: "Open CAIPE to view this update.",
         tag: notificationId,
         data: {
-          href: href ?? "/settings/notifications",
+          href: notificationCallbackUri(href) ?? NOTIFICATION_CALLBACK_FALLBACK,
           deliveryId: notificationId,
         },
       }),

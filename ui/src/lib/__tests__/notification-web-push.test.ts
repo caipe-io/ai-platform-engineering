@@ -57,7 +57,7 @@ describe("browser web push", () => {
     });
     expect(JSON.parse(mockSend.mock.calls[0][1])).toMatchObject({
       title: "New CAIPE notification",
-      body: "Open your inbox to view this update.",
+      body: "Open CAIPE to view this update.",
     });
   });
 });
