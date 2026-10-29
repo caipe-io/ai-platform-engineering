@@ -31,6 +31,6 @@ export function availableFeedbackRoutes(session: Record<string, unknown>, role?:
   }
   return [...merged.values()].map(route => ({
     ...route,
-    canAttachScreenshot: route.provider === "jira" || Boolean(process.env.GITHUB_SCREENSHOTS_REPO),
+    canAttachScreenshot: route.provider === "jira" || Boolean(cfg.githubScreenshotsRepo),
   }));
 }

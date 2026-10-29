@@ -68,3 +68,20 @@ it("preserves a created ticket when Jira attachment upload fails", async () => {
   expect((await response.json()).data.warnings).toHaveLength(1);
   expect(mockJira).toHaveBeenCalledTimes(1);
 });
+
+it.each([{ description: "" }, { contextUrl: "" }, { contextUrl: "javascript:alert(1)" }, { issueType: "Invalid" }])("rejects invalid feedback before provider calls %j", async change => {
+  expect((await post(change)).status).toBe(400);
+  expect(mockGithub).not.toHaveBeenCalled();
+});
+it("rejects service-account submissions", async () => {
+  mockAuth.mockResolvedValue({ email: "service@example.test", isServiceAccount: true });
+  expect((await post()).status).toBe(403);
+  expect(mockGithub).not.toHaveBeenCalled();
+});
+it("returns a setup error when the service credential is absent", async () => {
+  delete process.env.REPORT_PROBLEM_GITHUB_TOKEN;
+  delete process.env.GITHUB_TICKET_TOKEN;
+  delete process.env.GITHUB_TOKEN;
+  expect((await post()).status).toBe(503);
+  expect(mockGithub).not.toHaveBeenCalled();
+});

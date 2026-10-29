@@ -129,11 +129,13 @@ describe('getServerConfig', () => {
       expect(cfg.reportProblemEnabled).toBe(true);
       expect(cfg.provideFeedbackEnabled).toBe(false);
       expect(cfg.jiraTicketEnabled).toBe(false);
+      expect(cfg.jiraBaseUrl).toBeNull();
       expect(cfg.jiraTicketProject).toBeNull();
       expect(cfg.jiraTicketLabel).toBe('caipe-reported');
       expect(cfg.githubTicketEnabled).toBe(false);
       expect(cfg.githubTicketRepo).toBeNull();
       expect(cfg.githubTicketLabel).toBe('caipe-reported');
+      expect(cfg.githubScreenshotsRepo).toBeNull();
       expect(cfg.ticketEnabled).toBe(false);
       expect(cfg.ticketProvider).toBeNull();
     });
@@ -159,8 +161,8 @@ describe('getServerConfig', () => {
         'agenticAppsEnabled',
         'reportProblemEnabled',
         'provideFeedbackEnabled',
-        'jiraTicketEnabled', 'jiraTicketProject', 'jiraTicketLabel',
-        'githubTicketEnabled', 'githubTicketRepo', 'githubTicketLabel',
+        'jiraTicketEnabled', 'jiraBaseUrl', 'jiraTicketProject', 'jiraTicketLabel',
+        'githubTicketEnabled', 'githubTicketRepo', 'githubTicketLabel', 'githubScreenshotsRepo',
         'ticketEnabled', 'ticketProvider',
         'userInfoToolEnabled',
         'oidcRequiredGroup',
@@ -925,8 +927,8 @@ describe('getClientConfigScript (XSS safety)', () => {
       'agenticAppsEnabled',
       'reportProblemEnabled',
       'provideFeedbackEnabled',
-      'jiraTicketEnabled', 'jiraTicketProject', 'jiraTicketLabel',
-      'githubTicketEnabled', 'githubTicketRepo', 'githubTicketLabel',
+      'jiraTicketEnabled', 'jiraBaseUrl', 'jiraTicketProject', 'jiraTicketLabel',
+      'githubTicketEnabled', 'githubTicketRepo', 'githubTicketLabel', 'githubScreenshotsRepo',
       'ticketEnabled', 'ticketProvider',
       'userInfoToolEnabled',
       'oidcRequiredGroup',

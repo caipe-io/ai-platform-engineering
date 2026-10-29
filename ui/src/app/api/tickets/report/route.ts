@@ -58,7 +58,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       if (!token?.trim()) throw new ApiError("GitHub feedback service token is not configured", 503);
       let screenshotUrl: string | undefined;
       if (screenshotDataUrl) {
-        const repo = process.env.GITHUB_SCREENSHOTS_REPO;
+        const repo = cfg.githubScreenshotsRepo;
         if (!repo) throw new ApiError("Screenshot uploads are not configured", 503);
         screenshotUrl = await uploadScreenshotToGitHub(repo, token, screenshotDataUrl);
       }
@@ -66,7 +66,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         ...input, label: cfg.githubTicketLabel, source, screenshotUrl,
       });
     } else {
-      const baseUrl = process.env.JIRA_BASE_URL;
+      const baseUrl = cfg.jiraBaseUrl || process.env.JIRA_BASE_URL;
       const email = process.env.JIRA_EMAIL;
       const token = process.env.REPORT_PROBLEM_JIRA_TOKEN || process.env.JIRA_TICKET_TOKEN;
       if (!baseUrl || !email || !token?.trim()) throw new ApiError("Jira feedback service credentials are not configured", 503);
