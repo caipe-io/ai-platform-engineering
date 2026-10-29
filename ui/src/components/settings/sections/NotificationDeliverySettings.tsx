@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Bell, Pause, Play, Send } from "lucide-react";
 
 import { NotificationPreferenceSwitch } from "@/components/notifications/NotificationPreferenceSwitch";
@@ -50,11 +50,13 @@ async function jsonRequest(path: string, body?: unknown, method = "PATCH") {
 
 export function NotificationDeliverySettings({
   section = "all",
+  chimeOption,
   expandedSections,
   onSectionChange,
   onSectionsLoaded,
 }: {
   section?: NotificationSettingsTab | "all";
+  chimeOption?: ReactNode;
   expandedSections?: ReadonlySet<string>;
   onSectionChange?: (id: string, expanded: boolean) => void;
   onSectionsLoaded?: (ids: string[]) => void;
@@ -289,9 +291,12 @@ export function NotificationDeliverySettings({
 
   if (!view && section !== "status")
     return (
+      <div className="space-y-4">
       <p role="status" className="text-sm text-muted-foreground">
         {error ?? "Loading notification delivery…"}
       </p>
+      {(section === "all" || section === "delivery") && expanded("delivery:channels") && chimeOption}
+      </div>
     );
   const globallyPaused = isPaused(view?.global ?? null);
   const channels = {
@@ -392,6 +397,7 @@ export function NotificationDeliverySettings({
               />
             </div>
           ))}
+          {chimeOption}
           {view.webPushPublicKey && (
             <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
               <p className="text-sm">

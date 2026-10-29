@@ -13,6 +13,7 @@ import {
   cacheAgentCompletionPreferences,
   deliverAgentCompletionAlert,
   getBrowserNotificationCapability,
+  playCompletionChime,
   prepareBrowserNotificationDelivery,
   primeCompletionChime,
   requestBrowserNotificationPermission,
@@ -94,6 +95,7 @@ export function NotificationsSettings(): React.ReactElement {
   const [loading,setLoading] = useState(true);
   const [loadError,setLoadError] = useState<string | null>(null);
   const [testMessage,setTestMessage] = useState<string | null>(null);
+  const [chimeTestMessage, setChimeTestMessage] = useState<string | null>(null);
   const [expandedSections,setExpandedSections] = useState<Set<NotificationSection>>(
     () => new Set(NOTIFICATION_SECTIONS),
   );
@@ -209,6 +211,7 @@ export function NotificationsSettings(): React.ReactElement {
 
   const changeCompletionChime = (value: boolean): void => {
     setTestMessage(null);
+    setChimeTestMessage(null);
     if (value) void primeCompletionChime();
     setPreference("completion-chime",value);
   };
@@ -332,7 +335,36 @@ export function NotificationsSettings(): React.ReactElement {
       </div>
 
       <TabsContent value={tab} className="space-y-6">
-      <NotificationDeliverySettings section={tab} expandedSections={expandedSections} onSectionChange={(id, expanded) => setSectionExpanded(id as NotificationSection, expanded)} onSectionsLoaded={onDeliverySectionsLoaded} />
+      <NotificationDeliverySettings
+        section={tab}
+        expandedSections={expandedSections}
+        onSectionChange={(id, expanded) => setSectionExpanded(id as NotificationSection, expanded)}
+        onSectionsLoaded={onDeliverySectionsLoaded}
+        chimeOption={
+          <div role="group" aria-label="Chime delivery" className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">Chime</p>
+              <p className="text-xs text-muted-foreground">Play a short sound when a background agent turn finishes while the app is open.</p>
+              <AutoSaveStatus className="mt-1" onRetry={() => retry("completion-chime")} state={autoSave.stateFor("completion-chime")} />
+              {chimeTestMessage && <p role="status" className="mt-1 text-xs text-muted-foreground">{chimeTestMessage}</p>}
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!preferences.chimeEnabled}
+              onClick={() => {
+                void playCompletionChime().then((played) => setChimeTestMessage(played
+                  ? "Chime played."
+                  : "The browser could not play the chime. Check this site's audio permissions."))
+                  .catch(() => setChimeTestMessage("The browser could not play the chime. Check this site's audio permissions."));
+              }}
+            >
+              <Volume2 className="mr-1 h-3 w-3" />Test chime
+            </Button>
+            <SettingsSwitch checked={preferences.chimeEnabled} label="Enable chime" onCheckedChange={changeCompletionChime} testId="agent-completion-chime-toggle" />
+          </div>
+        }
+      />
 
       {tab === "delivery" && <SettingsCard
         collapsibleLabel="Agent completions"
@@ -358,24 +390,6 @@ export function NotificationsSettings(): React.ReactElement {
               label="Browser notifications for agent completions"
               onCheckedChange={(value) => { void changeBrowserNotifications(value); }}
               testId="agent-completion-browser-toggle"
-            />
-          </div>
-
-          <div className="flex items-center gap-4 rounded-lg border border-border/70 p-4">
-            <div className="min-w-0 flex-1">
-              <p className="flex items-center gap-1.5 text-sm font-medium"><Volume2 className="h-4 w-4" />Completion chime</p>
-              <p className="text-xs text-muted-foreground">Play a short two-note chime with background completion alerts.</p>
-              <AutoSaveStatus
-                className="mt-1"
-                onRetry={() => retry("completion-chime")}
-                state={autoSave.stateFor("completion-chime")}
-              />
-            </div>
-            <SettingsSwitch
-              checked={preferences.chimeEnabled}
-              label="Completion chime"
-              onCheckedChange={changeCompletionChime}
-              testId="agent-completion-chime-toggle"
             />
           </div>
 

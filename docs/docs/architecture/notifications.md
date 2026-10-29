@@ -20,6 +20,12 @@ Tracked in epic #2934. Architecture target: discussion #2937.
 Expand/collapse applies to the active tab. Tab changes preserve drafts and pending
 saves; delivery history loads when its tab opens.
 
+Chime appears alongside the channel options in Notification delivery, with its
+own toggle and audio-only test button. It reuses the existing personal completion
+chime preference, defaults off, and plays for background agent completions while
+the app is open. It does not create a server delivery channel or play sound from
+a closed tab; browser web push is the closed-tab delivery option.
+
 ## How an event flows
 
 ```mermaid

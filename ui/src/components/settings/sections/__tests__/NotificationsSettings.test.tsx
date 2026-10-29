@@ -7,6 +7,12 @@ import userEvent from "@testing-library/user-event";
 
 import { NotificationsSettings } from "../NotificationsSettings";
 import { PlatformAnnouncementsSettings } from "../PlatformAnnouncementsSettings";
+import * as completionAlerts from "@/lib/agent-completion-notifications";
+
+jest.mock("@/lib/agent-completion-notifications", () => ({
+  ...jest.requireActual("@/lib/agent-completion-notifications"),
+  playCompletionChime: jest.fn(),
+}));
 
 jest.mock("@/hooks/use-admin-role",() => ({
   useAdminRole: () => ({ isAdmin: true }),
@@ -149,7 +155,10 @@ describe("NotificationsSettings",() => {
     global.fetch = fetchMock;
     render(<NotificationsSettings />);
 
-    fireEvent.click(await screen.findByRole("switch",{ name: "Completion chime" }));
+    const chime = await screen.findByRole("switch",{ name: "Enable chime" });
+    expect(chime).toHaveAttribute("aria-checked", "false");
+    expect(screen.getAllByRole("switch", { name: "Enable chime" })).toHaveLength(1);
+    fireEvent.click(chime);
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -160,6 +169,21 @@ describe("NotificationsSettings",() => {
         }),
       );
     });
+  });
+
+  it.each([true, false, "error"])("tests only chime audio and reports browser acceptance %s", async (played) => {
+    const play = jest.mocked(completionAlerts.playCompletionChime);
+    if (played === "error") play.mockRejectedValue(new Error("Audio unavailable"));
+    else play.mockResolvedValue(played as boolean);
+    global.fetch = jest.fn(async () => jsonResponse({ success: true, data: {
+      notifications: { agent_completion_chime_enabled: true },
+    } }));
+    render(<NotificationsSettings />);
+    fireEvent.click(await screen.findByRole("button", { name: "Test chime" }));
+    expect(await screen.findByText(played === true ? "Chime played." : /browser could not play the chime/)).toBeInTheDocument();
+    expect(play).toHaveBeenCalledTimes(1);
+    expect(MockNotification.requestPermission).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalledWith("/api/notifications/test", expect.anything());
   });
 
   it("loads an opted-out personal preference",async () => {
