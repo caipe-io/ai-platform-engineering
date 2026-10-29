@@ -69,6 +69,18 @@ it("offers native bot agents only when the app declares Webex support", () => {
   expect(projectAgentAppIdentity([agent], { ...session, isServiceAccount: true }, { availableOnly: true })).toEqual([]);
 });
 
+it("keeps the primary app logo while projecting an additional agent's own registered avatar", () => {
+  app.installation.bindings = { agentStreams: [{ id: "secondary", agentId: "secondary-agent", streamPath: "/api/example/secondary" }] };
+  const secondary = { ...agent, _id: "secondary-agent", name: "Secondary assistant", ui: { gradient_theme: "ocean" } };
+  const [primaryResult, secondaryResult] = projectAgentAppIdentity([agent, secondary], user);
+  expect(primaryResult.presentation?.app.icon).toBe("/app-icons/example-app/logo.png");
+  expect(primaryResult.presentation?.agent).toBeUndefined();
+  expect(secondaryResult.presentation?.app).toMatchObject({ id: "example-app", name: "Example App" });
+  expect(secondaryResult.presentation?.app.icon).toBeUndefined();
+  expect(secondaryResult.presentation?.agent).toEqual({ id: "secondary-agent", name: "Secondary assistant", ui: secondary.ui });
+  expect(secondary).not.toHaveProperty("presentation");
+});
+
 it("projects an additional registered agent through the same app and agent permission boundary", () => {
   app.installation.bindings = { agentStreams: [{ id: "secondary", agentId: "secondary-agent", streamPath: "/api/example/secondary/start" }] };
   const secondary = { ...agent, _id: "secondary-agent" };

@@ -48,9 +48,11 @@ export function projectAgentAppIdentity<T extends DynamicAgentConfig>(
       !(assistant.streamPath && session.isServiceAccount === true) &&
       (!assistant.streamPath || supportsAssistantClient(assistant, client));
     if (availableOnly && !available) return [];
-    const icon = resolveAgenticAppIcon(app.manifest.id, app.manifest.catalog?.icon);
+    const primaryAssistant = app.manifest.ui.assistant?.agentId === assistant.agentId;
+    const icon = primaryAssistant ? resolveAgenticAppIcon(app.manifest.id, app.manifest.catalog?.icon) : undefined;
     return [{ ...clean, presentation: {
       app: { id: app.installation.appId, name: app.manifest.displayName, ownsRuntime: Boolean(assistant.streamPath), ...(icon ? { icon } : {}) },
+      ...(!primaryAssistant ? { agent: { id: String(agent._id), name: agent.name, ...(agent.ui ? { ui: agent.ui } : {}) } } : {}),
       available,
     } }];
   });

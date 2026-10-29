@@ -321,6 +321,10 @@ the operator can bind additional enabled registry agents through
 agent-use permission. Catalog discovery and every turn retain the existing agent,
 conversation and app authorization checks.
 
+The primary assistant uses the app's catalog logo. Additional agents keep their
+registered agent avatar in chat and sidebar badges while retaining the owning
+app's provenance and access checks.
+
 ```mermaid
 flowchart LR
   Chat[CAIPE Chat or native app panel] --> Auth[Agent-use and conversation access]

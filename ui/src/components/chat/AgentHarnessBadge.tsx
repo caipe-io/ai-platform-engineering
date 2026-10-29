@@ -3,6 +3,7 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getAgentPresentation } from "@/lib/agent-presentation";
 import { AppIcon } from "@/components/shared/AppIcon";
+import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
 import type { AgentPresentation } from "@/types/dynamic-agent";
 import { cn } from "@/lib/utils";
 import { Cpu } from "lucide-react";
@@ -39,7 +40,11 @@ export function AgentHarnessBadge({
             compact ? "h-4 w-4" : "h-5 w-5",
           )}
         >
-          {presentation?.app ? (
+          {presentation?.agent ? (
+            <AgentAvatar agent={{ _id: presentation.agent.id, ui: presentation.agent.ui }}
+              agentId={presentation.agent.id} size="h-full w-full" rounded="rounded-sm"
+              iconSize={compact ? "h-3 w-3" : "h-4 w-4"} />
+          ) : presentation?.app ? (
             <AppIcon
               appId={presentation.app.id}
               icon={presentation.app.icon}
