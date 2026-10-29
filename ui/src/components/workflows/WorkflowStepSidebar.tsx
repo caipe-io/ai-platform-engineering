@@ -1,5 +1,7 @@
 "use client";
 
+import { useTheme } from "@/components/theme-provider";
+import { isLightColorTheme } from "@/lib/color-theme";
 import type { AgentAvatarAgent } from "@/components/dynamic-agents/AgentAvatar";
 import type { Extension } from "@codemirror/state";
 import { AgentPicker,type AgentPickerOption } from "@/components/ui/agent-picker";
@@ -71,6 +73,8 @@ export function WorkflowStepSidebar({
   readOnly,
   readOnlyHint,
 }: WorkflowStepSidebarProps) {
+  const { resolvedTheme } = useTheme();
+  const editorTheme = isLightColorTheme(resolvedTheme) ? "light" : "dark";
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [configOverrideJson, setConfigOverrideJson] = useState(
     step?.config_override ? JSON.stringify(step.config_override, null, 2) : "",
@@ -258,7 +262,7 @@ export function WorkflowStepSidebar({
               value={step.prompt}
               onChange={(val: string) => onChange({ prompt: val })}
               extensions={cmExtensions}
-              theme="dark"
+              theme={editorTheme}
               height="200px"
               style={{ fontSize: "13px" }}
               basicSetup={{
