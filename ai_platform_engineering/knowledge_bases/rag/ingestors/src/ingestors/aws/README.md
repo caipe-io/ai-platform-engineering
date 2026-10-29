@@ -114,7 +114,7 @@ Profiles that need role assumption select their bootstrap credentials in this or
 
 1. When both `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE` are set, use an IRSA web-identity source profile.
 2. Otherwise, honor an explicit `AWS_CREDENTIAL_SOURCE`.
-3. Otherwise, use `EcsContainer` when the AWS container credential URI is present (including EKS Pod Identity).
+3. Otherwise, use `EcsContainer` when a nonblank AWS container credential URI is present (including EKS Pod Identity). Blank or whitespace-only URI settings are ignored.
 4. Otherwise, retain the `Environment` credential source for existing local deployments.
 
 Profiles with direct credentials in the mounted credentials file are unchanged. Workload

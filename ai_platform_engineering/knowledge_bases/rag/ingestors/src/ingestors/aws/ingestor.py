@@ -131,7 +131,7 @@ def credential_source() -> str:
     if configured not in SUPPORTED_CREDENTIAL_SOURCES:
       raise ValueError(f"Unsupported AWS_CREDENTIAL_SOURCE '{configured}'. Expected one of: {', '.join(sorted(SUPPORTED_CREDENTIAL_SOURCES))}.")
     return configured
-  if os.getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI") or os.getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"):
+  if os.getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", "").strip() or os.getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "").strip():
     return "EcsContainer"
   return "Environment"
 
