@@ -21,6 +21,8 @@ import { act, render, screen, waitFor, within, fireEvent } from '@testing-librar
 // Mocks
 // ============================================================================
 
+jest.mock('@/components/agentic-apps/ConnectionGuidanceSettings', () => ({ ConnectionGuidanceSettings: () => <div>Connection guidance settings</div> }));
+
 jest.mock('@/components/settings/ReleaseNotesPreview', () => ({
   ReleaseNotesPreview: () => <button type="button">Show current release notes</button>,
 }));
