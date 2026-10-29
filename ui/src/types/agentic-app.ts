@@ -42,6 +42,7 @@ export interface LegacyAgenticAppManifest {
     capabilities?: string[];
     icon?: string;
     supportUrl?: string;
+    feedback?: FeedbackDestination;
   };
 }
 

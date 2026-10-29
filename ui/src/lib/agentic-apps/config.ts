@@ -606,6 +606,7 @@ function parseLegacyManifest(
                   icon: requiredString(catalogRaw.icon, `${path}.catalog.icon`),
                 }
               : {}),
+            ...(catalogRaw.feedback !== undefined ? { feedback: validateFeedbackDestination(catalogRaw.feedback) } : {}),
             ...(catalogRaw.supportUrl !== undefined
               ? {
                   supportUrl: requiredHttpOrigin(
