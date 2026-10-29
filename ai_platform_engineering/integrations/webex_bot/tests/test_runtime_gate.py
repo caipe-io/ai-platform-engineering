@@ -148,7 +148,7 @@ def test_unlinked_webex_user_denies_before_dispatch() -> None:
     )
     assert result.allowed is False
     assert result.reason_code == REASON_USER_NOT_LINKED
-    assert result.linking_url == "https://ui.example/api/auth/webex-link?x=1"
+    assert result.linking_url == "https://ui.example/api/auth/webex-link?x=1&bot_id=primary"
     assert dispatcher.calls == []
     # Passive channel message (no @mention, no direct room) — must not be
     # flagged as explicit, so the responder stays silent.

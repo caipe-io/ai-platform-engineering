@@ -90,6 +90,22 @@ describe("AccessSettings", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 
+  it("does not claim success when persisted identity is absent", async () => {
+    mockSearchParams = new URLSearchParams("webex_link=success");
+    installFetchMock({ webex_link_available: true, webex_linked: false });
+    render(<AccessSettings />);
+    expect(await screen.findByText(/saved Webex identity could not be confirmed/)).toBeInTheDocument();
+    expect(screen.queryByText("Your Webex account has been linked.")).not.toBeInTheDocument();
+  });
+
+  it("offers the originating app and describes a failed DM confirmation accurately", async () => {
+    mockSearchParams = new URLSearchParams("webex_link=success&notification=unavailable&return_to=%2Fapps%2Fexample");
+    installFetchMock({ webex_link_available: true, webex_linked: true });
+    render(<AccessSettings />);
+    expect(await screen.findByRole("link", { name: "Return to your app" })).toHaveAttribute("href", "/apps/example");
+    expect(screen.getByText(/confirmation could not be delivered/)).toBeInTheDocument();
+  });
+
   it("shows a mapped error banner for a known failure reason", async () => {
     mockSearchParams = new URLSearchParams("webex_link=error&reason=WEBEX_ORG_MISMATCH");
     installFetchMock({ webex_link_available: true });
