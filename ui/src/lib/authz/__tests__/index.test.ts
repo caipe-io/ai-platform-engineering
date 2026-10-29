@@ -23,6 +23,14 @@ jest.mock("../engines/openfga", () => {
 // Audit is a no-op in tests (Mongo unconfigured).
 jest.mock("@/lib/mongodb", () => ({ getCollection: jest.fn(), isMongoDBConfigured: false }));
 
+const mockClaimConversationShareable = jest.fn();
+const mockRequireConversationGrantTarget = jest.fn();
+jest.mock("@/lib/conversation-evidence-privacy", () => ({
+  ...jest.requireActual("@/lib/conversation-evidence-privacy"),
+  claimConversationShareable: (...args: unknown[]) => mockClaimConversationShareable(...args),
+  requireConversationGrantTarget: (...args: unknown[]) => mockRequireConversationGrantTarget(...args),
+}));
+
 const mockEmitGrantAudit = jest.fn();
 const mockEmitDecisionAudit = jest.fn();
 const mockEmitBatchDecisionAudit = jest.fn();
@@ -62,7 +70,10 @@ import {
 const ALLOW: AuthorizeResult = { decision: "ALLOW", reason: "OK", retriable: false };
 const DENY: AuthorizeResult = { decision: "DENY", reason: "NO_CAPABILITY", retriable: false };
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockRequireConversationGrantTarget.mockReset().mockResolvedValue({ created_at: new Date('2026-01-01') });
+});
 
 describe("authorize", () => {
   it("returns the engine's decision", async () => {
@@ -288,5 +299,66 @@ describe("re-exports", () => {
     expect(describeFgaCheck).toBeDefined();
     expect(getEngineStats).toBeDefined();
     expect(getEngineStats()).toMatchObject({ circuitState: "closed" });
+  });
+});
+
+describe("canonical conversation grant visibility", () => {
+  beforeEach(() => { mockClaimConversationShareable.mockReset().mockResolvedValue(undefined); });
+
+  it.each(["discover", "read", "write", "share", "delete"] as const)("reserves shareable before a conversation %s grant", async (capability) => {
+    const intent = { resource: { type: "conversation" as const, id: "conversation-primary" },
+      grantee: { type: "user" as const, id: "subject-secondary" }, capability };
+    await grant(intent);
+    expect(mockClaimConversationShareable).toHaveBeenCalledWith("conversation-primary");
+    expect(mockClaimConversationShareable.mock.invocationCallOrder[0]).toBeLessThan(mockGrant.mock.invocationCallOrder[0]);
+    expect(mockGrant).toHaveBeenCalledWith(intent);
+  });
+
+  it.each(["discover", "read", "write", "share", "delete"] as const)("blocks a private conversation %s grant before the admin engine", async (capability) => {
+    mockClaimConversationShareable.mockRejectedValueOnce(Object.assign(new Error("Private evidence"), {
+      statusCode: 409, code: "PERSONAL_CONTEXT_PRIVATE",
+    }));
+    await expect(grant({ resource: { type: "conversation", id: "conversation-primary" },
+      grantee: { type: "team", id: "team-primary" }, capability })).rejects.toMatchObject({ statusCode: 409 });
+    expect(mockGrant).not.toHaveBeenCalled();
+    expect(mockEmitGrantAudit).not.toHaveBeenCalled();
+  });
+
+  it("does not reserve unrelated resources, administrative audit grants, or revocations", async () => {
+    await grant({ resource: { type: "agent", id: "agent-primary" }, grantee: { type: "user", id: "subject-primary" }, capability: "use" });
+    await grant({ resource: { type: "conversation", id: "conversation-primary" }, grantee: { type: "user", id: "subject-primary" }, capability: "audit" });
+    await revoke({ resource: { type: "conversation", id: "conversation-primary" }, grantee: { type: "user", id: "subject-primary" }, capability: "read" });
+    expect(mockClaimConversationShareable).not.toHaveBeenCalled();
+    expect(mockRevoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a purging conversation before creating a new grant", async () => {
+    const { ApiError } = await import('@/lib/api-error');
+    mockRequireConversationGrantTarget.mockRejectedValueOnce(new ApiError('Purging', 409, 'CONVERSATION_PURGING'));
+    await expect(grant({ resource: { type: 'conversation', id: 'example-conversation' },
+      grantee: { type: 'user', id: 'example-subject' }, capability: 'read' })).rejects.toMatchObject({ statusCode: 409 });
+    expect(mockGrant).not.toHaveBeenCalled();
+  });
+
+  it.each(['purging', 'missing', 'generation'])('revokes the exact acknowledged grant when %s wins in flight', async kind => {
+    const { ApiError } = await import('@/lib/api-error');
+    const intent = { resource: { type: 'conversation' as const, id: 'example-conversation' },
+      grantee: { type: 'team' as const, id: 'example-team' }, capability: 'read' as const };
+    mockRequireConversationGrantTarget.mockResolvedValueOnce({ created_at: new Date('2026-01-01') });
+    if (kind === 'generation') mockRequireConversationGrantTarget.mockResolvedValueOnce({ created_at: new Date('2026-01-01T00:00:00.001Z') });
+    else mockRequireConversationGrantTarget.mockRejectedValueOnce(new ApiError('Unavailable', kind === 'missing' ? 404 : 409, 'CONVERSATION_PURGING'));
+    await expect(grant(intent)).rejects.toMatchObject({ statusCode: 409 });
+    expect(mockGrant).toHaveBeenCalledWith(intent);
+    expect(mockRevoke).toHaveBeenCalledWith(intent);
+    expect(mockRevoke.mock.invocationCallOrder[0]).toBeGreaterThan(mockGrant.mock.invocationCallOrder[0]);
+    expect(mockEmitGrantAudit).toHaveBeenCalledWith('grant', intent, {}, expect.objectContaining({ outcome: 'error' }));
+  });
+
+  it('does not revoke an idempotent existing grant after an inconclusive Mongo read failure', async () => {
+    mockRequireConversationGrantTarget.mockResolvedValueOnce({ created_at: new Date('2026-01-01') })
+      .mockRejectedValueOnce(new Error('Mongo unavailable'));
+    await expect(grant({ resource: { type: 'conversation', id: 'example-conversation' },
+      grantee: { type: 'user', id: 'example-subject' }, capability: 'read' })).rejects.toThrow('Mongo unavailable');
+    expect(mockGrant).toHaveBeenCalled(); expect(mockRevoke).not.toHaveBeenCalled();
   });
 });

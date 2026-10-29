@@ -72,6 +72,13 @@ export interface Participant {
 }
 
 export interface Conversation {
+  /** Server-owned permanent-deletion claim; restore cannot clear it. */
+  purge?: { token: string; started_at: Date; lease_until: Date; retry_after: Date;
+    last_attempted_at: Date; reason: "manual" | "retention" };
+  /** Server-owned app route; ordinary create/metadata APIs cannot set it. */
+  app_binding?: { app_id: string; agent_id: string };
+  /** Server-owned personal evidence admission; only the owner can admit it. */
+  personal_context?: "private" | "shareable";
   _id: string; // UUID for shareable links (server-generated)
   title: string;
   client_type: ClientType; // Top-level: 'webui' | 'slack' (promoted from metadata)
@@ -165,6 +172,8 @@ export interface Message {
   sender_image?: string;
   metadata: {
     turn_id: string;
+    /** Server-accepted app result; client message APIs cannot write this marker. */
+    app_completion?: { app_id: string; agent_id: string; turn_id: string; completed_at: string };
     source?: string;
     model?: string;
     latency_ms?: number;

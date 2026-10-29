@@ -11,6 +11,8 @@ import { GET as streamRun } from "../runs/[runId]/events/stream/route";
 import { POST as validateDraft } from "../agent-drafts/validate/route";
 import { POST as clearSession } from "../sessions/clear/route";
 
+const mockFindAppStream = jest.fn();
+jest.mock("@/lib/agentic-apps/assistant-stream", () => ({ findAgenticAppAssistantStream: (...args: unknown[]) => mockFindAppStream(...args) }));
 const mockAuthenticateRequest = jest.fn();
 const mockClearHarnessGatewayBinding = jest.fn();
 const mockResolveHarnessGatewayTarget = jest.fn();
@@ -42,6 +44,7 @@ const ownedRun = {
 describe("Harness Engine BFF session routes", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockFindAppStream.mockReturnValue(null);
     process.env.HARNESS_ENGINE_URL = "http://harness-engine:8010";
     process.env.HARNESS_ENGINE_INTERNAL_TOKEN = "internal-test-token";
     mockAuthenticateRequest.mockResolvedValue({
@@ -326,4 +329,41 @@ describe("Harness Engine BFF session routes", () => {
     expect(response.status).toBe(409);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+});
+
+
+describe("direct Engine app ownership", () => {
+  beforeEach(() => { jest.clearAllMocks(); });
+
+it.each(["removed", "rebound", "conflicting-retained"])("rejects direct Engine creation for an app-bound conversation that is %s", async (variant) => {
+  mockAuthenticateRequest.mockResolvedValue({ subject: "test-user" });
+  mockRequireAgentUsePermission.mockResolvedValue(null);
+  mockAuthorizeConversationWriteAccess.mockResolvedValue({ conversation: { _id: "conversation-example",
+    participants: [{ type: "agent", id: "agent-example" }], app_binding: { app_id: "original-app", agent_id: "agent-example" } } });
+  mockResolveHarnessGatewayTarget.mockResolvedValue(variant === "conflicting-retained" ? { kind: "harness_engine", harnessId: "agentcore" } : null);
+  mockFindAppStream.mockReturnValue(variant === "rebound" ? { appId: "other-app", path: ["api", "example", "start"] } : null);
+  const upstream = jest.spyOn(global, "fetch");
+  const response = await startRun(new NextRequest("https://host.example.test/api/harness-engine/runs", {
+    method: "POST", body: JSON.stringify({ agent_id: "agent-example", conversation_id: "conversation-example", message: "hello" }),
+  }));
+  expect(response.status).toBe(409); expect(upstream).not.toHaveBeenCalled();
+  expect(mockResolveHarnessGatewayTarget).toHaveBeenCalledTimes(1);
+  upstream.mockRestore();
+});
+
+it("rejects direct Engine admission for a newly claimed app before creating a default binding", async () => {
+  mockAuthenticateRequest.mockResolvedValue({ subject: "test-user" }); mockRequireAgentUsePermission.mockResolvedValue(null);
+  mockAuthorizeConversationWriteAccess.mockResolvedValue({ conversation: { _id: "conversation-example",
+    participants: [{ type: "agent", id: "agent-example" }] } });
+  mockResolveHarnessGatewayTarget.mockResolvedValue(null);
+  mockFindAppStream.mockReturnValue({ appId: "example-app", path: ["api", "example", "start"] });
+  const upstream = jest.spyOn(global, "fetch");
+  const response = await startRun(new NextRequest("https://host.example.test/api/harness-engine/runs", {
+    method: "POST", body: JSON.stringify({ agent_id: "agent-example", conversation_id: "conversation-example", message: "hello" }),
+  }));
+  expect(response.status).toBe(501); expect(upstream).not.toHaveBeenCalled();
+  expect(mockResolveHarnessGatewayTarget).toHaveBeenCalledTimes(1);
+  upstream.mockRestore();
+});
+
 });

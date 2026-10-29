@@ -13,6 +13,7 @@ jest.mock("@/lib/api-middleware", () => ({
   getAuthenticatedUser: (...args: unknown[]) => mockAuthenticate(...args),
 }));
 jest.mock("@/lib/agentic-apps/config", () => ({
+  ...jest.requireActual("@/lib/agentic-apps/config"),
   isAgenticAppsEnabled: () => true,
   getConfiguredAgenticApp: (...args: unknown[]) => mockLookup(...args),
   loadConfiguredAgenticApps: () => mockList(),

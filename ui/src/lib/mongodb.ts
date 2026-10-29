@@ -2,7 +2,7 @@
 // This creates a singleton connection that is reused across API requests
 // Supports graceful degradation - if MongoDB is not configured, APIs will return appropriate errors
 
-import { Collection,Db,Document,MongoClient } from 'mongodb';
+import { Collection,Db,Document,MongoClient,type CreateIndexesOptions } from 'mongodb';
 
 // MongoDB is optional - check if it's configured
 const uri = process.env.MONGODB_URI;
@@ -105,7 +105,7 @@ async function safeCreateIndex(
   db: Db,
   collectionName: string,
   keys: Record<string, 1 | -1>,
-  options?: { unique?: boolean; expireAfterSeconds?: number },
+  options?: Pick<CreateIndexesOptions, 'unique' | 'expireAfterSeconds' | 'partialFilterExpression'>,
 ): Promise<boolean> {
   try {
     await db.collection(collectionName).createIndex(keys, options ?? {});
@@ -227,6 +227,9 @@ async function createIndexes(db: Db) {
     safeCreateIndex(db, 'conversations', { tags: 1 }),
     safeCreateIndex(db, 'conversations', { is_archived: 1, owner_id: 1 }),
     safeCreateIndex(db, 'conversations', { deleted_at: 1, owner_id: 1 }),
+    safeCreateIndex(db, 'conversations', { deleted_at: 1, _id: 1 }),
+    safeCreateIndex(db, 'conversations', { 'purge.retry_after': 1, _id: 1, 'purge.lease_until': 1 },
+      { partialFilterExpression: { purge: { $exists: true } } }),
     safeCreateIndex(db, 'conversations', { source: 1 }),
     safeCreateIndex(db, 'conversations', { deleted_at: 1, client_type: 1, is_archived: 1, is_pinned: -1, updated_at: -1 }),
     safeCreateIndex(db, 'conversations', { deleted_at: 1, source: 1, is_archived: 1, is_pinned: -1, updated_at: -1 }),

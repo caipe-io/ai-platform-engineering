@@ -7,6 +7,7 @@ import {
 } from "@/lib/agentic-apps/access";
 import {
   getConfiguredAgenticApp,
+  isAgenticAppBrowserContextPath,
   isAgenticAppsEnabled,
 } from "@/lib/agentic-apps/config";
 import { deriveAgenticAppSubjectId } from "@/lib/agentic-apps/identity";
@@ -26,6 +27,7 @@ import type { AgenticAppAuthMode } from "@/types/agentic-app";
 import { nativeExtensionById } from "@/native-extensions/runtime";
 
 import { ASSISTANT_CONTEXT_HEADER, type AssistantClientContext } from "./assistant-clients";
+import { BROWSER_CONTEXT_HEADER, browserRequestContext } from "./browser-context";
 
 const BLOCKED_RESPONSE_HEADERS = new Set([
   "connection",
@@ -54,6 +56,7 @@ export async function proxyAgenticAppRequest(
   context: ProxyContext,
   authenticatedUser?: Awaited<ReturnType<typeof getAuthenticatedUser>>,
   assistantClientContext?: AssistantClientContext,
+  beforeForward?: () => Promise<Response | null>,
 ): Promise<Response> {
   if (!isAgenticAppsEnabled()) {
     return Response.json({ error: "app_not_found" }, { status: 404 });
@@ -185,6 +188,25 @@ export async function proxyAgenticAppRequest(
     request, appId, bearerToken, authMode, subject,
     roles: deriveRoles(session, auth.user.role), decisionId, correlationId,
   });
+  // Explicit API credentials never acquire browser provenance from a secondary cookie.
+  const browserAuthenticated = request.headers.get("authorization") === null && session.isServiceAccount !== true &&
+    (!authenticatedUser || session.authMethod === "session");
+  if (browserAuthenticated && isAgenticAppBrowserContextPath(app, path)) {
+    const unsafe = !["GET", "HEAD", "OPTIONS"].includes(request.method.toUpperCase());
+    const expectedOrigin = new URL(process.env.NEXTAUTH_URL || request.url).origin;
+    if (request.headers.get("sec-fetch-site") === "cross-site" ||
+        (unsafe && request.headers.get("origin") !== expectedOrigin)) {
+      return Response.json({ error: "same_origin_browser_request_required" }, { status: 403 });
+    }
+    try {
+      const proof = await mintAgenticAppToken({ appId, subject, scopes, decisionId, correlationId, ttlSeconds: 60,
+        name: auth.user.name, email: auth.user.email, roles: deriveRoles(session, auth.user.role),
+        browserContext: browserRequestContext(request.method, target.pathname + target.search, body, bearerToken) });
+      forwardHeaders.set(BROWSER_CONTEXT_HEADER, proof.token);
+    } catch {
+      return Response.json({ error: "browser_context_unavailable" }, { status: 503 });
+    }
+  }
   if (mcpRoute && context.legacyMcpResource && app.manifest.api.mcp) {
     forwardHeaders.set("x-caipe-mcp-resource-path", app.manifest.api.mcp.path);
   }
@@ -202,6 +224,8 @@ export async function proxyAgenticAppRequest(
       return Response.json({ error: "assistant_context_unavailable" }, { status: 503 });
     }
   }
+  const admissionResponse = await beforeForward?.();
+  if (admissionResponse) return admissionResponse;
   let upstream: Response;
   try {
     upstream = await fetch(target, {

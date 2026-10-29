@@ -8,10 +8,16 @@ const mockWriteOpenFgaTupleDiff = jest.fn();
 const mockIsOpenFgaReconciliationEnabled = jest.fn();
 const mockEmitReconcileAudit = jest.fn();
 const mockInvalidateDecisionCache = jest.fn();
+const mockReadTuples = jest.fn();
+const mockDeleteExact = jest.fn();
+const mockIsConfigured = jest.fn();
 
 jest.mock("@/lib/rbac/openfga", () => ({
   writeOpenFgaTupleDiff: (...args: unknown[]) => mockWriteOpenFgaTupleDiff(...args),
   isOpenFgaReconciliationEnabled: () => mockIsOpenFgaReconciliationEnabled(),
+  isOpenFgaConfigured: () => mockIsConfigured(),
+  readOpenFgaTuples: (...args: unknown[]) => mockReadTuples(...args),
+  deleteExactOpenFgaTuples: (...args: unknown[]) => mockDeleteExact(...args),
 }));
 
 jest.mock("../audit", () => ({
@@ -25,6 +31,7 @@ jest.mock("../engines/openfga", () => ({
 import {
   OpenFgaReconcileRequiredError,
   reconcileTupleDiff,
+  purgeConversationRelationships,
 } from "../reconcile";
 
 const sampleWrite = {
@@ -37,6 +44,46 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockIsOpenFgaReconciliationEnabled.mockReturnValue(true);
   mockWriteOpenFgaTupleDiff.mockResolvedValue({ enabled: true, writes: 1, deletes: 0 });
+  mockIsConfigured.mockReturnValue(true);
+  mockReadTuples.mockReset().mockResolvedValue({ tuples: [] });
+  mockDeleteExact.mockReset().mockResolvedValue({ enabled: true, writes: 0, deletes: 1 });
+});
+
+describe('purgeConversationRelationships', () => {
+  const key = { object: 'conversation:example', user: 'team:example#member', relation: 'reader' };
+  it('enumerates exact stored userset keys with bounded reads and monotonic deletion', async () => {
+    mockReadTuples.mockResolvedValueOnce({ tuples: [{ key }], continuationToken: 'old-cursor' });
+    expect(await purgeConversationRelationships('example')).toBe(true);
+    expect(mockReadTuples).toHaveBeenCalledTimes(2);
+    for (const [options] of mockReadTuples.mock.calls) expect(options).toEqual({
+      tuple: { object: key.object }, pageSize: 100, signal: expect.any(AbortSignal),
+    });
+    expect(mockDeleteExact).toHaveBeenCalledWith([key], { monotonic: true, timeoutMs: 5000 });
+    expect(mockInvalidateDecisionCache).toHaveBeenCalled();
+  });
+  it('returns pending after ten pages without scanning the entire tuple store', async () => {
+    mockReadTuples.mockResolvedValue({ tuples: [{ key }], continuationToken: 'more' });
+    expect(await purgeConversationRelationships('example')).toBe(false);
+    expect(mockReadTuples).toHaveBeenCalledTimes(10); expect(mockDeleteExact).toHaveBeenCalledTimes(10);
+  });
+  it('invalidates cached grants after a partial failure and retains an error audit', async () => {
+    mockReadTuples.mockResolvedValueOnce({ tuples: [{ key }] });
+    mockDeleteExact.mockRejectedValueOnce(new Error('Write timed out'));
+    await expect(purgeConversationRelationships('example')).rejects.toThrow('Write timed out');
+    expect(mockInvalidateDecisionCache).toHaveBeenCalledTimes(1);
+    expect(mockEmitReconcileAudit).toHaveBeenCalledWith({ writes: [], deletes: [key] }, expect.anything(),
+      { source: 'conversation_purge' }, expect.objectContaining({ outcome: 'error' }));
+  });
+  it('never deletes tuples returned for another resource', async () => {
+    mockReadTuples.mockResolvedValueOnce({ tuples: [{ key: { ...key, object: 'conversation:other' } }] });
+    await expect(purgeConversationRelationships('example')).rejects.toThrow('Unexpected resource');
+    expect(mockDeleteExact).not.toHaveBeenCalled();
+  });
+  it('supports installations without OpenFGA but fails closed when configured reconciliation is disabled', async () => {
+    mockIsConfigured.mockReturnValue(false); expect(await purgeConversationRelationships('example')).toBe(true);
+    mockIsConfigured.mockReturnValue(true); mockIsOpenFgaReconciliationEnabled.mockReturnValue(false);
+    await expect(purgeConversationRelationships('example')).rejects.toThrow(OpenFgaReconcileRequiredError);
+  });
 });
 
 describe("reconcileTupleDiff", () => {

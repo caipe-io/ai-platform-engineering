@@ -2,6 +2,8 @@
 import { NextResponse } from "next/server";
 import { clearHarnessGatewayBinding, resolveHarnessGatewayTarget } from "../harness-gateway";
 
+const mockFindAppStream = jest.fn();
+jest.mock("@/lib/agentic-apps/assistant-stream", () => ({ findAgenticAppAssistantStream: (...args: unknown[]) => mockFindAppStream(...args) }));
 const mockFindAgent = jest.fn();
 const mockLookupSession = jest.fn();
 const mockFindNativeContext = jest.fn();
@@ -34,6 +36,7 @@ const context = { subject: "test-user", conversationId: "conversation-example" }
 beforeEach(() => {
   jest.resetAllMocks();
   bindings.clear();
+  mockFindAppStream.mockReturnValue(null);
   process.env.HARNESS_ENGINE_URL = "http://harness-engine:8010";
   process.env.HARNESS_ENGINE_INTERNAL_TOKEN = "test-internal-token";
   mockFindAgent.mockResolvedValue({ _id: "agent-example", execution_harness_id: "dynamic_agents" });
@@ -125,4 +128,72 @@ it("uses the native checkpoint collection configured for the agent", async () =>
   mockFindNativeContext.mockResolvedValue({ _id: "checkpoint-example" });
   expect(await resolveHarnessGatewayTarget("agent-example", context)).toEqual({ kind: "dynamic_agents", harnessId: "dynamic_agents" });
   expect(mockNativeCollection).toHaveBeenCalledWith("example_checkpoints");
+});
+
+
+it.each(["dynamic_agents", "agentcore"])("retains a pinned %s owner before later app declarations", async (harnessId) => {
+  mockLookupSession.mockResolvedValue({ harness_id: harnessId });
+  const expected = await resolveHarnessGatewayTarget("agent-example", context);
+  mockFindAppStream.mockReturnValue({ appId: "example-app", path: ["api", "example", "start"] });
+  mockFindAppStream.mockClear(); mockLookupSession.mockClear(); mockFindNativeContext.mockClear();
+  expect(await resolveHarnessGatewayTarget("agent-example", { ...context, retainedOnly: true })).toEqual(expected);
+  expect(mockFindAppStream).not.toHaveBeenCalled(); expect(mockLookupSession).not.toHaveBeenCalled();
+  expect(mockFindNativeContext).not.toHaveBeenCalled();
+});
+
+it("does not create a native owner or query Engine for a fresh app/default-native context", async () => {
+  mockFindAppStream.mockReturnValue({ appId: "example-app", path: ["api", "example", "start"] });
+  mockLookupSession.mockResolvedValue(NextResponse.json({}, { status: 503 }));
+  expect(await resolveHarnessGatewayTarget("agent-example", { ...context, retainedOnly: true })).toBeNull();
+  expect(mockLookupSession).not.toHaveBeenCalled(); expect(bindings.size).toBe(0);
+});
+
+it("adopts old native checkpoints before a new app claim", async () => {
+  mockFindNativeContext.mockResolvedValue({ _id: "native-checkpoint" });
+  mockFindAppStream.mockReturnValue({ appId: "example-app", path: ["api", "example", "start"] });
+  expect(await resolveHarnessGatewayTarget("agent-example", { ...context, retainedOnly: true }))
+    .toEqual({ kind: "dynamic_agents", harnessId: "dynamic_agents" });
+  expect(bindings.size).toBe(1); expect(mockFindAppStream).not.toHaveBeenCalled();
+});
+
+it("recovers a pre-gateway SDK session before an app claim when its SDK default is retained", async () => {
+  mockFindAgent.mockResolvedValue({ _id: "agent-example", execution_harness_id: "agentcore" });
+  mockLookupSession.mockResolvedValue({ harness_id: "claude_agent_sdk" });
+  mockFindAppStream.mockReturnValue({ appId: "example-app", path: ["api", "example", "start"] });
+  expect(await resolveHarnessGatewayTarget("agent-example", { ...context, retainedOnly: true }))
+    .toEqual({ kind: "harness_engine", harnessId: "claude_agent_sdk" });
+  expect(mockFindAppStream).not.toHaveBeenCalled();
+});
+
+it("does not pin an SDK default during discovery when no session exists", async () => {
+  mockFindAgent.mockResolvedValue({ _id: "agent-example", execution_harness_id: "agentcore" });
+  expect(await resolveHarnessGatewayTarget("agent-example", { ...context, retainedOnly: true })).toBeNull();
+  expect(bindings.size).toBe(0);
+});
+
+it("does not assign a new app conversation to Engine through an unsupported entry point", async () => {
+  mockFindAppStream.mockReturnValue({ appId: "example-app", path: ["api", "example", "start"] });
+  expect((await resolveHarnessGatewayTarget("agent-example", context) as NextResponse).status).toBe(501);
+  expect(bindings.size).toBe(0);
+});
+
+it("rejects a malformed saved owner rather than normalizing it into a new runtime", async () => {
+  await resolveHarnessGatewayTarget("agent-example", context);
+  [...bindings.values()][0].owner_subject = "other-user";
+  expect((await resolveHarnessGatewayTarget("agent-example", { ...context, retainedOnly: true }) as NextResponse).status).toBe(409);
+});
+
+it("permits discovery of a logical app assistant without a native agent row", async () => {
+  mockFindAgent.mockResolvedValue(null);
+  mockFindAppStream.mockReturnValue({ appId: "example-app", path: ["api", "example", "start"] });
+  expect(await resolveHarnessGatewayTarget("agent-example", { ...context, retainedOnly: true })).toBeNull();
+  expect(mockLookupSession).not.toHaveBeenCalled(); expect(bindings.size).toBe(0);
+  expect((await resolveHarnessGatewayTarget("agent-example", context) as NextResponse).status).toBe(404);
+});
+
+it("still detects pre-gateway native state if its agent row was removed", async () => {
+  mockFindAgent.mockResolvedValue(null);
+  mockFindNativeContext.mockResolvedValue({ _id: "native-checkpoint" });
+  expect(await resolveHarnessGatewayTarget("agent-example", { ...context, retainedOnly: true }))
+    .toEqual({ kind: "dynamic_agents", harnessId: "dynamic_agents" });
 });

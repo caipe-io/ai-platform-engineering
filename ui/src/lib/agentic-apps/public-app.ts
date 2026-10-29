@@ -5,6 +5,7 @@ import type {
   PublicAgenticApp,
 } from "@/types/agentic-app";
 import { resolveAgenticAppIcon } from "../../../app-sdk/agentic-app-manifest.mjs";
+import { getAgenticAppAgentStreams, supportsAssistantClient } from "./agent-stream-bindings";
 
 /** Build the browser-safe catalog record. Runtime origins never cross the BFF. */
 export function buildPublicAgenticApp(
@@ -14,7 +15,11 @@ export function buildPublicAgenticApp(
   const icon = resolveAgenticAppIcon(app.manifest.id, app.manifest.catalog?.icon);
   return {
     appId: app.installation.appId,
-    assistantEnabled: Boolean(app.manifest.ui.assistant),
+    assistantEnabled: Boolean(app.manifest.ui.assistant && supportsAssistantClient(app.manifest.ui.assistant, "webui")),
+    assistantUsesAppRuntime: Boolean(app.manifest.ui.assistant?.streamPath),
+    chatAgentIds: getAgenticAppAgentStreams(app)
+      .filter(stream => supportsAssistantClient(stream, "webui"))
+      .map((stream) => stream.agentId),
     ...(app.manifest.ui.assistant ? {
       assistantOptions: app.manifest.ui.assistant.hostOptions,
       assistantOverlay: app.manifest.ui.assistant.overlay ?? "host",

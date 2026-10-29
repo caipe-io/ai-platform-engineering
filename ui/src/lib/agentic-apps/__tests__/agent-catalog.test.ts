@@ -1,12 +1,12 @@
 /** @jest-environment node */
 import { projectAgentAppIdentity } from "../agent-catalog";
-import { loadConfiguredAgenticApps } from "../config";
+import { isAgenticAppsEnabled, loadConfiguredAgenticApps } from "../config";
 import { buildPublicAgenticApp } from "../public-app";
 import type { ConfiguredAgenticApp } from "@/types/agentic-app";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import example from "../../../../examples/agentic-apps/shared/manifest.json";
 
-jest.mock("../config", () => ({ loadConfiguredAgenticApps: jest.fn() }));
+jest.mock("../config", () => ({ ...jest.requireActual("../config"), isAgenticAppsEnabled: jest.fn(), loadConfiguredAgenticApps: jest.fn() }));
 jest.mock("@/lib/api-middleware", () => ({ ApiError: class extends Error {
   constructor(message: string, public statusCode: number) { super(message); }
 } }));
@@ -16,6 +16,7 @@ const user = { sub: "test-user", role: "user" };
 let app: ConfiguredAgenticApp;
 
 beforeEach(() => {
+  jest.mocked(isAgenticAppsEnabled).mockReturnValue(true);
   app = { manifest: { ...example, access: { ...example.access, requiredRoles: ["user"] }, catalog: { icon: "/app-icons/example-app/logo.png" },
     ui: { ...example.ui, assistant: { agentId: "bound-agent", label: "Ask", name: "Assistant", streamPath: "/api/example/chat" } } },
     installation: { appId: "example-app", packageId: "example-app", installed: true, enabled: true, visible: true } } as ConfiguredAgenticApp;
@@ -24,7 +25,7 @@ beforeEach(() => {
 
 it("projects only public identity from the resolved installation, without mutating the document", () => {
   const [result] = projectAgentAppIdentity([agent], user);
-  expect(result.presentation).toEqual({ app: { id: "example-app", name: "Example App", icon: "/app-icons/example-app/logo.png" }, available: true });
+  expect(result.presentation).toEqual({ app: { id: "example-app", name: "Example App", ownsRuntime: true, icon: "/app-icons/example-app/logo.png" }, available: true });
   expect(agent).not.toHaveProperty("presentation");
   expect(buildPublicAgenticApp(app, true).icon).toBe("/app-icons/example-app/logo.png");
   expect(result.presentation).not.toHaveProperty("runtimeOrigin");
@@ -66,4 +67,53 @@ it("offers native bot agents only when the app declares Webex support", () => {
   app.manifest.ui.assistant!.supportedClients = ["webui", "webex"];
   expect(projectAgentAppIdentity([agent], session, { availableOnly: true })).toHaveLength(1);
   expect(projectAgentAppIdentity([agent], { ...session, isServiceAccount: true }, { availableOnly: true })).toEqual([]);
+});
+
+it("keeps the primary app logo while projecting an additional agent's own registered avatar", () => {
+  app.installation.bindings = { agentStreams: [{ id: "secondary", agentId: "secondary-agent", streamPath: "/api/example/secondary" }] };
+  const secondary = { ...agent, _id: "secondary-agent", name: "Secondary assistant", ui: { gradient_theme: "ocean" } };
+  const [primaryResult, secondaryResult] = projectAgentAppIdentity([agent, secondary], user);
+  expect(primaryResult.presentation?.app.icon).toBe("/app-icons/example-app/logo.png");
+  expect(primaryResult.presentation?.agent).toBeUndefined();
+  expect(secondaryResult.presentation?.app).toMatchObject({ id: "example-app", name: "Example App" });
+  expect(secondaryResult.presentation?.app.icon).toBeUndefined();
+  expect(secondaryResult.presentation?.agent).toEqual({ id: "secondary-agent", name: "Secondary assistant", ui: secondary.ui });
+  expect(secondary).not.toHaveProperty("presentation");
+});
+
+it("projects an additional registered agent through the same app and agent permission boundary", () => {
+  app.installation.bindings = { agentStreams: [{ id: "secondary", agentId: "secondary-agent", streamPath: "/api/example/secondary/start" }] };
+  const secondary = { ...agent, _id: "secondary-agent" };
+  expect(projectAgentAppIdentity([secondary], user)[0].presentation).toMatchObject({ app: { id: "example-app" }, available: true });
+  app.manifest.ui.assistant!.supportedClients = ["webui", "webex"];
+  app.manifest.ui.assistant!.webexGroupChat = true;
+  const bot = { ...user, authMethod: "bearer", authorizedParty: "caipe-webex-bot" };
+  expect(projectAgentAppIdentity([secondary], bot, { availableOnly: true })).toEqual([]);
+  app.installation.bindings.agentStreams![0].supportedClients = ["webex"];
+  expect(projectAgentAppIdentity([secondary], bot, { availableOnly: true })).toHaveLength(1);
+  expect(projectAgentAppIdentity([secondary], { ...bot, isServiceAccount: true }, { availableOnly: true })).toEqual([]);
+  app.manifest.access.requiredRoles = ["admin"];
+  expect(projectAgentAppIdentity([secondary], user)).toEqual([]);
+});
+
+
+it("derives runtime ownership from the current binding rather than agent-stored presentation", () => {
+  const forged = { ...agent, presentation: { app: { id: "example-app", name: "Example", ownsRuntime: true }, available: true } };
+  delete app.manifest.ui.assistant!.streamPath;
+  expect(projectAgentAppIdentity([forged], user)[0].presentation?.app).toMatchObject({ id: "example-app", ownsRuntime: false });
+  app.installation.bindings = { agentStreams: [{ id: "secondary", agentId: "secondary-agent", streamPath: "/api/example/secondary/start" }] };
+  expect(projectAgentAppIdentity([{ ...agent, _id: "secondary-agent" }], user)[0].presentation?.app)
+    .toMatchObject({ id: "example-app", ownsRuntime: true });
+});
+
+
+it("retains disabled app identity while excluding every app agent from available choices", () => {
+  jest.mocked(isAgenticAppsEnabled).mockReturnValue(false);
+  app.installation.bindings = { agentStreams: [{ id: "secondary", agentId: "secondary-agent", streamPath: "/api/example/secondary/start" }] };
+  const agents = [agent, { ...agent, _id: "secondary-agent" }];
+  const details = projectAgentAppIdentity(agents, user);
+  expect(details).toHaveLength(2);
+  expect(details.every((item) => item.presentation?.app?.id === "example-app" && item.presentation.available === false)).toBe(true);
+  expect(projectAgentAppIdentity(agents, user, { availableOnly: true })).toEqual([]);
+  expect(loadConfiguredAgenticApps).toHaveBeenCalledWith(undefined, { includeDisabledIdentity: true });
 });

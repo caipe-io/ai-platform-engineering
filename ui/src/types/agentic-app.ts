@@ -56,6 +56,8 @@ export interface AgenticAppInstallation {
   bindings?: {
     runtimeOrigin?: string;
     resources?: Record<string, string>;
+    /** Operator-approved registered agents served by publisher-declared APIs. */
+    agentStreams?: AgenticAppAgentStream[];
     /** Client id of the service account this app uses to call the host. */
     serviceAccountClientId?: string;
   };
@@ -69,7 +71,21 @@ export interface AgenticAppInstallation {
   };
 }
 
+export interface AgenticAppAgentStream {
+  id: string;
+  agentId: string;
+  streamPath: string;
+  resumePath?: string;
+  cancelPath?: string;
+  statusPath?: string;
+  /** Defaults to webui; each additional agent declares its own client support. */
+  supportedClients?: Array<"webui" | "webex">;
+  webexGroupChat?: boolean;
+}
+
 export interface ConfiguredAgenticApp {
+  /** Operator trust policy, separate from publisher or browser metadata. */
+  gatewayPolicy?: { browserContextPaths?: string[] };
   manifest: AgenticAppManifest;
   installation: AgenticAppInstallation;
 }
@@ -90,9 +106,12 @@ export interface PublicAgenticApp {
   assistantOptions?: import("../../app-sdk/assistant-options.mjs").AssistantOptions;
   assistantOverlay?: "host" | "app";
   assistantEnabled?: boolean;
+  assistantUsesAppRuntime?: boolean;
   assistantAgentId?: string;
   assistantLabel?: string;
   assistantAgentName?: string;
+  /** Registered agent references only; execution paths remain server-owned. */
+  chatAgentIds?: string[];
 }
 
 export interface AgenticAppAssistantContextRecord {
@@ -111,4 +130,16 @@ export interface AgenticAppAssistantContextRecord {
   resourceRefs?: Array<Record<string, string>>;
   suggestedPrompts?: string[];
   reasonCode?: string;
+}
+
+/** Bounded, caller-authorized status for app-owned shared chat. */
+export interface AgenticAppCompletedTurn {
+  turnId: string;
+  content: string;
+  completedAt: string;
+}
+export interface AgenticAppAssistantStatus {
+  running: boolean;
+  turnId?: string;
+  completedTurn?: AgenticAppCompletedTurn;
 }

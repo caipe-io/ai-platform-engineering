@@ -25,6 +25,14 @@ import { ObjectId } from 'mongodb';
 const mockGetServerSession = jest.fn();
 const mockRequireConversationResourcePermission = jest.fn();
 const mockCheckOpenFgaTuple = jest.fn();
+jest.mock('@/lib/chat-message-persistence', () => ({
+  upsertChatMessage: async (messages, input) => {
+    const filter = { message_id: input.messageId, conversation_id: input.conversationId };
+    const result = await messages.updateOne(filter, { $set: input.fields, $setOnInsert: input.insert }, { upsert: true });
+    return { result, message: await messages.findOne(filter) };
+  },
+}));
+
 jest.mock('next-auth', () => ({
   getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
 }));
@@ -80,7 +88,7 @@ function createMockCollection() {
     updateOne: jest.fn().mockResolvedValue({
       upsertedId: new ObjectId(),
       upsertedCount: 1,
-      matchedCount: 0,
+      matchedCount: 1,
       modifiedCount: 0,
       acknowledged: true,
     }),

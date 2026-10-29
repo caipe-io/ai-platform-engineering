@@ -164,6 +164,34 @@ routes:
       frank_service_account:
         status: 403
         reason: pdp_denied
+  - id: ui-bff-post-api-chat-personal-context-openfga-agent-use
+    surface: ui_bff
+    method: POST
+    path: /api/chat/conversations/[id]/personal-context
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: OpenFGA user:<sub> can_use agent:<agent_id> plus conversation write and canonical owner-only private-context admission. Success fixtures use an unshared browser conversation owned by that persona. Service identities cannot admit personal context.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: PERSONAL_CONTEXT_USER_REQUIRED
   - id: ui-bff-post-api-v1-chat-invoke-openfga-agent-use
     surface: ui_bff
     method: POST

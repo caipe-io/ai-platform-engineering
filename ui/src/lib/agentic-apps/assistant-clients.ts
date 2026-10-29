@@ -3,7 +3,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { ApiError } from "@/lib/api-error";
 import type { AuthResult } from "@/lib/da-proxy";
 import type { Conversation } from "@/types/mongodb";
-import type { AgenticAppManifest } from "@/types/agentic-app";
+export { supportsAssistantClient } from "./agent-stream-bindings";
 
 export const WEBEX_CONTEXT_HEADER = "x-caipe-webex-context";
 export const WEBEX_SIGNATURE_HEADER = "x-caipe-webex-signature";
@@ -17,15 +17,6 @@ export type AssistantClientContext = {
   spaceId: string;
   threadId: string;
 };
-
-export function supportsAssistantClient(
-  assistant: NonNullable<AgenticAppManifest["ui"]["assistant"]>,
-  client: "webui" | "webex",
-  kind?: "direct" | "group",
-): boolean {
-  return (assistant.supportedClients ?? ["webui"]).includes(client)
-    && (client !== "webex" || kind !== "group" || assistant.webexGroupChat === true);
-}
 
 /** Verify bot assertions only after OIDC authentication and conversation/agent authorization. */
 export async function verifyWebexAssistantContext(

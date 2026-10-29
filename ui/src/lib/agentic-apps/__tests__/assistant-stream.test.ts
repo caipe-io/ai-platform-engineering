@@ -1,5 +1,6 @@
 /** @jest-environment node */
 import { createHash, createHmac } from "node:crypto";
+import { persistAssistantCompletion } from "../assistant-status";
 import { proxyAgenticAppAssistantStream } from "../assistant-stream";
 import { getAgenticAppRoutingSnapshot } from "../config";
 import { proxyAgenticAppRequest } from "../proxy";
@@ -7,7 +8,8 @@ import type { AuthResult } from "@/lib/da-proxy";
 import type { Conversation } from "@/types/mongodb";
 import type { ConfiguredAgenticApp } from "@/types/agentic-app";
 
-jest.mock("../config", () => ({ getAgenticAppRoutingSnapshot: jest.fn() }));
+jest.mock("../assistant-status", () => ({ ...jest.requireActual("../assistant-status"), persistAssistantCompletion: jest.fn() }));
+jest.mock("../config", () => ({ ...jest.requireActual("../config"), getAgenticAppRoutingSnapshot: jest.fn() }));
 jest.mock("../proxy", () => ({ proxyAgenticAppRequest: jest.fn() }));
 const secret = "example-key-".repeat(4);
 const body = JSON.stringify({ conversation_id: "example-chat", agent_id: "example-agent", message: "Hello", protocol: "agui" });
@@ -16,6 +18,8 @@ const auth = { subject: "example-user", bearerToken: "example-token", authentica
 const conversation = { _id: "example-chat", client_type: "webex", participants: [{ type: "agent", id: "example-agent" }],
   metadata: { webex_room_id: "example-room", webex_space_id: "example-space", webex_message_id: "example-thread", webex_is_direct: true } } as Conversation;
 let app: ConfiguredAgenticApp;
+const mockFindAgent = jest.fn();
+jest.mock("@/lib/mongodb", () => ({ getCollection: jest.fn(async () => ({ findOne: mockFindAgent })) }));
 function request() {
   const proof = { version: 1, client: "webex", kind: "direct", conversationId: conversation._id, agentId: "example-agent",
     roomId: "example-room", spaceId: "example-space", threadId: "example-thread", method: "POST", path: "/api/v1/chat/stream/start",
@@ -26,7 +30,7 @@ function request() {
     headers: { "x-caipe-webex-context": encoded, "x-caipe-webex-signature": createHmac("sha256", secret).update("caipe.webex.assistant.v1\n" + encoded).digest("hex") } });
 }
 beforeEach(() => {
-  jest.clearAllMocks(); process.env.WEBEX_LINK_HMAC_SECRET = secret; process.env.KEYCLOAK_WEBEX_BOT_CLIENT_ID = "example-bot";
+  jest.clearAllMocks(); mockFindAgent.mockResolvedValue({ _id: "example-agent" }); process.env.WEBEX_LINK_HMAC_SECRET = secret; process.env.KEYCLOAK_WEBEX_BOT_CLIENT_ID = "example-bot";
   app = { installation: { appId: "example-app", installed: true, enabled: true }, manifest: { ui: { assistant: {
     agentId: "example-agent", label: "Ask", name: "Example", streamPath: "/api/example/chat", supportedClients: ["webui", "webex"] } } } } as ConfiguredAgenticApp;
   jest.mocked(getAgenticAppRoutingSnapshot).mockReturnValue([app]);
@@ -37,7 +41,7 @@ it("forwards the authorized human and verified Webex context to the existing app
   const result = await proxyAgenticAppAssistantStream(request(), auth, conversation, JSON.parse(body), "start");
   expect(result!.status).toBe(200);
   expect(proxyAgenticAppRequest).toHaveBeenCalledWith(expect.any(Request), expect.anything(), auth.authenticatedUser,
-    expect.objectContaining({ client: "webex", kind: "direct", conversationId: "example-chat" }));
+    expect.objectContaining({ client: "webex", kind: "direct", conversationId: "example-chat" }), expect.any(Function));
 });
 it.each(["unsupported", "disabled", "service-account", "bad-agent", "missing-proof", "unsupported-operation"])("never falls back or forwards %s", async variant => {
   let caller = auth, input = JSON.parse(body);
@@ -55,4 +59,68 @@ it("preserves the browser caller and rejects a non-SSE native response", async (
   const chat = { ...conversation, client_type: "webui" } as Conversation;
   jest.mocked(proxyAgenticAppRequest).mockResolvedValue(new Response("{}", { headers: { "content-type": "application/json" } }));
   expect((await proxyAgenticAppAssistantStream(request(), browser, chat, JSON.parse(body), "start"))!.status).toBe(502);
+});
+
+
+describe("additional registered agents", () => {
+  const browser = { ...auth, bearerToken: undefined, authenticatedUser: { ...auth.authenticatedUser!, session: { authMethod: "session" } } } as AuthResult;
+  const chat = { ...conversation, client_type: "webui" } as Conversation;
+  beforeEach(() => {
+    app.manifest.ui.assistant!.agentId = "primary-agent";
+    app.installation.bindings = { agentStreams: [{ id: "secondary", agentId: "example-agent", streamPath: "/api/example/secondary/start",
+      cancelPath: "/api/example/secondary/cancel", statusPath: "/api/example/secondary/status" }] };
+  });
+  it.each([true, false])("reconciles only an exact requested completion turn, match=%s", async matches => {
+    const persistence = jest.mocked(persistAssistantCompletion).mockResolvedValue(true);
+    const completedTurn = { turnId: "accepted-turn", content: "Accepted final", completedAt: "2026-01-01T00:00:00Z" };
+    jest.mocked(proxyAgenticAppRequest).mockResolvedValue(Response.json({ running: false, completedTurn }));
+    const response = await proxyAgenticAppAssistantStream(request(), browser, chat,
+      { ...JSON.parse(body), turn_id: matches ? "accepted-turn" : "other-turn" }, "status");
+    const value = await response!.json();
+    if (matches) {
+      expect(persistence).toHaveBeenCalledWith(expect.objectContaining({ conversationId: chat._id,
+        agentId: "example-agent", subject: browser.subject, turn: completedTurn }));
+      expect(value.completedTurn).toEqual(completedTurn);
+    } else {
+      expect(persistence).not.toHaveBeenCalled(); expect(value).not.toHaveProperty("completedTurn");
+    }
+
+  });
+  it("dispatches an enabled registered agent with the exact caller and publisher route", async () => {
+    const response = await proxyAgenticAppAssistantStream(request(), browser, chat, JSON.parse(body), "start");
+    expect(response!.status).toBe(200);
+    expect(mockFindAgent).toHaveBeenCalledWith({ _id: "example-agent", enabled: true }, { projection: { _id: 1 } });
+    expect(proxyAgenticAppRequest).toHaveBeenCalledWith(expect.any(Request),
+      { params: expect.any(Promise) }, browser.authenticatedUser, undefined, expect.any(Function));
+    const { params } = jest.mocked(proxyAgenticAppRequest).mock.calls[0][1];
+    expect(await params).toEqual({ appId: "example-app", path: ["api", "example", "secondary", "start"] });
+  });
+  it("does not inherit the primary agent's Webex support", async () => {
+    expect((await proxyAgenticAppAssistantStream(request(), auth, conversation, JSON.parse(body), "start"))!.status).toBe(403);
+    expect(proxyAgenticAppRequest).not.toHaveBeenCalled();
+    app.installation.bindings!.agentStreams![0].supportedClients = ["webex"];
+    expect((await proxyAgenticAppAssistantStream(request(), auth, conversation, JSON.parse(body), "start"))!.status).toBe(200);
+  });
+  it.each(["disabled", "registry failure"])("never falls back for %s", async (failure) => {
+    if (failure === "disabled") mockFindAgent.mockResolvedValue(null);
+    else mockFindAgent.mockRejectedValue(new Error("temporarily unavailable"));
+    const response = await proxyAgenticAppAssistantStream(request(), browser, chat, JSON.parse(body), "start");
+    expect(response!.status).toBe(failure === "disabled" ? 409 : 503);
+    expect(proxyAgenticAppRequest).not.toHaveBeenCalled();
+  });
+  it.each(["cancel", "status"] as const)("permits %s for an existing run after disabling its agent", async (operation) => {
+    mockFindAgent.mockResolvedValue(null);
+    jest.mocked(proxyAgenticAppRequest).mockResolvedValue(Response.json(operation === "status" ? { running: false } : { success: true }));
+    const response = await proxyAgenticAppAssistantStream(request(), browser, chat, JSON.parse(body), operation);
+    expect(response!.status).toBe(200);
+    expect(response!.headers.get("cache-control")).toBe("private, no-store");
+    expect(mockFindAgent).not.toHaveBeenCalled();
+  });
+});
+
+it("preserves a primary logical app assistant without requiring a native agent registry row", async () => {
+  mockFindAgent.mockResolvedValue(null);
+  const browser = { ...auth, bearerToken: undefined, authenticatedUser: { ...auth.authenticatedUser!, session: { authMethod: "session" } } } as AuthResult;
+  const response = await proxyAgenticAppAssistantStream(request(), browser, { ...conversation, client_type: "webui" } as Conversation, JSON.parse(body), "start");
+  expect(response!.status).toBe(200); expect(mockFindAgent).not.toHaveBeenCalled();
 });

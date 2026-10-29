@@ -261,6 +261,7 @@ function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
       streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
       isFinal,
       turnId: msg.metadata?.turn_id,
+      appCompletion: Boolean(msg.metadata?.app_completion),
       taskId: msg.metadata?.task_id,
       autonomousRunId: msg.metadata?.run_id,
       autonomousMessageKind: msg.metadata?.kind,
@@ -290,6 +291,11 @@ function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
 function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
   const messagesById = new Map(existing.map((message) => [message.id, message]));
   for (const message of incoming) {
+    if (message.appCompletion && message.role === 'assistant' && message.turnId) {
+      for (const [id, local] of messagesById) {
+        if (local.role === 'assistant' && local.turnId === message.turnId && id !== message.id) messagesById.delete(id);
+      }
+    }
     const localMessage = messagesById.get(message.id);
     messagesById.set(message.id, localMessage?.isFinal && !message.isFinal ? localMessage : message);
   }

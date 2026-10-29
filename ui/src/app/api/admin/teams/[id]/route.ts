@@ -24,7 +24,7 @@ listOpenFgaObjects,
 writeOpenFgaTuples,
 type OpenFgaTupleKey,
 } from '@/lib/rbac/openfga';
-import type { Conversation } from '@/types/mongodb';
+import { removeConversationTeamShares } from '@/lib/conversation-evidence-privacy';
 import type { UpdateTeamRequest } from '@/types/teams';
 import { ObjectId,type Document } from 'mongodb';
 import { NextRequest,NextResponse } from 'next/server';
@@ -263,11 +263,7 @@ export const DELETE = withErrorHandler(async (
 
     // Remove team references from conversations shared_with_teams
     try {
-      const conversations = await getCollection<Conversation>('conversations');
-      await conversations.updateMany(
-        { 'sharing.shared_with_teams': params.id },
-        { $pull: { 'sharing.shared_with_teams': params.id } }
-      );
+      await removeConversationTeamShares(params.id);
     } catch (err) {
       console.warn('[Admin] Failed to clean up conversation team references:', err);
     }

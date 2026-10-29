@@ -109,6 +109,19 @@ describe('APIClient — Archive methods', () => {
       expect(result).toEqual({ deleted: true, permanent: true });
     });
 
+    it('preserves an accepted background cleanup response without reporting deletion complete', async () => {
+      mockFetch.mockResolvedValue({
+        ...mockSuccessResponse({ deleted: false, permanent: true, pending: true }),
+        status: 202,
+        statusText: 'Accepted',
+      });
+
+      const result = await apiClient.permanentDeleteConversation('example-conversation');
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ deleted: false, permanent: true, pending: true });
+    });
+
     it('throws on 403 (not owner)', async () => {
       mockFetch.mockResolvedValue(mockErrorResponse(403, 'Not authorized'));
 

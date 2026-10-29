@@ -305,6 +305,27 @@ describe('chat-store', () => {
       await useChatStore.getState().loadMessagesFromServer(conversation.id);
 
       expect(useChatStore.getState().conversations[0].messages[0].isInterrupted).toBe(true);
+
+    });
+
+    it('replaces a same-turn local interrupted placeholder with the server completion without duplicating or touching a newer retry', async () => {
+      const conv = makeConversation({ id: 'recovered-app-turn', messages: [
+        makeMessage({ id: 'local-placeholder', role: 'assistant', turnId: 'old-turn', content: 'Network error', isFinal: false }),
+        makeMessage({ id: 'newer-placeholder', role: 'assistant', turnId: 'new-turn', content: 'New request pending', isFinal: false }),
+      ] });
+      useChatStore.setState({ conversations: [conv] });
+      mockApiClient.getMessages.mockResolvedValueOnce({ items: [{
+        _id: 'recovered-id', message_id: 'app-turn-old-turn', conversation_id: conv.id,
+        role: 'assistant', content: 'Accepted answer', created_at: '2026-01-01T00:00:01Z',
+        metadata: { turn_id: 'old-turn', is_final: true, turn_status: 'done',
+          app_completion: { app_id: 'example-app', agent_id: 'example-agent', turn_id: 'old-turn', completed_at: '2026-01-01T00:00:01Z' } },
+      }], total: 1, page: 1, page_size: 100, has_more: false } as never);
+      await useChatStore.getState().loadMessagesFromServer(conv.id);
+      const messages = useChatStore.getState().conversations[0].messages;
+      expect(messages.filter(m => m.turnId === 'old-turn')).toEqual([expect.objectContaining({
+        id: 'app-turn-old-turn', content: 'Accepted answer', isFinal: true, appCompletion: true,
+      })]);
+      expect(messages.find(m => m.turnId === 'new-turn')?.content).toBe('New request pending');
     });
 
     it('loads messages from MongoDB and updates store', async () => {

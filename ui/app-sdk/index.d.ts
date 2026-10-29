@@ -32,7 +32,7 @@ export interface NativeExtensionModule {
   contractVersion: NativeExtensionContractVersion;
 }
 
-/** Host owns streaming, history persistence and activity across native screens. */
+/** Host owns streaming, canonical history and permissions for each installed app agent. */
 export interface NativeHostChat {
   /** Optional: request the host-owned popup instead of bundling an overlay. */
   assistant?: HostAssistantCapability;
@@ -50,6 +50,7 @@ export interface NativeHostConversationActionsProps {
 }
 export interface NativeHostChatPanelProps {
   conversationId: string;
+  /** Primary assistant or an operator-registered agent belonging to this app. */
   agentId: string;
   agentName?: string;
   clientContext?: Record<string, unknown>;

@@ -5,6 +5,8 @@
  * Response: JSON { success, content, agent_id, conversation_id, trace_id }
  */
 
+import { findAgenticAppAssistantStream } from "@/lib/agentic-apps/assistant-stream";
+import { resolveAppConversationDestination } from "@/lib/agentic-apps/app-assistant-binding";
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
 import { reconcileConversationOwnerIdentity } from "@/lib/conversation-owner-identity";
 import {
@@ -440,6 +442,32 @@ async function handleScheduledInvoke(
   });
   if (authzResponse) return authzResponse;
 
+  // Reject app-only work before creating/updating scheduled metadata. A retry
+  // may already have a canonical conversation and an older retained runtime.
+  let retainedTarget: Awaited<ReturnType<typeof resolveHarnessGatewayTarget>> | null = null;
+  try {
+    const conversations = await getCollection<Conversation>("conversations");
+    const existing = await conversations.findOne({ idempotency_key: `scheduler:${String(body.conversation_id)}` });
+    if (existing && (existing.owner_id !== scheduledRun.email ||
+        (existing.owner_subject && existing.owner_subject !== scheduledRun.sub))) {
+      return NextResponse.json({ success: false, error: "Scheduled conversation owner does not match the schedule owner" }, { status: 403 });
+    }
+    if (existing) {
+      retainedTarget = await resolveHarnessGatewayTarget(scheduledRun.agentId, {
+        subject: scheduledRun.sub, conversationId: await resolveConversationRuntimeId(existing), retainedOnly: true,
+        traceparent: traceContext.traceparent,
+      });
+      if (retainedTarget instanceof NextResponse) return retainedTarget;
+    }
+    const candidate = existing ?? { participants: buildParticipants(scheduledRun.agentId, scheduledRun.email) } as Conversation;
+    const app = resolveAppConversationDestination(candidate, scheduledRun.agentId, "start", findAgenticAppAssistantStream, Boolean(retainedTarget));
+    if (app instanceof NextResponse) return app;
+    if (app) return NextResponse.json({ success: false, code: "APP_STREAM_REQUIRED",
+      error: "This app assistant requires its declared chat stream endpoints" }, { status: 501 });
+  } catch {
+    return NextResponse.json({ success: false, error: "Scheduled conversation runtime could not be resolved" }, { status: 503 });
+  }
+
   // The scheduled conversation may not exist until this branch idempotently
   // creates it (owned by the resolved owner), so we own its creation and skip
   // the interactive conversation-write gate.
@@ -458,7 +486,7 @@ async function handleScheduledInvoke(
   }
   body = { ...body, conversation_id: conversationId };
 
-  const target = await resolveHarnessGatewayTarget(String(body.agent_id), {
+  const target = retainedTarget ?? await resolveHarnessGatewayTarget(String(body.agent_id), {
     subject: authResult.subject, conversationId: String(body.conversation_id),
   });
   if (target instanceof NextResponse) return target;
@@ -540,16 +568,16 @@ export async function POST(request: NextRequest): Promise<Response> {
   );
   if (conversationAuthz.denial) return conversationAuthz.denial;
 
-  body = {
-    ...body,
-    conversation_id: await resolveConversationRuntimeId(
-      conversationAuthz.conversation,
-    ),
-  };
-
-  const target = await resolveHarnessGatewayTarget(String(body.agent_id), {
-    subject: authResult.subject, conversationId: String(body.conversation_id),
-  });
+  const runtimeId = await resolveConversationRuntimeId(conversationAuthz.conversation);
+  const context = { subject: authResult.subject, conversationId: runtimeId, traceparent: authResult.traceparent };
+  let target = await resolveHarnessGatewayTarget(String(body.agent_id), { ...context, retainedOnly: true });
+  if (target instanceof NextResponse) return target;
+  const app = resolveAppConversationDestination(conversationAuthz.conversation, body.agent_id, "start", findAgenticAppAssistantStream, Boolean(target));
+  if (app instanceof NextResponse) return app;
+  if (app) return NextResponse.json({ success: false, code: "APP_STREAM_REQUIRED",
+    error: "This app assistant requires its declared chat stream endpoints" }, { status: 501 });
+  body = { ...body, conversation_id: runtimeId };
+  target ??= await resolveHarnessGatewayTarget(String(body.agent_id), context);
   if (target instanceof NextResponse) return target;
   let response: Response;
   if (target.kind === "harness_engine") {

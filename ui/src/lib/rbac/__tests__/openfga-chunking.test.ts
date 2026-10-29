@@ -252,4 +252,32 @@ describe("writeOpenFgaTuples (chunked + self-compensating)", () => {
       consoleErrSpy.mockRestore();
     }
   });
+  it("never compensates permanent purge deletions after a later chunk fails", async () => {
+    const { deleteExactOpenFgaTuples } = await import("../openfga");
+    const bodies: Array<{ writes?: unknown; deletes?: { tuple_keys: unknown[] } }> = [];
+    const { fetchMock } = mockFetch(body => {
+      bodies.push(body as typeof bodies[number]);
+      return new Response("{}", { status: bodies.length === 2 ? 500 : 200 });
+    });
+    await expect(deleteExactOpenFgaTuples(makeDiff(0, 150).deletes, { monotonic: true, timeoutMs: 5000 }))
+      .rejects.toThrow(/500/);
+    expect(bodies).toHaveLength(2);
+    expect(bodies.every(body => !body.writes)).toBe(true);
+    const writes = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/write"));
+    expect(writes.every(([, init]) => init?.signal instanceof AbortSignal)).toBe(true);
+  });
+
+  it("bounds a stalled monotonic purge request through the existing transport signal", async () => {
+    const { deleteExactOpenFgaTuples } = await import("../openfga");
+    process.env.OPENFGA_STORE_ID = "store-id";
+    global.fetch = jest.fn(async (_url, init) => new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      if (!signal) return reject(new Error("Missing bounded signal"));
+      if (signal.aborted) return reject(new Error("Bounded purge timeout"));
+      signal.addEventListener("abort", () => reject(new Error("Bounded purge timeout")), { once: true });
+    })) as typeof fetch;
+    await expect(deleteExactOpenFgaTuples([tuple(1)], { monotonic: true, timeoutMs: 1 }))
+      .rejects.toThrow("Bounded purge timeout");
+  });
+
 });

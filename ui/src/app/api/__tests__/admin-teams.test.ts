@@ -735,10 +735,15 @@ describe('DELETE /api/admin/teams/[id]', () => {
     expect(body.success).toBe(true);
     expect(body.data.deleted).toBe(true);
     expect(teamsCol.deleteOne).toHaveBeenCalledTimes(1);
-    // Should clean up conversation shared_with_teams
+    // Cleanup also preserves the privacy reservation of collaborative history.
     expect(convsCol.updateMany).toHaveBeenCalledWith(
       { 'sharing.shared_with_teams': TEST_TEAM_ID.toString() },
-      { $pull: { 'sharing.shared_with_teams': TEST_TEAM_ID.toString() } },
+      [{ $set: {
+        'sharing.shared_with_teams': expect.anything(),
+        personal_context: { $cond: [
+          { $eq: [{ $type: '$personal_context' }, 'missing'] }, 'shareable', '$personal_context',
+        ] },
+      } }],
     );
   });
 });

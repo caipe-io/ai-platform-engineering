@@ -99,6 +99,7 @@ function makeCollection(existingDoc: Record<string, unknown> | null = null) {
   return {
     findOne: jest.fn().mockResolvedValue(existingDoc),
     insertOne: jest.fn().mockResolvedValue({ insertedId: "conv-new" }),
+    updateOne: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
     updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
   };
 }
@@ -391,6 +392,15 @@ describe("POST /api/chat/conversations — SA auto-grant", () => {
       expect(response.status).toBe(200);
       expect(body.data.created).toBe(false);
 
+      // Reserve the canonical sharing state before creating an external grant.
+      expect(col.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: existingConv._id }),
+        { $set: { "personal_context": "shareable" } },
+      );
+      expect(col.updateOne.mock.invocationCallOrder[0]).toBeLessThan(
+        mockWriteOpenFgaTuples.mock.invocationCallOrder[0],
+      );
+
       // The writer tuple must be written (heals pre-fix conversations)
       expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -417,6 +427,19 @@ describe("POST /api/chat/conversations — SA auto-grant", () => {
       );
 
       expect(response.status).toBe(200);
+    });
+
+    it("does not grant access when private evidence wins the sharing reservation", async () => {
+      const col = makeCollection(existingConv);
+      col.updateOne.mockResolvedValue({ matchedCount: 0, modifiedCount: 0 });
+      mockGetCollection.mockResolvedValue(col);
+      const { POST } = await import("../chat/conversations/route");
+
+      const response = await POST(postRequest({ ...CONV_BODY, idempotency_key: "thread-example" }));
+
+      expect(response.status).toBe(409);
+      expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
+      expect(col.insertOne).not.toHaveBeenCalled();
     });
   });
 

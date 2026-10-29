@@ -7,6 +7,9 @@
 import {
   writeOpenFgaTupleDiff,
   isOpenFgaReconciliationEnabled,
+  isOpenFgaConfigured,
+  readOpenFgaTuples,
+  deleteExactOpenFgaTuples,
   type OpenFgaReconcileResult,
   type TeamResourceTupleDiff,
 } from "@/lib/rbac/openfga";
@@ -81,4 +84,33 @@ export async function reconcileTupleDiff(
     emitReconcileAudit(diff, result, ctx);
   }
   return result;
+}
+
+/** Bounded, monotonic cleanup of this conversation's stored relationships. */
+export async function purgeConversationRelationships(conversationId: string): Promise<boolean> {
+  if (!isOpenFgaConfigured()) return true;
+  if (!isOpenFgaReconciliationEnabled()) throw new OpenFgaReconcileRequiredError();
+  const object = `conversation:${conversationId}`;
+  for (let page = 0; page < 10; page++) {
+    // Read a fresh first page after each deletion; continuation cursors may
+    // become stale as tuples disappear or another expired lease is reclaimed.
+    const result = await readOpenFgaTuples({ tuple: { object }, pageSize: 100, signal: AbortSignal.timeout(5_000) });
+    const deletes = result.tuples.map(tuple => tuple.key);
+    if (deletes.some(tuple => tuple.object !== object)) throw new Error("Unexpected resource in conversation tuple cleanup");
+    if (!deletes.length) return true;
+    const diff = { writes: [], deletes };
+    const ctx = { source: "conversation_purge" };
+    try {
+      const applied = await deleteExactOpenFgaTuples(deletes, { monotonic: true, timeoutMs: 5_000 });
+      emitReconcileAudit(diff, applied, ctx);
+    } catch (error) {
+      emitReconcileAudit(diff, { enabled: true, writes: 0, deletes: 0 }, ctx, { outcome: "error", reasonCode: "PDP_WRITE_FAILED" });
+      throw error;
+    } finally {
+      // A failed bounded chunk may already have removed earlier keys.
+      invalidateDecisionCache();
+    }
+    if (!result.continuationToken) return true;
+  }
+  return false;
 }

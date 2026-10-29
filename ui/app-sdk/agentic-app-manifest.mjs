@@ -456,23 +456,28 @@ export function validateAgenticAppManifest(value) {
   return app;
 }
 
-/** Existing deployment manifests have already passed the legacy config parser. */
-/** Shared publisher/runtime policy matching, including first-match denial. */
-export function resolveAgenticAppHttpPolicyAction(manifest, method, path) {
+/** Match one path segment per named parameter; never a wildcard or prefix. */
+export function matchesAgenticAppHttpPath(pattern, path) {
   const normalize = (value) => {
     const absolute = value.startsWith("/") ? value : `/${value}`;
     return absolute.length > 1 ? absolute.replace(/\/+$/, "") : absolute;
   };
+  const actual = normalize(path).split("/").slice(1);
+  const expected = normalize(pattern).split("/").slice(1);
+  if (actual.some(segment => !segment) || expected.some(segment => !segment)) {
+    return normalize(path) === "/" && normalize(pattern) === "/";
+  }
+  return expected.length === actual.length && expected.every(
+    (segment, index) => segment.startsWith(":") || segment === actual[index],
+  );
+}
+
+/** Shared publisher/runtime policy matching, including first-match denial. */
+export function resolveAgenticAppHttpPolicyAction(manifest, method, path) {
   const normalizedMethod = method.toUpperCase();
-  const actual = normalize(path).split("/").filter(Boolean);
   const policies = manifest.access.policyActions;
-  const route = policies.find((candidate) => {
-    if (candidate.method !== normalizedMethod || typeof candidate.path !== "string") return false;
-    const expected = normalize(candidate.path).split("/").filter(Boolean);
-    return expected.length === actual.length && expected.every(
-      (segment, index) => segment.startsWith(":") || segment === actual[index],
-    );
-  });
+  const route = policies.find((candidate) => candidate.method === normalizedMethod &&
+    typeof candidate.path === "string" && matchesAgenticAppHttpPath(candidate.path, path));
   if (route) return route;
   if (policies.some((candidate) => candidate.method === normalizedMethod)) return undefined;
   return policies.find((candidate) => candidate.action === `proxy:${normalizedMethod}`);

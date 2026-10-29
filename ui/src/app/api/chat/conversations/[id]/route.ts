@@ -14,7 +14,7 @@ import { getCollection,isMongoDBConfigured } from '@/lib/mongodb';
 import { requireConversationResourcePermission } from '@/lib/rbac/conversation-implicit-authz';
 import type { Conversation,UpdateConversationRequest } from '@/types/mongodb';
 import { NextRequest,NextResponse } from 'next/server';
-import { deleteConversationsPermanently } from '../delete-permanently';
+import { conversationPurgingError, deleteConversationsPermanently } from '../delete-permanently';
 
 // GET /api/chat/conversations/[id]
 export const GET = withErrorHandler(async (
@@ -151,9 +151,11 @@ export const DELETE = withErrorHandler(async (
     await requireConversationResourcePermission(session, user.email, conversation, 'delete');
 
     if (permanent) {
-      await deleteConversationsPermanently([conversation]);
-      return successResponse({ deleted: true, permanent: true });
+      const result = await deleteConversationsPermanently([conversation]);
+      return successResponse({ deleted: result.deleted > 0, permanent: true,
+        ...(result.pending ? { pending: true } : {}) }, result.pending ? 202 : 200);
     } else {
+      if (conversation.purge) throw conversationPurgingError();
       // Soft delete: move to archive by setting deleted_at timestamp
       await conversations.updateOne(
         { _id: conversationId },

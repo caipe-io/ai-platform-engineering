@@ -1,4 +1,6 @@
 import type { Conversation } from "@/types/mongodb";
+import { ApiError } from "@/lib/api-error";
+import { ownsPersonalEvidenceConversation } from "@/lib/conversation-evidence-privacy";
 
 import {
   filterResourcesByPermission,
@@ -6,6 +8,22 @@ import {
   type ResourceAuthzSession,
   type ResourcePermissionAction,
 } from "./resource-authz";
+
+type ConversationOwnerFields = Pick<Conversation, "owner_id" | "owner_subject"> &
+  Partial<Pick<Conversation, "personal_context" | "owner_identity_version">>;
+type ConversationAuthzSession = ResourceAuthzSession & { canViewAdmin?: boolean };
+
+function isPrivateEvidenceConversation(conversation: ConversationOwnerFields): boolean {
+  return conversation.personal_context === "private";
+}
+
+function hasAdminAuditAccess(session: ConversationAuthzSession): boolean {
+  return session.isServiceAccount !== true && (session.role === "admin" || session.canViewAdmin === true);
+}
+
+function isReadAction(action: ResourcePermissionAction): boolean {
+  return action === "read" || action === "discover" || action === "list" || action === "audit";
+}
 
 function stableSubject(session: ResourceAuthzSession): string | null {
   return typeof session.sub === "string" && session.sub.trim() ? session.sub.trim() : null;
@@ -51,9 +69,12 @@ export function conversationVisibilityCandidateQuery(
 export function isImplicitConversationOwner(
   session: ResourceAuthzSession,
   userEmail: string,
-  conversation: Pick<Conversation, "owner_id" | "owner_subject">,
+  conversation: ConversationOwnerFields,
 ): boolean {
   const subject = stableSubject(session);
+  if (isPrivateEvidenceConversation(conversation)) {
+    return session.isServiceAccount !== true && ownsPersonalEvidenceConversation(conversation, subject ?? "", userEmail);
+  }
   if (subject && conversation.owner_subject === subject) return true;
   return Boolean(normalizeEmail(userEmail) && normalizeEmail(conversation.owner_id) === normalizeEmail(userEmail));
 }
@@ -82,7 +103,7 @@ export interface ConversationViewerSharingFlag {
 }
 
 export function annotateConversationsWithViewerSharing<
-  T extends Pick<Conversation, "owner_id" | "owner_subject">,
+  T extends ConversationOwnerFields,
 >(
   session: ResourceAuthzSession,
   userEmail: string,
@@ -97,37 +118,47 @@ export function annotateConversationsWithViewerSharing<
 }
 
 export async function requireConversationResourcePermission(
-  session: ResourceAuthzSession,
+  session: ConversationAuthzSession,
   userEmail: string,
   conversation: Conversation,
   action: ResourcePermissionAction,
 ): Promise<void> {
-  if (isImplicitConversationOwner(session, userEmail, conversation)) return;
-  await requireResourcePermission(
-    session,
-    {
-      type: "conversation",
-      id: conversation._id,
-      action,
-    },
-    { bypassForOrgAdmin: true },
-  );
+  if (!isImplicitConversationOwner(session, userEmail, conversation)) {
+    // Old tuples must never turn private evidence into a share. Keep the
+    // existing explicit, read-only admin audit path.
+    if (isPrivateEvidenceConversation(conversation) && !(isReadAction(action) && hasAdminAuditAccess(session))) {
+      throw new ApiError("Private personal research can only be accessed by its owner.", 403, "PRIVATE_CONVERSATION_OWNER_REQUIRED");
+    }
+    await requireResourcePermission(
+      session,
+      { type: "conversation", id: conversation._id, action },
+      { bypassForOrgAdmin: true },
+    );
+  }
+  if (conversation.purge && action !== 'delete') {
+    throw new ApiError("This conversation is being permanently deleted.", 409, "CONVERSATION_PURGING");
+  }
 }
 
 export async function filterConversationsByImplicitOrExplicitPermission<T extends Conversation>(
-  session: ResourceAuthzSession,
+  session: ConversationAuthzSession,
   userEmail: string,
   conversations: T[],
   action: ResourcePermissionAction = "discover",
   directShareConversationIds: readonly string[] = [],
 ): Promise<T[]> {
+  const candidates = conversations.filter((conversation) =>
+    !isPrivateEvidenceConversation(conversation) ||
+    isImplicitConversationOwner(session, userEmail, conversation) ||
+    (isReadAction(action) && hasAdminAuditAccess(session)),
+  );
   const directShareIds = new Set(directShareConversationIds);
   const implicitIds = new Set(
-    conversations
+    candidates
       .filter((conversation) => hasImplicitConversationVisibility(session, userEmail, conversation, directShareIds))
       .map((conversation) => conversation._id),
   );
-  const explicitCandidates = conversations.filter((conversation) => !implicitIds.has(conversation._id));
+  const explicitCandidates = candidates.filter((conversation) => !implicitIds.has(conversation._id));
   const explicitVisible = await filterResourcesByPermission(
     session,
     explicitCandidates,
@@ -139,7 +170,7 @@ export async function filterConversationsByImplicitOrExplicitPermission<T extend
     { bypassForOrgAdmin: true },
   );
   const explicitIds = new Set(explicitVisible.map((conversation) => conversation._id));
-  return conversations.filter((conversation) => implicitIds.has(conversation._id) || explicitIds.has(conversation._id));
+  return candidates.filter((conversation) => implicitIds.has(conversation._id) || explicitIds.has(conversation._id));
 }
 
 export async function getDirectSharingAccessConversationIds(

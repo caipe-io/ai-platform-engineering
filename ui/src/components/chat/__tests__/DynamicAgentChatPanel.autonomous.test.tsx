@@ -8,6 +8,7 @@ const mockPush = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 const mockToast = jest.fn();
 const mockStreamMessage = jest.fn().mockResolvedValue(undefined);
+const mockCreateStreamAdapter = jest.fn(() => ({ streamMessage: mockStreamMessage, abort: jest.fn() }));
 const mockInitializeFeatureFlags = jest.fn();
 const mockChatState = {
   activeConversationId: "task-chat",
@@ -46,7 +47,7 @@ jest.mock("@/components/autonomous/api", () => ({
   },
 }));
 jest.mock("@/lib/streaming", () => ({
-  createStreamAdapter: () => ({ streamMessage: mockStreamMessage, abort: jest.fn() }),
+  createStreamAdapter: (...args: unknown[]) => (mockCreateStreamAdapter as (...args: unknown[]) => unknown)(...args),
 }));
 jest.mock("@/hooks/useDynamicAgentTimeline", () => ({ useAgentTimeline: () => ({ data: {} }) }));
 jest.mock("@/components/shared/timeline", () => ({
@@ -126,6 +127,31 @@ it("does not offer continuation in a conversation shared as read-only", () => {
   render(<ChatPanel agentId="example-agent" conversationId="task-chat" readOnly readOnlyReason="shared_readonly" />);
   expect(screen.queryByRole("button", { name: "Continue this run" })).toBeNull();
   expect(screen.queryByPlaceholderText(/Ask anything/)).toBeNull();
+});
+
+it("uses ordinary shared chat for an app stream without native runtime side requests", async () => {
+  const savedFetch = global.fetch;
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: [] }) });
+  try {
+    mockConversation = { ...mockConversation, source: "web", task_id: undefined, messages: [] };
+    render(<ChatPanel agentId="example-agent" conversationId="task-chat" agent={{ _id: "example-agent", name: "Example",
+      presentation: { app: { id: "example-app", name: "Example App", ownsRuntime: true }, available: true },
+    } as import("@/types/dynamic-agent").DynamicAgentConfig} />);
+    fireEvent.change(screen.getByPlaceholderText(/Ask anything/), { target: { value: "Research the example" } });
+    fireEvent.click(screen.getByTitle("Send message"));
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalled());
+    expect(mockCreateStreamAdapter).toHaveBeenCalledWith({ protocol: "agui" });
+    const paths = jest.mocked(global.fetch).mock.calls.map(([url]) => String(url));
+    expect(paths.filter(path => /dynamic-agents.*(?:files|interrupt|agents$|capabilities)|\/api\/files\//.test(path))).toEqual([]);
+    expect(mockPush).not.toHaveBeenCalled();
+  } finally { global.fetch = savedFetch; }
+});
+
+it("explains application unavailability without claiming the owner's history was shared", () => {
+  mockConversation = { ...mockConversation, source: "web", task_id: undefined, messages: [] };
+  render(<ChatPanel agentId="example-agent" conversationId="task-chat" readOnly readOnlyReason="app_unavailable" />);
+  expect(screen.getByText("Application Unavailable")).toBeInTheDocument();
+  expect(screen.queryByText(/shared with you as read-only/)).toBeNull();
 });
 
 it("filters blank suggestions before limiting them, and fills the composer without sending", () => {

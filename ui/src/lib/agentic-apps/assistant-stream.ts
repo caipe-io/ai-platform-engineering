@@ -1,10 +1,14 @@
 import { validateAssistantRequestOptions } from "../../../app-sdk/assistant-options.mjs";
 import { NextResponse } from "next/server";
+import { readAssistantStatus, persistAssistantCompletion } from "./assistant-status";
 
 import type { AuthResult } from "@/lib/da-proxy";
 import { getAgentId } from "@/types/a2a";
 import type { Conversation } from "@/types/mongodb";
-import { getAgenticAppRoutingSnapshot } from "./config";
+import type { DynamicAgentConfig } from "@/types/dynamic-agent";
+import { getCollection } from "@/lib/mongodb";
+import { getAgenticAppAgentStreams, getAgenticAppRoutingSnapshot } from "./config";
+import { admitAppConversation, resolveAppConversationDestination } from "./app-assistant-binding";
 import { proxyAgenticAppRequest } from "./proxy";
 import { supportsAssistantClient, verifyWebexAssistantContext, type AssistantClientContext } from "./assistant-clients";
 import { ApiError } from "@/lib/api-error";
@@ -14,6 +18,7 @@ export type AssistantStreamOperation = "start" | "resume" | "cancel" | "status";
 export interface AgenticAppAssistantStream {
   appId: string;
   path: string[];
+  registeredAgent?: boolean;
   supportedClients?: Array<"webui" | "webex">;
   webexGroupChat?: boolean;
 }
@@ -23,21 +28,22 @@ export function findAgenticAppAssistantStream(
   agentId: string,
   operation: AssistantStreamOperation = "start",
 ): AgenticAppAssistantStream | null {
-  const matches = getAgenticAppRoutingSnapshot().filter((app) =>
-    app.manifest.ui.assistant?.agentId === agentId && app.manifest.ui.assistant.streamPath,
+  const matches = getAgenticAppRoutingSnapshot().flatMap((app) =>
+    getAgenticAppAgentStreams(app).filter((assistant) => assistant.agentId === agentId).map((assistant) => ({ app, assistant })),
   );
   if (matches.length > 1) throw new Error("Multiple installed apps claim the assistant");
-  const app = matches[0];
-  if (!app) return null;
+  const match = matches[0];
+  if (!match) return null;
+  const { app, assistant } = match;
   if (!app.installation.installed || !app.installation.enabled) {
     throw new Error("Assistant app is unavailable");
   }
-  const assistant = app.manifest.ui.assistant!;
   const path = operation === "start" ? assistant.streamPath
     : operation === "resume" ? assistant.resumePath
       : operation === "status" ? assistant.statusPath : assistant.cancelPath;
   // An empty path denotes an app-owned operation that the app does not implement.
   return { appId: app.installation.appId, path: path ? path.slice(1).split("/") : [],
+    ...(assistant.id !== "assistant" ? { registeredAgent: true } : {}),
     ...(assistant.supportedClients ? { supportedClients: assistant.supportedClients } : {}),
     ...(assistant.webexGroupChat !== undefined ? { webexGroupChat: assistant.webexGroupChat } : {}) };
 }
@@ -51,17 +57,8 @@ export async function proxyAgenticAppAssistantStream(
   operation: AssistantStreamOperation,
 ): Promise<Response | null> {
   const savedAgentId = getAgentId(conversation);
-  let target: AgenticAppAssistantStream | null;
-  try {
-    target = savedAgentId ? findAgenticAppAssistantStream(savedAgentId, operation) : null;
-    if (!target && typeof body.agent_id === "string" && body.agent_id !== savedAgentId &&
-        findAgenticAppAssistantStream(body.agent_id)) {
-      return NextResponse.json({ success: false, error: "Agent does not match this conversation" }, { status: 409 });
-    }
-  } catch {
-    console.error(`[stream/${operation}] Installed app assistant configuration is unavailable`);
-    return NextResponse.json({ success: false, error: "Assistant configuration unavailable" }, { status: 503 });
-  }
+  const target = resolveAppConversationDestination(conversation, body.agent_id, operation, findAgenticAppAssistantStream);
+  if (target instanceof NextResponse) return target;
   if (!target) return null;
   if (body.agent_id !== savedAgentId) {
     return NextResponse.json({ success: false, error: "Agent does not match this conversation" }, { status: 409 });
@@ -86,7 +83,7 @@ export async function proxyAgenticAppAssistantStream(
   } else if (conversation.client_type !== "webui") {
     return NextResponse.json({ error: "This app assistant does not support this client", code: "ASSISTANT_CLIENT_UNSUPPORTED" }, { status: 403 });
   }
-  if (!supportsAssistantClient({ agentId: savedAgentId!, name: "", label: "", ...target },
+  if (!supportsAssistantClient(target,
       clientContext ? "webex" : "webui", clientContext?.kind)) {
     return NextResponse.json({ error: "The app has not enabled this assistant client or group-space support", code: "ASSISTANT_CLIENT_UNSUPPORTED" }, { status: 403 });
   }
@@ -96,6 +93,16 @@ export async function proxyAgenticAppAssistantStream(
   if ((operation === "start" || operation === "resume") && body.protocol !== undefined && body.protocol !== "agui") {
     return NextResponse.json({ success: false, error: "App assistant streams require AG-UI" }, { status: 400 });
   }
+  if (target.registeredAgent && (operation === "start" || operation === "resume")) {
+    try {
+      const agents = await getCollection<DynamicAgentConfig>("dynamic_agents");
+      if (!await agents.findOne({ _id: savedAgentId!, enabled: true }, { projection: { _id: 1 } })) {
+        return NextResponse.json({ success: false, error: "Agent is disabled or unavailable" }, { status: 409 });
+      }
+    } catch {
+      return NextResponse.json({ success: false, error: "Agent registry is temporarily unavailable" }, { status: 503 });
+    }
+  }
   const options = getAgenticAppRoutingSnapshot().find(app => app.installation.appId === target.appId)?.manifest.ui.assistant?.hostOptions;
   if (options && body.forwarded_props !== undefined) {
     try { validateAssistantRequestOptions(body.forwarded_props, options); }
@@ -103,7 +110,9 @@ export async function proxyAgenticAppAssistantStream(
   }
   const response = await proxyAgenticAppRequest(request, {
     params: Promise.resolve({ appId: target.appId, path: target.path }),
-  }, auth.authenticatedUser, clientContext);
+  }, auth.authenticatedUser, clientContext,
+    operation === "start" || operation === "resume"
+      ? () => admitAppConversation(conversation, target, findAgenticAppAssistantStream) : undefined);
   if (!response.ok) return response;
   const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
   const expected = operation === "cancel" || operation === "status" ? "application/json" : "text/event-stream";
@@ -111,8 +120,23 @@ export async function proxyAgenticAppAssistantStream(
     await response.body?.cancel();
     return NextResponse.json({ success: false, error: `Assistant response must be ${expected}` }, { status: 502 });
   }
+  if (operation === "status") {
+    try {
+      const status = await readAssistantStatus(response);
+      if (status.completedTurn) {
+        const currentTarget = findAgenticAppAssistantStream(savedAgentId!, "status");
+        if (body.turn_id !== status.completedTurn.turnId || currentTarget?.appId !== target.appId ||
+            !await persistAssistantCompletion({ subject: auth.subject, email: auth.email,
+              conversationId: conversation._id, agentId: savedAgentId!, appId: target.appId,
+              turn: status.completedTurn })) delete status.completedTurn;
+      }
+      return NextResponse.json(status, { headers: { "Cache-Control": "private, no-store" } });
+    } catch {
+      return NextResponse.json({ error: "Assistant returned invalid status" }, { status: 502 });
+    }
+  }
   const headers = new Headers(response.headers);
-  headers.set("Cache-Control", "no-cache, no-transform");
+  headers.set("Cache-Control", expected === "text/event-stream" ? "no-cache, no-transform" : "private, no-store");
   if (expected === "text/event-stream") headers.set("X-Accel-Buffering", "no");
   return new Response(response.body, { status: response.status, headers });
 }

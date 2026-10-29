@@ -49,3 +49,28 @@ The preferences API validates folder IDs, unique names, assignments and limits
 before saving. Limits are 100 folders, 80 characters per name and 10,000 saved
 assignments. No migration of existing conversations is required. An account
 without organization preferences starts in Ungrouped view.
+
+## Deleted conversation retention
+
+Soft-deleted conversations become eligible for permanent deletion after seven
+days. MongoDB-backed UI servers check at startup and once a minute, processing
+at most 100 conversations per pass across all owners. Cleanup does not depend
+on anyone opening Trash. Browser-only installations and production builds do
+not run this database maintenance.
+
+Restore and permanent deletion compete on the conversation record. A restore
+that wins before cleanup claims the conversation preserves its data. Once
+permanent deletion has started, Restore returns a conflict explaining that the
+conversation is being deleted.
+
+Cleanup removes the conversation's associated platform records and access
+relationships before removing the conversation itself. Interrupted attempts
+remain retryable; other server replicas can resume them after the cleanup
+lease expires. Failed attempts back off so they do not continually block newer
+candidates. This policy covers CAIPE's canonical records; external application
+and agent-runtime stores retain their own retention policies.
+
+Large permanent deletions can return an accepted/pending result while cleanup
+continues in the background. The first retention pass includes conversations
+that were already soft-deleted more than seven days before this server version
+started.

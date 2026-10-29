@@ -64,7 +64,30 @@ export function ChatView({
     setTimeout(() => setIsAnimating(false), 300);
   }, [contextPanelRef]);
 
-  const isDisabled = agentNotFound || agent?.enabled === false;
+  const isDisabled = agentNotFound || agent?.enabled === false || agent?.presentation?.available === false;
+  const appOwnedRuntime = agent?.presentation?.app?.ownsRuntime === true;
+
+  const panel = (
+    <ChatPanel
+      appOwnedRuntime={appOwnedRuntime}
+      conversationId={conversationId}
+      readOnly={readOnly || isDisabled}
+      readOnlyReason={agentNotFound ? 'agent_deleted' : agent?.enabled === false ? 'agent_disabled' : readOnlyReason ??
+        (agent?.presentation?.available === false ? 'app_unavailable' : undefined)}
+      apiConversation={apiConversation}
+      agentId={selectedAgentId}
+      agent={agent}
+      isLoadingMessages={isLoadingMessages}
+      onAgentRelinked={onAgentRelinked}
+      requestOptions={app ? requestOptions : undefined}
+      composerHeader={composerHeader}
+      placeholder={options?.presentation?.placeholder ?? (assistantLabel ? `${assistantLabel}…` : undefined)}
+      emptyStateTitle={assistantLabel}
+      showAuditNotice={options?.presentation?.showAuditNotice}
+      feedbackPrompt={options?.presentation?.feedbackPrompt}
+    />
+  );
+  if (appOwnedRuntime) return panel;
 
   return (
     <ResizablePanelGroup
@@ -75,25 +98,11 @@ export function ChatView({
       {/* Chat Panel */}
       <ResizablePanel minSize={40}>
         <div className="flex-1 min-w-0 flex flex-col overflow-hidden h-full">
-          <ChatPanel
-            conversationId={conversationId}
-            readOnly={readOnly || isDisabled}
-            readOnlyReason={agentNotFound ? 'agent_deleted' : agent?.enabled === false ? 'agent_disabled' : readOnlyReason}
-            apiConversation={apiConversation}
-            agentId={selectedAgentId}
-            agent={agent}
-            isLoadingMessages={isLoadingMessages}
-            onAgentRelinked={onAgentRelinked}
-            requestOptions={app ? requestOptions : undefined}
-            composerHeader={composerHeader}
-            placeholder={options?.presentation?.placeholder ?? (assistantLabel ? `${assistantLabel}…` : undefined)}
-            emptyStateTitle={assistantLabel}
-            showAuditNotice={options?.presentation?.showAuditNotice}
-            feedbackPrompt={options?.presentation?.feedbackPrompt}
-          />
+          {panel}
         </div>
       </ResizablePanel>
 
+      {agent && <>
       <ResizableHandle className="bg-transparent hover:bg-primary/40 focus-visible:bg-primary/40" />
 
       {/* Context Panel - Dynamic Agent variant */}
@@ -117,6 +126,7 @@ export function ChatView({
           onCollapse={handleCollapse}
         />
       </ResizablePanel>
+      </>}
     </ResizablePanelGroup>
   );
 }

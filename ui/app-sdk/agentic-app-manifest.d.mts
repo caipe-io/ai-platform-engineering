@@ -97,3 +97,6 @@ export function nativeUiDescriptor(
 export function validateAgenticAppOwnership(
   manifests: AgenticAppManifest[],
 ): void;
+
+/** Match a complete route using one segment per named parameter. */
+export function matchesAgenticAppHttpPath(pattern: string, path: string): boolean;

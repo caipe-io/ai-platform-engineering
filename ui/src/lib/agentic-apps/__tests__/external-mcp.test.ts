@@ -17,6 +17,7 @@ jest.mock("@/lib/api-middleware", () => ({
 }));
 jest.mock("@/lib/agentic-apps/config", () => ({
   isAgenticAppsEnabled: () => true,
+  isAgenticAppBrowserContextPath: () => false,
   getConfiguredAgenticApp: () => mockApp(),
   loadConfiguredAgenticApps: () => mockApps(),
 }));

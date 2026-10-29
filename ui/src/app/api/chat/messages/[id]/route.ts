@@ -9,7 +9,9 @@ withErrorHandler,
 } from '@/lib/api-middleware';
 import { getCollection } from '@/lib/mongodb';
 import { requireResourcePermission } from '@/lib/rbac/resource-authz';
-import type { Message,UpdateMessageRequest } from '@/types/mongodb';
+import { requireConversationResourcePermission } from '@/lib/rbac/conversation-implicit-authz';
+import { reserveConversationMessageWrite } from '@/lib/conversation-evidence-privacy';
+import type { Conversation,Message,UpdateMessageRequest } from '@/types/mongodb';
 import { ObjectId,type Document,type Filter } from 'mongodb';
 import { NextRequest } from 'next/server';
 
@@ -45,6 +47,16 @@ export const PUT = withErrorHandler(async (
       action: 'write',
     });
 
+    // Private evidence remains owner-only even if an old writer tuple exists.
+    const conversation = await (await getCollection<Conversation>('conversations')).findOne({
+      _id: message.conversation_id,
+    });
+    if (!conversation) throw new ApiError('Conversation not found', 404, 'NOT_FOUND');
+    if (conversation.personal_context === 'private') {
+      await requireConversationResourcePermission(session, user.email, conversation, 'write');
+    }
+    await reserveConversationMessageWrite(conversation, session, user.email);
+
     // Build update
     const update: Document = {};
 
@@ -71,7 +83,7 @@ export const PUT = withErrorHandler(async (
       return successResponse(message);
     }
 
-    await messages.updateOne(filter, { $set: update });
+    await messages.updateOne({ ...filter, "metadata.app_completion": { $exists: false } }, { $set: update });
 
     const updated = await messages.findOne(filter);
 

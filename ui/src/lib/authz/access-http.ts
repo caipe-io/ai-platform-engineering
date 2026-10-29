@@ -70,7 +70,9 @@ async function handle(request: NextRequest, fields: string[], operation: AccessH
     response = await operation(body as Record<string, unknown>, caller, decisionContext(session, caller, request));
   } catch (error) {
     if (error instanceof HttpAuthzError) response = metaErrorResponse(error);
-    else {
+    else if (error instanceof ApiError && error.code === "PERSONAL_CONTEXT_PRIVATE") {
+      response = NextResponse.json({ error: error.message, code: error.code, retriable: false }, { status: error.statusCode });
+    } else {
       // A failed write may have reached OpenFGA: do not promise safe automatic retries.
       console.error("[access] Operation failed", { name: error instanceof Error ? error.name : "UnknownError" });
       response = NextResponse.json({ error: "Access operation failed", code: "INTERNAL_ERROR", retriable: false }, { status: 500 });

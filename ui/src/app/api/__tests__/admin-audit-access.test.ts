@@ -464,3 +464,36 @@ describe('GET /api/chat/conversations/[id] — access_level in response', () => 
     expect(body.error).toContain('You do not have access to this conversation.');
   });
 });
+
+
+describe('private evidence final conversation access boundary', () => {
+  const privateConversation = {
+    _id: CONV_ID, owner_id: 'owner@example.com', owner_subject: 'owner-sub', owner_identity_version: 2,
+    personal_context: 'private',
+    sharing: { shared_with: ['owner@example.com'], shared_with_teams: [] },
+  };
+
+  it.each([
+    { sub: 'different-sub' },
+    { sub: 'owner-sub', isServiceAccount: true },
+  ])('rejects conflicting identities before reading stale sharing records: %j', async (session) => {
+    const { requireConversationAccess } = await import('@/lib/api-middleware');
+    const conversations = createMockCollection();
+    conversations.findOne.mockResolvedValue(privateConversation);
+    mockCollections.conversations = conversations;
+    await expect(requireConversationAccess(CONV_ID, 'owner@example.com', mockGetCollection, session))
+      .rejects.toMatchObject({ statusCode: 403, code: 'PRIVATE_CONVERSATION_OWNER_REQUIRED' });
+    expect(mockGetCollection).not.toHaveBeenCalledWith('sharing_access');
+  });
+
+  it('accepts the exact owner and retains human admin audit access', async () => {
+    const { requireConversationAccess } = await import('@/lib/api-middleware');
+    const conversations = createMockCollection();
+    conversations.findOne.mockResolvedValue(privateConversation);
+    mockCollections.conversations = conversations;
+    await expect(requireConversationAccess(CONV_ID, 'old@example.com', mockGetCollection, { sub: 'owner-sub' }))
+      .resolves.toMatchObject({ access_level: 'owner' });
+    await expect(requireConversationAccess(CONV_ID, 'audit@example.com', mockGetCollection, { sub: 'audit-sub', canViewAdmin: true }))
+      .resolves.toMatchObject({ access_level: 'admin_audit' });
+  });
+});

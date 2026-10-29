@@ -78,50 +78,65 @@ export async function clearHarnessGatewayBinding(agentId: string, subject: strin
   await bindings.deleteOne({ _id: gatewayBindingId(agentId, subject, conversationId) });
 }
 
-/** Resolve the owner/conversation's pinned backend before an agent default. */
+/** Resolve retained state before consulting mutable agent or app defaults. */
+interface GatewayResolutionContext {
+  subject: string;
+  conversationId: string;
+  traceparent?: string;
+  retainedOnly?: boolean;
+}
+
+export function resolveHarnessGatewayTarget(
+  agentId: string, context: GatewayResolutionContext & { retainedOnly: true },
+): Promise<HarnessGatewayTarget | NextResponse | null>;
+export function resolveHarnessGatewayTarget(
+  agentId: string, context: GatewayResolutionContext & { retainedOnly?: false },
+): Promise<HarnessGatewayTarget | NextResponse>;
 export async function resolveHarnessGatewayTarget(
-  agentId: string,
-  context: { subject: string; conversationId: string; traceparent?: string },
-): Promise<HarnessGatewayTarget | NextResponse> {
+  agentId: string, context: GatewayResolutionContext,
+): Promise<HarnessGatewayTarget | NextResponse | null> {
   try {
-    // App-owned assistants execute through their declared stream endpoints.
-    // Reject entry points without an app operation before creating a provider binding.
-    if (findAgenticAppAssistantStream(agentId)) {
-      return NextResponse.json(
-        { success: false, code: "APP_STREAM_REQUIRED", error: "This app assistant requires its declared chat stream endpoints" },
-        { status: 501 },
-      );
-    }
     const bindings = await getCollection<GatewayBinding>("harness_gateway_bindings");
     const key = { _id: gatewayBindingId(agentId, context.subject, context.conversationId) };
     let binding = await bindings.findOne(key);
     if (!binding) {
       const agents = await getCollection<AgentRuntimeRecord>("dynamic_agents");
       const agent = await agents.findOne({ _id: agentId }, { projection: { _id: 1, execution_harness_id: 1, backend: 1 } });
-      if (!agent) return NextResponse.json({ success: false, error: "Agent not found" }, { status: 404 });
-      let harnessId = normalizedHarnessId(agent.execution_harness_id);
-      // Dynamic Agents and the BFF share the application database. Match the
-      // native runtime's checkpointer collection, including per-agent overrides.
-      const checkpointCollection = agent.backend?.config?.checkpoint_collection ||
+      if (!agent && !context.retainedOnly) return NextResponse.json({ success: false, error: "Agent not found" }, { status: 404 });
+      let harnessId = normalizedHarnessId(agent?.execution_harness_id);
+      const checkpointCollection = agent?.backend?.config?.checkpoint_collection ||
         process.env.CHECKPOINT_COLLECTION || "checkpoints_conversation";
       const checkpoints = await getCollection(checkpointCollection);
       const nativeContext = await checkpoints.findOne(
         { thread_id: context.conversationId }, { projection: { _id: 1 } },
       );
       if (nativeContext) harnessId = DEFAULT_HARNESS_ID;
+      // A fresh app chat must not create a native binding or depend on an
+      // unrelated Engine service. Explicit legacy SDK defaults still use their
+      // authoritative lookup to recover pre-gateway sessions.
+      if (context.retainedOnly && !nativeContext && harnessId === DEFAULT_HARNESS_ID) return null;
+      let retained = Boolean(nativeContext);
       const config = getHarnessEngineConfig();
       if (isHarnessEngineConfigured() && !(config instanceof NextResponse)) {
-        // Compare both authoritative owners when adopting pre-gateway sessions.
         const saved = await lookupHarnessSession(config, context, agentId, context.conversationId);
         if (saved instanceof NextResponse) {
           if (!nativeContext) return saved;
         } else if (nativeContext && saved.harness_id && saved.harness_id !== DEFAULT_HARNESS_ID) {
           return NextResponse.json({ success: false, error: "Conversation has conflicting runtime contexts; clear it before continuing" }, { status: 409 });
         } else {
+          retained ||= Boolean(saved.harness_id);
           harnessId = saved.harness_id ?? harnessId;
         }
       } else if (harnessId !== DEFAULT_HARNESS_ID && config instanceof NextResponse) {
         return config;
+      }
+      if (context.retainedOnly && !retained) return null;
+      // A declaration can select a new app session, never steal existing state.
+      if (!retained && findAgenticAppAssistantStream(agentId)) {
+        return NextResponse.json(
+          { success: false, code: "APP_STREAM_REQUIRED", error: "This app assistant requires its declared chat stream endpoints" },
+          { status: 501 },
+        );
       }
       binding = await bindings.findOneAndUpdate(key, { $setOnInsert: {
         ...key, owner_subject: context.subject, agent_id: agentId,
@@ -129,7 +144,11 @@ export async function resolveHarnessGatewayTarget(
       } }, { upsert: true, returnDocument: "after" });
       if (!binding) throw new Error("Backend binding could not be saved");
     }
-    const harnessId = normalizedHarnessId(binding.harness_id);
+    if (binding.owner_subject !== context.subject || binding.agent_id !== agentId ||
+        binding.conversation_id !== context.conversationId || typeof binding.harness_id !== "string" || !binding.harness_id.trim()) {
+      return NextResponse.json({ success: false, error: "Conversation runtime binding is invalid" }, { status: 409 });
+    }
+    const harnessId = binding.harness_id.trim();
     if (harnessId !== DEFAULT_HARNESS_ID) {
       const config = getHarnessEngineConfig();
       if (config instanceof NextResponse) return config;

@@ -42,6 +42,17 @@ describe("AgentHarnessBadge", () => {
     expect(logo.querySelector(".lucide-app-tile")).toBeInTheDocument();
   });
 
+  it.each([true, false])("uses an additional agent's avatar instead of the app logo, compact=%s", compact => {
+    render(<AgentHarnessBadge compact={compact} presentation={{
+      app: { id: "example-app", name: "Example App", icon: "/app-icons/example-app/logo.png" },
+      agent: { id: "secondary-agent", name: "Secondary assistant", ui: { gradient_theme: "ocean" } }, available: true,
+    }} />);
+    const badge = screen.getByRole("img", { name: "App: Example App" });
+    expect(badge.querySelector("img")).toBeNull();
+    expect(badge.querySelector("[data-agent-theme='ocean']")).not.toBeNull();
+    expect(badge.querySelector(".lucide-bot")).not.toBeNull();
+  });
+
   it("keeps custom harnesses identifiable without using another provider's logo", async () => {
     render(<AgentHarnessBadge harnessId="example_harness" className="ml-auto" />);
     const logo = screen.getByRole("img", { name: "Execution harness: example_harness" });

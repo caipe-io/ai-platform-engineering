@@ -25,6 +25,17 @@ import { ObjectId } from 'mongodb';
 // ============================================================================
 
 const mockGetServerSession = jest.fn();
+jest.mock('@/lib/chat-message-persistence', () => ({
+  ...jest.requireActual('@/lib/chat-message-persistence'),
+  upsertChatMessage: async (messages, input) => {
+    const filter = input.appTurn && input.role === 'assistant'
+      ? { conversation_id: input.conversationId, role: input.role, 'metadata.turn_id': input.turnId }
+      : { message_id: input.messageId, conversation_id: input.conversationId };
+    const result = await messages.updateOne(filter, { $set: input.fields, $setOnInsert: input.insert }, { upsert: true });
+    return { result, message: await messages.findOne(filter) };
+  },
+}));
+
 jest.mock('next-auth', () => ({
   getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
 }));
@@ -89,7 +100,7 @@ function createMockCollection() {
     updateOne: jest.fn().mockResolvedValue({
       upsertedId: new ObjectId(),
       upsertedCount: 1,
-      matchedCount: 0,
+      matchedCount: 1,
       modifiedCount: 0,
       acknowledged: true,
     }),
@@ -1787,4 +1798,57 @@ describe('POST /api/chat/conversations/[id]/messages — admin audit write block
     });
     expect(res.status).toBe(200);
   });
+});
+
+
+describe('app-bound assistant message POST', () => {
+  beforeEach(resetMocks);
+  it('deduplicates different browser message IDs by the canonical app turn', async () => {
+    mockGetServerSession.mockResolvedValue(authenticatedSession());
+    const conversations = createMockCollection();
+    conversations.findOne.mockResolvedValue({ _id: testConversationId, owner_id: 'user@example.com',
+      app_binding: { app_id: 'example-app', agent_id: 'example-agent' } });
+    mockCollections.conversations = conversations;
+    const rows = new Map<string, Record<string, unknown>>();
+    const messages = createMockCollection();
+    messages.updateOne.mockImplementation(async (filter, update) => {
+      const key = JSON.stringify(filter), previous = rows.get(key);
+      rows.set(key, { ...(!previous ? update.$setOnInsert : previous), ...update.$set });
+      return { upsertedId: previous ? null : new ObjectId(), upsertedCount: previous ? 0 : 1 };
+    });
+    messages.findOne.mockImplementation(async filter => rows.get(JSON.stringify(filter)) ?? null);
+    messages.countDocuments.mockImplementation(async () => rows.size);
+    mockCollections.messages = messages;
+    for (const messageId of ['first-browser-id', 'second-browser-id']) {
+      const response = await POST(makeRequest(`/api/chat/conversations/${testConversationId}/messages`, {
+        method: 'POST', body: JSON.stringify({ message_id: messageId, role: 'assistant', content: 'Final answer',
+          metadata: { turn_id: 'shared-turn', is_final: true } }),
+      }), { params: Promise.resolve({ id: testConversationId }) });
+      expect(response.status).toBe(messageId === 'first-browser-id' ? 201 : 200);
+    }
+    expect(rows.size).toBe(1);
+    expect(messages.updateOne).toHaveBeenLastCalledWith({ conversation_id: testConversationId, role: 'assistant',
+      'metadata.turn_id': 'shared-turn' }, expect.anything(), { upsert: true });
+    expect(conversations.updateOne).toHaveBeenCalledTimes(2);
+    expect(conversations.updateOne).toHaveBeenLastCalledWith({ _id: testConversationId }, {
+      $max: { 'metadata.total_messages': 1 }, $set: { updated_at: expect.any(Date) },
+    });
+  });
+});
+
+
+it('rejects an app POST when private admission wins after a same-email foreign-subject access check', async () => {
+  resetMocks(); mockGetServerSession.mockResolvedValue(authenticatedSession());
+  const conversations = createMockCollection();
+  const stale = { _id: testConversationId, owner_id: 'user@example.com', owner_subject: 'canonical-owner',
+    owner_identity_version: 2, app_binding: { app_id: 'example-app', agent_id: 'example-agent' } };
+  conversations.findOne.mockResolvedValueOnce(stale).mockResolvedValue({ ...stale, personal_context: 'private' });
+  conversations.updateOne.mockResolvedValue({ matchedCount: 0 });
+  mockCollections.conversations = conversations;
+  const messages = createMockCollection(); mockCollections.messages = messages;
+  const response = await POST(makeRequest(`/api/chat/conversations/${testConversationId}/messages`, {
+    method: 'POST', body: JSON.stringify({ message_id: 'late-write', role: 'user', content: 'Late shared write' }),
+  }), { params: Promise.resolve({ id: testConversationId }) });
+  expect(response.status).toBe(403);
+  expect(messages.updateOne).not.toHaveBeenCalled();
 });
