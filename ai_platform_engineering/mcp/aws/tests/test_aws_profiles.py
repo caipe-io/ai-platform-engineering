@@ -178,6 +178,63 @@ def test_container_identity_tolerates_incomplete_legacy_irsa(
     _assert_credential_source(_config(tmp_path), "EcsContainer")
 
 
+@pytest.mark.parametrize("source", [None, "Environment", "EcsContainer", "Ec2InstanceMetadata"])
+def test_selected_provider_ignores_malformed_irsa_settings(
+    server: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: str | None,
+) -> None:
+    monkeypatch.setenv("AWS_ROLE_ARN", "example\n[profile unused]")
+    monkeypatch.setenv("AWS_WEB_IDENTITY_TOKEN_FILE", "example\n[profile unused]")
+    if source is None:
+        monkeypatch.setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", "http://credentials.example.test/v1/credentials")
+    else:
+        monkeypatch.setenv("AWS_CREDENTIAL_SOURCE", source)
+
+    server._setup_aws_profiles()
+
+    _assert_credential_source(_config(tmp_path), source or "EcsContainer")
+
+
+@pytest.mark.parametrize("prefix,suffix", [(" ", ""), ("", " "), ("\t", ""), ("", "\t")])
+def test_irsa_rejects_token_paths_that_would_be_trimmed(
+    server: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, prefix: str, suffix: str,
+) -> None:
+    _set_irsa(monkeypatch, tmp_path)
+    monkeypatch.setenv("AWS_WEB_IDENTITY_TOKEN_FILE", f"{prefix}{tmp_path / 'token'}{suffix}")
+
+    with pytest.raises(ValueError, match="AWS_WEB_IDENTITY_TOKEN_FILE must not start or end with whitespace"):
+        server._setup_aws_profiles()
+    assert not (tmp_path / ".aws" / "config").exists()
+
+
+def test_irsa_reserved_profile_collision_preserves_existing_config(
+    server: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    _set_irsa(monkeypatch, tmp_path)
+    monkeypatch.setenv("AWS_ACCOUNT_LIST", "primary:111111111111,mcp-workload-identity:222222222222")
+    config_file = tmp_path / ".aws" / "config"
+    config_file.parent.mkdir()
+    config_file.write_text("[profile existing]\nregion = us-east-1\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="name 'mcp-workload-identity' is reserved when IRSA is used"):
+        server._setup_aws_profiles()
+    assert config_file.read_text(encoding="utf-8") == "[profile existing]\nregion = us-east-1\n"
+
+
+@pytest.mark.parametrize("source", ["Environment", "EcsContainer"])
+def test_internal_profile_name_is_allowed_without_irsa(
+    server: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: str,
+) -> None:
+    monkeypatch.setenv("AWS_CREDENTIAL_SOURCE", source)
+    monkeypatch.setenv("AWS_ACCOUNT_LIST", "mcp-workload-identity:111111111111")
+
+    server._setup_aws_profiles()
+
+    config = _config(tmp_path)
+    assert config.sections() == ["profile mcp-workload-identity"]
+    assert config["profile mcp-workload-identity"]["role_arn"] == "arn:aws:iam::111111111111:role/example-read-only"
+    assert config["profile mcp-workload-identity"]["credential_source"] == source
+
+
 @pytest.mark.parametrize("account_list", ["", " , "])
 def test_without_accounts_no_config_is_written(
     server: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, account_list: str,

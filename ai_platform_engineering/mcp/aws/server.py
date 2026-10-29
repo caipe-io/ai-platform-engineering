@@ -138,15 +138,22 @@ def _setup_aws_profiles() -> list[dict]:
     cross_account_role = os.getenv("CROSS_ACCOUNT_ROLE_NAME", "caipe-read-only")
     sections = ["# AUTO-GENERATED PROFILES FROM AWS_ACCOUNT_LIST\n"]
     credential_source = _credential_source()
-    web_identity_role = _single_line_env("AWS_ROLE_ARN")
-    web_identity_token_file = _single_line_env("AWS_WEB_IDENTITY_TOKEN_FILE")
-    if credential_source is None and bool(web_identity_role) != bool(web_identity_token_file):
-        raise ValueError("AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE must be set together for IRSA.")
+    web_identity_role = ""
+    web_identity_token_file = ""
+    if credential_source is None:
+        web_identity_role = _single_line_env("AWS_ROLE_ARN")
+        web_identity_token_file = _single_line_env("AWS_WEB_IDENTITY_TOKEN_FILE")
+        if bool(web_identity_role) != bool(web_identity_token_file):
+            raise ValueError("AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE must be set together for IRSA.")
 
     # Prefer the selected/container provider when legacy IRSA settings coexist.
     use_web_identity = credential_source is None and bool(web_identity_role and web_identity_token_file)
 
     if use_web_identity:
+        if os.getenv("AWS_WEB_IDENTITY_TOKEN_FILE", "") != web_identity_token_file:
+            raise ValueError("AWS_WEB_IDENTITY_TOKEN_FILE must not start or end with whitespace.")
+        if any(acc["name"] == "mcp-workload-identity" for acc in accounts):
+            raise ValueError("AWS_ACCOUNT_LIST name 'mcp-workload-identity' is reserved when IRSA is used.")
         sections.append(
             "[profile mcp-workload-identity]\n"
             f"role_arn = {web_identity_role}\n"

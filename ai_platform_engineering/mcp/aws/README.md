@@ -45,6 +45,11 @@ identity does not require static access keys in environment variables. These
 settings apply when `AWS_ACCOUNT_LIST` generates cross-account profiles; without
 an account list, the AWS CLI uses its existing credential chain.
 
+When IRSA is selected, its token-file path must not start or end with whitespace,
+and account names cannot use the reserved source profile name
+`mcp-workload-identity`. IRSA settings are ignored when an explicit credential
+source or container provider is selected.
+
 ## Running locally
 
 ```bash
