@@ -48,7 +48,7 @@ def transport(
 async def test_lists_all_pages_but_never_descends_into_child_folders() -> None:
     calls: list[str] = []
     items = [file(1), {"id": "child-1", "name": "Nested", "folder": {}},
-        {"id": "text-1", "name": "Text.docx", "file": {}}, file(2), {**file(3), "remoteItem": {}}]
+        {"id": "binary-1", "name": "Archive.zip", "file": {}}, file(2), {**file(3), "remoteItem": {}}]
     async with httpx.AsyncClient(transport=transport(items, calls, paginate=True)) as http:
         result = await SharePointDocuments(SharePointGraphClient(config(), http)).folder_snapshot("drive-1", "folder-1")
     assert result["document_count"] == 2
@@ -58,6 +58,34 @@ async def test_lists_all_pages_but_never_descends_into_child_folders() -> None:
     assert result["within_limits"] is True
     assert result["folder"]["kind"] == "folder"
     assert not any("child-1" in path or path.endswith("/content") for path in calls)
+
+
+async def test_word_files_share_the_direct_folder_count_and_byte_limits() -> None:
+    calls: list[str] = []
+    items = [file(1), {**file(2, 2048), "name": "Example.DOCX"},
+        {**file(3), "name": "Example.docm"}, {**file(4), "name": "Example.docx", "remoteItem": {}}]
+    async with httpx.AsyncClient(transport=transport(items, calls)) as http:
+        documents = SharePointDocuments(SharePointGraphClient(config(max_document_bytes=1024), http))
+        result = await documents.folder_snapshot("drive-1", "folder-1", select_files=True)
+    assert [row["item_id"] for row in result["documents"]] == ["file-1", "file-2"]
+    assert result["document_count"] == 2
+    assert result["total_size"] == 2148
+    assert result["unsupported_count"] == 2
+    assert result["within_limits"] is False
+    assert not any(path.endswith("/content") for path in calls)
+
+
+async def test_direct_text_files_are_discovered_without_reading_their_bodies() -> None:
+    calls: list[str] = []
+    extensions = ["md", "txt", "html", "jsonl", "json", "yaml"]
+    items = [{**file(number), "name": f"Example.{extension}", "file": {"mimeType": "application/octet-stream"}}
+        for number, extension in enumerate(extensions)]
+    async with httpx.AsyncClient(transport=transport(items, calls)) as http:
+        preview = await SharePointDocuments(SharePointGraphClient(config(), http)).folder_snapshot("drive-1", "folder-1", select_files=True)
+    assert preview["document_count"] == len(extensions)
+    assert preview["total_size"] == len(extensions) * 100
+    assert preview["unsupported_count"] == 0
+    assert not any(path.endswith("/content") for path in calls)
 
 
 @pytest.mark.parametrize("items,limit", [([file(n) for n in range(11)], 2048), ([file(1, 2048)], 1024)])
@@ -87,6 +115,19 @@ async def test_folder_listing_exposes_graph_versions_for_change_detection() -> N
     async with httpx.AsyncClient(transport=transport(items, [])) as http:
         result = await SharePointDocuments(SharePointGraphClient(config(), http)).folder_snapshot("drive-1", "folder-1", select_files=True)
     assert [row["version"] for row in result["documents"]] == ["etag-v2", "ctag-v3"]
+
+
+async def test_images_are_discovered_without_downloading_or_following_shortcuts() -> None:
+    calls: list[str] = []
+    extensions = ["png", "jpg", "jpeg", "gif", "webp", "svg", "avif"]
+    items = [{**file(index), "name": f"Image.{extension}"} for index, extension in enumerate(extensions)]
+    items.append({**file(10), "name": "Remote.png", "remoteItem": {}})
+    async with httpx.AsyncClient(transport=transport(items, calls)) as http:
+        result = await SharePointDocuments(SharePointGraphClient(config(), http)).folder_snapshot("drive-1", "folder-1", select_files=True)
+    assert result["document_count"] == len(extensions)
+    assert result["total_size"] == 700
+    assert result["unsupported_count"] == 1
+    assert not any(path.endswith("/content") for path in calls)
 
 
 async def test_empty_folder_can_be_attached_for_future_direct_files() -> None:

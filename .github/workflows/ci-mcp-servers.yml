@@ -11,6 +11,8 @@ on:
     paths:
       - 'ai_platform_engineering/mcp/**'
       - 'build/agents/Dockerfile.mcp'
+      - '.github/agents.json'
+      - '.github/workflows/ci-mcp-servers.yml'
   workflow_dispatch:
     inputs:
       build_all:
@@ -36,6 +38,7 @@ jobs:
     if: always()
     outputs:
       all_agents: ${{ steps.read-config.outputs.all_agents }}
+      mcp_build_args: ${{ steps.read-config.outputs.mcp_build_args }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -47,7 +50,9 @@ jobs:
         id: read-config
         run: |
           ALL_AGENTS=$(jq -c '.mcp_agents' .github/agents.json)
+          MCP_BUILD_ARGS=$(jq -c '.mcp_build_args // {}' .github/agents.json)
           echo "all_agents=$ALL_AGENTS" >> $GITHUB_OUTPUT
+          echo "mcp_build_args=$MCP_BUILD_ARGS" >> $GITHUB_OUTPUT
 
   determine-agents:
     runs-on: ubuntu-latest
@@ -85,6 +90,8 @@ jobs:
             filters += '  - \'pyproject.toml\'\n';
             filters += '  - \'uv.lock\'\n';
             filters += '  - \'ai_platform_engineering/mcp/common/**\'\n';
+            filters += '  - \'.github/agents.json\'\n';
+            filters += '  - \'.github/workflows/ci-mcp-servers.yml\'\n';
             filters += 'shared_dockerfile:\n';
             filters += '  - \'build/agents/Dockerfile.mcp\'\n';
             agents.forEach(agent => {
@@ -194,6 +201,19 @@ jobs:
             type=ref,event=tag,prefix=
             type=sha,format=short,prefix=,enable=${{ github.ref != 'refs/heads/main' }}
 
+      - name: Resolve per-agent MCP build args
+        id: mcp_build_args
+        env:
+          MCP_BUILD_ARGS: ${{ needs.load-config.outputs.mcp_build_args }}
+          AGENT: ${{ matrix.agent }}
+        run: |
+          EXTRA=$(jq -r --arg a "$AGENT" '.[$a] // {} | to_entries | map("\(.key)=\(.value)") | .[]' <<< "$MCP_BUILD_ARGS")
+          {
+            echo 'extra<<EOF'
+            echo "$EXTRA"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push MCP image by digest
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
@@ -205,6 +225,7 @@ jobs:
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' }}
           build-args: |
             AGENT_NAME=${{ matrix.agent }}
+            ${{ steps.mcp_build_args.outputs.extra }}
           cache-from: type=gha,scope=${{ matrix.agent }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.agent }}-${{ matrix.arch }}
 
