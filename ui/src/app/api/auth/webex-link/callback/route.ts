@@ -1,3 +1,5 @@
+import { safeWebexReturnTo, safeWebexBotId } from "@/lib/webex-link-context";
+import { callWebexBotAdmin } from "@/lib/webex-bot-admin";
 import { NextRequest, NextResponse } from "next/server";
 
 import { getRequestOrigin } from "@/app/api/skills/_lib/request-origin";
@@ -131,6 +133,7 @@ async function completeLink(request: NextRequest, ownerId: string): Promise<Next
   try {
     const meResponse = await fetch("https://webexapis.com/v1/people/me", {
       headers: { authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(10000), cache: "no-store",
     });
     if (!meResponse.ok) {
       return errorRedirect(request, "WEBEX_PROFILE_FETCH_FAILED");
@@ -159,9 +162,24 @@ async function completeLink(request: NextRequest, ownerId: string): Promise<Next
       webex_user_id: [person.id],
       webex_user_email: webexEmail ? [webexEmail] : undefined,
     });
-  } catch {
-    return errorRedirect(request, "WEBEX_ID_ALREADY_LINKED");
+  } catch (error) {
+    return errorRedirect(request, error instanceof ApiError && error.statusCode === 409 ? "WEBEX_ID_ALREADY_LINKED" : "WEBEX_LINK_SAVE_FAILED");
   }
 
-  return settingsRedirect(request, { webex_link: "success" });
+  const returnTo = safeWebexReturnTo(parsedState.webexLinkContext?.returnTo);
+  const botId = safeWebexBotId(parsedState.webexLinkContext?.botId);
+  let notification = "not_requested";
+  if (botId) {
+    try {
+      await callWebexBotAdmin("/admin/webex/identity-linked", {
+        method: "POST", body: { bot_id: botId, webex_user_id: person.id }, signal: AbortSignal.timeout(10000),
+      });
+      notification = "sent";
+    } catch {
+      // The identity is already persisted. Delivery failure must not undo it.
+      console.warn("[webex-link] Completion notification could not be delivered");
+      notification = "unavailable";
+    }
+  }
+  return settingsRedirect(request, { webex_link: "success", notification, ...(returnTo ? { return_to: returnTo } : {}) });
 }
