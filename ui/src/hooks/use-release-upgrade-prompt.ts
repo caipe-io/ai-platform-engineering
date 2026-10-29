@@ -1,5 +1,7 @@
 "use client";
 
+import { hasReleaseNotesOverride, type ReleaseNotesOverride } from "@/lib/release-notes-override";
+
 import { useSession } from "next-auth/react";
 import { useCallback,useEffect,useMemo,useState } from "react";
 
@@ -22,10 +24,13 @@ export interface ReleaseMarkdown {
   title: string | null;
   date: string | null;
   body: string;
+  source?: string | null;
+  markdownBaseUrl?: string;
   changelogUrl?: string | null;
 }
 
 interface ReleaseNotesResponse {
+  markdownBaseUrl?: string;
   matchedVersion?: string | null;
   title?: string | null;
   date?: string | null;
@@ -49,6 +54,8 @@ interface ChangelogResponse {
 }
 
 export interface ReleaseNotesNotificationConfig {
+  override?: ReleaseNotesOverride;
+  override_revision?: string;
   enabled: boolean;
   repository_url: string | null;
   previous_commit: string | null;
@@ -116,7 +123,7 @@ export function releaseNotesRequestUrl(
   config?: Partial<ReleaseNotesNotificationConfig> | null,
 ): string {
   const params = new URLSearchParams({ version });
-  if (hasConfiguredReleaseNotesCompare(config)) {
+  if (hasConfiguredReleaseNotesCompare(config) || hasReleaseNotesOverride(config, version)) {
     // The API resolves the stored platform config server-side so callers
     // cannot use the UI server's GitHub token to compare an arbitrary repo.
     params.set("compare", "platform");
@@ -205,8 +212,11 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
         }
 
         const activeReleaseVersion = deployedReleaseVersion;
-        const customCompareConfigured = hasConfiguredReleaseNotesCompare(releaseNotesConfig);
-        const activeAnnouncementId = customCompareConfigured
+        const curatedOverride = hasReleaseNotesOverride(releaseNotesConfig, activeReleaseVersion);
+        const customCompareConfigured = !curatedOverride && hasConfiguredReleaseNotesCompare(releaseNotesConfig);
+        const activeAnnouncementId = curatedOverride
+          ? `${activeReleaseVersion}:curated:${releaseNotesConfig?.override_revision}`
+          : customCompareConfigured
           ? JSON.stringify([
               activeReleaseVersion,
               releaseNotesConfig.repository_url,
@@ -229,7 +239,7 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
           return;
         }
 
-        const matchingRelease = customCompareConfigured
+        const matchingRelease = customCompareConfigured || curatedOverride
           ? null
           : changelogPayload?.releases?.find(
               (item) => normalizeVersion(item.version) === activeReleaseVersion,
@@ -244,7 +254,8 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
           if (!cancelled) {
             const hasExactChangelog = Boolean(matchingRelease);
             const hasConfiguredCompareNotes =
-              customCompareConfigured && notesPayload?.source === "github-compare";
+              (customCompareConfigured && notesPayload?.source === "github-compare") ||
+              (curatedOverride && ["manual", "repository-markdown"].includes(notesPayload?.source ?? ""));
             const hasExactCuratedNotes =
               Boolean(notesPayload?.body) &&
               (normalizeVersion(notesPayload?.matchedVersion) === activeReleaseVersion ||
@@ -256,6 +267,8 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
                     title: notesPayload.title ?? null,
                     date: notesPayload.date ?? null,
                     body: notesPayload.body,
+                    source: notesPayload.source,
+                    markdownBaseUrl: notesPayload.markdownBaseUrl,
                     changelogUrl: notesPayload.changelogUrl ?? null,
                   }
                 : null,

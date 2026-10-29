@@ -125,7 +125,7 @@ describe("admin platform-config route", () => {
     const response = await GET(request("/api/admin/platform-config"));
     const body = await response.json();
 
-    expect(body.data.release_notes).toEqual({
+    expect(body.data.release_notes).toMatchObject({
       enabled: true,
       repository_url: null,
       previous_commit: null,
@@ -332,7 +332,7 @@ describe("admin platform-config route", () => {
       { upsert: true },
     );
     expect(collection.updateOne.mock.calls[0][1].$set).not.toHaveProperty("default_agent_id");
-    expect(body.data.release_notes).toEqual({ enabled: false });
+    expect(body.data.release_notes).toMatchObject({ enabled: false });
     expect(collection.updateOne.mock.calls[0][1].$set).not.toHaveProperty('release_notes');
     expect(collection.updateOne.mock.calls[0][1].$set).not.toHaveProperty('release_notes.repository_url');
   });
@@ -362,7 +362,7 @@ describe("admin platform-config route", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.data.release_notes).toEqual({
+    expect(body.data.release_notes).toMatchObject({
       enabled: true,
       repository_url: "https://github.com/example/repository",
       previous_commit: "1111111",

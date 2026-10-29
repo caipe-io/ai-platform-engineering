@@ -1,3 +1,4 @@
+import { normalizeReleaseNotesOverride, validateReleaseNotesOverride, hasReleaseNotesOverride, MAX_RELEASE_NOTES_LENGTH } from "@/lib/release-notes-override";
 import fs from "fs";
 import { NextRequest,NextResponse } from "next/server";
 import path from "path";
@@ -82,8 +83,10 @@ export interface ReleaseNotesResponse {
   title: string | null;
   date: string | null;
   body: string | null;
-  source: "generated" | "github-compare" | "github" | "local" | "none";
+  source: "manual" | "repository-markdown" | "generated" | "github-compare" | "github" | "local" | "none";
   changelogUrl: string | null;
+  markdownBaseUrl?: string;
+  error?: string;
 }
 
 interface MainIncrementReleaseNotes {
@@ -511,6 +514,62 @@ export async function GET(request: NextRequest) {
       // Authenticate on every read, before configuration, cache or GitHub work.
       // This deliberately allows ordinary admitted users, not just admins.
       await getAuthFromBearerOrSession(request);
+      const collection = await getCollection<{ _id: string; release_notes?: { override?: unknown } }>("platform_config");
+      const document = await collection.findOne({ _id: PLATFORM_CONFIG_ID } as never);
+      const override = normalizeReleaseNotesOverride(document?.release_notes?.override);
+      if (hasReleaseNotesOverride({ override }, requestedVersion)) {
+        const headers = { "Cache-Control": "private, no-store" };
+        const invalid = validateReleaseNotesOverride(override);
+        if (invalid) return NextResponse.json({ ...empty, error: invalid }, { status: 400, headers });
+        let content = override.markdown;
+        let changelogUrl: string | null = override.changelog_url || null;
+        let markdownBaseUrl: string | undefined;
+        if (override.source === "repository") {
+          const repository = approvedReleaseNotesRepository(override.markdown_repository);
+          if (!repository) return NextResponse.json({ ...empty, error: "Release notes repository is not approved." }, { status: 400, headers });
+          const coords = parseReleaseNotesRepository(repository)!;
+          const encodedPath = override.markdown_path.split("/").map(encodeURIComponent).join("/");
+          const ref = encodeURIComponent(override.markdown_ref);
+          const url = `https://api.github.com/repos/${coords.owner}/${coords.repository}/contents/${encodedPath}?ref=${ref}`;
+          const cacheKey = JSON.stringify([repository, override.markdown_ref, override.markdown_path]);
+          const cached = contentCache.get(cacheKey);
+          if (cached && Date.now() - cached.at < CONTENT_TTL_MS) content = cached.body;
+          else {
+            const token = process.env.RELEASE_NOTES_GITHUB_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim() || process.env.GITHUB_PERSONAL_ACCESS_TOKEN?.trim();
+            const response = await fetch(url, {
+              signal: AbortSignal.timeout(10000), cache: "no-store", redirect: "error",
+              headers: { Accept: "application/vnd.github.raw+json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+            });
+            if (!response.ok) return NextResponse.json({ ...empty, error: `Release Markdown could not be fetched (HTTP ${response.status}). Check the file, ref, and repository access.` }, { status: 502, headers });
+            // Read at most the configured limit, including responses without Content-Length.
+            const reader = response.body?.getReader();
+            if (!reader) return NextResponse.json({ ...empty, error: "Release Markdown is empty." }, { status: 502, headers });
+            const chunks: Uint8Array[] = [];
+            let size = 0;
+            try {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                size += value.byteLength;
+                if (size > MAX_RELEASE_NOTES_LENGTH) {
+                  await reader.cancel();
+                  return NextResponse.json({ ...empty, error: "Release Markdown exceeds 128 KiB." }, { status: 502, headers });
+                }
+                chunks.push(value);
+              }
+            } finally { reader.releaseLock(); }
+            content = Buffer.concat(chunks).toString("utf8");
+            contentCache.set(cacheKey, { at: Date.now(), body: content });
+          }
+          changelogUrl = `${repository}/blob/${ref}/${encodedPath}`;
+          markdownBaseUrl = `https://raw.githubusercontent.com/${coords.owner}/${coords.repository}/${ref}/${encodedPath}`;
+        }
+        const parsed = parseFrontmatter(content);
+        if (!parsed.body.trim()) return NextResponse.json({ ...empty, error: "Release Markdown has no content." }, { status: 502, headers });
+        return NextResponse.json({ ...empty, ...parsed, matchedVersion: requestedVersion,
+          source: override.source === "manual" ? "manual" : "repository-markdown", changelogUrl, markdownBaseUrl,
+        }, { headers });
+      }
       const configuredCompare = await readConfiguredGithubCompare();
       const headers = { "Cache-Control": "private, no-store" };
       if (!configuredCompare) return NextResponse.json(empty, { status: 400, headers });
@@ -578,8 +637,8 @@ export async function GET(request: NextRequest) {
       });
     }
     if (useConfiguredCompare) {
-      console.error("[Release Notes API] Configured compare unavailable");
-      return NextResponse.json(empty, { status: 500, headers: { "Cache-Control": "private, no-store" } });
+      console.error("[Release Notes API] Configured release notes unavailable");
+      return NextResponse.json({ ...empty, error: "Configured release notes are unavailable. Check repository access and try again." }, { status: 500, headers: { "Cache-Control": "private, no-store" } });
     }
     console.error("[Release Notes API] Error resolving release notes:", error);
     return NextResponse.json(empty, { status: 500 });

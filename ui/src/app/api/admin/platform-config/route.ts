@@ -1,3 +1,5 @@
+import { createHash } from "crypto";
+import { normalizeReleaseNotesOverride, validateReleaseNotesOverride, type ReleaseNotesOverride } from "@/lib/release-notes-override";
 // GET /api/admin/platform-config — read platform-wide config (any authenticated user)
 // PATCH /api/admin/platform-config — update platform config (admin only)
 
@@ -205,6 +207,8 @@ async function reconcileDefaultAgentGrant(previousAgentId: string | null, nextAg
 }
 
 export interface ReleaseNotesNotificationConfig {
+  override: ReleaseNotesOverride;
+  override_revision: string;
   enabled: boolean;
   repository_url: string | null;
   previous_commit: string | null;
@@ -218,6 +222,8 @@ function optionalTrimmedString(value: unknown): string | null {
 function normalizeReleaseNotesConfig(input: unknown = {}): ReleaseNotesNotificationConfig {
   const source = isRecord(input) ? input : {};
   return {
+    override: normalizeReleaseNotesOverride(source.override),
+    override_revision: createHash('sha256').update(JSON.stringify(normalizeReleaseNotesOverride(source.override))).digest('hex').slice(0, 24),
     enabled: source.enabled !== false,
     repository_url: optionalTrimmedString(source.repository_url),
     previous_commit: optionalTrimmedString(source.previous_commit),
@@ -405,6 +411,21 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
         const config = normalizeReleaseNotesConfig(input);
         validateReleaseNotesConfig(config);
         for (const key of rangeKeys) releaseNotesUpdate[key] = config[key];
+      }
+      if (Object.prototype.hasOwnProperty.call(input, 'override')) {
+        if (!isRecord(input.override) || !['automatic', 'manual', 'repository'].includes(input.override.source as string) ||
+            Object.entries(input.override).some(([key, value]) => key !== 'source' && typeof value !== 'string')) {
+          throw new ApiError('Invalid release notes override fields', 400);
+        }
+        const override = normalizeReleaseNotesOverride(input.override);
+        const error = validateReleaseNotesOverride(override);
+        if (error) throw new ApiError(error, 400);
+        if (override.source === 'repository') {
+          const repository = approvedReleaseNotesRepository(override.markdown_repository);
+          if (!repository) throw new ApiError('Choose an approved release notes repository', 400);
+          override.markdown_repository = repository;
+        }
+        releaseNotesUpdate.override = override;
       }
       // Independent toggle/range writes cannot overwrite each other's values.
       for (const [key, value] of Object.entries(releaseNotesUpdate)) {

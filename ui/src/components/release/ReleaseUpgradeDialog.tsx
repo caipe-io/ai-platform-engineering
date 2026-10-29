@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertCircle,CheckCircle2,Clock3,Sparkles } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { getConfig } from "@/lib/config";
@@ -28,6 +28,14 @@ interface ReleaseUpgradeDialogProps {
 }
 
 const CHANGELOG_URL = "https://github.com/caipe-io/ai-platform-engineering/blob/main/CHANGELOG.md";
+
+function safeManualChangelogUrl(value?: string | null): string | undefined {
+  try {
+    const url = new URL(value ?? "");
+    if (url.protocol === "https:" && !url.username && !url.password) return url.href;
+  } catch { /* Invalid draft URLs are not links. */ }
+  return undefined;
+}
 
 function safeChangelogUrl(value?: string | null): string {
   try {
@@ -63,9 +71,13 @@ function userVisibleMarkdownBody(body: string, isAdmin: boolean): string {
 }
 
 /** Rich-markdown renderer for the full curated release notes body. */
-function ReleaseNotesMarkdown({ body }: { body: string }) {
+function ReleaseNotesMarkdown({ body, baseUrl }: { body: string; baseUrl?: string }) {
   return (
     <ReactMarkdown
+      urlTransform={(url) => {
+        if (!baseUrl || /^(?:[a-z][a-z0-9+.-]*:|#|\/\/)/i.test(url)) return defaultUrlTransform(url);
+        try { return defaultUrlTransform(new URL(url, baseUrl).href); } catch { return ""; }
+      }}
       remarkPlugins={[remarkGfm]}
       components={{
         h1: ({ children }) => <h2 className="mt-4 text-base font-semibold text-foreground first:mt-0">{children}</h2>,
@@ -188,7 +200,7 @@ export function ReleaseUpgradeDialog({
         <div className="max-h-[420px] overflow-y-auto rounded-lg border bg-muted/20 p-4">
           {markdownBody ? (
             <div className="min-w-0">
-              <ReleaseNotesMarkdown body={markdownBody} />
+              <ReleaseNotesMarkdown baseUrl={releaseMarkdown?.markdownBaseUrl} body={markdownBody} />
             </div>
           ) : !hasNotes ? (
             <div className="flex items-start gap-2 text-sm text-muted-foreground">
@@ -220,14 +232,14 @@ export function ReleaseUpgradeDialog({
         </div>
 
         <div className="text-xs text-muted-foreground">
-          <a
-            href={safeChangelogUrl(releaseMarkdown?.changelogUrl)}
+          {!(releaseMarkdown?.source === "manual" && !releaseMarkdown.changelogUrl) && <a
+            href={releaseMarkdown?.source === "manual" ? safeManualChangelogUrl(releaseMarkdown.changelogUrl) : safeChangelogUrl(releaseMarkdown?.changelogUrl)}
             target="_blank"
             rel="noopener noreferrer"
             className="font-medium text-primary underline-offset-2 hover:underline"
           >
             View full changelog
-          </a>
+          </a>}
         </div>
 
         <DialogFooter className="gap-2 sm:justify-between sm:space-x-0">
