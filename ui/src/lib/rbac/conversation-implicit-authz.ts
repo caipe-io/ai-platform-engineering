@@ -123,21 +123,21 @@ export async function requireConversationResourcePermission(
   conversation: Conversation,
   action: ResourcePermissionAction,
 ): Promise<void> {
-  if (isImplicitConversationOwner(session, userEmail, conversation)) return;
-  // Old or repaired tuples must never turn a private evidence chat into a share.
-  // Retain the existing explicit, read-only admin audit path.
-  if (isPrivateEvidenceConversation(conversation) && !(isReadAction(action) && hasAdminAuditAccess(session))) {
-    throw new ApiError("Private personal research can only be accessed by its owner.", 403, "PRIVATE_CONVERSATION_OWNER_REQUIRED");
+  if (!isImplicitConversationOwner(session, userEmail, conversation)) {
+    // Old tuples must never turn private evidence into a share. Keep the
+    // existing explicit, read-only admin audit path.
+    if (isPrivateEvidenceConversation(conversation) && !(isReadAction(action) && hasAdminAuditAccess(session))) {
+      throw new ApiError("Private personal research can only be accessed by its owner.", 403, "PRIVATE_CONVERSATION_OWNER_REQUIRED");
+    }
+    await requireResourcePermission(
+      session,
+      { type: "conversation", id: conversation._id, action },
+      { bypassForOrgAdmin: true },
+    );
   }
-  await requireResourcePermission(
-    session,
-    {
-      type: "conversation",
-      id: conversation._id,
-      action,
-    },
-    { bypassForOrgAdmin: true },
-  );
+  if (conversation.purge && action !== 'delete') {
+    throw new ApiError("This conversation is being permanently deleted.", 409, "CONVERSATION_PURGING");
+  }
 }
 
 export async function filterConversationsByImplicitOrExplicitPermission<T extends Conversation>(

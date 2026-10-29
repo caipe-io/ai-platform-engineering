@@ -1,6 +1,7 @@
 /** @jest-environment node */
 import { admitPersonalEvidenceConversation, assertPrivateConversationIdempotencyAccess,
-  claimConversationShareable, isPersonalEvidenceConversationEligible, reserveConversationMessageWrite } from "../conversation-evidence-privacy";
+  claimConversationShareable, isPersonalEvidenceConversationEligible, reserveConversationMessageWrite,
+  requireConversationGrantTarget } from "../conversation-evidence-privacy";
 import type { Conversation } from "@/types/mongodb";
 
 const mockGetCollection = jest.fn();
@@ -17,6 +18,7 @@ beforeEach(() => {
     sharing: { is_public: false, shared_with: [], shared_with_teams: [], share_link_enabled: false } } as Conversation;
   activeShare.mockResolvedValue(null);
   update.mockImplementation(async (filter, mutation) => {
+    if (filter.purge && conversation.purge) return { matchedCount: 0 };
     const choices = filter.$or as Array<Record<string, unknown>>;
     const matches = choices.some((choice) => choice.personal_context === conversation.personal_context ||
       (typeof choice.personal_context === "object" && conversation.personal_context === undefined));
@@ -93,4 +95,18 @@ it("rejects a delayed non-owner write after personal admission wins", async () =
   await admit();
   await expect(reserveConversationMessageWrite(stale, { sub: "other-subject" }, "owner@example.test"))
     .rejects.toMatchObject({ statusCode: 403, code: "PRIVATE_CONVERSATION_OWNER_REQUIRED" });
+});
+
+it('rejects new sharing and owner writes after permanent deletion has claimed the conversation', async () => {
+  conversation.purge = { token: 'attempt', started_at: new Date(), lease_until: new Date(),
+    retry_after: new Date(), last_attempted_at: new Date(), reason: 'retention' };
+  await expect(claimConversationShareable(conversation._id)).rejects.toMatchObject({ code: 'CONVERSATION_PURGING' });
+  await expect(reserveConversationMessageWrite(conversation, { sub: 'subject-primary' }, 'owner@example.test'))
+    .rejects.toMatchObject({ code: 'CONVERSATION_PURGING' });
+  await expect(requireConversationGrantTarget(conversation._id)).rejects.toMatchObject({ code: 'CONVERSATION_PURGING' });
+});
+
+it('does not admit a fresh grant for a soft-deleted conversation', async () => {
+  conversation.deleted_at = new Date();
+  await expect(requireConversationGrantTarget(conversation._id)).rejects.toMatchObject({ code: 'CONVERSATION_ARCHIVED' });
 });

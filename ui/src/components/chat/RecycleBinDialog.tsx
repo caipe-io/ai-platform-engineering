@@ -17,6 +17,7 @@ TooltipProvider,
 TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { apiClient } from "@/lib/api-client";
+import { getErrorMessage } from "@/lib/error-utils";
 import { cn,truncateText } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import type { Conversation } from "@/types/mongodb";
@@ -68,6 +69,8 @@ export function RecycleBinDialog({ open, onOpenChange, onRestored }: RecycleBinD
   const [loading, setLoading] = useState(false);
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
   const [confirmPurgeId, setConfirmPurgeId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
   const { loadConversationsFromServer } = useChatStore();
 
   const loadTrash = useCallback(async () => {
@@ -88,10 +91,14 @@ export function RecycleBinDialog({ open, onOpenChange, onRestored }: RecycleBinD
     if (open) {
       loadTrash();
       setConfirmPurgeId(null);
+      setActionError(null);
+      setActionNotice(null);
     }
   }, [open, loadTrash]);
 
   const handleRestore = async (id: string) => {
+    setActionError(null);
+    setActionNotice(null);
     setActionInProgress(id);
     try {
       await apiClient.restoreConversation(id);
@@ -102,19 +109,26 @@ export function RecycleBinDialog({ open, onOpenChange, onRestored }: RecycleBinD
       onRestored?.();
     } catch (error) {
       console.error("[RecycleBin] Failed to restore:", error);
+      setActionError(getErrorMessage(error, "The conversation could not be restored. Please try again."));
     } finally {
       setActionInProgress(null);
     }
   };
 
   const handlePermanentDelete = async (id: string) => {
+    setActionError(null);
+    setActionNotice(null);
     setActionInProgress(id);
     try {
-      await apiClient.permanentDeleteConversation(id);
+      const result = await apiClient.permanentDeleteConversation(id);
       setTrashedConversations((prev) => prev.filter((c) => c._id !== id));
       setConfirmPurgeId(null);
+      if (result.pending) {
+        setActionNotice("Deletion has started. Cleanup will continue in the background.");
+      }
     } catch (error) {
       console.error("[RecycleBin] Failed to permanently delete:", error);
+      setActionError(getErrorMessage(error, "The conversation could not be deleted. Please try again."));
     } finally {
       setActionInProgress(null);
     }
@@ -139,6 +153,9 @@ export function RecycleBinDialog({ open, onOpenChange, onRestored }: RecycleBinD
             Deleted conversations are kept for {RETENTION_DAYS} days before being permanently removed.
           </DialogDescription>
         </DialogHeader>
+
+        {actionError && <p role="alert" className="text-sm text-destructive">{actionError}</p>}
+        {actionNotice && <p role="status" className="text-sm text-muted-foreground">{actionNotice}</p>}
 
         {loading ? (
           <div className="flex items-center justify-center py-12">
@@ -191,7 +208,7 @@ export function RecycleBinDialog({ open, onOpenChange, onRestored }: RecycleBinD
                               : "text-muted-foreground/60"
                           )}
                         >
-                          {remaining === 0 ? "Expiring today" : `${remaining}d left`}
+                          {conv.purge ? "Cleanup in progress" : remaining === 0 ? "Expiring today" : `${remaining}d left`}
                         </span>
                       </div>
                     </div>
@@ -209,6 +226,8 @@ export function RecycleBinDialog({ open, onOpenChange, onRestored }: RecycleBinD
                                   variant="ghost"
                                   size="icon"
                                   className="h-7 w-7 text-green-600 hover:text-green-700 hover:bg-green-500/10"
+                                  aria-label="Restore conversation"
+                                  disabled={Boolean(conv.purge)}
                                   onClick={() => handleRestore(conv._id)}
                                 >
                                   <RotateCcw className="h-3.5 w-3.5" />
@@ -247,7 +266,13 @@ export function RecycleBinDialog({ open, onOpenChange, onRestored }: RecycleBinD
                                     variant="ghost"
                                     size="icon"
                                     className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-500/10"
-                                    onClick={() => setConfirmPurgeId(conv._id)}
+                                    aria-label="Delete conversation permanently"
+                                    disabled={Boolean(conv.purge)}
+                                    onClick={() => {
+                                      setActionError(null);
+                                      setActionNotice(null);
+                                      setConfirmPurgeId(conv._id);
+                                    }}
                                   >
                                     <AlertTriangle className="h-3.5 w-3.5" />
                                   </Button>

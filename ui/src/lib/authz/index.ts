@@ -1,4 +1,5 @@
-import { claimConversationShareable } from "@/lib/conversation-evidence-privacy";
+import { claimConversationShareable, requireConversationGrantTarget } from "@/lib/conversation-evidence-privacy";
+import { ApiError } from "@/lib/api-error";
 // assisted-by Codex Codex-sonnet-4-6
 //
 // Public API for the Centralized Authorization Service (CAS).
@@ -155,11 +156,32 @@ export async function listAccessible(
 // ─── Grant / Revoke (PAP) ─────────────────────────────────────────────────────
 
 export async function grant(intent: GrantIntent, ctx: DecisionContext = {}): Promise<void> {
+  const generation = intent.resource.type === "conversation"
+    ? await requireConversationGrantTarget(intent.resource.id) : undefined;
   if (intent.resource.type === "conversation" && intent.capability !== "audit") {
     await claimConversationShareable(intent.resource.id);
   }
   try {
     await admin.grant(intent);
+    if (generation) {
+      try {
+        const current = await requireConversationGrantTarget(intent.resource.id);
+        if (current.created_at?.getTime() !== generation.created_at?.getTime()) {
+          throw new ApiError("Conversation changed during grant", 409, "CONVERSATION_CHANGED");
+        }
+      } catch (error) {
+        const deletionWon = error instanceof ApiError && (error.statusCode === 404 ||
+          ["CONVERSATION_PURGING", "CONVERSATION_ARCHIVED", "CONVERSATION_CHANGED"].includes(error.code ?? ""));
+        if (!deletionWon) throw error;
+        // Acknowledged one-tuple grants are revoked monotonically if deletion
+        // won while the PDP request was in flight; never restore old grants.
+        await admin.revoke(intent);
+        if (error instanceof ApiError && error.statusCode === 404) {
+          throw new ApiError("This conversation is being permanently deleted.", 409, "CONVERSATION_PURGING");
+        }
+        throw error;
+      }
+    }
     await emitGrantAudit("grant", intent, ctx, { outcome: "success" });
   } catch (err) {
     await emitGrantAudit("grant", intent, ctx, { outcome: "error", reasonCode: "PDP_WRITE_FAILED" });
@@ -190,7 +212,7 @@ export class AuthzDeniedError extends Error {
 
 // ─── Tuple reconciliation (PAP batch writes) ──────────────────────────────────
 
-export { reconcileTupleDiff, OpenFgaReconcileRequiredError } from "./reconcile";
+export { reconcileTupleDiff, purgeConversationRelationships, OpenFgaReconcileRequiredError } from "./reconcile";
 export type { TupleReconcileContext } from "./reconcile";
 
 // ─── Re-exports ───────────────────────────────────────────────────────────────

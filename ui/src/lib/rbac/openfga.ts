@@ -67,6 +67,7 @@ export interface OpenFgaReadOptions {
   tuple?: Partial<OpenFgaTupleKey>;
   pageSize?: number;
   continuationToken?: string;
+  signal?: AbortSignal;
 }
 
 export interface OpenFgaReadResult {
@@ -537,6 +538,7 @@ export async function readOpenFgaTuples(options: OpenFgaReadOptions = {}): Promi
   const response = await requestOpenFga(`/stores/${storeId}/read`, {
     method: "POST",
     body: JSON.stringify(body),
+    ...(options.signal ? { signal: options.signal } : {}),
   });
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "");
@@ -643,6 +645,7 @@ interface OpenFgaChunkResult {
 async function postOpenFgaWriteChunk(
   storeId: string,
   chunk: TeamResourceTupleDiff,
+  signal?: AbortSignal,
 ): Promise<OpenFgaChunkResult> {
   if (chunk.writes.length === 0 && chunk.deletes.length === 0) {
     return { applied: { writes: [], deletes: [] } };
@@ -654,6 +657,7 @@ async function postOpenFgaWriteChunk(
   const response = await requestOpenFga(`/stores/${storeId}/write`, {
     method: "POST",
     body: JSON.stringify(body),
+    ...(signal ? { signal } : {}),
   });
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "");
@@ -794,7 +798,8 @@ async function applyDiffWithCompensation(
  * chunks (re-writing them) so the call is all-or-nothing across the diff.
  */
 export async function deleteExactOpenFgaTuples(
-  deletes: OpenFgaTupleKey[]
+  deletes: OpenFgaTupleKey[],
+  options: { monotonic?: boolean; timeoutMs?: number } = {},
 ): Promise<OpenFgaReconcileResult> {
   assertWritableRelations({ writes: [], deletes });
   if (!isOpenFgaConfigured()) {
@@ -806,6 +811,14 @@ export async function deleteExactOpenFgaTuples(
   }
   if (!isOpenFgaConfigured()) throw new Error("OPENFGA_HTTP is not set");
   const storeId = await getOpenFgaStoreId();
+  if (options.monotonic) {
+    // Permanent deletion must never compensate a partial failure by re-adding
+    // grants that another reclaimed purge attempt may already have removed.
+    for (const chunk of chunkOpenFgaDiff({ writes: [], deletes: unique })) {
+      await postOpenFgaWriteChunk(storeId, chunk, AbortSignal.timeout(options.timeoutMs ?? 5_000));
+    }
+    return { enabled: true, writes: 0, deletes: unique.length };
+  }
   return applyDiffWithCompensation(storeId, { writes: [], deletes: unique });
 }
 

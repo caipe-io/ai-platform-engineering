@@ -15,7 +15,7 @@
  * - Soft-delete sets deleted_at + is_archived
  * - Permanent delete removes conversation + messages
  * - Restore clears deleted_at + is_archived
- * - Trash listing with auto-purge of 7-day-old conversations
+ * - Read-only Trash listing; retention runs independently of owner activity
  * - Normal listing excludes soft-deleted conversations
  * - Ownership enforcement
  * - UUID and legacy conversation identifier validation
@@ -29,6 +29,13 @@ import { ObjectId } from 'mongodb';
 // ============================================================================
 
 const mockGetServerSession = jest.fn();
+const mockDeletePermanently = jest.fn();
+jest.mock('../chat/conversations/delete-permanently', () => ({
+  ARCHIVE_RETENTION_MS: 7 * 24 * 60 * 60 * 1000,
+  deleteConversationsPermanently: (...args: unknown[]) => mockDeletePermanently(...args),
+  conversationPurgingError: () => new (jest.requireActual('@/lib/api-error').ApiError)('Conversation is being deleted', 409, 'CONVERSATION_PURGING'),
+}));
+
 jest.mock('next-auth', () => ({
   getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
 }));
@@ -94,7 +101,7 @@ function createMockCollection() {
     }),
     findOne: jest.fn().mockResolvedValue(null),
     insertOne: jest.fn().mockResolvedValue({ insertedId: new ObjectId() }),
-    updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
+    updateOne: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
     deleteOne: jest.fn().mockResolvedValue({ deletedCount: 1 }),
     deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
     countDocuments: jest.fn().mockResolvedValue(0),
@@ -147,6 +154,7 @@ import { GET as GET_CONVERSATIONS } from '../chat/conversations/route';
 describe('Archive API', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockDeletePermanently.mockReset().mockImplementation(async items => ({ deleted: items.length, pending: 0 }));
     delete process.env.OPENFGA_HTTP;
     // Reset mock collections
     Object.keys(mockCollections).forEach(key => delete mockCollections[key]);
@@ -204,9 +212,20 @@ describe('Archive API', () => {
       expect(body.data.deleted).toBe(true);
       expect(body.data.permanent).toBe(true);
 
-      // Should have called deleteMany (via shared helper) for both conversations and messages
-      expect(convCollection.deleteMany).toHaveBeenCalledWith({ _id: { $in: ['550e8400-e29b-41d4-a716-446655440000'] } });
-      expect(msgCollection.deleteMany).toHaveBeenCalledWith({ conversation_id: { $in: ['550e8400-e29b-41d4-a716-446655440000'] } });
+      // The canonical lifecycle owns scoped child cleanup, covered on real MongoDB.
+      expect(mockDeletePermanently).toHaveBeenCalledWith([conv]);
+    });
+
+    it('returns accepted pending status when permanent cleanup is continuing', async () => {
+      const conv = makeConversation();
+      const conversations = createMockCollection(); conversations.findOne.mockResolvedValue(conv);
+      mockCollections.conversations = conversations;
+      mockDeletePermanently.mockResolvedValueOnce({ deleted: 0, pending: 1 });
+      const response = await DELETE(makeRequest(`http://localhost:3000/api/chat/conversations/${conv._id}?permanent=true`, {
+        method: 'DELETE',
+      }), { params: Promise.resolve({ id: conv._id }) });
+      expect(response.status).toBe(202);
+      expect((await response.json()).data).toEqual({ deleted: false, permanent: true, pending: true });
     });
 
     it('returns 404 for non-existent conversation', async () => {
@@ -317,7 +336,7 @@ describe('Archive API', () => {
 
       // Should have cleared deleted_at and set is_archived to false
       expect(convCollection.updateOne).toHaveBeenCalledWith(
-        { _id: '550e8400-e29b-41d4-a716-446655440000' },
+        { _id: '550e8400-e29b-41d4-a716-446655440000', deleted_at: conv.deleted_at, purge: { $exists: false } },
         {
           $set: expect.objectContaining({ is_archived: false }),
           $unset: { deleted_at: '' },
@@ -376,10 +395,7 @@ describe('Archive API', () => {
       const deletedConv = makeConversation({ deleted_at: new Date(), title: 'Deleted conv' });
       const convCollection = createMockCollection();
 
-      // Mock find for auto-purge (no expired items)
-      const purgeFind = {
-        toArray: jest.fn().mockResolvedValue([]),
-      };
+      // Mock read-only listing.
       // Mock find for listing (has items)
       const listFind = {
         sort: jest.fn().mockReturnValue({
@@ -392,8 +408,7 @@ describe('Archive API', () => {
       };
 
       convCollection.find
-        .mockReturnValueOnce(purgeFind)  // First call: auto-purge query
-        .mockReturnValueOnce(listFind);   // Second call: listing query
+        .mockReturnValueOnce(listFind);
       convCollection.countDocuments.mockResolvedValue(1);
       mockCollections['conversations'] = convCollection;
 
@@ -408,7 +423,7 @@ describe('Archive API', () => {
       expect(body.data.total).toBe(1);
     });
 
-    it('auto-purges conversations deleted more than 7 days ago', async () => {
+    it('does not purge expired conversations while listing Trash', async () => {
       const eightDaysAgo = new Date();
       eightDaysAgo.setDate(eightDaysAgo.getDate() - 8);
 
@@ -421,23 +436,19 @@ describe('Archive API', () => {
       const convCollection = createMockCollection();
       const msgCollection = createMockCollection();
 
-      // Mock find for auto-purge: returns expired conversations
-      const purgeFind = {
-        toArray: jest.fn().mockResolvedValue([expiredConv]),
-      };
-      // Mock find for listing: no items left after purge
+      // Expired records remain visible until the independent worker claims them.
+      // Listing is independent of cleanup.
       const listFind = {
         sort: jest.fn().mockReturnValue({
           skip: jest.fn().mockReturnValue({
             limit: jest.fn().mockReturnValue({
-              toArray: jest.fn().mockResolvedValue([]),
+              toArray: jest.fn().mockResolvedValue([expiredConv]),
             }),
           }),
         }),
       };
 
       convCollection.find
-        .mockReturnValueOnce(purgeFind)
         .mockReturnValueOnce(listFind);
       convCollection.countDocuments.mockResolvedValue(0);
       mockCollections['conversations'] = convCollection;
@@ -448,18 +459,11 @@ describe('Archive API', () => {
 
       expect(res.status).toBe(200);
 
-      // Auto-purge should have deleted the expired conversation and its messages
-      expect(convCollection.deleteMany).toHaveBeenCalledWith({
-        _id: { $in: ['expired-conv-id'] },
-      });
-      expect(msgCollection.deleteMany).toHaveBeenCalledWith({
-        conversation_id: { $in: ['expired-conv-id'] },
-      });
+      expect(mockDeletePermanently).not.toHaveBeenCalled();
     });
 
     it('returns empty list when no deleted conversations exist', async () => {
       const convCollection = createMockCollection();
-      const purgeFind = { toArray: jest.fn().mockResolvedValue([]) };
       const listFind = {
         sort: jest.fn().mockReturnValue({
           skip: jest.fn().mockReturnValue({
@@ -470,7 +474,6 @@ describe('Archive API', () => {
         }),
       };
       convCollection.find
-        .mockReturnValueOnce(purgeFind)
         .mockReturnValueOnce(listFind);
       convCollection.countDocuments.mockResolvedValue(0);
       mockCollections['conversations'] = convCollection;
@@ -748,7 +751,7 @@ describe('Archive API', () => {
       expect(updateCall.$unset.deleted_at).toBe('');
     });
 
-    it('auto-purge does NOT delete conversations deleted exactly 7 days ago (uses <= threshold)', async () => {
+    it('leaves retention-boundary cleanup to the background worker', async () => {
       // A conversation deleted exactly 7 days ago should be at the threshold boundary.
       // The purge threshold is 7 days ago, so deleted_at <= threshold means exactly 7 days IS purged.
       const exactlySevenDaysAgo = new Date();
@@ -762,22 +765,18 @@ describe('Archive API', () => {
       const convCollection = createMockCollection();
       const msgCollection = createMockCollection();
 
-      // The MongoDB query uses $lte, so exactly 7 days old IS matched
-      const purgeFind = {
-        toArray: jest.fn().mockResolvedValue([thresholdConv]),
-      };
+      // Merely opening Trash never makes the retention decision.
       const listFind = {
         sort: jest.fn().mockReturnValue({
           skip: jest.fn().mockReturnValue({
             limit: jest.fn().mockReturnValue({
-              toArray: jest.fn().mockResolvedValue([]),
+              toArray: jest.fn().mockResolvedValue([thresholdConv]),
             }),
           }),
         }),
       };
 
       convCollection.find
-        .mockReturnValueOnce(purgeFind)
         .mockReturnValueOnce(listFind);
       convCollection.countDocuments.mockResolvedValue(0);
       mockCollections['conversations'] = convCollection;
@@ -786,13 +785,11 @@ describe('Archive API', () => {
       const req = makeRequest('http://localhost:3000/api/chat/conversations/trash');
       await GET_TRASH(req);
 
-      // Conversation at exactly 7 days should be purged ($lte threshold)
-      expect(convCollection.deleteMany).toHaveBeenCalledWith({
-        _id: { $in: ['threshold-conv'] },
-      });
+      // The background lifecycle owns the cutoff; GET does not purge.
+      expect(mockDeletePermanently).not.toHaveBeenCalled();
     });
 
-    it('auto-purge does NOT run when no expired conversations exist', async () => {
+    it('does not schedule deletion from a recent-archive listing', async () => {
       const recentConv = makeConversation({
         _id: 'recent-conv',
         deleted_at: new Date(), // Just deleted, not expired
@@ -800,9 +797,6 @@ describe('Archive API', () => {
 
       const convCollection = createMockCollection();
 
-      const purgeFind = {
-        toArray: jest.fn().mockResolvedValue([]), // No expired items
-      };
       const listFind = {
         sort: jest.fn().mockReturnValue({
           skip: jest.fn().mockReturnValue({
@@ -814,7 +808,6 @@ describe('Archive API', () => {
       };
 
       convCollection.find
-        .mockReturnValueOnce(purgeFind)
         .mockReturnValueOnce(listFind);
       convCollection.countDocuments.mockResolvedValue(1);
       mockCollections['conversations'] = convCollection;
@@ -822,8 +815,7 @@ describe('Archive API', () => {
       const req = makeRequest('http://localhost:3000/api/chat/conversations/trash');
       await GET_TRASH(req);
 
-      // deleteMany should NOT have been called (no expired items)
-      expect(convCollection.deleteMany).not.toHaveBeenCalled();
+      expect(mockDeletePermanently).not.toHaveBeenCalled();
     });
 
     it('hard delete removes messages for the correct conversation', async () => {
@@ -840,13 +832,11 @@ describe('Archive API', () => {
 
       await DELETE(req, { params: Promise.resolve({ id: '550e8400-e29b-41d4-a716-446655440000' }) });
 
-      // Verify messages are deleted for the correct conversation ID (via shared helper, uses $in)
-      expect(msgCollection.deleteMany).toHaveBeenCalledWith({
-        conversation_id: { $in: ['550e8400-e29b-41d4-a716-446655440000'] },
-      });
+      // Pass the exact canonical conversation to the deletion lifecycle.
+      expect(mockDeletePermanently).toHaveBeenCalledWith([conv]);
     });
 
-    it('auto-purge deletes messages for all purged conversations', async () => {
+    it('does not delete archived history for any owner during a listing', async () => {
       const eightDaysAgo = new Date();
       eightDaysAgo.setDate(eightDaysAgo.getDate() - 8);
 
@@ -856,21 +846,17 @@ describe('Archive API', () => {
       const convCollection = createMockCollection();
       const msgCollection = createMockCollection();
 
-      const purgeFind = {
-        toArray: jest.fn().mockResolvedValue([expired1, expired2]),
-      };
       const listFind = {
         sort: jest.fn().mockReturnValue({
           skip: jest.fn().mockReturnValue({
             limit: jest.fn().mockReturnValue({
-              toArray: jest.fn().mockResolvedValue([]),
+              toArray: jest.fn().mockResolvedValue([expired1, expired2]),
             }),
           }),
         }),
       };
 
       convCollection.find
-        .mockReturnValueOnce(purgeFind)
         .mockReturnValueOnce(listFind);
       convCollection.countDocuments.mockResolvedValue(0);
       mockCollections['conversations'] = convCollection;
@@ -879,14 +865,7 @@ describe('Archive API', () => {
       const req = makeRequest('http://localhost:3000/api/chat/conversations/trash');
       await GET_TRASH(req);
 
-      // Both conversations should be purged
-      expect(convCollection.deleteMany).toHaveBeenCalledWith({
-        _id: { $in: ['exp-1', 'exp-2'] },
-      });
-      // Messages for both should be deleted
-      expect(msgCollection.deleteMany).toHaveBeenCalledWith({
-        conversation_id: { $in: ['exp-1', 'exp-2'] },
-      });
+      expect(mockDeletePermanently).not.toHaveBeenCalled();
     });
 
     it('restore returns 400 for conversation without deleted_at (not in archive)', async () => {

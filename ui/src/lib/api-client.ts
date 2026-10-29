@@ -233,7 +233,7 @@ class APIClient {
     });
   }
 
-  async permanentDeleteConversation(id: string): Promise<{ deleted: boolean; permanent: boolean }> {
+  async permanentDeleteConversation(id: string): Promise<{ deleted: boolean; permanent: boolean; pending?: boolean }> {
     return this.request(`/api/chat/conversations/${id}?permanent=true`, {
       method: 'DELETE',
     });

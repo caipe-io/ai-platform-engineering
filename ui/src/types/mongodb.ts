@@ -72,6 +72,9 @@ export interface Participant {
 }
 
 export interface Conversation {
+  /** Server-owned permanent-deletion claim; restore cannot clear it. */
+  purge?: { token: string; started_at: Date; lease_until: Date; retry_after: Date;
+    last_attempted_at: Date; reason: "manual" | "retention" };
   /** Server-owned app route; ordinary create/metadata APIs cannot set it. */
   app_binding?: { app_id: string; agent_id: string };
   /** Server-owned personal evidence admission; only the owner can admit it. */

@@ -107,7 +107,8 @@ function collectionWithItems(items: unknown[]) {
   return {
     countDocuments: jest.fn().mockResolvedValue(items.length),
     deleteMany: jest.fn(),
-    find: jest.fn().mockReturnValue({ sort, toArray: jest.fn().mockResolvedValue([]) }),
+    find: jest.fn().mockReturnValue({ sort, toArray: jest.fn().mockResolvedValue([]),
+      limit: () => ({ toArray: jest.fn().mockResolvedValue([]) }) }),
     findOne: jest.fn().mockResolvedValue(items[0] ?? null),
     insertMany: jest.fn(),
     updateOne: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
@@ -235,7 +236,7 @@ describe("remaining conversation routes use OpenFGA instead of legacy owner/team
     const response = await GET(request("/api/chat/conversations/trash"));
 
     expect(response.status).toBe(200);
-    const listQuery = conversations.find.mock.calls[1][0];
+    const listQuery = conversations.find.mock.calls[0][0];
     expect(listQuery.$and).toEqual(
       expect.arrayContaining([
         { deleted_at: { $exists: true, $ne: null } },

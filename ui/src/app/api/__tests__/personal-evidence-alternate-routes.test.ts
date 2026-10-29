@@ -15,6 +15,7 @@ jest.mock("@/lib/rbac/resource-authz", () => ({
   filterResourcesByPermission: async (_session: unknown, items: unknown[]) => items,
 }));
 jest.mock("../chat/conversations/delete-permanently", () => ({
+  ARCHIVE_RETENTION_MS: 7 * 24 * 60 * 60 * 1000,
   deleteConversationsPermanently: (...args: unknown[]) => mockDeletePermanently(...args),
 }));
 jest.mock("@/lib/api-middleware", () => ({
@@ -67,11 +68,12 @@ describe("private evidence opaque turn writes", () => {
   });
 });
 
-describe("private evidence archive retention", () => {
+describe("read-only private evidence Trash listing", () => {
   async function getTrash(expired: unknown[]) {
     const conversations = {
       find: jest.fn(() => ({
         toArray: async () => expired,
+        limit: () => ({ toArray: async () => expired }),
         sort: () => ({ skip: () => ({ limit: () => ({ toArray: async () => [] }) }) }),
       })),
       countDocuments: async () => 0,
@@ -85,16 +87,16 @@ describe("private evidence archive retention", () => {
     { sub: "different-sub", role: "user" },
     { sub: "owner-sub", role: "admin", isServiceAccount: true },
     { sub: "different-sub", role: "admin" },
-  ])("does not purge another subject's private chat: %j", async (session) => {
+  ])("does not trigger cleanup of archived private history: %j", async (session) => {
     mockSession = session;
     const ordinaryChat = { ...privateChat, _id: "ordinary-chat", personal_context: undefined };
     expect((await getTrash([privateChat, ordinaryChat])).status).toBe(200);
-    expect(mockDeletePermanently).toHaveBeenCalledWith([ordinaryChat]);
+    expect(mockDeletePermanently).not.toHaveBeenCalled();
   });
 
-  it("preserves ordinary retention and permits the canonical private owner", async () => {
+  it("does not trigger cleanup even for the canonical private owner", async () => {
     expect((await getTrash([privateChat])).status).toBe(200);
-    expect(mockDeletePermanently).toHaveBeenCalledWith([privateChat]);
+    expect(mockDeletePermanently).not.toHaveBeenCalled();
   });
 });
 

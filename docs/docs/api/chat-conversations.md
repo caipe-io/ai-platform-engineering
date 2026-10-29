@@ -296,7 +296,7 @@ All fields optional; only provided fields are updated. `updated_at` is set serve
 
 **Auth:** Session (authenticated) | **Since:** v1.0
 
-Soft-deletes by default (`deleted_at` set, `is_archived: true`). With `permanent=true`, hard-deletes the conversation and its messages. **Owner only.**
+Soft-deletes by default (`deleted_at` set, `is_archived: true`). With `permanent=true`, permanently deletes the conversation and its associated platform records through the same lifecycle as retention cleanup. **Owner only.**
 
 **Path Parameters:**
 
@@ -338,6 +338,22 @@ _Not applicable_
 }
 ```
 
+**Response `202` (permanent cleanup accepted):**
+
+If another replica already holds the cleanup claim, or bounded file/relationship
+cleanup needs another pass, deletion continues in the background:
+
+```json
+{
+  "success": true,
+  "data": {
+    "deleted": false,
+    "permanent": true,
+    "pending": true
+  }
+}
+```
+
 **Errors:**
 
 | Status | Code | Description |
@@ -346,6 +362,7 @@ _Not applicable_
 | 400 | — | Invalid conversation ID |
 | 403 | `FORBIDDEN` | Not the owner |
 | 404 | — | Conversation not found |
+| 409 | `CONVERSATION_CHANGED` | The conversation was restored or changed before the deletion claim; reload before retrying |
 | 503 | `MONGODB_NOT_CONFIGURED` | MongoDB not configured |
 
 ---
@@ -822,7 +839,9 @@ Full updated `Conversation` document under `data` (same general shape as POST sh
 
 **Auth:** Session (authenticated) | **Since:** v1.0
 
-Lists **soft-deleted** conversations for the current user (`owner_id` match, `deleted_at` set). On each request, permanently removes conversations whose `deleted_at` is older than **7 days** (and related messages; Dynamic Agent checkpoint collections may also be purged). Paginated.
+Lists **soft-deleted** conversations visible to the current user. Paginated. Listing Trash does not trigger deletion.
+
+MongoDB-backed UI servers enforce the **seven-day** soft-delete retention policy at startup and once a minute, in bounded batches of up to 100 conversations across all owners. The cutoff uses `deleted_at`, not an ordinary `is_archived` toggle. Atomic per-conversation claims coordinate replicas and compete with Restore. Associated platform data and authorization relationships are cleaned before the conversation is removed; partial failures remain eligible for retry after backoff. Production builds and browser-only installations do not run cleanup.
 
 **Path Parameters:**
 
@@ -957,7 +976,7 @@ _Not applicable_
 
 **Auth:** Session (authenticated) | **Since:** v1.0
 
-Clears `deleted_at` and sets `is_archived: false` for a soft-deleted conversation. **Owner only.**
+Clears `deleted_at` and sets `is_archived: false` for a soft-deleted conversation. **Owner only.** The update is conditional on the conversation still being soft-deleted and not yet claimed for permanent deletion. A restore that wins the claim race preserves the conversation; once cleanup has claimed it, Restore returns `409 CONVERSATION_PURGING`.
 
 **Path Parameters:**
 
@@ -987,6 +1006,8 @@ Full restored `Conversation` under `data`.
 | 400 | — | Invalid ID, or conversation not in archive (`deleted_at` unset) |
 | 403 | `FORBIDDEN` | Not the owner |
 | 404 | — | Conversation not found |
+| 409 | `CONVERSATION_PURGING` | Permanent deletion has started; the conversation cannot be restored |
+| 409 | `CONVERSATION_CHANGED` | The archived state changed concurrently; reload before retrying |
 
 ---
 

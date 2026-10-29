@@ -13,15 +13,18 @@ export async function claimConversationShareable(conversationId: string): Promis
   const conversations = await getCollection<Conversation>("conversations");
   const claimed = await conversations.updateOne({
     _id: conversationId,
+    purge: { $exists: false },
     $or: [
       { [CONVERSATION_EVIDENCE_VISIBILITY_PATH]: { $exists: false } },
       { [CONVERSATION_EVIDENCE_VISIBILITY_PATH]: "shareable" },
     ],
   }, { $set: { [CONVERSATION_EVIDENCE_VISIBILITY_PATH]: "shareable" } });
   if (claimed.matchedCount !== 1) {
-    if (!await conversations.findOne({ _id: conversationId }, { projection: { _id: 1 } })) {
+    const existing = await conversations.findOne({ _id: conversationId }, { projection: { _id: 1, purge: 1 } });
+    if (!existing) {
       throw new ApiError("Conversation not found", 404, "NOT_FOUND");
     }
+    if (existing.purge) throw new ApiError("This conversation is being permanently deleted.", 409, "CONVERSATION_PURGING");
     throw new ApiError(
       "This chat contains private personal evidence and cannot be shared. Start a separate chat to share agent answers.",
       409,
@@ -36,6 +39,7 @@ export async function reserveConversationMessageWrite(
   caller: { sub?: unknown; isServiceAccount?: unknown },
   email: string,
 ): Promise<void> {
+  if (conversation.purge) throw new ApiError("This conversation is being permanently deleted.", 409, "CONVERSATION_PURGING");
   const subject = typeof caller.sub === "string" ? caller.sub.trim() : "";
   if (caller.isServiceAccount !== true && ownsPersonalEvidenceConversation(conversation, subject, email)) return;
   try {
@@ -46,6 +50,15 @@ export async function reserveConversationMessageWrite(
     }
     throw error;
   }
+}
+
+/** New grants cannot outlive a conversation's canonical deletion generation. */
+export async function requireConversationGrantTarget(conversationId: string): Promise<Conversation> {
+  const conversation = await (await getCollection<Conversation>("conversations")).findOne({ _id: conversationId });
+  if (!conversation) throw new ApiError("Conversation not found", 404, "NOT_FOUND");
+  if (conversation.purge) throw new ApiError("This conversation is being permanently deleted.", 409, "CONVERSATION_PURGING");
+  if (conversation.deleted_at) throw new ApiError("Archived conversations cannot receive new grants.", 409, "CONVERSATION_ARCHIVED");
+  return conversation;
 }
 
 /** Removing legacy sharing cannot make previously collaborative history private. */

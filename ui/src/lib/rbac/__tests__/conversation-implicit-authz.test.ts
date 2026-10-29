@@ -224,4 +224,16 @@ describe("private personal evidence authorization", () => {
     await expect(requireConversationResourcePermission({ sub: "auditor-sub", canViewAdmin: true }, "audit@example.com", privateChat, "write"))
       .rejects.toMatchObject({ statusCode: 403 });
   });
+
+  it("blocks owner reads and writes once purge starts, while permitting an authorized deletion retry", async () => {
+    const purging = { ...privateChat, purge: { token: 'attempt', started_at: new Date(),
+      lease_until: new Date(), retry_after: new Date(), last_attempted_at: new Date(), reason: 'manual' as const } };
+    for (const action of ['read', 'write'] as const) {
+      await expect(requireConversationResourcePermission({ sub: 'owner-sub' }, 'owner@example.com', purging, action))
+        .rejects.toMatchObject({ statusCode: 409, code: 'CONVERSATION_PURGING' });
+    }
+    await expect(requireConversationResourcePermission({ sub: 'owner-sub' }, 'owner@example.com', purging, 'delete'))
+      .resolves.toBeUndefined();
+    expect(requireResourcePermission).not.toHaveBeenCalled();
+  });
 });
