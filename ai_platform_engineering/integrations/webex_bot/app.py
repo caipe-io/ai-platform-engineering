@@ -11,7 +11,8 @@ from typing import Any, Awaitable, Callable, Optional, Protocol
 from .utils.audit import log_webex_authz_decision
 from .utils.dm_authz_client import DmAgentAccessDecision, DmAuthzClient
 from .utils.dm_thread_overrides import OverrideKey, get_default_override_store
-from .utils.identity_linker import WebexIdentityLinker
+from .utils.identity_linker import WebexIdentityLinker, webex_auto_link_status
+from .utils.identity_write_lock import reserve_dm_dispatch
 from .utils.obo_exchange import OboExchangeError, OboToken, impersonate_user
 from .utils.space_team_resolver import SpaceTeamResolution, WebexSpaceTeamResolver
 from .utils.user_messages import (
@@ -170,7 +171,7 @@ class DirectUserResolverProtocol(Protocol):
         *,
         bot_id: str,
         webex_user_id: str,
-        person_email: str | None,
+        keycloak_user_id: str | None,
     ) -> WebexDirectUserAccess:
         raise NotImplementedError
 
@@ -647,9 +648,6 @@ async def handle_webex_message(
 
     try:
         keycloak_user_id = await linker.resolve(parsed.person_id)
-        auto_link = getattr(linker, "auto_link", None)
-        if keycloak_user_id is None and parsed.is_direct and bot_config.direct_messages_access_mode != "disabled" and callable(auto_link):
-            keycloak_user_id = await auto_link(parsed.person_id, parsed.bot_id)
     except Exception as exc:  # noqa: BLE001 — fail closed on KC/network errors
         logger.error(
             "Webex identity resolution failed (type=%s); denying request",
@@ -671,6 +669,15 @@ async def handle_webex_message(
             ),
             explicit_invocation=explicit_invocation,
         )
+
+    if (keycloak_user_id is None and parsed.is_direct
+            and bot_config.direct_messages_access_mode != "disabled" and webex_auto_link_status()["enabled"]):
+        auto_link = getattr(linker, "auto_link", None)
+        if callable(auto_link):
+            try:
+                keycloak_user_id = await auto_link(parsed.person_id, parsed.bot_id)
+            except Exception as exc:  # noqa: BLE001 - optional matching retains explicit SSO fallback
+                logger.warning("Webex automatic linking unavailable (type=%s)", type(exc).__name__)
 
     if keycloak_user_id is None:
         if parsed.is_direct and bot_config.direct_messages_access_mode == "disabled":
@@ -965,6 +972,15 @@ async def handle_webex_message(
             team_slug=team_slug,
             explicit_invocation=explicit_invocation,
         )
+
+    if (dispatcher is not None and parsed.is_direct and parsed.message_id
+            and webex_auto_link_status()["configured"]):
+        try:
+            if not await reserve_dm_dispatch(parsed.bot_id, parsed.message_id):
+                return _ignore("WEBEX_DUPLICATE_MESSAGE")
+        except Exception as exc:  # noqa: BLE001 - fail closed on uncertain reservation
+            logger.warning("Webex DM dispatch reservation unavailable (type=%s)", type(exc).__name__)
+            return _deny(REASON_IDENTITY_UNAVAILABLE, deny_message="Message processing is temporarily unavailable.")
 
     if dispatcher is not None:
         await dispatcher(

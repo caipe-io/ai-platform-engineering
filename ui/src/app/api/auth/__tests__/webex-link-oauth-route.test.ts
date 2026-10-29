@@ -8,7 +8,8 @@ import { ApiError } from "@/lib/api-middleware";
 
 const mockGetAuthFromBearerOrSession = jest.fn();
 const mockMergeUserAttributes = jest.fn();
-const mockFindRealmUserIdByAttribute = jest.fn();
+const mockGetRealmUserById = jest.fn();
+const mockFindRealmUserIdsByAttribute = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => {
   const actual = jest.requireActual("@/lib/api-middleware");
@@ -18,12 +19,19 @@ jest.mock("@/lib/api-middleware", () => {
   };
 });
 
-jest.mock("@/lib/rbac/keycloak-admin", () => ({
-  mergeUserAttributes: (...args: unknown[]) => mockMergeUserAttributes(...args),
-  findRealmUserIdByAttribute: (...args: unknown[]) => mockFindRealmUserIdByAttribute(...args),
+jest.mock("@/lib/rbac/webex-identity-write-lock", () => ({
+  withWebexIdentityWriteLock: async (write: () => Promise<unknown>) => write(),
 }));
+jest.mock("@/lib/rbac/mongo-collections", () => ({
+  getRbacCollection: jest.fn(async () => ({ findOne: jest.fn(), insertOne: jest.fn(), deleteOne: jest.fn(), updateOne: jest.fn() })),
+}));
+jest.mock("@/lib/rbac/webex-direct-user-route-store", () => ({ setWebexIdentityForUserRoutes: jest.fn() }));
 
-jest.mock("@/lib/rbac/webex-identity-write-lock", () => ({ withWebexIdentityWriteLock: async (write: () => Promise<unknown>) => write() }));
+jest.mock("@/lib/rbac/keycloak-admin", () => ({
+  getRealmUserById: (...args: unknown[]) => mockGetRealmUserById(...args),
+  mergeUserAttributes: (...args: unknown[]) => mockMergeUserAttributes(...args),
+  findRealmUserIdsByAttribute: (...args: unknown[]) => mockFindRealmUserIdsByAttribute(...args),
+}));
 
 const WEBEX_TOKEN_URL = "https://webexapis.com/v1/access_token";
 const WEBEX_PEOPLE_URL = "https://webexapis.com/v1/people/me";
@@ -46,8 +54,12 @@ beforeEach(() => {
   jest.clearAllMocks();
   clearConfigured();
   mockGetAuthFromBearerOrSession.mockResolvedValue({ session: { sub: "kc-user-1" } });
-  mockMergeUserAttributes.mockResolvedValue(undefined);
-  mockFindRealmUserIdByAttribute.mockResolvedValue(null);
+  mockMergeUserAttributes.mockImplementation(async (id: string, attrs: Record<string, unknown>) => {
+    const user = await mockGetRealmUserById(id);
+    user.attributes = { ...user.attributes, ...attrs };
+  });
+  mockFindRealmUserIdsByAttribute.mockResolvedValue([]);
+  mockGetRealmUserById.mockResolvedValue({ enabled: true, attributes: {} });
 });
 
 describe("GET /api/auth/webex-link/start", () => {
@@ -228,7 +240,7 @@ describe("GET /api/auth/webex-link/callback", () => {
     const parsed = parseOAuthStateCookie(cookieValue);
 
     global.fetch = mockFetchSequence({ personOrgId: "org-1" });
-    mockFindRealmUserIdByAttribute.mockResolvedValue("kc-user-2");
+    mockFindRealmUserIdsByAttribute.mockResolvedValue(["kc-user-2"]);
 
     const { GET } = await import("../webex-link/callback/route");
     const response = await GET(
@@ -266,11 +278,10 @@ describe("GET /api/auth/webex-link/callback", () => {
     const location = new URL(response.headers.get("location") ?? "");
     expect(location.pathname).toBe("/settings/account-and-access");
     expect(location.searchParams.get("webex_link")).toBe("success");
-    expect(mockMergeUserAttributes).toHaveBeenCalledWith("kc-user-1", {
+    expect(mockMergeUserAttributes).toHaveBeenCalledWith("kc-user-1", expect.objectContaining({
       webex_user_id: ["person-42"],
       webex_user_email: undefined,
-      webex_auto_link_disabled: undefined,
-    });
+    }));
     expect(response.headers.get("set-cookie")).toContain("caipe_oauth_state_webex-link=;");
   });
 
@@ -300,40 +311,19 @@ describe("GET /api/auth/webex-link/callback", () => {
     expect(location.searchParams.get("webex_link")).toBe("success");
   });
 
-  it("rolls back and rejects when a concurrent grant wins the race after the initial check", async () => {
+  it("rejects replacing an enterprise user's different binding", async () => {
     setConfigured();
     const cookie = await startAndGetCookie();
-    const { oauthStateCookieName, parseOAuthStateCookie } = await import("@/lib/credentials/oauth-state");
-    const cookieValue = cookie.split(`${oauthStateCookieName("webex-link")}=`)[1];
-    const parsed = parseOAuthStateCookie(cookieValue);
-
-    global.fetch = mockFetchSequence({ personId: "person-42", personOrgId: "org-1" });
-    mockFindRealmUserIdByAttribute
-      .mockResolvedValueOnce(null) // pre-write check: no existing owner
-      .mockResolvedValueOnce("kc-user-2"); // post-write check: a concurrent grant won the race
-
+    const { parseOAuthStateCookie } = await import("@/lib/credentials/oauth-state");
+    const state = parseOAuthStateCookie(cookie.split("=").slice(1).join("=")).state;
+    global.fetch = mockFetchSequence({ personId: "person-42" });
+    mockGetRealmUserById.mockResolvedValue({ enabled: true, attributes: { webex_user_id: ["other-person"] } });
     const { GET } = await import("../webex-link/callback/route");
-    const response = await GET(
-      new NextRequest(
-        `http://localhost:3000/api/auth/webex-link/callback?code=code-1&state=${parsed.state}`,
-        { headers: { cookie } },
-      ),
-    );
-
-    expect(response.status).toBe(302);
-    const location = new URL(response.headers.get("location") ?? "");
-    expect(location.searchParams.get("webex_link")).toBe("error");
-    expect(location.searchParams.get("reason")).toBe("WEBEX_ID_ALREADY_LINKED");
-    expect(mockMergeUserAttributes).toHaveBeenCalledWith("kc-user-1", {
-      webex_user_id: ["person-42"],
-      webex_user_email: undefined,
-      webex_auto_link_disabled: undefined,
-    });
-    expect(mockMergeUserAttributes).toHaveBeenCalledWith("kc-user-1", {
-      webex_user_id: undefined,
-      webex_user_email: undefined,
-      webex_auto_link_disabled: undefined,
-    });
+    const response = await GET(new NextRequest(
+      `http://localhost:3000/api/auth/webex-link/callback?code=code-1&state=${state}`, { headers: { cookie } },
+    ));
+    expect(new URL(response.headers.get("location") ?? "").searchParams.get("reason")).toBe("WEBEX_ID_ALREADY_LINKED");
+    expect(mockMergeUserAttributes).not.toHaveBeenCalled();
   });
 
   it("captures the Webex account's email alongside the person id", async () => {
@@ -357,11 +347,10 @@ describe("GET /api/auth/webex-link/callback", () => {
       ),
     );
 
-    expect(mockMergeUserAttributes).toHaveBeenCalledWith("kc-user-1", {
+    expect(mockMergeUserAttributes).toHaveBeenCalledWith("kc-user-1", expect.objectContaining({
       webex_user_id: ["person-42"],
       webex_user_email: ["person@example.com"],
-      webex_auto_link_disabled: undefined,
-    });
+    }));
   });
 });
 
@@ -388,10 +377,9 @@ describe("DELETE /api/auth/webex-link/unlink", () => {
     const response = await DELETE(new NextRequest("http://localhost:3000/api/auth/webex-link/unlink"));
 
     expect(response.status).toBe(200);
-    expect(mockMergeUserAttributes).toHaveBeenCalledWith("kc-user-1", {
+    expect(mockMergeUserAttributes).toHaveBeenCalledWith("kc-user-1", expect.objectContaining({
       webex_user_id: undefined,
       webex_user_email: undefined,
-      webex_auto_link_disabled: ["true"],
-    });
+    }));
   });
 });

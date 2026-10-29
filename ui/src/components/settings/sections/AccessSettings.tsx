@@ -18,6 +18,8 @@ interface RbacPosture {
 }
 
 const WEBEX_LINK_ERROR_MESSAGES: Record<string, string> = {
+  WEBEX_LINK_LOOKUP_UNAVAILABLE: "Identity lookup is temporarily unavailable. Please retry shortly.",
+  WEBEX_LINK_UNAVAILABLE: "The identity link could not be completed. Please retry or contact an administrator.",
   WEBEX_LINK_BUSY: "Another Webex identity link is being saved. Please retry shortly.",
   WEBEX_ID_ALREADY_LINKED: "That Webex account is already linked to a different user.",
   WEBEX_ORG_MISMATCH: "That Webex account does not belong to this organization.",

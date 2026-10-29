@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock
 
+import mongomock
 import pytest
 from pymongo.errors import DuplicateKeyError
 
@@ -24,7 +25,7 @@ def setup_auto(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     monkeypatch.setenv("EXAMPLE_BOT_TOKEN", "example-token")
     profile = {"id": "person1234", "type": "person", "orgId": "example-org", "emails": ["test-user@example.test"]}
     user: dict[str, Any] = {"id": "primary", "enabled": True, "emailVerified": True, "email": "test-user@example.test", "attributes": {}}
-    state = SimpleNamespace(profile=profile, user=user, posts=[], existing=None, writes=[])
+    state = SimpleNamespace(profile=profile, user=user, posts=[], existing=None, writes=[], collection=mongomock.MongoClient().example.webex_identity_bindings)
 
     class Client:
         async def __aenter__(self) -> Client:
@@ -46,9 +47,9 @@ def setup_auto(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     async def lock() -> AsyncIterator[None]:
         yield
 
-    async def write(owner: str, attr: str, value: str) -> None:
-        state.writes.append((owner, attr, value))
-        state.user["attributes"][attr] = [value]
+    async def write(owner: str, attributes: dict[str, list[str]]) -> None:
+        state.writes.append((owner, "webex_user_id", attributes["webex_user_id"][0]))
+        state.user["attributes"].update(attributes)
 
     monkeypatch.setattr(il.httpx, "AsyncClient", lambda **_kwargs: Client())
     monkeypatch.setattr(il, "configured_webex_bot", lambda _id: SimpleNamespace(token_env="EXAMPLE_BOT_TOKEN", direct_messages_access_mode="all_users"))
@@ -56,7 +57,9 @@ def setup_auto(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     monkeypatch.setattr(il, "get_user_by_attribute", AsyncMock(side_effect=lambda *_args: state.existing))
     monkeypatch.setattr(il, "get_unique_verified_user_by_email", AsyncMock(side_effect=lambda _email: state.user))
     monkeypatch.setattr(il, "get_user_by_id", AsyncMock(side_effect=lambda _id: state.user))
-    monkeypatch.setattr(il, "set_user_attribute", write)
+    monkeypatch.setattr(il, "merge_user_attributes", write)
+    monkeypatch.setattr(il, "identity_binding_collection", lambda: state.collection)
+    monkeypatch.setattr(il, "webex_identity_owners", AsyncMock(side_effect=lambda *_args: [state.existing["id"]] if state.existing else []))
     monkeypatch.setattr(il, "log_webex_authz_decision", lambda **_kwargs: None)
     return state
 
@@ -94,6 +97,7 @@ def test_another_owners_binding_is_not_overwritten(setup_auto: SimpleNamespace) 
 
 
 def test_concurrent_completed_claim_is_reused_without_duplicate_ack(setup_auto: SimpleNamespace) -> None:
+    setup_auto.user["attributes"]["webex_user_id"] = ["person1234"]
     setup_auto.existing = setup_auto.user
     assert asyncio.run(il.auto_link_webex_user("person1234", "primary")) == "primary"
     assert setup_auto.writes == []

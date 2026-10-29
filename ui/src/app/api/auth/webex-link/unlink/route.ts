@@ -1,4 +1,3 @@
-import { withWebexIdentityWriteLock } from "@/lib/rbac/webex-identity-write-lock";
 import { NextRequest } from "next/server";
 
 import {
@@ -8,7 +7,7 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { isWebexIdentityLinkingEnabled } from "@/lib/integration-config";
-import { mergeUserAttributes } from "@/lib/rbac/keycloak-admin";
+import { unlinkWebexIdentity } from "@/lib/rbac/webex-identity-link";
 
 export const DELETE = withErrorHandler(async (request: NextRequest) => {
   if (!isWebexIdentityLinkingEnabled()) {
@@ -21,8 +20,6 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
     throw new ApiError("Authenticated subject is required", 401, "UNAUTHORIZED");
   }
 
-  await withWebexIdentityWriteLock(async () => {
-    await mergeUserAttributes(ownerId, { webex_user_id: undefined, webex_user_email: undefined, webex_auto_link_disabled: ["true"] });
-  });
+  await unlinkWebexIdentity(ownerId);
   return successResponse({ unlinked: true });
 });

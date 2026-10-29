@@ -30,9 +30,7 @@ class KeycloakAdminConfig:
     server_url: str = field(
         default_factory=lambda: os.environ.get("KEYCLOAK_URL", "http://localhost:7080")
     )
-    realm: str = field(
-        default_factory=lambda: os.environ.get("KEYCLOAK_REALM", "caipe")
-    )
+    realm: str = field(default_factory=lambda: os.environ.get("KEYCLOAK_REALM", "caipe"))
     client_id: str = field(
         default_factory=lambda: os.environ.get(
             "KEYCLOAK_WEBEX_BOT_ADMIN_CLIENT_ID", "caipe-platform"
@@ -80,20 +78,19 @@ async def get_user_by_attribute(
         )
         resp.raise_for_status()
         users = resp.json()
+        matches = []
         for user in users:
             attrs = user.get("attributes") or {}
             raw = attrs.get(attr)
-            stored = raw[0] if isinstance(raw, list) and raw else raw
-            if isinstance(stored, str) and stored.strip() == value:
-                return user
-    return None
+            values = raw if isinstance(raw, list) else [raw]
+            if any(isinstance(stored, str) and stored.strip() == value for stored in values):
+                matches.append(user)
+        return matches[0] if len(matches) == 1 else None
 
 
 def _user_profile_roundtrip(user_repr: dict[str, Any]) -> dict[str, Any]:
     return {
-        field: user_repr[field]
-        for field in _USER_PROFILE_ROUNDTRIP_FIELDS
-        if field in user_repr
+        field: user_repr[field] for field in _USER_PROFILE_ROUNDTRIP_FIELDS if field in user_repr
     }
 
 
@@ -104,6 +101,15 @@ async def set_user_attribute(
     config: KeycloakAdminConfig | None = None,
 ) -> None:
     """Set a single-valued Keycloak user attribute."""
+    await merge_user_attributes(user_id, {attr: [value]}, config)
+
+
+async def merge_user_attributes(
+    user_id: str,
+    attributes: dict[str, list[str]],
+    config: KeycloakAdminConfig | None = None,
+) -> None:
+    """Merge identity metadata without losing the existing user profile."""
     cfg = config or _default_config
     token = await _get_admin_token(cfg)
     url = f"{cfg.server_url}/admin/realms/{cfg.realm}/users/{user_id}"
@@ -112,7 +118,7 @@ async def set_user_attribute(
         resp.raise_for_status()
         user_repr = resp.json()
         attrs = user_repr.get("attributes") or {}
-        attrs[attr] = [value]
+        attrs.update(attributes)
         body = {**_user_profile_roundtrip(user_repr), "attributes": attrs}
         put = await client.put(
             url,
@@ -156,3 +162,27 @@ async def get_unique_verified_user_by_email(email: str, config: KeycloakAdminCon
     if user.get("enabled") is not True or user.get("emailVerified") is not True or str(user.get("email", "")).casefold() != email.casefold():
         return None
     return user
+
+
+async def webex_identity_owners(webex_user_id: str) -> list[str]:
+    """Return all exact owners, rejecting truncated/ambiguous search results."""
+    cfg = _default_config
+    token = await _get_admin_token(cfg)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            f"{cfg.server_url}/admin/realms/{cfg.realm}/users",
+            params={"q": f"{WEBEX_USER_ATTRIBUTE}:{webex_user_id}", "max": 2},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        resp.raise_for_status()
+        users = resp.json()
+        # Conservatively reject any multi-result query, including legacy duplicates.
+        if len(users) > 1:
+            return [str(user.get("id") or "") for user in users]
+        owners = []
+        for user in users:
+            raw = (user.get("attributes") or {}).get(WEBEX_USER_ATTRIBUTE, [])
+            values = raw if isinstance(raw, list) else [raw]
+            if webex_user_id in values:
+                owners.append(str(user["id"]))
+        return owners
