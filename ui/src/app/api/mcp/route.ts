@@ -502,6 +502,32 @@ const TOOLS: ToolDef[] = [
       return toolText(JSON.stringify(data, null, 2));
     },
   },
+  {
+    name: "caipe_notification_raise",
+    description:
+      "Raise an input_required, completed, or failed notification for the authenticated user " +
+      "about a saved CAIPE conversation they own. Use the conversation's real id and a stable " +
+      "event_id for this pause or attempt; reuse that event_id on retries to avoid duplicates. " +
+      "The host supplies generic text and a link back to the chat, and honors the user's " +
+      "notification preferences and channel opt-ins. No recipients, content, or delivery " +
+      "destinations can be supplied. Requires a user identity, not a service account. " +
+      "input_required only raises an alert: it does not pause execution, request approval, " +
+      "or resume a run. Do not repeat an alert the runtime already emitted. " +
+      "A queued result is not proof of delivery; disabled means notifications are turned off. " +
+      "Requires the notification framework; older hosts return an unsupported-route error.",
+    inputSchema: schema({
+      conversation_id: { type: "string", maxLength: 128, description: "Existing CAIPE chat owned by the current user." },
+      event_id: { type: "string", minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", description: "Stable identifier for one pause or attempt; reuse on retries." },
+      event_type: { type: "string", enum: ["input_required", "completed", "failed"] },
+    }, ["conversation_id", "event_id", "event_type"]),
+    handler: async (ctx, args) => {
+      const data = ensureOk(
+        await ctx.fwd("POST", "/api/notifications/agent-events", args),
+        "raise notification",
+      );
+      return toolText(JSON.stringify(data, null, 2));
+    },
+  },
 ];
 
 const TOOLS_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));

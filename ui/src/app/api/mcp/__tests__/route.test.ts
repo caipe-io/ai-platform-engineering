@@ -164,7 +164,7 @@ describe("POST /api/mcp", () => {
     expect((await withNullId.json()).result).toEqual({});
   });
 
-  it("lists exactly the Phase 1 + Phase 2 tools", async () => {
+  it("lists the agent tools and user-delegated notification tool", async () => {
     const { POST } = await import("../route");
 
     const response = await POST(jsonRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" }));
@@ -179,6 +179,7 @@ describe("POST /api/mcp", () => {
       "caipe_agent_update",
       "caipe_agent_set_prompt",
       "caipe_agent_delete",
+      "caipe_notification_raise",
     ]);
   });
 
@@ -470,6 +471,54 @@ describe("POST /api/mcp", () => {
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(body.result.content[0].text).toContain("No change made");
+    });
+  });
+
+  describe("caipe_notification_raise", () => {
+    const args = { conversation_id: "example-chat", event_id: "example-pause-1", event_type: "input_required" };
+
+    it("advertises bounded arguments without recipient or destination overrides", async () => {
+      const { POST } = await import("../route");
+      const response = await POST(jsonRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" }));
+      const tools = (await response.json()).result.tools;
+      const tool = tools.find((value: { name: string }) => value.name === "caipe_notification_raise");
+      expect(tool.inputSchema.additionalProperties).toBe(false);
+      expect(Object.keys(tool.inputSchema.properties)).toEqual(["conversation_id", "event_id", "event_type"]);
+      expect(tool.inputSchema.properties.event_type.enum).toContain("input_required");
+    });
+
+    it("forwards the unchanged event with the caller's own credentials", async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        status: 202, text: async () => JSON.stringify({ success: true, data: { status: "queued" } }),
+      });
+      const { POST } = await import("../route");
+      const response = await POST(jsonRequest({ jsonrpc: "2.0", id: 1, method: "tools/call",
+        params: { name: "caipe_notification_raise", arguments: args } },
+        { Authorization: "Bearer example-user-token", cookie: "example-session=value" }));
+      expect(global.fetch).toHaveBeenCalledWith("http://localhost:3000/api/notifications/agent-events", expect.objectContaining({
+        method: "POST", body: JSON.stringify(args), headers: expect.objectContaining({
+          Authorization: "Bearer example-user-token", cookie: "example-session=value",
+        }),
+      }));
+      expect(JSON.parse((await response.json()).result.content[0].text)).toEqual({ status: "queued" });
+    });
+
+    it.each([400, 401, 403, 404, 429, 503])("reports backend %s as a tool error, never a successful send", async (status) => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        status, text: async () => JSON.stringify({ success: false, error: "Notification unavailable" }),
+      });
+      const response = await callTool("caipe_notification_raise", args);
+      const result = (await response.json()).result;
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain(`(${status})`);
+    });
+
+    it("preserves the disabled result without claiming a queued alert", async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        status: 200, text: async () => JSON.stringify({ success: true, data: { status: "disabled" } }),
+      });
+      const response = await callTool("caipe_notification_raise", args);
+      expect(JSON.parse((await response.json()).result.content[0].text)).toEqual({ status: "disabled" });
     });
   });
 

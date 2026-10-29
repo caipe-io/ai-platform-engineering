@@ -157,6 +157,9 @@ function ConnectDialogBody({ endpoint }: { endpoint: string }) {
               <code className="rounded bg-muted px-1">caipe_agent_get</code>, and agent-lifecycle
               tools like <code className="rounded bg-muted px-1">caipe_agent_create</code> and{" "}
               <code className="rounded bg-muted px-1">caipe_agent_set_prompt</code>.
+              {" "}With the notification framework installed, agents can use{" "}
+              <code className="rounded bg-muted px-1">caipe_notification_raise</code>{" "}
+              to alert you about a saved chat you own, including when input is needed.
             </li>
             <li>caipe_whoami reports your own email and role, not a service account.</li>
           </ul>
