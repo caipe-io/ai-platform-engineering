@@ -185,6 +185,9 @@ export async function proxyAgenticAppRequest(
     request, appId, bearerToken, authMode, subject,
     roles: deriveRoles(session, auth.user.role), decisionId, correlationId,
   });
+  if (mcpRoute && context.legacyMcpResource && app.manifest.api.mcp) {
+    forwardHeaders.set("x-caipe-mcp-resource-path", app.manifest.api.mcp.path);
+  }
   if (assistantClientContext) {
     try {
       const proof = await mintAgenticAppToken({

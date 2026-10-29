@@ -238,6 +238,22 @@ it("preserves a root client's unauthenticated OAuth challenge", async () => {
   expect(new Headers(fetchMock.mock.calls[0][1].headers).get("x-caipe-mcp-resource-path")).toBe("/api/example/mcp");
 });
 
+it("preserves both browser authentication and the fixed root selector on cookie-backed protocol requests", async () => {
+  mockAuth.mockResolvedValue({ user: { role: "user", name: "Example", email: "test-user@example.test" },
+    session: { sub: "test-user", accessToken: "browser-token" } });
+  fetchMock.mockResolvedValueOnce(Response.json({ jsonrpc: "2.0", id: 1, result: {} }));
+  const response = await rootPost(new NextRequest("https://example.test/api/example/mcp", {
+    method: "POST", body: "{}", headers: { cookie: "session=valid", "x-caipe-mcp-resource-path": "/api/other/mcp" },
+  }), rootContext());
+  expect(response.status).toBe(200);
+  expect(mockAuth).toHaveBeenCalled();
+  const headers = new Headers(fetchMock.mock.calls[0][1].headers);
+  expect(headers.get("authorization")).toBe("Bearer browser-token");
+  expect(headers.get("x-caipe-user")).toBe("test-user");
+  expect(headers.get("x-caipe-mcp-resource-path")).toBe("/api/example/mcp");
+  expect(headers.has("cookie")).toBe(false);
+});
+
 it.each([false, true])("keeps path-derived discovery public with legacy resource selection %s", async legacy => {
   const path = [...(legacy ? [] : ["apps", "example"]), "api", "example", "mcp"];
   await discovery(new NextRequest(`https://example.test/.well-known/oauth-protected-resource/${path.join("/")}`, {
