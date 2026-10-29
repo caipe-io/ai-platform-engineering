@@ -771,7 +771,7 @@ def _agent_reply_markdown(
     agent_name: str, body: str, *, bot_name: str, is_direct: bool = False
 ) -> str:
     content = body.strip() or "Done."
-    footer = f"Agent: {agent_name}"
+    footer = f"Agent: {' '.join(agent_name.split()) or 'Assistant'}"
     if not is_direct:
         footer += f" • **Mention @{bot_name} to continue**"
     return f"{content}\n\n{footer}{_BOT_REPLY_MARKER}"

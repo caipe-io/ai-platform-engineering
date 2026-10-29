@@ -636,6 +636,11 @@ def test_dispatcher_continues_when_agent_name_lookup_raises(
     assert "example-sensitive-detail" not in caplog.text
 
 
+def test_reply_footer_collapses_line_breaks_in_the_agent_name() -> None:
+    reply = _agent_reply_markdown(" Example\nAgent\r\n\t", "Answer", bot_name="Example Bot")
+    assert reply == f"Answer\n\nAgent: Example Agent • **Mention @Example Bot to continue**{_BOT_REPLY_MARKER}"
+
+
 def test_threaded_stream_dispatcher_tags_message_turns_with_webex_source() -> None:
     """A successful Webex dispatch records source="webex" message turns.
 

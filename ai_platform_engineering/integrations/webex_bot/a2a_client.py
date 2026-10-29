@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -19,6 +20,7 @@ from .utils.native_assistant_context import native_assistant_headers
 logger = logging.getLogger("caipe.webex_bot.a2a_client")
 
 _SSE_ERROR_BODY_MAX_LEN = 200
+_AGENT_NAME_LOOKUP_DEADLINE_SECONDS = 5.0
 _SENSITIVE_SSE_ERROR_RE = re.compile(
     r"(?i)(authorization|bearer\s+\S+|access_token|refresh_token|client_secret)",
 )
@@ -229,32 +231,34 @@ class WebexSSEClient:
     ) -> Optional[str]:
         """Read the agent display name through the caller-authorized BFF API."""
 
-        client = self._http_client
-        owns_client = client is None
-        if owns_client:
-            client = httpx.Client(timeout=5)
-        assert client is not None
+        caller_token = bearer_token or get_obo_token()
+        if not caller_token:
+            return None
+
+        async def lookup() -> Optional[str]:
+            # Bound the complete response, including a peer that keeps sending
+            # bytes often enough to avoid an individual read timeout.
+            async with asyncio.timeout(_AGENT_NAME_LOOKUP_DEADLINE_SECONDS):
+                async with httpx.AsyncClient(timeout=_AGENT_NAME_LOOKUP_DEADLINE_SECONDS) as client:
+                    headers = self._get_headers(bearer_token=caller_token)
+                    headers["Accept"] = "application/json"
+                    response = await client.get(
+                        f"{self.base_url}/api/dynamic-agents/agents/{quote(agent_id, safe='')}",
+                        headers=headers,
+                    )
+                    if response.status_code != 200:
+                        logger.debug("Agent display-name lookup returned status=%s", response.status_code)
+                        return None
+                    payload = response.json()
+                    data = payload.get("data", payload) if isinstance(payload, dict) else None
+                    name = data.get("name") if isinstance(data, dict) else None
+                    return name.strip() if isinstance(name, str) and name.strip() else None
+
         try:
-            headers = self._get_headers(bearer_token=bearer_token)
-            headers["Accept"] = "application/json"
-            response = client.get(
-                f"{self.base_url}/api/dynamic-agents/agents/{quote(agent_id, safe='')}",
-                headers=headers,
-                timeout=5,
-            )
-            if response.status_code != 200:
-                logger.debug("Agent display-name lookup returned status=%s", response.status_code)
-                return None
-            payload = response.json()
-            data = payload.get("data", payload) if isinstance(payload, dict) else None
-            name = data.get("name") if isinstance(data, dict) else None
-            return name.strip() if isinstance(name, str) and name.strip() else None
-        except (httpx.HTTPError, ValueError) as exc:
+            return asyncio.run(lookup())
+        except (httpx.HTTPError, ValueError, TimeoutError) as exc:
             logger.warning("Agent display-name lookup failed (type=%s)", type(exc).__name__)
             return None
-        finally:
-            if owns_client:
-                client.close()
 
     def create_conversation(
         self,
