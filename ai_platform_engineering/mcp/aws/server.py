@@ -16,7 +16,7 @@ import os
 import re
 import shlex
 import tempfile
-from typing import Optional
+from typing import BinaryIO, Optional
 
 from dotenv import load_dotenv
 from fastmcp import FastMCP
@@ -153,12 +153,24 @@ def _resolve_account_profile(
 # AWS CLI tool
 # ---------------------------------------------------------------------------
 
+def _parse_aws_command(command: str) -> list[str]:
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    parts = list(lexer)
+    if any(part and all(char in ";&|<>" for char in part) for part in parts):
+        raise ValueError("Command contains a shell operator. Use --query or jq_filter for filtering.")
+    if any(part == "--profile" or part.startswith("--profile=") for part in parts):
+        raise ValueError("Select the account using the profile argument, not a command flag.")
+    return parts
+
+
 def _validate_aws_command(command: str) -> tuple[bool, str]:
     command = command.strip()
-    for char in [";", "|", "&", "`", "$", "<", ">", "\\"]:
-        if char in command:
-            return False, f"Command contains shell character '{char}'. Use --query for filtering."
-    parts = command.split()
+    try:
+        parts = _parse_aws_command(command)
+    except ValueError as exc:
+        return False, str(exc)
     if not parts:
         return False, "Empty command provided."
     for pattern in BLOCKED_COMMAND_PATTERNS:
@@ -222,43 +234,32 @@ async def aws_cli_execute(
     selected_profile, profile_error = _resolve_account_profile(profile, account)
     if profile_error:
         return f"❌ {profile_error}"
-    profile_prefix = f"--profile {shlex.quote(selected_profile)} " if selected_profile else ""
-
-    if "--region" in command:
-        full_command = f"aws {profile_prefix}{command} --output {output_fmt}"
-    else:
-        full_command = f"aws {profile_prefix}{command} --region {aws_region} --output {output_fmt}"
+    command_parts = _parse_aws_command(command)
+    full_command = ["aws"]
+    if selected_profile:
+        full_command.extend(["--profile", selected_profile])
+    full_command.extend(command_parts)
+    if not any(part == "--region" or part.startswith("--region=") for part in command_parts):
+        full_command.extend(["--region", aws_region])
+    full_command.extend(["--output", output_fmt])
 
     logger.info("Executing AWS CLI: %s", full_command)
 
     async with _aws_cli_semaphore:
         try:
-            process = await asyncio.create_subprocess_shell(
-                full_command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env={**os.environ},
-            )
-            try:
-                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=AWS_CLI_TIMEOUT)
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
-                return f"❌ Command timed out after {AWS_CLI_TIMEOUT} seconds."
-
-            stdout_str = stdout.decode("utf-8", errors="replace")
-            stderr_str = stderr.decode("utf-8", errors="replace")
-
-            if process.returncode != 0:
-                return f"❌ Command failed (exit {process.returncode}):\n{stderr_str or stdout_str}"
-
-            if jq_filter and stdout_str:
-                stdout_str = await _apply_jq(stdout_str, jq_filter)
-
-            if len(stdout_str) > MAX_OUTPUT_SIZE:
-                stdout_str = stdout_str[:MAX_OUTPUT_SIZE] + f"\n\n... [Truncated. Total: {len(stdout_str)} chars]"
-
-            return stdout_str or "✅ Command completed (no output)."
+            with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+                process = await asyncio.create_subprocess_exec(
+                    *full_command, stdout=stdout, stderr=stderr, env={**os.environ},
+                )
+                try:
+                    await _wait_for_process(process, AWS_CLI_TIMEOUT)
+                except TimeoutError:
+                    return f"❌ Command timed out after {AWS_CLI_TIMEOUT} seconds."
+                if process.returncode != 0:
+                    return f"❌ Command failed (exit {process.returncode}):\n{_read_captured_output(stderr) or _read_captured_output(stdout)}"
+                if jq_filter and stdout.tell():
+                    return await _apply_jq(stdout, jq_filter)
+                return _read_captured_output(stdout) or "✅ Command completed (no output)."
 
         except FileNotFoundError:
             return "❌ AWS CLI not found. Ensure it is installed in the container."
@@ -267,33 +268,43 @@ async def aws_cli_execute(
             return f"❌ Error: {exc}"
 
 
-async def _apply_jq(data: str, jq_filter: str) -> str:
-    """Apply a jq filter to JSON data, returning the filtered result or a warning."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as fh:
-        fh.write(data)
-        tmp = fh.name
-
+async def _wait_for_process(process: asyncio.subprocess.Process, timeout: float) -> None:
+    """Kill and reap the child before capture files close on timeout/cancellation."""
     try:
-        safe_filter = jq_filter.replace("'", "'\"'\"'")
-        proc = await asyncio.create_subprocess_shell(
-            f"jq '{safe_filter}' {tmp}",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        jq_out, jq_err = await asyncio.wait_for(proc.communicate(), timeout=JQ_TIMEOUT)
-        if proc.returncode == 0:
-            return jq_out.decode("utf-8", errors="replace")
-        err = jq_err.decode("utf-8", errors="replace")
-        logger.warning("jq filter failed: %s", err)
-        return f"⚠️ jq filter failed ({err}), showing raw output:\n\n{data}"
-    except Exception as exc:
-        logger.warning("jq processing error: %s", exc)
-        return f"⚠️ jq processing failed ({exc}), showing raw output:\n\n{data}"
-    finally:
+        await asyncio.wait_for(process.wait(), timeout=timeout)
+    except (TimeoutError, asyncio.CancelledError):
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass  # The process may have exited between the check and kill.
+        await process.wait()
+        raise
+
+
+def _read_captured_output(capture: BinaryIO) -> str:
+    """Bound the in-memory read; subprocess output itself is captured on disk."""
+    total = capture.seek(0, os.SEEK_END)
+    capture.seek(0)
+    output = capture.read(MAX_OUTPUT_SIZE).decode("utf-8", errors="replace")
+    if total > MAX_OUTPUT_SIZE:
+        output += f"\n\n... [Truncated. Total: {total} bytes]"
+    return output
+
+
+async def _apply_jq(data: BinaryIO, jq_filter: str) -> str:
+    """Filter the full capture without buffering it or invoking a shell."""
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         try:
-            os.unlink(tmp)
-        except Exception:
-            pass
+            data.seek(0)
+            proc = await asyncio.create_subprocess_exec("jq", jq_filter, stdin=data, stdout=stdout, stderr=stderr)
+            await _wait_for_process(proc, JQ_TIMEOUT)
+            if proc.returncode == 0:
+                return _read_captured_output(stdout)
+            logger.warning("jq filter exited with status %s", proc.returncode)
+        except (OSError, TimeoutError) as exc:
+            logger.warning("jq processing failed: %s", type(exc).__name__)
+        return f"⚠️ jq filtering failed, showing raw output:\n\n{_read_captured_output(data)}"
 
 
 # ---------------------------------------------------------------------------

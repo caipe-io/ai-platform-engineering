@@ -21,8 +21,9 @@ AWS MCP Server that exposes `aws_cli_execute` and `eks_kubectl_execute` as
 | `AWS_ACCOUNT_LIST` | — | Comma-separated `name:account_id` pairs for cross-account profiles |
 | `CROSS_ACCOUNT_ROLE_NAME` | `caipe-read-only` | IAM role to assume in each account |
 | `AWS_CLI_MAX_EXECUTION_TIME` | `30` | Timeout (seconds) for AWS CLI commands |
+| `MAX_CONCURRENT_AWS_CALLS` | `10` | Maximum concurrent AWS CLI subprocesses; lower for memory/disk-constrained deployments |
 | `KUBECTL_MAX_EXECUTION_TIME` | `45` | Timeout (seconds) for kubectl commands |
-| `AWS_CLI_MAX_OUTPUT_SIZE` | `20000` | Maximum output size (bytes) before truncation |
+| `AWS_CLI_MAX_OUTPUT_SIZE` | `20000` | Maximum captured output bytes returned before a truncation notice |
 | `RESTRICT_KUBECTL_SECRETS` | `true` | Block `kubectl get/describe secret(s)` |
 | `RESTRICT_KUBECTL_PROXY` | `true` | Block `kubectl proxy` |
 | `RESTRICT_KUBECTL_EXEC` | `false` | Block `kubectl exec` |
@@ -36,6 +37,18 @@ continue to use the default credential chain without a profile argument.
 
 Account selection is routing, not authorization. Restrict the server's IAM
 permissions and role trust policies independently.
+
+AWS CLI and optional `jq` filtering run as argument arrays, not shell commands.
+Quoted JMESPath expressions can contain pipes without being interpreted as shell
+pipelines. Pass the account using `profile`/`account`, not an embedded
+`--profile` flag. Existing destructive-operation checks are retained; they are
+not a substitute for read-only IAM permissions.
+
+AWS CLI and `jq` stdout/stderr use temporary files, with bounded reads into
+memory. `jq` sees the full CLI output before truncation. Timeout or request
+cancellation kills and reaps the child process. Capture files close on exit.
+This bounds application-level output buffering, not total process memory or
+temporary-disk usage; size ephemeral storage and concurrency accordingly.
 
 ## Running locally
 
