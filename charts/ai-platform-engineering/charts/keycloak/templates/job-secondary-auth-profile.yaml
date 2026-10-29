@@ -34,7 +34,7 @@ spec:
             - name: KC_REALM
               value: {{ .Values.realm.name | quote }}
             - name: KEYCLOAK_USER_PROFILE_ATTRIBUTES_JSON
-              value: {{ .Values.userProfile.customAttributes | default list | toJson | quote }}
+              value: {{ ternary "[]" (toJson .Values.userProfile.customAttributes) (kindIs "invalid" .Values.userProfile.customAttributes) | quote }}
             - name: KEYCLOAK_ADMIN
               valueFrom:
                 secretKeyRef:
