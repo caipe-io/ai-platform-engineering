@@ -1,11 +1,12 @@
 "use client";
 
 import { ReleaseNotesPreview } from "@/components/settings/ReleaseNotesPreview";
-import { NotificationDeliverySettings } from "@/components/settings/sections/NotificationDeliverySettings";
+import { NotificationDeliverySettings, type NotificationSettingsTab } from "@/components/settings/sections/NotificationDeliverySettings";
 import { AutoSaveStatus } from "@/components/settings/shared/AutoSaveStatus";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
 import { SettingsSwitch } from "@/components/settings/shared/SettingsSwitch";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAdminRole } from "@/hooks/use-admin-role";
 import { useKeyedAutoSave } from "@/hooks/use-keyed-auto-save";
 import {
@@ -71,9 +72,16 @@ function permissionDescription(capability: BrowserNotificationCapability): strin
 
 export function NotificationsSettings(): React.ReactElement {
   const { isAdmin } = useAdminRole();
+  const [tab, setTab] = useState<NotificationSettingsTab>("delivery");
   const [deliverySections, setDeliverySections] = useState<NotificationSection[]>([]);
   const knownDeliverySections = useRef(new Set<string>());
-  const visibleSections: NotificationSection[] = [...(isAdmin ? NOTIFICATION_SECTIONS : ["agent-completions", "release-notes"] as NotificationSection[]), ...deliverySections];
+  const visibleSections: NotificationSection[] = tab === "delivery"
+    ? ["agent-completions", "delivery:channels"]
+    : tab === "platform"
+      ? ["release-notes", ...(isAdmin ? ["platform-health" as const] : []), "delivery:platform"]
+      : tab === "status"
+        ? ["delivery:status"]
+        : deliverySections.filter((section) => section.startsWith("delivery:app:"));
   const [preferences,setPreferences] = useState<NotificationPreferences>({
     browserEnabled: false,
     chimeEnabled: false,
@@ -283,7 +291,15 @@ export function NotificationsSettings(): React.ReactElement {
   }
 
   return (
-    <div className="space-y-6">
+    <Tabs value={tab} onValueChange={(value) => setTab(value as NotificationSettingsTab)} className="space-y-6">
+      <div className="overflow-x-auto pb-1">
+        <TabsList aria-label="Notification settings" className="w-max">
+          <TabsTrigger value="delivery">Notification delivery</TabsTrigger>
+          <TabsTrigger value="apps">Apps</TabsTrigger>
+          <TabsTrigger value="platform">Platform</TabsTrigger>
+          <TabsTrigger value="status">Delivery status</TabsTrigger>
+        </TabsList>
+      </div>
       {loadError ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {loadError}
@@ -315,9 +331,10 @@ export function NotificationsSettings(): React.ReactElement {
         </Button>
       </div>
 
-      <NotificationDeliverySettings expandedSections={expandedSections} onSectionChange={(id, expanded) => setSectionExpanded(id as NotificationSection, expanded)} onSectionsLoaded={onDeliverySectionsLoaded} />
+      <TabsContent value={tab} className="space-y-6">
+      <NotificationDeliverySettings section={tab} expandedSections={expandedSections} onSectionChange={(id, expanded) => setSectionExpanded(id as NotificationSection, expanded)} onSectionsLoaded={onDeliverySectionsLoaded} />
 
-      <SettingsCard
+      {tab === "delivery" && <SettingsCard
         collapsibleLabel="Agent completions"
         description="Get a quiet signal when a background agent turn finishes. No message content is included in the desktop alert."
         expanded={expandedSections.has("agent-completions")}
@@ -380,9 +397,9 @@ export function NotificationsSettings(): React.ReactElement {
             Alerts work while a CAIPE tab remains open. They are independent of the selected agent harness.
           </p>
         </div>
-      </SettingsCard>
+      </SettingsCard>}
 
-      <SettingsCard
+      {tab === "platform" && <SettingsCard
         collapsibleLabel="Release notes"
         description="Choose whether CAIPE announces a new release after you sign in."
         expanded={expandedSections.has("release-notes")}
@@ -411,8 +428,8 @@ export function NotificationsSettings(): React.ReactElement {
           </div>
           <ReleaseNotesPreview isAdmin={false} />
         </div>
-      </SettingsCard>
-      {isAdmin ? <SettingsCard
+      </SettingsCard>}
+      {tab === "platform" && isAdmin ? <SettingsCard
         collapsibleLabel="Platform health"
         description="Choose whether global platform incidents appear in your personal notification feed."
         expanded={expandedSections.has("platform-health")}
@@ -439,6 +456,7 @@ export function NotificationsSettings(): React.ReactElement {
           />
         </div>
       </SettingsCard> : null}
-    </div>
+      </TabsContent>
+    </Tabs>
   );
 }

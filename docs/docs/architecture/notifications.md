@@ -8,6 +8,18 @@ Users choose which events notify them. Ingestion, workflow, and agent runs publi
 
 Tracked in epic #2934. Architecture target: discussion #2937.
 
+## Notification settings
+
+`/settings/notifications` separates controls into four tabs:
+
+- **Notification delivery**: channels, global pause, quiet hours, browser alerts, and completion chime.
+- **Apps**: registered app types, subscriptions, per-event delivery, and followed-resource links.
+- **Platform**: platform event types, release announcements, and authorized platform-health controls.
+- **Delivery status**: recent delivery attempts, browser display receipts, refresh, and retries.
+
+Expand/collapse applies to the active tab. Tab changes preserve drafts and pending
+saves; delivery history loads when its tab opens.
+
 ## How an event flows
 
 ```mermaid
@@ -49,6 +61,7 @@ flowchart LR
 | `workflow.started` | A run begins | Off |
 | `agent.completed` | An autonomous task succeeds, or a chat run lasting at least `NOTIFICATION_CHAT_MIN_SECONDS` finishes | On |
 | `agent.failed` | An autonomous task or chat run fails | On |
+| `agent.requires_input` | A user-delegated agent requests input for a saved chat the user owns | On |
 | `agent.started` | Reserved. No producer emits it yet | Off |
 | `service.degraded` | Platform health opens an incident | On |
 | `service.recovered` | Platform health confirms recovery | On |

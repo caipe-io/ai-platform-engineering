@@ -24,6 +24,7 @@ const LABELS: Record<NotificationChannel, string> = {
   webex: "Webex",
   slack: "Slack",
 };
+export type NotificationSettingsTab = "delivery" | "apps" | "platform" | "status";
 interface DeliveryView {
   global: NotificationSubscription;
   sources: NotificationSourceView[];
@@ -48,10 +49,12 @@ async function jsonRequest(path: string, body?: unknown, method = "PATCH") {
 }
 
 export function NotificationDeliverySettings({
+  section = "all",
   expandedSections,
   onSectionChange,
   onSectionsLoaded,
 }: {
+  section?: NotificationSettingsTab | "all";
   expandedSections?: ReadonlySet<string>;
   onSectionChange?: (id: string, expanded: boolean) => void;
   onSectionsLoaded?: (ids: string[]) => void;
@@ -95,14 +98,34 @@ export function NotificationDeliverySettings({
       browserDisplayedAt?: string;
     }>
   >([]);
+  const [loadingDeliveries, setLoadingDeliveries] = useState(false);
+  const [deliveriesLoaded, setDeliveriesLoaded] = useState(false);
+
+  const refreshDeliveries = useCallback(async () => {
+    setLoadingDeliveries(true);
+    setError(null);
+    try {
+      const result = await jsonRequest("/api/notifications/deliveries");
+      if (!Array.isArray(result?.deliveries)) throw new Error("Unexpected delivery status response");
+      setDeliveries(result.deliveries);
+      setDeliveriesLoaded(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load delivery status");
+    } finally {
+      setLoadingDeliveries(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (section === "status") void refreshDeliveries();
+  }, [section, refreshDeliveries]);
 
   const sourceIds = view?.sources.map((source) => source.id).join(",") ?? "";
   useEffect(() => {
-    if (sourceIds)
-      onSectionsLoaded?.([
+    onSectionsLoaded?.([
         "delivery:channels",
         "delivery:status",
-        ...sourceIds.split(",").map((id) => `delivery:${id}`),
+        ...sourceIds.split(",").filter(Boolean).map((id) => `delivery:${id}`),
       ]);
   }, [sourceIds, onSectionsLoaded]);
 
@@ -255,7 +278,7 @@ export function NotificationDeliverySettings({
     try {
       await jsonRequest("/api/notifications/test", { channel }, "POST");
       setMessage(
-        `Test queued for ${LABELS[channel]}. Check delivery status below.`,
+        `Test queued for ${LABELS[channel]}. Check the Delivery status tab.`,
       );
     } catch (reason) {
       setError(
@@ -264,31 +287,20 @@ export function NotificationDeliverySettings({
     }
   }
 
-  async function refreshDeliveries() {
-    try {
-      setDeliveries(
-        (await jsonRequest("/api/notifications/deliveries")).deliveries,
-      );
-    } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : "Could not load delivery status",
-      );
-    }
-  }
-
-  if (!view)
+  if (!view && section !== "status")
     return (
       <p role="status" className="text-sm text-muted-foreground">
         {error ?? "Loading notification delivery…"}
       </p>
     );
-  const globallyPaused = isPaused(view.global);
+  const globallyPaused = isPaused(view?.global ?? null);
   const channels = {
     ...DEFAULT_NOTIFICATION_CHANNELS,
-    ...view.global.channels,
+    ...view?.global.channels,
   };
+  const sources = (view?.sources ?? []).filter((source) => section === "all" ||
+    (section === "platform" && source.id === "platform") ||
+    (section === "apps" && source.id.startsWith("app:")));
   return (
     <div className="space-y-6">
       {error && (
@@ -301,7 +313,7 @@ export function NotificationDeliverySettings({
           {message}
         </p>
       )}
-      <SettingsCard
+      {view && (section === "all" || section === "delivery") && <SettingsCard
         collapsibleLabel="Notification delivery"
         expanded={expanded("delivery:channels")}
         onExpandedChange={(open) => changeSection("delivery:channels", open)}
@@ -456,8 +468,9 @@ export function NotificationDeliverySettings({
             </p>
           </div>
         </div>
-      </SettingsCard>
-      {view.sources.map((source) => (
+      </SettingsCard>}
+      {section === "apps" && sources.length === 0 && <p className="text-sm text-muted-foreground">No apps have registered notifications yet.</p>}
+      {sources.map((source) => (
         <SettingsCard
           key={source.id}
           title={source.label}
@@ -602,7 +615,7 @@ export function NotificationDeliverySettings({
           </div>
         </SettingsCard>
       ))}
-      <SettingsCard
+      {(section === "all" || section === "status") && <SettingsCard
         title="Delivery status"
         collapsibleLabel="Delivery status"
         expanded={expanded("delivery:status")}
@@ -612,10 +625,12 @@ export function NotificationDeliverySettings({
         <Button
           size="sm"
           variant="outline"
+          disabled={loadingDeliveries}
           onClick={() => void refreshDeliveries()}
         >
-          Refresh delivery status
+          {loadingDeliveries ? "Refreshing delivery status…" : "Refresh delivery status"}
         </Button>
+        {deliveriesLoaded && deliveries.length === 0 && <p className="mt-3 text-sm text-muted-foreground">No recent deliveries.</p>}
         <ul className="mt-3 space-y-2">
           {deliveries.map((delivery) => (
             <li
@@ -656,7 +671,7 @@ export function NotificationDeliverySettings({
             </li>
           ))}
         </ul>
-      </SettingsCard>
+      </SettingsCard>}
     </div>
   );
 }
