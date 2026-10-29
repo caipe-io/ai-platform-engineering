@@ -193,3 +193,70 @@ access token to the selected runtime. The browser does not attach a bearer token
   their bearer identity and do not inherit browser administrator privileges.
 - Conversation-write, agent-use and app installation admission checks remain in
   force for every operation. Keep admin-only app policies unchanged.
+## Feedback destinations
+
+The **Provide Feedback** form collects Bug/Enhancement, an area or app, a
+description, and optional chat context or screenshots. It displays the destination
+before submission. The server resolves it again from trusted configuration.
+
+Apps register a destination in their manifest:
+
+```json
+{
+  "catalog": {
+    "feedback": { "provider": "github", "githubRepo": "example/product-feedback" }
+  }
+}
+```
+
+An operator can override it in the app installation, including routing to Jira:
+
+```yaml
+agentic_apps:
+  installations:
+    - app_id: example
+      package_id: example
+      installed: true
+      enabled: true
+      feedback:
+        provider: jira
+        jiraProject: SUPPORT
+        issueTypes:
+          Bug: Defect
+          Enhancement: Request
+```
+
+- `feedback: null` disables the app's declared destination.
+- Only installed, enabled apps the reporter can access appear in the form.
+- The current app path selects its area automatically. Reporters can change it.
+- This optional manifest field requires a host/checker with feedback registration
+  support. Existing app packages can use the installation override while upgrading.
+
+Platform areas inherit `GITHUB_TICKET_REPO` or `JIRA_TICKET_PROJECT` and the
+corresponding enabled provider flag. Override individual areas or add an app area
+with the deployment-owned `FEEDBACK_ROUTES` JSON array:
+
+```json
+[
+  { "id": "skills", "label": "Skills", "provider": "jira", "jiraProject": "SKILLS" },
+  { "id": "app-example", "label": "Example", "appId": "example", "pathPrefixes": ["/projects"], "provider": "github", "githubRepo": "example/product-feedback" }
+]
+```
+
+- Platform IDs: `chat`, `skills`, `workflows`, `knowledge-bases`, `agents`,
+  `mcp-servers`, `models`, `credentials`, `admin`.
+- App route IDs are `app-<app_id>`. Explicit routes override registered destinations.
+- Jira defaults to the `Bug` and `Task` issue types; override `issueTypes` for projects
+  with a different schema. Routes may also specify additional `labels`.
+- GitHub service credential: `REPORT_PROBLEM_GITHUB_TOKEN`, `GITHUB_TICKET_TOKEN`, or `GITHUB_TOKEN`,
+  with Issues write permission on the registered repositories.
+- Jira credentials: `JIRA_BASE_URL`, `JIRA_EMAIL`, and
+  `REPORT_PROBLEM_JIRA_TOKEN` or `JIRA_TICKET_TOKEN`.
+- Credentials are server-only environment variables. Never prefix them with
+  `NEXT_PUBLIC_` or put them in manifests or `FEEDBACK_ROUTES`.
+- GitHub screenshot uploads require `GITHUB_SCREENSHOTS_REPO` and Contents write
+  permission on that repository. Images use its `screenshots` branch. Jira uses
+  issue attachments. Attachment failures after Jira issue creation return the
+  created issue and a warning, so a retry does not create a duplicate.
+- `REPORT_PROBLEM_ENABLED=false` disables submission. Successful reports are stored
+  in the existing `feedback` collection for Admin → Feedback.

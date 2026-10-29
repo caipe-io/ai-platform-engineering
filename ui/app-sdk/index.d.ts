@@ -5,7 +5,7 @@ import type { NativeExtensionContractVersion } from "./contract-version.mjs";
 export type { NativeExtensionContractVersion } from "./contract-version.mjs";
 export { CONTRACT_VERSION, CHECKER_VERSION, LEGACY_NATIVE_CONTRACT_VERSION, isSupportedNativeContractVersion } from "./contract-version.mjs";
 
-export type { AgenticAppManifest, AgenticAppUiProfile, AgenticAppAuthMode, AgenticAppPolicyAction } from "./agentic-app-manifest.mjs";
+export type { AgenticAppManifest, AgenticAppUiProfile, AgenticAppAuthMode, AgenticAppPolicyAction, FeedbackDestination } from "./agentic-app-manifest.mjs";
 export { validateAgenticAppManifest, validateAgenticAppOwnership } from "./agentic-app-manifest.mjs";
 export type { NativeExtensionManifest } from "./native-manifest.mjs";
 

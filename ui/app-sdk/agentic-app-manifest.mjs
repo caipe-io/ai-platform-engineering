@@ -431,7 +431,7 @@ export function validateAgenticAppManifest(value) {
   if (app.catalog !== undefined) {
     record(
       app.catalog,
-      ["categories", "capabilities", "icon", "supportUrl"],
+      ["categories", "capabilities", "icon", "supportUrl", "feedback"],
       "catalog",
     );
     for (const field of ["categories", "capabilities"])
@@ -443,6 +443,7 @@ export function validateAgenticAppManifest(value) {
       if (!resolveAgenticAppIcon(app.id, icon) && !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(icon))
         throw new Error("catalog.icon must be an asset under /app-icons/<app-id>/ or a legacy icon name");
     }
+    if (app.catalog.feedback !== undefined) validateFeedbackDestination(app.catalog.feedback);
     if (app.catalog.supportUrl !== undefined) {
       const url = new URL(string(app.catalog.supportUrl, "catalog.supportUrl"));
       if (
@@ -610,4 +611,21 @@ export function validateAgenticAppOwnership(manifests) {
         );
     }
   }
+}
+
+/** Public destination metadata; credentials are configured only by the host. */
+export function validateFeedbackDestination(value) {
+  record(value, ["provider", "githubRepo", "jiraProject", "issueTypes"], "feedback");
+  if (value.provider === "github") {
+    if (typeof value.githubRepo !== "string" || !/^[a-zA-Z0-9-]+\/[a-zA-Z0-9_.-]+$/.test(value.githubRepo) || value.jiraProject !== undefined || value.issueTypes !== undefined)
+      throw new Error("feedback.githubRepo must be owner/repository");
+  } else if (value.provider === "jira") {
+    if (typeof value.jiraProject !== "string" || !/^[A-Z][A-Z0-9_]*$/.test(value.jiraProject) || value.githubRepo !== undefined)
+      throw new Error("feedback.jiraProject must be a project key");
+    if (value.issueTypes !== undefined) {
+      record(value.issueTypes, ["Bug", "Enhancement"], "feedback.issueTypes");
+      for (const type of Object.values(value.issueTypes)) string(type, "feedback.issueTypes value");
+    }
+  } else throw new Error("feedback.provider must be github or jira");
+  return value;
 }

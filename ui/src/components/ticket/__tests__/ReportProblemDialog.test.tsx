@@ -5,7 +5,7 @@
  * - Renders dialog with title and description input
  * - Submit button disabled when description is empty (no feedbackContext)
  * - Submit button enabled when feedbackContext is provided (even without description)
- * - Calls createTicketViaAgent on submit
+ * - Calls createTicketViaApi on submit
  * - Shows success state with ticket result
  * - Shows error state on failure
  * - Cancel during submission aborts the request
@@ -20,6 +20,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 // Mocks — must be before imports
 // ============================================================================
 
+let mockPathname = "/chat/test-uuid";
 let mockTicketProvider: string | null = "jira";
 jest.mock("@/lib/config", () => ({
   getConfig: (key: string) => {
@@ -27,7 +28,7 @@ jest.mock("@/lib/config", () => ({
       case "ticketProvider":
         return mockTicketProvider;
       case "jiraTicketProject":
-        return "OPENSD";
+        return "TEST";
       case "githubTicketRepo":
         return "org/repo";
       default:
@@ -36,10 +37,10 @@ jest.mock("@/lib/config", () => ({
   },
 }));
 
-const mockCreateTicketViaAgent = jest.fn();
+const mockCreateTicketViaApi = jest.fn();
 
 jest.mock("@/lib/ticket-client", () => ({
-  createTicketViaAgent: (opts: unknown) => mockCreateTicketViaAgent(opts),
+  createTicketViaApi: (opts: unknown) => mockCreateTicketViaApi(opts),
 }));
 
 jest.mock("next-auth/react", () => ({
@@ -52,7 +53,7 @@ jest.mock("next-auth/react", () => ({
 }));
 
 jest.mock("next/navigation", () => ({
-  usePathname: () => "/chat/test-uuid",
+  usePathname: () => mockPathname,
 }));
 
 jest.mock("framer-motion", () => ({
@@ -153,6 +154,11 @@ describe("ReportProblemDialog", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockTicketProvider = "jira";
+    mockPathname = "/chat/test-uuid";
+    global.fetch = jest.fn().mockImplementation(async () => ({ ok: true, json: async () => ({ success: true, data: [
+      { id: "chat", label: "Chat", provider: mockTicketProvider, githubRepo: "example/platform", jiraProject: "TEST", pathPrefixes: ["/chat"], canAttachScreenshot: true },
+      { id: "app-example", label: "Example app", provider: "github", githubRepo: "example/product", pathPrefixes: ["/projects"], appId: "example" },
+    ] }) }));
   });
 
   it("renders dialog with title when open", () => {
@@ -160,7 +166,7 @@ describe("ReportProblemDialog", () => {
       <ReportProblemDialog open={true} onOpenChange={jest.fn()} />
     );
     expect(screen.getByTestId("dialog-title")).toHaveTextContent(
-      "Report a Problem via Jira"
+      "Provide Feedback"
     );
   });
 
@@ -179,11 +185,11 @@ describe("ReportProblemDialog", () => {
     render(
       <ReportProblemDialog open={true} onOpenChange={jest.fn()} />
     );
-    const submitBtn = screen.getByText("Submit Report");
+    const submitBtn = screen.getByText(/Submit (Jira|GitHub) Issue/);
     expect(submitBtn).toBeDisabled();
   });
 
-  it("submit button is enabled when feedbackContext is provided", () => {
+  it("submit button is enabled when feedbackContext is provided", async () => {
     render(
       <ReportProblemDialog
         open={true}
@@ -194,8 +200,8 @@ describe("ReportProblemDialog", () => {
         }}
       />
     );
-    const submitBtn = screen.getByText("Submit Report");
-    expect(submitBtn).not.toBeDisabled();
+    const submitBtn = screen.getByText(/Submit (Jira|GitHub) Issue/);
+    await waitFor(() => expect(submitBtn).not.toBeDisabled());
   });
 
   it("shows feedback context in combo flow", () => {
@@ -214,10 +220,10 @@ describe("ReportProblemDialog", () => {
     expect(screen.getByText(/Response was unrelated/)).toBeInTheDocument();
   });
 
-  it("calls createTicketViaAgent on submit", async () => {
-    mockCreateTicketViaAgent.mockResolvedValue({
-      id: "OPENSD-123",
-      url: "https://jira.example.com/browse/OPENSD-123",
+  it("calls createTicketViaApi on submit", async () => {
+    mockCreateTicketViaApi.mockResolvedValue({
+      id: "TEST-123",
+      url: "https://jira.example.com/browse/TEST-123",
       provider: "jira",
     });
 
@@ -230,18 +236,19 @@ describe("ReportProblemDialog", () => {
     );
     fireEvent.change(textarea, { target: { value: "Something broke" } });
 
-    const submitBtn = screen.getByText("Submit Report");
+    const submitBtn = screen.getByText(/Submit (Jira|GitHub) Issue/);
+    await waitFor(() => expect(submitBtn).toBeEnabled());
     fireEvent.click(submitBtn);
 
     await waitFor(() => {
-      expect(mockCreateTicketViaAgent).toHaveBeenCalledTimes(1);
+      expect(mockCreateTicketViaApi).toHaveBeenCalledTimes(1);
     });
   });
 
   it("shows success state with ticket result", async () => {
-    mockCreateTicketViaAgent.mockResolvedValue({
-      id: "OPENSD-456",
-      url: "https://jira.example.com/browse/OPENSD-456",
+    mockCreateTicketViaApi.mockResolvedValue({
+      id: "TEST-456",
+      url: "https://jira.example.com/browse/TEST-456",
       provider: "jira",
     });
 
@@ -255,15 +262,16 @@ describe("ReportProblemDialog", () => {
       ),
       { target: { value: "Something broke" } }
     );
-    fireEvent.click(screen.getByText("Submit Report"));
+    await waitFor(() => expect(screen.getByText(/Submit (Jira|GitHub) Issue/)).toBeEnabled());
+    fireEvent.click(screen.getByText(/Submit (Jira|GitHub) Issue/));
 
     await waitFor(() => {
-      expect(screen.getByText("OPENSD-456")).toBeInTheDocument();
+      expect(screen.getByText("TEST-456")).toBeInTheDocument();
     });
   });
 
   it("shows error state on failure", async () => {
-    mockCreateTicketViaAgent.mockRejectedValue(
+    mockCreateTicketViaApi.mockRejectedValue(
       new Error("Agent unavailable")
     );
 
@@ -277,7 +285,8 @@ describe("ReportProblemDialog", () => {
       ),
       { target: { value: "Bug report" } }
     );
-    fireEvent.click(screen.getByText("Submit Report"));
+    await waitFor(() => expect(screen.getByText(/Submit (Jira|GitHub) Issue/)).toBeEnabled());
+    fireEvent.click(screen.getByText(/Submit (Jira|GitHub) Issue/));
 
     await waitFor(() => {
       expect(screen.getByText("Agent unavailable")).toBeInTheDocument();
@@ -297,7 +306,21 @@ describe("ReportProblemDialog", () => {
       <ReportProblemDialog open={true} onOpenChange={jest.fn()} />
     );
     expect(screen.getByTestId("dialog-title")).toHaveTextContent(
-      "Report a Problem via GitHub"
+      "Provide Feedback"
     );
   });
+});
+
+it("selects the app destination from the current page and submits its enhancement type", async () => {
+  mockPathname = "/projects/example";
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: [
+    { id: "app-example", label: "Example app", provider: "github", githubRepo: "example/product", pathPrefixes: ["/projects"], appId: "example" },
+  ] }) });
+  mockCreateTicketViaApi.mockResolvedValue({ id: "#42", url: "https://github.com/example/product/issues/42", provider: "github" });
+  render(<ReportProblemDialog open onOpenChange={jest.fn()} />);
+  expect(await screen.findByText("GitHub issue in example/product")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Type *"), { target: { value: "Enhancement" } });
+  fireEvent.change(screen.getByPlaceholderText("What went wrong? Be as specific as you can."), { target: { value: "Improve navigation" } });
+  fireEvent.click(screen.getByText("Submit GitHub Issue"));
+  await waitFor(() => expect(mockCreateTicketViaApi).toHaveBeenCalledWith(expect.objectContaining({ areaId: "app-example", issueType: "Enhancement" })));
 });

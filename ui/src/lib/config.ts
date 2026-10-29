@@ -429,7 +429,7 @@ export function getServerConfig(): Config {
   const githubTicketEnabled = env('GITHUB_TICKET_ENABLED') === 'true';
   const githubTicketRepo = env('GITHUB_TICKET_REPO') || null;
   const githubTicketLabel = env('GITHUB_TICKET_LABEL') || 'caipe-reported';
-  const ticketEnabled = jiraTicketEnabled || githubTicketEnabled;
+  const ticketEnabled = jiraTicketEnabled || githubTicketEnabled || Boolean(env("FEEDBACK_ROUTES")) || agenticAppsEnabled;
   const ticketProvider: 'jira' | 'github' | null = jiraTicketEnabled ? 'jira' : githubTicketEnabled ? 'github' : null;
 
   const showPoweredByEnv = env('SHOW_POWERED_BY');

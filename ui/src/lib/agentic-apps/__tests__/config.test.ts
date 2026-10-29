@@ -29,6 +29,12 @@ describe("External Apps deployment config", () => {
     }); } finally { if (previous === undefined) delete process.env.AGENTIC_APPS_CONFIG_PATH; else process.env.AGENTIC_APPS_CONFIG_PATH = previous; }
   });
 
+  it("loads deployment-owned app feedback destinations", () => {
+    withConfig(validConfig().replace("      installed: true", "      feedback:\n        provider: jira\n        jiraProject: SUPPORT\n      installed: true"), path => {
+      expect(loadConfiguredAgenticApps(path)[0].installation.feedback).toEqual({ provider: "jira", jiraProject: "SUPPORT" });
+    });
+  });
+
   it("loads and joins generic packages and installations", () => {
     withConfig(validConfig(), (path) => {
       expect(loadConfiguredAgenticApps(path)).toEqual([

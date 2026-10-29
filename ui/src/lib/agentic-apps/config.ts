@@ -5,6 +5,7 @@ import { load as loadYaml } from "js-yaml";
 import {
   normalizeLegacyAgenticAppManifest,
   validateAgenticAppManifest,
+  validateFeedbackDestination,
   validateAgenticAppOwnership,
 } from "../../../app-sdk/agentic-app-manifest.mjs";
 import {
@@ -58,6 +59,7 @@ type RawInstallation = {
   access_overrides?: unknown;
   host_route_claims?: unknown;
   navigation_overrides?: unknown;
+  feedback?: unknown;
   selected_ui_profile?: unknown;
   app_version?: unknown;
   bindings?: unknown;
@@ -214,6 +216,7 @@ export function loadConfiguredAgenticApps(
         : {}),
       ...(raw.host_route_claims !== undefined
         ? { hostRouteClaims: requiredStringArray(raw.host_route_claims, `${path}.host_route_claims`, true) } : {}),
+      ...(raw.feedback !== undefined ? { feedback: raw.feedback === null ? null : validateFeedbackDestination(raw.feedback) } : {}),
       ...(raw.navigation_overrides !== undefined
         ? { navigationOverrides: parseNavigationOverrides(raw.navigation_overrides, `${path}.navigation_overrides`) } : {}),
       ...(raw.access_overrides !== undefined

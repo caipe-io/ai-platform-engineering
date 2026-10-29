@@ -74,6 +74,7 @@ export interface AgenticAppManifest {
     /** Same-origin /app-icons/<app-id>/<filename> asset; legacy names use a generic icon. */
     icon?: string;
     supportUrl?: string;
+    feedback?: FeedbackDestination;
   };
 }
 export function resolveAgenticAppIcon(appId: string, icon?: string): string | undefined;
@@ -97,3 +98,8 @@ export function nativeUiDescriptor(
 export function validateAgenticAppOwnership(
   manifests: AgenticAppManifest[],
 ): void;
+
+export type FeedbackDestination =
+  | { provider: "github"; githubRepo: string }
+  | { provider: "jira"; jiraProject: string; issueTypes?: { Bug?: string; Enhancement?: string } };
+export function validateFeedbackDestination(value: unknown): FeedbackDestination;

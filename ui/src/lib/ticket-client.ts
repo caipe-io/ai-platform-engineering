@@ -26,6 +26,7 @@ export interface TicketResult {
   id: string;
   url: string;
   provider: "jira" | "github";
+  warnings?: string[];
 }
 
 export interface TicketStreamEvent {
@@ -137,12 +138,38 @@ function extractTicketResult(text: string): TicketResult | null {
 }
 
 export interface CreateTicketOptions {
+  areaId?: string;
+  issueType?: "Bug" | "Enhancement";
   request: TicketRequest;
   /** @deprecated Browser requests authenticate with the session cookie; this value is ignored. */
   accessToken?: string;
   onEvent?: (event: TicketStreamEvent, logLine: string) => void;
   onResult?: (result: TicketResult) => void;
   signal?: AbortSignal;
+}
+
+/** Submit to a destination resolved and authorized by the host. */
+export async function createTicketViaApi(options: CreateTicketOptions): Promise<TicketResult> {
+  const { request, signal, areaId, issueType } = options;
+  const response = await fetch("/api/tickets/report", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      description: request.description, contextUrl: request.contextUrl,
+      feedbackContext: request.feedbackContext, screenshotDataUrl: request.screenshotDataUrl,
+      chatContext: request.chatContext, areaId, issueType,
+    }),
+    signal,
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.message || body.error || `Ticket API failed (${response.status})`);
+  if (!body.data?.id || !body.data?.url || !["github", "jira"].includes(body.data?.provider)) {
+    throw new Error("Ticket API did not return a created issue");
+  }
+  const result = body.data as TicketResult;
+  options.onResult?.(result);
+  options.onEvent?.({ type: "done" }, `<- done: ${result.id} ${result.url}`);
+  return result;
 }
 
 /**

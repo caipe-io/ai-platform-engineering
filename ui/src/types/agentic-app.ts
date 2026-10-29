@@ -1,4 +1,4 @@
-import type { AgenticAppManifest, AgenticAppAuthMode, AgenticAppPolicyAction } from "../../app-sdk/agentic-app-manifest.mjs";
+import type { AgenticAppManifest, AgenticAppAuthMode, AgenticAppPolicyAction, FeedbackDestination } from "../../app-sdk/agentic-app-manifest.mjs";
 
 export type { AgenticAppManifest, AgenticAppUiProfile, AgenticAppAuthMode, AgenticAppPolicyAction } from "../../app-sdk/agentic-app-manifest.mjs";
 export type AgenticAppRuntimeKind = "proxied-next-zone";
@@ -63,6 +63,8 @@ export interface AgenticAppInstallation {
   runtimeOriginOverride?: string;
   /** Explicit operator approval of declared iframe host routes. */
   hostRouteClaims?: string[];
+  /** Override the publisher destination; null disables app feedback. */
+  feedback?: FeedbackDestination | null;
   navigationOverrides?: { visible?: boolean; label?: string; order?: number };
   accessOverrides?: {
     requiredRoles?: string[];

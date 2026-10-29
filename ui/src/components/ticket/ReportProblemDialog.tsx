@@ -2,6 +2,10 @@
 
 import { getErrorMessage } from "@/lib/error-utils";
 
+import { Select } from "@/components/ui/select";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
+import { feedbackRouteForPath, type FeedbackRoute } from "@/lib/feedback-routing";
+
 import { Button } from "@/components/ui/button";
 import {
 Dialog,
@@ -12,7 +16,7 @@ DialogTitle,
 } from "@/components/ui/dialog";
 import { getConfig } from "@/lib/config";
 import {
-createTicketViaAgent,
+createTicketViaApi,
 type FeedbackContext,
 type TicketResult,
 } from "@/lib/ticket-client";
@@ -81,7 +85,40 @@ export function ReportProblemDialog({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileInputId = useId();
 
-  const provider = getConfig("ticketProvider");
+  const [issueType, setIssueType] = useState<"Bug" | "Enhancement">("Bug");
+  const [routes, setRoutes] = useState<FeedbackRoute[]>([]);
+  const [areaId, setAreaId] = useState("");
+  const [routesLoading, setRoutesLoading] = useState(false);
+  const [routesError, setRoutesError] = useState<string | null>(null);
+  const [routesRetry, setRoutesRetry] = useState(0);
+  const selectedRoute = routes.find(route => route.id === areaId);
+  const canAttachScreenshot = Boolean(selectedRoute?.canAttachScreenshot);
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    setRoutesLoading(true);
+    setRoutesError(null);
+    fetch("/api/tickets/routes", { signal: controller.signal, cache: "no-store" })
+      .then(async response => {
+        const body = await response.json();
+        if (!response.ok || !body.success || !Array.isArray(body.data)) throw new Error(body.error || "Could not load feedback areas");
+        if (controller.signal.aborted) return;
+        const items: FeedbackRoute[] = body.data;
+        setRoutes(items);
+        setAreaId(previous => items.some(route => route.id === previous) ? previous
+          : (feedbackRouteForPath(items, pathname || "/") ?? items[0])?.id ?? "");
+      })
+      .catch(error => { if (!controller.signal.aborted) setRoutesError(getErrorMessage(error, "Could not load feedback areas")); })
+      .finally(() => { if (!controller.signal.aborted) setRoutesLoading(false); });
+    return () => controller.abort();
+  }, [open, pathname, routesRetry]);
+
+  useEffect(() => {
+    if (!canAttachScreenshot) setScreenshotDataUrl(null);
+  }, [canAttachScreenshot]);
+
+  const provider = selectedRoute?.provider ?? getConfig("ticketProvider");
   const providerLabel = provider === "jira" ? "Jira" : provider === "github" ? "GitHub" : "";
 
   const contextUrl =
@@ -97,6 +134,8 @@ export function ReportProblemDialog({
 
   const resetState = useCallback(() => {
     setDescription("");
+    setIssueType("Bug");
+    setAreaId("");
     setIncludeChatContext(false);
     setChatContextDraft("");
     setStatus("idle");
@@ -194,7 +233,7 @@ export function ReportProblemDialog({
   }, []);
 
   const handleSubmit = useCallback(async () => {
-    if (!description.trim() && !feedbackContext) return;
+    if (!areaId || !issueType || routesLoading || routesError || (!description.trim() && !feedbackContext)) return;
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -211,7 +250,9 @@ export function ReportProblemDialog({
     appendLog(`Context: ${contextUrl}`);
 
     try {
-      const result = await createTicketViaAgent({
+      const result = await createTicketViaApi({
+        areaId,
+        issueType,
         request: {
           description: feedbackContext
             ? `${feedbackContext.reason}: ${feedbackContext.additionalFeedback || description || "(no additional details)"}`
@@ -253,6 +294,10 @@ export function ReportProblemDialog({
     }
   }, [
     description,
+    areaId,
+    issueType,
+    routesLoading,
+    routesError,
     feedbackContext,
     session,
     contextUrl,
@@ -287,11 +332,11 @@ export function ReportProblemDialog({
               ? "Ticket Created"
               : status === "error"
                 ? "Something Went Wrong"
-                : `Report a Problem${providerLabel ? ` via ${providerLabel}` : ""}`}
+                : "Provide Feedback"}
           </DialogTitle>
           <DialogDescription>
             {status === "idle" &&
-              "Describe the issue briefly. A ticket will be created and assigned to the team."}
+              "Report bugs or request enhancements. Select the type and area, then describe the issue."}
             {status === "submitting" && "Creating your ticket..."}
             {status === "success" && "Your ticket has been created successfully."}
             {status === "error" && "We couldn't create the ticket. You can retry or copy your description."}
@@ -311,6 +356,25 @@ export function ReportProblemDialog({
                 )}
               </div>
             )}
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium" htmlFor={`${fileInputId}-type`}>Type *</label>
+              <Select id={`${fileInputId}-type`} value={issueType} required
+                onChange={event => setIssueType(event.target.value as "Bug" | "Enhancement")}>
+                <option value="Bug">Bug</option>
+                <option value="Enhancement">Enhancement</option>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium" htmlFor={`${fileInputId}-area`}>Area *</label>
+              <SearchablePicker<FeedbackRoute> id={`${fileInputId}-area`} options={routes} selected={selectedRoute}
+                onSelect={route => setAreaId(route.id)} getOptionKey={route => route.id} getOptionLabel={route => route.label}
+                placeholder="Choose an area or app" searchPlaceholder="Find an area or app..." emptyLabel="No feedback destinations configured"
+                loading={routesLoading} error={routesError} onRetry={() => setRoutesRetry(value => value + 1)} required />
+            </div>
+            {selectedRoute && <p className="text-xs text-muted-foreground" role="status">
+              {selectedRoute.provider === "github" ? `GitHub issue in ${selectedRoute.githubRepo}` : `Jira ticket in ${selectedRoute.jiraProject}`}
+            </p>}
 
             <textarea
               value={description}
@@ -344,7 +408,7 @@ export function ReportProblemDialog({
             )}
 
             {/* Screenshot attachment */}
-            {screenshotDataUrl ? (
+            {canAttachScreenshot && (screenshotDataUrl ? (
               <div className="relative rounded-lg overflow-hidden border border-border group cursor-zoom-in"
                 onClick={() => setLightboxOpen(true)}
               >
@@ -404,7 +468,7 @@ export function ReportProblemDialog({
                   onChange={handleFileUpload}
                 />
               </div>
-            )}
+            ))}
 
             <p className="text-[10px] text-muted-foreground/60 text-center break-words">
               The current page URL and your email will be included in the ticket.
@@ -412,10 +476,10 @@ export function ReportProblemDialog({
 
             <Button
               onClick={handleSubmit}
-              disabled={!description.trim() && !feedbackContext}
+              disabled={!areaId || routesLoading || Boolean(routesError) || (!description.trim() && !feedbackContext)}
               className="w-full gap-2"
             >
-              Submit Report
+              Submit {providerLabel} Issue
             </Button>
           </div>
         )}
@@ -508,6 +572,7 @@ export function ReportProblemDialog({
         {/* Success */}
         {status === "success" && ticketResult && (
           <div className="space-y-4 text-center">
+            {ticketResult?.warnings?.map(warning => <p key={warning} role="alert" className="text-sm text-amber-600">{warning}</p>)}
             <div className="flex items-center justify-center">
               <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center">
                 <CheckCircle2 className="h-6 w-6 text-green-500" />

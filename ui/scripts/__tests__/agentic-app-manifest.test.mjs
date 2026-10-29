@@ -421,3 +421,17 @@ test("the build registry is generated from one pinned application declaration", 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+test("app feedback registration accepts provider destinations and rejects credentials", () => {
+  const app = exampleManifest();
+  for (const feedback of [
+    { provider: "github", githubRepo: "example/product" },
+    { provider: "jira", jiraProject: "SUPPORT", issueTypes: { Bug: "Defect" } },
+  ]) assert.deepEqual(validateAgenticAppManifest({ ...app, catalog: { feedback } }).catalog.feedback, feedback);
+  for (const feedback of [
+    { provider: "github", githubRepo: "https://github.com/example/product" },
+    { provider: "jira", jiraProject: "SUPPORT", token: "must-not-register" },
+    { provider: "github", githubRepo: "example/product", jiraProject: "SUPPORT" },
+  ]) assert.throws(() => validateAgenticAppManifest({ ...app, catalog: { feedback } }));
+});
