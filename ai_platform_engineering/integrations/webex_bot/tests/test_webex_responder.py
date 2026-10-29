@@ -9,6 +9,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -29,6 +30,7 @@ from ai_platform_engineering.integrations.webex_bot.webex_responder import (
     _format_thread_context,
     _is_webex_bot_reply,
     _message_with_thread_context,
+    _public_conversation_url,
 )
 
 
@@ -1248,3 +1250,105 @@ def test_bot_reply_recognized_via_legacy_app_name_pattern_pre_upgrade(
     message = {"markdown": legacy_markdown, "personEmail": "bot@example.com"}
     assert _is_webex_bot_reply(message) is True
     assert _format_thread_context([message]) == ""
+
+
+@pytest.mark.parametrize("max_edits", [1, 2, 10, 20])
+@pytest.mark.parametrize("failure", [None, "edit", "persistence", "run"])
+@pytest.mark.parametrize("oversized", [False, True])
+def test_stream_limits_preserve_completion(
+    monkeypatch: pytest.MonkeyPatch, max_edits: int, failure: str | None, oversized: bool,
+) -> None:
+    """Exhausting/rejecting previews must still consume the stream and deliver its outcome."""
+    monkeypatch.setenv("APP_NAME", "Example")
+    monkeypatch.setenv("CAIPE_UI_BASE_URL", "https://chat.example.com")
+
+    class LimitedApi(FakeWebexApi):
+        def update_message(self, *, message_id: str, room_id: str, markdown: str) -> None:
+            super().update_message(message_id=message_id, room_id=room_id, markdown=markdown)
+            if failure == "edit":
+                raise httpx.HTTPStatusError(
+                    "edit rejected", request=httpx.Request("PUT", "https://example.com/messages"),
+                    response=httpx.Response(400),
+                )
+
+    class RecordingClient(FakeSseClient):
+        consumed: int = 0
+
+        def stream_chat(self, **kwargs: Any):
+            self.calls.append(kwargs)
+            for event in self.events:
+                self.consumed += 1
+                yield event
+
+        def add_message(self, **kwargs: Any) -> None:
+            if failure == "persistence":
+                raise RuntimeError("save failed")
+            super().add_message(**kwargs)
+
+    api = LimitedApi()
+    chunks = [f"Part {i}: " + ("😀" if oversized else "a") * 100 for i in range(40)]
+    sse = RecordingClient(events=[
+        *[SSEEvent(SSEEventType.TEXT_MESSAGE_CONTENT, delta=chunk) for chunk in chunks],
+        SSEEvent(SSEEventType.RUN_ERROR, message="Run failed") if failure == "run"
+        else SSEEvent(SSEEventType.RUN_FINISHED),
+    ])
+    dispatcher = WebexThreadedStreamDispatcher(
+        webex_api=api, sse_client=sse, update_every_chars=1,
+        update_interval_seconds=0, max_message_edits=max_edits,
+        thread_owner_cache=ThreadOwnerCache(),
+    )
+    dispatcher._dispatch_sync({
+        "space_id": "test-space", "webex_room_id": "test-room", "message_id": "test-message",
+        "thread_parent_id": "test-root", "text": "test request", "agent_id": "test-agent",
+        "obo_token": "test-token",
+    })
+    assert sse.consumed == len(sse.events)
+    assert len(api.updated) <= max_edits
+    assert all(len(row["markdown"].encode("utf-8")) <= 7439 for row in [*api.created, *api.updated])
+    assert all(row["parent_id"] == "test-root" for row in api.created)
+    final = (api.created if failure == "edit" else api.updated)[-1]["markdown"]
+    if failure == "run":
+        assert "Run failed" in final
+        assert not sse.messages
+    elif failure == "persistence" and oversized:
+        assert "link is unavailable" in final
+        assert "https://chat.example.com" not in final
+    else:
+        if oversized:
+            assert "https://chat.example.com/chat/server-conversation-id" in final
+        else:
+            assert final.startswith("".join(chunks))
+            if failure is None:
+                assert len(api.updated) == max_edits
+        if failure == "persistence":
+            return
+        assert sse.messages[0]["content"] == "test request"
+        assert sse.messages[1]["content"] == "".join(chunks)
+        assert sse.messages[1]["bearer_token"] == "test-token"
+    if failure == "edit":
+        assert len(api.updated) == 1
+        assert len(api.created) == 2
+
+
+def test_stream_preview_updates_are_coalesced(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Deterministic elapsed times: start, first preview, suppressed preview, next preview, finish.
+    clock = iter([0.0, 0.0, 0.5, 1.0, 2.0])
+    monkeypatch.setattr("ai_platform_engineering.integrations.webex_bot.webex_responder.time", SimpleNamespace(monotonic=lambda: next(clock)))
+    api = FakeWebexApi()
+    sse = FakeSseClient(events=[SSEEvent(SSEEventType.TEXT_MESSAGE_CONTENT, delta="a" * 240) for _ in range(3)])
+    dispatcher = WebexThreadedStreamDispatcher(webex_api=api, sse_client=sse)
+    dispatcher._dispatch_sync({
+        "space_id": "test-space", "webex_room_id": "test-room", "message_id": "test-message",
+        "text": "test request", "agent_id": "test-agent", "obo_token": "test-token",
+    })
+    assert len(api.updated) == 2
+    assert api.updated[0]["markdown"].startswith("a" * 240 + "\n")
+    assert api.updated[1]["markdown"].startswith("a" * 720 + "\n")
+
+
+@pytest.mark.parametrize("base", ["", "https://user:secret@example.com", "https://example.com?token=secret", "https://example.com:bad", "https://example.com/a b"])
+def test_full_response_url_rejects_invalid_public_origins(monkeypatch: pytest.MonkeyPatch, base: str) -> None:
+    monkeypatch.setenv("CAIPE_UI_BASE_URL", base)
+    monkeypatch.delenv("WEBEX_LINKING_BASE_URL", raising=False)
+    monkeypatch.setenv("CAIPE_API_URL", "https://internal.example.test")
+    assert _public_conversation_url("test-conversation") is None
