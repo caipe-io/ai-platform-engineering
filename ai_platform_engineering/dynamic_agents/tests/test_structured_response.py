@@ -116,6 +116,10 @@ def test_nested_validation_rejects_then_accepts_corrected_submission(payload: di
 @pytest.mark.parametrize("schema", [
     {"type": "object", "properties": {"summary": {"type": ["string", "invalid"]}}},
     {"type": "array"},
+    {"$ref": "#/$defs/result", "$defs": {"result": {"type": "array"}}},
+    {"type": "object", "$ref": "#/$defs/result", "$defs": {"result": {"type": "array"}}},
+    {"type": "object", "$dynamicRef": "#result"},
+    {"type": "object", "$recursiveRef": "#"},
     {"type": "object", "$schema": "https://schema.example.test/unsupported"},
     {"type": "object", "properties": {"summary": {"$ref": "https://schema.example.test/value"}}},
     {"type": "object", "$defs": {"value": {"$dynamicRef": "https://schema.example.test/value"}}},
@@ -123,6 +127,14 @@ def test_nested_validation_rejects_then_accepts_corrected_submission(payload: di
 def test_invalid_or_external_schemas_are_rejected_before_execution(schema: dict) -> None:
     with pytest.raises(StructuredResponseError):
         extract_response_format({"response_format": {"type": "json_schema", "schema": schema}})
+
+
+@pytest.mark.parametrize("dialect", [5, True, None, [], {}])
+def test_schema_dialect_must_be_a_string(dialect: object) -> None:
+    with pytest.raises(StructuredResponseError, match=r"\$schema must be a string"):
+        extract_response_format({"response_format": {
+            "type": "json_schema", "schema": {"type": "object", "$schema": dialect},
+        }})
 
 
 def test_local_schema_references_are_validated_and_missing_references_rejected() -> None:

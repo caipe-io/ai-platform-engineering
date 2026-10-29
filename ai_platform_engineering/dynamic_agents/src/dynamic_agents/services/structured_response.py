@@ -33,6 +33,10 @@ class StructuredResponseFormat:
         schema = deepcopy(self.schema)
         if not isinstance(schema, dict) or schema.get("type") not in (None, "object"):
             raise StructuredResponseError("Structured response schema must describe a JSON object.")
+        if any(keyword in schema for keyword in ("$ref", "$dynamicRef", "$recursiveRef")):
+            raise StructuredResponseError("Structured response schemas cannot use a reference at the root.")
+        if "$schema" in schema and not isinstance(schema["$schema"], str):
+            raise StructuredResponseError("Structured response schema $schema must be a string.")
         validator_class = validator_for(schema, default=None) if "$schema" in schema else Draft202012Validator
         if validator_class is None:
             raise StructuredResponseError("Unsupported structured response JSON Schema dialect.")

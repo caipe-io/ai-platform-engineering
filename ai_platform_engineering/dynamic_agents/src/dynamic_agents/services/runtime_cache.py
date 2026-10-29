@@ -14,7 +14,8 @@ import os
 import resource
 import sys
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from copy import deepcopy
+from typing import TYPE_CHECKING, Any
 
 from pymongo import MongoClient
 
@@ -81,6 +82,7 @@ class AgentRuntimeCache:
         # Prevents duplicate init when concurrent requests hit the same key.
         # Self-cleaning: removed in finally block after init completes/fails.
         self._pending: dict[str, asyncio.Future["AgentRuntime"]] = {}
+        self._pending_response_formats: dict[str, Any] = {}
 
         # Flat cap on concurrent cached runtimes
         if max_size is not None:
@@ -146,6 +148,16 @@ class AgentRuntimeCache:
         """Create cache key from agent and session IDs."""
         return f"{agent_id}:{session_id}"
 
+    @staticmethod
+    def _response_format(client_context: ClientContext | None) -> Any:
+        return client_context.model_dump().get("response_format") if client_context else None
+
+    @staticmethod
+    def _response_format_matches(runtime: AgentRuntime, client_context: ClientContext | None) -> bool:
+        """The schema fixes the graph's submission tool and prompt at initialization."""
+        previous_context = getattr(runtime, "_client_context", None)
+        return AgentRuntimeCache._response_format(previous_context) == AgentRuntimeCache._response_format(client_context)
+
     async def get_or_create(
         self,
         agent_config: DynamicAgentConfig,
@@ -165,22 +177,35 @@ class AgentRuntimeCache:
             RuntimeInitError: If the new runtime fails to initialize.
         """
         key = self._make_key(agent_config.id, session_id)
+        requested_format = self._response_format(client_context)
 
         # Someone else is already initializing this key — wait for their result
-        if key in self._pending:
-            return await asyncio.shield(self._pending[key])
+        while key in self._pending:
+            pending = self._pending[key]
+            if self._pending_response_formats.get(key) == requested_format:
+                return await asyncio.shield(pending)
+            try:
+                await asyncio.shield(pending)
+            except RuntimeInitError:
+                # Another schema's initialization failure does not reject this request.
+                logger.debug("Retrying initialization with a different schema for agent %s", agent_config.id)
 
         # We're the first — create a future and perform initialization
         loop = asyncio.get_event_loop()
         fut: asyncio.Future["AgentRuntime"] = loop.create_future()
         self._pending[key] = fut
+        self._pending_response_formats[key] = deepcopy(requested_format)
         self._update_metrics()
 
         try:
             # Fast path: cached and valid
             if key in self._cache:
                 runtime = self._cache[key]
-                if await asyncio.to_thread(runtime.is_stale, agent_config, mcp_servers):
+                format_changed = not self._response_format_matches(runtime, client_context)
+                if format_changed and runtime._is_streaming:
+                    # Do not tear down a graph while another request is using it.
+                    raise RuntimeCapacityError(self._max_size)
+                if format_changed or await asyncio.to_thread(runtime.is_stale, agent_config, mcp_servers):
                     logger.info(
                         "Runtime cache invalidated due to config change for agent %s",
                         agent_config.id,
@@ -226,6 +251,7 @@ class AgentRuntimeCache:
             raise
         finally:
             self._pending.pop(key, None)
+            self._pending_response_formats.pop(key, None)
             self._update_metrics()
 
     @asynccontextmanager

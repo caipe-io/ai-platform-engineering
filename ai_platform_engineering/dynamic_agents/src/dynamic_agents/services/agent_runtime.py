@@ -148,9 +148,9 @@ def _with_general_purpose_tool_result_recovery(
     """
     recovered_general_purpose = {
         **GENERAL_PURPOSE_SUBAGENT,
-        "tools": tools,
+        "tools": [tool for tool in tools if getattr(tool, "name", None) != "submit_structured_response"],
         "model": model,
-        "interrupt_on": interrupt_on,
+        "interrupt_on": {name: policy for name, policy in interrupt_on.items() if name != "submit_structured_response"},
         "middleware": [ToolCallRecoveryMiddleware(), ToolResultInvariantMiddleware()],
     }
     configured_subagents = [
@@ -611,7 +611,7 @@ class AgentRuntime:
         self._mongo_service = mongo_service
         self._remote_agent_versions: dict[str, str | None] = {}
         self._user = user
-        self._client_context = client_context
+        self._client_context = client_context.model_copy(deep=True) if client_context else None
         # Spec 102 Phase 8 / T107: prefer the per-request bearer from
         # current_user_token (set by JwtAuthMiddleware) so the same token
         # the BFF authenticated us with is forwarded to MCP servers.

@@ -197,6 +197,11 @@ async def test_initialization_resolves_structured_policy_once(monkeypatch: pytes
     await runtime.initialize()
     resolve_policy.assert_called_once()
     assert sum(tool.name == "submit_structured_response" for tool in create_graph.call_args.kwargs["tools"]) == 1
+    assert all(
+        tool.name != "submit_structured_response"
+        for subagent in create_graph.call_args.kwargs["subagents"]
+        for tool in subagent.get("tools", [])
+    )
     assert "Structured response requirement:" in create_graph.call_args.kwargs["system_prompt"]
 
 

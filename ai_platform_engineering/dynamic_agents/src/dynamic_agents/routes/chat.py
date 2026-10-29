@@ -99,7 +99,16 @@ def apply_config_override(agent: DynamicAgentConfig, config_override: dict[str, 
     # Convert agent to dict, deep merge, reconstruct
     agent_dict = agent.model_dump(by_alias=True)
     merged = _deep_merge(agent_dict, config_override)
-    return DynamicAgentConfig.model_validate(merged)
+    overridden = DynamicAgentConfig.model_validate(merged)
+    original_policy = [
+        entry for entry in agent.features.middleware if entry.type == "structured_response"
+    ] if agent.features else []
+    overridden_policy = [
+        entry for entry in overridden.features.middleware if entry.type == "structured_response"
+    ] if overridden.features else []
+    if original_policy != overridden_policy:
+        raise HTTPException(status_code=400, detail="config_override cannot change structured_response middleware")
+    return overridden
 
 
 def _validate_allowed_tools_subset(
@@ -486,6 +495,7 @@ async def _generate_resume_sse_events(
             mcp_servers,
             session_id,
             user=user,
+            client_context=client_context,
         )
 
         # Resume streaming with form data
