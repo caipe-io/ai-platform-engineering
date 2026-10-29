@@ -1,3 +1,4 @@
+import { enqueuePlatformNotificationExports } from "./exports.server";
 import { enqueueNotification } from "@/lib/notifications/delivery.server";
 import { getCollection } from "@/lib/mongodb";
 import {
@@ -102,6 +103,7 @@ async function publishToJetStream(
 export async function storeNotificationEnvelope(
   envelope: NotificationEnvelope,
 ): Promise<NotificationPublishOutcome> {
+  await enqueuePlatformNotificationExports(envelope);
   const preferences = await loadNotificationPreferences(
     envelope.recipient_email,
   );

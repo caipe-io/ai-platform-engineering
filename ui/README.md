@@ -210,5 +210,9 @@ access token to the selected runtime. The browser does not attach a bearer token
   `publicKey`, `privateKey`, and `subject`. Channel enablement is configured
   through the UI chart's `config` values. External channels are off by default.
 
+- Operators can enable metadata-only Splunk HEC or OTLP/HTTP logs exports with
+  `NOTIFICATION_SPLUNK_ENABLED` and `NOTIFICATION_OTEL_ENABLED`. Both default off;
+  endpoints and secrets are deployment-owned, separate from personal channels.
+
 See [notification architecture](../docs/docs/architecture/notifications.md) for
 acceptance, retry, idempotency, and authorization behavior.

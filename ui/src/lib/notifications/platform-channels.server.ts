@@ -1,3 +1,4 @@
+import { enqueueNotificationExports } from "./exports.server";
 import { resolveRecipients } from "./audience.server";
 import { enqueueNotification } from "./delivery.server";
 import type { InAppNotificationSeverity } from "@/types/in-app-notification";
@@ -10,16 +11,23 @@ export async function queuePlatformNotificationChannels(input: {
   message: string;
   severity: InAppNotificationSeverity;
 }): Promise<void> {
-  if (
-    process.env.NOTIFICATION_EVENTS_ENABLED === "false" ||
-    !(
-      process.env.NOTIFICATION_WEB_PUSH_PUBLIC_KEY ||
-      process.env.NOTIFICATION_SLACK_ENABLED === "true" ||
-      process.env.NOTIFICATION_WEBEX_ENABLED === "true"
-    )
-  )
-    return;
+  if (process.env.NOTIFICATION_EVENTS_ENABLED === "false") return;
   try {
+    await enqueueNotificationExports({
+      key: [input.id],
+      sourceId: "platform",
+      eventType: input.eventType,
+      occurredAt: new Date().toISOString(),
+      severity: input.severity,
+    });
+    if (
+      !(
+        process.env.NOTIFICATION_WEB_PUSH_PUBLIC_KEY ||
+        process.env.NOTIFICATION_SLACK_ENABLED === "true" ||
+        process.env.NOTIFICATION_WEBEX_ENABLED === "true"
+      )
+    )
+      return;
     const audience = await resolveRecipients([], { includeOrgAdmins: true });
     for (const recipient of audience.recipients)
       await enqueueNotification({

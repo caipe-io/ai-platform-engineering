@@ -207,7 +207,17 @@ notifications:
     secretName: ""
     secretKey: token
 
+  # Operator-only notification metadata exports. Secrets are never app-provided.
+  splunk:
+    tokenSecretName: ""
+    tokenSecretKey: token
+  otel:
+    headersSecretName: ""
+    headersSecretKey: headers
+
 config:
+  NOTIFICATION_SPLUNK_ENABLED: "false"
+  NOTIFICATION_OTEL_ENABLED: "false"
   NOTIFICATION_WEBEX_ENABLED: "false"
   NOTIFICATION_SLACK_ENABLED: "false"
   # Optional comma-separated GitHub repository URLs approved for release-note

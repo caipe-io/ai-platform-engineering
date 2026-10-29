@@ -278,3 +278,64 @@ Secret with `publicKey`, `privateKey`, and `subject` VAPID keys. Configure bot
 admin authentication through the existing Slack/Webex deployment settings and
 enable `NOTIFICATION_SLACK_ENABLED` or `NOTIFICATION_WEBEX_ENABLED` explicitly.
 Configuring a channel never enables it for a user.
+
+
+## Operator exports: Splunk and OpenTelemetry
+
+Notification events can also be exported to **Splunk HEC** and **OTLP/HTTP JSON
+logs collectors**. These are operator-controlled observability destinations,
+separate from the four personal delivery channels. They do not create a generic
+event bus or ingest arbitrary events.
+
+- Both exports are **off by default**; personal subscriptions and quiet hours
+  do not control them. `NOTIFICATION_EVENTS_ENABLED=false` disables all delivery.
+- Exported fields are restricted to a stable hashed event ID, source ID, event
+  type, occurrence time, severity, resource type, and hashed resource ID.
+  Message bodies, titles, links, recipients, and credentials are excluded.
+- Each logical event queues once per sink, independently of recipient fanout.
+  Platform events with no matching user records can still export.
+- Each sink has its own lease, status, and up to five attempts with backoff and
+  jitter. Successful sinks are not repeated when another fails. Workers honor `Retry-After`;
+  permanent errors and OTLP partial rejections fail immediately.
+- Delivery is at least once. Use the event ID for downstream deduplication.
+  Splunk success means HEC accepted the event; indexer acknowledgment is not used.
+- Collector records use `kind: "export"` in `notification_deliveries`; they are
+  excluded from personal delivery-status responses. Operators can inspect those
+  records using existing database access. Retention and deduplication last 90 days.
+
+Configure non-secret values through the UI chart's `config` (or server env):
+
+```yaml
+caipe-ui:
+  config:
+    NOTIFICATION_SPLUNK_ENABLED: "true"
+    NOTIFICATION_SPLUNK_HEC_URL: "https://collector.example.test:8088/services/collector/event"
+    NOTIFICATION_OTEL_ENABLED: "true"
+    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "https://collector.example.test:4318/v1/logs"
+    # Optional exact event-type allowlist; unset exports all notification types.
+    NOTIFICATION_EXPORT_EVENT_TYPES: "workflow.failed,agent.failed,ingestion.failed"
+  notifications:
+    splunk:
+      tokenSecretName: example-hec-token
+      tokenSecretKey: token
+    otel:
+      headersSecretName: example-collector-headers
+      headersSecretKey: headers
+```
+
+`NOTIFICATION_SPLUNK_HEC_TOKEN` is required for HEC. Optional
+`NOTIFICATION_SPLUNK_INDEX` and `NOTIFICATION_SPLUNK_SOURCETYPE` select an approved
+index and sourcetype. OTLP supports `OTEL_EXPORTER_OTLP_LOGS_HEADERS` (URL-encoded
+comma-separated `key=value` entries) and `OTEL_SERVICE_NAME`. When logs-specific
+settings are absent, `OTEL_EXPORTER_OTLP_ENDPOINT` (with `/v1/logs` appended) and
+`OTEL_EXPORTER_OTLP_HEADERS` apply. Only OTLP/HTTP JSON is supported, not gRPC.
+
+Endpoints and authentication must come from deployment configuration and existing
+Secrets; apps cannot choose destinations. Redirects and embedded URL credentials
+are rejected. HTTPS with certificate validation is required unless an operator
+explicitly sets `NOTIFICATION_COLLECTOR_ALLOW_HTTP=true` for a trusted private
+collector. Export acceptance does not prove the downstream retention or access
+policy; configure those at the collector.
+
+Protocol references: [Splunk HEC event format](https://help.splunk.com/en/data-management/collect-http-event-data/use-hec-in-splunk-cloud-platform/format-events-for-http-event-collector)
+and [OTLP/HTTP logs](https://opentelemetry.io/docs/specs/otlp/).

@@ -10,45 +10,25 @@ import {
 } from "./subscriptions.server";
 import { quietHoursEnd, type NotificationChannel } from "./channels";
 import type { BrowserPushDevice } from "./web-push.server";
-import type { InAppNotificationSeverity } from "@/types/in-app-notification";
+import { sendNotificationExport } from "./exports.server";
+import {
+  NotificationDeliveryError,
+  type NotificationDispatch,
+  type NotificationDelivery,
+  type NotificationExportDelivery,
+} from "./delivery-types";
+export type {
+  NotificationDispatch,
+  NotificationDelivery,
+} from "./delivery-types";
+type QueuedDelivery = NotificationDelivery | NotificationExportDelivery;
 
-export interface NotificationDispatch {
-  id: string;
-  sourceId: string;
-  sourceLabel: string;
-  eventType: string;
-  recipient: { subject: string; email: string };
-  title: string;
-  message: string;
-  href?: string;
-  severity: InAppNotificationSeverity;
-  retentionDays?: number;
-  correlationKey?: string;
-  channels?: NotificationChannel[];
-}
 interface NotificationJob extends NotificationDispatch {
   _id: string;
   expanded: boolean;
   createdAt: Date;
   expiresAt: Date;
 }
-export interface NotificationDelivery extends NotificationDispatch {
-  _id: string;
-  notificationId: string;
-  channel: NotificationChannel;
-  targetId?: string;
-  status: "pending" | "processing" | "delivered" | "failed" | "skipped";
-  attempts: number;
-  availableAt: Date;
-  leaseUntil?: Date;
-  leaseToken?: string;
-  lastError?: string;
-  browserDisplayedAt?: Date;
-  createdAt: Date;
-  updatedAt: Date;
-  expiresAt: Date;
-}
-
 /** Persist acceptance before returning; expansion can resume after a process exits. */
 export async function enqueueNotification(
   input: NotificationDispatch,
@@ -123,7 +103,7 @@ async function expandNotificationJobs(): Promise<void> {
 
 export async function runNotificationDeliveriesOnce(): Promise<number> {
   await expandNotificationJobs();
-  const deliveries = await getCollection<NotificationDelivery>(
+  const deliveries = await getCollection<QueuedDelivery>(
     "notification_deliveries",
   );
   const now = new Date();
@@ -156,50 +136,55 @@ export async function runNotificationDeliveriesOnce(): Promise<number> {
     );
     if (!delivery) continue;
     try {
-      const allowed = await deliveryAllowed(
-        delivery.recipient.subject,
-        delivery.sourceId,
-        delivery.eventType,
-        delivery.channel,
-      );
-      if (allowed && delivery.channel !== "in_app") {
-        const [global, source] = await Promise.all([
-          readSubscription(delivery.recipient.subject),
-          readSubscription(delivery.recipient.subject, delivery.sourceId),
-        ]);
-        const until = quietHoursEnd(source?.quietHours ? source : global);
-        if (until) {
-          await deliveries.updateOne(
-            { _id: delivery._id, leaseToken: token },
-            {
-              $set: {
-                status: "pending",
-                availableAt: until,
-                updatedAt: new Date(),
+      let allowed: boolean;
+      if (delivery.kind === "export") {
+        allowed = await sendNotificationExport(delivery);
+      } else {
+        allowed = await deliveryAllowed(
+          delivery.recipient.subject,
+          delivery.sourceId,
+          delivery.eventType,
+          delivery.channel,
+        );
+        if (allowed && delivery.channel !== "in_app") {
+          const [global, source] = await Promise.all([
+            readSubscription(delivery.recipient.subject),
+            readSubscription(delivery.recipient.subject, delivery.sourceId),
+          ]);
+          const until = quietHoursEnd(source?.quietHours ? source : global);
+          if (until) {
+            await deliveries.updateOne(
+              { _id: delivery._id, leaseToken: token },
+              {
+                $set: {
+                  status: "pending",
+                  availableAt: until,
+                  updatedAt: new Date(),
+                },
+                $inc: { attempts: -1 },
+                $unset: { leaseUntil: "", leaseToken: "" },
               },
-              $inc: { attempts: -1 },
-              $unset: { leaseUntil: "", leaseToken: "" },
-            },
-          );
-          continue;
+            );
+            continue;
+          }
         }
-      }
-      if (allowed) {
-        if (delivery.channel === "in_app") {
-          await createInAppNotification({
-            eventKey: delivery.notificationId,
-            recipientUserSubjects: [delivery.recipient.subject],
-            title: delivery.title,
-            message: delivery.message,
-            href: delivery.href,
-            severity: delivery.severity,
-            sourceLabel: delivery.sourceLabel,
-            sourceId: delivery.sourceId,
-            correlationKey: delivery.correlationKey,
-            eventType: delivery.eventType,
-            retentionDays: delivery.retentionDays,
-          });
-        } else await sendExternalNotification(delivery);
+        if (allowed) {
+          if (delivery.channel === "in_app") {
+            await createInAppNotification({
+              eventKey: delivery.notificationId,
+              recipientUserSubjects: [delivery.recipient.subject],
+              title: delivery.title,
+              message: delivery.message,
+              href: delivery.href,
+              severity: delivery.severity,
+              sourceLabel: delivery.sourceLabel,
+              sourceId: delivery.sourceId,
+              correlationKey: delivery.correlationKey,
+              eventType: delivery.eventType,
+              retentionDays: delivery.retentionDays,
+            });
+          } else await sendExternalNotification(delivery);
+        }
       }
       await deliveries.updateOne(
         { _id: delivery._id, leaseToken: token },
@@ -222,9 +207,20 @@ export async function runNotificationDeliveriesOnce(): Promise<number> {
         { _id: delivery._id, leaseToken: token },
         {
           $set: {
-            status: delivery.attempts >= 5 ? "failed" : "pending",
+            status:
+              delivery.attempts >= 5 ||
+              (error instanceof NotificationDeliveryError && !error.retryable)
+                ? "failed"
+                : "pending",
             availableAt: new Date(
-              Date.now() + Math.min(300_000, 5000 * 2 ** delivery.attempts),
+              Date.now() +
+                Math.max(
+                  Math.min(300_000, 5000 * 2 ** delivery.attempts) *
+                    (0.8 + Math.random() * 0.4),
+                  error instanceof NotificationDeliveryError
+                    ? error.retryAfterMs
+                    : 0,
+                ),
             ),
             updatedAt: new Date(),
             lastError:

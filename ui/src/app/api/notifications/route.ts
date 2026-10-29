@@ -1,3 +1,4 @@
+import { enqueueNotificationExports } from "@/lib/notifications/exports.server";
 import { consumeNotificationQuota } from "@/lib/notifications/limits.server";
 import { canLaunchAgenticApp, agenticAppUserContextFromSession } from "@/lib/agentic-apps/access";
 import { loadConfiguredAgenticApps } from "@/lib/agentic-apps/config";
@@ -94,25 +95,29 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     throw new ApiError("severity is not recognised", 400, "BAD_REQUEST");
   }
 
+  const eventKey = text(body.eventKey, "eventKey");
+  const title = text(body.title, "title"), message = text(body.message, "message");
+  const sourceId = `app:${app.manifest.id}`;
   const source = await getNotificationSource(`app:${app.manifest.id}`);
   if (source) {
     if (typeof body.eventType !== "string" || !source.events.some((event) => event.id === body.eventType)) throw new ApiError("Select a registered notification eventType", 400);
-    const eventKey = text(body.eventKey, "eventKey");
-    const title = text(body.title, "title"), message = text(body.message, "message");
     const audience = await resolveRecipients((recipients as string[]).map((subject) => ({ subject })), { includeOrgAdmins: false });
-    if (audience.recipients.length) await consumeNotificationQuota(`app:${app.manifest.id}`, 200, audience.recipients.length);
+    await consumeNotificationQuota(sourceId, 200, Math.max(1, audience.recipients.length));
     for (const recipient of audience.recipients) await consumeNotificationQuota(`recipient:${recipient.subject}`, 20);
+    await enqueueNotificationExports({ key: [eventKey], sourceId, eventType: body.eventType, occurredAt: new Date().toISOString(), severity: severity as Severity });
     for (const recipient of audience.recipients) await enqueueNotification({
       id: eventKey, sourceId: `app:${app.manifest.id}`, sourceLabel: app.manifest.displayName,
       eventType: body.eventType, recipient, title, message, href, severity: severity as Severity, retentionDays: 90,
     });
     return successResponse({ queued: audience.recipients.length, skipped: audience.skipped + audience.rejected }, 202);
   }
+  await consumeNotificationQuota(sourceId, 200, recipients.length);
+  await enqueueNotificationExports({ key: [eventKey], sourceId, eventType: "app.notification", occurredAt: new Date().toISOString(), severity: severity as Severity });
   const created = await createInAppNotification({
-    eventKey: `app:${app.installation.appId}:${text(body.eventKey, "eventKey")}`,
+    eventKey: `app:${app.installation.appId}:${eventKey}`,
     recipientUserSubjects: recipients as string[],
-    title: text(body.title, "title"),
-    message: text(body.message, "message"),
+    title,
+    message,
     href,
     severity: severity as Severity,
     sourceLabel: app.manifest.displayName,
