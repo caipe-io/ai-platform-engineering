@@ -45,6 +45,8 @@ const BLOCKED_RESPONSE_HEADERS = new Set([
 
 export type ProxyContext = {
   params: Promise<{ appId: string; path?: string[] }>;
+  /** Selected by the host's root MCP routes, never by a caller header. */
+  legacyMcpResource?: boolean;
 };
 
 export async function proxyAgenticAppRequest(
@@ -73,7 +75,7 @@ export async function proxyAgenticAppRequest(
     Boolean(app.manifest.api.mcp?.apiKeyHeader && request.headers.has(app.manifest.api.mcp.apiKeyHeader));
   if (!authenticatedUser && mcpRoute &&
       (mcpRoute !== "protocol" || explicitMcpCredential || !request.headers.has("cookie"))) {
-    return proxyExternalMcpRequest(request, app, path, mcpRoute === "protocol");
+    return proxyExternalMcpRequest(request, app, path, mcpRoute === "protocol", context.legacyMcpResource);
   }
 
   const nextRequest = request instanceof NextRequest
@@ -85,7 +87,7 @@ export async function proxyAgenticAppRequest(
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.statusCode === 401 && mcpRoute) {
-        return proxyExternalMcpRequest(request, app, path, mcpRoute === "protocol");
+        return proxyExternalMcpRequest(request, app, path, mcpRoute === "protocol", context.legacyMcpResource);
       }
       if (error.statusCode === 401 && isDocumentNavigation(request)) {
         return redirectToLogin(request);
@@ -234,6 +236,7 @@ async function proxyExternalMcpRequest(
   app: NonNullable<ReturnType<typeof getConfiguredAgenticApp>>,
   path: string[],
   forwardCredentials: boolean,
+  legacyMcpResource = false,
 ): Promise<Response> {
   const policy = resolveAgenticAppHttpPolicyAction(app.manifest, request.method, `/${path.join("/")}`);
   if (!policy || policy.defaultEffect !== "allow") return Response.json({ error: "policy_denied" }, { status: 403 });
@@ -249,6 +252,11 @@ async function proxyExternalMcpRequest(
   for (const name of names) {
     const value = request.headers.get(name);
     if (value !== null) headers.set(name, value);
+  }
+  // Preserve the OAuth resource identity when a saved client uses the root URL.
+  // This is a fixed resource selector, not an assertion of caller identity.
+  if (legacyMcpResource && app.manifest.api.mcp) {
+    headers.set("x-caipe-mcp-resource-path", app.manifest.api.mcp.path);
   }
   // No cookies, gateway identity assertions, or shared app token are supplied.
   // An invalid external bearer must never fall back to a browser's identity.

@@ -15,13 +15,12 @@ export function externalMcpRoute(
     ? "protocol" : null;
 }
 
-/** Resolve RFC 9728 path-derived discovery for native and prefixed iframe URLs. */
+/** Resolve discovery for both stable root MCP URLs and hosted app URLs. */
 export function appForMcpResource(apps: ConfiguredAgenticApp[], resource: string): ConfiguredAgenticApp | null {
   const matches = apps.filter(app => {
     const mcp = app.manifest.api.mcp;
     return app.installation.installed && app.installation.enabled && mcp &&
-      (resource === `${buildAgenticAppPublicPath(app.installation.appId)}${mcp.path}` ||
-       (resource === mcp.path && app.manifest.api.mounts.some(root => resource === root || resource.startsWith(`${root}/`))));
+      (resource === `${buildAgenticAppPublicPath(app.installation.appId)}${mcp.path}` || resource === mcp.path);
   });
   if (matches.length > 1) throw new Error("Ambiguous MCP protected resource");
   return matches[0] ?? null;

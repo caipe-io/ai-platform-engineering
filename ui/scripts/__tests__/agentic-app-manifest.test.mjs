@@ -76,6 +76,23 @@ test("external MCP authentication is opt-in with fixed runtime and discovery pat
   assert.throws(() => validateAgenticAppManifest(app), /runtime/);
 });
 
+test("stable root MCP paths cannot collide with another app's MCP or API mount", () => {
+  const primary = exampleManifest();
+  primary.api.mounts = [];
+  primary.api.mcp = { path: "/api/example/mcp", metadataPath: "/.well-known/oauth-protected-resource/api/example/mcp" };
+  const secondary = exampleManifest();
+  secondary.id = "secondary";
+  secondary.ui.routes = [{ id: "home", path: "/secondary" }];
+  secondary.api.mounts = [];
+  secondary.api.mcp = { ...primary.api.mcp };
+  assert.throws(() => validateAgenticAppOwnership([primary, secondary]), /claims overlap/);
+  delete secondary.api.mcp;
+  secondary.api.mounts = ["/api/example"];
+  assert.throws(() => validateAgenticAppOwnership([primary, secondary]), /claims overlap/);
+  primary.api.mounts = ["/api/example"];
+  assert.doesNotThrow(() => validateAgenticAppOwnership([primary]));
+});
+
 test("app icons are owned same-origin assets; legacy symbolic names remain compatible", () => {
   const app = exampleManifest();
   const icon = "/app-icons/example-app/logo.svg";

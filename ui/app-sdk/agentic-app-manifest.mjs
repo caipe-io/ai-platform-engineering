@@ -583,6 +583,9 @@ export function validateAgenticAppOwnership(manifests) {
       claims.push({ id: app.id, kind: "route", path: route.path });
     for (const mount of app.api.mounts)
       claims.push({ id: app.id, kind: "api", path: mount });
+    if (app.api.mcp && !app.api.mounts.some(root =>
+      app.api.mcp.path === root || app.api.mcp.path.startsWith(`${root}/`)))
+      claims.push({ id: app.id, kind: "api", path: app.api.mcp.path });
     for (const slot of app.ui.slots ?? [])
       claims.push({ id: app.id, kind: "slot", path: slot });
   }

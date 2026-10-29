@@ -299,6 +299,16 @@ publisher trust boundary.
 - The iframe resource URL is `/apps/<app-id>/api/example/mcp`; compiled native API mounts retain their declared public URL. The app's metadata must advertise that exact resource URL and a public authorization server.
 - Path-derived RFC 9728 discovery is available at `/.well-known/oauth-protected-resource` followed by the resource path. Disabled, unknown, or ambiguous resources fail closed.
 
+#### Preserve saved external MCP connections
+
+- The declared root `api.mcp.path` and its `openapi.json` schema remain available when an app moves to an iframe installation. CAIPE proxies these exact routes through the existing app gateway without redirecting clients or rewriting saved connections.
+- Root discovery remains available at `/.well-known/oauth-protected-resource` followed by `api.mcp.path`. A root MCP claim cannot overlap another app's MCP path or API mount.
+- For root protocol, metadata, and schema requests, CAIPE supplies `x-caipe-mcp-resource-path` with the declared root MCP path. Caller-supplied values are stripped. This selects a public resource URL; it does not authenticate a caller or supply host identity.
+- The app must recognize that fixed root selector, advertise the matching root `resource` and metadata URL, and validate tokens against that resource. Hosted requests continue using the hosted resource. Apps that ignore the selector may accept existing credentials but still fail OAuth rediscovery.
+- Retain the OAuth issuer, client registrations, refresh grants, and authorization-server resource registrations for both URLs. With resource indicators enabled, removing the old permitted resource can cause token issuance or refresh to fail even when routing works. Revoked grants still require sign-in.
+- For secondary OIDC, retain both public URL keys in the host's `CAIPE_SECONDARY_AUTH_RESOURCES` bindings. Restoring routing does not grant an undeclared resource access to a secondary trust anchor.
+- Deploy matching host and app changes before asking users to reconnect. Check an existing token, a refresh, and a fresh authorization against the saved root URL. No client configuration or CAIPE database migration is required.
+
 ### Host keyboard shortcuts
 
 - A connected iframe can receive `hostShortcuts: ["search"]` in its bridge capabilities.

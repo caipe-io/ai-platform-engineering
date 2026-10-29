@@ -5,9 +5,12 @@ import { ApiError } from "@/lib/api-error";
 import { proxyAgenticAppRequest } from "../proxy";
 import { appForMcpResource, externalMcpRoute } from "../mcp-routing";
 import type { ConfiguredAgenticApp } from "@/types/agentic-app";
+import { GET as rootGet, POST as rootPost, DELETE as rootDelete } from "@/app/api/[...path]/route";
+import { GET as discovery } from "@/app/.well-known/oauth-protected-resource/[...path]/route";
 
 const mockAuth = jest.fn();
 const mockApp = jest.fn();
+const mockApps = jest.fn();
 jest.mock("@/lib/api-middleware", () => ({
   ApiError: jest.requireActual("@/lib/api-error").ApiError,
   getAuthenticatedUser: (...args: unknown[]) => mockAuth(...args),
@@ -15,6 +18,7 @@ jest.mock("@/lib/api-middleware", () => ({
 jest.mock("@/lib/agentic-apps/config", () => ({
   isAgenticAppsEnabled: () => true,
   getConfiguredAgenticApp: () => mockApp(),
+  loadConfiguredAgenticApps: () => mockApps(),
 }));
 jest.mock("@/native-extensions/runtime", () => ({ nativeExtensionById: () => null }));
 
@@ -34,6 +38,7 @@ function app(): ConfiguredAgenticApp {
 let fetchMock: jest.SpyInstance;
 beforeEach(() => {
   jest.clearAllMocks(); mockApp.mockReturnValue(app()); mockAuth.mockRejectedValue(new ApiError("Unauthorized", 401));
+  mockApps.mockImplementation(() => [mockApp()]);
   fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(new Response("Unauthorized", {
     status: 401, headers: { "WWW-Authenticate": 'Bearer resource_metadata="https://example.test/discovery"', "set-cookie": "untrusted=1" },
   }));
@@ -177,13 +182,113 @@ it("preserves many tiny chunks without retaining their reusable source buffer", 
   expect(stream.locked).toBe(false);
 });
 
-it("routes only a known native or iframe resource to discovery", () => {
+it("routes only a known root or hosted resource to discovery", () => {
   const configured = app();
   expect(appForMcpResource([configured], "/apps/example/api/example/mcp")).toBe(configured);
-  expect(appForMcpResource([configured], "/api/example/mcp")).toBeNull();
+  expect(appForMcpResource([configured], "/api/example/mcp")).toBe(configured);
   configured.manifest.api.mounts = ["/api/example"];
   expect(appForMcpResource([configured], "/api/example/mcp")).toBe(configured);
   expect(appForMcpResource([configured], "/api/example/other")).toBeNull();
   expect(externalMcpRoute(configured.manifest, "PUT", configured.manifest.api.mcp!.metadataPath)).toBeNull();
   expect(() => appForMcpResource([configured, configured], "/api/example/mcp")).toThrow("Ambiguous");
+});
+
+const rootContext = (path = ["example", "mcp"]) => ({ params: Promise.resolve({ path }) });
+
+it("proxies a saved root URL without redirecting, changing its body, or substituting a browser identity", async () => {
+  const configured = app();
+  configured.manifest.runtime!.preserveMountPath = true;
+  mockApp.mockReturnValue(configured);
+  const body = '{"jsonrpc":"2.0","id":1,"method":"tools/list"}';
+  const stream = new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("data: result\n\n")); controller.close(); } });
+  fetchMock.mockResolvedValueOnce(new Response(stream, { headers: {
+    "content-type": "text/event-stream", "mcp-session-id": "example-session",
+  } }));
+  const request = new NextRequest("https://example.test/api/example/mcp?transport=example", {
+    method: "POST", body, headers: {
+      authorization: "Bearer saved-token", cookie: "session=valid", "mcp-session-id": "example-session",
+      "mcp-protocol-version": "2025-11-25", "last-event-id": "example-event",
+      "x-caipe-user": "forged", "x-caipe-mcp-resource-path": "/api/other/mcp",
+    },
+  });
+  const response = await rootPost(request, rootContext());
+  const [target, init] = fetchMock.mock.calls[0];
+  expect(String(target)).toBe("http://example.internal/apps/example/api/example/mcp?transport=example");
+  expect(Buffer.from(init.body).toString()).toBe(body);
+  expect(init.signal).toBe(request.signal);
+  expect(init.redirect).toBe("manual");
+  const headers = new Headers(init.headers);
+  expect(headers.get("authorization")).toBe("Bearer saved-token");
+  expect(headers.get("x-caipe-mcp-resource-path")).toBe("/api/example/mcp");
+  expect(headers.get("mcp-session-id")).toBe("example-session");
+  expect(headers.get("mcp-protocol-version")).toBe("2025-11-25");
+  expect(headers.get("last-event-id")).toBe("example-event");
+  expect(headers.has("cookie")).toBe(false);
+  expect(headers.has("x-caipe-user")).toBe(false);
+  expect(mockAuth).not.toHaveBeenCalled();
+  expect(response.status).toBe(200);
+  expect(response.headers.get("location")).toBeNull();
+  expect(response.headers.get("mcp-session-id")).toBe("example-session");
+  expect(await response.text()).toBe("data: result\n\n");
+});
+
+it("preserves a root client's unauthenticated OAuth challenge", async () => {
+  expect((await rootPost(new NextRequest("https://example.test/api/example/mcp", { method: "POST", body: "{}" }), rootContext())).status).toBe(401);
+  expect(mockAuth).not.toHaveBeenCalled();
+  expect(new Headers(fetchMock.mock.calls[0][1].headers).get("x-caipe-mcp-resource-path")).toBe("/api/example/mcp");
+});
+
+it.each([false, true])("keeps path-derived discovery public with legacy resource selection %s", async legacy => {
+  const path = [...(legacy ? [] : ["apps", "example"]), "api", "example", "mcp"];
+  await discovery(new NextRequest(`https://example.test/.well-known/oauth-protected-resource/${path.join("/")}`, {
+    headers: { authorization: "Bearer secret", cookie: "session=valid", "x-caipe-mcp-resource-path": "/api/other/mcp" },
+  }), { params: Promise.resolve({ path }) });
+  const headers = new Headers(fetchMock.mock.calls[0][1].headers);
+  expect(headers.get("x-caipe-mcp-resource-path")).toBe(legacy ? "/api/example/mcp" : null);
+  expect(headers.has("authorization")).toBe(false);
+  expect(headers.has("cookie")).toBe(false);
+  expect(mockAuth).not.toHaveBeenCalled();
+});
+
+it("keeps the root schema public without forwarding credentials", async () => {
+  await rootGet(new NextRequest("https://example.test/api/example/mcp/openapi.json", {
+    headers: { authorization: "Bearer secret", "x-example-token": "secret" },
+  }), rootContext(["example", "mcp", "openapi.json"]));
+  const headers = new Headers(fetchMock.mock.calls[0][1].headers);
+  expect(headers.has("authorization")).toBe(false);
+  expect(headers.has("x-example-token")).toBe(false);
+  expect(headers.get("x-caipe-mcp-resource-path")).toBe("/api/example/mcp");
+});
+
+it("resolves an exact MCP path before interpreting a schema suffix", async () => {
+  const configured = app();
+  configured.manifest.api.mcp!.path = "/api/example/openapi.json";
+  mockApp.mockReturnValue(configured);
+  expect((await rootPost(new NextRequest("https://example.test/api/example/openapi.json", { method: "POST", body: "{}" }), rootContext(["example", "openapi.json"]))).status).toBe(401);
+  expect(new Headers(fetchMock.mock.calls[0][1].headers).get("x-caipe-mcp-resource-path")).toBe("/api/example/openapi.json");
+});
+
+it.each([["example", "projects"], ["example", "mcp", "other"], ["example", "mcp2"], ["other", "mcp"]])("does not expose undeclared root API %s", async (...path) => {
+  expect((await rootGet(new NextRequest(`https://example.test/api/${path.join("/")}`), rootContext(path))).status).toBe(404);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it("fails closed for disabled, ambiguous, invalid, denied, and oversized root requests", async () => {
+  const configured = app();
+  mockApp.mockReturnValue(configured);
+  configured.installation.enabled = false;
+  const request = () => new NextRequest("https://example.test/api/example/mcp", { method: "POST", body: "{}" });
+  expect((await rootPost(request(), rootContext())).status).toBe(404);
+  configured.installation.enabled = true;
+  mockApps.mockReturnValueOnce([configured, configured]);
+  expect((await rootPost(request(), rootContext())).status).toBe(503);
+  mockApps.mockImplementationOnce(() => { throw new Error("Invalid configuration"); });
+  expect((await rootPost(request(), rootContext())).status).toBe(503);
+  configured.manifest.access.policyActions = [];
+  expect((await rootPost(request(), rootContext())).status).toBe(403);
+  configured.manifest.access.policyActions = [{ action: "proxy:POST", defaultEffect: "allow" }];
+  configured.manifest.runtime!.maxRequestBodyBytes = 1;
+  expect((await rootPost(request(), rootContext())).status).toBe(413);
+  expect((await rootDelete(new NextRequest("https://example.test/api/example/mcp", { method: "DELETE" }), rootContext())).status).toBe(403);
+  expect(fetchMock).not.toHaveBeenCalled();
 });

@@ -146,6 +146,13 @@ its tooltip shows the full local timestamp.
 4. The UI stores conversation messages and stream events in MongoDB-backed state.
 5. MCP tools are reached through configured MCP server rows, usually via AgentGateway.
 
+External app MCP clients can retain a saved root `api.mcp.path` URL after the app
+moves behind `/apps/<id>`. The API fallback and protected-resource discovery
+route delegate to the existing gateway and select the root OAuth resource with
+`x-caipe-mcp-resource-path`. The app must support that fixed selector. See
+[saved external MCP connections](../docs/docs/features/agentic-apps.md#preserve-saved-external-mcp-connections)
+for OAuth resource registration and rollout requirements.
+
 ## Existing AgentCore agents
 
 - **Agent Builder → Execution harness → Add existing AgentCore agent** is available to callers authorized
