@@ -361,7 +361,7 @@ export function AgenticAppAssistantOverlay({
           ref={panelRef}
           role="dialog"
           aria-label={headerTitle}
-          className="pointer-events-auto relative flex min-h-0 flex-col overflow-hidden rounded-3xl border border-border bg-background text-foreground shadow-2xl dark:bg-slate-950"
+          className="agentic-assistant-surface pointer-events-auto relative flex min-h-0 flex-col overflow-hidden rounded-3xl border border-border bg-background text-foreground shadow-2xl"
           style={{
             width: expanded ? "100%" : `min(${panelSize.width}px, 100%)`,
             height: expanded ? "100%" : `min(${panelSize.height}px, 100%)`,
@@ -371,7 +371,7 @@ export function AgenticAppAssistantOverlay({
             onPointerMove={handleResizeMove} onPointerUp={handleResizeEnd} onPointerCancel={handleResizeEnd} onLostPointerCapture={handleResizeEnd}
             className="absolute left-1 top-1 z-10 flex h-6 w-6 cursor-nwse-resize touch-none items-center justify-center rounded-md text-muted-foreground hover:bg-accent"
           ><span aria-hidden className="h-2 w-2 border-l border-t border-current" /></button>
-          <header className="flex items-center justify-between gap-3 border-b border-border bg-background py-3 pl-9 pr-4">
+          <header className="agentic-assistant-header flex items-center justify-between gap-3 border-b border-border py-3 pl-9 pr-4">
             {hasSelectedConversation && assistantConversation ? <HostConversationActions key={assistantConversation.id}
               appId={appId} agentId={assistantAgentId} conversationId={assistantConversation.id}
               variant="title" conversationTitle={selectedTitle} disabled={conversationActionPending}
@@ -412,7 +412,7 @@ export function AgenticAppAssistantOverlay({
               revision={historyRevision} disabled={conversationActionPending}
               selectedId={assistantConversation?.id} onSelect={selectHistory} onArchived={onArchived} />
           </TabsContent>
-          <TabsContent value="chat" forceMount className="m-0 min-h-0 flex-1 bg-background data-[state=inactive]:hidden [&>div]:bg-background" style={{
+          <TabsContent value="chat" forceMount className="m-0 min-h-0 flex-1 data-[state=inactive]:hidden" style={{
             "--text-sm": fontScale === "large" ? "1rem" : fontScale === "compact" ? "0.8125rem" : "0.875rem",
             "--text-base": fontScale === "large" ? "1.125rem" : fontScale === "compact" ? "0.875rem" : "1rem",
           } as React.CSSProperties}>
@@ -432,6 +432,7 @@ export function AgenticAppAssistantOverlay({
                 placeholder={options?.presentation?.placeholder ?? `${bubbleLabel}…`}
                 emptyStateTitle={bubbleLabel}
                 showAgentHeader={false}
+                transparentBackground
                 showAuditNotice={options?.presentation?.showAuditNotice}
                 feedbackPrompt={options?.presentation?.feedbackPrompt}
                 clientContext={clientContext}

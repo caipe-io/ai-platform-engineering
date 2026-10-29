@@ -124,6 +124,8 @@ interface ChatPanelProps {
   placeholder?: string;
   emptyStateTitle?: string;
   showAgentHeader?: boolean;
+  /** Let an enclosing surface provide the chat and composer background. */
+  transparentBackground?: boolean;
   /** Show the audit logging notice when configured. Defaults to true. */
   showAuditNotice?: boolean;
   /** App-owned copy for the host correction form; omitted for the standard disclaimer. */
@@ -142,7 +144,7 @@ export function ChatPanel({
   clientContext: suppliedClientContext,
   composerDraft,
   onComposerDraftApplied,
-  requestOptions, composerHeader, suggestedPrompts, placeholder, emptyStateTitle, showAgentHeader = true, showAuditNotice = true, feedbackPrompt,
+  requestOptions, composerHeader, suggestedPrompts, placeholder, emptyStateTitle, showAgentHeader = true, transparentBackground = false, showAuditNotice = true, feedbackPrompt,
 }: ChatPanelProps) {
   // Derive display values from agent object
   const agentGradient = agent?.ui?.gradient_theme ?? null;
@@ -2308,7 +2310,7 @@ export function ChatPanel({
   };
 
   return (
-    <div className="h-full w-full flex flex-col bg-background relative">
+    <div className={cn("h-full w-full flex flex-col relative", transparentBackground ? "bg-transparent" : "bg-background")}>
       {showAgentHeader && <div
         className="flex min-h-14 shrink-0 items-center gap-3 bg-gradient-to-r from-primary/[0.06] via-background/70 to-background px-4 py-2"
         aria-label={`Chat: ${conversationTitle}`}
@@ -2742,7 +2744,7 @@ export function ChatPanel({
           </div>
         </div>
       ) : !isAutonomousHistory && (
-      <div className="border-t border-border bg-background shrink-0">
+      <div className={cn("border-t border-border shrink-0", transparentBackground ? "bg-transparent" : "bg-background")}>
         <div className="max-w-7xl mx-auto px-6 py-3 space-y-2">
           {/* Queued Messages Display */}
           {queuedMessages.length > 0 && (

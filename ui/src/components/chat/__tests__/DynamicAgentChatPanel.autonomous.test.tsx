@@ -114,6 +114,18 @@ it("keeps normal streaming available in the independent manual chat", async () =
   expect(mockOpenChat).not.toHaveBeenCalled();
 });
 
+it("lets an embedded assistant supply its surface without changing the normal chat background", () => {
+  mockConversation = { ...mockConversation, source: "web", task_id: undefined, messages: [] };
+  const { container, rerender } = render(<ChatPanel agentId="example-agent" conversationId="task-chat" />);
+  const panel = container.firstElementChild;
+  const composer = screen.getByRole("textbox", { name: "Message" }).closest(".border-t");
+  expect(panel).toHaveClass("bg-background");
+  expect(composer).toHaveClass("bg-background");
+  rerender(<ChatPanel agentId="example-agent" conversationId="task-chat" transparentBackground />);
+  expect(panel).toHaveClass("bg-transparent");
+  expect(composer).toHaveClass("bg-transparent");
+});
+
 it("focuses the message field when the lower composer area is clicked", () => {
   mockConversation = { ...mockConversation, source: "web", task_id: undefined, messages: [] };
   render(<ChatPanel agentId="example-agent" conversationId="task-chat" />);

@@ -57,6 +57,7 @@ jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
     composerDraft,
     emptyStateTitle,
     showAgentHeader,
+    transparentBackground,
     suggestedPrompts,
   }: {
     conversationId?: string;
@@ -66,6 +67,7 @@ jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
     composerDraft?: { text: string } | null;
     emptyStateTitle?: string;
     showAgentHeader?: boolean;
+    transparentBackground?: boolean;
     suggestedPrompts?: string[];
   }) => (
     <div
@@ -74,6 +76,7 @@ jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
       data-agent-id={agentId}
       data-empty-title={emptyStateTitle}
       data-agent-header={String(showAgentHeader)}
+      data-transparent-background={String(transparentBackground)}
       data-suggestions={JSON.stringify(suggestedPrompts ?? [])}
       data-draft={composerDraft?.text ?? ""}
       data-context={JSON.stringify(clientContext ?? {})}
@@ -174,6 +177,7 @@ describe("AgenticAppAssistantOverlay", () => {
     expect(chat).toHaveAttribute("data-agent-id", "agent-example");
     expect(chat).toHaveAttribute("data-empty-title", "Ask Example");
     expect(chat).toHaveAttribute("data-agent-header", "false");
+    expect(chat).toHaveAttribute("data-transparent-background", "true");
     expect(chat).toHaveAttribute("data-suggestions", "[]");
   });
 
@@ -535,7 +539,7 @@ describe("AgenticAppAssistantOverlay", () => {
   it("keeps the shared chat opaque while applying text size preferences", async () => {
     const view = renderExampleOverlay();
     await screen.findByTestId("chat-panel");
-    expect(screen.getByRole("dialog")).toHaveClass("bg-background");
+    expect(screen.getByRole("dialog")).toHaveClass("bg-background", "agentic-assistant-surface");
     act(() => { applyAssistantFontScale("large"); localStorage.setItem("agentic-app-assistant-glass", "true"); });
     expect(document.querySelector('[style*="--text-sm"]')).toHaveStyle({ "--text-sm": "1rem" });
     expect(screen.getByRole("dialog")).not.toHaveClass("backdrop-blur-3xl");
