@@ -23,6 +23,8 @@ jest.mock("@/lib/rbac/keycloak-admin", () => ({
   findRealmUserIdByAttribute: (...args: unknown[]) => mockFindRealmUserIdByAttribute(...args),
 }));
 
+jest.mock("@/lib/rbac/webex-identity-write-lock", () => ({ withWebexIdentityWriteLock: async (write: () => Promise<unknown>) => write() }));
+
 const WEBEX_TOKEN_URL = "https://webexapis.com/v1/access_token";
 const WEBEX_PEOPLE_URL = "https://webexapis.com/v1/people/me";
 
@@ -267,6 +269,7 @@ describe("GET /api/auth/webex-link/callback", () => {
     expect(mockMergeUserAttributes).toHaveBeenCalledWith("kc-user-1", {
       webex_user_id: ["person-42"],
       webex_user_email: undefined,
+      webex_auto_link_disabled: undefined,
     });
     expect(response.headers.get("set-cookie")).toContain("caipe_oauth_state_webex-link=;");
   });
@@ -324,10 +327,12 @@ describe("GET /api/auth/webex-link/callback", () => {
     expect(mockMergeUserAttributes).toHaveBeenCalledWith("kc-user-1", {
       webex_user_id: ["person-42"],
       webex_user_email: undefined,
+      webex_auto_link_disabled: undefined,
     });
     expect(mockMergeUserAttributes).toHaveBeenCalledWith("kc-user-1", {
       webex_user_id: undefined,
       webex_user_email: undefined,
+      webex_auto_link_disabled: undefined,
     });
   });
 
@@ -355,6 +360,7 @@ describe("GET /api/auth/webex-link/callback", () => {
     expect(mockMergeUserAttributes).toHaveBeenCalledWith("kc-user-1", {
       webex_user_id: ["person-42"],
       webex_user_email: ["person@example.com"],
+      webex_auto_link_disabled: undefined,
     });
   });
 });
@@ -385,6 +391,7 @@ describe("DELETE /api/auth/webex-link/unlink", () => {
     expect(mockMergeUserAttributes).toHaveBeenCalledWith("kc-user-1", {
       webex_user_id: undefined,
       webex_user_email: undefined,
+      webex_auto_link_disabled: ["true"],
     });
   });
 });

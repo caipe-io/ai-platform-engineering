@@ -159,8 +159,8 @@ async function completeLink(request: NextRequest, ownerId: string): Promise<Next
       webex_user_id: [person.id],
       webex_user_email: webexEmail ? [webexEmail] : undefined,
     });
-  } catch {
-    return errorRedirect(request, "WEBEX_ID_ALREADY_LINKED");
+  } catch (error) {
+    return errorRedirect(request, error instanceof ApiError && error.code === "WEBEX_LINK_BUSY" ? "WEBEX_LINK_BUSY" : "WEBEX_ID_ALREADY_LINKED");
   }
 
   return settingsRedirect(request, { webex_link: "success" });

@@ -1,3 +1,4 @@
+import { withWebexIdentityWriteLock } from "@/lib/rbac/webex-identity-write-lock";
 import { ApiError } from "@/lib/api-middleware";
 import { findRealmUserIdByAttribute, mergeUserAttributes } from "@/lib/rbac/keycloak-admin";
 
@@ -28,12 +29,14 @@ export async function claimWebexIdentity(
   keycloakSub: string,
   attributes: { webex_user_email?: string[]; webex_user_id: string[] }
 ): Promise<void> {
+  return withWebexIdentityWriteLock(async () => {
   await assertWebexIdNotLinkedToOtherUser(webexUserId, keycloakSub);
-  await mergeUserAttributes(keycloakSub, attributes);
+  await mergeUserAttributes(keycloakSub, { ...attributes, webex_auto_link_disabled: undefined });
 
   const ownerAfterWrite = await findRealmUserIdByAttribute("webex_user_id", webexUserId);
   if (ownerAfterWrite && ownerAfterWrite !== keycloakSub) {
     await mergeUserAttributes(keycloakSub, { webex_user_id: undefined, webex_user_email: undefined });
     throw ALREADY_LINKED_ERROR;
   }
+  });
 }

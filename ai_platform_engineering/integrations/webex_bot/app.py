@@ -647,6 +647,9 @@ async def handle_webex_message(
 
     try:
         keycloak_user_id = await linker.resolve(parsed.person_id)
+        auto_link = getattr(linker, "auto_link", None)
+        if keycloak_user_id is None and parsed.is_direct and bot_config.direct_messages_access_mode != "disabled" and callable(auto_link):
+            keycloak_user_id = await auto_link(parsed.person_id, parsed.bot_id)
     except Exception as exc:  # noqa: BLE001 — fail closed on KC/network errors
         logger.error(
             "Webex identity resolution failed (type=%s); denying request",

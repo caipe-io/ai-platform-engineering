@@ -1,3 +1,4 @@
+import { withWebexIdentityWriteLock } from "@/lib/rbac/webex-identity-write-lock";
 import { NextRequest } from "next/server";
 
 import {
@@ -20,6 +21,8 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
     throw new ApiError("Authenticated subject is required", 401, "UNAUTHORIZED");
   }
 
-  await mergeUserAttributes(ownerId, { webex_user_id: undefined, webex_user_email: undefined });
+  await withWebexIdentityWriteLock(async () => {
+    await mergeUserAttributes(ownerId, { webex_user_id: undefined, webex_user_email: undefined, webex_auto_link_disabled: ["true"] });
+  });
   return successResponse({ unlinked: true });
 });

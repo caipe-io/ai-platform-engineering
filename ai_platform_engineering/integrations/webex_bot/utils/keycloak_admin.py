@@ -136,3 +136,23 @@ async def get_user_by_id(
             return None
         resp.raise_for_status()
         return resp.json()
+
+
+async def get_unique_verified_user_by_email(email: str, config: KeycloakAdminConfig | None = None) -> Optional[dict[str, Any]]:
+    """Require one exact, verified, enabled existing account; never create users."""
+    cfg = config or _default_config
+    token = await _get_admin_token(cfg)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            f"{cfg.server_url}/admin/realms/{cfg.realm}/users",
+            params={"email": email, "exact": "true", "max": 2},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        response.raise_for_status()
+        users = response.json()
+    if not isinstance(users, list) or len(users) != 1:
+        return None
+    user = users[0]
+    if user.get("enabled") is not True or user.get("emailVerified") is not True or str(user.get("email", "")).casefold() != email.casefold():
+        return None
+    return user

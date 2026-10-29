@@ -20,6 +20,7 @@ from pymongo.collection import Collection
 
 from ai_platform_engineering.integrations.slack_bot.utils.config_models import AgentBinding
 
+from .identity_linker import webex_auto_link_status
 from .webex_agent_routes import (
     DEFAULT_OPENFGA_HTTP,
     WebexAgentRouteResolver,
@@ -217,8 +218,8 @@ class WebexBotAdminService:
             "last_sync": self._last_sync,
         }
 
-    def bot_catalog(self) -> dict[str, list[dict[str, object]]]:
-        return {"bots": [bot.public_dict() for bot in configured_webex_bots()]}
+    def bot_catalog(self) -> dict[str, object]:
+        return {"bots": [bot.public_dict() for bot in configured_webex_bots()], "auto_link": webex_auto_link_status()}
 
     def bot_policy(self, bot_id: str) -> dict[str, object]:
         bot = next(

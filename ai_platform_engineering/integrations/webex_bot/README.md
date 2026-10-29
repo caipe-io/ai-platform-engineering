@@ -43,3 +43,14 @@ only after that write succeeds. Existing conversation permissions still apply;
 Webex space membership does not grant browser access. Older metadata-only turns
 are not backfilled. Missing/invalid public URLs or failed writes produce an
 explicit link-unavailable notice.
+
+### Optional Webex DM identity auto-linking
+
+- Disabled by default. Set `WEBEX_DM_AUTO_LINK_ENABLED=true` and `WEBEX_DM_AUTO_LINK_ALLOWED_ORG_ID` on the bot, and configure MongoDB plus its existing Keycloak admin credentials. UI and bot must share the same MongoDB database for identity-write coordination.
+- A DM sender profile is fetched using the selected configured bot token. The immutable person ID, human profile type, allowed organization, and exactly one provider email must match. The account must already exist in Keycloak, have a verified matching email, be enabled, and have no conflicting Webex identity.
+- Trust assumption: administrators of the configured Webex organization control its email identities. Enable this only for an organization whose identity lifecycle you trust. No new accounts are created.
+- DM `all_users` admission, bot/agent routing, OBO, and resource authorization remain separate checks. Group messages do not auto-link.
+- `/admin/webex/bots` reports `auto_link.enabled` and `auto_link.configured` without secrets. Successful automatic claims produce a structured auth audit event; errors fall back to explicit SSO linking.
+- Unlinking sets `webex_auto_link_disabled` on the account. Automatic matching respects that opt-out; successful explicit linking clears it. Identity resolution reads current Keycloak state rather than a positive cache, so unlink/revoke is visible on the next message.
+- All bot auto-claims and UI link/unlink writes share the `webex_identity_write_locks` mutex. Contention fails closed and can be retried. Locks deliberately have no TTL: a paused identity writer must not resume after its lock has expired.
+- Crash recovery: stop all UI/bot identity writers, inspect the `identity-write` record and the corresponding Keycloak bindings, remove the orphan lock, then restart writers. Never delete a lock while a writer may still be running. Deploy this UI and bot together; mixed older writers do not participate in coordination.
