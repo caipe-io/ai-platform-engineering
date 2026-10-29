@@ -1,0 +1,37 @@
+name: "[Tests] Release Policy"
+
+on:
+  pull_request:
+    paths:
+      - '.github/actions/**'
+      - '.github/workflows/ci-*.yml'
+      - '.github/workflows/release-*.yml'
+      - 'CHANGELOG.md'
+      - 'pyproject.toml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/actions/**'
+      - '.github/workflows/ci-*.yml'
+      - '.github/workflows/release-*.yml'
+      - 'CHANGELOG.md'
+      - 'pyproject.toml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: '3.14'
+      - name: Test release validation, image channels, and changelog rollups
+        run: >-
+          uv run --no-project --with pytest==9.1.1 --with PyYAML==6.0.3
+          --with commitizen==4.19.3 pytest -q .github/actions/tests/test_release_policy.py

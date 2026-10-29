@@ -60,6 +60,7 @@ jobs:
       agents_to_build: ${{ steps.set-matrix.outputs.agents_to_build }}
       should_build: ${{ steps.set-matrix.outputs.should_build }}
       tag_version: ${{ steps.version.outputs.tag_version }}
+      is_final_release: ${{ steps.version.outputs.is_final_release }}
     env:
       ALL_AGENTS: ${{ needs.load-config.outputs.all_agents }}
     steps:
@@ -189,7 +190,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.')) }}
+            type=raw,value=latest,enable=${{ needs.determine-agents.outputs.is_final_release == 'true' }}
             type=raw,value=${{ needs.determine-agents.outputs.tag_version }},enable=${{ needs.determine-agents.outputs.tag_version != '' }}
             type=ref,event=tag,prefix=
             type=sha,format=short,prefix=,enable=${{ github.ref != 'refs/heads/main' }}
@@ -277,7 +278,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.')) }}
+            type=raw,value=latest,enable=${{ needs.determine-agents.outputs.is_final_release == 'true' }}
             type=raw,value=${{ needs.determine-agents.outputs.tag_version }},enable=${{ needs.determine-agents.outputs.tag_version != '' }}
             type=ref,event=tag,prefix=
             type=sha,format=short,prefix=,enable=${{ github.ref != 'refs/heads/main' }}

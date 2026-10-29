@@ -6,16 +6,21 @@ description: >
 
 inputs:
   version:
-    description: 'Release version (e.g. 1.0.0 or 1.0.0-rc.1)'
+    description: 'Stable release version (e.g. 1.0.0)'
     required: true
 
 runs:
   using: "composite"
   steps:
+    - name: ✅ Validate stable release version
+      uses: ./.github/actions/validate-release-tag
+      with:
+        version: ${{ inputs.version }}
+
     - name: 📦 Install commitizen
       shell: bash
       run: |
-        uv tool install commitizen
+        uv tool install commitizen==4.19.3
         echo "✅ Installed commitizen"
 
     - name: 📝 Update all version files
@@ -31,8 +36,21 @@ runs:
       run: |
         set -euo pipefail
 
+        # A release PR may have prepared this entry before its stable tag exists.
+        # Regenerate that entry so changes made after PR preparation are included.
+        python - <<'PY'
+        import os
+        from pathlib import Path
+
+        path = Path("CHANGELOG.md")
+        if path.exists():
+            heading, separator, body = path.read_text().partition("\n")
+            if heading.startswith(f"## {os.environ['VERSION']} ("):
+                path.write_text("## Unreleased" + separator + body)
+        PY
+
         echo "🔄 Generating changelog for $VERSION using commitizen..."
-        cz changelog --unreleased-version "$VERSION"
+        cz changelog --incremental --merge-prerelease --unreleased-version "$VERSION"
         echo "✅ Generated changelog entry for $VERSION"
         echo ""
         echo "📋 New changelog entry preview:"

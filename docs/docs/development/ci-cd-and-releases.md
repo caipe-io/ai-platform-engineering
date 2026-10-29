@@ -45,6 +45,10 @@ Every image and chart workflow (`ci-*.yml`, `ci-helm.yml` — see the reference 
 
 Each workflow figures out its own tag via `.github/actions/determine-release-tag/action.yml`: `canary` for a main push, the pushed tag for a tag push, or whatever you typed in if you triggered the build by hand.
 
+Only a resolved stable `x.y.z` version also receives the `latest` image alias.
+This applies to manual builds too: an RC/hotfix input never updates `latest`, and
+a manual main build without a version publishes `canary`.
+
 ## Prebuild Artifacts
 
 Prebuild artifacts let you test Docker images or Helm charts from a PR before it merges, without waiting for an official tag.
@@ -67,17 +71,40 @@ Use a `release/x.y.z` branch to prepare a new release, or `release/x.y.z-hotfix`
 
 When ready to publish, run the final release flow below with the intended final semver tag.
 
+To build an RC on demand, use the prerelease workflow:
+
+```bash
+gh workflow run release-prerelease.yml -f release_branch=release/1.4.0
+```
+
+RC/hotfix builds publish image and chart artifacts without creating GitHub Release
+entries or updating `CHANGELOG.md`. GitHub Release entries are reserved for stable
+versions; draft entries are also visible to maintainers in the Releases tab.
+
 ## Final Release Flow
 
 Final releases use plain `x.y.z` tags and are always cut manually:
 
 1. Open a PR from `release/x.y.z` to `main`. `pr-version-bump.yml` detects the release merge and commits the final version files and changelog onto that PR branch.
 2. Merge the release PR to `main`. `auto-tag.yml` detects the merge and dispatches `release-manual.yml`.
-3. `release-manual.yml` validates the version — it must be a plain semver or an RC, and strictly greater than the latest existing stable tag — then creates the final tag, pushes it, and creates a draft GitHub Release.
+3. `release-manual.yml` validates the version — it must be a plain `x.y.z` strictly greater than the latest stable tag — then creates the final tag, pushes it, and creates a draft GitHub Release. RC inputs are rejected.
 4. The tag triggers Docker and Helm CI for every component; each notifies `release-finalize.yml` on completion.
 5. `release-finalize.yml` publishes the draft once all required workflows pass, then dispatches post-release security scanning and sanity tests, and deletes RC tags older than the new release.
 
 If a required workflow fails, the release stays a draft with a failure note for investigation.
+
+## Changelog Policy
+
+- Keep one `CHANGELOG.md` section per stable release.
+- Fold dev, RC, and hotfix changes into the next stable release using Commitizen's
+  `changelog_merge_prerelease` setting. Ignore prerelease tag boundaries so an
+  RC-tagged HEAD also generates the requested stable heading.
+- Update incrementally so published history survives even if historical tags were
+  removed. `prepare-release` passes `--incremental --merge-prerelease` when
+  generating the next stable entry.
+- To remove old RC entries from GitHub's Releases tab, delete the RC **Release
+  records**, including drafts. This does not require deleting registry images or
+  git tags.
 
 ## Useful Workflow Reference
 
@@ -92,7 +119,7 @@ If a required workflow fails, the release stays a draft with a failure note for 
 | `.github/workflows/ci-helm.yml` | Publishes the Helm chart the same way |
 | `.github/workflows/prebuild-*.yml` | Publishes temporary prebuild images and charts for PR testing |
 | `.github/actions/prebuild-version/action.yml` | Computes `<latest-stable-tag>-<branch>-<N>` for prebuild builds |
-| `.github/actions/validate-release-tag/action.yml` | Enforces the semver/RC format and monotonicity rules on manual release tags |
+| `.github/actions/validate-release-tag/action.yml` | Requires stable semver for final releases; validates RC/hotfix series on release branches |
 | `.github/actions/update-version-files/action.yml` | Sets version + appVersion + local dependency refs across pyproject, lockfile, and every chart |
 | `.github/actions/determine-release-tag/action.yml` | Resolves the tag used by image and chart CI workflows (`canary`, a pushed tag, or a manual input) |
 | `.github/actions/prepare-release/action.yml` | Updates final release files and generates changelog |
