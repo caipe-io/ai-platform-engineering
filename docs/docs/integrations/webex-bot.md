@@ -248,6 +248,12 @@ resolve to the same enabled Keycloak user, and the runtime checks that user's
 OBO token directly against the selected agent. Authorization or identity
 dependency failures fail closed.
 
+After verified account linking, the identity is synchronized to all of the user's
+existing direct-message routes across bots, including disabled routes. Relinking
+updates the binding; self-service unlink and admin revoke clear it. The selected
+agents and enabled state are preserved. Linking does not create a route or grant
+access by itself.
+
 ## Conversation Context
 
 Each Webex root message and its replies map to one CAIPE conversation. The
