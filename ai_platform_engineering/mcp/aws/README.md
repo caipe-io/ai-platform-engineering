@@ -29,11 +29,21 @@ AWS MCP Server that exposes `aws_cli_execute` and `eks_kubectl_execute` as
 
 ### Workload identity
 
-The server automatically uses `EcsContainer` when EKS Pod Identity injects a
-container credential endpoint. When IRSA injects both `AWS_ROLE_ARN` and
-`AWS_WEB_IDENTITY_TOKEN_FILE`, the server creates a web-identity source profile
-and chains each cross-account profile through it. Static environment credentials
-remain supported as a local-development fallback, but are not required on EKS.
+Cross-account profiles select their base credentials in this order:
+
+1. An explicit `AWS_CREDENTIAL_SOURCE` override.
+2. `EcsContainer` when `AWS_CONTAINER_CREDENTIALS_FULL_URI` or
+   `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` is set, including EKS Pod Identity.
+   This takes precedence over legacy IRSA settings that may still be present.
+3. An IRSA source profile when both `AWS_ROLE_ARN` and
+   `AWS_WEB_IDENTITY_TOKEN_FILE` are set. Setting only one fails startup with a
+   configuration error unless an override or container provider is selected.
+4. `Environment` for local or legacy static credentials.
+
+IRSA profiles chain through a generated web-identity source profile. EKS workload
+identity does not require static access keys in environment variables. These
+settings apply when `AWS_ACCOUNT_LIST` generates cross-account profiles; without
+an account list, the AWS CLI uses its existing credential chain.
 
 ## Running locally
 

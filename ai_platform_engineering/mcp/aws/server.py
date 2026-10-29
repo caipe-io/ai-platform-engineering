@@ -80,14 +80,13 @@ _SUPPORTED_CREDENTIAL_SOURCES = {
 # AWS profile setup
 # ---------------------------------------------------------------------------
 
-def _credential_source() -> str:
-    """Return the AWS CLI credential source for assume-role profiles.
+def _credential_source() -> Optional[str]:
+    """Return an explicit or detected AWS CLI credential source.
 
     EKS Pod Identity exposes credentials through the standard container
-    credential endpoint, which the AWS CLI names ``EcsContainer``.  Preserve
-    ``Environment`` as the fallback for local development and legacy installs.
-    Operators may explicitly select any AWS CLI-supported source through
-    ``AWS_CREDENTIAL_SOURCE``.
+    credential endpoint, which the AWS CLI names ``EcsContainer``. An explicit
+    ``AWS_CREDENTIAL_SOURCE`` takes precedence over automatic detection.
+    Returning None lets profile setup select IRSA or the Environment fallback.
     """
     configured = os.getenv("AWS_CREDENTIAL_SOURCE", "").strip()
     if configured:
@@ -99,12 +98,13 @@ def _credential_source() -> str:
             )
         return configured
 
-    if os.getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI") or os.getenv(
-        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
+    if any(
+        os.getenv(name, "").strip()
+        for name in ("AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI")
     ):
         return "EcsContainer"
 
-    return "Environment"
+    return None
 
 
 def _single_line_env(name: str) -> str:
@@ -113,6 +113,7 @@ def _single_line_env(name: str) -> str:
     if "\n" in value or "\r" in value:
         raise ValueError(f"{name} must be a single-line value.")
     return value
+
 
 def _setup_aws_profiles() -> list[dict]:
     """Read AWS_ACCOUNT_LIST and write ~/.aws/config with assume-role profiles."""
@@ -135,13 +136,15 @@ def _setup_aws_profiles() -> list[dict]:
         return []
 
     cross_account_role = os.getenv("CROSS_ACCOUNT_ROLE_NAME", "caipe-read-only")
-    aws_config_dir = os.path.expanduser("~/.aws")
-    os.makedirs(aws_config_dir, exist_ok=True)
-
     sections = ["# AUTO-GENERATED PROFILES FROM AWS_ACCOUNT_LIST\n"]
+    credential_source = _credential_source()
     web_identity_role = _single_line_env("AWS_ROLE_ARN")
     web_identity_token_file = _single_line_env("AWS_WEB_IDENTITY_TOKEN_FILE")
-    use_web_identity = bool(web_identity_role and web_identity_token_file)
+    if credential_source is None and bool(web_identity_role) != bool(web_identity_token_file):
+        raise ValueError("AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE must be set together for IRSA.")
+
+    # Prefer the selected/container provider when legacy IRSA settings coexist.
+    use_web_identity = credential_source is None and bool(web_identity_role and web_identity_token_file)
 
     if use_web_identity:
         sections.append(
@@ -151,7 +154,7 @@ def _setup_aws_profiles() -> list[dict]:
             "role_session_name = mcp-aws\n"
         )
     else:
-        credential_source = _credential_source()
+        credential_source = credential_source or "Environment"
 
     for acc in accounts:
         profile = (
@@ -164,7 +167,9 @@ def _setup_aws_profiles() -> list[dict]:
             profile += f"credential_source = {credential_source}\n"
         sections.append(profile)
 
-    with open(os.path.join(aws_config_dir, "config"), "w") as fh:
+    aws_config_dir = os.path.expanduser("~/.aws")
+    os.makedirs(aws_config_dir, exist_ok=True)
+    with open(os.path.join(aws_config_dir, "config"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(sections))
 
     source_type = "WebIdentity" if use_web_identity else credential_source
