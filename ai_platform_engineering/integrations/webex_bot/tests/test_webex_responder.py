@@ -604,6 +604,38 @@ def test_dispatcher_uses_distinct_agent_and_catalog_bot_names(
     assert sse.calls[0]["agent_id"] == "example-agent"
 
 
+def test_dispatcher_continues_when_agent_name_lookup_raises(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    api = FakeWebexApi()
+    sse = FakeSseClient(events=[
+        SSEEvent(SSEEventType.TEXT_MESSAGE_CONTENT, delta="hello world"),
+        SSEEvent(SSEEventType.RUN_FINISHED),
+    ])
+
+    def fail_lookup(**kwargs: Any) -> str:
+        raise RuntimeError("example-sensitive-detail")
+
+    monkeypatch.setattr(sse, "get_agent_name", fail_lookup)
+    dispatcher = WebexThreadedStreamDispatcher(webex_api=api, sse_client=sse)
+    asyncio.run(dispatcher({
+        "space_id": "example-space-id",
+        "webex_room_id": "example-room-id",
+        "message_id": "example-message-id",
+        "text": "hello",
+        "agent_id": "example-agent",
+        "obo_token": "example-access-token",
+        "is_direct": True,
+    }))
+
+    assert sse.calls[0]["agent_id"] == "example-agent"
+    assert api.created[0]["markdown"] == f"Working on it...\n\nAgent: Assistant{_BOT_REPLY_MARKER}"
+    assert api.updated[-1]["markdown"] == f"hello world\n\nAgent: Assistant{_BOT_REPLY_MARKER}"
+    assert len(sse.messages) == 2
+    assert "Agent display-name lookup failed (type=RuntimeError)" in caplog.text
+    assert "example-sensitive-detail" not in caplog.text
+
+
 def test_threaded_stream_dispatcher_tags_message_turns_with_webex_source() -> None:
     """A successful Webex dispatch records source="webex" message turns.
 

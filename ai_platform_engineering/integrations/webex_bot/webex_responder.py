@@ -442,9 +442,13 @@ class WebexThreadedStreamDispatcher:
                     )
                     agent_id = owner_id
 
-            agent_name = self._sse_client.get_agent_name(
-                agent_id=agent_id, bearer_token=obo_token
-            ) or "Assistant"
+            try:
+                agent_name = self._sse_client.get_agent_name(
+                    agent_id=agent_id, bearer_token=obo_token
+                ) or "Assistant"
+            except Exception as exc:  # noqa: BLE001 - display name is best-effort
+                logger.warning("Agent display-name lookup failed (type=%s)", type(exc).__name__)
+                agent_name = "Assistant"
 
             reply_id = self._webex_api.create_message(
                 room_id=room_id,
