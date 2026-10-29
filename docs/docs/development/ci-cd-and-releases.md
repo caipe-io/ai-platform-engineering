@@ -80,6 +80,8 @@ gh workflow run release-prerelease.yml -f release_branch=release/1.4.0
 RC/hotfix builds publish image and chart artifacts without creating GitHub Release
 entries or updating `CHANGELOG.md`. GitHub Release entries are reserved for stable
 versions; draft entries are also visible to maintainers in the Releases tab.
+Retain RC Git tags after a stable release so their original commits remain
+available from the Tags tab.
 
 ## Final Release Flow
 
@@ -89,7 +91,7 @@ Final releases use plain `x.y.z` tags and are always cut manually:
 2. Merge the release PR to `main`. `auto-tag.yml` detects the merge and dispatches `release-manual.yml`.
 3. `release-manual.yml` validates the version — it must be a plain `x.y.z` strictly greater than the latest stable tag — then creates the final tag, pushes it, and creates a draft GitHub Release. RC inputs are rejected.
 4. The tag triggers Docker and Helm CI for every component; each notifies `release-finalize.yml` on completion.
-5. `release-finalize.yml` publishes the draft once all required workflows pass, then dispatches post-release security scanning and sanity tests, and deletes RC tags older than the new release.
+5. `release-finalize.yml` publishes the draft once all required workflows pass, then dispatches post-release security scanning and sanity tests. It retains existing RC Git tags.
 
 If a required workflow fails, the release stays a draft with a failure note for investigation.
 

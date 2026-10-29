@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tomllib
@@ -188,3 +189,12 @@ def test_prepare_release_validates_stable_input_before_writing_files() -> None:
   first_step = data["runs"]["steps"][0]
   assert first_step["uses"] == "./.github/actions/validate-release-tag"
   assert first_step["with"] == {"version": "${{ inputs.version }}"}
+
+
+def test_finalization_does_not_delete_git_tags() -> None:
+  workflow = yaml.safe_load((ROOT / ".github/workflows/release-finalize.yml").read_text())
+  for job in workflow["jobs"].values():
+    for step in job.get("steps", []):
+      script = step.get("run", "")
+      assert not re.search(r"gh\s+api[^\n]*(?:-X|--method)\s+DELETE[^\n]*git/refs/tags", script)
+      assert not re.search(r"git\s+push[^\n]*(?:--delete|:refs/tags/)", script)

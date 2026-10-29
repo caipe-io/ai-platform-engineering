@@ -22,6 +22,8 @@ automatically after the required builds pass.
 
 RC images and charts remain prerelease artifacts. They do not create entries in
 GitHub Releases or `CHANGELOG.md`, and they never update the `latest` image alias.
+RC Git tags are retained after stable releases and remain available in GitHub's
+Tags tab.
 
 ---
 
