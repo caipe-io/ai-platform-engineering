@@ -34,6 +34,10 @@ jest.mock('next-auth/react', () => ({
   useSession: jest.fn(() => mockSession),
 }))
 
+jest.mock('@/components/agentic-apps/AssistantConnectionGuidance', () => ({
+  AssistantConnectionGuidance: () => null,
+}))
+
 let mockPathname = '/chat'
 // Shared spy so admin-alert popover tests can assert programmatic
 // navigation. Reset in beforeEach.
