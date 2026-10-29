@@ -1,5 +1,6 @@
 "use client";
 
+import { safeWebexReturnTo } from "@/lib/webex-link-context";
 import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
 import { cn } from "@/lib/utils";
@@ -18,6 +19,8 @@ interface RbacPosture {
 }
 
 const WEBEX_LINK_ERROR_MESSAGES: Record<string, string> = {
+  WEBEX_LINK_SAVE_FAILED: "Your Webex link could not be saved. Please try again.",
+  MISSING_CODE_OR_STATE: "The Webex link is incomplete or expired. Start linking again.",
   WEBEX_ID_ALREADY_LINKED: "That Webex account is already linked to a different user.",
   WEBEX_ORG_MISMATCH: "That Webex account does not belong to this organization.",
   WEBEX_PROFILE_FETCH_FAILED: "Could not read your Webex profile. Please try again.",
@@ -43,7 +46,7 @@ export function AccessSettings(): React.ReactElement {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/auth/my-roles");
+      const response = await fetch("/api/auth/my-roles", { cache: "no-store" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not load your access");
       setPosture(data as RbacPosture);
@@ -60,6 +63,7 @@ export function AccessSettings(): React.ReactElement {
 
   const webexLinkStatus = searchParams.get("webex_link");
   const webexLinkReason = searchParams.get("reason");
+  const returnTo = safeWebexReturnTo(searchParams.get("return_to"));
 
   useEffect(() => {
     if (webexLinkStatus === "success") void load();
@@ -107,7 +111,16 @@ export function AccessSettings(): React.ReactElement {
     <div className="space-y-6">
       {webexLinkStatus === "success" ? (
         <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm" role="status">
-          Your Webex account has been linked.
+          {posture.webex_linked ? <>
+            <p className="font-medium">Your Webex account has been linked.</p>
+            <p className="mt-1">Return to your Webex conversation and send your question again. Agent access is checked when you message the bot.</p>
+            {searchParams.get("notification") === "sent" && <p className="mt-1">A confirmation was sent to your Webex DM.</p>}
+            {searchParams.get("notification") === "unavailable" && <p className="mt-1">The link was saved, but a Webex confirmation could not be delivered. You can still return to Webex and try your message.</p>}
+            {returnTo && <Button asChild className="mt-3" size="sm" variant="outline"><a href={returnTo}>Return to your app</a></Button>}
+          </> : <>
+            <p>Linking returned, but your saved Webex identity could not be confirmed. Refresh your access before trying again.</p>
+            <Button className="mt-3" size="sm" variant="outline" onClick={() => void load()}>Refresh linked status</Button>
+          </>}
         </div>
       ) : null}
       {webexLinkStatus === "error" ? (

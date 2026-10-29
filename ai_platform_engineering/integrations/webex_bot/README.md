@@ -57,3 +57,11 @@ explicit link-unavailable notice.
 
 See the [transport contract](../../../docs/docs/integrations/bot-harness-gateway.md)
 for deployment settings and restart limitations.
+
+## Linking completion feedback
+
+- Bot-issued SSO links carry the configured bot ID; the OAuth start route signs it into the existing ten-minute state cookie. The verified callback notifies that bot's DM using the authenticated Webex profile's person ID, never a room/person supplied in a URL.
+- App connection actions may append a local `return_to` path to `/api/auth/webex-link/start`; it is signed with the OAuth state and offered as a return action on the completion screen. External URLs, API paths, and encoded redirect tricks are rejected.
+- The account screen reloads saved identity state without HTTP caching and gives the next step to retry a DM. Identity linked does not imply agent access granted.
+- Confirmation delivery uses the existing bot-admin service credentials and notification scope. A delivery failure shows a warning but does not undo a saved link.
+- The reported unsaved-setting behavior was not reproduced against a live deployment here. Tests check awaited save, error classification, stale UI state, and retry paths; deployment validation should also reload settings in a fresh browser session.
