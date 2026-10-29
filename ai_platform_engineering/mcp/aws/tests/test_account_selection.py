@@ -56,9 +56,20 @@ def test_profile_and_legacy_alias(server: ModuleType, profile: Optional[str], ac
 
 
 def test_default_credential_chain_without_account_list(server: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert server._get_configured_profiles() == ["primary", "secondary"]
     monkeypatch.delenv("AWS_ACCOUNT_LIST")
     assert server.list_aws_accounts() == {"accounts": []}
     assert server._resolve_account_profile(None, None) == (None, None)
+
+
+def test_selector_resolution_tracks_discovery_after_config_change(server: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert server._resolve_account_profile("primary", None) == ("primary", None)
+    monkeypatch.setenv("AWS_ACCOUNT_LIST", "secondary:000000000002")
+
+    assert server.list_aws_accounts() == {"accounts": [{"name": "secondary", "id": "000000000002"}]}
+    assert server._get_configured_profiles() == ["secondary"]
+    assert server._resolve_account_profile("primary", None) == (None, "Select a valid profile. Available profiles: secondary")
+    assert server._resolve_account_profile("secondary", None) == ("secondary", None)
 
 
 @pytest.mark.asyncio

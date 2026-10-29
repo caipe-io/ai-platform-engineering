@@ -10,7 +10,6 @@ operations. Exposes read-only AWS CLI execute logic as MCP tools.
 """
 
 import asyncio
-import functools
 import json
 import logging
 import os
@@ -119,9 +118,8 @@ def _setup_aws_profiles() -> list[dict]:
     return accounts
 
 
-@functools.lru_cache(maxsize=None)
 def _get_configured_profiles() -> list[str]:
-    """Return profile names from AWS_ACCOUNT_LIST. Cached after first call."""
+    """Read profile names using the same current configuration as discovery."""
     return [a["name"] for a in _parse_aws_accounts()]
 
 
@@ -200,10 +198,11 @@ async def aws_cli_execute(
         command: AWS CLI command without the 'aws' prefix.
             Examples: 'ec2 describe-instances', 's3 ls', 'iam list-roles',
             'eks list-clusters --region us-west-2'.
-        profile: AWS profile name for the target account. REQUIRED — when the
-            user asks for 'all accounts', make separate calls with each profile.
-            If AWS_ACCOUNT_LIST is not configured, omit the selector to use
-            the server's default credential chain.
+        profile: Configured account name returned by list_aws_accounts. Required
+            (or supply account) when AWS_ACCOUNT_LIST contains accounts. For
+            'all accounts', make separate calls with each configured profile.
+            Without configured accounts, omit profile and account to use the
+            server's default credential chain.
         region: AWS region override. Defaults to AWS_REGION / AWS_DEFAULT_REGION
             environment variable, or 'us-west-2' if neither is set.
         output_format: CLI output format — json (default), text, table, or yaml.
@@ -423,13 +422,15 @@ async def eks_kubectl_execute(
       - exec / attach / cp / port-forward — default: false (opt-in)
 
     Args:
-        cluster_name: EKS cluster name, e.g. 'eks-gitops-1'.
+        cluster_name: EKS cluster name, e.g. 'example-cluster'.
         kubectl_command: kubectl subcommand without the 'kubectl' prefix.
             Examples: 'get nodes', 'get pods -n kube-system --all-namespaces',
             'describe node <name>', 'logs <pod> -n <ns> --tail 100',
             'top nodes', 'get events --sort-by=.lastTimestamp'.
-        profile: AWS profile name for the account containing the cluster.
-            Pass an empty string to use environment-variable credentials.
+        profile: Configured account name returned by list_aws_accounts for the
+            account containing the cluster. Required (or supply account) when
+            AWS_ACCOUNT_LIST contains accounts. Without configured accounts,
+            omit profile and account to use the server's default credential chain.
         region: AWS region where the cluster resides. Defaults to the profile
             default or AWS_REGION / AWS_DEFAULT_REGION env var.
         account: Legacy alias for profile. If both are set, they must match.
@@ -442,7 +443,7 @@ async def eks_kubectl_execute(
     if profile_error:
         return f"❌ {profile_error}"
 
-    logger.info("EKS kubectl: cluster=%s profile=%s command='%s'", cluster_name, profile, kubectl_command)
+    logger.info("EKS kubectl: cluster=%s profile=%s command='%s'", cluster_name, selected_profile, kubectl_command)
 
     async with _kubectl_semaphore:
         loop = asyncio.get_event_loop()
