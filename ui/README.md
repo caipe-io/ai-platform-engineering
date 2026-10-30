@@ -193,3 +193,37 @@ access token to the selected runtime. The browser does not attach a bearer token
   their bearer identity and do not inherit browser administrator privileges.
 - Conversation-write, agent-use and app installation admission checks remain in
   force for every operation. Keep admin-only app policies unchanged.
+
+### Notification channels
+
+- Notification settings include app subscriptions, per-event and per-channel
+  choices, pause/resume, external quiet hours, tests, and delivery status.
+- Native and hosted apps register through `POST /api/notifications/registrations`
+  and publish through `POST /api/notifications`, using an installed app's bound
+  service account and declared `host.notifications` capability.
+- Set `NOTIFICATION_WEBEX_ENABLED=true` or `NOTIFICATION_SLACK_ENABLED=true` to
+  offer bot delivery. Users must link the matching provider account and opt in.
+  No bot is required for the inbox or browser push.
+- Configure `NOTIFICATION_WEB_PUSH_PUBLIC_KEY`,
+  `NOTIFICATION_WEB_PUSH_PRIVATE_KEY`, and `NOTIFICATION_WEB_PUSH_SUBJECT` for
+  browser web push. Generate a deployment-specific VAPID pair with
+  `npx web-push generate-vapid-keys`; keep the private key in a secret store.
+  The subject is an operator contact such as `mailto:admin@example.com`.
+- Push endpoints are limited to exact trusted service hosts. The defaults cover
+  Google, Mozilla, and Apple. Configure `NOTIFICATION_WEB_PUSH_ALLOWED_HOSTS`
+  only when another trusted provider is needed. Device keys and endpoints are
+  never returned by the notification status API.
+- The UI chart accepts `notifications.webPush.secretName`, containing keys
+  `publicKey`, `privateKey`, and `subject`. Channel enablement is configured
+  through the UI chart's `config` values. External channels are off by default.
+
+- Operators can enable metadata-only Splunk HEC or OTLP/HTTP logs exports with
+  `NOTIFICATION_SPLUNK_ENABLED` and `NOTIFICATION_OTEL_ENABLED`. Both default off;
+  endpoints and secrets are deployment-owned, separate from personal channels.
+
+- Publish a host-relative `callbackUri` (legacy `href` also works) to return to
+  an exact page, query, and section anchor. Recipient-bound launch markers survive
+  sign-in and recheck app access before navigating.
+
+See [notification architecture](../docs/docs/architecture/notifications.md) for
+acceptance, retry, idempotency, and authorization behavior.
