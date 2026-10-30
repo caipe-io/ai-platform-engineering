@@ -9,7 +9,6 @@ import {
   readSubscription,
 } from "./subscriptions.server";
 import { quietHoursEnd, type NotificationChannel } from "./channels";
-interface BrowserPushDevice { _id: string; subject: string; expiresAt: Date; }
 import {
   NotificationDeliveryError,
   type NotificationDispatch,
@@ -19,6 +18,7 @@ export type {
   NotificationDispatch,
   NotificationDelivery,
 } from "./delivery-types";
+interface BrowserPushDevice { _id: string; subject: string; expiresAt: Date; }
 type QueuedDelivery = NotificationDelivery;
 
 interface NotificationJob extends NotificationDispatch {
