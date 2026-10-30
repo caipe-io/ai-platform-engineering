@@ -16,6 +16,7 @@ export const RESERVED_HOST_PATHS = [
   "/knowledge-bases",
   "/login",
   "/logout",
+  "/notifications",
   "/schedules",
   "/settings",
   "/skills",
