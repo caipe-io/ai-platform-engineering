@@ -1,3 +1,4 @@
+import { enqueuePlatformNotificationExports } from "./exports.server";
 import { resolveRecipients } from "@/lib/notifications/audience.server";
 import {
   publishNotificationEvent,
@@ -32,6 +33,18 @@ export async function publishNotificationRequest(
     failed: 0,
   };
 
+  // Export once even when no user records match. Recipient fanout deduplicates
+  // against the same event key when it subsequently reaches the consumer.
+  try {
+    await enqueuePlatformNotificationExports(request.base);
+  } catch (error) {
+    console.error(
+      "[notifications] could not queue event exports",
+      error instanceof Error ? error.name : "unknown",
+    );
+    results.failed += 1;
+    return { recipients: 0, skipped: 0, rejected: 0, results };
+  }
   let audience;
   try {
     audience = await resolveRecipients(request.recipients, {

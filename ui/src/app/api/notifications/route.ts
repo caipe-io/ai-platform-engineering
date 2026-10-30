@@ -1,4 +1,5 @@
 import { notificationCallbackUri } from "@/lib/notifications/callback";
+import { enqueueNotificationExports } from "@/lib/notifications/exports.server";
 import { consumeNotificationQuota } from "@/lib/notifications/limits.server";
 import { canLaunchAgenticApp, agenticAppUserContextFromSession } from "@/lib/agentic-apps/access";
 import { loadConfiguredAgenticApps } from "@/lib/agentic-apps/config";
@@ -95,6 +96,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     const audience = await resolveRecipients((recipients as string[]).map((subject) => ({ subject })), { includeOrgAdmins: false });
     await consumeNotificationQuota(sourceId, 200, Math.max(1, audience.recipients.length));
     for (const recipient of audience.recipients) await consumeNotificationQuota(`recipient:${recipient.subject}`, 20);
+    await enqueueNotificationExports({ key: [eventKey], sourceId, eventType: body.eventType, occurredAt: new Date().toISOString(), severity: severity as Severity });
     for (const recipient of audience.recipients) await enqueueNotification({
       id: eventKey, sourceId: `app:${app.manifest.id}`, sourceLabel: app.manifest.displayName,
       eventType: body.eventType, recipient, title, message, href, severity: severity as Severity, retentionDays: 90,
@@ -102,6 +104,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return successResponse({ queued: audience.recipients.length, skipped: audience.skipped + audience.rejected }, 202);
   }
   await consumeNotificationQuota(sourceId, 200, recipients.length);
+  await enqueueNotificationExports({ key: [eventKey], sourceId, eventType: "app.notification", occurredAt: new Date().toISOString(), severity: severity as Severity });
   const created = await createInAppNotification({
     eventKey: `app:${app.installation.appId}:${eventKey}`,
     recipientUserSubjects: recipients as string[],

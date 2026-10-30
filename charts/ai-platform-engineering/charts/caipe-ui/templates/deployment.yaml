@@ -138,6 +138,20 @@ spec:
                   name: {{ $notificationSecretName | quote }}
                   key: {{ $notificationSecretKey | quote }}
             {{- end }}
+            {{- if .Values.notifications.splunk.tokenSecretName }}
+            - name: NOTIFICATION_SPLUNK_HEC_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.notifications.splunk.tokenSecretName | quote }}
+                  key: {{ .Values.notifications.splunk.tokenSecretKey | default "token" | quote }}
+            {{- end }}
+            {{- if .Values.notifications.otel.headersSecretName }}
+            - name: OTEL_EXPORTER_OTLP_LOGS_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.notifications.otel.headersSecretName | quote }}
+                  key: {{ .Values.notifications.otel.headersSecretKey | default "headers" | quote }}
+            {{- end }}
             {{- /* Service URL defaults: env: takes precedence over envFrom (ConfigMap),
                    so these entries provide release-name-derived defaults while still
                    allowing operators to override via .Values.config. */}}

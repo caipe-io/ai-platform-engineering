@@ -39,6 +39,23 @@ export interface NotificationDelivery
   browserDisplayedAt?: Date;
 }
 
+export type NotificationExportSink = "splunk" | "otel";
+/** Metadata allowlist. No message text, links, recipients, or credentials. */
+export interface NotificationExportEvent {
+  id: string;
+  sourceId: string;
+  eventType: string;
+  occurredAt: string;
+  severity: InAppNotificationSeverity;
+  resourceType?: string;
+  resourceIdHash?: string;
+}
+export interface NotificationExportDelivery extends NotificationDeliveryState {
+  kind: "export";
+  channel: NotificationExportSink;
+  event: NotificationExportEvent;
+}
+
 export class NotificationDeliveryError extends Error {
   constructor(
     message: string,

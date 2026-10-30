@@ -10,6 +10,8 @@ const mockCreate = jest.fn();
 const mockSource = jest.fn();
 const mockEnqueue = jest.fn();
 const mockAudience = jest.fn();
+const mockExports = jest.fn();
+jest.mock("@/lib/notifications/exports.server", () => ({ enqueueNotificationExports: (...args: unknown[]) => mockExports(...args) }));
 
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
@@ -90,11 +92,14 @@ describe("POST /api/notifications", () => {
     expect(response.status).toBe(202);
     expect(mockEnqueue).toHaveBeenCalledWith(expect.objectContaining({ sourceId: "app:example-app", eventType: "report.ready", recipient: { subject: "user-1", email: "test-user@example.test" } }));
     expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockExports).toHaveBeenCalledTimes(1);
+    expect(mockExports).toHaveBeenCalledWith({ key: [valid.eventKey], sourceId: "app:example-app", eventType: "report.ready", severity: "info", occurredAt: expect.any(String) });
   });
   it("rejects an unregistered type for a registered app", async () => {
     mockSource.mockResolvedValue({ events: [{ id: "report.ready" }] });
     expect((await post({ ...valid, eventType: "other.event" })).status).toBe(400);
     expect(mockEnqueue).not.toHaveBeenCalled();
+    expect(mockExports).not.toHaveBeenCalled();
   });
 
   it("creates a notification for the named users and answers 201", async () => {
@@ -165,6 +170,7 @@ describe("POST /api/notifications", () => {
 
     expect(response.status).toBe(400);
     expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockExports).not.toHaveBeenCalled();
   });
 
   it("rejects a body that is not JSON", async () => {
