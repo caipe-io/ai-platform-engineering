@@ -17,8 +17,7 @@ const RELEASES_DIR = "docs/releases";
 const CONTENTS_API_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${RELEASES_DIR}?ref=${GITHUB_REF}`;
 const RAW_BASE_URL = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_REF}/${RELEASES_DIR}`;
 
-// One curated post per minor series, named `YYYY-MM-DD-release-X-Y-0.md`. Retired
-// per-patch posts share the shape, so only the major and minor are used.
+// Curated posts include patch releases; an X-Y-0 post also covers its minor series.
 const RELEASE_FILE_PATTERN = /release-(\d+)-(\d+)-(\d+)\.mdx?$/i;
 
 const LISTING_TTL_MS = 10 * 60 * 1000;
@@ -340,7 +339,7 @@ function buildReleaseFile(name: string, rawUrl: string, localPath?: string): Rel
   if (!match) return null;
   return {
     name,
-    version: `${Number(match[1])}.${Number(match[2])}.0`,
+    version: `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}`,
     rawUrl,
     localPath,
   };
@@ -413,14 +412,12 @@ function seriesVersion(value: string): string {
 }
 
 /**
- * Release posts are published once per minor series, so patches and prereleases
- * resolve to their series post. A version whose series has no post yet stays
- * unmatched rather than borrowing notes from an earlier series.
+ * Prefer the deployed patch's post, including for its prerelease builds. If no
+ * exact post exists, use only the same minor series' X-Y-0 post.
  */
-function selectRelease(files: ReleaseFile[], requestedBase: string): ReleaseFile | null {
-  if (files.length === 0) return null;
-  const series = seriesVersion(requestedBase);
-  return files.find((file) => file.version === series) ?? null;
+function selectReleaseCandidates(files: ReleaseFile[], requestedBase: string): ReleaseFile[] {
+  const versions = new Set([requestedBase, seriesVersion(requestedBase)]);
+  return [...versions].flatMap(version => files.filter(file => file.version === version));
 }
 
 async function readReleaseContent(file: ReleaseFile): Promise<{ body: string; source: "github" | "local" } | null> {
@@ -546,31 +543,22 @@ export async function GET(request: NextRequest) {
     }
 
     const files = await getReleaseFiles();
-    const selected = selectRelease(files, baseVersion(requestedVersion));
-    if (!selected) {
-      return NextResponse.json(empty);
+    for (const selected of selectReleaseCandidates(files, baseVersion(requestedVersion))) {
+      const content = await readReleaseContent(selected);
+      if (!content) continue;
+      const { title, date, body } = parseFrontmatter(content.body);
+      if (!body) continue;
+      return NextResponse.json({
+        requestedVersion,
+        matchedVersion: selected.version,
+        title,
+        date,
+        body,
+        source: content.source,
+        changelogUrl: null,
+      } satisfies ReleaseNotesResponse);
     }
-
-    const content = await readReleaseContent(selected);
-    if (!content) {
-      return NextResponse.json(empty);
-    }
-
-    const { title, date, body } = parseFrontmatter(content.body);
-    if (!body) {
-      return NextResponse.json(empty);
-    }
-
-    const result: ReleaseNotesResponse = {
-      requestedVersion,
-      matchedVersion: selected.version,
-      title,
-      date,
-      body,
-      source: content.source,
-      changelogUrl: null,
-    };
-    return NextResponse.json(result);
+    return NextResponse.json(empty);
   } catch (error) {
     if (useConfiguredCompare && error instanceof ApiError) {
       return NextResponse.json(empty, {

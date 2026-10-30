@@ -2,6 +2,11 @@
 
 - The platform announcement switch and each user's notification preference are
   independent. Existing deployed-version release notes remain the default.
+- Automatic notes prefer the exact patch-release blog in `docs/releases`, then
+  the same minor series' `X-Y-0` blog if the patch post is missing, unreadable,
+  or empty. Prerelease and build suffixes resolve to
+  their base patch version. Matching blog content takes precedence over the
+  changelog; unrelated patch or minor posts are never substituted.
 - Deployment operators approve comparison repositories through the server-side
   `RELEASE_NOTES_ALLOWED_REPOSITORIES` environment variable (comma-separated
   HTTPS GitHub repository URLs, up to 32). Unset permits only the canonical

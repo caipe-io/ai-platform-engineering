@@ -242,15 +242,16 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
             ? await notesResponse.json()
             : null;
           if (!cancelled) {
-            const hasExactChangelog = Boolean(matchingRelease);
-            const hasConfiguredCompareNotes =
-              customCompareConfigured && notesPayload?.source === "github-compare";
-            const hasExactCuratedNotes =
+            const deployedBase = baseVersion(activeReleaseVersion);
+            const matchedVersion = normalizeVersion(notesPayload?.matchedVersion);
+            const hasSeriesBlog =
+              (notesPayload?.source === "github" || notesPayload?.source === "local") &&
+              matchedVersion === deployedBase.replace(/\.\d+$/, ".0");
+            const hasMatchingCuratedNotes =
               Boolean(notesPayload?.body) &&
-              (normalizeVersion(notesPayload?.matchedVersion) === activeReleaseVersion ||
-                normalizeVersion(notesPayload?.matchedVersion) === baseVersion(activeReleaseVersion));
+              (matchedVersion === activeReleaseVersion || matchedVersion === deployedBase || hasSeriesBlog);
             setReleaseMarkdown(
-              (hasConfiguredCompareNotes || !hasExactChangelog) && hasExactCuratedNotes
+              hasMatchingCuratedNotes
                 ? {
                     matchedVersion: notesPayload.matchedVersion ?? null,
                     title: notesPayload.title ?? null,
