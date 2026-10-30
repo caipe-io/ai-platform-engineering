@@ -55,3 +55,9 @@ Small implementation units extend the existing inbox.
 - Inbox links use an opaque recipient-bound marker. Sign-in returns to the exact destination, including query and anchor.
 - Resolution checks owner, expiry and current app launch access. Markers grant no resource access.
 - Resource-level CAS rechecks remain required before production for resource-backed events. Legacy direct links remain supported.
+
+## Platform event settings
+
+- Users can select category/event preferences and send a personal test notification.
+- Existing browser-completion, chime, release-note and platform-health settings remain intact.
+- Area toggles are reusable; each producer enables its own area control in a separate PR.
