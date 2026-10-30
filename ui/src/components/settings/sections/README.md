@@ -49,3 +49,22 @@
 - A build-provided `public/main-increment-release-notes.json` may supply notes
   for its exact version. This is a public build artifact, not a private
   GitHub-token read. Do not place confidential material in public artifacts.
+
+## Curated release overrides
+
+- Platform announcements → Curated release notes supports automatic, entered Markdown, or an approved repository file.
+- Set the exact deployed release version; later versions do not inherit stale curated content.
+- Save explicitly. Entered Markdown can be previewed before saving; the current-release preview fetches the saved source and reports errors. Repository Markdown is previewed after saving.
+- Repository mode uses the deployment's `RELEASE_NOTES_ALLOWED_REPOSITORIES` policy and existing server GitHub token variables. It accepts any repository-relative `.md`/`.mdx` path and a Git ref, independently of comparison refs.
+- Repository content is limited to 128 KiB and cached for ten minutes per repository/ref/path. Pin an immutable ref for release content. Relative media/links resolve against the file's raw GitHub location; private images still require browser access.
+- Manual notes allow an optional HTTPS changelog link. Without it, the dialog hides the full-changelog link.
+- Each saved content/source revision gets a separate dismissal identity. Automatic restores existing notification/comparison behavior. Fetch errors display the dialog's unavailable-content state; they never block login.
+- Manual preview and published notes share metadata/truncate parsing and preserve
+  leading Markdown indentation. Both sources enforce the 128 KiB UTF-8 limit.
+- Dismissal revisions include only active-source fields. This revision format
+  change re-announces previously dismissed curated notes once; later edits to
+  inactive fields do not re-announce unchanged notes.
+- Responses from another source are not accepted under a configured announcement
+  identity. Manual failures retain the configured changelog-link policy.
+- Concurrent repository reads share one in-flight fetch after each caller's
+  authorization and repository-policy checks; failed reads can be retried.

@@ -305,7 +305,7 @@ describe("/api/release-notes", () => {
     const response = await GET(new NextRequest("https://app.example.test/api/release-notes?version=1&compare=platform"));
     expect(response.status).toBe(500);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
-    expect(log).toHaveBeenCalledWith("[Release Notes API] Configured compare unavailable");
+    expect(log).toHaveBeenCalledWith("[Release Notes API] Configured release notes unavailable");
   });
 
   it("returns 400 when no version is provided", async () => {

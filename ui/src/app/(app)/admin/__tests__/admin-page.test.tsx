@@ -21,6 +21,7 @@ import { act, render, screen, waitFor, within, fireEvent } from '@testing-librar
 // Mocks
 // ============================================================================
 
+jest.mock('@/components/settings/ReleaseNotesOverrideSettings', () => ({ ReleaseNotesOverrideSettings: () => <div>Curated notes settings</div> }));
 jest.mock('@/components/agentic-apps/ConnectionGuidanceSettings', () => ({ ConnectionGuidanceSettings: () => <div>Connection guidance settings</div> }));
 
 jest.mock('@/components/settings/ReleaseNotesPreview', () => ({

@@ -393,3 +393,27 @@ describe("useReleaseUpgradePrompt", () => {
     expect(dismissed.result.current.open).toBe(false);
   });
 });
+
+describe("curated source identity and failure metadata", () => {
+  it.each(["mismatch", "http-error", "network-error"])("retains manual metadata on %s without accepting another source", async failure => {
+    window.sessionStorage.clear();
+    mockUseSession.mockReturnValue({ status: "authenticated", data: { user: { email: "test-user@example.test" } } });
+    mockUseVersion.mockReturnValue({ isLoading: false, versionInfo: { version: "1.3.2" } });
+    mockUseAdminRole.mockReturnValue({ isAdmin: true, loading: false });
+    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      if (String(url) === "/api/admin/platform-config") return jsonResponse({ data: { release_notes: { enabled: true, override_revision: "primary", override: { source: "manual", release_version: "1.3.2", markdown: "Saved notes", changelog_url: "" } } } });
+      if (String(url).startsWith("/api/release-notes")) {
+        if (failure === "network-error") throw new Error("Unavailable");
+        return jsonResponse({ matchedVersion: "1.3.2", body: "Wrong identity notes", source: "github-compare" }, failure !== "http-error");
+      }
+      return jsonResponse({ data: { preferences: {} }, releases: [] });
+    }) as jest.Mock;
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { result } = renderHook(() => useReleaseUpgradePrompt());
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.releaseMarkdown).toMatchObject({ source: "manual", changelogUrl: "", body: "" });
+      expect(result.current.open).toBe(true);
+    } finally { warn.mockRestore(); }
+  });
+});
