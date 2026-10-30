@@ -22,6 +22,7 @@ interface ShareButtonProps {
   sharing?: Conversation["sharing"];
   accessLevel?: Conversation["accessLevel"];
   className?: string;
+  disabled?: boolean;
 }
 
 export function ShareButton({
@@ -33,6 +34,7 @@ export function ShareButton({
   sharing,
   accessLevel,
   className,
+  disabled = false,
 }: ShareButtonProps) {
   const [showDialog, setShowDialog] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -82,6 +84,7 @@ export function ShareButton({
               <Button
                 variant="ghost"
                 size="icon"
+                disabled={disabled}
                 onClick={shouldOpenDialog ? handleOpenDialog : handleQuickCopy}
                 className={cn("h-6 w-6", className)}
                 aria-label={isOwner ? "Share conversation" : sharedByText}

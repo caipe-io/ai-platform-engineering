@@ -93,7 +93,7 @@ export function AppAssistantHistory({ appId, agentId, includeLegacy = false, sel
     </div>
     {loading && !items.length ? <p role="status" className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin" aria-hidden />Loading history…</p> : null}
     <ul aria-label="Your app chat history" className="space-y-1">
-      {items.map(item => <li key={item.id} className={cn("flex items-center rounded-lg border border-transparent", selectedId === item.id ? "border-border bg-accent" : "hover:bg-accent/50")}>
+      {items.map(item => <li key={item.id} className={cn("group/history flex items-center rounded-lg border border-transparent", selectedId === item.id ? "border-border bg-accent" : "hover:bg-accent/50")}>
         <button type="button" disabled={busy} aria-current={selectedId === item.id ? "true" : undefined}
           aria-label={item.title} className="flex min-w-0 flex-1 items-center gap-3 rounded-lg p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" onClick={() => void select(item.id)}>
           <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -101,7 +101,7 @@ export function AppAssistantHistory({ appId, agentId, includeLegacy = false, sel
             {item.updatedAt ? <time dateTime={item.updatedAt} className="mt-1 block text-xs text-muted-foreground">{new Date(item.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</time> : null}
           </span>
         </button>
-        <div className="mr-2 flex shrink-0 items-center">
+        <div className="mr-2 flex shrink-0 items-center opacity-0 transition-opacity group-hover/history:opacity-100 group-focus-within/history:opacity-100 [@media(hover:none)]:opacity-100">
           <HostConversationActions appId={appId} agentId={agentId} conversationId={item.id} disabled={busy}
             onHistoryChange={() => setRefresh(n => n + 1)} onArchived={() => { onArchived(item.id); setRefresh(n => n + 1); }} />
         </div>

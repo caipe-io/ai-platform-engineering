@@ -71,9 +71,9 @@ export default function HostConversationActions({ appId, conversationId, agentId
         aria-label="Rename conversation" disabled={disabled || pending}
         onClick={() => { setTitle(conversationTitle ?? conversation.title); setError(null); setRenaming(true); }}><Pencil className="h-3 w-3" aria-hidden />
       </Button></TooltipTrigger><TooltipContent>Rename conversation</TooltipContent></Tooltip>
-      {variant === "actions" && getStorageMode() === "mongodb" && !disabled && !pending && (
+      {variant === "actions" && getStorageMode() === "mongodb" && (
         <ShareButton conversationId={conversationId} conversationTitle={conversation.title}
-          isOwner sharing={conversation.sharing} accessLevel="owner" />
+          isOwner sharing={conversation.sharing} accessLevel="owner" disabled={disabled || pending} />
       )}
       {variant === "actions" && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="h-6 w-6"
         aria-label="Archive conversation" disabled={disabled || pending} onClick={() => void archive()}>
