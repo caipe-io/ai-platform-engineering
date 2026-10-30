@@ -16,3 +16,8 @@ Published guidance omits the local Webex identity-link action when linking is
 not configured. The editor retains it so operators can prepare configuration.
 Load failures offer Retry, and opening instructions moves keyboard focus into
 the panel; Escape and Close restore the trigger focus.
+
+History rows display lightweight action controls on hover/focus. They perform
+no app, agent, or conversation-detail reads until Rename, Share, or Archive is
+requested. The requested row then uses the canonical app/agent/owner validation
+before opening a dialog or mutating history; other rows remain unloaded.

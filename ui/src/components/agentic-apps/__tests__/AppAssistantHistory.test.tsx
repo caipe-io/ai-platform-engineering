@@ -53,7 +53,7 @@ it("shows validated actions directly on each history row", async () => {
   await screen.findByRole("button", { name: "Another allowed chat" });
   expect(screen.queryByRole("button", { name: "Actions for Allowed app chat" })).not.toBeInTheDocument();
   expect(screen.getAllByText("Validated row actions")).toHaveLength(2);
-  expect(mockActions).toHaveBeenCalledWith(expect.objectContaining({ appId: "example-app", agentId: "example-agent", conversationId: "Allowed app chat" }));
+  expect(mockActions).toHaveBeenCalledWith(expect.objectContaining({ appId: "example-app", agentId: "example-agent", conversationId: "Allowed app chat", deferLoad: true }));
 });
 
 it.each(["localStorage", "mongodb"])("includes unbound history only with legacy opt-in in %s mode", async mode => {

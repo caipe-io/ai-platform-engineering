@@ -102,7 +102,7 @@ export function AppAssistantHistory({ appId, agentId, includeLegacy = false, sel
           </span>
         </button>
         <div className="mr-2 flex shrink-0 items-center opacity-0 transition-opacity group-hover/history:opacity-100 group-focus-within/history:opacity-100 [@media(hover:none)]:opacity-100">
-          <HostConversationActions appId={appId} agentId={agentId} conversationId={item.id} disabled={busy}
+          <HostConversationActions appId={appId} agentId={agentId} conversationId={item.id} conversationTitle={item.title} deferLoad disabled={busy}
             onHistoryChange={() => setRefresh(n => n + 1)} onArchived={() => { onArchived(item.id); setRefresh(n => n + 1); }} />
         </div>
       </li>)}
