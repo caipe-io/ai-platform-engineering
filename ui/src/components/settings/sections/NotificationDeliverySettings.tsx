@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Bell, Pause, Play, Send } from "lucide-react";
 
 import { NotificationPreferenceSwitch } from "@/components/notifications/NotificationPreferenceSwitch";
@@ -79,7 +79,9 @@ export function NotificationDeliverySettings({
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const browserReady = false;
+  const registration = useRef<ServiceWorkerRegistration | null>(null);
+  const [browserReady, setBrowserReady] = useState(false);
+  const [browserSubscribed, setBrowserSubscribed] = useState(false);
   const [quiet, setQuiet] = useState({
     enabled: false,
     start: "22:00",
@@ -148,6 +150,35 @@ export function NotificationDeliverySettings({
       ...current,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     }));
+    if (
+      "serviceWorker" in navigator &&
+      "PushManager" in window &&
+      "Notification" in window
+    ) {
+      void navigator.serviceWorker
+        .register("/caipe-notification-sw.js", { scope: "/" })
+        .then(() => navigator.serviceWorker.ready)
+        .then(async (worker) => {
+          registration.current = worker;
+          setBrowserReady(true);
+          const subscription = await worker.pushManager.getSubscription();
+          if (subscription) {
+            // Renew the device lease without asking for permission again.
+            await jsonRequest(
+              "/api/notifications/push-subscriptions",
+              subscription.toJSON(),
+              "POST",
+            );
+            setBrowserSubscribed(true);
+          }
+        })
+        .catch((reason) =>
+          console.warn(
+            "[notification-settings] Browser subscription renewal failed",
+            reason instanceof Error ? reason.message : "unknown",
+          ),
+        );
+    }
   }, [load]);
 
   async function save(patch: Record<string, unknown>) {
@@ -169,7 +200,77 @@ export function NotificationDeliverySettings({
     }
   }
 
+  async function updateBrowser(enabled: boolean) {
+    const worker = registration.current;
+    if (!worker || !view?.webPushPublicKey)
+      throw new Error("Web push is unavailable in this browser or deployment");
+    if (enabled) {
+      const key = Uint8Array.from(
+        atob(view.webPushPublicKey.replace(/-/g, "+").replace(/_/g, "/")),
+        (value) => value.charCodeAt(0),
+      );
+      const subscription = await worker.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: key,
+      });
+      await jsonRequest(
+        "/api/notifications/push-subscriptions",
+        subscription.toJSON(),
+        "POST",
+      );
+    } else {
+      const subscription = await worker.pushManager.getSubscription();
+      if (subscription) {
+        await jsonRequest(
+          "/api/notifications/push-subscriptions",
+          { endpoint: subscription.endpoint },
+          "DELETE",
+        );
+        await subscription.unsubscribe();
+      }
+    }
+    setBrowserSubscribed(enabled);
+  }
+
+  async function toggleBrowser() {
+    setSaving(true);
+    setError(null);
+    try {
+      await updateBrowser(!browserSubscribed);
+      setMessage(
+        browserSubscribed
+          ? "This browser is unsubscribed."
+          : "This browser is subscribed. Enable Browser web push to receive alerts.",
+      );
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not update this browser",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function toggleChannel(channel: NotificationChannel, enabled: boolean) {
+    setError(null);
+    if (channel === "web_push" && enabled && !browserSubscribed) {
+      setSaving(true);
+      try {
+        // Called directly from the user's toggle so the browser may request permission.
+        await updateBrowser(true);
+      } catch (reason) {
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "Could not update browser push",
+        );
+        return;
+      } finally {
+        setSaving(false);
+      }
+    }
     await save({ channels: { [channel]: enabled } });
   }
 
@@ -179,7 +280,7 @@ export function NotificationDeliverySettings({
     try {
       await jsonRequest("/api/notifications/test", { channel }, "POST");
       setMessage(
-        `Test queued for ${LABELS[channel]}.`,
+        `Test queued for ${LABELS[channel]}. Check the Delivery status tab.`,
       );
     } catch (reason) {
       setError(
@@ -297,6 +398,25 @@ export function NotificationDeliverySettings({
             </div>
           ))}
           {chimeOption}
+          {view.webPushPublicKey && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+              <p className="text-sm">
+                {browserSubscribed
+                  ? "This browser is subscribed."
+                  : "This browser is not subscribed."}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={saving || !browserReady}
+                onClick={() => void toggleBrowser()}
+              >
+                {browserSubscribed
+                  ? "Unsubscribe this browser"
+                  : "Subscribe this browser"}
+              </Button>
+            </div>
+          )}
           <div className="space-y-3 rounded-lg border p-3">
             <NotificationPreferenceSwitch
               label="Quiet hours for external channels"
