@@ -64,9 +64,24 @@ Built via the shared `build/agents/Dockerfile.mcp` with `AGENT_NAME=aws`,
 
 ```bash
 docker build \
+  --pull --no-cache-filter runtime \
   --build-arg AGENT_NAME=aws \
   --build-arg INSTALL_AWS_CLI=true \
   --build-arg INSTALL_KUBECTL=true \
   -f build/agents/Dockerfile.mcp \
   -t mcp-aws .
 ```
+
+Release and prebuild workflows read the install flags from `.github/agents.json`.
+AWS builds pull current base images and rebuild the `runtime` stage without
+Docker layer caching, while retaining the Python dependency builder cache.
+Each new tag therefore refreshes AWS CLI v2 (`aws-cli-2`) and the latest patch
+of kubectl 1.36 (`kubectl-1.36-default`) available in the Wolfi package repository.
+This tracks repository availability rather than immediately installing every
+upstream release. Kubectl minor upgrades require an explicit package change to
+preserve compatibility with target clusters.
+
+The image build runs `aws --version` and `kubectl version --client=true` as the
+runtime user. A missing or unusable binary fails the build, and the installed
+versions appear in the build log. Existing images retain their installed
+versions until rebuilt and deployed.

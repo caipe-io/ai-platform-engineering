@@ -1,5 +1,4 @@
 name: "[Prebuild][MCP] MCP Servers Docker Build and Push"
-description: "Build and push MCP server Docker images"
 
 on:
   pull_request:
@@ -248,6 +247,8 @@ jobs:
         with:
           context: .
           file: build/agents/Dockerfile.mcp
+          pull: ${{ matrix.agent == 'aws' }}
+          no-cache-filters: ${{ matrix.agent == 'aws' && 'runtime' || '' }}
           labels: |
             ${{ steps.meta.outputs.labels }}
             io.cnoe.prebuild.branch=${{ env.BRANCH_BARE }}
