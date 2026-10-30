@@ -6,7 +6,7 @@ import type { Conversation } from "@/types/a2a";
 import { applyAssistantFontScale } from "@/lib/appearance-preferences";
 import { AgenticAppAssistantOverlay } from "../AgenticAppAssistantOverlay";
 
-jest.mock("../AssistantConnectionGuidance", () => ({ AssistantConnectionGuidance: () => <button type="button">Connect</button> }));
+jest.mock("../AssistantConnectionGuidance", () => ({ AssistantConnectionGuidance: ({ appId }: { appId: string }) => <button type="button" data-app-id={appId}>Connect</button> }));
 
 jest.mock("@/native-extensions/HostConversationActions", () => ({ __esModule: true, default: () => <h2>Saved app chat</h2> }));
 
@@ -122,6 +122,7 @@ describe("AgenticAppAssistantOverlay", () => {
     expect(tabs).toContainElement(screen.getByRole("tab", { name: "Chat" }));
     expect(tabs).toContainElement(screen.getByRole("tab", { name: "History" }));
     expect(header).toContainElement(screen.getByRole("button", { name: "Connect" }));
+    expect(screen.getByRole("button", { name: "Connect" })).toHaveAttribute("data-app-id", "example-app");
     expect(header).toContainElement(screen.getByRole("button", { name: "Conversation actions" }));
   });
 

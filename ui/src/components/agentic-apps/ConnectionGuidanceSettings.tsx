@@ -34,26 +34,30 @@ function GuideEditor({ appId, readOnly }: { appId: string; readOnly: boolean }) 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [revision, setRevision] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  const [needsReload, setNeedsReload] = useState(false);
   const endpoint = `/api/agentic-apps/${encodeURIComponent(appId)}/connection-guidance`;
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(endpoint, { signal: controller.signal, cache: "no-store" }).then(async (response) => {
+    void fetch(`${endpoint}?editor=true`, { signal: controller.signal, cache: "no-store" }).then(async (response) => {
       if (!response.ok) throw new Error("Could not load connection instructions.");
       const data = await response.json();
-      if (!controller.signal.aborted) { setGuides(data.data?.guides ?? []); setSaved(JSON.stringify(data.data?.guides ?? [])); }
+      if (!controller.signal.aborted) { setGuides(data.data?.guides ?? []); setSaved(JSON.stringify(data.data?.guides ?? [])); setRevision(data.data?.revision ?? null); setNeedsReload(false); }
     }).catch((reason) => { if (!controller.signal.aborted) setError(reason.message); });
     return () => controller.abort();
-  }, [endpoint]);
+  }, [endpoint, reload]);
   const edit = (index: number, patch: Partial<AssistantConnectionGuide>) => { setGuides((current) => current.map((guide, i) => i === index ? { ...guide, ...patch } : guide)); setMessage(""); };
   const save = async () => {
     setError(""); setMessage("");
     try {
       const snapshot = validateConnectionGuidance(guides);
       setSaving(true);
-      const response = await fetch(endpoint, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ guides: snapshot }) });
+      const response = await fetch(endpoint, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ guides: snapshot, revision }) });
       const data = await response.json();
+      if (response.status === 409) setNeedsReload(true);
       if (!response.ok) throw new Error(data.error?.message || data.error || "Could not save instructions.");
-      setSaved(JSON.stringify(snapshot)); setGuides(snapshot); setMessage("Connection guidance saved.");
+      setSaved(JSON.stringify(snapshot)); setGuides(snapshot); setRevision(data.data?.revision ?? null); setMessage("Connection guidance saved.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save instructions."); }
     finally { setSaving(false); }
   };
@@ -71,11 +75,16 @@ function GuideEditor({ appId, readOnly }: { appId: string; readOnly: boolean }) 
         <Button type="button" variant="outline" onClick={() => setGuides((current) => current.filter((_, i) => i !== index))}>Remove guide</Button>
       </div>)}
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" disabled={guides.length >= 5} onClick={() => setGuides((current) => [...current, { id: `channel-${current.length + 1}`, enabled: false, label: "Connect", title: "Connection instructions", markdown: "", action_label: "", action_url: "" }])}>Add connection guide</Button>
-        <Button type="button" disabled={JSON.stringify(guides) === saved} onClick={() => void save()}>{saving ? "Saving…" : "Save connection guidance"}</Button>
+        <Button type="button" variant="outline" disabled={guides.length >= 5} onClick={() => setGuides((current) => {
+          let index = 1;
+          while (current.some(guide => guide.id === `channel-${index}`)) index += 1;
+          return [...current, { id: `channel-${index}`, enabled: false, label: "Connect", title: "Connection instructions", markdown: "", action_label: "", action_url: "" }];
+        })}>Add connection guide</Button>
+        <Button type="button" disabled={needsReload || JSON.stringify(guides) === saved} onClick={() => void save()}>{saving ? "Saving…" : "Save connection guidance"}</Button>
       </div>
     </fieldset>
     <div className="flex flex-wrap gap-2" aria-label="Connection guide preview"><ConnectionGuideButtons guides={guides} /></div>
     {message && <p role="status">{message}</p>}{error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+    {error && (saved === null || needsReload) && <Button type="button" variant="outline" onClick={() => { setError(""); setMessage(""); setSaved(null); setReload(value => value + 1); }}>Reload connection guidance</Button>}
   </div>;
 }

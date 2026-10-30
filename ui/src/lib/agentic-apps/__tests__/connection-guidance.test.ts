@@ -11,3 +11,8 @@ test("requires readable enabled instructions and unique channel IDs", () => {
   expect(() => validateConnectionGuidance([guide, guide])).toThrow(/unique/);
   expect(() => validateConnectionGuidance([{ ...guide, markdown: "x".repeat(8193) }])).toThrow(/markdown/);
 });
+test("preserves leading code indentation and rejects blank enabled instructions", () => {
+  const markdown = "    example command\n    second command\n";
+  expect(validateConnectionGuidance([{ ...guide, markdown }])[0].markdown).toBe(markdown);
+  expect(() => validateConnectionGuidance([{ ...guide, markdown: " \n " }])).toThrow(/instructions/);
+});

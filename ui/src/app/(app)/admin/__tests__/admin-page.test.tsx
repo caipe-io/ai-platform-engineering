@@ -1149,6 +1149,12 @@ describe('Admin Dashboard Page', () => {
       ).toHaveAttribute("aria-expanded", "true");
     });
 
+    it("exposes connection guidance on the Defaults page", async () => {
+      currentPathname = "/admin/configuration/defaults";
+      render(<AdminPage />);
+      expect(await screen.findByText("Connection guidance settings")).toBeInTheDocument();
+    });
+
     it("defaults bare Admin to the canonical Users route", async () => {
       render(<AdminPage />);
 

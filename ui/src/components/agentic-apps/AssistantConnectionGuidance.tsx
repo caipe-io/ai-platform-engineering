@@ -2,7 +2,7 @@
 
 import { X } from "lucide-react";
 import Image from "next/image";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { MarkdownRenderer } from "@/components/shared/timeline/MarkdownRenderer";
@@ -13,6 +13,9 @@ export function ConnectionGuideButtons({ guides }: { guides: AssistantConnection
   const instanceId = useId();
   const triggerRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const activeGuide = guides.find((guide) => guide.enabled && guide.id === selectedId);
+  const focusPanel = useCallback((node: HTMLDivElement | null) => {
+    if (node) requestAnimationFrame(() => { if (node.isConnected) node.focus(); });
+  }, []);
 
   useEffect(() => {
     if (!activeGuide) return;
@@ -41,7 +44,7 @@ export function ConnectionGuideButtons({ guides }: { guides: AssistantConnection
           </Button>
         </PopoverTrigger>
         <PopoverContent align="end" className="max-h-[70vh] w-80 max-w-[calc(100vw-1rem)] overflow-y-auto p-4">
-          <div id={panelId} role="dialog" aria-labelledby={titleId} className="space-y-3">
+          <div ref={focusPanel} id={panelId} role="dialog" tabIndex={-1} aria-labelledby={titleId} className="space-y-3">
             <div className="flex items-start justify-between gap-3">
               <h3 id={titleId} className="text-sm font-semibold">{guide.title}</h3>
               <Button type="button" variant="ghost" size="icon" className="-mr-2 -mt-2 h-8 w-8 shrink-0"
@@ -59,14 +62,16 @@ export function ConnectionGuideButtons({ guides }: { guides: AssistantConnection
 }
 
 export function AssistantConnectionGuidance({ appId }: { appId: string }) {
-  const [state, setState] = useState<{ appId: string; guides: AssistantConnectionGuide[] } | null>(null);
+  const [state, setState] = useState<{ appId: string; guides: AssistantConnectionGuide[]; error?: boolean } | null>(null);
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     void fetch(`/api/agentic-apps/${encodeURIComponent(appId)}/connection-guidance`, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => { if (!response.ok) throw new Error("Guidance unavailable"); return response.json(); })
       .then((data) => { if (!controller.signal.aborted) setState({ appId, guides: data.data?.guides ?? [] }); })
-      .catch(() => { if (!controller.signal.aborted) setState({ appId, guides: [] }); });
+      .catch(() => { if (!controller.signal.aborted) setState({ appId, guides: [], error: true }); });
     return () => controller.abort();
-  }, [appId]);
+  }, [appId, retry]);
+  if (state?.appId === appId && state.error) return <div role="alert" className="flex items-center gap-2 text-xs text-muted-foreground">Connection instructions unavailable.<Button size="sm" variant="outline" onClick={() => { setState(null); setRetry(value => value + 1); }}>Retry</Button></div>;
   return <ConnectionGuideButtons guides={state?.appId === appId ? state.guides : []} />;
 }
