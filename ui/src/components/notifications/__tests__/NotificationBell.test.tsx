@@ -3,6 +3,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const mockPush = jest.fn();
+const mockDeferred = jest.fn();
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
@@ -12,6 +13,7 @@ jest.mock("@/store/unsaved-changes-store", () => ({
   useUnsavedChangesStore: () => ({
     hasUnsavedChanges: false,
     requestNavigation: jest.fn(),
+    requestDeferredAction: mockDeferred,
   }),
 }));
 
@@ -103,4 +105,16 @@ it("labels global platform incidents and their resolved lifecycle",async () => {
 
   expect(await screen.findByText("Platform")).toBeInTheDocument();
   expect(screen.getByText("Resolved")).toBeInTheDocument();
+});
+
+
+it("uses document navigation for callback markers through the existing unsaved-edit guard", async () => {
+  global.fetch = jest.fn(async () => ({ ok: true, json: async () => ({
+    notifications: [{ id: "notification-example", title: "Example update", message: "Example changed", href: "/notifications/open/" + "a".repeat(64), severity: "info", created_at: "2026-01-01T00:00:00Z", read: true }],
+    unread_count: 0, pagination: { page: 1, page_size: 10, total: 1, total_pages: 1 },
+  }) })) as jest.Mock;
+  render(<NotificationBell enabled />);
+  fireEvent.click(await screen.findByRole("button", { name: "Notifications" }));
+  fireEvent.click(await screen.findByText("Example update"));
+  expect(mockDeferred).toHaveBeenCalledWith(expect.any(Function));
 });
