@@ -79,6 +79,9 @@ function mockGithub(listing = LISTING) {
     if (u.endsWith("0-6-0.md")) {
       return { ok: true, text: async () => BODY_060 } as unknown as Response;
     }
+    if (u.endsWith("1-3-0.md")) {
+      return { ok: true, text: async () => "## Example series release\n\nSeries-level release notes." } as unknown as Response;
+    }
     if (u.endsWith("1-3-3.md")) {
       return { ok: true, text: async () => "## Example patch release\n\nPatch-specific release notes." } as unknown as Response;
     }
@@ -154,6 +157,29 @@ describe("/api/release-notes", () => {
     const data = await callGet(version, listing);
     expect(data).toMatchObject({ matchedVersion: "1.3.3", source: "github", body: expect.stringContaining("Patch-specific release notes") });
     expect(githubUrls.at(-1)).toBe(`${RAW_BASE}/2026-01-01-release-1-3-3.md`);
+  });
+
+  it("uses the series post when a different patch is also listed", async () => {
+    const listing = ["1-3-3", "1-3-0"].map(suffix => ({
+      name: `2026-01-01-release-${suffix}.md`, type: "file", download_url: `${RAW_BASE}/2026-01-01-release-${suffix}.md`,
+    }));
+    const data = await callGet("1.3.4", listing);
+    expect(data).toMatchObject({ matchedVersion: "1.3.0", source: "github", body: expect.stringContaining("Series-level release notes") });
+    expect(githubUrls.at(-1)).toBe(`${RAW_BASE}/2026-01-01-release-1-3-0.md`);
+  });
+
+  it.each(["unreadable", "empty"])("tries the series post when the exact patch post is %s", async failure => {
+    jest.resetModules();
+    mockGithub(["1-3-0", "1-3-3"].map(suffix => ({
+      name: `2026-01-01-release-${suffix}.md`, type: "file", download_url: `${RAW_BASE}/2026-01-01-release-${suffix}.md`,
+    })));
+    const fallback = global.fetch;
+    global.fetch = jest.fn(async (url: string | URL) => String(url).endsWith("1-3-3.md")
+      ? { ok: failure === "empty", text: async () => "" } as Response
+      : fallback(url));
+    const { GET } = await import("../route");
+    const data = await (await GET(new NextRequest("https://example.test/api/release-notes?version=1.3.3"))).json();
+    expect(data).toMatchObject({ matchedVersion: "1.3.0", source: "github", body: expect.stringContaining("Series-level release notes") });
   });
 
   it("does not relabel a different patch post as a minor-series fallback", async () => {
