@@ -360,6 +360,23 @@ services:
   #   MongoDB: For persistent chat history and user settings
   #   - Configure via MONGODB_* environment variables
   #   - See mongodb service configuration above
+  # Optional notification broker; excluded from minimal profiles.
+  nats:
+    image: nats:2.10-alpine
+    container_name: caipe-nats
+    command: ["-js", "-sd", "/data", "-m", "8222", "--auth", "${NATS_TOKEN:-caipe-notifications-local-only}"]
+    ports:
+      - "127.0.0.1:4222:4222"
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - nats
+
   caipe-ui:
     image: ghcr.io/cnoe-io/caipe-ui:${IMAGE_TAG:-0.5.66}
     container_name: caipe-ui
@@ -367,6 +384,9 @@ services:
     env_file:
       - .env
     environment:
+      - NOTIFICATIONS_TRANSPORT=${NOTIFICATIONS_TRANSPORT:-direct}
+      - NATS_URL=${NATS_URL:-nats://nats:4222}
+      - NATS_TOKEN=${NATS_TOKEN:-caipe-notifications-local-only}
       - NODE_ENV=production
       # Safe release metadata shown by System Health. A specific
       # PLATFORM_COMPONENT_VERSION_* value may override this shared tag.
@@ -1676,6 +1696,7 @@ services:
 
 
 volumes:
+  nats_data:
   mongodb_data:
     driver: local
   mongodb_config:
