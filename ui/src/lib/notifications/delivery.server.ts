@@ -9,17 +9,19 @@ import {
   readSubscription,
 } from "./subscriptions.server";
 import { quietHoursEnd, type NotificationChannel } from "./channels";
+import { sendNotificationExport } from "./exports.server";
 import {
   NotificationDeliveryError,
   type NotificationDispatch,
   type NotificationDelivery,
+  type NotificationExportDelivery,
 } from "./delivery-types";
 export type {
   NotificationDispatch,
   NotificationDelivery,
 } from "./delivery-types";
 interface BrowserPushDevice { _id: string; subject: string; expiresAt: Date; }
-type QueuedDelivery = NotificationDelivery;
+type QueuedDelivery = NotificationDelivery | NotificationExportDelivery;
 
 interface NotificationJob extends NotificationDispatch {
   _id: string;
@@ -134,7 +136,11 @@ export async function runNotificationDeliveriesOnce(): Promise<number> {
     );
     if (!delivery) continue;
     try {
-      const allowed = await deliveryAllowed(
+      let allowed: boolean;
+      if (delivery.kind === "export") {
+        allowed = await sendNotificationExport(delivery);
+      } else {
+        allowed = await deliveryAllowed(
           delivery.recipient.subject,
           delivery.sourceId,
           delivery.eventType,
@@ -180,6 +186,7 @@ export async function runNotificationDeliveriesOnce(): Promise<number> {
             });
           } else await sendExternalNotification(delivery);
         }
+      }
       await deliveries.updateOne(
         { _id: delivery._id, leaseToken: token },
         {

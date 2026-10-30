@@ -7,6 +7,8 @@ import { parseNotificationEventRequest } from "@/lib/notifications/request";
 const mockFind = jest.fn();
 const mockReadTuples = jest.fn();
 const mockPublishEvent = jest.fn();
+const mockExports = jest.fn();
+jest.mock("@/lib/notifications/exports.server", () => ({ enqueuePlatformNotificationExports: (...args: unknown[]) => mockExports(...args) }));
 
 jest.mock("@/lib/mongodb", () => ({
   getCollection: async () => ({
@@ -252,6 +254,8 @@ describe("fan-out", () => {
     expect(mockPublishEvent).toHaveBeenCalledWith(
       expect.objectContaining({ recipient_subject: "sub-bob", recipient_email: "bob@example.com" }),
     );
+    expect(mockExports).toHaveBeenCalledTimes(1);
+    expect(mockExports).toHaveBeenCalledWith(baseEvent);
     expect(result.recipients).toBe(2);
     expect(result.results.delivered).toBe(2);
   });
@@ -279,6 +283,7 @@ describe("fan-out", () => {
     });
     expect(result.rejected).toBe(1);
     expect(result.recipients).toBe(0);
+    expect(mockExports).toHaveBeenCalledWith(baseEvent);
     expect(mockPublishEvent).not.toHaveBeenCalled();
     warn.mockRestore();
   });

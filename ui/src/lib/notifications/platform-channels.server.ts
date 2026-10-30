@@ -1,3 +1,4 @@
+import { enqueueNotificationExports } from "./exports.server";
 import { resolveRecipients } from "./audience.server";
 import { enqueueNotification } from "./delivery.server";
 import type { InAppNotificationSeverity } from "@/types/in-app-notification";
@@ -12,6 +13,13 @@ export async function queuePlatformNotificationChannels(input: {
 }): Promise<void> {
   if (process.env.NOTIFICATION_EVENTS_ENABLED === "false") return;
   try {
+    await enqueueNotificationExports({
+      key: [input.id],
+      sourceId: "platform",
+      eventType: input.eventType,
+      occurredAt: new Date().toISOString(),
+      severity: input.severity,
+    });
     if (
       !(
         process.env.NOTIFICATION_WEB_PUSH_PUBLIC_KEY ||
