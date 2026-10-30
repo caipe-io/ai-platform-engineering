@@ -857,27 +857,6 @@ pre code.hljs {
   pointer-events: none;
 }
 
-/* Opaque, theme-aware color blending for the floating app assistant. */
-.agentic-assistant-surface {
-  background-image:
-    radial-gradient(ellipse at 95% 100%, color-mix(in srgb, var(--gradient-to) 24%, transparent), transparent 68%),
-    radial-gradient(ellipse at 5% 0%, color-mix(in srgb, var(--gradient-from) 16%, transparent), transparent 65%);
-}
-
-.agentic-assistant-header {
-  background: linear-gradient(105deg, color-mix(in srgb, var(--gradient-from) 16%, hsl(var(--background))), hsl(var(--background)));
-}
-
-:where(.light, [data-theme="light"], [data-theme="legacy-light"]) .agentic-assistant-surface {
-  background-image:
-    radial-gradient(ellipse at 95% 100%, color-mix(in srgb, var(--gradient-to) 7%, transparent), transparent 68%),
-    radial-gradient(ellipse at 5% 0%, color-mix(in srgb, var(--gradient-from) 6%, transparent), transparent 65%);
-}
-
-:where(.light, [data-theme="light"], [data-theme="legacy-light"]) .agentic-assistant-header {
-  background: linear-gradient(105deg, color-mix(in srgb, var(--gradient-from) 5%, hsl(var(--background))), hsl(var(--background)));
-}
-
 /* Light uses a quiet tonal hierarchy inspired by semantic surface
    roles. These selectors are intentionally scoped so Legacy Light and every
    dark theme keep their existing appearance. */
