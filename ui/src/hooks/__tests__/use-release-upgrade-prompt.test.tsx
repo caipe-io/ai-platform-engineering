@@ -92,7 +92,7 @@ describe("useReleaseUpgradePrompt", () => {
 
     expect(result.current.releaseVersion).toBe("0.5.1");
     expect(result.current.release?.sections[0].items[0].text).toBe("Added migrations");
-    expect(result.current.releaseMarkdown).toBeNull();
+    expect(result.current.releaseMarkdown?.body).toBe("Curated release notes body");
     expect(result.current.isAdmin).toBe(true);
   });
 
@@ -121,17 +121,17 @@ describe("useReleaseUpgradePrompt", () => {
     }));
   });
 
-  it("uses exact changelog entries before exact curated release markdown", async () => {
+  it("prefers exact curated release markdown over changelog entries", async () => {
     const { result } = renderHook(() => useReleaseUpgradePrompt());
 
     await waitFor(() => expect(result.current.open).toBe(true));
 
     expect(result.current.release?.version).toBe("0.5.1");
-    expect(result.current.releaseMarkdown).toBeNull();
+    expect(result.current.releaseMarkdown?.body).toBe("Curated release notes body");
     expect(global.fetch).toHaveBeenCalledWith("/api/release-notes?version=0.5.1");
   });
 
-  it("uses exact curated release markdown only when the changelog has no exact entry", async () => {
+  it("uses exact curated release markdown when the changelog has no exact entry", async () => {
     (global.fetch as jest.Mock).mockImplementation(async (url: RequestInfo | URL) => {
       const href = String(url);
       if (href === "/api/settings") {
@@ -165,6 +165,39 @@ describe("useReleaseUpgradePrompt", () => {
 
     expect(result.current.release).toBeNull();
     expect(result.current.releaseMarkdown?.body).toBe("Curated release notes body");
+  });
+
+  it.each([
+    ["1.3.3", "1.3.3", "github"],
+    ["1.3.3-example.7", "1.3.3", "github"],
+    ["1.3.3", "1.3.0", "github"],
+    ["1.3.3-example.7", "1.3.0", "local"],
+  ])("renders matching blog notes for deployed %s from %s (%s)", async (version, matchedVersion, source) => {
+    mockUseVersion.mockReturnValue({ isLoading: false, versionInfo: { version } });
+    const fallback = global.fetch;
+    global.fetch = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url) === "/api/changelog") return jsonResponse({ releases: [{ ...changelogPayload.releases[0], version }], scopes: [] });
+      if (String(url).startsWith("/api/release-notes")) return jsonResponse({ matchedVersion, body: "Example blog notes", source });
+      return fallback(url, init);
+    });
+    const { result } = renderHook(() => useReleaseUpgradePrompt());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.open).toBe(true);
+    expect(result.current.releaseMarkdown?.body).toBe("Example blog notes");
+  });
+
+  it.each(["1.3.2", "1.2.0", null])("keeps changelog fallback when blog version %s does not match", async matchedVersion => {
+    mockUseVersion.mockReturnValue({ isLoading: false, versionInfo: { version: "1.3.3" } });
+    const fallback = global.fetch;
+    global.fetch = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url) === "/api/changelog") return jsonResponse({ releases: [{ ...changelogPayload.releases[0], version: "1.3.3" }], scopes: [] });
+      if (String(url).startsWith("/api/release-notes")) return jsonResponse({ matchedVersion, body: matchedVersion ? "Other release" : null, source: "github" });
+      return fallback(url, init);
+    });
+    const { result } = renderHook(() => useReleaseUpgradePrompt());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.release?.version).toBe("1.3.3");
+    expect(result.current.releaseMarkdown).toBeNull();
   });
 
   it("stores admin skip until next login only in sessionStorage", async () => {

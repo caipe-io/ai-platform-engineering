@@ -59,7 +59,7 @@ date: 2026-06-01
 Newest available notes.
 `;
 
-function mockGithub() {
+function mockGithub(listing = LISTING) {
   githubUrls.length = 0;
   global.fetch = jest.fn(async (url: string | URL) => {
     const u = String(url);
@@ -71,7 +71,7 @@ function mockGithub() {
       hostname = "";
     }
     if (hostname === "api.github.com") {
-      return { ok: true, json: async () => LISTING } as unknown as Response;
+      return { ok: true, json: async () => listing } as unknown as Response;
     }
     if (u.endsWith("0-5-0.md")) {
       return { ok: true, text: async () => BODY_050 } as unknown as Response;
@@ -79,15 +79,18 @@ function mockGithub() {
     if (u.endsWith("0-6-0.md")) {
       return { ok: true, text: async () => BODY_060 } as unknown as Response;
     }
+    if (u.endsWith("1-3-3.md")) {
+      return { ok: true, text: async () => "## Example patch release\n\nPatch-specific release notes." } as unknown as Response;
+    }
     return { ok: false, status: 404, text: async () => "", json: async () => ({}) } as unknown as Response;
   }) as unknown as typeof fetch;
 }
 
-async function callGet(version: string) {
+async function callGet(version: string, listing = LISTING) {
   jest.resetModules();
-  mockGithub();
+  mockGithub(listing);
   const { GET } = await import("../route");
-  const res = await GET(new NextRequest(`http://localhost/api/release-notes?version=${version}`));
+  const res = await GET(new NextRequest(`http://localhost/api/release-notes?version=${encodeURIComponent(version)}`));
   return res.json();
 }
 
@@ -141,6 +144,23 @@ describe("/api/release-notes", () => {
     const data = await callGet("0.6.1-dev.14");
     expect(data.matchedVersion).toBe("0.6.0");
     expect(data.title).toBe("Release 0.6.0 — Big Stuff");
+  });
+
+  it.each(["1.3.3", "v1.3.3", "1.3.3-example.7", "1.3.3+build.7"])("prefers the exact patch post for %s", async version => {
+    const listing = ["1-3-0", "1-3-2", "1-3-3"].map(suffix => ({
+      name: `2026-01-01-release-${suffix}.md`, type: "file",
+      download_url: `${RAW_BASE}/2026-01-01-release-${suffix}.md`,
+    }));
+    const data = await callGet(version, listing);
+    expect(data).toMatchObject({ matchedVersion: "1.3.3", source: "github", body: expect.stringContaining("Patch-specific release notes") });
+    expect(githubUrls.at(-1)).toBe(`${RAW_BASE}/2026-01-01-release-1-3-3.md`);
+  });
+
+  it("does not relabel a different patch post as a minor-series fallback", async () => {
+    const data = await callGet("1.3.4", [{
+      name: "2026-01-01-release-1-3-3.md", type: "file", download_url: `${RAW_BASE}/2026-01-01-release-1-3-3.md`,
+    }]);
+    expect(data).toMatchObject({ matchedVersion: null, body: null, source: "none" });
   });
 
   it("does not fall back to an older series when the requested series has no post", async () => {
