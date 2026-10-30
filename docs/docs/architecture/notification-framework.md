@@ -62,3 +62,9 @@ CAIPE 1.4.0 adds event and preference contracts for the existing inbox.
 - Inbox links use an opaque recipient-bound marker. Sign-in returns to the exact destination, including query and anchor.
 - Resolution checks owner, expiry and current app launch access. Markers grant no resource access.
 - Resource-level CAS rechecks remain required before production for resource-backed events. Legacy direct links remain supported.
+
+## Area preference shortcuts
+
+- A reusable area toggle reads and updates the authenticated event preference API.
+- Category choices and event defaults remain consistent with the shared catalog.
+- Producer pages add their own area control independently. Full app/event delivery settings are a separate review unit.
