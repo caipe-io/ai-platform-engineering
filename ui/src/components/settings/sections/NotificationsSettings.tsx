@@ -1,28 +1,29 @@
 "use client";
 
-import { EventNotificationSettings } from "./EventNotificationSettings";
-import { NotificationDeliverySettings } from "./NotificationDeliverySettings";
 import { ReleaseNotesPreview } from "@/components/settings/ReleaseNotesPreview";
+import { NotificationDeliverySettings, type NotificationSettingsTab } from "@/components/settings/sections/NotificationDeliverySettings";
 import { AutoSaveStatus } from "@/components/settings/shared/AutoSaveStatus";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
 import { SettingsSwitch } from "@/components/settings/shared/SettingsSwitch";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAdminRole } from "@/hooks/use-admin-role";
 import { useKeyedAutoSave } from "@/hooks/use-keyed-auto-save";
 import {
   cacheAgentCompletionPreferences,
   deliverAgentCompletionAlert,
   getBrowserNotificationCapability,
+  playCompletionChime,
   prepareBrowserNotificationDelivery,
   primeCompletionChime,
   requestBrowserNotificationPermission,
   type BrowserNotificationCapability,
 } from "@/lib/agent-completion-notifications";
 import { Activity,Bell,BellRing,ChevronsDownUp,ChevronsUpDown,Loader2,Volume2 } from "lucide-react";
-import { useEffect,useRef,useState } from "react";
+import { useCallback,useEffect,useRef,useState } from "react";
 
 type NotificationKey = "release-notes" | "browser-completions" | "completion-chime" | "platform-health";
-type NotificationSection = "agent-completions" | "release-notes" | "platform-health";
+type NotificationSection = "agent-completions" | "release-notes" | "platform-health" | `delivery:${string}`;
 
 const NOTIFICATION_SECTIONS: NotificationSection[] = ["agent-completions","release-notes","platform-health"];
 
@@ -72,9 +73,16 @@ function permissionDescription(capability: BrowserNotificationCapability): strin
 
 export function NotificationsSettings(): React.ReactElement {
   const { isAdmin } = useAdminRole();
-  const visibleSections: NotificationSection[] = isAdmin
-    ? NOTIFICATION_SECTIONS
-    : ["agent-completions","release-notes"];
+  const [tab, setTab] = useState<NotificationSettingsTab>("delivery");
+  const [deliverySections, setDeliverySections] = useState<NotificationSection[]>([]);
+  const knownDeliverySections = useRef(new Set<string>());
+  const visibleSections: NotificationSection[] = tab === "delivery"
+    ? ["agent-completions", "delivery:channels"]
+    : tab === "platform"
+      ? ["release-notes", ...(isAdmin ? ["platform-health" as const] : []), "delivery:platform"]
+      : tab === "status"
+        ? ["delivery:status"]
+        : deliverySections.filter((section) => section.startsWith("delivery:app:"));
   const [preferences,setPreferences] = useState<NotificationPreferences>({
     browserEnabled: false,
     chimeEnabled: false,
@@ -87,6 +95,7 @@ export function NotificationsSettings(): React.ReactElement {
   const [loading,setLoading] = useState(true);
   const [loadError,setLoadError] = useState<string | null>(null);
   const [testMessage,setTestMessage] = useState<string | null>(null);
+  const [chimeTestMessage, setChimeTestMessage] = useState<string | null>(null);
   const [expandedSections,setExpandedSections] = useState<Set<NotificationSection>>(
     () => new Set(NOTIFICATION_SECTIONS),
   );
@@ -202,6 +211,7 @@ export function NotificationsSettings(): React.ReactElement {
 
   const changeCompletionChime = (value: boolean): void => {
     setTestMessage(null);
+    setChimeTestMessage(null);
     if (value) void primeCompletionChime();
     setPreference("completion-chime",value);
   };
@@ -256,6 +266,12 @@ export function NotificationsSettings(): React.ReactElement {
     }
     autoSave.retry(key);
   };
+  const onDeliverySectionsLoaded = useCallback((ids: string[]) => {
+    setDeliverySections(ids as NotificationSection[]);
+    const added = ids.filter((id) => !knownDeliverySections.current.has(id));
+    added.forEach((id) => knownDeliverySections.current.add(id));
+    if (added.length) setExpandedSections((current) => new Set([...current, ...added as NotificationSection[]]));
+  }, [setExpandedSections]);
   const setSectionExpanded = (section: NotificationSection,expanded: boolean): void => {
     setExpandedSections((current) => {
       const next = new Set(current);
@@ -278,9 +294,15 @@ export function NotificationsSettings(): React.ReactElement {
   }
 
   return (
-    <div className="space-y-6">
-      <EventNotificationSettings />
-      <NotificationDeliverySettings />
+    <Tabs value={tab} onValueChange={(value) => setTab(value as NotificationSettingsTab)} className="space-y-6">
+      <div className="overflow-x-auto pb-1">
+        <TabsList aria-label="Notification settings" className="w-max">
+          <TabsTrigger value="delivery">Notification delivery</TabsTrigger>
+          <TabsTrigger value="apps">Apps</TabsTrigger>
+          <TabsTrigger value="platform">Platform</TabsTrigger>
+          <TabsTrigger value="status">Delivery status</TabsTrigger>
+        </TabsList>
+      </div>
       {loadError ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {loadError}
@@ -312,7 +334,39 @@ export function NotificationsSettings(): React.ReactElement {
         </Button>
       </div>
 
-      <SettingsCard
+      <TabsContent value={tab} className="space-y-6">
+      <NotificationDeliverySettings
+        section={tab}
+        expandedSections={expandedSections}
+        onSectionChange={(id, expanded) => setSectionExpanded(id as NotificationSection, expanded)}
+        onSectionsLoaded={onDeliverySectionsLoaded}
+        chimeOption={
+          <div role="group" aria-label="Chime delivery" className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">Chime</p>
+              <p className="text-xs text-muted-foreground">Play a short sound when a background agent turn finishes while the app is open.</p>
+              <AutoSaveStatus className="mt-1" onRetry={() => retry("completion-chime")} state={autoSave.stateFor("completion-chime")} />
+              {chimeTestMessage && <p role="status" className="mt-1 text-xs text-muted-foreground">{chimeTestMessage}</p>}
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!preferences.chimeEnabled}
+              onClick={() => {
+                void playCompletionChime().then((played) => setChimeTestMessage(played
+                  ? "Chime played."
+                  : "The browser could not play the chime. Check this site's audio permissions."))
+                  .catch(() => setChimeTestMessage("The browser could not play the chime. Check this site's audio permissions."));
+              }}
+            >
+              <Volume2 className="mr-1 h-3 w-3" />Test chime
+            </Button>
+            <SettingsSwitch checked={preferences.chimeEnabled} label="Enable chime" onCheckedChange={changeCompletionChime} testId="agent-completion-chime-toggle" />
+          </div>
+        }
+      />
+
+      {tab === "delivery" && <SettingsCard
         collapsibleLabel="Agent completions"
         description="Get a quiet signal when a background agent turn finishes. No message content is included in the desktop alert."
         expanded={expandedSections.has("agent-completions")}
@@ -339,24 +393,6 @@ export function NotificationsSettings(): React.ReactElement {
             />
           </div>
 
-          <div className="flex items-center gap-4 rounded-lg border border-border/70 p-4">
-            <div className="min-w-0 flex-1">
-              <p className="flex items-center gap-1.5 text-sm font-medium"><Volume2 className="h-4 w-4" />Completion chime</p>
-              <p className="text-xs text-muted-foreground">Play a short two-note chime with background completion alerts.</p>
-              <AutoSaveStatus
-                className="mt-1"
-                onRetry={() => retry("completion-chime")}
-                state={autoSave.stateFor("completion-chime")}
-              />
-            </div>
-            <SettingsSwitch
-              checked={preferences.chimeEnabled}
-              label="Completion chime"
-              onCheckedChange={changeCompletionChime}
-              testId="agent-completion-chime-toggle"
-            />
-          </div>
-
           <div className="flex flex-wrap items-center gap-3">
             <Button
               disabled={!preferences.browserEnabled && !preferences.chimeEnabled}
@@ -375,9 +411,9 @@ export function NotificationsSettings(): React.ReactElement {
             Alerts work while a CAIPE tab remains open. They are independent of the selected agent harness.
           </p>
         </div>
-      </SettingsCard>
+      </SettingsCard>}
 
-      <SettingsCard
+      {tab === "platform" && <SettingsCard
         collapsibleLabel="Release notes"
         description="Choose whether CAIPE announces a new release after you sign in."
         expanded={expandedSections.has("release-notes")}
@@ -406,8 +442,8 @@ export function NotificationsSettings(): React.ReactElement {
           </div>
           <ReleaseNotesPreview isAdmin={false} />
         </div>
-      </SettingsCard>
-      {isAdmin ? <SettingsCard
+      </SettingsCard>}
+      {tab === "platform" && isAdmin ? <SettingsCard
         collapsibleLabel="Platform health"
         description="Choose whether global platform incidents appear in your personal notification feed."
         expanded={expandedSections.has("platform-health")}
@@ -434,6 +470,7 @@ export function NotificationsSettings(): React.ReactElement {
           />
         </div>
       </SettingsCard> : null}
-    </div>
+      </TabsContent>
+    </Tabs>
   );
 }
