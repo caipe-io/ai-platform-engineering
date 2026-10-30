@@ -1,8 +1,11 @@
 import { ApiError } from "@/lib/api-error";
+import type { NotificationDelivery } from "./delivery-types";
+import { NotificationDeliveryError } from "./delivery-types";
 import type { ChannelChoices, NotificationChannel } from "./channels";
 
 type ExternalChannel = Exclude<NotificationChannel, "in_app">;
 export interface NotificationChannelAdapter {
+  send?(delivery: NotificationDelivery): Promise<void>;
   available(subject: string): Promise<boolean>;
   validateEnable?(subject: string): Promise<void>;
   publicKey?(): string | null;
@@ -28,4 +31,11 @@ export async function validateNotificationChannelChoices(subject: string, choice
     if (!adapter || !await adapter.available(subject)) throw new ApiError("Notification channel is not configured or linked", 400);
     await adapter.validateEnable?.(subject);
   }
+}
+
+export async function sendExternalNotification(delivery: NotificationDelivery): Promise<void> {
+  if (delivery.channel === "in_app") throw new NotificationDeliveryError("Inbox uses its own adapter", false);
+  const adapter = notificationChannelAdapters[delivery.channel];
+  if (!adapter?.send) throw new NotificationDeliveryError("Notification channel is not installed", false);
+  await adapter.send(delivery);
 }
