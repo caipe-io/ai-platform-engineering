@@ -34,3 +34,11 @@ Small implementation units extend the existing inbox.
 - Recheck current subscriptions and app launch access before delivery. Existing inbox entries remain readable.
 - Only in-app delivery is implemented here; missing external adapters fail explicitly.
 - `NOTIFICATION_EVENTS_ENABLED=false` stops workers and new queue acceptance. No NATS service is required.
+
+## Trusted platform publishing
+
+- Trusted backend producers use `POST /api/internal/notifications/events` with the configured internal publisher token. Keep this endpoint blocked at public ingress.
+- Recipient subject/email must resolve to one canonical user record; mismatches are rejected.
+- Direct publishing persists delivery jobs and reports failures explicitly. Publication failure must not fail the originating task.
+- `NOTIFICATIONS_INTERNAL_TOKEN` enables the internal endpoint; producers are added separately.
+- Selecting `NOTIFICATIONS_TRANSPORT=jetstream` before its optional implementation is installed fails publication explicitly; it never falls back to direct delivery.
