@@ -306,6 +306,9 @@ test("rejects ambiguous profiles, references, reserved paths and unbound origins
       app.ui.routes[0].path = "/admin";
     },
     (app) => {
+      app.ui.routes[0].path = "/notifications/open/example";
+    },
+    (app) => {
       app.api.mounts = ["/api/auth"];
     },
     (app) => {
