@@ -3,13 +3,21 @@
  */
 
 import { act,fireEvent,render,screen,waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { NotificationsSettings } from "../NotificationsSettings";
 import { PlatformAnnouncementsSettings } from "../PlatformAnnouncementsSettings";
+import * as completionAlerts from "@/lib/agent-completion-notifications";
+
+jest.mock("@/lib/agent-completion-notifications", () => ({
+  ...jest.requireActual("@/lib/agent-completion-notifications"),
+  playCompletionChime: jest.fn(),
+}));
 
 jest.mock("@/hooks/use-admin-role",() => ({
   useAdminRole: () => ({ isAdmin: true }),
 }));
+
 
 jest.mock("@/components/settings/ReleaseNotesPreview",() => ({
   ReleaseNotesPreview: () => <button type="button">Show current release notes</button>,
@@ -42,6 +50,50 @@ describe("NotificationsSettings",() => {
       configurable: true,
       value: MockNotification,
     });
+  });
+
+  it("separates tabs, preserves a quiet-hours draft, and loads history only on demand", async () => {
+    const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/notifications/subscriptions") return jsonResponse({ success: true, data: {
+        global: { channels: { in_app: true }, quietHours: { enabled: false, start: "22:00", end: "07:00", timeZone: "UTC" } },
+        webPushPublicKey: null,
+        sources: [
+          { id: "platform", label: "CAIPE", subscription: {}, events: [] },
+          { id: "app:example", label: "Example app", subscription: { enabled: true }, events: [] },
+        ],
+      } });
+      if (url === "/api/notifications/channels") return jsonResponse({ success: true, data: { in_app: true } });
+      if (url === "/api/notifications/deliveries") return jsonResponse({ success: true, data: { deliveries: [
+        { id: "example-delivery", sourceLabel: "Example app", eventType: "report.ready", channel: "in_app", status: "delivered", attempts: 1 },
+      ] } });
+      return jsonResponse({ success: true, data: {} });
+    });
+    global.fetch = fetchMock;
+    render(<NotificationsSettings />);
+    const start = await screen.findByLabelText("Quiet hours start");
+    fireEvent.change(start, { target: { value: "21:30" } });
+    expect(screen.queryByRole("switch", { name: "Subscribe to Example app" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Refresh delivery status" })).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/notifications/deliveries", expect.anything());
+
+    await userEvent.click(screen.getByRole("tab", { name: "Apps" }));
+    expect(screen.getByRole("switch", { name: "Subscribe to Example app" })).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Subscribe to CAIPE" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Quiet hours start")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: "Platform" }));
+    expect(screen.getByRole("switch", { name: "Subscribe to CAIPE" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Notify me about new releases" })).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Subscribe to Example app" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: "Notification delivery" }));
+    expect(screen.getByLabelText("Quiet hours start")).toHaveValue("21:30");
+    await userEvent.click(screen.getByRole("tab", { name: "Delivery status" }));
+    expect(await screen.findByText(/report.ready/)).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Enable In-app inbox" })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/notifications/subscriptions")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/notifications/deliveries")).toHaveLength(1);
   });
 
   it("requests permission from the browser toggle and saves completion alerts",async () => {
@@ -100,7 +152,10 @@ describe("NotificationsSettings",() => {
     global.fetch = fetchMock;
     render(<NotificationsSettings />);
 
-    fireEvent.click(await screen.findByRole("switch",{ name: "Completion chime" }));
+    const chime = await screen.findByRole("switch",{ name: "Enable chime" });
+    expect(chime).toHaveAttribute("aria-checked", "false");
+    expect(screen.getAllByRole("switch", { name: "Enable chime" })).toHaveLength(1);
+    fireEvent.click(chime);
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -113,6 +168,21 @@ describe("NotificationsSettings",() => {
     });
   });
 
+  it.each([true, false, "error"])("tests only chime audio and reports browser acceptance %s", async (played) => {
+    const play = jest.mocked(completionAlerts.playCompletionChime);
+    if (played === "error") play.mockRejectedValue(new Error("Audio unavailable"));
+    else play.mockResolvedValue(played as boolean);
+    global.fetch = jest.fn(async () => jsonResponse({ success: true, data: {
+      notifications: { agent_completion_chime_enabled: true },
+    } }));
+    render(<NotificationsSettings />);
+    fireEvent.click(await screen.findByRole("button", { name: "Test chime" }));
+    expect(await screen.findByText(played === true ? "Chime played." : /browser could not play the chime/)).toBeInTheDocument();
+    expect(play).toHaveBeenCalledTimes(1);
+    expect(MockNotification.requestPermission).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalledWith("/api/notifications/test", expect.anything());
+  });
+
   it("loads an opted-out personal preference",async () => {
     global.fetch = jest.fn(async () => jsonResponse({
       success: true,
@@ -120,6 +190,7 @@ describe("NotificationsSettings",() => {
     }));
 
     render(<NotificationsSettings />);
+    await userEvent.click(await screen.findByRole("tab", { name: "Platform" }));
 
     expect(await screen.findByRole("switch",{ name: "Notify me about new releases" })).toHaveAttribute(
       "aria-checked",
@@ -136,16 +207,21 @@ describe("NotificationsSettings",() => {
     expect(screen.queryByRole("switch",{
       name: "Browser notifications for agent completions",
     })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: "Platform" }));
     expect(screen.getByRole("switch",{ name: "Notify me about new releases" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button",{ name: "Collapse all" }));
     expect(screen.queryByRole("switch",{ name: "Notify me about new releases" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button",{ name: "Expand all" }));
+    expect(screen.getByRole("switch",{ name: "Notify me about new releases" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: "Notification delivery" }));
+    expect(screen.queryByRole("switch",{ name: "Browser notifications for agent completions" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{ name: "Expand all" }));
     expect(screen.getByRole("switch",{
       name: "Browser notifications for agent completions",
     })).toBeInTheDocument();
-    expect(screen.getByRole("switch",{ name: "Notify me about new releases" })).toBeInTheDocument();
+    expect(screen.queryByRole("switch",{ name: "Notify me about new releases" })).not.toBeInTheDocument();
   });
 
   it("auto-saves the personal preference without a Save button",async () => {
@@ -158,6 +234,7 @@ describe("NotificationsSettings",() => {
     });
     global.fetch = fetchMock;
     render(<NotificationsSettings />);
+    await userEvent.click(await screen.findByRole("tab", { name: "Platform" }));
 
     fireEvent.click(await screen.findByRole("switch",{ name: "Notify me about new releases" }));
 
@@ -190,6 +267,7 @@ describe("NotificationsSettings",() => {
     });
     global.fetch = fetchMock;
     render(<NotificationsSettings />);
+    await userEvent.click(await screen.findByRole("tab", { name: "Platform" }));
 
     const toggle = await screen.findByRole("switch",{ name: "Notify me about new releases" });
     fireEvent.click(toggle);
