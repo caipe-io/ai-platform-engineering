@@ -372,6 +372,18 @@ describe('Archive API', () => {
   // --------------------------------------------------------------------------
 
   describe('GET /api/chat/conversations/trash', () => {
+    it.each(["2026-03-10T12:00:00-04:00", "2026-11-04T12:00:00-05:00"])("uses the same seven-day duration across DST (%s)", async now => {
+      jest.useFakeTimers().setSystemTime(new Date(now));
+      try {
+        const collection = createMockCollection();
+        collection.find.mockReturnValueOnce({ toArray: jest.fn().mockResolvedValue([]) } as never);
+        mockCollections['conversations'] = collection;
+        const response = await GET_TRASH(makeRequest('https://example.test/api/chat/conversations/trash'));
+        expect(response.status).toBe(200);
+        expect(collection.find.mock.calls[0][0].deleted_at.$lte).toEqual(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+      } finally { jest.useRealTimers(); }
+    });
+
     it('lists soft-deleted conversations', async () => {
       const deletedConv = makeConversation({ deleted_at: new Date(), title: 'Deleted conv' });
       const convCollection = createMockCollection();
@@ -406,6 +418,8 @@ describe('Archive API', () => {
       expect(body.data.items).toHaveLength(1);
       expect(body.data.items[0].title).toBe('Deleted conv');
       expect(body.data.total).toBe(1);
+      const cutoff = convCollection.find.mock.calls[0][0].deleted_at.$lte;
+      expect(Math.abs(Date.now() - cutoff.getTime() - 7 * 24 * 60 * 60 * 1000)).toBeLessThan(1000);
     });
 
     it('auto-purges conversations deleted more than 7 days ago', async () => {

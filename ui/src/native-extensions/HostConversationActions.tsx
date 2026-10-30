@@ -1,7 +1,7 @@
 "use client";
 
 import { Archive, Pencil } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { NativeHostConversationActionsProps } from "../../app-sdk";
 import { ShareButton } from "@/components/chat/ShareButton";
@@ -14,38 +14,54 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useChatStore } from "@/store/chat-store";
 import { loadHostConversation } from "./host-chat";
 
-export default function HostConversationActions({ appId, conversationId, agentId, disabled, onArchived, onHistoryChange, variant = "actions", conversationTitle }:
-  NativeHostConversationActionsProps & { appId: string; variant?: "actions" | "title"; conversationTitle?: string }) {
+export default function HostConversationActions({ appId, conversationId, agentId, disabled, onArchived, onHistoryChange, variant = "actions", conversationTitle, deferLoad = false }:
+  NativeHostConversationActionsProps & { appId: string; variant?: "actions" | "title"; conversationTitle?: string; deferLoad?: boolean }) {
   const [conversation, setConversation] = useState<Awaited<ReturnType<typeof loadHostConversation>>["saved"] | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const generation = useRef(0);
   useEffect(() => {
-    let cancelled = false;
+    const current = ++generation.current;
     setConversation(null);
     setError(null);
-    void loadHostConversation(appId, agentId, conversationId).then(({ saved }) => {
-      if (!cancelled) setConversation(saved);
+    setPending(false);
+    if (!deferLoad) void loadHostConversation(appId, agentId, conversationId).then(({ saved }) => {
+      if (current === generation.current) setConversation(saved);
     }).catch((reason: unknown) => {
-      if (!cancelled) setError(reason instanceof Error ? reason.message : "Conversation actions are unavailable");
+      if (current === generation.current) setError(reason instanceof Error ? reason.message : "Conversation actions are unavailable");
     });
-    return () => { cancelled = true; };
-  }, [appId, agentId, conversationId]);
+    return () => { generation.current += 1; };
+  }, [appId, agentId, conversationId, deferLoad]);
 
-  async function archive() {
-    if (disabled || pending || conversation?.access_level !== "owner") return;
+  async function withOwnedConversation(action: (saved: NonNullable<typeof conversation>) => void | Promise<void>): Promise<boolean> {
+    if (disabled || pending) return false;
+    const current = generation.current;
     setPending(true);
     setError(null);
     try {
+      const saved = conversation ?? (await loadHostConversation(appId, agentId, conversationId, true)).saved;
+      if (current !== generation.current) return false;
+      if (saved.access_level !== "owner") throw new Error("Conversation actions are unavailable");
+      setConversation(saved);
+      const operation = action(saved);
+      if (operation) await operation;
+      return true;
+    } catch (reason: unknown) {
+      if (current === generation.current) setError(reason instanceof Error ? reason.message : "Conversation actions are unavailable");
+      return false;
+    } finally {
+      if (current === generation.current) setPending(false);
+    }
+  }
+
+  async function archive() {
+    await withOwnedConversation(async () => {
       // The host store rolls back optimistic removal when CAS denies the API request.
       await useChatStore.getState().deleteConversation(conversationId, { selectNext: false });
       onArchived();
-    } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "Could not archive this conversation");
-    } finally {
-      setPending(false);
-    }
+    });
   }
 
   async function rename() {
@@ -66,14 +82,15 @@ export default function HostConversationActions({ appId, conversationId, agentId
 
   return <div className="group flex min-w-0 items-center gap-1" aria-label="Host conversation actions">
     {variant === "title" && <h2 className="truncate text-sm font-semibold">{conversationTitle || conversation?.title || "New chat"}</h2>}
-    {conversation?.access_level === "owner" && <>
+    {(conversation?.access_level === "owner" || (deferLoad && !conversation)) && <>
       <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className={variant === "title" ? "h-7 w-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100" : "h-6 w-6"}
         aria-label="Rename conversation" disabled={disabled || pending}
-        onClick={() => { setTitle(conversationTitle ?? conversation.title); setError(null); setRenaming(true); }}><Pencil className="h-3 w-3" aria-hidden />
+        onClick={() => void withOwnedConversation(saved => { setTitle(conversationTitle ?? saved.title); setRenaming(true); })}><Pencil className="h-3 w-3" aria-hidden />
       </Button></TooltipTrigger><TooltipContent>Rename conversation</TooltipContent></Tooltip>
-      {variant === "actions" && getStorageMode() === "mongodb" && !disabled && !pending && (
-        <ShareButton conversationId={conversationId} conversationTitle={conversation.title}
-          isOwner sharing={conversation.sharing} accessLevel="owner" />
+      {variant === "actions" && getStorageMode() === "mongodb" && (
+        <ShareButton conversationId={conversationId} conversationTitle={conversationTitle ?? conversation?.title}
+          isOwner sharing={conversation?.sharing} accessLevel="owner" disabled={disabled || pending}
+          onBeforeOpen={() => withOwnedConversation(() => {})} />
       )}
       {variant === "actions" && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="h-6 w-6"
         aria-label="Archive conversation" disabled={disabled || pending} onClick={() => void archive()}>
