@@ -54,6 +54,16 @@ spec:
               protocol: TCP
             {{- end }}
           env:
+            {{- $notifications := (default dict .Values.global).notifications | default dict }}
+            {{- if $notifications.enabled }}
+            - name: NOTIFICATIONS_INTERNAL_URL
+              value: {{ $notifications.internalUrl | default (printf "http://%s-caipe-ui:3000" .Release.Name) | quote }}
+            - name: NOTIFICATIONS_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "global.notifications.tokenSecret.name is required when enabled" $notifications.tokenSecret.name | quote }}
+                  key: {{ $notifications.tokenSecret.key | default "token" | quote }}
+            {{- end }}
             - name: METRICS_PORT
               value: {{ .Values.service.metricsPort | default 0 | quote }}
             - name: KEYCLOAK_URL
