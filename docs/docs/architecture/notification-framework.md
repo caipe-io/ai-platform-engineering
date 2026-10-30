@@ -15,3 +15,9 @@ CAIPE 1.4.0 adds event and preference contracts for the existing inbox.
 ![The platform catalog supplies defaults. Preference resolution checks the user's event override, then their category override, then the catalog default.](/diagrams/notification-preferences.svg)
 
 [Download editable Excalidraw](/diagrams/notification-preferences.excalidraw)
+
+## Authenticated preference persistence
+
+- `GET/PATCH /api/settings/notification-preferences` addresses the signed-in user only.
+- Revision guards preserve concurrent edits, including first-document creation; persistent conflicts return 409.
+- Existing settings remain intact and missing notification preferences use catalog defaults.
