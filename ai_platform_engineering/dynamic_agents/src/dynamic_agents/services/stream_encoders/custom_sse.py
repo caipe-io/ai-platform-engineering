@@ -27,6 +27,7 @@ from dynamic_agents.services.stream_encoders.langgraph_helpers import (
     normalize_tool_message_content,
     truncate_tool_result,
 )
+from dynamic_agents.services.structured_response import STRUCTURED_OUTPUT_EVENT
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,10 @@ class CustomStreamEncoder(StreamEncoder):
         namespace: tuple[str, ...],
     ) -> list[str]:
         """Encode transport-neutral runtime signals in the custom protocol."""
+        if isinstance(data, dict) and data.get("type") == STRUCTURED_OUTPUT_EVENT:
+            if isinstance(data.get("payload"), dict):
+                return self.on_structured_output(data["payload"], data.get("schema_id"))
+            return []
         if isinstance(data, dict) and data.get("type") == "tool_output":
             return [_sse_frame("tool_output", {**data, "namespace": list(namespace)})]
         if not isinstance(data, dict) or data.get("type") != CONTEXT_USAGE_EVENT:
@@ -120,6 +125,21 @@ class CustomStreamEncoder(StreamEncoder):
 
     def on_warning(self, message: str) -> list[str]:
         return [_sse_frame("warning", {"message": message, "namespace": []})]
+
+    def on_structured_output(
+        self, payload: dict[str, Any], schema_id: str | None = None
+    ) -> list[str]:
+        """Emit app-requested structured output before the terminal done event."""
+        super().on_structured_output(payload, schema_id)
+        return [
+            _sse_frame(
+                "structured_output",
+                {
+                    "payload": payload,
+                    "schema_id": schema_id,
+                },
+            )
+        ]
 
     def on_input_required(
         self,

@@ -26,6 +26,7 @@ from dynamic_agents.services.runtime_cache import (
     get_runtime_cache,
 )
 from dynamic_agents.services.stream_encoders import StreamEncoder, get_encoder
+from dynamic_agents.services.structured_response import StructuredResponseError
 from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryError
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,16 @@ def apply_config_override(agent: DynamicAgentConfig, config_override: dict[str, 
     # Convert agent to dict, deep merge, reconstruct
     agent_dict = agent.model_dump(by_alias=True)
     merged = _deep_merge(agent_dict, config_override)
-    return DynamicAgentConfig.model_validate(merged)
+    overridden = DynamicAgentConfig.model_validate(merged)
+    original_policy = [
+        entry for entry in agent.features.middleware if entry.type == "structured_response"
+    ] if agent.features else []
+    overridden_policy = [
+        entry for entry in overridden.features.middleware if entry.type == "structured_response"
+    ] if overridden.features else []
+    if original_policy != overridden_policy:
+        raise HTTPException(status_code=400, detail="config_override cannot change structured_response middleware")
+    return overridden
 
 
 def _validate_allowed_tools_subset(
@@ -269,7 +279,7 @@ async def _collect_invoke_response(
             },
         )
 
-    return {
+    result = {
         "success": True,
         "content": encoder.get_accumulated_content(),
         "thinking": encoder.get_thinking_content() or None,
@@ -277,6 +287,12 @@ async def _collect_invoke_response(
         "conversation_id": request.conversation_id,
         "trace_id": request.trace_id,
     }
+
+    structured_output = encoder.get_structured_output()
+    if structured_output is not None:
+        result["structured_output"] = structured_output
+        result["structured_output_schema_id"] = encoder.get_structured_output_schema_id()
+    return result
 
 
 async def _generate_sse_events(
@@ -343,9 +359,9 @@ async def _generate_sse_events(
         # so the client surface (Slack/Webex/UI) can tell the operator what
         # to fix. Anything else falls through to the generic message.
         cause = e.cause
-        if isinstance(cause, LLMConfigError):
+        if isinstance(cause, (LLMConfigError, StructuredResponseError)):
             logger.warning(
-                f"Agent '{agent_config.name}' has no usable LLM config: {cause}"
+                f"Agent '{agent_config.name}' has invalid invocation configuration: {cause}"
             )
             for frame in encoder.on_run_error(str(cause)):
                 yield frame
@@ -355,8 +371,8 @@ async def _generate_sse_events(
             )
             for frame in encoder.on_run_error(GENERIC_AGENT_ERROR):
                 yield frame
-    except ToolCallRecoveryError as exc:
-        logger.warning("Model output recovery exhausted for agent %s", agent_config.id)
+    except (ToolCallRecoveryError, StructuredResponseError) as exc:
+        logger.warning("Agent output request failed for agent %s", agent_config.id)
         for frame in encoder.on_run_error(str(exc)):
             yield frame
     except Exception:
@@ -479,6 +495,7 @@ async def _generate_resume_sse_events(
             mcp_servers,
             session_id,
             user=user,
+            client_context=client_context,
         )
 
         # Resume streaming with form data
@@ -491,8 +508,13 @@ async def _generate_resume_sse_events(
         logger.warning(f"Agent runtime at capacity: {e}")
         for frame in encoder.on_run_error("This agent is at capacity right now. Please try again in a moment."):
             yield frame
-    except ToolCallRecoveryError as exc:
-        logger.warning("Model output recovery exhausted for agent %s", agent_config.id)
+    except RuntimeInitError as exc:
+        message = str(exc.cause) if isinstance(exc.cause, (LLMConfigError, StructuredResponseError)) else GENERIC_AGENT_ERROR
+        logger.warning("Agent resume initialization failed: %s", type(exc.cause).__name__)
+        for frame in encoder.on_run_error(message):
+            yield frame
+    except (ToolCallRecoveryError, StructuredResponseError) as exc:
+        logger.warning("Agent output request failed for agent %s", agent_config.id)
         for frame in encoder.on_run_error(str(exc)):
             yield frame
     except Exception:
@@ -660,6 +682,19 @@ async def chat_invoke(
                 agent=agent,
             )
 
+    except RuntimeInitError as exc:
+        schema_error = isinstance(exc.cause, StructuredResponseError)
+        logger.warning("Agent invocation initialization failed: %s", type(exc.cause).__name__)
+        return JSONResponse(
+            status_code=422 if schema_error else 500,
+            content={
+                "success": False,
+                "error": str(exc.cause) if schema_error else GENERIC_AGENT_ERROR,
+                "agent_id": agent.id,
+                "conversation_id": request.conversation_id,
+                "trace_id": request.trace_id,
+            },
+        )
     except RuntimeCapacityError as e:
         logger.warning(f"Agent runtime at capacity for invoke: {e}")
         return JSONResponse(
@@ -672,8 +707,8 @@ async def chat_invoke(
                 "trace_id": request.trace_id,
             },
         )
-    except ToolCallRecoveryError as exc:
-        logger.warning("Model output recovery exhausted for agent %s", agent.id)
+    except (ToolCallRecoveryError, StructuredResponseError) as exc:
+        logger.warning("Agent output request failed for agent %s", agent.id)
         return JSONResponse(
             status_code=422,
             content={

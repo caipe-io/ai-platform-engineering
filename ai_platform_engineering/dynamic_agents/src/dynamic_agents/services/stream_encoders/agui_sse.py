@@ -33,6 +33,7 @@ from dynamic_agents.services.stream_encoders.langgraph_helpers import (
     normalize_tool_message_content,
     truncate_tool_result,
 )
+from dynamic_agents.services.structured_response import STRUCTURED_OUTPUT_EVENT
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,10 @@ class AGUIStreamEncoder(StreamEncoder):
         namespace: tuple[str, ...],
     ) -> list[str]:
         """Encode transport-neutral runtime signals as AG-UI custom events."""
+        if isinstance(data, dict) and data.get("type") == STRUCTURED_OUTPUT_EVENT:
+            if isinstance(data.get("payload"), dict):
+                return self.on_structured_output(data["payload"], data.get("schema_id"))
+            return []
         if isinstance(data, dict) and data.get("type") == "tool_output":
             return [_sse_frame("CUSTOM", {
                 "type": "CUSTOM", "name": "TOOL_OUTPUT",
@@ -209,6 +214,16 @@ class AGUIStreamEncoder(StreamEncoder):
                 },
             )
         ]
+
+    def on_structured_output(self, payload: dict[str, Any], schema_id: str | None = None) -> list[str]:
+        """Emit the same domain payload through the AG-UI custom event contract."""
+        super().on_structured_output(payload, schema_id)
+        return [_sse_frame("CUSTOM", {
+            "type": "CUSTOM",
+            "name": "STRUCTURED_OUTPUT",
+            "value": {"payload": payload, "schema_id": schema_id},
+            "timestamp": _ts(),
+        })]
 
     def on_input_required(
         self,

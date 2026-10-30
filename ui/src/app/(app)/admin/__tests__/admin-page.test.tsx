@@ -22,6 +22,7 @@ import { act, render, screen, waitFor, within, fireEvent } from '@testing-librar
 // ============================================================================
 
 jest.mock('@/components/settings/ReleaseNotesOverrideSettings', () => ({ ReleaseNotesOverrideSettings: () => <div>Curated notes settings</div> }));
+jest.mock('@/components/agentic-apps/ConnectionGuidanceSettings', () => ({ ConnectionGuidanceSettings: () => <div>Connection guidance settings</div> }));
 
 jest.mock('@/components/settings/ReleaseNotesPreview', () => ({
   ReleaseNotesPreview: () => <button type="button">Show current release notes</button>,
@@ -1147,6 +1148,12 @@ describe('Admin Dashboard Page', () => {
       expect(
         within(updatedNavigation).getByRole("button", { name: "Integrations" }),
       ).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it("exposes connection guidance on the Defaults page", async () => {
+      currentPathname = "/admin/configuration/defaults";
+      render(<AdminPage />);
+      expect(await screen.findByText("Connection guidance settings")).toBeInTheDocument();
     });
 
     it("defaults bare Admin to the canonical Users route", async () => {

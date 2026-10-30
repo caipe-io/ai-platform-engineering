@@ -65,6 +65,24 @@ class StreamEncoder(ABC):
     def on_warning(self, message: str) -> list[str]:
         """Non-fatal warning (e.g., MCP server unavailable)."""
 
+    def on_structured_output(self, payload: dict[str, Any], schema_id: str | None = None) -> list[str]:
+        """Capture a validated submission on this request's encoder.
+
+        Built-in encoders also emit protocol-specific events. The concrete
+        default preserves compatibility with external encoder implementations.
+        """
+        self._structured_output = payload
+        self._structured_output_schema_id = schema_id
+        return []
+
+    def get_structured_output(self) -> dict[str, Any] | None:
+        """Return this request's latest submission, including an empty object."""
+        return getattr(self, "_structured_output", None)
+
+    def get_structured_output_schema_id(self) -> str | None:
+        """Return the schema identifier for this request's submission."""
+        return getattr(self, "_structured_output_schema_id", None)
+
     @abstractmethod
     def on_input_required(
         self,

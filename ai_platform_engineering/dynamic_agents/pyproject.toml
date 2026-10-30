@@ -31,6 +31,8 @@ dependencies = [
     "requests==2.34.2",
     "beautifulsoup4==4.15.0",
     "jinja2==3.1.6",
+    "jsonschema==4.26.0",
+    "referencing==0.37.0",
     "prometheus-client==0.26.0",
     # JWKS-based JWT validation in dynamic_agents.auth.jwks_validate
     # (vendored from ai_platform_engineering.utils.auth so the DA image

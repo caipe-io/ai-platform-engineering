@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = "==3.14.*"
 
 [manifest]
@@ -410,6 +410,7 @@ dependencies = [
     { name = "deepagents" },
     { name = "fastapi" },
     { name = "jinja2" },
+    { name = "jsonschema" },
     { name = "langchain" },
     { name = "langchain-anthropic" },
     { name = "langchain-aws" },
@@ -427,6 +428,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "pymongo" },
+    { name = "referencing" },
     { name = "requests" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -452,6 +454,7 @@ requires-dist = [
     { name = "deepagents", specifier = "==0.6.8" },
     { name = "fastapi", specifier = "==0.141.1" },
     { name = "jinja2", specifier = "==3.1.6" },
+    { name = "jsonschema", specifier = "==4.26.0" },
     { name = "langchain", specifier = "==1.4.6" },
     { name = "langchain-anthropic", specifier = "==1.4.6" },
     { name = "langchain-aws", specifier = "==1.5.0" },
@@ -472,6 +475,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.1.1" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = "==1.4.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = "==7.1.0" },
+    { name = "referencing", specifier = "==0.37.0" },
     { name = "requests", specifier = "==2.34.2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.16.4" },
     { name = "uvicorn", extras = ["standard"], specifier = "==0.52.4" },

@@ -1,6 +1,7 @@
 # Copyright 2026 CNOE
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import functools
 import logging
 import re
@@ -117,7 +118,7 @@ class UserHubCalendar(BaseModel):
         Field(
             description=(
                 "Optional ISO-8601 lower bound for occurrence start time. "
-                "Filtering is applied client-side after reading User Hub calendar rows."
+                "The date is sent to User Hub; exact timestamp filtering is applied after reading rows."
             ),
             default=None,
         ),
@@ -127,7 +128,7 @@ class UserHubCalendar(BaseModel):
         Field(
             description=(
                 "Optional ISO-8601 upper bound for occurrence start time. "
-                "Filtering is applied client-side after reading User Hub calendar rows."
+                "The date is sent to User Hub; exact timestamp filtering is applied after reading rows."
             ),
             default=None,
         ),
@@ -611,7 +612,14 @@ def _userhub_calendar_params(args: UserHubCalendar) -> dict[str, Any]:
     }
     from_dt = _parse_iso_datetime(args.from_iso)
     if from_dt is not None:
-        params["startDate"] = from_dt.date().isoformat()
+        # Date-only bounds can be interpreted in the user's local timezone.
+        # Overlap by a day; the caller still filters exact UTC timestamps.
+        params["startDate"] = (from_dt - timedelta(days=1)).date().isoformat()
+    to_dt = _parse_iso_datetime(args.to_iso)
+    if to_dt is not None:
+        # User Hub's endDate is inclusive, whereas to_iso is exclusive.
+        # Without endDate, User Hub selects its own (usually shorter) window.
+        params["endDate"] = (to_dt - timedelta(microseconds=1) + timedelta(days=1)).date().isoformat()
     return params
 
 
@@ -1161,6 +1169,47 @@ def register_tools(server) -> None:
                 public_error = exc
                 listing = {"items": []}
         items = listing.get("items", []) if isinstance(listing, dict) else []
+        if not items and not args.meeting_id and not userhub_only_lookup and (args.from_iso or args.to_iso):
+            # Broad transcript lists can be empty even though the caller's
+            # recordings expose usable occurrence IDs. Keep this best-effort
+            # search bounded; an empty result is not proof no transcript exists.
+            recovered: list[dict[str, Any]] = []
+            seen_transcripts: set[str] = set()
+            checked = 0
+            limited = False
+            timed_out = False
+            try:
+                async with asyncio.timeout(30):
+                    recording_params = {key: value for key, value in params.items() if key != "max"}
+                    recording_params["max"] = 100
+                    recordings = _extract_items(await _request("GET", "/recordings", params=recording_params)) or []
+                    occurrence_ids = list(dict.fromkeys(
+                        row["meetingId"].strip() for row in recordings
+                        if isinstance(row, dict) and isinstance(row.get("meetingId"), str)
+                        and row["meetingId"].strip() and row["meetingId"].strip() != str(row.get("meetingSeriesId", "")).strip()
+                    ))
+                    limited = len(recordings) >= 100 or len(occurrence_ids) > 10
+                    for occurrence_id in occurrence_ids[:10]:
+                        result = await _request("GET", "/meetingTranscripts", params={"meetingId": occurrence_id, "max": args.max_results})
+                        checked += 1
+                        for item in _extract_items(result) or []:
+                            if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
+                                continue
+                            if item["id"] not in seen_transcripts:
+                                seen_transcripts.add(item["id"])
+                                recovered.append(item)
+                            if len(recovered) >= args.max_results:
+                                limited = True
+                                break
+                        if len(recovered) >= args.max_results:
+                            break
+            except TimeoutError:
+                timed_out = True
+                limited = True
+            if recovered:
+                items = recovered
+                listing = {"items": items, "source": "recording_occurrence_lookup"}
+            listing["recordingOccurrenceLookup"] = {"recordingsChecked": checked, "limited": limited, "timedOut": timed_out}
         if args.download and items:
             bearer = _bearer_from_request()
             async with httpx.AsyncClient(

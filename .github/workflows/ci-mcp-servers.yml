@@ -1,5 +1,4 @@
 name: "[CI][MCP] MCP Servers Docker Build and Push"
-description: "Build and push MCP server Docker images"
 
 on:
   push:
@@ -11,6 +10,8 @@ on:
     paths:
       - 'ai_platform_engineering/mcp/**'
       - 'build/agents/Dockerfile.mcp'
+      - '.github/agents.json'
+      - '.github/workflows/ci-mcp-servers.yml'
   workflow_dispatch:
     inputs:
       build_all:
@@ -85,6 +86,8 @@ jobs:
             filters += '  - \'pyproject.toml\'\n';
             filters += '  - \'uv.lock\'\n';
             filters += '  - \'ai_platform_engineering/mcp/common/**\'\n';
+            filters += '  - \'.github/agents.json\'\n';
+            filters += '  - \'.github/workflows/ci-mcp-servers.yml\'\n';
             filters += 'shared_dockerfile:\n';
             filters += '  - \'build/agents/Dockerfile.mcp\'\n';
             agents.forEach(agent => {
@@ -174,6 +177,20 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Resolve per-agent build arguments
+        id: build-args
+        env:
+          AGENT_NAME: ${{ matrix.agent }}
+        run: |
+          for build_arg in INSTALL_NETUTILS INSTALL_AWS_CLI INSTALL_KUBECTL; do
+            value=$(jq -r --arg agent "$AGENT_NAME" --arg key "$build_arg" \
+              '.mcp_build_args[$agent][$key] // "false"' .github/agents.json)
+            if [[ "$value" != "true" && "$value" != "false" ]]; then
+              echo "Invalid $build_arg value for $AGENT_NAME: $value"
+              exit 1
+            fi
+            echo "${build_arg,,}=$value" >> "$GITHUB_OUTPUT"
+          done
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Log in to GitHub Container Registry
@@ -200,11 +217,18 @@ jobs:
         with:
           context: .
           file: build/agents/Dockerfile.mcp
+          # Refresh AWS runtime packages on every build, including new tags.
+          # Keep the Python dependency builder cached.
+          pull: ${{ matrix.agent == 'aws' }}
+          no-cache-filters: ${{ matrix.agent == 'aws' && 'runtime' || '' }}
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' }}
           build-args: |
             AGENT_NAME=${{ matrix.agent }}
+            INSTALL_NETUTILS=${{ steps.build-args.outputs.install_netutils }}
+            INSTALL_AWS_CLI=${{ steps.build-args.outputs.install_aws_cli }}
+            INSTALL_KUBECTL=${{ steps.build-args.outputs.install_kubectl }}
           cache-from: type=gha,scope=${{ matrix.agent }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.agent }}-${{ matrix.arch }}
 

@@ -32,6 +32,7 @@ from jinja2.sandbox import ImmutableSandboxedEnvironment, SecurityError
 from langchain.agents.middleware.pii import PIIMiddleware
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.mongodb.saver import MongoDBSaver
+from langgraph.config import get_stream_writer
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 from llm_wrapper.bedrock_family import resolve_bedrock_client
@@ -92,6 +93,13 @@ from dynamic_agents.services.model_capabilities import (
 )
 from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
+from dynamic_agents.services.structured_response import (
+    STRUCTURED_OUTPUT_EVENT,
+    StructuredResponseFormat,
+    build_structured_response_instruction,
+    create_submit_structured_response_tool,
+    extract_response_format,
+)
 from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryMiddleware
 from dynamic_agents.services.tracing import TracingManager
 
@@ -140,9 +148,9 @@ def _with_general_purpose_tool_result_recovery(
     """
     recovered_general_purpose = {
         **GENERAL_PURPOSE_SUBAGENT,
-        "tools": tools,
+        "tools": [tool for tool in tools if getattr(tool, "name", None) != "submit_structured_response"],
         "model": model,
-        "interrupt_on": interrupt_on,
+        "interrupt_on": {name: policy for name, policy in interrupt_on.items() if name != "submit_structured_response"},
         "middleware": [ToolCallRecoveryMiddleware(), ToolResultInvariantMiddleware()],
     }
     configured_subagents = [
@@ -603,7 +611,7 @@ class AgentRuntime:
         self._mongo_service = mongo_service
         self._remote_agent_versions: dict[str, str | None] = {}
         self._user = user
-        self._client_context = client_context
+        self._client_context = client_context.model_copy(deep=True) if client_context else None
         # Spec 102 Phase 8 / T107: prefer the per-request bearer from
         # current_user_token (set by JwtAuthMiddleware) so the same token
         # the BFF authenticated us with is forwarded to MCP servers.
@@ -961,7 +969,8 @@ class AgentRuntime:
 
         # 2. Add built-in tools
         client_ctx = self._client_context.model_dump() if self._client_context else None
-        builtin_tools = self._build_builtin_tools(self._user, client_context=client_ctx)
+        response_format = self._get_allowed_structured_response_format(client_ctx)
+        builtin_tools = self._build_builtin_tools(self._user, client_context=client_ctx, response_format=response_format)
         builtin_tool_names = {t.name for t in builtin_tools}
         if builtin_tools:
             tools = tools + builtin_tools
@@ -986,6 +995,9 @@ class AgentRuntime:
         except SystemPromptRenderError as exc:
             logger.error(f"Agent '{self.config.name}' failed to initialize: {exc}")
             raise RuntimeError(f"Agent '{self.config.name}' failed to initialize: {exc}") from exc
+
+        if response_format:
+            system_prompt += build_structured_response_instruction(response_format)
 
         # 5. Instantiate LLM
         logger.info(
@@ -1310,11 +1322,49 @@ class AgentRuntime:
         )
         return tools
 
+    @staticmethod
+    def _emit_structured_response(payload: dict[str, Any], schema_id: str | None) -> None:
+        """Publish on the current graph invocation, without shared runtime state."""
+        get_stream_writer()({"type": STRUCTURED_OUTPUT_EVENT, "payload": payload, "schema_id": schema_id})
+
+    def _get_allowed_structured_response_format(
+        self, client_context: dict | None
+    ) -> StructuredResponseFormat | None:
+        """Return requested structured output only when the agent allows it."""
+        if self.config.features is None:
+            return None
+
+        for entry in self.config.features.middleware:
+            if entry.type != "structured_response" or not entry.enabled:
+                continue
+            response_format = extract_response_format(client_context)
+            if response_format is None:
+                return None
+
+            allowed_schema_ids = str(entry.params.get("allowed_schema_ids", "")).strip()
+            if not allowed_schema_ids:
+                return response_format
+
+            allowed = {item.strip() for item in allowed_schema_ids.split(",") if item.strip()}
+            if response_format.schema_id in allowed:
+                return response_format
+
+            logger.warning(
+                "Agent '%s': structured response schema '%s' not allowed",
+                self.config.name,
+                response_format.schema_id,
+            )
+            return None
+
+        return None
+
     def _build_builtin_tools(
         self,
         user: UserContext | None = None,
         agent_config: DynamicAgentConfig | None = None,
         client_context: dict | None = None,
+        *,
+        response_format: StructuredResponseFormat | None = None,
     ) -> list:
         """Build list of built-in tools based on agent config.
 
@@ -1323,6 +1373,7 @@ class AgentRuntime:
             agent_config: Agent config to use. Defaults to self.config (parent agent).
                           Pass subagent config to build tools for a subagent.
             client_context: Optional client context dict for the user_info tool.
+            response_format: Prevalidated structured response request for the root agent.
 
         Returns:
             List of LangChain tools to add to the agent.
@@ -1330,6 +1381,20 @@ class AgentRuntime:
         config = agent_config or self.config
         tools = []
         config_summary: dict[str, Any] = {}
+
+        if response_format is not None and agent_config is None:
+            tools.append(
+                create_submit_structured_response_tool(
+                    response_format=response_format,
+                    on_submit=lambda payload: self._emit_structured_response(
+                        payload,
+                        response_format.schema_id,
+                    ),
+                )
+            )
+            config_summary["submit_structured_response"] = {
+                "schema_id": response_format.schema_id
+            }
 
         if not config.builtin_tools:
             return tools

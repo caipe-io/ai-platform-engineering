@@ -48,6 +48,37 @@ Dynamic Agents provide a flexible way to create purpose-built AI assistants with
 - Exactly one terminal outcome per turn: `success`, `error`, `interrupted`, or `cancelled`
 - Time to first user-visible response and end-to-end turn latency histograms
 
+### Optional structured responses
+
+- Enable the `structured_response` middleware on the agent. It is disabled by
+  default and exposes one option: `allowed_schema_ids`, a comma-separated
+  allowlist. An empty allowlist accepts any schema ID.
+- Chat `config_override` cannot add, remove, or change this middleware or its
+  schema allowlist. Other middleware overrides remain available.
+- A caller may send `client_context.response_format` with `type: json_schema`,
+  an optional `schema_id`, and an object-root `schema`. The root agent receives
+  a `submit_structured_response` tool and instructions to use it. Subagents do
+  not receive this tool.
+- Schemas use their declared supported JSON Schema dialect, or Draft 2020-12
+  when omitted. Nullable types, nested objects/arrays, constraints, and local
+  references within the schema are validated. Root references and external
+  references are rejected; reference resolution never fetches URLs. Invalid active requests return an invocation
+  error; disabled agents retain their existing behavior.
+- Rejected submissions return validation feedback without publishing output.
+  The agent may correct and resubmit. A model that cannot obtain required data
+  can explain the limitation; a valid structured submission is not guaranteed.
+- Each accepted submission is carried by its graph invocation and captured by
+  its request's encoder. Custom SSE emits `structured_output` with
+  `{payload, schema_id}`. AG-UI emits `CUSTOM` / `STRUCTURED_OUTPUT` with the same
+  value. Events are delivered before any later approval interrupt; resume uses
+  a fresh encoder and never reuses another request's result.
+- Send the original `client_context.response_format` again on resume, including
+  after runtime eviction. A changed response format on a later turn rebuilds
+  the cached graph; a conflicting request during an active stream must retry.
+- `/chat/invoke` includes `structured_output` and `structured_output_schema_id`
+  only after an accepted submission. Otherwise its legacy response fields are
+  unchanged. An accepted empty object is still returned.
+
 ### Optional app-context prompt adapter
 
 - Structured `client_context` remains separate from the user's message.
