@@ -14,3 +14,9 @@ Small implementation units extend the existing inbox.
 - `GET/PATCH /api/settings/notification-preferences` addresses the signed-in user only.
 - Revision guards preserve concurrent edits, including first-document creation; persistent conflicts return 409.
 - Existing settings remain intact and missing notification preferences use catalog defaults.
+
+## Envelope and channel contracts
+
+- Validate versioned metadata envelopes, bounded text, stable retry keys, and same-host relative destinations.
+- Query strings and fragments are preserved. Conflicting `callbackUri` and legacy `href` values are rejected.
+- Channel identifiers are contracts only; external delivery remains off until an adapter is installed and explicitly enabled.
