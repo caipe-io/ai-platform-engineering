@@ -556,6 +556,9 @@ services:
       - ${HOME}/.aws:/home/app/.aws:ro
     ports: ["9446:9446"]
     environment:
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - AWS_CONFIG_FILE=/home/app/.aws/config
       - AWS_SHARED_CREDENTIALS_FILE=/home/app/.aws/credentials
       - LOG_LEVEL=DEBUG
@@ -744,6 +747,9 @@ services:
     image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: web-ingestor
     environment:
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - INGESTOR_TYPE=webloader
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REDIS_URL=redis://rag-redis:6379/0
@@ -762,6 +768,9 @@ services:
     image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: jira-ingestor
     environment:
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - INGESTOR_TYPE=jira
       - JIRA_URL=${JIRA_URL}
       - JIRA_EMAIL=${JIRA_EMAIL}
@@ -781,6 +790,9 @@ services:
     image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: confluence-ingestor
     environment:
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - INGESTOR_TYPE=confluence
       - CONFLUENCE_URL=${CONFLUENCE_URL}
       - CONFLUENCE_USERNAME=${CONFLUENCE_USERNAME}
@@ -802,6 +814,9 @@ services:
     image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: slack-ingestor
     environment:
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - INGESTOR_TYPE=slack
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
       - SLACK_BOT_NAME=${SLACK_BOT_NAME}
@@ -824,6 +839,9 @@ services:
     image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: webex-ingestor
     environment:
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - INGESTOR_TYPE=webex
       - WEBEX_ACCESS_TOKEN=${WEBEX_ACCESS_TOKEN}
       - WEBEX_BOT_NAME=${WEBEX_BOT_NAME}

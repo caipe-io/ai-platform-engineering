@@ -5,6 +5,15 @@
 sunnyTesting: true
 
 global:
+  # Enable only when the UI's internal notification endpoint is configured with
+  # the same Secret. For a separate RAG release, set the UI's full Service URL.
+  notifications:
+    enabled: false
+    internalUrl: ""
+    tokenSecret:
+      name: ""
+      key: token
+
   # -- Global image tag override. When set, overrides appVersion-based image tags for all rag-stack subcharts.
   # Individual subchart image.tag values still take highest precedence.
   image:
