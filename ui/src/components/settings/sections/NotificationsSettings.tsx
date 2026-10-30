@@ -1,6 +1,7 @@
 "use client";
 
 import { EventNotificationSettings } from "./EventNotificationSettings";
+import { NotificationDeliverySettings } from "./NotificationDeliverySettings";
 import { ReleaseNotesPreview } from "@/components/settings/ReleaseNotesPreview";
 import { AutoSaveStatus } from "@/components/settings/shared/AutoSaveStatus";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
@@ -279,6 +280,7 @@ export function NotificationsSettings(): React.ReactElement {
   return (
     <div className="space-y-6">
       <EventNotificationSettings />
+      <NotificationDeliverySettings />
       {loadError ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {loadError}
