@@ -38,4 +38,6 @@ export async function register() {
   startIdpSyncScheduler();
   const { startNotificationDeliveries } = await import("./lib/notifications/delivery.server");
   startNotificationDeliveries();
+  const { startNotificationConsumer } = await import("./lib/notifications/consumer.server");
+  startNotificationConsumer();
 }

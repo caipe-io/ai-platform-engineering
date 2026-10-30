@@ -188,6 +188,9 @@ podDisruptionBudget:
 # Each key-value pair is injected as a flat environment variable via ConfigMap (envFrom).
 # For sensitive values (OIDC secrets, MongoDB URI, etc.) use existingSecret or externalSecrets below.
 notifications:
+  natsToken:
+    secretName: ""
+    secretKey: token
   internalToken:
     secretName: ""
     secretKey: token
