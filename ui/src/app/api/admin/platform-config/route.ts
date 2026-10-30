@@ -219,11 +219,20 @@ function optionalTrimmedString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+function releaseNotesOverrideRevision(override: ReleaseNotesOverride): string {
+  const active = override.source === 'manual'
+    ? { source: override.source, release_version: override.release_version, markdown: override.markdown, changelog_url: override.changelog_url }
+    : override.source === 'repository'
+      ? { source: override.source, release_version: override.release_version, markdown_repository: override.markdown_repository, markdown_ref: override.markdown_ref, markdown_path: override.markdown_path }
+      : { source: override.source };
+  return createHash('sha256').update(JSON.stringify(active)).digest('hex').slice(0, 24);
+}
+
 function normalizeReleaseNotesConfig(input: unknown = {}): ReleaseNotesNotificationConfig {
   const source = isRecord(input) ? input : {};
   return {
     override: normalizeReleaseNotesOverride(source.override),
-    override_revision: createHash('sha256').update(JSON.stringify(normalizeReleaseNotesOverride(source.override))).digest('hex').slice(0, 24),
+    override_revision: releaseNotesOverrideRevision(normalizeReleaseNotesOverride(source.override)),
     enabled: source.enabled !== false,
     repository_url: optionalTrimmedString(source.repository_url),
     previous_commit: optionalTrimmedString(source.previous_commit),
@@ -587,7 +596,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
         ...(Object.prototype.hasOwnProperty.call(update, 'slack_victorops_escalation_agent_id')
           ? { slack_victorops_escalation_agent_id: update.slack_victorops_escalation_agent_id }
           : {}),
-        ...(releaseNotesUpdate ? { release_notes: releaseNotesUpdate } : {}),
+        ...(releaseNotesUpdate ? { release_notes: { ...releaseNotesUpdate, ...(releaseNotesUpdate.override ? { override_revision: releaseNotesOverrideRevision(releaseNotesUpdate.override) } : {}) } } : {}),
         ...(Object.prototype.hasOwnProperty.call(update, 'slack_discovery_cache_ttl_minutes')
           ? { slack_discovery_cache_ttl_minutes: update.slack_discovery_cache_ttl_minutes }
           : {}),

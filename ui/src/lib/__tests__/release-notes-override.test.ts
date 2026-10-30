@@ -16,3 +16,14 @@ test("automatic preserves inactive content without enabling it", () => {
   expect(override.markdown).toBe("Saved notes");
   expect(hasReleaseNotesOverride({ override }, "1.3.2")).toBe(false);
 });
+test("normalizes uppercase version prefixes without losing Markdown indentation", () => {
+  const override = normalizeReleaseNotesOverride({ source: "manual", release_version: "V1.3.2", markdown: "\n    example command\n" });
+  expect(override.release_version).toBe("1.3.2");
+  expect(override.markdown).toBe("    example command");
+  expect(hasReleaseNotesOverride({ override }, "V1.3.2")).toBe(true);
+});
+test("bounds manual content by UTF-8 bytes and rejects whitespace-only notes", () => {
+  const override = normalizeReleaseNotesOverride({ source: "manual", release_version: "1.3.2", markdown: "例".repeat(45000) });
+  expect(validateReleaseNotesOverride(override)).toMatch(/128 KiB/);
+  expect(validateReleaseNotesOverride({ ...override, markdown: " \n " })).toMatch(/Enter/);
+});

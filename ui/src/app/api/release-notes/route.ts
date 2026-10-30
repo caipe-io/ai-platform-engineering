@@ -1,3 +1,4 @@
+import { parseReleaseNotesMarkdown } from "@/lib/release-notes-markdown";
 import { normalizeReleaseNotesOverride, validateReleaseNotesOverride, hasReleaseNotesOverride, MAX_RELEASE_NOTES_LENGTH } from "@/lib/release-notes-override";
 import fs from "fs";
 import { NextRequest,NextResponse } from "next/server";
@@ -463,32 +464,47 @@ async function readReleaseContent(file: ReleaseFile): Promise<{ body: string; so
   return null;
 }
 
-/**
- * Split YAML frontmatter from the markdown body and surface the `title`.
- * Also removes the Docusaurus `<!-- truncate -->` marker so the dialog renders a
- * single continuous body.
- */
-function parseFrontmatter(raw: string): { title: string | null; date: string | null; body: string } {
-  let title: string | null = null;
-  let date: string | null = null;
-  let body = raw;
 
-  const frontmatterMatch = raw.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
-  if (frontmatterMatch) {
-    const frontmatter = frontmatterMatch[1];
-    body = raw.slice(frontmatterMatch[0].length);
-    const titleMatch = frontmatter.match(/^title:\s*(.+)$/m);
-    if (titleMatch) {
-      title = titleMatch[1].trim().replace(/^["']|["']$/g, "");
-    }
-    const dateMatch = frontmatter.match(/^date:\s*(.+)$/m);
-    if (dateMatch) {
-      date = dateMatch[1].trim().replace(/^["']|["']$/g, "");
-    }
-  }
+type RepositoryMarkdownResult = { body: string } | { error: string };
+const repositoryMarkdownRequests = new Map<string, Promise<RepositoryMarkdownResult>>();
 
-  body = body.replace(/<!--\s*truncate\s*-->/g, "").trim();
-  return { title, date, body };
+async function readRepositoryMarkdown(cacheKey: string, url: string): Promise<RepositoryMarkdownResult> {
+  const cached = contentCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < CONTENT_TTL_MS) return { body: cached.body };
+  const pending = repositoryMarkdownRequests.get(cacheKey);
+  if (pending) return pending;
+  const request = (async (): Promise<RepositoryMarkdownResult> => {
+    try {
+      const token = process.env.RELEASE_NOTES_GITHUB_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim() || process.env.GITHUB_PERSONAL_ACCESS_TOKEN?.trim();
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(10000), cache: "no-store", redirect: "error",
+        headers: { Accept: "application/vnd.github.raw+json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
+      if (!response.ok) return { error: `Release Markdown could not be fetched (HTTP ${response.status}). Check the file, ref, and repository access.` };
+      const reader = response.body?.getReader();
+      if (!reader) return { error: "Release Markdown is empty." };
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > MAX_RELEASE_NOTES_LENGTH) {
+            await reader.cancel();
+            return { error: "Release Markdown exceeds 128 KiB." };
+          }
+          chunks.push(value);
+        }
+      } finally { reader.releaseLock(); }
+      const body = Buffer.concat(chunks).toString("utf8");
+      contentCache.set(cacheKey, { at: Date.now(), body });
+      return { body };
+    } catch { return { error: "Release Markdown could not be fetched. Check repository access and try again." }; }
+  })();
+  repositoryMarkdownRequests.set(cacheKey, request);
+  try { return await request; }
+  finally { repositoryMarkdownRequests.delete(cacheKey); }
 }
 
 export async function GET(request: NextRequest) {
@@ -532,39 +548,13 @@ export async function GET(request: NextRequest) {
           const ref = encodeURIComponent(override.markdown_ref);
           const url = `https://api.github.com/repos/${coords.owner}/${coords.repository}/contents/${encodedPath}?ref=${ref}`;
           const cacheKey = JSON.stringify([repository, override.markdown_ref, override.markdown_path]);
-          const cached = contentCache.get(cacheKey);
-          if (cached && Date.now() - cached.at < CONTENT_TTL_MS) content = cached.body;
-          else {
-            const token = process.env.RELEASE_NOTES_GITHUB_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim() || process.env.GITHUB_PERSONAL_ACCESS_TOKEN?.trim();
-            const response = await fetch(url, {
-              signal: AbortSignal.timeout(10000), cache: "no-store", redirect: "error",
-              headers: { Accept: "application/vnd.github.raw+json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-            });
-            if (!response.ok) return NextResponse.json({ ...empty, error: `Release Markdown could not be fetched (HTTP ${response.status}). Check the file, ref, and repository access.` }, { status: 502, headers });
-            // Read at most the configured limit, including responses without Content-Length.
-            const reader = response.body?.getReader();
-            if (!reader) return NextResponse.json({ ...empty, error: "Release Markdown is empty." }, { status: 502, headers });
-            const chunks: Uint8Array[] = [];
-            let size = 0;
-            try {
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                size += value.byteLength;
-                if (size > MAX_RELEASE_NOTES_LENGTH) {
-                  await reader.cancel();
-                  return NextResponse.json({ ...empty, error: "Release Markdown exceeds 128 KiB." }, { status: 502, headers });
-                }
-                chunks.push(value);
-              }
-            } finally { reader.releaseLock(); }
-            content = Buffer.concat(chunks).toString("utf8");
-            contentCache.set(cacheKey, { at: Date.now(), body: content });
-          }
+          const result = await readRepositoryMarkdown(cacheKey, url);
+          if ("error" in result) return NextResponse.json({ ...empty, error: result.error }, { status: 502, headers });
+          content = result.body;
           changelogUrl = `${repository}/blob/${ref}/${encodedPath}`;
           markdownBaseUrl = `https://raw.githubusercontent.com/${coords.owner}/${coords.repository}/${ref}/${encodedPath}`;
         }
-        const parsed = parseFrontmatter(content);
+        const parsed = parseReleaseNotesMarkdown(content);
         if (!parsed.body.trim()) return NextResponse.json({ ...empty, error: "Release Markdown has no content." }, { status: 502, headers });
         return NextResponse.json({ ...empty, ...parsed, matchedVersion: requestedVersion,
           source: override.source === "manual" ? "manual" : "repository-markdown", changelogUrl, markdownBaseUrl,
@@ -615,7 +605,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(empty);
     }
 
-    const { title, date, body } = parseFrontmatter(content.body);
+    const { title, date, body } = parseReleaseNotesMarkdown(content.body);
     if (!body) {
       return NextResponse.json(empty);
     }

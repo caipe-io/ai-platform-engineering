@@ -25,7 +25,7 @@ test("repository notes use server credentials and recheck policy before cache", 
   process.env.RELEASE_NOTES_GITHUB_TOKEN = "example-token";
   global.fetch = jest.fn().mockResolvedValue(new Response("## Release\n[Guide](guide.md)"));
   const result = await GET(request());
-  expect(await result.json()).toMatchObject({ source: "repository-markdown", changelogUrl: "https://github.com/example/repository/blob/release%2F1.3.2/docs/notes.md" });
+  expect(await result.json()).toMatchObject({ body: "## Release\n[Guide](guide.md)", source: "repository-markdown", changelogUrl: "https://github.com/example/repository/blob/release%2F1.3.2/docs/notes.md" });
   expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining("ref=release%2F1.3.2"), expect.objectContaining({ redirect: "error", headers: expect.objectContaining({ Authorization: "Bearer example-token" }) }));
   process.env.RELEASE_NOTES_ALLOWED_REPOSITORIES = "";
   expect((await GET(request())).status).toBe(400);
@@ -36,4 +36,20 @@ test("missing file returns an actionable error", async () => {
   const result = await GET(request());
   expect(result.status).toBe(502);
   expect((await result.json()).error).toContain("HTTP 404");
+});
+
+test("shares an in-flight repository read and retries a failed fetch", async () => {
+  mockFind.mockResolvedValue({ release_notes: { override: { source: "repository", release_version: "1.3.2", markdown_repository: "https://github.com/example/repository", markdown_ref: "primary", markdown_path: "docs/concurrent.md" } } });
+  let finish!: (response: Response) => void;
+  global.fetch = jest.fn(() => new Promise<Response>(resolve => { finish = resolve; }));
+  const responses = Promise.all([GET(request()), GET(request())]);
+  await new Promise(resolve => setImmediate(resolve));
+  expect(global.fetch).toHaveBeenCalledTimes(1);
+  finish(new Response("", { status: 404 }));
+  for (const response of await responses) expect(response.status).toBe(502);
+  global.fetch = jest.fn().mockResolvedValue(new Response("    example command"));
+  const response = await GET(request());
+  expect(response.status).toBe(200);
+  expect((await response.json()).body).toBe("    example command");
+  expect(global.fetch).toHaveBeenCalledTimes(1);
 });

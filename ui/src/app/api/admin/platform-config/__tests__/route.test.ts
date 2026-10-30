@@ -981,3 +981,29 @@ describe("admin platform-config route", () => {
     expect(updateOne.mock.calls[1][1].$set.platform_llm).toBeNull();
   });
 });
+
+describe("curated override persistence and dismissal revisions", () => {
+  it("round-trips normalized overrides and hashes only active source fields", async () => {
+    process.env.RELEASE_NOTES_ALLOWED_REPOSITORIES = "https://github.com/example/repository";
+    mockWithAuth.mockImplementation((req, handler) => handler(req, { email: "admin@example.test" }, { sub: "admin", role: "admin" }));
+    mockRequireAdmin.mockResolvedValue(undefined);
+    mockRequireResourcePermission.mockResolvedValue(undefined);
+    let override: unknown;
+    const updateOne = jest.fn(async (_filter, update) => { override = update.$set['release_notes.override']; return { acknowledged: true }; });
+    mockGetCollection.mockResolvedValue({ updateOne, findOne: jest.fn(async () => ({ release_notes: { override } })) });
+    const { GET, PATCH } = await import("../route");
+    const save = async (value: unknown) => (await (await PATCH(request("/api/admin/platform-config", { method: "PATCH", body: JSON.stringify({ release_notes: { override: value } }) }))).json()).data.release_notes.override_revision;
+    const manual = { source: "manual", release_version: "V1.3.2", markdown: "    example command", markdown_repository: "", markdown_path: "", markdown_ref: "", changelog_url: "" };
+    const initial = await save(manual);
+    expect(updateOne.mock.calls.at(-1)![1].$set['release_notes.override']).toMatchObject({ release_version: "1.3.2", markdown: "    example command" });
+    const stored = (await (await GET(request("/api/admin/platform-config"))).json()).data.release_notes;
+    expect(stored.override).toMatchObject({ source: "manual", release_version: "1.3.2", markdown: "    example command" });
+    expect(stored.override_revision).toBe(initial);
+    expect(await save({ ...manual, markdown_path: "docs/inactive.md" })).toBe(initial);
+    expect(await save({ ...manual, markdown: "Changed notes" })).not.toBe(initial);
+    const repository = { ...manual, source: "repository", markdown_repository: "https://github.com/example/repository", markdown_ref: "primary", markdown_path: "docs/notes.md" };
+    const repositoryRevision = await save(repository);
+    expect(await save({ ...repository, markdown: "Inactive notes" })).toBe(repositoryRevision);
+    expect(await save({ ...repository, markdown_ref: "secondary" })).not.toBe(repositoryRevision);
+  });
+});

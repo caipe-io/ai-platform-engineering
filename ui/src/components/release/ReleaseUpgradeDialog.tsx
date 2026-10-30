@@ -1,5 +1,7 @@
 "use client";
 
+import { trimReleaseMarkdown } from "@/lib/release-notes-markdown";
+
 import { AlertCircle,CheckCircle2,Clock3,Sparkles } from "lucide-react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -67,7 +69,7 @@ function userVisibleMarkdownBody(body: string, isAdmin: boolean): string {
   const lines = body.split("\n");
   const cutIndex = lines.findIndex((line) => /^#{1,6}\s+upgrade guide\b/i.test(line.trim()));
   const visible = cutIndex >= 0 ? lines.slice(0, cutIndex) : lines;
-  return visible.join("\n").replace(/\n*-{3,}\s*$/g, "").trim();
+  return trimReleaseMarkdown(visible.join("\n").replace(/\n*-{3,}\s*$/g, ""));
 }
 
 /** Rich-markdown renderer for the full curated release notes body. */
@@ -170,6 +172,7 @@ export function ReleaseUpgradeDialog({
   const markdownBody = releaseMarkdown?.body
     ? userVisibleMarkdownBody(releaseMarkdown.body, isAdmin)
     : null;
+  const changelogUrl = releaseMarkdown?.source === "manual" ? safeManualChangelogUrl(releaseMarkdown.changelogUrl) : safeChangelogUrl(releaseMarkdown?.changelogUrl);
   const visibleSections = userVisibleSections(release?.sections ?? [], isAdmin);
   // We only have real notes when there's a curated markdown body or at least one
   // changelog-derived section to show. Otherwise the dialog renders an error.
@@ -232,8 +235,8 @@ export function ReleaseUpgradeDialog({
         </div>
 
         <div className="text-xs text-muted-foreground">
-          {!(releaseMarkdown?.source === "manual" && !releaseMarkdown.changelogUrl) && <a
-            href={releaseMarkdown?.source === "manual" ? safeManualChangelogUrl(releaseMarkdown.changelogUrl) : safeChangelogUrl(releaseMarkdown?.changelogUrl)}
+          {changelogUrl && <a
+            href={changelogUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="font-medium text-primary underline-offset-2 hover:underline"

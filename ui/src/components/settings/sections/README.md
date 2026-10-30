@@ -59,3 +59,12 @@
 - Repository content is limited to 128 KiB and cached for ten minutes per repository/ref/path. Pin an immutable ref for release content. Relative media/links resolve against the file's raw GitHub location; private images still require browser access.
 - Manual notes allow an optional HTTPS changelog link. Without it, the dialog hides the full-changelog link.
 - Each saved content/source revision gets a separate dismissal identity. Automatic restores existing notification/comparison behavior. Fetch errors display the dialog's unavailable-content state; they never block login.
+- Manual preview and published notes share metadata/truncate parsing and preserve
+  leading Markdown indentation. Both sources enforce the 128 KiB UTF-8 limit.
+- Dismissal revisions include only active-source fields. This revision format
+  change re-announces previously dismissed curated notes once; later edits to
+  inactive fields do not re-announce unchanged notes.
+- Responses from another source are not accepted under a configured announcement
+  identity. Manual failures retain the configured changelog-link policy.
+- Concurrent repository reads share one in-flight fetch after each caller's
+  authorization and repository-policy checks; failed reads can be retried.

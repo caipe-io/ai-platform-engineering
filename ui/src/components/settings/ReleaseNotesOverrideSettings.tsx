@@ -1,5 +1,7 @@
 "use client";
 
+import { parseReleaseNotesMarkdown } from "@/lib/release-notes-markdown";
+
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,6 +76,6 @@ export function ReleaseNotesOverrideSettings({ readOnly = false }: { readOnly?: 
       <Button type="button" disabled={JSON.stringify(config) === saved} onClick={() => void save()}>{saving ? "Saving…" : "Save curated notes"}</Button>
     </fieldset>
     {message && <p role="status" className="text-sm">{message}</p>}{error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    <ReleaseUpgradeDialog open={preview} isAdmin releaseVersion={config.release_version || "preview"} release={null} releaseMarkdown={{ matchedVersion: config.release_version, title: null, date: null, body: config.markdown, source: "manual", changelogUrl: config.changelog_url || null }} onSkipUntilNextLogin={() => setPreview(false)} onDismissPermanently={() => setPreview(false)} />
+    <ReleaseUpgradeDialog open={preview} isAdmin releaseVersion={config.release_version || "preview"} release={null} releaseMarkdown={{ matchedVersion: config.release_version, ...parseReleaseNotesMarkdown(config.markdown), source: "manual", changelogUrl: config.changelog_url || null }} onSkipUntilNextLogin={() => setPreview(false)} onDismissPermanently={() => setPreview(false)} />
   </div>;
 }

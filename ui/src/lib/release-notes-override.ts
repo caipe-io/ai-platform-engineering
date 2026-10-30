@@ -1,3 +1,4 @@
+import { trimReleaseMarkdown } from "@/lib/release-notes-markdown";
 import { isValidReleaseNotesRef } from "@/lib/release-notes-ref";
 
 export const MAX_RELEASE_NOTES_LENGTH = 128 * 1024;
@@ -16,8 +17,8 @@ export function normalizeReleaseNotesOverride(value: unknown): ReleaseNotesOverr
   const string = (key: string) => typeof input[key] === "string" ? (input[key] as string).trim() : "";
   return {
     source: input.source === "manual" || input.source === "repository" ? input.source : "automatic",
-    release_version: string("release_version").replace(/^v/, ""),
-    markdown: string("markdown"),
+    release_version: string("release_version").replace(/^v/i, ""),
+    markdown: typeof input.markdown === "string" ? trimReleaseMarkdown(input.markdown) : "",
     markdown_repository: string("markdown_repository"),
     markdown_ref: string("markdown_ref"),
     markdown_path: string("markdown_path"),
@@ -32,13 +33,13 @@ export function validReleaseMarkdownPath(value: string): boolean {
 }
 
 export function validateReleaseNotesOverride(config: ReleaseNotesOverride): string | null {
-  if (config.markdown.length > MAX_RELEASE_NOTES_LENGTH) return "Release notes must be at most 128 KiB of text.";
+  if (new TextEncoder().encode(config.markdown).byteLength > MAX_RELEASE_NOTES_LENGTH) return "Release notes must be at most 128 KiB of text.";
   if (config.source === "automatic") return null;
   if (!config.release_version || config.release_version.length > 200 || /\s/.test(config.release_version)) {
     return "Set the deployed release version for these notes.";
   }
   if (config.source === "manual") {
-    if (!config.markdown) return "Enter curated release notes before selecting manual notes.";
+    if (!config.markdown.trim()) return "Enter curated release notes before selecting manual notes.";
     if (config.changelog_url) {
       try {
         const url = new URL(config.changelog_url);
@@ -53,5 +54,5 @@ export function validateReleaseNotesOverride(config: ReleaseNotesOverride): stri
 
 export function hasReleaseNotesOverride(config: { override?: ReleaseNotesOverride | null } | null | undefined, version: string): boolean {
   return Boolean(config?.override && config.override.source !== "automatic" &&
-    config.override.release_version === version.replace(/^v/, ""));
+    config.override.release_version === version.replace(/^v/i, ""));
 }

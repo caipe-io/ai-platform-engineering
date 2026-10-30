@@ -246,6 +246,11 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
             ) ?? null;
         setRelease(matchingRelease);
 
+        const unavailableNotes: ReleaseMarkdown | null = curatedOverride ? {
+          matchedVersion: activeReleaseVersion, title: null, date: null, body: "",
+          source: releaseNotesConfig?.override?.source === "manual" ? "manual" : "repository-markdown",
+          changelogUrl: releaseNotesConfig?.override?.source === "manual" ? releaseNotesConfig.override.changelog_url : null,
+        } : null;
         try {
           const notesResponse = await fetch(releaseNotesRequestUrl(activeReleaseVersion, releaseNotesConfig));
           const notesPayload: ReleaseNotesResponse | null = notesResponse.ok
@@ -253,6 +258,8 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
             : null;
           if (!cancelled) {
             const hasExactChangelog = Boolean(matchingRelease);
+            const expectedSource = curatedOverride ? unavailableNotes?.source : customCompareConfigured ? "github-compare" : null;
+            const sourceMatches = expectedSource ? notesPayload?.source === expectedSource : ["github", "local", "generated"].includes(notesPayload?.source ?? "");
             const hasConfiguredCompareNotes =
               (customCompareConfigured && notesPayload?.source === "github-compare") ||
               (curatedOverride && ["manual", "repository-markdown"].includes(notesPayload?.source ?? ""));
@@ -261,7 +268,7 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
               (normalizeVersion(notesPayload?.matchedVersion) === activeReleaseVersion ||
                 normalizeVersion(notesPayload?.matchedVersion) === baseVersion(activeReleaseVersion));
             setReleaseMarkdown(
-              (hasConfiguredCompareNotes || !hasExactChangelog) && hasExactCuratedNotes
+              sourceMatches && (hasConfiguredCompareNotes || !hasExactChangelog) && hasExactCuratedNotes
                 ? {
                     matchedVersion: notesPayload.matchedVersion ?? null,
                     title: notesPayload.title ?? null,
@@ -271,12 +278,12 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
                     markdownBaseUrl: notesPayload.markdownBaseUrl,
                     changelogUrl: notesPayload.changelogUrl ?? null,
                   }
-                : null,
+                : unavailableNotes,
             );
           }
         } catch (notesError) {
           console.warn("[release-upgrade-prompt] Failed to load curated release notes:", notesError);
-          if (!cancelled) setReleaseMarkdown(null);
+          if (!cancelled) setReleaseMarkdown(unavailableNotes);
         }
 
         if (cancelled) return;
