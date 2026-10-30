@@ -27,3 +27,10 @@ Small implementation units extend the existing inbox.
 - Users can subscribe, pause, select events/channels, and set quiet hours. App subscriptions and all external channels default off.
 - Channel availability and enablement go through an adapter registry; missing integrations are unavailable.
 - The host checks current app launch access. Resource-specific authorization remains the publisher responsibility pending resource-level CAS integration.
+
+## Durable inbox queue
+
+- Accepted jobs are durable before acknowledgement. Per-channel deliveries use deterministic keys, expiring leases, capped retries and expiry.
+- Recheck current subscriptions and app launch access before delivery. Existing inbox entries remain readable.
+- Only in-app delivery is implemented here; missing external adapters fail explicitly.
+- `NOTIFICATION_EVENTS_ENABLED=false` stops workers and new queue acceptance. No NATS service is required.
