@@ -1,3 +1,14 @@
+## 1.3.4 (2026-10-30)
+
+### Feat
+
+- **ui**: support curated release note overrides (#3143)
+- **ui**: configure Agentic App connection guidance (#3144)
+
+### Fix
+
+- **ci**: install and refresh AWS MCP runtime CLIs (#3154)
+
 ## 1.3.3 (2026-10-29)
 
 ### Feat
