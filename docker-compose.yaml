@@ -673,6 +673,9 @@ services:
     ports: ["127.0.0.1:8002:8002"]
     env_file: [.env]
     environment:
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       # Dynamic-agents runtime endpoint -- every autonomous task runs against a
       # dynamic agent (its tools / system prompt / middleware) selected by the
       # task's dynamic_agent_id. Tasks surface a clear ack failure if this URL

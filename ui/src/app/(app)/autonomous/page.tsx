@@ -1,5 +1,6 @@
 "use client";
 
+import { AreaNotificationToggle } from "@/components/notifications/AreaNotificationToggle";
 import React, { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 
@@ -61,6 +62,7 @@ function AutonomousWorkspace() {
           Tasks you own, grouped by the agents you can automate.
         </p>
       </div>
+      <AreaNotificationToggle area="agent" />
 
       {error ? (
         <div className="flex items-center gap-2 text-sm text-destructive">
