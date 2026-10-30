@@ -113,12 +113,14 @@ describe("AgenticAppAssistantOverlay", () => {
 
   afterEach(() => jest.restoreAllMocks());
 
-  it("keeps the view tabs and connection guidance in the assistant header", async () => {
+  it("places the view tabs below the assistant header", async () => {
     renderExampleOverlay();
     await screen.findByTestId("chat-panel");
-    const header = screen.getByRole("tablist", { name: "Ask Example views" }).closest("header");
-    expect(header).toContainElement(screen.getByRole("tab", { name: "Chat" }));
-    expect(header).toContainElement(screen.getByRole("tab", { name: "History" }));
+    const tabs = screen.getByRole("tablist", { name: "Ask Example views" });
+    const header = screen.getByRole("button", { name: "Conversation actions" }).closest("header");
+    expect(tabs.previousElementSibling).toBe(header);
+    expect(tabs).toContainElement(screen.getByRole("tab", { name: "Chat" }));
+    expect(tabs).toContainElement(screen.getByRole("tab", { name: "History" }));
     expect(header).toContainElement(screen.getByRole("button", { name: "Connect" }));
     expect(header).toContainElement(screen.getByRole("button", { name: "Conversation actions" }));
   });
