@@ -367,6 +367,7 @@ services:
     env_file:
       - .env
     environment:
+      - NOTIFICATION_SLACK_ENABLED=${NOTIFICATION_SLACK_ENABLED:-false}
       - NODE_ENV=production
       # Safe release metadata shown by System Health. A specific
       # PLATFORM_COMPONENT_VERSION_* value may override this shared tag.
