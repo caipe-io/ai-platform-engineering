@@ -1,5 +1,6 @@
 import { ApiError } from "@/lib/api-middleware";
 import { findRealmUserIdByAttribute, mergeUserAttributes } from "@/lib/rbac/keycloak-admin";
+import { setWebexIdentityForUserRoutes } from "@/lib/rbac/webex-direct-user-route-store";
 
 const ALREADY_LINKED_ERROR = new ApiError(
   "This Webex account is already linked to a different enterprise user.",
@@ -36,4 +37,6 @@ export async function claimWebexIdentity(
     await mergeUserAttributes(keycloakSub, { webex_user_id: undefined, webex_user_email: undefined });
     throw ALREADY_LINKED_ERROR;
   }
+
+  await setWebexIdentityForUserRoutes(keycloakSub, webexUserId);
 }

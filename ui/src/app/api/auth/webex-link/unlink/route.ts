@@ -8,6 +8,7 @@ import {
 } from "@/lib/api-middleware";
 import { isWebexIdentityLinkingEnabled } from "@/lib/integration-config";
 import { mergeUserAttributes } from "@/lib/rbac/keycloak-admin";
+import { setWebexIdentityForUserRoutes } from "@/lib/rbac/webex-direct-user-route-store";
 
 export const DELETE = withErrorHandler(async (request: NextRequest) => {
   if (!isWebexIdentityLinkingEnabled()) {
@@ -21,5 +22,6 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
   }
 
   await mergeUserAttributes(ownerId, { webex_user_id: undefined, webex_user_email: undefined });
+  await setWebexIdentityForUserRoutes(ownerId, null);
   return successResponse({ unlinked: true });
 });

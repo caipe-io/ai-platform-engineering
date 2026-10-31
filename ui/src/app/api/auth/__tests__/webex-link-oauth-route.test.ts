@@ -9,6 +9,7 @@ import { ApiError } from "@/lib/api-middleware";
 const mockGetAuthFromBearerOrSession = jest.fn();
 const mockMergeUserAttributes = jest.fn();
 const mockFindRealmUserIdByAttribute = jest.fn();
+const mockSetWebexIdentityForUserRoutes = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => {
   const actual = jest.requireActual("@/lib/api-middleware");
@@ -21,6 +22,10 @@ jest.mock("@/lib/api-middleware", () => {
 jest.mock("@/lib/rbac/keycloak-admin", () => ({
   mergeUserAttributes: (...args: unknown[]) => mockMergeUserAttributes(...args),
   findRealmUserIdByAttribute: (...args: unknown[]) => mockFindRealmUserIdByAttribute(...args),
+}));
+
+jest.mock("@/lib/rbac/webex-direct-user-route-store", () => ({
+  setWebexIdentityForUserRoutes: (...args: unknown[]) => mockSetWebexIdentityForUserRoutes(...args),
 }));
 
 const WEBEX_TOKEN_URL = "https://webexapis.com/v1/access_token";
@@ -45,7 +50,8 @@ beforeEach(() => {
   clearConfigured();
   mockGetAuthFromBearerOrSession.mockResolvedValue({ session: { sub: "kc-user-1" } });
   mockMergeUserAttributes.mockResolvedValue(undefined);
-  mockFindRealmUserIdByAttribute.mockResolvedValue(null);
+  mockFindRealmUserIdByAttribute.mockReset().mockResolvedValue(null);
+  mockSetWebexIdentityForUserRoutes.mockReset().mockResolvedValue(undefined);
 });
 
 describe("GET /api/auth/webex-link/start", () => {
@@ -98,7 +104,7 @@ describe("GET /api/auth/webex-link/start", () => {
 
   it("redirects to the public origin (NEXTAUTH_URL) for the sign-in page, not the pod-internal request origin", async () => {
     setConfigured();
-    process.env.NEXTAUTH_URL = "https://forge.dev.svc.splunk8s.io";
+    process.env.NEXTAUTH_URL = "https://chat.example.com";
     mockGetAuthFromBearerOrSession.mockRejectedValue(
       new ApiError("You are not signed in. Please sign in to continue.", 401, "NOT_SIGNED_IN", "not_signed_in", "sign_in"),
     );
@@ -108,7 +114,7 @@ describe("GET /api/auth/webex-link/start", () => {
 
     expect(response.status).toBe(307);
     const location = new URL(response.headers.get("location") ?? "");
-    expect(location.origin).toBe("https://forge.dev.svc.splunk8s.io");
+    expect(location.origin).toBe("https://chat.example.com");
     expect(location.pathname).toBe("/login");
     expect(location.searchParams.get("callbackUrl")).toBe("/api/auth/webex-link/start");
   });
@@ -192,6 +198,7 @@ describe("GET /api/auth/webex-link/callback", () => {
     expect(location.searchParams.get("webex_link")).toBe("error");
     expect(location.searchParams.get("reason")).toBe("INVALID_OAUTH_STATE");
     expect(mockMergeUserAttributes).not.toHaveBeenCalled();
+    expect(mockSetWebexIdentityForUserRoutes).not.toHaveBeenCalled();
   });
 
   it("rejects an orgId mismatch without writing any attribute", async () => {
@@ -216,6 +223,7 @@ describe("GET /api/auth/webex-link/callback", () => {
     expect(location.searchParams.get("webex_link")).toBe("error");
     expect(location.searchParams.get("reason")).toBe("WEBEX_ORG_MISMATCH");
     expect(mockMergeUserAttributes).not.toHaveBeenCalled();
+    expect(mockSetWebexIdentityForUserRoutes).not.toHaveBeenCalled();
   });
 
   it("rejects a Webex id already linked to a different user", async () => {
@@ -241,6 +249,7 @@ describe("GET /api/auth/webex-link/callback", () => {
     expect(location.searchParams.get("webex_link")).toBe("error");
     expect(location.searchParams.get("reason")).toBe("WEBEX_ID_ALREADY_LINKED");
     expect(mockMergeUserAttributes).not.toHaveBeenCalled();
+    expect(mockSetWebexIdentityForUserRoutes).not.toHaveBeenCalled();
   });
 
   it("links the Webex identity on a successful happy-path grant", async () => {
@@ -268,12 +277,13 @@ describe("GET /api/auth/webex-link/callback", () => {
       webex_user_id: ["person-42"],
       webex_user_email: undefined,
     });
+    expect(mockSetWebexIdentityForUserRoutes).toHaveBeenCalledWith("kc-user-1", "person-42");
     expect(response.headers.get("set-cookie")).toContain("caipe_oauth_state_webex-link=;");
   });
 
   it("redirects to the public origin (NEXTAUTH_URL), not the pod-internal request origin", async () => {
     setConfigured();
-    process.env.NEXTAUTH_URL = "https://forge.dev.svc.splunk8s.io";
+    process.env.NEXTAUTH_URL = "https://chat.example.com";
     const cookie = await startAndGetCookie();
     const { oauthStateCookieName, parseOAuthStateCookie } = await import("@/lib/credentials/oauth-state");
     const cookieValue = cookie.split(`${oauthStateCookieName("webex-link")}=`)[1];
@@ -292,7 +302,7 @@ describe("GET /api/auth/webex-link/callback", () => {
 
     expect(response.status).toBe(302);
     const location = new URL(response.headers.get("location") ?? "");
-    expect(location.origin).toBe("https://forge.dev.svc.splunk8s.io");
+    expect(location.origin).toBe("https://chat.example.com");
     expect(location.pathname).toBe("/settings/account-and-access");
     expect(location.searchParams.get("webex_link")).toBe("success");
   });
@@ -329,6 +339,7 @@ describe("GET /api/auth/webex-link/callback", () => {
       webex_user_id: undefined,
       webex_user_email: undefined,
     });
+    expect(mockSetWebexIdentityForUserRoutes).not.toHaveBeenCalled();
   });
 
   it("captures the Webex account's email alongside the person id", async () => {
@@ -365,6 +376,7 @@ describe("DELETE /api/auth/webex-link/unlink", () => {
     const response = await DELETE(new NextRequest("http://localhost:3000/api/auth/webex-link/unlink"));
     expect(response.status).toBe(404);
     expect(mockMergeUserAttributes).not.toHaveBeenCalled();
+    expect(mockSetWebexIdentityForUserRoutes).not.toHaveBeenCalled();
   });
 
   it("returns 401 when there is no authenticated subject", async () => {
@@ -374,6 +386,7 @@ describe("DELETE /api/auth/webex-link/unlink", () => {
     const response = await DELETE(new NextRequest("http://localhost:3000/api/auth/webex-link/unlink"));
     expect(response.status).toBe(401);
     expect(mockMergeUserAttributes).not.toHaveBeenCalled();
+    expect(mockSetWebexIdentityForUserRoutes).not.toHaveBeenCalled();
   });
 
   it("clears both the Webex id and email attributes for the calling user", async () => {
@@ -386,5 +399,6 @@ describe("DELETE /api/auth/webex-link/unlink", () => {
       webex_user_id: undefined,
       webex_user_email: undefined,
     });
+    expect(mockSetWebexIdentityForUserRoutes).toHaveBeenCalledWith("kc-user-1", null);
   });
 });

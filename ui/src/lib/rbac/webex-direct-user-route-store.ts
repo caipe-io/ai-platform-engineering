@@ -70,6 +70,22 @@ export async function listWebexDirectUserRoutesForUser(
   return new Map(routes.map((route) => [route.bot_id, route]));
 }
 
+/** Bind or unbind an existing user's routes without changing their grants or enabled state. */
+export async function setWebexIdentityForUserRoutes(
+  keycloakUserId: string,
+  webexUserId: string | null,
+): Promise<void> {
+  const collection = await getRbacCollection<WebexDirectUserRouteDocument>("webexDirectUserRoutes");
+  const normalizedUserId = requiredId(keycloakUserId, "keycloak_user_id");
+  const normalizedWebexUserId = webexUserId === null ? null : requiredId(webexUserId, "webex_user_id");
+  await collection.updateMany(
+    { keycloak_user_id: normalizedUserId } as never,
+    normalizedWebexUserId === null
+      ? { $unset: { webex_user_id: "" }, $set: { updated_at: new Date().toISOString() } }
+      : { $set: { webex_user_id: normalizedWebexUserId, updated_at: new Date().toISOString() } },
+  );
+}
+
 export async function upsertWebexDirectUserRoute(input: {
   botId: string;
   keycloakUserId: string;
