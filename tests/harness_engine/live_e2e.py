@@ -228,7 +228,7 @@ def run(args: argparse.Namespace) -> None:
     child_ids = {event["data"]["payload"]["toolCallId"] for event in child_events
                  if event["event_type"] == "runtime.event" and event["data"].get("name") == "TOOL_CALL_START"
                  and event["data"].get("payload", {}).get("toolCallName") == "task"}
-    assert any(event["data"].get("payload", {}).get("toolCallId") in child_ids
+    assert any((event["data"].get("payload", {}).get("toolCallId") or event["data"].get("payload", {}).get("tool_call_id")) in child_ids
                and "child-result" in event["data"].get("payload", {}).get("content", "")
                for event in child_events if event["event_type"] == "runtime.event" and event["data"].get("name") == "TOOL_CALL_RESULT")
     passed_check("native general-purpose subagent")

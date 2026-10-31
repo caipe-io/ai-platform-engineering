@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -9,10 +10,27 @@ from typing import Any
 from uuid import uuid4
 
 
+def observed_content(value: Any) -> str:
+    """Echo decoded attachment bytes received by the provider transport."""
+    if isinstance(value, list):
+        return " ".join(observed_content(item) for item in value)
+    if isinstance(value, dict):
+        return " ".join(observed_content(item) for item in value.values())
+    if isinstance(value, str) and value.startswith("data:") and ";base64," in value:
+        media, encoded = value.split(";base64,", 1)
+        decoded = base64.b64decode(encoded, validate=True)
+        if media == "data:text/plain":
+            return decoded.decode("utf-8")
+        if media == "data:image/png" and decoded.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image-observed"
+        return "attachment-observed"
+    return str(value)
+
+
 def reply(body: dict[str, Any]) -> dict[str, Any]:
     messages = body.get("messages", [])
     user_index = max((index for index, message in enumerate(messages) if message["role"] == "user"), default=0)
-    user = str(messages[user_index].get("content", ""))
+    user = observed_content(messages[user_index].get("content", ""))
     tools_after = any(message["role"] == "tool" for message in messages[user_index + 1 :])
     if tools_after:
         return {"role": "assistant", "content": "Tool completed. " + str(messages[-1].get("content", ""))}
@@ -43,9 +61,8 @@ def reply(body: dict[str, Any]) -> dict[str, Any]:
                 }
             ],
         }
-    observed = " image-observed" if "image_url" in user else ""
-    history = " | ".join(str(message.get("content", "")) for message in messages if message["role"] == "user")
-    return {"role": "assistant", "content": "Example response: " + history + observed}
+    history = " | ".join(observed_content(message.get("content", "")) for message in messages if message["role"] == "user")
+    return {"role": "assistant", "content": "Example response: " + history}
 
 
 class Handler(BaseHTTPRequestHandler):
