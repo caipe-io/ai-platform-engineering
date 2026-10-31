@@ -158,9 +158,12 @@ def route_path_from_ui_file(path: Path) -> str:
     return "/" + "/".join(without_route.parts)
 
 
-def find_openfga_agent_use_route_sites() -> dict[str, list[str]]:
-    """Return {route_path: [file:line, ...]} for BFF OpenFGA agent-use gates."""
-    sites: dict[str, list[str]] = {}
+def find_openfga_agent_use_route_sites() -> dict[tuple[str, str], list[str]]:
+    """Return {(method, route_path): [file:line, ...]} for agent-use gates."""
+    sites: dict[tuple[str, str], list[str]] = {}
+    handler_pattern = re.compile(
+        r"\bexport\s+(?:async\s+function|const)\s+(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\b"
+    )
     for path in REPO_ROOT.glob(UI_ROUTES_GLOB):
         try:
             content = path.read_text()
@@ -169,7 +172,15 @@ def find_openfga_agent_use_route_sites() -> dict[str, list[str]]:
         for match in TS_OPENFGA_AGENT_USE_RE.finditer(content):
             line_no = content[: match.start()].count("\n") + 1
             where = f"{path.relative_to(REPO_ROOT)}:{line_no}"
-            sites.setdefault(route_path_from_ui_file(path), []).append(where)
+            handlers = list(handler_pattern.finditer(content, 0, match.start()))
+            # A module-level helper can precede its exported handler. In that
+            # case require coverage for every method that may use the helper.
+            methods = (
+                [handlers[-1].group(1)] if handlers
+                else [handler.group(1) for handler in handler_pattern.finditer(content)]
+            )
+            for method in methods or ["UNKNOWN"]:
+                sites.setdefault((method, route_path_from_ui_file(path)), []).append(where)
     return sites
 
 
@@ -264,8 +275,8 @@ def main() -> int:
     if args.print:
         for (res, scope), wheres in sorted({**ts_sites, **py_sites}.items()):
             print(f"  - ({res}, {scope}): {wheres[0]}{' (+%d more)' % (len(wheres)-1) if len(wheres) > 1 else ''}")
-        for route_path, wheres in sorted(openfga_sites.items()):
-            print(f"  - (openfga, POST {route_path}, agent#use): {wheres[0]}{' (+%d more)' % (len(wheres)-1) if len(wheres) > 1 else ''}")
+        for (method, route_path), wheres in sorted(openfga_sites.items()):
+            print(f"  - (openfga, {method} {route_path}, agent#use): {wheres[0]}{' (+%d more)' % (len(wheres)-1) if len(wheres) > 1 else ''}")
 
     matrix_violations: list[Violation] = []
     for pair, wheres in {**ts_sites, **py_sites}.items():
@@ -277,13 +288,13 @@ def main() -> int:
                     f"call site uses ({pair[0]!r}, {pair[1]!r}) but no entry in tests/rbac/rbac-matrix.yaml",
                 )
             )
-    for route_path, wheres in openfga_sites.items():
-        if ("POST", route_path) not in declared_openfga_routes:
+    for (method, route_path), wheres in openfga_sites.items():
+        if (method, route_path) not in declared_openfga_routes:
             matrix_violations.append(
                 Violation(
                     "missing_in_matrix",
                     wheres[0],
-                    f"OpenFGA agent-use gate on POST {route_path} has no authorization_system=openfga entry",
+                    f"OpenFGA agent-use gate on {method} {route_path} has no authorization_system=openfga entry",
                 )
             )
 
