@@ -1,0 +1,27 @@
+name: Validate Compose upgrade gate
+
+on:
+  pull_request:
+    paths:
+      - deploy/compose-safe-upgrade.py
+      - deploy/caipe-oss-nginx.conf
+      - docker-compose.caipe-oss.yaml
+      - tests/test_compose_safe_upgrade.py
+      - tests/test_compose_upgrade_nginx.py
+      - .github/workflows/validate-compose-upgrade.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readiness-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+      - name: Verify orchestration and isolated nginx behavior
+        env:
+          RUN_COMPOSE_NGINX_TEST: "1"
+        run: uv run --with pytest pytest -q tests/test_compose_safe_upgrade.py tests/test_compose_upgrade_nginx.py
