@@ -1050,14 +1050,14 @@ function StatusSegmentView({ segment, isNested = false }: { segment: StatusSegme
   const isWaiting = status === "waiting_for_input";
   
   // Status labels
-  const statusLabel = isDone ? "Done" : isInterrupted ? "Interrupted" : "Waiting for user response";
+  const statusLabel = isDone ? "Done" : isInterrupted ? "Interrupted" : status === "unknown" ? "Completion unconfirmed" : "Waiting for user response";
   
   return (
     <div className={cn(
       "flex items-center gap-1.5",
       isNested ? "text-[10px]" : "text-xs",
       isDone && "text-emerald-500",
-      (isInterrupted || isWaiting) && "text-amber-500"
+      (isInterrupted || isWaiting || status === "unknown") && "text-amber-500"
     )}>
       {isDone ? (
         <CheckCircle className={cn("shrink-0", isNested ? "h-2.5 w-2.5" : "h-3 w-3")} />

@@ -4,16 +4,17 @@ version = "0.1.0"
 description = "Independent multi-harness control plane with durable reconnectable runs"
 requires-python = ">=3.13,<4.0"
 dependencies = [
-    "boto3==1.43.78",
+    "boto3==1.43.16",
     "claude-agent-sdk==0.2.139",
-    "fastapi==0.135.3",
+    "fastapi==0.141.1",
     "pydantic==2.13.4",
-    "pydantic-settings==2.14.2",
-    "pymongo==4.18.3",
-    "uvicorn[standard]==0.34.2",
+    "pydantic-settings==2.15.0",
+    "pymongo==4.19.0",
+    "uvicorn[standard]==0.52.4",
 ]
 
 [project.optional-dependencies]
+deep-agents = ["dynamic-agents; python_version >= '3.14'"]
 dev = [
     "httpx2==2.12.0",
     "mongomock==4.3.0",
@@ -40,3 +41,7 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.uv.sources]
+dynamic-agents = { path = "../dynamic_agents", editable = true }
+llm-wrapper = { path = "../llm_wrapper", editable = true }

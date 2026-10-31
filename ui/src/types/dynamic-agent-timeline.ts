@@ -97,7 +97,7 @@ export interface ErrorSegment {
 }
 
 /** Status segment types */
-export type StatusType = "done" | "interrupted" | "waiting_for_input";
+export type StatusType = "done" | "interrupted" | "waiting_for_input" | "unknown";
 
 /** A status marker (completion, interruption, or waiting for input) */
 export interface StatusSegment {

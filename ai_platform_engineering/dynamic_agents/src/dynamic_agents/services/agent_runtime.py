@@ -10,6 +10,7 @@ This module contains the core ``AgentRuntime`` class.  Sibling modules:
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -23,6 +24,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import uuid4
 
 from deepagents import create_deep_agent
+from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.state import StateBackend
 from deepagents.backends.store import StoreBackend
 from deepagents.middleware.skills import SkillsMiddleware
@@ -93,6 +95,7 @@ from dynamic_agents.services.model_capabilities import (
 )
 from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
+from dynamic_agents.services.skills_backend import ReadOnlySkillsBackend
 from dynamic_agents.services.structured_response import (
     STRUCTURED_OUTPUT_EVENT,
     StructuredResponseFormat,
@@ -812,6 +815,14 @@ class AgentRuntime:
             return (ns[0], ns[1], ns[2])
         return (self.config.id, self._session_id, "filesystem")
 
+    def _build_skill_store_backend(self, files: dict[str, Any]) -> StoreBackend:
+        """Seed a private immutable skill snapshot without touching shared files."""
+        digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
+        namespace = (self.config.id, self._session_id, f"skills-{digest}")
+        for path, data in files.items():
+            self._store.put(namespace, path.removeprefix("/skills"), data)
+        return ReadOnlySkillsBackend(store=self._store, namespace=lambda runtime: namespace)
+
     def _resolve_fs_ttl(self) -> int:
         """Resolve filesystem TTL from agent config or server default.
 
@@ -1026,15 +1037,8 @@ class AgentRuntime:
         self._skills_files: dict[str, Any] = {}
         skills_middleware = None
 
-        # Always clear stale skill files from the shared filesystem when using
-        # StoreBackend.  This is critical for workflows where multiple agents
-        # share the same fs_namespace — without this, Agent B would inherit
-        # Agent A's skill files if Agent B has no skills of its own (because
-        # the seeding block below is skipped when self.config.skills is empty).
-        if self._resolve_backend_type() == BACKEND_STORE and self._store:
-            if hasattr(self._store, "delete_by_key_prefix"):
-                fs_ns = self._resolve_fs_namespace()
-                self._store.delete_by_key_prefix(fs_ns, "/skills/")
+        # Skills use an immutable, caller/session-scoped snapshot. Shared normal
+        # files remain in the configured namespace without cross-agent deletion.
 
         if self.config.skills:
             try:
@@ -1053,26 +1057,11 @@ class AgentRuntime:
                         # enabled so skills are read from the same store as read_file;
                         # otherwise fall back to StateBackend (reads from state["files"]).
                         if self._resolve_backend_type() == BACKEND_STORE:
-                            fs_ns = self._resolve_fs_namespace()
-
-                            skills_backend = StoreBackend(
-                                store=self._store,
-                                namespace=lambda runtime: fs_ns,
-                            )
-
-                            # Seed skill files into GridFS so SkillsMiddleware and
-                            # read_file can find them via StoreBackend.
-                            # Note: stale skills were already cleared above.
-                            if self._store:
-                                namespace = fs_ns
-                                for path, file_data in self._skills_files.items():
-                                    self._store.put(namespace, path, file_data)
-                                logger.info(
-                                    f"Agent '{self.config.name}': seeded "
-                                    f"{len(self._skills_files)} skill files in GridFS"
-                                )
+                            skills_backend = self._build_skill_store_backend(self._skills_files)
                         else:
                             skills_backend = StateBackend()
+                        if self._resolve_backend_type() == BACKEND_STORE:
+                            skills_backend = CompositeBackend(default=skills_backend, routes={"/skills/": skills_backend})
                         skills_middleware = SkillsMiddleware(backend=skills_backend, sources=skills_sources)
                         logger.info(
                             f"Agent '{self.config.name}': loaded {len(skills_data)} skills "
@@ -1235,6 +1224,8 @@ class AgentRuntime:
                 store=self._store,
                 namespace=lambda runtime: fs_ns,
             )
+            skills_store = self._build_skill_store_backend(self._skills_files)
+            backend = CompositeBackend(default=backend, routes={"/skills/": skills_store})
         else:
             backend = None  # defaults to StateBackend
 
@@ -1828,6 +1819,7 @@ class AgentRuntime:
         encoder: "StreamEncoder | None" = None,
         files: list[InputFile] | None = None,
         turn_id: str | None = None,
+        cancellation_event: asyncio.Event | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream agent response for a user message.
 
@@ -1848,6 +1840,7 @@ class AgentRuntime:
             observation,
             files,
             turn_id,
+            cancellation_event,
         )
         async with aclosing(self._observe_turn(implementation, observation)) as observed:
             async for frame in observed:
@@ -2021,13 +2014,16 @@ class AgentRuntime:
         observation: _TurnObservation,
         files: list[InputFile] | None = None,
         turn_id: str | None = None,
+        cancellation_event: asyncio.Event | None = None,
     ) -> AsyncGenerator[str, None]:
         if not self._initialized:
             await self.initialize()
 
         assert encoder is not None, "encoder must be provided"
 
-        self._cancelled = False
+        self._cancelled = cancellation_event.is_set() if cancellation_event else False
+        if self._cancelled:
+            return
 
         config = self._build_stream_config(session_id, user_id, trace_id)
         run_id = f"run-{uuid4().hex[:12]}"
@@ -2185,7 +2181,7 @@ class AgentRuntime:
             agent=self.config.name,
         )
 
-    async def has_pending_interrupt(self, session_id: str) -> dict[str, Any] | None:
+    async def has_pending_interrupt(self, session_id: str, *, strict: bool = False) -> dict[str, Any] | None:
         """Check if there's a pending interrupt for the given session.
 
         Returns a discriminated dict with ``type`` field:
@@ -2224,7 +2220,7 @@ class AgentRuntime:
                 for action in action_requests:
                     tool_name = action.get("name", "")
                     if tool_name == "request_user_input":
-                        tool_call_id = action.get("id", str(id(interrupt)))
+                        tool_call_id = action.get("id") or str(interrupt.id)
                         args = action.get("args", {})
                         logger.info(
                             f"[has_pending_interrupt] Found request_user_input interrupt: tool_call_id={tool_call_id}"
@@ -2239,9 +2235,9 @@ class AgentRuntime:
 
                 # Collect ALL tool approval action_requests
                 tool_approvals: list[dict[str, Any]] = []
-                for action in action_requests:
+                for action_index, action in enumerate(action_requests):
                     tool_name = action.get("name", "")
-                    tool_call_id = action.get("id", str(id(interrupt)))
+                    tool_call_id = action.get("id") or (str(interrupt.id) if action_index == 0 else f"{interrupt.id}:{action_index}")
                     args = action.get("args", {})
                     allowed_decisions = self._get_allowed_decisions_for_tool(tool_name)
                     tool_approvals.append(
@@ -2273,7 +2269,9 @@ class AgentRuntime:
             logger.debug("[has_pending_interrupt] No actionable interrupt found")
             return None
         except Exception as e:
-            logger.warning(f"Error checking for pending interrupt: {e}")
+            logger.warning("Checkpoint inspection failed for agent=%s session=%s (%s); inspect checkpoint storage connectivity and schema", self.config.id, session_id, type(e).__name__, exc_info=True)
+            if strict:
+                raise
             return None
 
     def _get_allowed_decisions_for_tool(self, tool_name: str) -> list[str]:
@@ -2407,6 +2405,7 @@ class AgentRuntime:
         resume_data: str,
         trace_id: str | None = None,
         encoder: "StreamEncoder | None" = None,
+        cancellation_event: asyncio.Event | None = None,
     ) -> AsyncGenerator[str, None]:
         """Resume agent execution after a HITL interrupt.
 
@@ -2425,6 +2424,7 @@ class AgentRuntime:
             trace_id,
             encoder,
             observation,
+            cancellation_event,
         )
         async with aclosing(self._observe_turn(implementation, observation)) as observed:
             async for frame in observed:
@@ -2438,13 +2438,16 @@ class AgentRuntime:
         trace_id: str | None,
         encoder: "StreamEncoder | None",
         observation: _TurnObservation,
+        cancellation_event: asyncio.Event | None = None,
     ) -> AsyncGenerator[str, None]:
         if not self._initialized:
             await self.initialize()
 
         assert encoder is not None, "encoder must be provided"
 
-        self._cancelled = False
+        self._cancelled = cancellation_event.is_set() if cancellation_event else False
+        if self._cancelled:
+            return
 
         config = self._build_stream_config(session_id, user_id, trace_id)
         run_id = f"run-{uuid4().hex[:12]}"

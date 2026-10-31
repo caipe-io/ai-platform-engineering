@@ -240,10 +240,19 @@ export function DynamicAgentsTab({
     if (!agentCanManage(agent)) return;
     clearRowActionError(agent._id);
     try {
-      const response = await fetch(`/api/dynamic-agents?id=${agent._id}`, {
+      const update: Record<string, unknown> = { enabled: !agent.enabled };
+      if (agent.execution_harness_id && agent.execution_harness_id !== "dynamic_agents") {
+        const published = await fetch(`/api/harness-engine/agents/${encodeURIComponent(agent._id)}`);
+        const saved = await published.json();
+        if (!published.ok || !saved.success || !saved.data?.version?.blueprint) {
+          throw new Error(saved.error || "The published execution configuration is unavailable");
+        }
+        update.harness_save = { blueprint: saved.data.version.blueprint };
+      }
+      const response = await fetch(`/api/dynamic-agents?id=${encodeURIComponent(agent._id)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: !agent.enabled }),
+        body: JSON.stringify(update),
       });
       const data = await response.json();
       if (data.success) {

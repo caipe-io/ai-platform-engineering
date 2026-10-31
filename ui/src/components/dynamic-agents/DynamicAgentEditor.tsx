@@ -11,6 +11,8 @@ import {
   useAiReview,
 } from "@/components/ai-review";
 import { TeamOwnershipFields } from "@/components/rbac/TeamOwnershipFields";
+import { HarnessFeaturePanels } from "@/components/harness-engine/HarnessFeaturePanels";
+import { harnessBuilderSections, supportsHarnessCapability, validateHarnessOptionsSchema } from "@/lib/harness-builder";
 import { HarnessOptionsForm } from "@/components/harness-engine/HarnessOptionsForm";
 import { UnsavedChangesDialog } from "@/components/shared/UnsavedChangesDialog";
 import { Badge } from "@/components/ui/badge";
@@ -332,7 +334,11 @@ function AdvancedStep({
   setMiddlewareError,
   loading,
   visibility,
+  descriptor,
+  schemaPanel,
 }: {
+  descriptor?: HarnessDescriptor;
+  schemaPanel?: React.ReactNode;
   agent: DynamicAgentConfig | null;
   subagents: SubAgentRef[];
   setSubagents: (v: SubAgentRef[]) => void;
@@ -359,9 +365,9 @@ function AdvancedStep({
   const workflowCount = builtinTools?.workflows?.length ?? 0;
   const remoteAgentCount = allowedRemoteAgents.length;
 
-  return (
-    <div className="space-y-4 pt-2">
-      <CollapsibleSection
+  const panels = {
+    "schema-form": schemaPanel,
+    "agent-delegation": (<CollapsibleSection
         title="Subagents"
         description="Delegate tasks to other agents"
         badge={`${subagents.length} subagent${subagents.length !== 1 ? "s" : ""}`}
@@ -379,9 +385,8 @@ function AdvancedStep({
           disabled={loading}
           parentVisibility={visibility}
         />
-      </CollapsibleSection>
-
-      <CollapsibleSection
+      </CollapsibleSection>),
+    "remote-agents": (<CollapsibleSection
         title="Remote A2A Agents"
         description="Call agents registered with the A2A protocol"
         badge={`${remoteAgentCount} selected`}
@@ -401,9 +406,8 @@ function AdvancedStep({
           }
           disabled={loading}
         />
-      </CollapsibleSection>
-
-      <CollapsibleSection
+      </CollapsibleSection>),
+    "tool-approvals": (<CollapsibleSection
         title="Human Approval"
         description="Require approval before executing specific tools"
         badge={`${interruptRuleCount} rule${interruptRuleCount !== 1 ? "s" : ""}`}
@@ -416,9 +420,8 @@ function AdvancedStep({
           builtinTools={builtinTools}
           disabled={loading}
         />
-      </CollapsibleSection>
-
-      <CollapsibleSection
+      </CollapsibleSection>),
+    "deep-agents-middleware": (<CollapsibleSection
         title="Middleware"
         description="Retries, limits, and preprocessing"
       >
@@ -429,9 +432,8 @@ function AdvancedStep({
           availableModels={availableModels}
           onError={setMiddlewareError}
         />
-      </CollapsibleSection>
-
-      <CollapsibleSection
+      </CollapsibleSection>),
+    "workflow-tools": (<CollapsibleSection
         title="Workflows"
         description="Allow this agent to trigger and monitor workflows"
         badge={`${workflowCount} workflow${workflowCount !== 1 ? "s" : ""}`}
@@ -447,9 +449,9 @@ function AdvancedStep({
           }}
           disabled={loading}
         />
-      </CollapsibleSection>
-    </div>
-  );
+      </CollapsibleSection>)
+  };
+  return <div className="space-y-4 pt-2"><HarnessFeaturePanels descriptor={descriptor} step="advanced" panels={panels} /></div>;
 }
 
 export function DynamicAgentEditor({
@@ -590,18 +592,32 @@ export function DynamicAgentEditor({
     [harnessDescriptors, harnessId],
   );
   const isDeepAgents = harnessId === "dynamic_agents";
-  const selectedHarnessStatus = isDeepAgents
-    ? HARNESS_STATUS_PRESENTATION.certified
-    : selectedHarness && HARNESS_STATUS_PRESENTATION[selectedHarness.certification];
-  const toolCapability = selectedHarness?.capabilities["tools.broker"];
-  const supportsTools =
-    isDeepAgents || toolCapability?.level === "native" || toolCapability?.level === "emulated";
+  const [harnessSwitchConfirmed, setHarnessSwitchConfirmed] = React.useState(false);
+  const requiresHarnessConfirmation = isEditing && harnessId !== (agent?.execution_harness_id || "dynamic_agents");
+  const selectedHarnessStatus = selectedHarness
+    ? HARNESS_STATUS_PRESENTATION[selectedHarness.certification]
+    : isDeepAgents ? HARNESS_STATUS_PRESENTATION.certified : undefined;
+  const supportsTools = supportsHarnessCapability(selectedHarness, "tools.broker", isDeepAgents);
+  const supportsKnowledge = supportsHarnessCapability(selectedHarness, "knowledge", isDeepAgents);
+  const supportsSkills = supportsHarnessCapability(selectedHarness, "skills", isDeepAgents);
+  const supportsConfiguredModel = supportsHarnessCapability(selectedHarness, "model.configured", isDeepAgents);
+  const supportsBuiltinTools = supportsHarnessCapability(selectedHarness, "tools.builtin", isDeepAgents);
+  const supportsDelegation = supportsHarnessCapability(selectedHarness, "multi_agent.delegation", isDeepAgents);
+  const supportsRemoteAgents = supportsHarnessCapability(selectedHarness, "remote_agents", isDeepAgents);
+  const supportsApprovals = supportsHarnessCapability(selectedHarness, "human_input.resume", isDeepAgents);
+  const supportsMiddleware = supportsHarnessCapability(selectedHarness, "deep_agents.middleware", isDeepAgents);
+
+  let builderSchemaError: string | null = null;
+  let hasFeaturePanels = false;
+  try { if (selectedHarness) validateHarnessOptionsSchema(selectedHarness.options_schema); hasFeaturePanels = harnessBuilderSections(selectedHarness).some(section => section.step === "advanced" && section.renderer !== "schema-form"); }
+  catch (error) { builderSchemaError = error instanceof Error ? error.message : "Unsupported editor schema"; }
   const hasHarnessOptions =
     Object.keys(selectedHarness?.options_schema.properties ?? {}).length > 0;
   const steps = STEPS.filter((step) => {
     if (step.id === "tools") return supportsTools;
-    if (step.id === "knowledge" || step.id === "skills") return isDeepAgents;
-    if (step.id === "advanced") return isDeepAgents || hasHarnessOptions;
+    if (step.id === "knowledge") return supportsKnowledge;
+    if (step.id === "skills") return supportsSkills;
+    if (step.id === "advanced") return isDeepAgents || hasFeaturePanels || hasHarnessOptions;
     return true;
   }).map((step) =>
     step.id === "advanced" && !isDeepAgents
@@ -614,6 +630,7 @@ export function DynamicAgentEditor({
       profileId: harnessProfileId,
       options: harnessOptions,
     });
+    setHarnessSwitchConfirmed(false);
     setHarnessId(nextHarnessId);
     const draft = harnessDrafts.current.get(nextHarnessId);
     setHarnessOptions(draft?.options ?? {});
@@ -871,6 +888,8 @@ export function DynamicAgentEditor({
         setCatalogRevision(catalog.data?.catalog_revision ?? null);
 
         const persistedHarnessId = source?.execution_harness_id;
+        const defaultDescriptor = descriptors.find(item => item.id === (persistedHarnessId || "dynamic_agents"));
+        setHarnessProfileId(defaultDescriptor?.profiles.find(profile => profile.available)?.id ?? "");
         if (persistedHarnessId) setHarnessId(persistedHarnessId);
         if (source?._id && persistedHarnessId && persistedHarnessId !== "dynamic_agents") {
           const overlayResponse = await fetch(
@@ -1156,9 +1175,9 @@ export function DynamicAgentEditor({
             system_prompt: systemPrompt || undefined,
             allowed_tools:
               supportsTools && Object.keys(allowedTools).length > 0 ? allowedTools : undefined,
-            builtin_tools: isDeepAgents ? builtinTools : undefined,
+            builtin_tools: supportsBuiltinTools ? builtinTools : undefined,
             subagents:
-              isDeepAgents && subagents.length > 0
+              supportsDelegation && subagents.length > 0
                 ? subagents.map((s) => ({
                     agent_id: s.agent_id,
                     name: s.name || s.agent_id,
@@ -1323,7 +1342,7 @@ export function DynamicAgentEditor({
     }
 
     // Validate required fields
-    if (isDeepAgents && (!modelId || !modelProvider)) {
+    if (supportsConfiguredModel && (!modelId || !modelProvider)) {
       setError("Model selection is required");
       setLoading(false);
       return;
@@ -1351,6 +1370,8 @@ export function DynamicAgentEditor({
     }
 
     try {
+      if (builderSchemaError) throw new Error(builderSchemaError);
+      if (requiresHarnessConfirmation && !harnessSwitchConfirmed) throw new Error("Confirm that the new harness applies to new conversations");
       // Build UI config if gradient theme is set
       const uiConfig: AgentUIConfig | undefined = gradientTheme
         ? {
@@ -1370,7 +1391,7 @@ export function DynamicAgentEditor({
       // Restricted: send the real (possibly empty) arrays. Unrestricted with
       // nothing to clear: omit both fields entirely. Unrestricted after
       // having been restricted: explicitly clear both back to unset.
-      const knowledgeFields = !isDeepAgents ? {} : restrictKnowledge
+      const knowledgeFields = !supportsKnowledge ? {} : restrictKnowledge
         ? { datasource_ids: datasourceIds, rag_collection_ids: ragCollectionIds }
         : hadExplicitKnowledgeScope
           ? { datasource_ids: null, rag_collection_ids: null }
@@ -1386,18 +1407,18 @@ export function DynamicAgentEditor({
 
       // Keep saved Deep Agents settings intact while another harness is active.
       // Only supported settings are published into its execution blueprint.
-      const runtimeFields = isDeepAgents ? {
-        allowed_tools: allowedTools,
-        allowed_remote_agents: allowedRemoteAgents,
-        remote_agent_timeouts: Object.fromEntries(Object.entries(remoteAgentTimeouts).filter(([id]) => allowedRemoteAgents.includes(id))),
-        builtin_tools: builtinTools,
-        subagents: subagents.length > 0 ? subagents : undefined,
-        skills,
+      const runtimeFields = {
+        ...(supportsTools && { allowed_tools: allowedTools }),
+        ...(supportsRemoteAgents && { allowed_remote_agents: allowedRemoteAgents,
+          remote_agent_timeouts: Object.fromEntries(Object.entries(remoteAgentTimeouts).filter(([id]) => allowedRemoteAgents.includes(id))) }),
+        ...(supportsBuiltinTools && { builtin_tools: builtinTools }),
+        ...(supportsDelegation && { subagents: subagents.length > 0 ? subagents : undefined }),
+        ...(supportsSkills && { skills }),
         ...knowledgeFields,
-        model: { id: modelId, provider: modelProvider, reasoning_effort: reasoningEffort },
-        features,
-        interrupt_on: interruptOn,
-      } : supportsTools ? { allowed_tools: allowedTools } : {};
+        ...(supportsConfiguredModel && { model: { id: modelId, provider: modelProvider, reasoning_effort: reasoningEffort } }),
+        ...(supportsMiddleware && { features }),
+        ...(supportsApprovals && { interrupt_on: interruptOn }),
+      };
 
       const targetAgentId = isEditing ? agent._id : generatedId;
       let preparedHarnessSave: {
@@ -1430,17 +1451,15 @@ export function DynamicAgentEditor({
             options: harnessOptions,
           },
           prompt: { system: systemPrompt, variables: {}, context_sources: [] },
-          // The selected operator profile owns the provider model in this
-          // vertical slice. Model compatibility/filtering is a follow-up.
-          model: { policy: "harness_default" },
+          model: supportsConfiguredModel ? { policy: "configured", id: modelId, provider: modelProvider } : { policy: "harness_default" },
           tools: { bindings: toolBindings, approval_policy: "sensitive_only" },
           thread: { persistence: "durable" },
           memory: { enabled: false },
           workspace: { persistence: "none" },
           streaming: { protocol: "canonical", replay: "required" },
           delegation: {
-            agents: [],
-            max_depth: 0,
+            agents: supportsDelegation ? subagents.map(child => child.agent_id) : [],
+            max_depth: supportsDelegation ? 1 : 0,
             max_parallel: 1,
           },
         };
@@ -1478,6 +1497,7 @@ export function DynamicAgentEditor({
           confirm_not_member?: boolean;
         } = {
           execution_harness_id: harnessId,
+          ...(preparedHarnessSave && { harness_save: { ...preparedHarnessSave, expected_revision: harnessRevision } }),
           name,
           description: description || undefined,
           system_prompt: systemPrompt,
@@ -1521,6 +1541,7 @@ export function DynamicAgentEditor({
         const createData: DynamicAgentConfigCreate = {
           id: generatedId,
           execution_harness_id: harnessId,
+          ...(preparedHarnessSave && { harness_save: { ...preparedHarnessSave, expected_revision: harnessRevision } }),
           name,
           description: description || undefined,
           system_prompt: systemPrompt,
@@ -1543,64 +1564,6 @@ export function DynamicAgentEditor({
         if (!data.success) {
           throw new Error(data.error || "Failed to create agent");
         }
-      }
-
-      if (preparedHarnessSave) {
-        let harnessSaveError: string | null = null;
-        let savedHarnessRevision: number | null = null;
-        try {
-          const harnessResponse = await fetch(
-            `/api/harness-engine/agents/${encodeURIComponent(targetAgentId)}`,
-            {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                ...preparedHarnessSave,
-                ...(harnessRevision
-                  ? { expected_revision: harnessRevision }
-                  : {}),
-              }),
-            },
-          );
-          const harness = await harnessResponse.json();
-          if (!harnessResponse.ok || !harness.success) {
-            harnessSaveError = harness.error || "unknown error";
-          } else {
-            savedHarnessRevision = harness.data.record.revision;
-          }
-        } catch (harnessError) {
-          harnessSaveError = getErrorMessage(
-            harnessError,
-            "Harness Engine is unavailable",
-          );
-        }
-
-        if (harnessSaveError) {
-          if (!isEditing) {
-            let rollbackSucceeded = false;
-            try {
-              const rollbackResponse = await fetch(
-                `/api/dynamic-agents?id=${encodeURIComponent(targetAgentId)}`,
-                { method: "DELETE" },
-              );
-              rollbackSucceeded = rollbackResponse.ok;
-              const rollback = await rollbackResponse.json();
-              rollbackSucceeded = rollbackResponse.ok && rollback.success !== false;
-            } catch {
-              // The error below explicitly tells the operator that manual
-              // cleanup may be required when compensation cannot complete.
-            }
-            throw new Error(
-              rollbackSucceeded
-                ? `Agent creation was rolled back because its harness blueprint could not be saved: ${harnessSaveError}`
-                : `Harness blueprint save failed and the newly created agent could not be rolled back: ${harnessSaveError}`,
-            );
-          }
-          throw new Error(
-            `The agent was saved, but its harness blueprint was not: ${harnessSaveError}`,
-          );
-        }
-        setHarnessRevision(savedHarnessRevision);
       }
 
       // Clear unsaved-changes state BEFORE calling onSave(): the parent will
@@ -1648,7 +1611,7 @@ export function DynamicAgentEditor({
       if (!name.trim()) {
         list.push({ field: "name", label: "Agent name", step: "basic" });
       }
-      if (isDeepAgents && availableModels.length === 0) {
+      if (supportsConfiguredModel && availableModels.length === 0) {
         // Distinct from "model not picked" — the user can't pick anything
         // because nothing is configured. Surfacing this separately tells the
         // operator the problem is upstream (no providers configured).
@@ -1657,7 +1620,7 @@ export function DynamicAgentEditor({
           label: "At least one model provider must be configured",
           step: "basic",
         });
-      } else if (isDeepAgents && (!modelId || !modelProvider)) {
+      } else if (supportsConfiguredModel && (!modelId || !modelProvider)) {
         list.push({ field: "model", label: "Model", step: "basic" });
       }
       if (!isDeepAgents) {
@@ -1688,7 +1651,7 @@ export function DynamicAgentEditor({
       // already had an explicit scope may still be intentionally cleared
       // to opt out - only gate the "just enabled, nothing picked" case.
       if (
-        isDeepAgents && restrictKnowledge &&
+        supportsKnowledge && restrictKnowledge &&
         !hadExplicitKnowledgeScope &&
         datasourceIds.length === 0 &&
         ragCollectionIds.length === 0
@@ -1707,6 +1670,8 @@ export function DynamicAgentEditor({
       modelProvider,
       availableModels.length,
       isDeepAgents,
+      supportsConfiguredModel,
+      supportsKnowledge,
       harnessLoading,
       harnessLoadError,
       selectedHarness,
@@ -1835,12 +1800,12 @@ export function DynamicAgentEditor({
                       className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-medium shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <option value="dynamic_agents">
-                        LangChain Deep Agents (default) — Stable
+                        LangChain Deep Agents (default) — {HARNESS_STATUS_PRESENTATION[harnessDescriptors.find(item => item.id === "dynamic_agents")?.certification ?? "certified"].label}
                       </option>
                       {!isDeepAgents && !selectedHarness && (
                         <option value={harnessId}>{harnessId} (unavailable)</option>
                       )}
-                      {harnessDescriptors.map((descriptor) => (
+                      {harnessDescriptors.filter(descriptor => descriptor.id !== "dynamic_agents").map((descriptor) => (
                         <option
                           key={descriptor.id}
                           value={descriptor.id}
@@ -1928,6 +1893,11 @@ export function DynamicAgentEditor({
                         {isEditing && <p>Saved Deep Agents settings are retained and apply when Deep Agents is selected.</p>}
                       </div>
                     )}
+
+                    {requiresHarnessConfirmation && <label className="flex items-start gap-2 text-sm">
+                      <input type="checkbox" checked={harnessSwitchConfirmed} onChange={event => setHarnessSwitchConfirmed(event.target.checked)} />
+                      I understand that existing conversations keep their saved runtime and configuration; new conversations use this harness.
+                    </label>}
                     {!isDeepAgents && harnessLoadError && (
                       <p role="alert" className="text-xs text-destructive">{harnessLoadError}. Reopen the editor to retry.</p>
                     )}
@@ -1972,7 +1942,7 @@ export function DynamicAgentEditor({
                 </div>
 
                 {/* LLM Model - right after name so AI Suggest buttons can use it */}
-                {isDeepAgents ? (
+                {supportsConfiguredModel ? (
                   <>
                     <div className="space-y-2">
                       <Label htmlFor="modelId">
@@ -2841,7 +2811,7 @@ export function DynamicAgentEditor({
             {activeStep === "tools" && (
               <div className="space-y-6 pt-2">
                 {/* Built-in Tools */}
-                {isDeepAgents && <BuiltinToolsPicker
+                {supportsBuiltinTools && <BuiltinToolsPicker
                   value={builtinTools}
                   onChange={setBuiltinTools}
                   disabled={loading || !!readOnly}
@@ -2950,8 +2920,10 @@ export function DynamicAgentEditor({
             )}
 
             {/* Advanced Step */}
-            {activeStep === "advanced" && (isDeepAgents ? (
+            {activeStep === "advanced" && (isDeepAgents || hasFeaturePanels ? (
               <AdvancedStep
+                descriptor={selectedHarness}
+                schemaPanel={selectedHarness && !isDeepAgents ? <HarnessOptionsForm schema={selectedHarness.options_schema} value={harnessOptions} onChange={setHarnessOptions} disabled={loading || !!readOnly} /> : undefined}
                 agent={agent}
                 subagents={subagents}
                 setSubagents={setSubagents}
@@ -3064,10 +3036,11 @@ export function DynamicAgentEditor({
         >
           {readOnly ? "Close" : "Cancel"}
         </Button>
+        {builderSchemaError && <p role="alert" className="text-sm text-destructive">{builderSchemaError}</p>}
         {!readOnly && (
           <Button
             onClick={handleSubmit}
-            disabled={loading || !isValid}
+            disabled={loading || !isValid || Boolean(builderSchemaError) || (requiresHarnessConfirmation && !harnessSwitchConfirmed)}
             // Native-tooltip mirror of the inline hint above. Helps users who
             // hover the button looking for an explanation when they miss the
             // inline text (e.g. on narrow screens where the hint wraps).

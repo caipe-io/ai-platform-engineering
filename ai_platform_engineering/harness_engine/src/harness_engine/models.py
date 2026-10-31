@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 from harness_engine.config import AgentCoreRuntimeTarget
 
@@ -253,12 +253,13 @@ class AdapterEvaluation(StrictModel):
 class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
 
 
-TERMINAL_RUN_STATUSES = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}
+TERMINAL_RUN_STATUSES = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.PAUSED}
 
 
 class RunRecord(StrictModel):
@@ -274,10 +275,14 @@ class RunRecord(StrictModel):
     status: RunStatus = RunStatus.QUEUED
     last_sequence: int = 0
     client_request_id: str | None = None
+    turn_id: str | None = None
     request_fingerprint: str | None = None
     cancellation_requested: bool = False
     error_code: str | None = None
     traceparent: str | None = None
+    resumes_run_id: str | None = None
+    interrupt_id: str | None = None
+    command: Literal["start", "resume", "rewind", "reconcile"] = "start"
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -291,11 +296,15 @@ class SessionBinding(StrictModel):
     profile_id: str
     provider_session_id: str | None = Field(None, max_length=1024)
     checkpoint_strategy: Literal["langgraph", "adapter_store", "remote_managed", "ephemeral"]
+    native_state_key: str | None = None
     epoch: int = Field(0, ge=0)
     revision: int = Field(1, ge=1)
     status: Literal["active", "degraded", "closed"] = "active"
     active_run: RunRecord | None = None
+    last_run_id: str | None = None
     dispatch_started: bool = False
+    pending_interrupt: dict[str, Any] | None = None
+    resume_run_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -305,18 +314,81 @@ class ClearAgentSessionRequest(StrictModel):
     conversation_id: str = Field(..., min_length=1, max_length=256)
 
 
+class LookupRunRequest(ClearAgentSessionRequest):
+    client_request_id: str = Field(..., min_length=1, max_length=128)
+
+
 class ClearAgentSessionResult(StrictModel):
     cleared: bool
     closed_binding_id: str | None = None
     next_epoch: int = Field(0, ge=0)
 
 
+class AttachmentReference(StrictModel):
+    id: str = Field(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
+
+
+class ExecutionIdentity(StrictModel):
+    """Transient caller credentials. Never included in run or event records."""
+
+    subject: str
+    email: str | None = None
+    principal_type: Literal["user", "service_account"] = "user"
+    bearer: SecretStr = Field(exclude=True, repr=False)
+    user_context: dict[str, Any] = Field(default_factory=dict, exclude=True, repr=False)
+
+
 class CreateRunRequest(StrictModel):
+    agent_version: int | None = Field(None, ge=1)
     agent_id: str = Field(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     conversation_id: str = Field(..., min_length=1, max_length=256)
-    message: str = Field(..., min_length=1, max_length=1_000_000)
+    message: str = Field("", max_length=1_000_000)
     context: str | None = Field(None, max_length=500_000)
     client_request_id: str | None = Field(None, min_length=1, max_length=128)
+    command: Literal["start", "resume", "rewind", "reconcile"] = "start"
+    resumes_run_id: str | None = Field(None, max_length=128)
+    interrupt_id: str | None = Field(None, max_length=256)
+    resume_data: dict[str, Any] | None = None
+    attachments: list[AttachmentReference] = Field(default_factory=list, max_length=20)
+    client_context: dict[str, Any] | None = None
+    turn_id: str | None = Field(None, max_length=128)
+    config_override: dict[str, Any] | None = None
+    rewind_data: dict[str, Any] | None = None
+    handoff_owner: Literal["dynamic_agents", "harness_engine"] | None = None
+
+    @model_validator(mode="after")
+    def validate_command(self) -> CreateRunRequest:
+        if self.config_override is not None:
+            if set(self.config_override) - {"model", "allowed_tools"}:
+                raise ValueError("Unsupported per-turn execution override")
+            model = self.config_override.get("model", {})
+            if not isinstance(model, dict) or set(model) - {"reasoning_effort"}:
+                raise ValueError("Only model reasoning effort can be overridden per turn")
+            if "reasoning_effort" in model and model["reasoning_effort"] not in ("low", "medium", "high", "max"):
+                raise ValueError("Invalid reasoning effort override")
+            if "allowed_tools" in self.config_override:
+                tools = self.config_override["allowed_tools"]
+                if not isinstance(tools, dict) or any(
+                    not isinstance(value, bool) and not (isinstance(value, list) and all(isinstance(item, str) for item in value))
+                    for value in tools.values()
+                ):
+                    raise ValueError("Invalid allowed tools override")
+        if self.handoff_owner and self.command != "reconcile":
+            raise ValueError("Execution ownership changes require checkpoint reconciliation")
+        if self.command == "reconcile":
+            if self.attachments or self.resume_data is not None or self.message or self.resumes_run_id or self.interrupt_id:
+                raise ValueError("Reconcile only inspects the native checkpoint")
+        elif self.command == "rewind":
+            if not self.turn_id or not self.rewind_data or not isinstance(self.rewind_data.get("message_content"), str) or type(self.rewind_data.get("content_occurrence")) is not int or self.rewind_data["content_occurrence"] < 1:
+                raise ValueError("Rewind requires the persisted target turn and content occurrence")
+            if self.attachments or self.resume_data is not None or self.resumes_run_id or self.interrupt_id:
+                raise ValueError("Rewind cannot include new attachments or an approval")
+        elif self.command == "resume":
+            if not self.resumes_run_id or not self.interrupt_id or self.resume_data is None or self.attachments:
+                raise ValueError("Resume requires the paused run, interrupt and response; attachments remain in native state")
+        elif self.resume_data is not None or self.resumes_run_id or self.interrupt_id or not (self.message.strip() or self.attachments):
+            raise ValueError("Start requires a message or attachments and cannot contain a resume response")
+        return self
 
 
 class CancelActiveRunRequest(StrictModel):
@@ -341,6 +413,9 @@ CanonicalEventType = Literal[
     "subagent.started",
     "subagent.event",
     "usage.updated",
+    "runtime.event",
+    "result.updated",
+    "run.paused",
     "run.completed",
     "run.failed",
     "run.cancelled",
@@ -372,6 +447,20 @@ class TurnInput(StrictModel):
     run_id: str
     message: str
     traceparent: str | None = None
+    command: Literal["start", "resume", "rewind", "reconcile"] = "start"
+    resume_data: dict[str, Any] | None = None
+    attachments: list[AttachmentReference] = Field(default_factory=list)
+    client_context: dict[str, Any] | None = None
+    turn_id: str | None = None
+    config_override: dict[str, Any] | None = None
+    rewind_data: dict[str, Any] | None = None
+    handoff_owner: Literal["dynamic_agents", "harness_engine"] | None = None
+
+
+class TurnOutcome(StrictModel):
+    status: Literal["completed", "paused", "cancelled"]
+    interrupt: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
 
 
 class RunContext(StrictModel):
@@ -379,3 +468,4 @@ class RunContext(StrictModel):
     binding: SessionBinding
     prompt: RenderedPrompt
     turn: TurnInput
+    identity: ExecutionIdentity | None = Field(None, exclude=True, repr=False)

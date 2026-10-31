@@ -1,3 +1,4 @@
+import { waitForRetry } from "./streaming/retry";
 import type { HarnessEventPage, HarnessRun, HarnessRunEvent } from "@/types/harness-engine";
 
 interface Envelope<T> {
@@ -51,6 +52,16 @@ export function subscribeHarnessRun(
   const eventTypes: HarnessRunEvent["event_type"][] = [
     "run.started",
     "content.delta",
+    "runtime.event",
+    "result.updated",
+    "run.paused",
+    "reasoning.delta",
+    "tool.started",
+    "tool.completed",
+    "subagent.started",
+    "subagent.event",
+    "interrupt.requested",
+    "usage.updated",
     "run.completed",
     "run.failed",
     "run.cancelled",
@@ -64,9 +75,26 @@ export function subscribeHarnessRun(
         event_type: eventType,
         data: JSON.parse(event.data) as Record<string, unknown>,
       });
-      if (["run.completed", "run.failed", "run.cancelled"].includes(eventType)) source.close();
+      if (["run.completed", "run.failed", "run.cancelled", "run.paused"].includes(eventType)) source.close();
     });
   }
   if (options.onError) source.onerror = options.onError;
   return () => source.close();
+}
+
+
+/** Status recovery survives temporary BFF outages without reposting a prompt. */
+export async function fetchChatRunStatus(agentId: string, conversationId: string, signal: AbortSignal): Promise<Response> {
+  let attempts = 0;
+  while (true) {
+    signal.throwIfAborted();
+    try {
+      const response = await fetch("/api/v1/chat/stream/status", { method: "POST", signal,
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agent_id: agentId, conversation_id: conversationId }) });
+      if (response.ok || response.status < 500 && ![408, 409, 429].includes(response.status)) return response;
+    } catch (error) {
+      if (signal.aborted) throw error;
+    }
+    await waitForRetry(Math.min(250 * 2 ** Math.min(attempts++, 7), 30_000), signal);
+  }
 }

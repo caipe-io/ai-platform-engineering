@@ -83,6 +83,7 @@ class Settings(BaseSettings):
     agentcore_provision_timeout_seconds: float = Field(180.0, ge=1.0, le=900.0)
     agentcore_provision_poll_seconds: float = Field(2.0, ge=0.1, le=10.0)
     claude_sdk_profiles_json: str = "{}"
+    deep_agents_enabled: bool = False
 
     def agentcore_targets(self) -> dict[str, AgentCoreRuntimeTarget]:
         """Parse the operator allowlist without exposing raw settings to clients."""

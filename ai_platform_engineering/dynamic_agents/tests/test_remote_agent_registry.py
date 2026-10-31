@@ -80,7 +80,7 @@ async def test_cache_validation_is_offloaded_and_single_flight() -> None:
         started.set()
         assert release.wait(timeout=5)
         return False
-    runtime = SimpleNamespace(is_stale=stale, idle_seconds=0, touch=Mock(), cleanup=AsyncMock())
+    runtime = SimpleNamespace(_is_streaming=False, is_stale=stale, idle_seconds=0, touch=Mock(), cleanup=AsyncMock())
     config = SimpleNamespace(id="test-agent")
     cache = AgentRuntimeCache(max_size=2)
     cache._cache["test-agent:test-session"] = runtime

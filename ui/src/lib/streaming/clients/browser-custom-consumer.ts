@@ -14,7 +14,8 @@
 import { parseContextUsageData,type InputFieldDefinition } from "@/lib/streaming/types";
 import type { StreamAdapter } from "../adapter";
 import type { RawStreamEvent,StreamCallbacks,StreamParams } from "../callbacks";
-import { parseSSEStream,type RawSSEEvent } from "../parse-sse";
+import { type RawSSEEvent } from "../parse-sse";
+import { recoverableStream } from "./recoverable-stream";
 import { buildStreamErrorFromResponse } from "../stream-error";
 
 /** Flat API route prefix for chat streaming. */
@@ -68,6 +69,7 @@ export class CustomStreamAdapter implements StreamAdapter {
     const url = `${STREAM_BASE}/start`;
     const body = JSON.stringify({
       message: params.message,
+      client_request_id: params.turnId ?? crypto.randomUUID(),
       conversation_id: params.conversationId,
       agent_id: params.agentId,
       ...(params.reasoningEffort && { reasoning_effort: params.reasoningEffort }),
@@ -88,6 +90,7 @@ export class CustomStreamAdapter implements StreamAdapter {
       agent_id: params.agentId,
       ...(params.reasoningEffort && { reasoning_effort: params.reasoningEffort }),
       resume_data: params.resumeData,
+      client_request_id: crypto.randomUUID(),
       protocol: "custom",
       ...(params.forwardedProps && { forwarded_props: params.forwardedProps }),
       ...(params.clientContext && { client_context: params.clientContext }),
@@ -98,7 +101,11 @@ export class CustomStreamAdapter implements StreamAdapter {
 
   // ── Private: shared stream loop ────────────────────────────
 
-  private async _stream(url: string, body: string, callbacks: StreamCallbacks): Promise<void> {
+  async recoverRun(runId: string, callbacks: StreamCallbacks): Promise<void> {
+    await this._stream(`/api/harness-engine/runs/${encodeURIComponent(runId)}/events/stream?after=0&protocol=custom`, undefined, callbacks);
+  }
+
+  private async _stream(url: string, body: string | undefined, callbacks: StreamCallbacks): Promise<void> {
     if (this.abortController) {
       this.abortController.abort();
     }
@@ -111,7 +118,7 @@ export class CustomStreamAdapter implements StreamAdapter {
 
     try {
       const response = await fetch(url, {
-        method: "POST",
+        method: body === undefined ? "GET" : "POST",
         credentials: "same-origin",
         headers,
         body,
@@ -125,7 +132,7 @@ export class CustomStreamAdapter implements StreamAdapter {
         throw await buildStreamErrorFromResponse(response);
       }
 
-      for await (const raw of parseSSEStream(response)) {
+      for await (const raw of recoverableStream(response, "custom", this.abortController.signal)) {
         this._emitRawEvent(raw, callbacks);
         const terminal = this._dispatchEvent(raw, callbacks);
         if (terminal) break;
@@ -229,7 +236,9 @@ export class CustomStreamAdapter implements StreamAdapter {
         }
 
         case "done": {
-          callbacks.onDone?.();
+          const parsed = JSON.parse(data);
+          if (parsed.outcome === "cancelled") callbacks.onError?.("The run was stopped before completion.");
+          else callbacks.onDone?.();
           return true;
         }
 

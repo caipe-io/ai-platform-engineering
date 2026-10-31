@@ -1,5 +1,6 @@
 "use client";
 
+import { fetchChatRunStatus } from "@/lib/harness-engine-session-client";
 import { useComposerDraft } from "@/hooks/use-composer-draft";
 import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
@@ -255,6 +256,7 @@ export function ChatPanel({
     contextId?: string;
     // SSE/Dynamic Agent specific fields
     isSSE?: boolean;
+    interruptId?: string;
     agentId?: string;
   } | null>(null);
 
@@ -833,6 +835,7 @@ export function ChatPanel({
                     input_fields: inputFields,
                   },
                   contextId: conversationId,
+                  interruptId: idata.interrupt_id,
                   isSSE: true,
                   agentId: agentId,
                 });
@@ -1012,7 +1015,7 @@ export function ChatPanel({
     const inputEvent = [...streamEventsFromConv].reverse().find((e) => e.type === "input_required");
 
     if (inputEvent && inputEvent.inputRequiredData) {
-       const { prompt, fields } = inputEvent.inputRequiredData;
+       const { prompt, fields, interrupt_id: savedInterruptId } = inputEvent.inputRequiredData;
 
        // Check if already answered
        const assistantIdx = messages.findIndex(m => m.id === lastMsg.id);
@@ -1044,6 +1047,7 @@ export function ChatPanel({
             input_fields: inputFields,
           },
           contextId: activeConversationId,
+          interruptId: savedInterruptId,
           isSSE: true,
           agentId: agentId,
        });
@@ -1067,6 +1071,7 @@ export function ChatPanel({
     hitlFormRequested: boolean;
     hasError: boolean;
     errorMessage?: string;
+    serverCompleted?: boolean;
     /** Epoch ms when the turn was submitted — used to derive latency_ms. */
     startedAt?: number;
   }
@@ -1206,6 +1211,7 @@ export function ChatPanel({
         },
         contextId: convId,
         isSSE: true,
+        interruptId,
         agentId,
       });
 
@@ -1268,7 +1274,7 @@ export function ChatPanel({
     },
 
     onDone() {
-      // Finalization handled after adapter.streamMessage resolves
+      loopState.serverCompleted = true;
     },
 
     onError(message) {
@@ -1300,6 +1306,10 @@ export function ChatPanel({
       return;
     }
 
+    if (!state.hitlFormRequested && !state.serverCompleted && !state.hasError) {
+      state.hasError = true;
+      state.errorMessage = "The connection ended before the server confirmed completion.";
+    }
     const isFinal = !state.hitlFormRequested;
     const turnStatus: TurnStatus = state.hitlFormRequested
       ? "waiting_for_input"
@@ -1334,6 +1344,60 @@ export function ChatPanel({
     setConversationStreaming(conversationId, null);
     // Store's setConversationStreaming(null) hook auto-saves after 500ms.
   }, [updateMessage, setConversationStreaming, agentName]);
+
+  const recoveryChecked = useRef(new Set<string>());
+  const recoveryMessageId = conversation?.messages?.at(-1)?.id;
+  const recoveryMessageRole = conversation?.messages?.at(-1)?.role;
+  const recoveryMessageFinal = conversation?.messages?.at(-1)?.isFinal;
+  const recoveryTurnId = conversation?.messages?.at(-1)?.turnId;
+  useEffect(() => {
+    const checked = recoveryChecked.current;
+    if (!activeConversationId || isLoadingMessages || isThisConversationStreaming || isRemoteResponse || isAutonomousHistory || panelReadOnly) return;
+    if (!recoveryMessageId || !["assistant", "user"].includes(recoveryMessageRole ?? "") || checked.has(activeConversationId)) return;
+    checked.add(activeConversationId);
+    let disposed = false;
+    let subscribed = false;
+    const recoveryController = new AbortController();
+    void (async () => {
+      const response = await fetchChatRunStatus(agentId, activeConversationId, recoveryController.signal);
+      if (!response.ok || disposed) return;
+      const { data } = await response.json();
+      if (data?.runtime !== "harness_engine" || !data.run_id || data.status === "waiting_for_input") return;
+      // Maintenance runs (handoff/rewind) have no chat turn identity. They must
+      // never replace an unfinished answer or confirm that earlier turn.
+      if (!recoveryTurnId || data.turn_id !== recoveryTurnId) return;
+      if (data.status !== "running" && (recoveryMessageRole === "assistant" ? recoveryMessageFinal : !data.turn_id || data.turn_id !== recoveryTurnId)) return;
+      // A popup and the full chat share this store. Only one subscriber rebuilds
+      // the current turn; its command and checkpoints remain server-owned.
+      if (useChatStore.getState().streamingConversations.has(activeConversationId)) return;
+      subscribed = true;
+      // Periodic persistence omits an unfinished assistant placeholder. Rebuild
+      // it from the admitted run rather than submitting the saved prompt again.
+      const assistantId = recoveryMessageRole === "assistant" ? recoveryMessageId : addMessage(
+        activeConversationId, { role: "assistant", content: "", isFinal: false }, recoveryTurnId,
+      );
+      const adapter = createStreamAdapter({ protocol: agentProtocol as "custom" | "agui" });
+      const state: StreamLoopState = { accumulatedText: "", rawStreamContent: "", hitlFormRequested: false, hasError: false };
+      clearStreamEvents(activeConversationId);
+      updateMessage(activeConversationId, assistantId, { isFinal: false });
+      setConversationStreaming(activeConversationId, { conversationId: activeConversationId, messageId: assistantId,
+        client: { abort: () => adapter.abort() }, streamAdapter: adapter });
+      try {
+        await adapter.recoverRun(data.run_id, buildStreamCallbacks(activeConversationId, assistantId, state, new Map()));
+      } catch (error) {
+        state.hasError = true;
+        state.errorMessage = error instanceof Error ? error.message : "Run recovery failed";
+      }
+      finalizeStreamLoop(activeConversationId, assistantId, state);
+    })().catch(error => { if (!disposed) console.error("[DynamicAgent] Run status recovery failed", error); });
+    return () => {
+      disposed = true;
+      recoveryController.abort();
+      if (!subscribed) checked.delete(activeConversationId);
+    };
+  }, [activeConversationId, agentId, agentProtocol, isLoadingMessages, isThisConversationStreaming, isRemoteResponse,
+    isAutonomousHistory, panelReadOnly, recoveryMessageId, recoveryMessageRole, recoveryMessageFinal, recoveryTurnId, addMessage, clearStreamEvents, updateMessage, setConversationStreaming,
+    buildStreamCallbacks, finalizeStreamLoop]);
 
   // A queued batch renders as separate user bubbles but is sent as one prompt,
   // producing one coherent assistant response for the whole batch.
@@ -2008,7 +2072,7 @@ export function ChatPanel({
     };
 
     // Send form data as discriminated resume payload
-    const formDataJson = JSON.stringify({ type: "form_input", values: formData });
+    const formDataJson = JSON.stringify({ type: "form_input", values: formData, interrupt_id: pendingUserInput.interruptId });
 
     setConversationStreaming(activeConversationId, {
       conversationId: activeConversationId,
@@ -2130,6 +2194,7 @@ export function ChatPanel({
         }),
       };
     }
+    resumePayload.interrupt_id = pendingToolApproval.interruptId;
     const resumeData = JSON.stringify(resumePayload);
 
     setConversationStreaming(activeConversationId, {
@@ -2566,7 +2631,7 @@ export function ChatPanel({
                         protocol: agentProtocol as "custom" | "agui",
                       });
                       // Fire-and-forget: resume with rejection message
-                      const dismissalPayload = JSON.stringify({ type: "form_input", dismissed: true });
+                      const dismissalPayload = JSON.stringify({ type: "form_input", dismissed: true, interrupt_id: pendingUserInput.interruptId });
                       dismissAdapter.resumeStream(
                         {
                           conversationId: activeConversationId,
@@ -3266,11 +3331,13 @@ const ChatMessage = React.memo(function ChatMessage({
   const displayContent = message.content;
 
   // Transform SSE events into grouped timeline data for assistant messages
-  // Use turnStatus from message (defaults to "done" for backward compatibility)
+  // An explicitly unfinished persisted message is never evidence of completion.
+  const effectiveTurnStatus = message.turnStatus ?? (message.isInterrupted ? "interrupted" :
+    isLatestAnswer && pendingHitl ? "waiting_for_input" : !isStreaming && message.isFinal === false ? "unknown" : undefined);
   const { data: timelineData } = useAgentTimeline(
     turnEvents, 
     isStreaming, 
-    message.turnStatus
+    effectiveTurnStatus
   );
 
   return (
@@ -3497,8 +3564,9 @@ const ChatMessage = React.memo(function ChatMessage({
         ) : (
           // ── Assistant message ──
           <>
+            {effectiveTurnStatus === "unknown" && <p role="status" className="mb-3 text-xs text-muted-foreground">Completion has not been confirmed by the server.</p>}
             {/* Recovery / interrupted banner */}
-            {(isRecovering || message.isInterrupted) && (
+            {(isRecovering || !isStreaming && (message.isInterrupted || effectiveTurnStatus === "interrupted")) && (
               <motion.div
                 initial={{ opacity: 0, y: -5 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -3560,7 +3628,7 @@ const ChatMessage = React.memo(function ChatMessage({
               <div className="rounded-xl bg-card/50 border border-border/50 px-4 py-3">
                 <MarkdownRenderer content={displayContent} />
               </div>
-            ) : message.turnStatus === "interrupted" ? (
+            ) : effectiveTurnStatus === "interrupted" ? (
               <div className="text-xs text-destructive px-1">
                 {interruptedTurnFallbackText(message.error)}
               </div>

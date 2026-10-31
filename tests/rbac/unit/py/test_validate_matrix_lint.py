@@ -139,6 +139,40 @@ def test_lint_fails_when_call_site_has_no_matrix_entry(fake_repo: Path) -> None:
     )
 
 
+@pytest.mark.parametrize("shared_helper", [False, True])
+@pytest.mark.parametrize(
+    ("handler_method", "declared_method", "passes"),
+    [("GET", "GET", True), ("POST", "POST", True), ("GET", "POST", False)],
+)
+def test_openfga_gate_matches_its_handler_method(
+    fake_repo: Path, handler_method: str, declared_method: str, passes: bool, shared_helper: bool,
+) -> None:
+    route = fake_repo / "ui/src/app/api/admin/users/route.ts"
+    gate = "await requireAgentUsePermission({ subject: 'test-user' });"
+    helper = f"async function authorize() {{ {gate} }}\n" if shared_helper else ""
+    body = "await authorize();" if shared_helper else gate
+    route.write_text(helper + f"export async function {handler_method}(request) {{ {body} }}")
+    _write_matrix(fake_repo, {
+        "version": 1,
+        "routes": [{
+            "id": "example-agent-use",
+            "surface": "ui_bff",
+            "method": declared_method,
+            "path": "/api/admin/users",
+            "resource": "agent",
+            "scope": "use",
+            "authorization_system": "openfga",
+            "relation": "can_use",
+            "object_type": "agent",
+            "expectations": _OK_EXPECTATIONS,
+        }],
+    })
+    result = _run(fake_repo)
+    assert (result.returncode == 0) is passes, result.stdout + result.stderr
+    if not passes:
+        assert f"gate on {handler_method} /api/admin/users" in result.stderr
+
+
 def test_lint_fails_when_matrix_omits_a_persona(fake_repo: Path) -> None:
     bad = dict(_OK_EXPECTATIONS)
     bad.pop("dave_no_role")
@@ -222,3 +256,29 @@ def test_lint_fails_when_matrix_version_wrong(fake_repo: Path) -> None:
     assert result.returncode == 1
     assert "schema" in result.stderr
     assert "version must be 1" in result.stderr
+
+
+@pytest.mark.parametrize("position", ["before", "between", "after"])
+def test_shared_helper_gates_every_exported_method(fake_repo: Path, position: str) -> None:
+    route = fake_repo / "ui/src/app/api/admin/users/route.ts"
+    helper = "async function authorize() { await requireAgentUsePermission({ subject: 'test-user' }); }\n"
+    get = "export async function GET(request) { await authorize(); }\n"
+    post = "export const POST = withErrorHandler(async (request) => { await authorize(); });\n"
+    route.write_text({"before": helper + get + post, "between": get + helper + post, "after": get + post + helper}[position])
+    _write_matrix(fake_repo, {"version": 1, "routes": [{
+        "id": "example-agent-use", "surface": "ui_bff", "method": "GET", "path": "/api/admin/users",
+        "resource": "agent", "scope": "use", "authorization_system": "openfga", "relation": "can_use",
+        "object_type": "agent", "expectations": _OK_EXPECTATIONS,
+    }]})
+    result = _run(fake_repo)
+    assert result.returncode == 1
+    assert "gate on POST /api/admin/users" in result.stderr
+
+
+@pytest.mark.parametrize("fake_gate", ["// requireAgentUsePermission({});", 'const example = "requireAgentUsePermission({})";'])
+def test_comments_and_strings_are_not_authorization_gates(fake_repo: Path, fake_gate: str) -> None:
+    route = fake_repo / "ui/src/app/api/admin/users/route.ts"
+    route.write_text('export async function GET(request) { await requireRbacPermission({ resource: "admin_ui", scope: "view" });\n' + fake_gate + '\n}')
+    _write_matrix(fake_repo, {"version": 1, "routes": [{"id": "example", "surface": "ui_bff", "method": "GET", "path": "/api/admin/users", "resource": "admin_ui", "scope": "view", "expectations": _OK_EXPECTATIONS}]})
+    result = _run(fake_repo)
+    assert result.returncode == 0, result.stdout + result.stderr

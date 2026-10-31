@@ -13,6 +13,8 @@ const mockReconcileAgentRelationships = jest.fn();
 const mockIsPlatformDefaultAgent = jest.fn();
 const mockCheckOpenFgaTuple = jest.fn();
 
+jest.mock("@/lib/agent-mutation-lock", () => ({ withAgentMutationLock: async (_id: string, operation: () => Promise<unknown>) => operation() }));
+
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
     constructor(

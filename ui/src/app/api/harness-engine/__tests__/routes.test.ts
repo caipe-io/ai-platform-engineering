@@ -14,7 +14,9 @@ import { POST as clearSession } from "../sessions/clear/route";
 const mockAuthenticateRequest = jest.fn();
 const mockClearHarnessGatewayBinding = jest.fn();
 const mockResolveHarnessGatewayTarget = jest.fn();
+jest.mock("@/lib/mongodb", () => ({ getCollection: async () => ({ findOne: async () => null, updateOne: async () => ({ matchedCount: 1 }) }) }));
 jest.mock("@/lib/harness-gateway", () => ({
+  ...jest.requireActual("@/lib/harness-gateway"),
   clearHarnessGatewayBinding: (...args: unknown[]) => mockClearHarnessGatewayBinding(...args),
   resolveHarnessGatewayTarget: (...args: unknown[]) => mockResolveHarnessGatewayTarget(...args),
 }));

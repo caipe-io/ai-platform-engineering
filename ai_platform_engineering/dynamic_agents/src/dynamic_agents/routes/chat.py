@@ -3,6 +3,7 @@
 import logging
 from contextlib import AsyncExitStack, aclosing
 from typing import Any, AsyncGenerator, Literal
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -17,6 +18,7 @@ from dynamic_agents.config import get_settings
 from dynamic_agents.log_config import conversation_id_var
 from dynamic_agents.models import ChatRequest, ClientContext, DynamicAgentConfig, InputFile, UserContext
 from dynamic_agents.services.app_context_prompt import app_context_scope
+from dynamic_agents.services.execution_lease import NativeThreadBusyError, reserve_native_thread
 from dynamic_agents.services.llm_clients import LLMConfigError
 from dynamic_agents.services.model_capabilities import supports_reasoning_effort
 from dynamic_agents.services.mongo import MongoDBService, get_mongo_service
@@ -122,7 +124,7 @@ def _validate_allowed_tools_subset(
     - Cannot enable a server that is disabled (False) in base
     - Cannot add tools not in base's tool list (when base has a specific list)
     - Setting False (disable) is always allowed
-    - Setting True (all) is allowed if base allows the server
+    - True and [] mean all tools and require an unrestricted base configuration
 
     Raises:
         HTTPException(400): If override violates subset constraint.
@@ -155,12 +157,13 @@ def _validate_allowed_tools_subset(
         if override_val is False:
             continue
 
-        # "All tools" is fine if base allows the server at all
-        if override_val is True:
+        if override_val is True or override_val == []:
+            if base_val is not True and base_val != []:
+                raise HTTPException(status_code=400, detail="config_override cannot widen a tool list to all tools")
             continue
 
         # Override is a specific list — validate each tool
-        if isinstance(override_val, list) and isinstance(base_val, list):
+        if isinstance(override_val, list) and isinstance(base_val, list) and base_val:
             extra = set(override_val) - set(base_val)
             if extra:
                 raise HTTPException(
@@ -176,6 +179,7 @@ def _validate_allowed_tools_subset(
 # assisted-by Codex Codex-sonnet-4-6
 router = APIRouter(prefix="/chat", tags=["chat"])
 GENERIC_AGENT_ERROR = "Agent execution failed. Check server logs for details."
+CONVERSATION_BUSY_ERROR = "This conversation is active or owned by another runtime. Wait for it to finish or reconcile its session."
 
 
 class RestartRuntimeRequest(BaseModel):
@@ -333,20 +337,21 @@ async def _generate_sse_events(
         )
 
         # Stream response with trace_id for Langfuse tracing
-        with app_context_scope(agent_config.app_context_prompt, client_context.model_dump() if client_context else None):
-            async with aclosing(
-                runtime.stream(
-                    message,
-                    session_id,
-                    user.email,
-                    trace_id,
-                    encoder,
-                    files=files,
-                    turn_id=turn_id,
-                )
-            ) as frames:
-                async for frame in frames:
-                    yield frame
+        async with reserve_native_thread(mongo._db if mongo else None, agent_config, session_id, uuid4().hex):
+            with app_context_scope(agent_config.app_context_prompt, client_context.model_dump() if client_context else None):
+                async with aclosing(
+                    runtime.stream(
+                        message,
+                        session_id,
+                        user.email,
+                        trace_id,
+                        encoder,
+                        files=files,
+                        turn_id=turn_id,
+                    )
+                ) as frames:
+                    async for frame in frames:
+                        yield frame
 
     except RuntimeCapacityError as e:
         logger.warning(f"Agent runtime at capacity: {e}")
@@ -374,6 +379,10 @@ async def _generate_sse_events(
     except (ToolCallRecoveryError, StructuredResponseError) as exc:
         logger.warning("Agent output request failed for agent %s", agent_config.id)
         for frame in encoder.on_run_error(str(exc)):
+            yield frame
+    except NativeThreadBusyError:
+        logger.info("Native conversation is busy: %s", session_id)
+        for frame in encoder.on_run_error(CONVERSATION_BUSY_ERROR, code="conversation_busy"):
             yield frame
     except Exception:
         logger.exception(f"Error streaming from agent '{agent_config.name}'")
@@ -499,10 +508,11 @@ async def _generate_resume_sse_events(
         )
 
         # Resume streaming with form data
-        with app_context_scope(agent_config.app_context_prompt, client_context.model_dump() if client_context else None):
-            async with aclosing(runtime.resume(session_id, user.email, resume_data, trace_id, encoder)) as frames:
-                async for frame in frames:
-                    yield frame
+        async with reserve_native_thread(mongo._db if mongo else None, agent_config, session_id, uuid4().hex):
+            with app_context_scope(agent_config.app_context_prompt, client_context.model_dump() if client_context else None):
+                async with aclosing(runtime.resume(session_id, user.email, resume_data, trace_id, encoder)) as frames:
+                    async for frame in frames:
+                        yield frame
 
     except RuntimeCapacityError as e:
         logger.warning(f"Agent runtime at capacity: {e}")
@@ -516,6 +526,10 @@ async def _generate_resume_sse_events(
     except (ToolCallRecoveryError, StructuredResponseError) as exc:
         logger.warning("Agent output request failed for agent %s", agent_config.id)
         for frame in encoder.on_run_error(str(exc)):
+            yield frame
+    except NativeThreadBusyError:
+        logger.info("Native conversation is busy: %s", session_id)
+        for frame in encoder.on_run_error(CONVERSATION_BUSY_ERROR, code="conversation_busy"):
             yield frame
     except Exception:
         logger.exception(f"Error resuming stream for agent '{agent_config.name}'")
@@ -648,15 +662,12 @@ async def chat_invoke(
                 user=user,
                 client_context=request.client_context,
             ) as runtime:
-                return await _collect_invoke_response(
-                    runtime=runtime,
-                    request=request,
-                    user=user,
-                    agent=agent,
-                )
+                async with reserve_native_thread(mongo._db, agent, request.conversation_id, uuid4().hex):
+                    return await _collect_invoke_response(runtime=runtime, request=request, user=user, agent=agent)
 
         async with AsyncExitStack() as stack:
             if persist_history:
+                await stack.enter_async_context(reserve_native_thread(mongo._db, agent, request.conversation_id, uuid4().hex))
                 runtime = await cache.get_or_create(
                     agent,
                     mcp_servers,
@@ -682,6 +693,8 @@ async def chat_invoke(
                 agent=agent,
             )
 
+    except NativeThreadBusyError:
+        return JSONResponse(status_code=409, content={"success": False, "error": "Conversation is active or owned by another runtime"})
     except RuntimeInitError as exc:
         schema_error = isinstance(exc.cause, StructuredResponseError)
         logger.warning("Agent invocation initialization failed: %s", type(exc.cause).__name__)

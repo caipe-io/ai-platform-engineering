@@ -62,6 +62,7 @@ jest.mock("@/lib/mongodb", () => ({
     if (name === "checkpoints_conversation") return Promise.resolve({ findOne: async () => null });
     if (name === "harness_gateway_bindings") return Promise.resolve({
       findOne: mockFindGatewayBinding,
+      updateOne: async () => ({ matchedCount: 1 }),
       findOneAndUpdate: async (_key: unknown, update: { $setOnInsert: unknown }) => update.$setOnInsert,
     });
     return mockGetCollection(name, ...args);

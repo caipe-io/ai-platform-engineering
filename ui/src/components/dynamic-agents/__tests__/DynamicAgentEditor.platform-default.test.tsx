@@ -214,7 +214,7 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
       "without exposing credentials or infrastructure identifiers",
     );
     fireEvent.click(screen.getByRole("button", { name: /Advanced/i }));
-    expect(screen.getByLabelText("Maximum turns")).toHaveValue(20);
+    expect(screen.getByLabelText("Maximum turns")).toHaveValue("20");
   });
 
   it("validates a provider blueprint before updating existing agent metadata", async () => {
@@ -225,6 +225,7 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     fireEvent.change(screen.getByLabelText("Execution harness"), {
       target: { value: "claude_agent_sdk" },
     });
+    fireEvent.click(screen.getByRole("checkbox", { name: /existing conversations keep/i }));
     fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
     await flushAsync();
 
@@ -244,7 +245,7 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     expect(await screen.findByText(/agent was not saved/i)).toBeInTheDocument();
   });
 
-  it("rolls back a newly created agent when its provider blueprint cannot be persisted", async () => {
+  it("keeps creation unsuccessful when atomic server publication fails", async () => {
     mockFetch(null, true);
     const onSave = jest.fn();
     render(<DynamicAgentEditor onCancel={jest.fn()} onSave={onSave} />);
@@ -277,7 +278,7 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
         });
       }
       if (path === "/api/dynamic-agents" && init?.method === "POST") {
-        return jsonResponse({ success: true, data: { _id: "agent-provider-agent" } });
+        return jsonResponse({ success: false, error: "Execution configuration could not be prepared; the agent was not changed" });
       }
       if (path.includes("/api/harness-engine/agents/") && init?.method === "PUT") {
         return {
@@ -302,10 +303,8 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     expect(writes).toEqual([
       ["/api/harness-engine/agent-drafts/validate", "POST"],
       ["/api/dynamic-agents", "POST"],
-      ["/api/harness-engine/agents/agent-provider-agent", "PUT"],
-      ["/api/dynamic-agents?id=agent-provider-agent", "DELETE"],
     ]);
-    expect(await screen.findByText(/creation was rolled back/i)).toBeInTheDocument();
+    expect(await screen.findByText(/agent was not changed/i)).toBeInTheDocument();
     expect(onSave).not.toHaveBeenCalled();
   });
 

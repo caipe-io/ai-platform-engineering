@@ -18,10 +18,11 @@ Wire format examples::
 
 import json
 import logging
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 
 from dynamic_agents.services.context_usage import CONTEXT_USAGE_EVENT
-from dynamic_agents.services.stream_encoders import StreamEncoder
+from dynamic_agents.services.stream_encoders import FrameT, StreamEncoder
 from dynamic_agents.services.stream_encoders.langgraph_helpers import (
     LangGraphStreamHelper,
     normalize_tool_message_content,
@@ -60,7 +61,7 @@ def _sse_frame(event_type: str, data: dict[str, Any]) -> str:
 # ═══════════════════════════════════════════════════════════════
 
 
-class CustomStreamEncoder(StreamEncoder):
+class CustomStreamEncoder(StreamEncoder[FrameT]):
     """Encodes LangGraph stream chunks to the original custom SSE format.
 
     This encoder reproduces the exact wire format that the existing frontend
@@ -69,15 +70,16 @@ class CustomStreamEncoder(StreamEncoder):
     ``chat.py``.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, frame_builder: Callable[[str, dict[str, Any]], FrameT] | None = None) -> None:
+        self._frame = frame_builder or cast(Callable[[str, dict[str, Any]], FrameT], _sse_frame)
         self._helper = LangGraphStreamHelper()
 
     # ── Core lifecycle ────────────────────────────────────
 
-    def on_run_start(self, run_id: str, thread_id: str) -> list[str]:
+    def on_run_start(self, run_id: str, thread_id: str) -> list[FrameT]:
         return []  # Old format has no run_started event
 
-    def on_chunk(self, chunk: tuple) -> list[str]:
+    def on_chunk(self, chunk: tuple) -> list[FrameT]:
         namespace, mode, data = self._helper.parse_chunk(chunk)
         if mode == "tasks":
             return []  # Helper already updated its namespace mapping
@@ -99,40 +101,40 @@ class CustomStreamEncoder(StreamEncoder):
         self,
         data: Any,
         namespace: tuple[str, ...],
-    ) -> list[str]:
+    ) -> list[FrameT]:
         """Encode transport-neutral runtime signals in the custom protocol."""
         if isinstance(data, dict) and data.get("type") == STRUCTURED_OUTPUT_EVENT:
             if isinstance(data.get("payload"), dict):
                 return self.on_structured_output(data["payload"], data.get("schema_id"))
             return []
         if isinstance(data, dict) and data.get("type") == "tool_output":
-            return [_sse_frame("tool_output", {**data, "namespace": list(namespace)})]
+            return [self._frame("tool_output", {**data, "namespace": list(namespace)})]
         if not isinstance(data, dict) or data.get("type") != CONTEXT_USAGE_EVENT:
             return []
 
         payload = {key: item for key, item in data.items() if key != "type"}
         payload["namespace"] = list(namespace)
-        return [_sse_frame(CONTEXT_USAGE_EVENT, payload)]
+        return [self._frame(CONTEXT_USAGE_EVENT, payload)]
 
-    def on_stream_end(self) -> list[str]:
+    def on_stream_end(self) -> list[FrameT]:
         return []  # No state to flush in custom format
 
-    def on_run_finish(self, run_id: str, thread_id: str) -> list[str]:
-        return [_sse_frame("done", {})]
+    def on_run_finish(self, run_id: str, thread_id: str) -> list[FrameT]:
+        return [self._frame("done", {})]
 
-    def on_run_error(self, message: str, code: str | None = None) -> list[str]:
-        return [_sse_frame("error", {"error": message})]
+    def on_run_error(self, message: str, code: str | None = None) -> list[FrameT]:
+        return [self._frame("error", {"error": message, **({"code": code} if code else {})})]
 
-    def on_warning(self, message: str) -> list[str]:
-        return [_sse_frame("warning", {"message": message, "namespace": []})]
+    def on_warning(self, message: str) -> list[FrameT]:
+        return [self._frame("warning", {"message": message, "namespace": []})]
 
     def on_structured_output(
         self, payload: dict[str, Any], schema_id: str | None = None
-    ) -> list[str]:
+    ) -> list[FrameT]:
         """Emit app-requested structured output before the terminal done event."""
         super().on_structured_output(payload, schema_id)
         return [
-            _sse_frame(
+            self._frame(
                 "structured_output",
                 {
                     "payload": payload,
@@ -152,7 +154,7 @@ class CustomStreamEncoder(StreamEncoder):
         tool_args: dict[str, Any] | None = None,
         allowed_decisions: list[str] | None = None,
         tool_approvals: list[dict[str, Any]] | None = None,
-    ) -> list[str]:
+    ) -> list[FrameT]:
         payload: dict[str, Any] = {
             "type": interrupt_type,
             "interrupt_id": interrupt_id,
@@ -168,7 +170,7 @@ class CustomStreamEncoder(StreamEncoder):
         else:
             payload["prompt"] = prompt
             payload["fields"] = fields
-        return [_sse_frame("input_required", payload)]
+        return [self._frame("input_required", payload)]
 
     # ── Content retrieval ─────────────────────────────────
 
@@ -184,7 +186,7 @@ class CustomStreamEncoder(StreamEncoder):
         self,
         data: Any,
         namespace: tuple[str, ...],
-    ) -> list[str]:
+    ) -> list[FrameT]:
         """Handle 'messages' mode chunks -> content events.
 
         Reproduces the old ``_handle_messages_chunk()`` behavior from
@@ -214,7 +216,7 @@ class CustomStreamEncoder(StreamEncoder):
         self._helper.accumulate_content(content)
 
         # Old format: event type "content", data wrapped as {"text": ..., "namespace": [...]}
-        return [_sse_frame("content", {"text": content, "namespace": list(namespace)})]
+        return [self._frame("content", {"text": content, "namespace": list(namespace)})]
 
     # ── Private: updates mode ─────────────────────────────
 
@@ -222,13 +224,13 @@ class CustomStreamEncoder(StreamEncoder):
         self,
         data: Any,
         namespace: tuple[str, ...],
-    ) -> list[str]:
+    ) -> list[FrameT]:
         """Handle 'updates' mode chunks -> tool events.
 
         Reproduces the old ``_handle_updates_chunk()`` behavior from
         ``stream_events.py`` (main branch).
         """
-        results: list[str] = []
+        results: list[FrameT] = []
 
         if not isinstance(data, dict):
             return results
@@ -279,7 +281,7 @@ class CustomStreamEncoder(StreamEncoder):
                         logger.debug(f"[sse:tool_start] {tool_name} id={tool_call_id[:8]}... ns={namespace}")
                         self._helper.reset_accumulated_content()
                         results.append(
-                            _sse_frame(
+                            self._frame(
                                 "tool_start",
                                 {
                                     "tool_name": tool_name,
@@ -320,6 +322,6 @@ class CustomStreamEncoder(StreamEncoder):
                         tool_end_data["error"] = error
                     elif content:
                         tool_end_data["result"] = truncate_tool_result(content)
-                    results.append(_sse_frame("tool_end", tool_end_data))
+                    results.append(self._frame("tool_end", tool_end_data))
 
         return results

@@ -1,6 +1,8 @@
 /** @jest-environment node */
 import { invokeHarnessGatewayRun } from "../harness-gateway";
 
+jest.mock("@/lib/mongodb", () => ({ getCollection: async () => ({ findOne: async () => null, updateOne: async () => ({ matchedCount: 1 }) }) }));
+
 const run = {
   run_id: "run-example", agent_id: "agent-example", conversation_id: "conversation-example",
   harness_id: "agentcore", last_sequence: 3,

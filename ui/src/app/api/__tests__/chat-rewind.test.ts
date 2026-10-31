@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 const mockRequireAgentUsePermission = jest.fn().mockResolvedValue(null);
 const mockAuthorizeConversationWriteAccess = jest.fn().mockResolvedValue({ denial: null });
 const mockGetCollection = jest.fn();
+jest.mock("@/lib/harness-gateway", () => ({ getPinnedHarnessGatewayTarget: async () => null }));
 
 jest.mock("@/lib/api-middleware", () => ({
   validateConversationId: jest.fn().mockReturnValue(true),

@@ -15,6 +15,8 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
+import { withAgentMutationLock } from "@/lib/agent-mutation-lock";
+import { prepareAgentExecution } from "@/lib/harness-agent-publication";
 import {
   getHarnessEngineConfig,
   proxyHarnessEngine,
@@ -819,139 +821,144 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const collection = await getCollection<DynamicAgentConfig>(COLLECTION_NAME);
 
-  // Uniqueness check
-  const existing = await collection.findOne({ _id: agentId });
-  if (existing) {
-    throw new ApiError(`Agent with ID "${agentId}" already exists`, 409);
-  }
-
-  // Subagent visibility validation
-  const subagents: SubAgentRef[] = body.subagents ?? [];
-  if (subagents.length > 0) {
-    const result = await validateSubagentVisibility(
-      visibility,
-      subagents,
-      collection,
-    );
-    if (!result.valid) {
-      throw new ApiError(result.error!, 400);
+  return withAgentMutationLock(agentId, async () => {
+    // Uniqueness check
+    const existing = await collection.findOne({ _id: agentId });
+    if (existing) {
+      throw new ApiError(`Agent with ID "${agentId}" already exists`, 409);
     }
-  }
 
-  // Resolve `shared_with_teams` (which historically held Mongo `_id`
-  // values from the editor) into canonical slugs so (a) the OpenFGA
-  // tuples we write below match the global subject naming convention
-  // (`team:<slug>#member`) and (b) the stored Mongo field is
-  // self-consistent for any future read path. Owner-team slug is
-  // dropped from the shared list because the reconciler already writes
-  // the owner-team tuples — keeping it duplicated in
-  // `shared_with_teams` would surface confusingly in the UI and is
-  // semantically a no-op for OpenFGA (deduped at write time).
-  const { slugs: rawSharedTeamSlugs, droppedInputs: droppedSharedInputs } =
-    await resolveSharedTeamSlugs(body.shared_with_teams);
-  const sharedTeamSlugs = ownerTeamSlug
-    ? rawSharedTeamSlugs.filter((slug) => slug !== ownerTeamSlug)
-    : rawSharedTeamSlugs;
-  if (droppedSharedInputs.length > 0) {
-    console.warn(
-      "[dynamic-agents] POST dropped unresolved shared_with_teams entries (no such team)",
-      { agent: body.name, dropped: droppedSharedInputs },
-    );
-  }
-
-  let datasourceIds = normalizeDatasourceIds(body.datasource_ids);
-  let ragCollectionIds = normalizeRagCollectionIds(body.rag_collection_ids);
-  // A RAG-enabled agent with no explicit selection is intentionally left
-  // unrestricted here: the RAG server always independently intersects
-  // results with the caller's own accessible datasources at query time, so
-  // "no configured scope" never means "unrestricted access" - it means "as
-  // much as the calling user can already see." Explicit [] on either field
-  // remains a deliberate opt-out (deny) and is preserved as-is below.
-  if (datasourceIds !== undefined || ragCollectionIds !== undefined) {
-    datasourceIds ??= [];
-    ragCollectionIds ??= [];
-  }
-  await validateDatasourceSelection(datasourceIds, ownerTeamSlug, session);
-  await validateRagCollectionSelection(ragCollectionIds, session);
-
-  // Build document with explicit field allowlist (Security VII)
-  const ownerSubject = requireStableSubject(session);
-  const now = new Date();
-  const allowedRemoteAgents = await validateRemoteAgentIds(body.allowed_remote_agents);
-  const doc: DynamicAgentConfig = {
-    _id: agentId,
-    execution_harness_id: executionHarnessId,
-    name: body.name as string,
-    description: (body.description as string) ?? "",
-    system_prompt: body.system_prompt as string,
-    allowed_tools:
-      (body.allowed_tools as Record<string, string[] | boolean>) ?? {},
-    allowed_remote_agents: allowedRemoteAgents,
-    remote_agent_timeouts: normalizeRemoteAgentTimeouts(body.remote_agent_timeouts, allowedRemoteAgents),
-    builtin_tools: body.builtin_tools ?? undefined,
-    ...(body.model ? { model: body.model as ModelConfig } : {}),
-    visibility,
-    shared_with_teams: sharedTeamSlugs,
-    owner_team_slug: ownerTeamSlug ?? undefined,
-    owner_team_id: ownerTeam ? teamIdString(ownerTeam) : undefined,
-    subagents,
-    skills: (body.skills as string[]) ?? [],
-    datasource_ids: datasourceIds,
-    rag_collection_ids: ragCollectionIds,
-    ui: body.ui as DynamicAgentConfig["ui"],
-    features: body.features as DynamicAgentConfig["features"],
-    interrupt_on: body.interrupt_on as DynamicAgentConfig["interrupt_on"],
-    enabled: (body.enabled as boolean) ?? true,
-    // Carry the AI Review verdict from the create payload so a blocking
-    // review run during agent creation surfaces a grade in the list view.
-    ...(body.last_review !== undefined
-      ? { last_review: body.last_review as DynamicAgentConfig["last_review"] }
-      : {}),
-    // Server-controlled fields — never from request body
-    owner_id: user.email,
-    owner_subject: ownerSubject,
-    is_system: false,
-    config_driven: false,
-    created_at: now.toISOString(),
-    updated_at: now.toISOString(),
-  };
-
-  // Only resolve the unlinked SA sub when it is needed. Global agents are
-  // available to callers without a linked user identity (Slack/Webex bots),
-  // while team agents continue to rely on explicit scopes.
-  const unlinkedServiceAccountSub =
-    visibility === "global" ? await resolveUnlinkedServiceAccountSub() : null;
-
-  await reconcileAgentRelationships({
-    agentId,
-    previousAllowedTools: {},
-    nextAllowedTools: doc.allowed_tools,
-    ownerSubject: doc.owner_subject,
-    organizationId: caipeOrgKey(),
-    ownerTeamSlug,
-    nextSharedTeamSlugs: sharedTeamSlugs,
-    previousSharedTeamSlugs: [],
-    // Encode `visibility === 'global'` as the wildcard `user:* user
-    // agent:<id>` grant so a freshly-created global agent is usable by
-    // every member without waiting for the list-time repair in
-    // available/route.ts. Fresh create has no previous state to revoke.
-    globalUserAccess: visibility === "global",
-    unlinkedServiceAccountSub,
-  });
-
-  try {
-    await collection.insertOne(doc);
-  } catch (error) {
-    await deleteAllAgentToolTuples(agentId).catch((cleanupError) => {
-      console.warn(
-        "[dynamic-agents] failed to clean up OpenFGA tuples after create failure:",
-        cleanupError,
+    // Subagent visibility validation
+    const subagents: SubAgentRef[] = body.subagents ?? [];
+    if (subagents.length > 0) {
+      const result = await validateSubagentVisibility(
+        visibility,
+        subagents,
+        collection,
       );
-    });
-    throw error;
-  }
+      if (!result.valid) {
+        throw new ApiError(result.error!, 400);
+      }
+    }
 
-  return successResponse(doc, 201);
+    // Resolve `shared_with_teams` (which historically held Mongo `_id`
+    // values from the editor) into canonical slugs so (a) the OpenFGA
+    // tuples we write below match the global subject naming convention
+    // (`team:<slug>#member`) and (b) the stored Mongo field is
+    // self-consistent for any future read path. Owner-team slug is
+    // dropped from the shared list because the reconciler already writes
+    // the owner-team tuples — keeping it duplicated in
+    // `shared_with_teams` would surface confusingly in the UI and is
+    // semantically a no-op for OpenFGA (deduped at write time).
+    const { slugs: rawSharedTeamSlugs, droppedInputs: droppedSharedInputs } =
+      await resolveSharedTeamSlugs(body.shared_with_teams);
+    const sharedTeamSlugs = ownerTeamSlug
+      ? rawSharedTeamSlugs.filter((slug) => slug !== ownerTeamSlug)
+      : rawSharedTeamSlugs;
+    if (droppedSharedInputs.length > 0) {
+      console.warn(
+        "[dynamic-agents] POST dropped unresolved shared_with_teams entries (no such team)",
+        { agent: body.name, dropped: droppedSharedInputs },
+      );
+    }
+
+    let datasourceIds = normalizeDatasourceIds(body.datasource_ids);
+    let ragCollectionIds = normalizeRagCollectionIds(body.rag_collection_ids);
+    // A RAG-enabled agent with no explicit selection is intentionally left
+    // unrestricted here: the RAG server always independently intersects
+    // results with the caller's own accessible datasources at query time, so
+    // "no configured scope" never means "unrestricted access" - it means "as
+    // much as the calling user can already see." Explicit [] on either field
+    // remains a deliberate opt-out (deny) and is preserved as-is below.
+    if (datasourceIds !== undefined || ragCollectionIds !== undefined) {
+      datasourceIds ??= [];
+      ragCollectionIds ??= [];
+    }
+    await validateDatasourceSelection(datasourceIds, ownerTeamSlug, session);
+    await validateRagCollectionSelection(ragCollectionIds, session);
+
+    // Build document with explicit field allowlist (Security VII)
+    const ownerSubject = requireStableSubject(session);
+    const now = new Date();
+    const allowedRemoteAgents = await validateRemoteAgentIds(body.allowed_remote_agents);
+    const doc: DynamicAgentConfig = {
+      _id: agentId,
+      execution_harness_id: executionHarnessId,
+      name: body.name as string,
+      description: (body.description as string) ?? "",
+      system_prompt: body.system_prompt as string,
+      allowed_tools:
+        (body.allowed_tools as Record<string, string[] | boolean>) ?? {},
+      allowed_remote_agents: allowedRemoteAgents,
+      remote_agent_timeouts: normalizeRemoteAgentTimeouts(body.remote_agent_timeouts, allowedRemoteAgents),
+      builtin_tools: body.builtin_tools ?? undefined,
+      ...(body.model ? { model: body.model as ModelConfig } : {}),
+      visibility,
+      shared_with_teams: sharedTeamSlugs,
+      owner_team_slug: ownerTeamSlug ?? undefined,
+      owner_team_id: ownerTeam ? teamIdString(ownerTeam) : undefined,
+      subagents,
+      skills: (body.skills as string[]) ?? [],
+      datasource_ids: datasourceIds,
+      rag_collection_ids: ragCollectionIds,
+      ui: body.ui as DynamicAgentConfig["ui"],
+      features: body.features as DynamicAgentConfig["features"],
+      interrupt_on: body.interrupt_on as DynamicAgentConfig["interrupt_on"],
+      enabled: (body.enabled as boolean) ?? true,
+      // Carry the AI Review verdict from the create payload so a blocking
+      // review run during agent creation surfaces a grade in the list view.
+      ...(body.last_review !== undefined
+        ? { last_review: body.last_review as DynamicAgentConfig["last_review"] }
+        : {}),
+      // Server-controlled fields — never from request body
+      owner_id: user.email,
+      owner_subject: ownerSubject,
+      is_system: false,
+      config_driven: false,
+      created_at: now.toISOString(),
+      updated_at: now.toISOString(),
+    };
+
+    const execution = await prepareAgentExecution(doc as unknown as Record<string, unknown>, ownerSubject, body.harness_save);
+    if (execution) doc.execution_blueprint_version = execution.version;
+
+    // Only resolve the unlinked SA sub when it is needed. Global agents are
+    // available to callers without a linked user identity (Slack/Webex bots),
+    // while team agents continue to rely on explicit scopes.
+    const unlinkedServiceAccountSub =
+      visibility === "global" ? await resolveUnlinkedServiceAccountSub() : null;
+
+    await reconcileAgentRelationships({
+      agentId,
+      previousAllowedTools: {},
+      nextAllowedTools: doc.allowed_tools,
+      ownerSubject: doc.owner_subject,
+      organizationId: caipeOrgKey(),
+      ownerTeamSlug,
+      nextSharedTeamSlugs: sharedTeamSlugs,
+      previousSharedTeamSlugs: [],
+      // Encode `visibility === 'global'` as the wildcard `user:* user
+      // agent:<id>` grant so a freshly-created global agent is usable by
+      // every member without waiting for the list-time repair in
+      // available/route.ts. Fresh create has no previous state to revoke.
+      globalUserAccess: visibility === "global",
+      unlinkedServiceAccountSub,
+    });
+
+    try {
+      await collection.insertOne(doc);
+    } catch (error) {
+      await deleteAllAgentToolTuples(agentId).catch((cleanupError) => {
+        console.warn(
+          "[dynamic-agents] failed to clean up OpenFGA tuples after create failure:",
+          cleanupError,
+        );
+      });
+      throw error;
+    }
+
+    return successResponse(doc, 201);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -1222,51 +1229,82 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     await validateRagCollectionSelection(finalCollectionIds, session);
   }
 
-  // Resolve the unlinked SA grant state whenever the Everyone grant is being
-  // added or removed. On a global → team transition, preserve a separately
-  // assigned explicit service-account scope.
-  const { sub: unlinkedServiceAccountSub, explicitAgentIds } =
-    finalVisibility === "global" || currentVisibility === "global"
-      ? await resolveUnlinkedServiceAccountGrantState()
-      : { sub: null, explicitAgentIds: new Set<string>() };
+  return withAgentMutationLock(id, async () => {
+    const current = await collection.findOne({ _id: id });
+    if (!current || new Date(current.updated_at ?? 0).getTime() !== new Date(agent.updated_at ?? 0).getTime()) {
+      throw new ApiError("The agent changed during save; reload before retrying", 409);
+    }
+    // SDK availability is enforced from the agent row at admission; changing
+    // only that flag does not change its published provider configuration.
+    const availabilityOnly = nextHarnessId !== "dynamic_agents" && body.harness_save === undefined &&
+      !isTransferRequest && Object.keys(updateData).every(field => ["enabled", "updated_at"].includes(field)) &&
+      typeof updateData.enabled === "boolean" && Object.keys(unsetData).length === 0;
+    const execution = availabilityOnly ? null : await prepareAgentExecution({ ...agent, ...updateData }, requireStableSubject(session), body.harness_save);
+    if (execution) updateData.execution_blueprint_version = execution.version;
 
-  await reconcileAgentRelationships({
-    agentId: id,
-    previousAllowedTools: allowedToolsFromAgent(agent),
-    nextAllowedTools: finalAllowedTools,
-    ownerSubject: agent.owner_subject ?? agent.owner_id,
-    organizationId: caipeOrgKey(),
-    ownerTeamSlug: nextOwnerTeamSlug,
-    previousOwnerTeamSlug: transferPreviousOwner,
-    nextSharedTeamSlugs: sharedTeamSlugs,
-    previousSharedTeamSlugs,
-    // Keep the wildcard `user:* user agent:<id>` grant in sync with
-    // visibility on every edit. Without this a `global → team` demote
-    // would update Mongo but leave the everyone-can-use grant behind,
-    // so non-owner-team members keep `can_use` (the SRE-agent leak).
-    // `currentVisibility` may be the legacy 'private' value on old docs;
-    // only an exact 'global' match counts as a previous wildcard grant.
-    globalUserAccess: finalVisibility === "global",
-    previousGlobalUserAccess: currentVisibility === "global",
-    unlinkedServiceAccountSub,
-    unlinkedGrantIsExplicit: explicitAgentIds.has(id),
+    // Resolve the unlinked SA grant state whenever the Everyone grant is being
+    // added or removed. On a global → team transition, preserve a separately
+    // assigned explicit service-account scope.
+    const { sub: unlinkedServiceAccountSub, explicitAgentIds } =
+      finalVisibility === "global" || currentVisibility === "global"
+        ? await resolveUnlinkedServiceAccountGrantState()
+        : { sub: null, explicitAgentIds: new Set<string>() };
+
+    const relationships = {
+      agentId: id,
+      previousAllowedTools: allowedToolsFromAgent(agent),
+      nextAllowedTools: finalAllowedTools,
+      ownerSubject: agent.owner_subject ?? agent.owner_id,
+      organizationId: caipeOrgKey(),
+      ownerTeamSlug: nextOwnerTeamSlug,
+      previousOwnerTeamSlug: transferPreviousOwner,
+      nextSharedTeamSlugs: sharedTeamSlugs,
+      previousSharedTeamSlugs,
+      // Keep the wildcard `user:* user agent:<id>` grant in sync with
+      // visibility on every edit. Without this a `global → team` demote
+      // would update Mongo but leave the everyone-can-use grant behind,
+      // so non-owner-team members keep `can_use` (the SRE-agent leak).
+      // `currentVisibility` may be the legacy 'private' value on old docs;
+      // only an exact 'global' match counts as a previous wildcard grant.
+      globalUserAccess: finalVisibility === "global",
+      previousGlobalUserAccess: currentVisibility === "global",
+      unlinkedServiceAccountSub,
+      unlinkedGrantIsExplicit: explicitAgentIds.has(id),
+    };
+    await reconcileAgentRelationships(relationships);
+
+    try {
+      const updated = await collection.findOneAndUpdate(
+        { _id: id, ...(execution && { updated_at: agent.updated_at }) },
+        Object.keys(unsetData).length > 0
+          ? { $set: updateData, $unset: unsetData }
+          : { $set: updateData },
+        { returnDocument: "after" },
+      );
+
+      if (!updated) {
+        throw new ApiError("The agent changed during save; reload before retrying", 409);
+      }
+
+      return successResponse(
+        normalizeAgentDoc(updated as unknown as Record<string, unknown>),
+      );
+    } catch (error) {
+      await reconcileAgentRelationships({
+        ...relationships,
+        previousAllowedTools: finalAllowedTools,
+        nextAllowedTools: allowedToolsFromAgent(agent),
+        ownerTeamSlug: transferPreviousOwner ?? nextOwnerTeamSlug,
+        previousOwnerTeamSlug: nextOwnerTeamSlug,
+        nextSharedTeamSlugs: previousSharedTeamSlugs,
+        previousSharedTeamSlugs: sharedTeamSlugs,
+        globalUserAccess: currentVisibility === "global",
+        previousGlobalUserAccess: finalVisibility === "global",
+      });
+      throw error;
+    }
+
   });
-
-  const updated = await collection.findOneAndUpdate(
-    { _id: id },
-    Object.keys(unsetData).length > 0
-      ? { $set: updateData, $unset: unsetData }
-      : { $set: updateData },
-    { returnDocument: "after" },
-  );
-
-  if (!updated) {
-    throw new ApiError("Failed to update agent", 500);
-  }
-
-  return successResponse(
-    normalizeAgentDoc(updated as unknown as Record<string, unknown>),
-  );
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -1322,63 +1360,67 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
     );
   }
 
-  // Autonomous tasks are owned by a separate service (autonomous-agents)
-  // keyed on this agent's id. Cascade-delete them BEFORE removing the
-  // agent doc / OpenFGA tuples, and abort on failure: agent ids are
-  // deterministic slugs of the name, so an orphaned task left behind here
-  // would silently reappear (and start firing again) under any future
-  // agent recreated with the same name. Fail-closed keeps the whole
-  // operation safely retryable — nothing below has run yet.
-  try {
-    await cascadeDeleteAutonomousTasksForAgent(id);
-  } catch (err) {
-    console.warn("[dynamic-agents] autonomous-task cascade delete failed:", err);
-    throw new ApiError(
-      "Failed to remove autonomous tasks for this agent. Deletion aborted; retry once the autonomous-agents service is reachable.",
-      502,
-      "AUTONOMOUS_TASK_CASCADE_FAILED",
-    );
-  }
-
-  if (normalizeExecutionHarnessId(agent.execution_harness_id) !== "dynamic_agents") {
-    const config = getHarnessEngineConfig();
-    if (config instanceof NextResponse) {
+  return withAgentMutationLock(id, async () => {
+    const currentAgent = await collection.findOne({ _id: id });
+    if (!currentAgent) throw new ApiError("Agent not found", 404);
+    // Autonomous tasks are owned by a separate service (autonomous-agents)
+    // keyed on this agent's id. Cascade-delete them BEFORE removing the
+    // agent doc / OpenFGA tuples, and abort on failure: agent ids are
+    // deterministic slugs of the name, so an orphaned task left behind here
+    // would silently reappear (and start firing again) under any future
+    // agent recreated with the same name. Fail-closed keeps the whole
+    // operation safely retryable — nothing below has run yet.
+    try {
+      await cascadeDeleteAutonomousTasksForAgent(id);
+    } catch (err) {
+      console.warn("[dynamic-agents] autonomous-task cascade delete failed:", err);
       throw new ApiError(
-        "Harness Engine is unavailable; deletion was aborted to avoid orphaning its provider resource.",
-        503,
-        "HARNESS_ENGINE_UNAVAILABLE",
+        "Failed to remove autonomous tasks for this agent. Deletion aborted; retry once the autonomous-agents service is reachable.",
+        502,
+        "AUTONOMOUS_TASK_CASCADE_FAILED",
       );
     }
-    const sessionValues = session as unknown as Record<string, unknown>;
-    const response = await proxyHarnessEngine(
-      config,
-      {
-        subject:
-          (sessionValues.sub as string | undefined) ??
-          agent.owner_subject ??
-          user.email,
-        traceparent: request.headers.get("traceparent") ?? undefined,
-      },
-      `/api/v1/agents/${encodeURIComponent(id)}`,
-      { method: "DELETE" },
-    );
-    if (!response.ok) {
-      const result = (await response.json().catch(() => null)) as {
-        detail?: string;
-        error?: string;
-      } | null;
-      throw new ApiError(
-        result?.detail ??
-          result?.error ??
-          "Failed to remove the agent's provider resource. Deletion was aborted.",
-        response.status,
-        "HARNESS_PROVIDER_DELETE_FAILED",
+
+    if (normalizeExecutionHarnessId(currentAgent.execution_harness_id) !== "dynamic_agents") {
+      const config = getHarnessEngineConfig();
+      if (config instanceof NextResponse) {
+        throw new ApiError(
+          "Harness Engine is unavailable; deletion was aborted to avoid orphaning its provider resource.",
+          503,
+          "HARNESS_ENGINE_UNAVAILABLE",
+        );
+      }
+      const sessionValues = session as unknown as Record<string, unknown>;
+      const response = await proxyHarnessEngine(
+        config,
+        {
+          subject:
+            (sessionValues.sub as string | undefined) ??
+            currentAgent.owner_subject ??
+            user.email,
+          traceparent: request.headers.get("traceparent") ?? undefined,
+        },
+        `/api/v1/agents/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
       );
+      if (!response.ok) {
+        const result = (await response.json().catch(() => null)) as {
+          detail?: string;
+          error?: string;
+        } | null;
+        throw new ApiError(
+          result?.detail ??
+            result?.error ??
+            "Failed to remove the agent's provider resource. Deletion was aborted.",
+          response.status,
+          "HARNESS_PROVIDER_DELETE_FAILED",
+        );
+      }
     }
-  }
 
-  await deleteAllAgentToolTuples(id);
-  await collection.deleteOne({ _id: id });
+    await deleteAllAgentToolTuples(id);
+    await collection.deleteOne({ _id: id });
 
-  return successResponse({ deleted: id });
+    return successResponse({ deleted: id });
+  });
 });

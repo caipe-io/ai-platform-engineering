@@ -309,6 +309,64 @@ routes:
         status: 403
         reason: pdp_denied
 
+  - id: ui-bff-post-api-harness-engine-sessions-migrate-openfga-agent-use
+    surface: ui_bff
+    method: POST
+    path: /api/harness-engine/sessions/migrate
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: Current agent use plus conversation write and saved-agent matching before quiescent native adoption or rollback; active producers and overlapping handoffs are rejected.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+
+  - id: ui-bff-get-api-dynamic-agents-interrupt-state-openfga-agent-use
+    surface: ui_bff
+    method: GET
+    path: /api/dynamic-agents/conversations/[id]/interrupt-state
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: Current agent use plus conversation read and saved-agent matching before inspecting pending native or Engine approval state.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+
   - id: ui-bff-get-api-harness-engine-run-openfga-agent-use
     surface: ui_bff
     method: GET

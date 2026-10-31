@@ -1,0 +1,57 @@
+# Opt-in overlay; use with docker-compose.yaml and the harness-engine profile.
+services:
+  harness-engine:
+    profiles: [harness-engine]
+    build:
+      context: .
+      dockerfile: ai_platform_engineering/harness_engine/build/Dockerfile.deep-agents
+    image: caipe-harness-engine-deep:local
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      HARNESS_ENGINE_INTERNAL_TOKEN: ${HARNESS_ENGINE_INTERNAL_TOKEN:?set HARNESS_ENGINE_INTERNAL_TOKEN}
+      HARNESS_ENGINE_STORAGE_BACKEND: mongodb
+      HARNESS_ENGINE_MONGODB_URI: ${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/harness_engine?authSource=admin}
+      HARNESS_ENGINE_MONGODB_DATABASE: ${HARNESS_ENGINE_MONGODB_DATABASE:-harness_engine}
+      HARNESS_ENGINE_DEEP_AGENTS_ENABLED: "true"
+      MONGODB_URI: ${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-caipe}
+      AUTHZ_SERVICE_URL: http://caipe-ui:3000
+      ATTACHMENT_LOCAL_PATH: /var/lib/caipe-attachments
+    volumes:
+      - harness-attachments:/var/lib/caipe-attachments
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+
+  # Both producers need the same checkpoint ownership fence during rollout.
+  dynamic-agents:
+    image: caipe-harness-engine-deep:local
+    build:
+      context: .
+      dockerfile: ai_platform_engineering/harness_engine/build/Dockerfile.deep-agents
+    command: [python, -m, dynamic_agents.main]
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8001"
+      ATTACHMENT_LOCAL_PATH: /var/lib/caipe-attachments
+    volumes:
+      - harness-attachments:/var/lib/caipe-attachments
+
+  caipe-ui:
+    image: caipe-ui-harness-deep:local
+    build:
+      context: .
+      dockerfile: build/Dockerfile.caipe-ui
+      target: runner
+    environment:
+      HARNESS_ENGINE_URL: http://harness-engine:8010
+      HARNESS_ENGINE_INTERNAL_TOKEN: ${HARNESS_ENGINE_INTERNAL_TOKEN:?set HARNESS_ENGINE_INTERNAL_TOKEN}
+      HARNESS_ENGINE_DEEP_AGENTS_ENABLED: "true"
+      HARNESS_ENGINE_DEEP_AGENTS_ADOPT_EXISTING: ${HARNESS_ENGINE_DEEP_AGENTS_ADOPT_EXISTING:-false}
+
+volumes:
+  harness-attachments:

@@ -9,6 +9,7 @@ import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
 import { reconcileConversationOwnerIdentity } from "@/lib/conversation-owner-identity";
 import {
   invokeHarnessGatewayRun,
+  getHarnessGatewayNativeThread,
   resolveHarnessGatewayTarget,
 } from "@/lib/harness-gateway";
 import { createAuthzTraceContext, type AuthzTraceContext } from "@/lib/rbac/authz-tracing";
@@ -464,13 +465,14 @@ async function handleScheduledInvoke(
   if (target instanceof NextResponse) return target;
   let response: Response;
   if (target.kind === "harness_engine") {
-    response = await invokeHarnessGatewayRun(body, authResult, request.signal);
+    response = await invokeHarnessGatewayRun(body, authResult, request.signal, target.harnessId);
   } else {
     const daConfig = getDynamicAgentsConfig();
     if (daConfig instanceof NextResponse) return daConfig;
+    const nativeId = await getHarnessGatewayNativeThread(String(body.agent_id), authResult.subject, String(body.conversation_id));
     response = await proxyJSONRequest(
         `${daConfig.dynamicAgentsUrl}/api/v1/chat/invoke`,
-        JSON.stringify(body),
+        JSON.stringify({ ...body, conversation_id: nativeId }),
         authResult,
         "[invoke]",
       );
@@ -553,13 +555,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (target instanceof NextResponse) return target;
   let response: Response;
   if (target.kind === "harness_engine") {
-    response = await invokeHarnessGatewayRun(body, authResult, request.signal);
+    response = await invokeHarnessGatewayRun(body, authResult, request.signal, target.harnessId);
   } else {
     const daConfig = getDynamicAgentsConfig();
     if (daConfig instanceof NextResponse) return daConfig;
+    const nativeId = await getHarnessGatewayNativeThread(String(body.agent_id), authResult.subject, String(body.conversation_id));
     response = await proxyJSONRequest(
       `${daConfig.dynamicAgentsUrl}/api/v1/chat/invoke`,
-      JSON.stringify(body),
+      JSON.stringify({ ...body, conversation_id: nativeId }),
       authResult,
       "[invoke]",
     );

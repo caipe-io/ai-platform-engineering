@@ -1,4 +1,4 @@
-export type HarnessRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type HarnessRunStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
 
 export interface HarnessRun {
   run_id: string;
@@ -8,6 +8,12 @@ export interface HarnessRun {
   binding_id: string;
   harness_id: string;
   profile_id: string;
+  provider_session_id?: string | null;
+  client_request_id?: string | null;
+  turn_id?: string | null;
+  command?: "start" | "resume" | "rewind" | "reconcile";
+  resumes_run_id?: string | null;
+  interrupt_id?: string | null;
   status: HarnessRunStatus;
   last_sequence: number;
 }
@@ -26,6 +32,9 @@ export interface HarnessRunEvent {
     | "subagent.started"
     | "subagent.event"
     | "usage.updated"
+    | "runtime.event"
+    | "result.updated"
+    | "run.paused"
     | "run.completed"
     | "run.failed"
     | "run.cancelled";
@@ -67,7 +76,13 @@ export interface HarnessDescriptor {
 }
 
 export interface HarnessOptionSchema {
-  type: "string" | "integer" | "number" | "boolean";
+  type: "string" | "integer" | "number" | "boolean" | "object" | "array";
+  properties?: Record<string, HarnessOptionSchema>;
+  required?: string[];
+  items?: HarnessOptionSchema;
+  minItems?: number;
+  maxItems?: number;
+  maxLength?: number;
   title?: string;
   description?: string;
   default?: string | number | boolean;

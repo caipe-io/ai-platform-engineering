@@ -450,4 +450,30 @@ describe("DynamicAgentsTab search + pagination", () => {
     expect(screen.queryByLabelText(/autonomous status/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/manage autonomous tasks/i)).not.toBeInTheDocument();
   });
+
+  it.each([true, false])("includes the published blueprint when toggling an SDK agent from enabled=%s", async (enabled) => {
+    const blueprint = { id: "example-agent", harness: { id: "example_sdk", profile_id: "example", options: {} } };
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "/api/harness-engine/agents/example-agent") return { ok: true, json: async () => ({ success: true, data: { version: { blueprint } } }) };
+      if (init?.method === "PUT") return jsonResponse({ success: true });
+      return jsonResponse({ success: true, data: { items: [makeAgent({ _id: "example-agent", name: "Example", execution_harness_id: "example_sdk", enabled })], total: 1 } });
+    });
+    render(<DynamicAgentsTab />);
+    fireEvent.click(await screen.findByRole("button", { name: enabled ? "Active" : "Disabled", exact: true }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?id=example-agent", expect.objectContaining({ method: "PUT" })));
+    const request = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect(JSON.parse(request[1].body)).toEqual({ enabled: !enabled, harness_save: { blueprint } });
+  });
+
+  it("keeps the saved SDK state if its published blueprint cannot be loaded", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.startsWith("/api/harness-engine/")) return { ok: false, json: async () => ({ success: false, error: "Execution configuration is unavailable" }) };
+      return jsonResponse({ success: true, data: { items: [makeAgent({ _id: "example-agent", name: "Example", execution_harness_id: "example_sdk" })], total: 1 } });
+    });
+    render(<DynamicAgentsTab />);
+    fireEvent.click(await screen.findByRole("button", { name: "Active", exact: true }));
+    expect(await screen.findByText("Execution configuration is unavailable")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+  });
+
 });

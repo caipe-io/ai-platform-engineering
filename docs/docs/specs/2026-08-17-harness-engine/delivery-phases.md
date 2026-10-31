@@ -1,6 +1,6 @@
 # Harness Engine Delivery Phases
 
-- **Updated:** 2026-10-21.
+- **Updated:** 2026-10-31.
 - **Status:** Proposed delivery scope for review; this document does not record reviewer approval or certify pending capabilities.
 - **Purpose:** One delivery sequence for PR 2401, Discussion 2405, and the Spec Kit package.
 - **Precedence:** These delivery phases supersede the original replacement-first ordering in the plan. Numbered task workstreams retain their task IDs and describe technical work, not release order. Spec Kit's own research/design workflow stages are separate.
@@ -10,7 +10,7 @@
 | Delivery phase | Scope | Status / exit gate |
 |---|---|---|
 | **1 — Independent engine and gateway** | PR 2401: opt-in AgentCore and Claude SDK adapters; unchanged Dynamic Agents default; durable engine sessions/runs/replay; current chat and app-stream contracts; honest capability-driven controls | Foundation implemented. Current-path correctness, compatibility, UI capability gating, CI and review agreement remain merge gates. |
-| **2 — Deep Agents integration and pluggable builder** | Extract/reuse the existing runtime behind `DeepAgentsAdapter`; preserve native behavior and state; add required engine lifecycle contracts; introduce reusable capability-driven editor panels | Pending, separately reviewed work. Exit requires compatibility, CAS/credential isolation, pause/resume, attachment, cancellation and migration evidence. |
+| **Deep Agents integration and pluggable builder** | Reuse the existing runtime behind `DeepAgentsAdapter`; preserve native behavior and state; add explicit lifecycle contracts and capability-driven editor panels | Opt-in implementation added. See the [implementation and validation guide](https://github.com/caipe-io/ai-platform-engineering/blob/main/ai_platform_engineering/harness_engine/README.md#opt-in-deep-agents-integration). Experimental; rollout and review remain separate gates. |
 | **3 — External sandbox execution** | Keep `SandboxManager` inside the engine container; add a pluggable external backend such as Kubernetes Agent Sandbox; run local harness workers in isolated conversation-scoped environments | Pending. Exit requires lease/fencing, state recovery, worker identity, secret-free execution and isolation evidence. |
 | **4 — Cross-harness agent composition** | Add `DelegationBroker` to invoke authorized child agents through their own adapters and execution contexts; correlate child output, approvals and cancellation | Pending. Exit requires caller/child authorization, depth/cycle/concurrency controls, session/workspace isolation and end-to-end delegation evidence. |
 
@@ -39,7 +39,7 @@ flowchart TD
     Gateway -->|App-defined assistant| App["App's declared chat stream"]
 ```
 
-## Phase 2 — Separate Deep Agents integration
+## Deep Agents integration
 
 - Reuse the current graph/tool/middleware/skill implementation through a narrow runtime interface; do not create another implementation.
 - Add typed events, explicit completed/paused/cancelled outcomes, authorized resume and attachment references to the engine contract.
@@ -95,7 +95,7 @@ flowchart TD
 | Artifact / workstream | Delivery placement |
 |---|---|
 | Independent slice, gateway, portable-contract and provider-lifecycle task groups | Phase 1; historical completed tasks are implementation records, not blanket release approval |
-| Runtime compatibility, event normalization, lifecycle and full builder workstreams | Phase 2, retaining existing state and authorization semantics |
+| Runtime compatibility, event normalization, lifecycle and full builder workstreams | Deep Agents integration, retaining existing state and authorization semantics |
 | Worker protocol, claim/lease lifecycle, external state and sandbox hardening | Phase 3 |
 | Cross-harness delegation, child-run visibility and coordinated approvals/Stop | Phase 4 |
 | Memory, additional harnesses, process-failure takeover and ACP integration | Separately scoped extensions; qualify their capabilities before advertising support |
@@ -103,5 +103,5 @@ flowchart TD
 - [Plan](plan.md) owns the delivery summary and implementation approach.
 - [Tasks](tasks.md) retains stable task IDs and technical dependency notes. Old task checkboxes are not revalidated by this documentation update.
 - [Architecture](architecture.md) and [portable abstractions](portable-abstractions.md) distinguish implemented paths from target execution/broker boundaries.
-- [Agent creation UI](agent-creation-ui.md) separates Phase 1 capability truthfulness from Phase 2 reusable feature panels.
+- [Agent creation UI](agent-creation-ui.md) describes capability controls and reusable feature panels.
 - [Discussion 2405](https://github.com/orgs/caipe-io/discussions/2405) and [PR 2401](https://github.com/caipe-io/ai-platform-engineering/pull/2401) publish the same phase names and boundaries.
