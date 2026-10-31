@@ -16,9 +16,25 @@ spec:
       {{- include "dynamic-agents.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
+      {{- $llmEnabled := dig "litellm" "enabled" false (.Values.global.llmRouting | default (dict)) }}
+      {{- $podAnnotations := deepCopy (default (dict) .Values.podAnnotations) }}
+      {{- if $llmEnabled }}
+        {{- $llmData := deepCopy (default (dict) .Values.global.llmSecrets.data) }}
+        {{- if .Values.global.createLlmSecret }}
+          {{- if not (hasKey $llmData "LLM_PROVIDER") }}{{- $_ := set $llmData "LLM_PROVIDER" "openai" }}{{- end }}
+          {{- if not (hasKey $llmData "OPENAI_ENDPOINT") }}{{- $_ := set $llmData "OPENAI_ENDPOINT" (printf "http://%s-litellm:4000/v1" .Release.Name) }}{{- end }}
+        {{- end }}
+        {{- $llmConfig := dict
+          "createSecret" .Values.global.createLlmSecret
+          "secretName" .Values.global.llmSecrets.secretName
+          "data" $llmData
+          "externalSecret" .Values.global.llmSecrets.externalSecrets
+        }}
+        {{- $_ := set $podAnnotations "checksum/llm-config" (toYaml $llmConfig | sha256sum) }}
+      {{- end }}
+      {{- if or $llmEnabled $podAnnotations }}
       annotations:
-        {{- toYaml . | nindent 8 }}
+        {{- toYaml $podAnnotations | nindent 8 }}
       {{- end }}
       labels:
         {{- include "dynamic-agents.labels" . | nindent 8 }}
@@ -68,6 +84,12 @@ spec:
               value: {{ index .Values.config "AUTHZ_SERVICE_URL" | default (printf "http://%s-caipe-ui:3000" .Release.Name) | quote }}
             - name: AUDIT_SERVICE_URL
               value: {{ index .Values.config "AUDIT_SERVICE_URL" | default (printf "http://%s-audit-service:8010" .Release.Name) | quote }}
+            {{- if dig "litellm" "enabled" false (.Values.global.llmRouting | default (dict)) }}
+            - name: LLM_PROVIDER
+              value: openai
+            - name: OPENAI_ENDPOINT
+              value: {{ printf "http://%s-litellm:4000/v1" .Release.Name | quote }}
+            {{- end }}
             {{- if .Values.agentContext.existingSecret.name }}
             - name: CAIPE_AGENT_CONTEXT_HMAC_SECRET
               valueFrom:
