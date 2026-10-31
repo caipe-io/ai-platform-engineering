@@ -246,3 +246,36 @@ async def test_idempotency_key_rejects_an_explicit_version_change(durable_reposi
     assert (await second.start_run(request(), "test-user")).run_id == run.run_id
     compiler.resume.set()
     await first._tasks[run.run_id]
+
+
+async def test_remote_cancel_is_not_confirmed_until_the_binding_is_released(
+    durable_repository: RunRepository, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, second, compiler, _ = await coordinators(durable_repository)
+    releasing, release = asyncio.Event(), asyncio.Event()
+    original = durable_repository.release_run
+
+    async def delayed_release(binding_id: str, run_id: str) -> None:
+        releasing.set()
+        await release.wait()
+        await original(binding_id, run_id)
+
+    monkeypatch.setattr(durable_repository, "release_run", delayed_release)
+    run = await first.start_run(request(), "test-user")
+    producer = first._tasks[run.run_id]
+    await compiler.entered.wait()
+    try:
+        result = await second.cancel_active("test-user", "agent-example", "conversation-example")
+        assert releasing.is_set()
+        assert result.cancellation_requested and not result.cancelled
+        with pytest.raises(RunAdmissionError, match="active run"):
+            await second.start_run(request("next"), "test-user")
+    finally:
+        release.set()
+        results = await asyncio.gather(producer, return_exceptions=True)
+    assert isinstance(results[0], asyncio.CancelledError)
+    binding = await durable_repository.get_session(run.binding_id)
+    assert binding and binding.active_run is None
+    compiler.resume.set()
+    next_run = await second.start_run(request("next"), "test-user")
+    await second._tasks[next_run.run_id]

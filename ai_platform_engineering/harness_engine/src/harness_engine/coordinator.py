@@ -276,8 +276,12 @@ class RunCoordinator:
             # Only the owning producer can confirm stop and release its reservation.
             for _ in range(20):
                 run = await self._repository.get_run(run_id)
-                if run is None or run.status in TERMINAL_RUN_STATUSES:
-                    return run
+                if run is None:
+                    return None
+                if run.status in TERMINAL_RUN_STATUSES:
+                    binding = await self._repository.get_session(run.binding_id)
+                    if binding is None or binding.active_run is None or binding.active_run.run_id != run_id:
+                        return run
                 await asyncio.sleep(0.025)
         return await self._repository.get_run(run_id)
 
@@ -290,8 +294,10 @@ class RunCoordinator:
         if run is None:
             return CancelActiveRunResult(cancelled=False)
         cancelled = await self.cancel(run.run_id)
+        binding = await self._repository.get_session(run.binding_id)
+        released = binding is None or binding.active_run is None or binding.active_run.run_id != run.run_id
         return CancelActiveRunResult(
-            cancelled=cancelled is not None and cancelled.status == RunStatus.CANCELLED,
+            cancelled=released and cancelled is not None and cancelled.status == RunStatus.CANCELLED,
             run_id=run.run_id,
             cancellation_requested=cancelled is not None and cancelled.cancellation_requested,
         )
