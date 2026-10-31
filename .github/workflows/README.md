@@ -6,6 +6,15 @@ This directory contains automated workflows for the AI Platform Engineering proj
 
 See the `.github/workflows/` directory for the full list of CI/CD workflows.
 
+### Docker Compose smoke tests
+
+- `test-compose.yml` validates both Compose files and runs isolated platform,
+  RAG, graph-storage, and tracing lanes without LLM credentials.
+- Runs on relevant PRs/pushes, weekly, and by manual dispatch.
+- Checks readiness, init-job success, storage operations, and persistence after
+  container recreation; uploads logs on success or failure.
+- See [coverage and limitations](../../scripts/ci/compose-smoke/README.md).
+
 ### MCP registry concurrency
 
 - `ci-mcp-servers.yml` and `prebuild-mcp-servers.yml` each allow at most
