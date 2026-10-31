@@ -14,6 +14,7 @@ import logging
 import os
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+from tools import page_reads
 from starlette.middleware import Middleware
 from mcp_agent_auth.middleware import MCPAuthMiddleware
 
@@ -325,9 +326,13 @@ def main():
     mcp.tool()(blogposts.create_blog_post)
     mcp.tool()(labels.get_content_labels)
     mcp.tool()(labels.add_labels_to_content)
-    mcp.tool()(pages.get_pages)
+    mcp.tool(output_schema=None)(page_reads.inline_json_tool(page_reads.confluence_list_spaces))
+    mcp.tool(output_schema=None)(page_reads.inline_json_tool(page_reads.confluence_search))
+    mcp.tool(output_schema=None)(page_reads.inline_json_tool(page_reads.confluence_get_page))
+    mcp.tool(output_schema=None)(page_reads.inline_json_tool(page_reads.confluence_get_page_chunk))
+    mcp.tool(output_schema=None)(page_reads.inline_json_tool(pages.get_pages))
     mcp.tool()(pages.create_page)
-    mcp.tool()(spaces.get_spaces)
+    mcp.tool(output_schema=None)(page_reads.inline_json_tool(spaces.get_spaces))
     mcp.tool()(spaces.create_space)
     mcp.tool()(space_permissions.get_available_space_permissions)
     mcp.tool()(footer_comments.get_footer_comments)

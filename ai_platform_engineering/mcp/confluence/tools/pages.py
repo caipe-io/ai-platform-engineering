@@ -4,10 +4,12 @@
 
 """Tools for /pages operations"""
 
+import json
 import logging
 import os
 from typing import Dict, Any, Optional, List
 from api.client import make_api_request
+from tools.page_reads import confluence_get_page, confluence_search
 
 # Configure logging - use LOG_LEVEL from environment or default to INFO
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -17,99 +19,42 @@ logger = logging.getLogger("mcp_tools")
 
 
 async def get_pages(
-  param_id: List[int] = None,
-  param_space_id: List[int] = None,
-  param_sort: str = None,
-  param_status: List[str] = None,
-  param_title: str = None,
-  param_body_format: str = None,
-  param_subtype: str = None,
-  param_cursor: str = None,
-  param_limit: int = None
+  param_id: Optional[List[int]] = None,
+  param_space_id: Optional[List[int]] = None,
+  param_sort: Optional[str] = None,
+  param_status: Optional[List[str]] = None,
+  param_title: Optional[str] = None,
+  param_body_format: Optional[str] = None,
+  param_subtype: Optional[str] = None,
+  param_cursor: Optional[str] = None,
+  param_limit: Optional[int] = None
 ) -> Dict[str, Any]:
+    """List bounded page metadata using CQL and classic OAuth scopes.
+
+    Body reads must use confluence_get_page and all continuation chunks.
+    Use confluence_search with a space key for space-scoped enumeration.
     """
-    Get pages
+    if param_space_id or param_subtype or (param_status and param_status != ["current"]):
+        raise ValueError("Use confluence_search with supported CQL filters; numeric space IDs, subtype and non-current status are unsupported here")
+    if param_body_format:
+        if not param_id or len(param_id) != 1 or any((param_title, param_sort, param_cursor)):
+            raise ValueError("Read a single page body with confluence_get_page and its continuation chunks")
+        if param_body_format not in {"storage", "body.storage"}:
+            raise ValueError("Only storage body reads are supported")
+        return await confluence_get_page(str(param_id[0]))
+    clauses = ["type=page"]
+    if param_id:
+        if any(type(page_id) is not int or page_id <= 0 for page_id in param_id):
+            raise ValueError("Page IDs must be positive integers")
+        clauses.append("id IN (" + ",".join(str(value) for value in param_id) + ")")
+    if param_title:
+        clauses.append("title=" + json.dumps(param_title))
+    sort = param_sort or "-modified-date"
+    order = {"-modified-date": "lastmodified DESC", "modified-date": "lastmodified ASC", "title": "title ASC", "-title": "title DESC"}.get(sort)
+    if not order:
+        raise ValueError("Supported sort values: modified-date, -modified-date, title, -title")
+    return await confluence_search(" AND ".join(clauses) + " ORDER BY " + order, param_limit if param_limit is not None else 5, param_cursor)
 
-    OpenAPI Description:
-        Returns all pages. The number of results is limited by the `limit` parameter and additional results (if available)
-will be available through the `next` URL present in the `Link` response header.
-
-**[Permissions](https://confluence.atlassian.com/x/_AozKw) required**:
-Permission to access the Confluence site ('Can use' global permission).
-Only pages that the user has permission to view will be returned.
-
-    Args:
-
-        param_id (List[int]): Filter the results based on page ids. Multiple page ids can be specified as a comma-separated list.
-
-        param_space_id (List[int]): Filter the results based on space ids. Multiple space ids can be specified as a comma-separated list.
-
-        param_sort (str): Used to sort the result by a particular field.
-
-        param_status (List[str]): Filter the results to pages based on their status. By default, `current` and `archived` are used.
-
-        param_title (str): Filter the results to pages based on their title.
-
-        param_body_format (str): The content format types to be returned in the `body` field of the response. If available, the representation will be available under a response field of the same name under the `body` field.
-
-        param_subtype (str): Filter the results to pages based on their subtype.
-
-        param_cursor (str): Used for pagination, this opaque cursor will be returned in the `next` URL in the `Link` response header. Use the relative URL in the `Link` header to retrieve the `next` set of results.
-
-        param_limit (int): Maximum number of pages per result to return. If more results exist, use the `Link` header to retrieve a relative URL that will return the next set of results.
-
-
-    Returns:
-        Dict[str, Any]: The JSON response from the API call.
-
-    Raises:
-        Exception: If the API request fails or returns an error.
-    """
-    logger.debug("Making GET request to /content")
-
-    params = {}
-    data = {}
-
-    # Add type=page to filter for pages only
-    params["type"] = "page"
-
-    # Only add parameters if they have values
-    if param_id is not None:
-        params["id"] = param_id
-    if param_space_id is not None:
-        params["spaceId"] = param_space_id
-    if param_sort is not None:
-        params["sort"] = param_sort
-    if param_status is not None:
-        params["status"] = param_status
-    if param_title is not None:
-        params["title"] = param_title
-    if param_body_format is not None:
-        params["expand"] = param_body_format
-    if param_subtype is not None:
-        params["subtype"] = param_subtype
-    if param_cursor is not None:
-        params["cursor"] = param_cursor
-    if param_limit is not None:
-        params["limit"] = param_limit
-
-
-
-    success, response = await make_api_request(
-        "/content",
-        method="GET",
-        params=params,
-        data=data
-    )
-
-    if not success:
-        error_details = response.get('error', 'Request failed')
-        error_message = f"Failed to get pages: {error_details}"
-        logger.error(error_message)
-        # Raise an exception instead of returning an error dict
-        # This ensures the MCP framework properly signals the error to the agent
-        raise Exception(error_message)
-    return response
 
 async def create_page(
     title: str,
