@@ -160,7 +160,7 @@ describe("ReportProblemDialog", () => {
       <ReportProblemDialog open={true} onOpenChange={jest.fn()} />
     );
     expect(screen.getByTestId("dialog-title")).toHaveTextContent(
-      "Report a Problem via Jira"
+      "Report a Problem"
     );
   });
 
@@ -291,13 +291,13 @@ describe("ReportProblemDialog", () => {
     expect(screen.queryByTestId("dialog")).not.toBeInTheDocument();
   });
 
-  it("uses GitHub label when ticketProvider is github", () => {
+  it("keeps the dialog title neutral when a global provider is configured", () => {
     mockTicketProvider = "github";
     render(
       <ReportProblemDialog open={true} onOpenChange={jest.fn()} />
     );
     expect(screen.getByTestId("dialog-title")).toHaveTextContent(
-      "Report a Problem via GitHub"
+      "Report a Problem"
     );
   });
 });

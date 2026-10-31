@@ -193,3 +193,30 @@ access token to the selected runtime. The browser does not attach a bearer token
   their bearer identity and do not inherit browser administrator privileges.
 - Conversation-write, agent-use and app installation admission checks remain in
   force for every operation. Keep admin-only app policies unchanged.
+
+## App feedback
+
+Apps can opt into the existing report dialog through their deployment installation:
+
+```yaml
+agentic_apps:
+  installations:
+    - app_id: example
+      package_id: example
+      feedback_path: /api/example/feedback
+```
+
+`feedback_path` is a canonical path relative to the app runtime. CAIPE selects
+it from the current app page and forwards submissions through the existing app
+proxy, including its availability, user access, POST policy and token checks.
+The app backend owns the provider, repository/project/space, credentials and
+attachments. It must derive reporter identity from its authenticated caller.
+Return `{ "success": true, "data": { "id": "42", "url": "https://example.test/report/42", "provider": "github" } }`.
+Supported receipt labels are `github`, `jira`, `gitlab` and `webex`; the URL may
+be empty when the provider has no link.
+
+The compatibility endpoint `/api/tickets/report` also accepts existing app
+clients. Apps without `feedback_path` use the platform's existing configured
+agent flow. A failed app submission is shown to the reporter and never silently
+rerouted to that platform flow. No app SDK or provider dependency is added.
+MCP provider registration and notification integration are tracked in #3151.

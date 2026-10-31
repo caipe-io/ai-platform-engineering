@@ -29,6 +29,17 @@ describe("External Apps deployment config", () => {
     }); } finally { if (previous === undefined) delete process.env.AGENTIC_APPS_CONFIG_PATH; else process.env.AGENTIC_APPS_CONFIG_PATH = previous; }
   });
 
+  it("loads an optional app-owned feedback path", () => {
+    withConfig(validConfig().replace("      installed: true", "      feedback_path: /api/example/feedback\n      installed: true"), path => {
+      expect(loadConfiguredAgenticApps(path)[0].installation.feedbackPath).toBe("/api/example/feedback");
+    });
+  });
+  it.each(["https://other.example.test/report", "/api/../admin", "/api/feedback?repo=other", "/api//feedback"])("rejects unsafe feedback paths %s", feedbackPath => {
+    withConfig(validConfig().replace("      installed: true", `      feedback_path: ${feedbackPath}\n      installed: true`), path => {
+      expect(() => loadConfiguredAgenticApps(path)).toThrow(/feedback_path/);
+    });
+  });
+
   it("loads and joins generic packages and installations", () => {
     withConfig(validConfig(), (path) => {
       expect(loadConfiguredAgenticApps(path)).toEqual([

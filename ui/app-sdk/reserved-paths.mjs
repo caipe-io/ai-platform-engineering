@@ -61,6 +61,7 @@ export const RESERVED_API_PATHS = [
   "/api/skill-hubs",
   "/api/skill-templates",
   "/api/skills",
+  "/api/tickets",
   "/api/user",
   "/api/users",
   "/api/v1",

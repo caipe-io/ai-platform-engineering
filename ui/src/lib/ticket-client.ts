@@ -25,7 +25,7 @@ export interface TicketRequest {
 export interface TicketResult {
   id: string;
   url: string;
-  provider: "jira" | "github";
+  provider: "jira" | "github" | "gitlab" | "webex";
 }
 
 export interface TicketStreamEvent {
@@ -153,6 +153,23 @@ export async function createTicketViaAgent(
   options: CreateTicketOptions
 ): Promise<TicketResult | null> {
   const { request, onEvent, onResult, signal } = options;
+  if (getConfig("agenticAppsEnabled")) {
+    const response = await fetch("/api/tickets/report", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request), signal,
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `Feedback submission failed (${response.status})`);
+    if (body.data?.handled !== false) {
+      const result = body.data;
+      if (!result || typeof result.id !== "string" || !["github", "jira", "gitlab", "webex"].includes(result.provider)) {
+        throw new Error("The app did not return a feedback receipt");
+      }
+      const ticket: TicketResult = { ...result, url: typeof result.url === "string" ? result.url : "" };
+      onResult?.(ticket);
+      return ticket;
+    }
+  }
   const prompt = buildPrompt(request);
 
   let finalContent = "";

@@ -58,6 +58,7 @@ type RawInstallation = {
   access_overrides?: unknown;
   host_route_claims?: unknown;
   navigation_overrides?: unknown;
+  feedback_path?: unknown;
   selected_ui_profile?: unknown;
   app_version?: unknown;
   bindings?: unknown;
@@ -214,6 +215,8 @@ export function loadConfiguredAgenticApps(
         : {}),
       ...(raw.host_route_claims !== undefined
         ? { hostRouteClaims: requiredStringArray(raw.host_route_claims, `${path}.host_route_claims`, true) } : {}),
+      ...(raw.feedback_path !== undefined
+        ? { feedbackPath: requiredFeedbackPath(raw.feedback_path, `${path}.feedback_path`) } : {}),
       ...(raw.navigation_overrides !== undefined
         ? { navigationOverrides: parseNavigationOverrides(raw.navigation_overrides, `${path}.navigation_overrides`) } : {}),
       ...(raw.access_overrides !== undefined
@@ -870,4 +873,12 @@ function requiredHttpOrigin(
     throw new Error(`${path} must be an HTTP(S) origin without credentials`);
   }
   return allowPath ? parsed.toString() : parsed.origin;
+}
+
+function requiredFeedbackPath(value: unknown, label: string): string {
+  const path = requiredString(value, label);
+  if (!/^\/[a-zA-Z0-9_/-]+$/.test(path) || path.includes("//")) {
+    throw new Error(`${label} must be a canonical app-relative path without query parameters`);
+  }
+  return path;
 }
