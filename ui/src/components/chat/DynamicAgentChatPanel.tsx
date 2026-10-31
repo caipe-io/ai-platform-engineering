@@ -1363,8 +1363,9 @@ export function ChatPanel({
       if (!response.ok || disposed) return;
       const { data } = await response.json();
       if (data?.runtime !== "harness_engine" || !data.run_id || data.status === "waiting_for_input") return;
-      if (recoveryMessageRole === "user" && (!recoveryTurnId || data.turn_id !== recoveryTurnId)) return;
-      if (data.turn_id && recoveryTurnId && data.turn_id !== recoveryTurnId) return;
+      // Maintenance runs (handoff/rewind) have no chat turn identity. They must
+      // never replace an unfinished answer or confirm that earlier turn.
+      if (!recoveryTurnId || data.turn_id !== recoveryTurnId) return;
       if (data.status !== "running" && (recoveryMessageRole === "assistant" ? recoveryMessageFinal : !data.turn_id || data.turn_id !== recoveryTurnId)) return;
       // A popup and the full chat share this store. Only one subscriber rebuilds
       // the current turn; its command and checkpoints remain server-owned.

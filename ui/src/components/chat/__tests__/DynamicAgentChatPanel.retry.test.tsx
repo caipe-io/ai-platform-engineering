@@ -146,6 +146,18 @@ describe("Engine run recovery after refresh", () => {
     } finally { fetchMock.mockRestore(); }
   });
 
+  it.each([undefined, null, "turn-other"])("does not replace an unfinished assistant with an unrelated maintenance run (%s)", async (turnId) => {
+    setConversation([message("assistant-example", "assistant", "Unfinished answer", { turnId: "turn-example", isFinal: false })]);
+    const fetchMock = status({ runtime: "harness_engine", status: "idle", run_id: "run-maintenance", turn_id: turnId });
+    try {
+      render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      await act(async () => {});
+      expect(mockRecoverRun).not.toHaveBeenCalled();
+      expect(mockConversation.messages.at(-1)).toMatchObject({ content: "Unfinished answer", isFinal: false });
+    } finally { fetchMock.mockRestore(); }
+  });
+
   it("keeps app-owned runs in their application's lifecycle", async () => {
     setConversation([message("user-example", "user", "saved prompt")]);
     const fetchMock = status({ status: "running", run_id: "app-run" });
