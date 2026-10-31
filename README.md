@@ -1,4 +1,4 @@
-# 🤖 CAIPE: An Opensource Platform for AI Platform Engineering
+# 🤖 CAIPE: An Open-Source Platform for AI
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
