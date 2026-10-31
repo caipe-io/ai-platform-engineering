@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
 import {
   gotoMcpServersTab,
   installMcpBrowserMocks,
-  openAddMcpServerEditor,
+  openMcpServerEditor,
   waitForAddMcpServerFormReady,
 } from "./_mcp-browser-fixtures";
 import { fulfillJson, mockedRbacEnabled, postJson } from "./_mocked-rbac";
@@ -106,7 +106,7 @@ test.describe("remote MCP catalog dialog", () => {
 
 test.describe("MCP server credential probe (Test Connection)", () => {
   test("Test Connection button sends POST to credential-probe and shows result", async ({ page }) => {
-    const credProbeRequests: Array<{ url?: string; credential_sources?: unknown[] }> = [];
+    const credProbeRequests: Array<{ server_id?: string; credential_sources?: unknown[] }> = [];
 
     await installMcpBrowserMocks(page, {
       secrets: [
@@ -122,7 +122,7 @@ test.describe("MCP server credential probe (Test Connection)", () => {
     await page.route("**/api/mcp-servers/credential-probe", async (route) => {
       if (route.request().method() === "POST") {
         const body = (await postJson(route)) as {
-          url?: string;
+          server_id?: string;
           credential_sources?: unknown[];
         };
         credProbeRequests.push(body);
@@ -143,12 +143,7 @@ test.describe("MCP server credential probe (Test Connection)", () => {
     });
 
     await gotoMcpServersTab(page);
-    await openAddMcpServerEditor(page);
-
-    // Fill endpoint and add a credential row — Test Connection only renders
-    // once credentialSources.length > 0.
-    await page.getByLabel(/Endpoint URL/i).fill("https://api.example.test/mcp");
-    await page.getByRole("button", { name: "Add Credential" }).click();
+    await openMcpServerEditor(page, "Jira MCP");
 
     await page.getByRole("button", { name: /Test Connection/i }).click();
 
@@ -158,7 +153,8 @@ test.describe("MCP server credential probe (Test Connection)", () => {
     await expect(page.getByText("Connected (HTTP 200)")).toBeVisible({ timeout: 10_000 });
 
     expect(credProbeRequests).toHaveLength(1);
-    expect(credProbeRequests[0]?.url).toMatch(/api\.example\.test\/mcp/);
+    expect(credProbeRequests[0]?.server_id).toBe("mcp-jira");
+    expect(credProbeRequests[0]).not.toHaveProperty("url");
   });
 
   test("Test Connection shows degraded indicator when credentials are missing", async ({ page }) => {
@@ -169,8 +165,7 @@ test.describe("MCP server credential probe (Test Connection)", () => {
         await fulfillJson(route, {
           success: true,
           data: {
-            ok: true,
-            status: 200,
+            ok: false,
             credentialOrigins: [],
             missingCredentials: ["Authorization"],
           },
@@ -181,17 +176,15 @@ test.describe("MCP server credential probe (Test Connection)", () => {
     });
 
     await gotoMcpServersTab(page);
-    await openAddMcpServerEditor(page);
-    await page.getByLabel(/Endpoint URL/i).fill("https://api.example.test/mcp");
-    await page.getByRole("button", { name: "Add Credential" }).click();
+    await openMcpServerEditor(page, "Jira MCP");
     await page.getByRole("button", { name: /Test Connection/i }).click();
 
-    // "Reachable but credentials not resolved" copy appears. Exact text — a
-    // loose /credential/i regex also matches the "Add Credential" button and
-    // "Credentials" section heading.
-    await expect(
-      page.getByText("Reachable (HTTP 200) — credentials not resolved"),
-    ).toBeVisible({ timeout: 10_000 });
+    // The probe stops before contacting AgentGateway when required credentials
+    // are unresolved, so the UI must show the degraded credential state rather
+    // than claiming that the endpoint was reachable.
+    await expect(page.getByText("Credentials not resolved", { exact: true })).toBeVisible({
+      timeout: 10_000,
+    });
   });
 });
 
