@@ -10,7 +10,8 @@ import asyncio
 import multiprocessing
 import os
 from typing import Dict, Optional, Callable, Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from contextvars import Context, copy_context
 
 # Use 'spawn' context to create fresh processes without inheriting parent's event loop
 # This is critical for Twisted reactor to work properly in subprocess
@@ -43,6 +44,7 @@ class PendingJob:
   request: CrawlRequest
   future: asyncio.Future
   worker_id: int  # Track which worker is handling this job
+  context: Context = field(default_factory=copy_context)
   on_progress: Optional[Callable[[CrawlProgress], Awaitable[None]]] = None
   on_documents: Optional[Callable[[CrawlDocuments], Awaitable[bool]]] = None  # Returns False to cancel
 
@@ -189,7 +191,7 @@ class ScrapyWorkerPool:
               queue_size=msg.payload.get("queue_size", 0),
             )
             try:
-              await pending.on_progress(progress)
+              await asyncio.create_task(pending.on_progress(progress), context=pending.context.copy())
             except Exception:
               logger.warning("Progress callback error")
 
@@ -207,7 +209,7 @@ class ScrapyWorkerPool:
             )
             try:
               # Callback returns False if we should cancel the crawl
-              should_continue = await pending.on_documents(docs)
+              should_continue = await asyncio.create_task(pending.on_documents(docs), context=pending.context.copy())
               if not should_continue:
                 logger.info(f"Documents callback requested cancellation for job {job_id}")
                 await self.cancel_crawl(job_id)

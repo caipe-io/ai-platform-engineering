@@ -1,8 +1,10 @@
 import os
+import asyncio
 import time
 import logging
 from typing import List, Dict, Any, Set
 
+from common.ingestor_listener import run_standalone_ingestion
 from common.ingestor import IngestorBuilder, Client
 from common.models.rag import StructuredEntity
 from common.models.rag import DataSourceInfo
@@ -214,135 +216,138 @@ async def sync_k8s_resources(client: Client):
       "resource_types": list(RESOURCE_LIST),
     },
   )
-  await client.upsert_datasource(datasource_info)
-  logging.info(f"Created/updated datasource: {datasource_id}")
+  async def sync_datasource() -> None:
+    await client.upsert_datasource(datasource_info)
+    logging.info(f"Created/updated datasource: {datasource_id}")
 
-  # Create job - we'll update total count once we discover all resources
-  job_response = await client.create_job(
-    datasource_id=datasource_id,
-    job_status=JobStatus.IN_PROGRESS,
-    message=f"Starting Kubernetes resource sync for cluster {CLUSTER_NAME}",
-    total=0,  # Will be updated as we discover resources
-  )
-  job_id = job_response["job_id"]
-  logging.info(f"Created job {job_id}")
+    # Create job - we'll update total count once we discover all resources
+    job_response = await client.create_job(
+      datasource_id=datasource_id,
+      job_status=JobStatus.IN_PROGRESS,
+      message=f"Starting Kubernetes resource sync for cluster {CLUSTER_NAME}",
+      total=0,  # Will be updated as we discover resources
+    )
+    job_id = job_response["job_id"]
+    logging.info(f"Created job {job_id}")
 
-  try:
-    # Ensure cluster entity exists
-    await ensure_cluster_entity_exists(client, CLUSTER_NAME, datasource_id, job_id)
+    try:
+      # Ensure cluster entity exists
+      await ensure_cluster_entity_exists(client, CLUSTER_NAME, datasource_id, job_id)
 
-    # Initialize dynamic client
-    dyn_client = dynamic.DynamicClient(kconfig.new_client_from_config())
+      # Initialize dynamic client
+      dyn_client = dynamic.DynamicClient((await asyncio.to_thread(kconfig.new_client_from_config)))
 
-    # Discover all available API resources
-    api_resources = dyn_client.resources
+      # Discover all available API resources
+      api_resources = dyn_client.resources
 
-    # Collect all entities to ingest
-    all_entities = []
-    processed_kinds = set()
-    skipped_kinds = set()
+      # Collect all entities to ingest
+      all_entities = []
+      processed_kinds = set()
+      skipped_kinds = set()
 
-    # Iterate through all resource types
-    for resource_group in api_resources:
-      try:
-        resource: Resource = resource_group[0]
-
-        # Skip invalid resources
-        if not isinstance(resource, Resource) or resource.kind is None:
-          continue
-
-        kind_lower = resource.kind.lower()
-
-        # Skip if not in allowed resource list
-        if kind_lower not in RESOURCE_LIST:
-          if kind_lower not in skipped_kinds:
-            logging.debug(f"Skipping resource type not in RESOURCE_LIST: {resource.kind}")
-            skipped_kinds.add(kind_lower)
-          continue
-
-        processed_kinds.add(kind_lower)
-
-        resource_group_version = f"{resource.group}/{resource.api_version}" if resource.group else resource.api_version
-        logging.info(f"Fetching {resource.kind} resources (API: {resource_group_version})")
-
-        # Fetch all objects of this resource type
+      # Iterate through all resource types
+      for resource_group in await asyncio.to_thread(list, api_resources):
         try:
-          objects = resource.get()
-        except (NotFoundError, ApiException) as e:
-          logging.warning(f"Cannot access {resource.kind}: {e}")
-          continue
+          resource: Resource = resource_group[0]
 
-        # Convert each object to an StructuredEntity
-        for obj in objects.items:
-          try:
-            # Generate unique identifier for logging
-            namespace = obj.metadata.get("namespace", "")
-            name = obj.metadata.get("name", "")
-            resource_id = f"{CLUSTER_NAME}/{resource_group_version}/{resource.kind}/{namespace}/{name}"
-
-            logging.debug(f"Processing {resource.kind}: {resource_id}")
-
-            # Filter ignored fields while preserving nested structure
-            resource_dict = obj.to_dict()
-            filtered_resource = utils.filter_nested_dict(resource_dict, IGNORE_FIELD_LIST)
-
-            # Add cluster name to properties
-            filtered_resource["cluster_name"] = CLUSTER_NAME  # type: ignore
-
-            # Determine primary key properties based on namespace
-            primary_key_props = determine_primary_key_properties(filtered_resource)  # type: ignore
-
-            # Determine additional key properties for alternate lookups
-            additional_keys = []
-            metadata = filtered_resource.get("metadata", {})
-            if metadata.get("uid"):
-              additional_keys.append(["cluster_name", "metadata.uid"])
-
-            # Create StructuredEntity
-            entity = StructuredEntity(entity_type=normalize_k8s_kind_to_entity_type(resource.kind), primary_key_properties=primary_key_props, additional_key_properties=additional_keys, all_properties=filtered_resource)
-            all_entities.append(entity)
-
-          except Exception as e:
-            error_msg = f"Error processing {resource.kind} object {name}: {str(e)}"
-            logging.error(error_msg, exc_info=True)
-            await client.add_job_error(job_id, [error_msg])
-            await client.increment_job_failure(job_id, 1)
+          # Skip invalid resources
+          if not isinstance(resource, Resource) or resource.kind is None:
             continue
 
-        logging.info(f"Collected {len(objects.items)} {resource.kind} resources")
+          kind_lower = resource.kind.lower()
 
-      except Exception as e:
-        logging.error(f"Error processing resource group: {e}", exc_info=True)
-        continue
+          # Skip if not in allowed resource list
+          if kind_lower not in RESOURCE_LIST:
+            if kind_lower not in skipped_kinds:
+              logging.debug(f"Skipping resource type not in RESOURCE_LIST: {resource.kind}")
+              skipped_kinds.add(kind_lower)
+            continue
 
-    # Update job with total count
-    await client.update_job(job_id=job_id, total=len(all_entities), message=f"Discovered {len(all_entities)} resources across {len(processed_kinds)} types")
+          processed_kinds.add(kind_lower)
 
-    logging.info(f"Discovered {len(all_entities)} total resources across {len(processed_kinds)} resource types")
+          resource_group_version = f"{resource.group}/{resource.api_version}" if resource.group else resource.api_version
+          logging.info(f"Fetching {resource.kind} resources (API: {resource_group_version})")
 
-    # Ingest all entities with automatic batching
-    if all_entities:
-      logging.info(f"Ingesting {len(all_entities)} entities with automatic batching")
+          # Fetch all objects of this resource type
+          try:
+            objects = (await asyncio.to_thread(resource.get))
+          except (NotFoundError, ApiException) as e:
+            logging.warning(f"Cannot access {resource.kind}: {e}")
+            continue
 
-      await client.ingest_entities(job_id=job_id, datasource_id=datasource_id, entities=all_entities, fresh_until=utils.get_fresh_until(SYNC_INTERVAL))
+          # Convert each object to an StructuredEntity
+          for obj in objects.items:
+            try:
+              # Generate unique identifier for logging
+              namespace = obj.metadata.get("namespace", "")
+              name = obj.metadata.get("name", "")
+              resource_id = f"{CLUSTER_NAME}/{resource_group_version}/{resource.kind}/{namespace}/{name}"
 
-      # Update progress
-      await client.increment_job_progress(job_id, len(all_entities))
+              logging.debug(f"Processing {resource.kind}: {resource_id}")
 
-      # Mark job as completed
-      await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully synced {len(all_entities)} K8s resources from {len(processed_kinds)} resource types")
-      logging.info(f"Successfully completed K8s resource sync: {len(all_entities)} entities")
-    else:
-      # No resources found
-      await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message="No Kubernetes resources found matching configured filters")
-      logging.info("No resources to ingest")
+              # Filter ignored fields while preserving nested structure
+              resource_dict = obj.to_dict()
+              filtered_resource = utils.filter_nested_dict(resource_dict, IGNORE_FIELD_LIST)
 
-  except Exception as e:
-    error_msg = f"Kubernetes resource sync failed: {str(e)}"
-    await client.add_job_error(job_id, [error_msg])
-    await client.update_job(job_id=job_id, job_status=JobStatus.FAILED, message=error_msg)
-    logging.error(error_msg, exc_info=True)
-    raise
+              # Add cluster name to properties
+              filtered_resource["cluster_name"] = CLUSTER_NAME  # type: ignore
+
+              # Determine primary key properties based on namespace
+              primary_key_props = determine_primary_key_properties(filtered_resource)  # type: ignore
+
+              # Determine additional key properties for alternate lookups
+              additional_keys = []
+              metadata = filtered_resource.get("metadata", {})
+              if metadata.get("uid"):
+                additional_keys.append(["cluster_name", "metadata.uid"])
+
+              # Create StructuredEntity
+              entity = StructuredEntity(entity_type=normalize_k8s_kind_to_entity_type(resource.kind), primary_key_properties=primary_key_props, additional_key_properties=additional_keys, all_properties=filtered_resource)
+              all_entities.append(entity)
+
+            except Exception as e:
+              error_msg = f"Error processing {resource.kind} object {name}: {str(e)}"
+              logging.error(error_msg, exc_info=True)
+              await client.add_job_error(job_id, [error_msg])
+              await client.increment_job_failure(job_id, 1)
+              continue
+
+          logging.info(f"Collected {len(objects.items)} {resource.kind} resources")
+
+        except Exception as e:
+          logging.error(f"Error processing resource group: {e}", exc_info=True)
+          continue
+
+      # Update job with total count
+      await client.update_job(job_id=job_id, total=len(all_entities), message=f"Discovered {len(all_entities)} resources across {len(processed_kinds)} types")
+
+      logging.info(f"Discovered {len(all_entities)} total resources across {len(processed_kinds)} resource types")
+
+      # Ingest all entities with automatic batching
+      if all_entities:
+        logging.info(f"Ingesting {len(all_entities)} entities with automatic batching")
+
+        await client.ingest_entities(job_id=job_id, datasource_id=datasource_id, entities=all_entities, fresh_until=utils.get_fresh_until(SYNC_INTERVAL))
+
+        # Update progress
+        await client.increment_job_progress(job_id, len(all_entities))
+
+        # Mark job as completed
+        await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully synced {len(all_entities)} K8s resources from {len(processed_kinds)} resource types")
+        logging.info(f"Successfully completed K8s resource sync: {len(all_entities)} entities")
+      else:
+        # No resources found
+        await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message="No Kubernetes resources found matching configured filters")
+        logging.info("No resources to ingest")
+
+    except Exception as e:
+      error_msg = f"Kubernetes resource sync failed: {str(e)}"
+      await client.add_job_error(job_id, [error_msg])
+      await client.update_job(job_id=job_id, job_status=JobStatus.FAILED, message=error_msg)
+      logging.error(error_msg, exc_info=True)
+      raise
+
+  await run_standalone_ingestion(datasource_info.datasource_id, sync_datasource)
 
 
 if __name__ == "__main__":
