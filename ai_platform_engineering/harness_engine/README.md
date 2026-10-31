@@ -267,3 +267,28 @@ Quality gates:
 uv run ruff check src tests
 uv run pytest -q
 ```
+
+## Standard installations
+
+- Docker Compose starts Harness Engine with the existing `dynamic-agents`
+  profile. Its internal port is not published. The source build is a fallback
+  when the selected release image is not published yet.
+- The umbrella Helm chart includes it whenever the UI is enabled. Set
+  `global.harnessEngine.enabled=false` to disable it.
+- Helm generates a shared service token on first installation. For GitOps,
+  provision a Secret and set `global.harnessEngine.tokenSecretName` to avoid
+  random token changes during offline rendering. The default key is
+  `HARNESS_ENGINE_INTERNAL_TOKEN`.
+- Set `harnessEngine.mongodbSecretName` to the Secret containing `MONGODB_URI`;
+  otherwise the UI's existing Secret is used. Engine collections use the
+  separate `harness_engine` database by default. With no database Secret
+  configured, Helm uses ephemeral memory storage for local evaluation.
+- Configure `harnessEngine.claudeSDKProfiles` and/or
+  `harnessEngine.agentcoreRuntimes` with the profile objects documented above.
+  Supply provider credentials through `harnessEngine.providerSecrets` or the
+  service account's AWS role through `harnessEngine.serviceAccount.annotations`.
+- Empty profiles leave the adapters visible but unavailable. Administrators can
+  register an existing AgentCore deployment from Agent Builder after providing
+  AWS invocation permissions to the Engine.
+- Claude SDK and AgentCore retain their Experimental status. Deep Agents remains
+  the default for new agents; existing conversations keep their pinned backend.

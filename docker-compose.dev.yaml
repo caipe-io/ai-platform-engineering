@@ -655,6 +655,8 @@ services:
       # Chat runtime health endpoint URL
       - A2A_BASE_URL=${A2A_BASE_URL:-http://dynamic-agents:8001}
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
+      - HARNESS_ENGINE_URL=${HARNESS_ENGINE_URL:-http://harness-engine:8010}
+      - HARNESS_ENGINE_INTERNAL_TOKEN=${HARNESS_ENGINE_INTERNAL_TOKEN:-local-development-only}
       # Feature gate for autonomous-task UI surfaces and /api/autonomous proxy.
       - ENABLE_AUTONOMOUS_AGENTS=${ENABLE_AUTONOMOUS_AGENTS:-false}
       # Autonomous Agents - URL the UI's /api/autonomous proxy targets.
@@ -912,6 +914,8 @@ services:
       # Chat runtime health endpoint URL
       - A2A_BASE_URL=${A2A_BASE_URL:-http://dynamic-agents:8001}
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
+      - HARNESS_ENGINE_URL=${HARNESS_ENGINE_URL:-http://harness-engine:8010}
+      - HARNESS_ENGINE_INTERNAL_TOKEN=${HARNESS_ENGINE_INTERNAL_TOKEN:-local-development-only}
       - SKILL_SCANNER_URL=${SKILL_SCANNER_URL:-http://skill-scanner:8000}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-${GITHUB_PERSONAL_ACCESS_TOKEN:-}}
       - MONGODB_URI=${MONGODB_URI:-mongodb://admin:changeme@caipe-mongodb:27017/caipe?authSource=admin}
@@ -1063,6 +1067,32 @@ services:
   #
   # Ports:
   #   - 8100: Dynamic Agents API (proxied via UI at /api/dynamic-agents)
+  # Portable execution backends, available with the standard agent profile.
+  # Provider profiles stay empty until an operator configures credentials/targets.
+  harness-engine:
+    image: ghcr.io/caipe-io/caipe-harness-engine:${HARNESS_ENGINE_IMAGE_TAG:-${IMAGE_TAG:-1.3.4}}
+    build:
+      context: .
+      dockerfile: ai_platform_engineering/harness_engine/build/Dockerfile
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      HARNESS_ENGINE_INTERNAL_TOKEN: ${HARNESS_ENGINE_INTERNAL_TOKEN:-local-development-only}
+      HARNESS_ENGINE_STORAGE_BACKEND: mongodb
+      HARNESS_ENGINE_MONGODB_URI: ${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/harness_engine?authSource=admin}
+      HARNESS_ENGINE_MONGODB_DATABASE: harness_engine
+      HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON: ${HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON:-{}}
+      HARNESS_ENGINE_AGENTCORE_RUNTIMES_JSON: ${HARNESS_ENGINE_AGENTCORE_RUNTIMES_JSON:-{}}
+    tmpfs:
+      - /workspace:rw,nosuid,nodev,mode=1777,size=512m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles: [dynamic-agents, harness-engine]
+
   dynamic-agents:
     build:
       context: .

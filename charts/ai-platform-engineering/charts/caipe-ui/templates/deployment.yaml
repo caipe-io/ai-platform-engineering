@@ -202,6 +202,15 @@ spec:
               value: {{ index .Values.config "MILVUS_HEALTH_URL" | default (printf "http://%s-milvus:9091/healthz" .Release.Name) | quote }}
             - name: MILVUS_MINIO_HOST
               value: {{ index .Values.config "MILVUS_MINIO_HOST" | default (printf "%s-minio" .Release.Name) | quote }}
+            {{- if dig "harnessEngine" "enabled" false (.Values.global | default dict) }}
+            - name: HARNESS_ENGINE_URL
+              value: {{ index .Values.config "HARNESS_ENGINE_URL" | default (printf "http://%s-harness-engine:8010" .Release.Name) | quote }}
+            - name: HARNESS_ENGINE_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ dig "harnessEngine" "tokenSecretName" "" .Values.global | default (printf "%s-harness-engine-token" .Release.Name) | quote }}
+                  key: {{ dig "harnessEngine" "tokenSecretKey" "HARNESS_ENGINE_INTERNAL_TOKEN" .Values.global | quote }}
+            {{- end }}
           envFrom:
             # Mount ConfigMap as environment variables (non-sensitive config)
             - configMapRef:
