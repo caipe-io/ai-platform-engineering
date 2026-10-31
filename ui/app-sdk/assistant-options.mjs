@@ -29,8 +29,9 @@ export function validateAssistantOptions(value) {
   if (value.controls !== undefined) {
     if (!Array.isArray(value.controls) || value.controls.length > 4) throw new Error("Too many assistant controls");
     for (const control of value.controls) {
-      object(control, ["id", "label", "requestKey", "defaultChoice", "choices"]);
+      object(control, ["id", "label", "requestKey", "defaultChoice", "choices", "kind"]);
       identifier(control.id); text(control.label); identifier(control.requestKey);
+      if (control.kind !== undefined && !["select", "checkbox"].includes(control.kind)) throw new Error("Invalid assistant control kind");
       if (PROTECTED.test(control.requestKey) || !/^[a-z][a-z0-9_]*$/.test(control.requestKey)) throw new Error("Protected assistant request key");
       if (!Array.isArray(control.choices) || !control.choices.length || control.choices.length > 8) throw new Error("Invalid assistant choices");
       for (const choice of control.choices) {
@@ -40,6 +41,9 @@ export function validateAssistantOptions(value) {
         if (typeof choice.value === "string") text(choice.value, 200);
       }
       unique(control.choices.map(c => c.id));
+      if (control.kind === "checkbox" && (control.choices.length !== 2 ||
+          !control.choices.some(c => c.value === true) || !control.choices.some(c => c.value === false)))
+        throw new Error("Checkbox controls require true and false choices");
       if (!control.choices.some(c => c.id === control.defaultChoice)) throw new Error("Unknown default choice");
     }
     unique(value.controls.map(c => c.id)); unique(value.controls.map(c => c.requestKey));

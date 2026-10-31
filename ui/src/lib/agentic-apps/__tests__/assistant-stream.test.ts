@@ -56,3 +56,23 @@ it("preserves the browser caller and rejects a non-SSE native response", async (
   jest.mocked(proxyAgenticAppRequest).mockResolvedValue(new Response("{}", { headers: { "content-type": "application/json" } }));
   expect((await proxyAgenticAppAssistantStream(request(), browser, chat, JSON.parse(body), "start"))!.status).toBe(502);
 });
+
+it("preserves an explicit false checkbox value in the browser stream request forwarded to the app", async () => {
+  app.manifest.ui.assistant!.hostOptions = { version: "1.0", controls: [{
+    id: "research", kind: "checkbox", label: "Personal research", requestKey: "personal_research", defaultChoice: "disabled",
+    choices: [{ id: "disabled", label: "Disabled", value: false }, { id: "enabled", label: "Enabled", value: true }],
+  }] };
+  const browser = { ...auth, bearerToken: undefined,
+    authenticatedUser: { ...auth.authenticatedUser!, session: { authMethod: "session" } },
+  } as AuthResult;
+  const chat = { ...conversation, client_type: "webui" } as Conversation;
+  const input = { ...JSON.parse(body), forwarded_props: { personal_research: false } };
+  const req = new Request("https://example.test/api/v1/chat/stream/start", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+  });
+
+  expect((await proxyAgenticAppAssistantStream(req, browser, chat, input, "start"))!.status).toBe(200);
+  expect(proxyAgenticAppRequest).toHaveBeenCalledTimes(1);
+  const forwardedRequest = jest.mocked(proxyAgenticAppRequest).mock.calls[0][0];
+  expect(await forwardedRequest.json()).toEqual(input);
+});

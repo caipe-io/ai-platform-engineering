@@ -6,6 +6,7 @@ export interface AssistantOptions {
   legacyConversationQueryParams?: string[];
   controls?: Array<{
     id: string; label: string; requestKey: string; defaultChoice: string;
+    kind?: "select" | "checkbox";
     choices: Array<{ id: string; label: string; value?: string | boolean | number }>;
   }>;
   presentation?: {
