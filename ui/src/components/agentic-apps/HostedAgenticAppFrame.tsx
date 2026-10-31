@@ -3,6 +3,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, type IframeHTMLAttributes } from "react";
 import { useTheme } from "@/components/theme-provider";
 import { isLightColorTheme } from "@/lib/color-theme";
+import { readAgenticAppPalette } from "@/lib/agentic-apps/theme-palette";
 import { useInterfaceShadows } from "@/hooks/use-interface-shadows";
 
 /** Presentation context only: never send sessions, credentials, or JWTs here. */
@@ -20,11 +21,13 @@ export const HostedAgenticAppFrame = forwardRef<HTMLIFrameElement, IframeHTMLAtt
         type: "caipe.microfrontend.initialize.v1", version: "1.0", appId,
         context: {
           surface: "hosted", route: window.location.pathname, theme,
+          themeId: resolvedTheme ?? systemTheme ?? theme,
+          palette: readAgenticAppPalette(window.getComputedStyle(document.documentElement)),
           locale: navigator.language, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           preferences: { shadows_enabled: shadowsEnabled },
         },
       }, window.location.origin);
-    }, [appId, theme, shadowsEnabled]);
+    }, [appId, theme, resolvedTheme, systemTheme, shadowsEnabled]);
 
     useEffect(() => { publish(); }, [publish]);
     useEffect(() => {
