@@ -135,6 +135,7 @@ def run(args: argparse.Namespace) -> None:
                 if http(args.engine_url + "/healthz")[0] == 200:
                     break
             except (OSError, urllib.error.URLError):
+                # Restart temporarily refuses connections; keep polling until ready.
                 pass
             time.sleep(0.1)
         else:

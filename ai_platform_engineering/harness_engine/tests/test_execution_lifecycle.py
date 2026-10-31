@@ -54,7 +54,7 @@ def wait_for_run(client: TestClient, run_id: str) -> dict:
         if run["status"] not in {"queued", "running"}:
             return run
         time.sleep(0.01)
-    pytest.fail("Run did not terminate")
+    raise AssertionError("Run did not terminate")
 
 
 @pytest.mark.parametrize("durable", [False, True])
