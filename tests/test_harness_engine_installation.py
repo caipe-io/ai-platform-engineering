@@ -71,3 +71,13 @@ def test_disabling_engine_removes_service_and_gateway_token_dependency(tmp_path:
     assert not any(doc["metadata"]["name"].startswith("example-harness-engine") for doc in docs)
     ui = next(doc for doc in docs if doc["kind"] == "Deployment")
     assert not any(item["name"].startswith("HARNESS_ENGINE_") for item in ui["spec"]["template"]["spec"]["containers"][0]["env"])
+
+
+def test_helm_default_without_database_secret_uses_ephemeral_storage(tmp_path: Path) -> None:
+    docs = _render(tmp_path)
+    engine = next(doc for doc in docs if doc["kind"] == "Deployment" and doc["metadata"]["name"] == "example-harness-engine")
+    env = {item["name"]: item for item in engine["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["HARNESS_ENGINE_STORAGE_BACKEND"]["value"] == "memory"
+    assert "HARNESS_ENGINE_MONGODB_URI" not in env
+    token = next(doc for doc in docs if doc["kind"] == "Secret" and doc["metadata"]["name"] == "example-harness-engine-token")
+    assert token["data"]["HARNESS_ENGINE_INTERNAL_TOKEN"]
