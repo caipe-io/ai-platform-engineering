@@ -6,7 +6,12 @@ let binding: Record<string, unknown>;
 const lookup = jest.fn();
 const invoke = jest.fn();
 const resolve = jest.fn();
-const update = jest.fn(async (_filter, change) => { Object.assign(binding, change.$set); for (const key of Object.keys(change.$unset ?? {})) delete binding[key]; });
+const update = jest.fn(async (filter, change) => {
+  if (filter.transition_id !== binding.transition_id) return { matchedCount: 0 };
+  Object.assign(binding, change.$set);
+  for (const key of Object.keys(change.$unset ?? {})) delete binding[key];
+  return { matchedCount: 1 };
+});
 jest.mock("@/lib/da-proxy", () => ({ authenticateRequest: async () => ({ subject: "test-user" }) }));
 jest.mock("@/lib/rbac/openfga-agent-authz", () => ({ requireAgentUsePermission: async () => null }));
 jest.mock("@/app/api/v1/chat/_conversation-authz", () => ({ authorizeConversationWriteAccess: async () => ({ conversation: {}, denial: null }), resolveConversationRuntimeId: async () => "example-thread" }));
@@ -29,4 +34,14 @@ it("retains an ambiguous handoff and recovers it after a BFF restart using the s
   expect(binding).toMatchObject({ runtime: "harness_engine", native_thread_id: "native-example" });
   expect(binding.transition_id).toBeUndefined();
   expect(resolve).not.toHaveBeenCalled();
+});
+
+
+it("does not publish a handoff whose transition changed while reconciling", async () => {
+  binding = { _id: "example", transition_id: "original", transition_action: "adopt" };
+  invoke.mockImplementationOnce(async () => { binding.transition_id = "competing"; return NextResponse.json({ success: true }); });
+  lookup.mockResolvedValueOnce({ native_thread_id: "native-example", active_run: null });
+  expect((await POST(request())).status).toBe(409);
+  expect(binding.transition_id).toBe("competing");
+  expect(binding.runtime).toBeUndefined();
 });

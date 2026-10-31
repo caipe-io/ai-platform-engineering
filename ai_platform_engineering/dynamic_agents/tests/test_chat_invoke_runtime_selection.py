@@ -159,3 +159,11 @@ def test_per_turn_tools_cannot_widen_a_saved_tool_list() -> None:
     with pytest.raises(HTTPException, match="widen"):
         _validate_allowed_tools_subset({"example": ["read"]}, {"example": True})
     _validate_allowed_tools_subset({"example": ["read", "list"]}, {"example": ["read"]})
+
+
+def test_empty_tool_list_cannot_widen_a_saved_specific_allowlist() -> None:
+    with pytest.raises(HTTPException, match="widen"):
+        _validate_allowed_tools_subset({"example": ["read"]}, {"example": []})
+    _validate_allowed_tools_subset({"example": []}, {"example": True})
+    _validate_allowed_tools_subset({"example": True}, {"example": []})
+    _validate_allowed_tools_subset({"example": []}, {"example": ["read"]})

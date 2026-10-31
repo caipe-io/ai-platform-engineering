@@ -31,3 +31,9 @@ it("rejects file operations during a handoff", async () => {
   pinned.mockResolvedValue(NextResponse.json({ error: "handoff" }, { status: 409 }));
   expect((await resolveHarnessNativeNamespace(raw, { subject: "test-user" }) as NextResponse).status).toBe(409);
 });
+
+it("keeps private skill snapshots outside the public file namespace", async () => {
+  const privateNamespace = JSON.stringify(["example-agent", "example-thread", "skills-example"]);
+  expect((await resolveHarnessNativeNamespace(privateNamespace, { subject: "test-user" }, true) as NextResponse).status).toBe(403);
+  expect(authorize).not.toHaveBeenCalled();
+});

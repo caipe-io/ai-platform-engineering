@@ -10,7 +10,7 @@ let mockStreaming = false;
 const mockPush = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 const mockToast = jest.fn();
-const mockStreamMessage = jest.fn().mockResolvedValue(undefined);
+const mockStreamMessage = jest.fn(async (_params: unknown, callbacks: StreamCallbacks) => { callbacks.onDone?.(); });
 const mockRecoverRun = jest.fn(async (_run: string, callbacks: StreamCallbacks) => { callbacks.onContent?.("Recovered final answer", []); callbacks.onDone?.(); });
 const mockChatState = {
   activeConversationId: "chat-1",
@@ -284,6 +284,23 @@ describe("retry alongside edit", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
     expect(lastRequest()).toEqual(expect.objectContaining({ message: "long task" }));
+  });
+});
+
+describe("authoritative completion", () => {
+  it("does not label an unfinished saved response as done", () => {
+    setConversation([message("user-example", "user", "example"), message("assistant-example", "assistant", "partial", { isFinal: false, turnStatus: undefined })]);
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    expect(screen.getByText("Completion has not been confirmed by the server.")).toBeInTheDocument();
+    expect(screen.queryByText("Response was interrupted")).not.toBeInTheDocument();
+  });
+
+  it("keeps a subscription closure interrupted without a server completion event", async () => {
+    setConversation([message("user-example", "user", "example"), message("assistant-example", "assistant", "partial", { isFinal: true, isInterrupted: true })]);
+    mockStreamMessage.mockResolvedValueOnce(undefined);
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(mockConversation.messages.at(-1)).toMatchObject({ turnStatus: "interrupted" }));
   });
 });
 

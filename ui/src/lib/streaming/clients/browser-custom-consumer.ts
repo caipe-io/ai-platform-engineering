@@ -236,7 +236,9 @@ export class CustomStreamAdapter implements StreamAdapter {
         }
 
         case "done": {
-          callbacks.onDone?.();
+          const parsed = JSON.parse(data);
+          if (parsed.outcome === "cancelled") callbacks.onError?.("The run was stopped before completion.");
+          else callbacks.onDone?.();
           return true;
         }
 

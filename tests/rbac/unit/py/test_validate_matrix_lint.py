@@ -273,3 +273,12 @@ def test_shared_helper_gates_every_exported_method(fake_repo: Path, position: st
     result = _run(fake_repo)
     assert result.returncode == 1
     assert "gate on POST /api/admin/users" in result.stderr
+
+
+@pytest.mark.parametrize("fake_gate", ["// requireAgentUsePermission({});", 'const example = "requireAgentUsePermission({})";'])
+def test_comments_and_strings_are_not_authorization_gates(fake_repo: Path, fake_gate: str) -> None:
+    route = fake_repo / "ui/src/app/api/admin/users/route.ts"
+    route.write_text('export async function GET(request) { await requireRbacPermission({ resource: "admin_ui", scope: "view" });\n' + fake_gate + '\n}')
+    _write_matrix(fake_repo, {"version": 1, "routes": [{"id": "example", "surface": "ui_bff", "method": "GET", "path": "/api/admin/users", "resource": "admin_ui", "scope": "view", "expectations": _OK_EXPECTATIONS}]})
+    result = _run(fake_repo)
+    assert result.returncode == 0, result.stdout + result.stderr

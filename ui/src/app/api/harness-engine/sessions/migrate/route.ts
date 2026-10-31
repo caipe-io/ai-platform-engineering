@@ -52,8 +52,9 @@ export async function POST(request: NextRequest): Promise<Response> {
   const saved = await lookupHarnessSession(config, auth, body.agent_id, conversationId);
   if (saved instanceof NextResponse) return saved;
   if (!saved.native_thread_id || saved.active_run) return NextResponse.json({ error: "Session reconciliation has not drained" }, { status: 409 });
-  await bindings.updateOne({ ...key, transition_id: transition }, { $set: {
+  const committed = await bindings.updateOne({ ...key, transition_id: transition }, { $set: {
     runtime: body.action === "adopt" ? "harness_engine" : "dynamic_agents", native_thread_id: saved.native_thread_id,
   }, $unset: { transition_id: "", transition_action: "" } });
+  if (committed.matchedCount !== 1) return NextResponse.json({ error: "Session handoff changed; retry to recover its current state" }, { status: 409 });
   return NextResponse.json({ success: true, data: { runtime: body.action === "adopt" ? "harness_engine" : "dynamic_agents", native_thread_id: saved.native_thread_id, pending_interrupt: saved.pending_interrupt } });
 }

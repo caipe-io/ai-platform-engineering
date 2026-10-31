@@ -14,7 +14,7 @@ export async function stageHarnessAttachments(
   const references: Array<{ id: string }> = [];
   for (const file of files) {
     if (!file || typeof file !== "object" || typeof file.data !== "string" || !file.data ||
-        typeof file.mime_type !== "string" || file.mime_type.length > 128 ||
+        typeof file.mime_type !== "string" || !file.mime_type.trim() || file.mime_type.length > 128 ||
         file.name !== undefined && (typeof file.name !== "string" || file.name.length > 512) ||
         !/^[A-Za-z0-9+/]*={0,2}$/.test(file.data) || file.data.length % 4 !== 0) {
       throw new TypeError("Attachments require inline base64 data and a MIME type");

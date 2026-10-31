@@ -408,6 +408,11 @@ export class TimelineManager {
       this.flushSubagentContent(subagentId);
     }
 
+    if (status === "unknown") {
+      this.rootSegments.push({ type: "status", id: "root-status", status });
+      return;
+    }
+
     // Mark all running tools as completed (unless interrupted)
     const toolStatus = status === "interrupted" ? "failed" : "completed";
     for (const tool of this.rootToolMap.values()) {

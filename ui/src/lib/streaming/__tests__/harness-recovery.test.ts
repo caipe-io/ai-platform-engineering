@@ -15,10 +15,15 @@ it("reattaches from the last received cursor without resubmitting a command", as
   } finally { fetchMock.mockRestore(); }
 });
 
-it("keeps legacy EOF behavior when there is no admitted Engine run", async () => {
+it("rejects legacy EOF without an authoritative terminal event", async () => {
   const fetchMock = jest.spyOn(global, "fetch");
+  const received: string[] = [];
+  const consume = async () => {
+    for await (const event of recoverableStream(new Response('event: content\ndata: {"text":"example"}\n\n'), "custom", new AbortController().signal)) received.push(event.event);
+  };
   try {
-    for await (const event of recoverableStream(new Response('event: content\ndata: {"text":"example"}\n\n'), "custom", new AbortController().signal)) expect(event.event).toBe("content");
+    await expect(consume()).rejects.toThrow("before the server confirmed completion");
+    expect(received).toEqual(["content"]);
     expect(fetchMock).not.toHaveBeenCalled();
   } finally { fetchMock.mockRestore(); }
 });

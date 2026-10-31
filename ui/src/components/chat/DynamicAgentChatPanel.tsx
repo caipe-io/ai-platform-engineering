@@ -1,5 +1,6 @@
 "use client";
 
+import { fetchChatRunStatus } from "@/lib/harness-engine-session-client";
 import { useComposerDraft } from "@/hooks/use-composer-draft";
 import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
@@ -1070,6 +1071,7 @@ export function ChatPanel({
     hitlFormRequested: boolean;
     hasError: boolean;
     errorMessage?: string;
+    serverCompleted?: boolean;
     /** Epoch ms when the turn was submitted — used to derive latency_ms. */
     startedAt?: number;
   }
@@ -1272,7 +1274,7 @@ export function ChatPanel({
     },
 
     onDone() {
-      // Finalization handled after adapter.streamMessage resolves
+      loopState.serverCompleted = true;
     },
 
     onError(message) {
@@ -1304,6 +1306,10 @@ export function ChatPanel({
       return;
     }
 
+    if (!state.hitlFormRequested && !state.serverCompleted && !state.hasError) {
+      state.hasError = true;
+      state.errorMessage = "The connection ended before the server confirmed completion.";
+    }
     const isFinal = !state.hitlFormRequested;
     const turnStatus: TurnStatus = state.hitlFormRequested
       ? "waiting_for_input"
@@ -1351,9 +1357,9 @@ export function ChatPanel({
     checked.add(activeConversationId);
     let disposed = false;
     let subscribed = false;
+    const recoveryController = new AbortController();
     void (async () => {
-      const response = await fetch("/api/v1/chat/stream/status", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agent_id: agentId, conversation_id: activeConversationId }) });
+      const response = await fetchChatRunStatus(agentId, activeConversationId, recoveryController.signal);
       if (!response.ok || disposed) return;
       const { data } = await response.json();
       if (data?.runtime !== "harness_engine" || !data.run_id || data.status === "waiting_for_input") return;
@@ -1382,9 +1388,10 @@ export function ChatPanel({
         state.errorMessage = error instanceof Error ? error.message : "Run recovery failed";
       }
       finalizeStreamLoop(activeConversationId, assistantId, state);
-    })().catch(error => console.error("[DynamicAgent] Run status recovery failed", error));
+    })().catch(error => { if (!disposed) console.error("[DynamicAgent] Run status recovery failed", error); });
     return () => {
       disposed = true;
+      recoveryController.abort();
       if (!subscribed) checked.delete(activeConversationId);
     };
   }, [activeConversationId, agentId, agentProtocol, isLoadingMessages, isThisConversationStreaming, isRemoteResponse,
@@ -3323,11 +3330,13 @@ const ChatMessage = React.memo(function ChatMessage({
   const displayContent = message.content;
 
   // Transform SSE events into grouped timeline data for assistant messages
-  // Use turnStatus from message (defaults to "done" for backward compatibility)
+  // An explicitly unfinished persisted message is never evidence of completion.
+  const effectiveTurnStatus = message.turnStatus ?? (message.isInterrupted ? "interrupted" :
+    isLatestAnswer && pendingHitl ? "waiting_for_input" : !isStreaming && message.isFinal === false ? "unknown" : undefined);
   const { data: timelineData } = useAgentTimeline(
     turnEvents, 
     isStreaming, 
-    message.turnStatus
+    effectiveTurnStatus
   );
 
   return (
@@ -3554,8 +3563,9 @@ const ChatMessage = React.memo(function ChatMessage({
         ) : (
           // ── Assistant message ──
           <>
+            {effectiveTurnStatus === "unknown" && <p role="status" className="mb-3 text-xs text-muted-foreground">Completion has not been confirmed by the server.</p>}
             {/* Recovery / interrupted banner */}
-            {(isRecovering || message.isInterrupted) && (
+            {(isRecovering || !isStreaming && (message.isInterrupted || effectiveTurnStatus === "interrupted")) && (
               <motion.div
                 initial={{ opacity: 0, y: -5 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -3617,7 +3627,7 @@ const ChatMessage = React.memo(function ChatMessage({
               <div className="rounded-xl bg-card/50 border border-border/50 px-4 py-3">
                 <MarkdownRenderer content={displayContent} />
               </div>
-            ) : message.turnStatus === "interrupted" ? (
+            ) : effectiveTurnStatus === "interrupted" ? (
               <div className="text-xs text-destructive px-1">
                 {interruptedTurnFallbackText(message.error)}
               </div>

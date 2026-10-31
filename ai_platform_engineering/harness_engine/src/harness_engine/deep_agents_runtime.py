@@ -82,7 +82,8 @@ class DeepAgentsRuntime:
         if runtime is None:
             return False
         runtime[1].set()
-        runtime[0].cancel()
+        if runtime[0] is not None:
+            runtime[0].cancel()
         return True
 
     async def restart_session(self, binding: Any) -> None:
@@ -124,6 +125,8 @@ class DeepAgentsRuntime:
         bearer = identity.bearer.get_secret_value()
         token_scope = current_user_token.set(bearer)
         trace_scope = current_traceparent.set(context.turn.traceparent)
+        cancellation_event = asyncio.Event()
+        self.active[context.turn.run_id] = (None, cancellation_event)
         try:
             # Reuse the existing CAS adapter. The BFF also checks conversation
             # write before admission; its service credential is never a tool credential.
@@ -168,6 +171,8 @@ class DeepAgentsRuntime:
                 ClientContext.model_validate(context.turn.client_context) if context.turn.client_context else None
             )
             servers = await asyncio.to_thread(self.mongo.get_agent_mcp_servers, config)
+            if cancellation_event.is_set():
+                raise asyncio.CancelledError
             native_id = context.binding.provider_session_id
             if not native_id:
                 raise ValueError("Deep Agents binding has no native thread")
@@ -201,9 +206,12 @@ class DeepAgentsRuntime:
                 runtime = await self.cache.get_or_create(
                     config, servers, native_id, user=user, client_context=client_context, cache_scope=cache_scope
                 )
-                files = await self._load_attachments(context, config.id)
-                cancellation_event = asyncio.Event()
                 self.active[context.turn.run_id] = (runtime, cancellation_event)
+                if cancellation_event.is_set():
+                    raise asyncio.CancelledError
+                files = await self._load_attachments(context, config.id)
+                if cancellation_event.is_set():
+                    raise asyncio.CancelledError
                 if context.turn.command == "rewind":
                     target = context.turn.rewind_data or {}
                     checkpoint_id = await runtime.rewind_before_turn(

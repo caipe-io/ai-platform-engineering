@@ -95,6 +95,7 @@ from dynamic_agents.services.model_capabilities import (
 )
 from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
+from dynamic_agents.services.skills_backend import ReadOnlySkillsBackend
 from dynamic_agents.services.structured_response import (
     STRUCTURED_OUTPUT_EVENT,
     StructuredResponseFormat,
@@ -820,7 +821,7 @@ class AgentRuntime:
         namespace = (self.config.id, self._session_id, f"skills-{digest}")
         for path, data in files.items():
             self._store.put(namespace, path.removeprefix("/skills"), data)
-        return StoreBackend(store=self._store, namespace=lambda runtime: namespace)
+        return ReadOnlySkillsBackend(store=self._store, namespace=lambda runtime: namespace)
 
     def _resolve_fs_ttl(self) -> int:
         """Resolve filesystem TTL from agent config or server default.

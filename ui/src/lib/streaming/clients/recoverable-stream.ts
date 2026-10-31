@@ -1,13 +1,5 @@
+import { waitForRetry } from "../retry";
 import { parseSSEStream, type RawSSEEvent } from "../parse-sse";
-
-function waitForRetry(delay: number, signal: AbortSignal): Promise<void> {
-  return new Promise(resolve => {
-    const finish = () => { clearTimeout(timer); signal.removeEventListener("abort", finish); resolve(); };
-    const timer = setTimeout(finish, delay);
-    signal.addEventListener("abort", finish, { once: true });
-    if (signal.aborted) finish();
-  });
-}
 
 /** Reattach to an admitted run; retries never resubmit the user's command. */
 export async function* recoverableStream(
@@ -23,9 +15,10 @@ export async function* recoverableStream(
         yield event;
         if (event.id && /^\d+(?:\.\d+)?$/.test(event.id)) cursor = event.id;
         attempts = 0;
-        if (["RUN_FINISHED", "RUN_ERROR", "done", "error", "input_required"].includes(event.event)) return;
+        const terminalEvents = protocol === "agui" ? ["RUN_FINISHED", "RUN_ERROR"] : ["done", "error", "input_required"];
+        if (terminalEvents.includes(event.event)) return;
       }
-      if (!runId) return;
+      if (!runId) throw new Error("Connection closed before the server confirmed completion. Reopen the chat to check its status.");
     } catch (error) {
       if (signal.aborted) return;
       if (!runId) throw error;

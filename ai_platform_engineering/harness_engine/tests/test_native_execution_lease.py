@@ -219,3 +219,57 @@ async def test_attachment_reader_rejects_another_owner_or_conversation(owner: st
     context.identity.subject = "test-user"
     context.binding.conversation_id = "example-thread"
     assert len(await runtime._load_attachments(context, "example-agent")) == 1
+
+
+@pytest.mark.parametrize("command", ["rewind", "reconcile"])
+@pytest.mark.parametrize("identifiers", [{"interrupt_id": "example"}, {"resumes_run_id": "example"}, {"resume_data": {}}])
+def test_state_inspection_commands_cannot_be_admitted_as_resumes(command: str, identifiers: dict[str, Any]) -> None:
+    models = import_module("harness_engine.models")
+    payload = {"agent_id": "example", "conversation_id": "example", "command": command, **identifiers}
+    if command == "rewind":
+        payload.update(turn_id="example", rewind_data={"message_content": "example", "content_occurrence": 1})
+    with pytest.raises(ValueError):
+        models.CreateRunRequest(**payload)
+
+
+@pytest.mark.skipif(find_spec("dynamic_agents") is None, reason="Requires the deep-agents extra")
+@pytest.mark.asyncio
+async def test_cancellation_is_registered_while_runtime_setup_drains(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = import_module("harness_engine.deep_agents_runtime")
+    models = import_module("dynamic_agents.models")
+    namespace = import_module("types").SimpleNamespace
+    mocks = import_module("unittest.mock")
+    config = models.DynamicAgentConfig(_id="example", name="Example", owner_id="user@example.test", system_prompt="Help", model={"id": "example", "provider": "example"})
+    runtime = object.__new__(module.DeepAgentsRuntime)
+    runtime.active = {}
+    runtime.initialize = mocks.AsyncMock()
+    db = mongomock.MongoClient(tz_aware=True).example
+    runtime.mongo = namespace(_db=db, get_agent=lambda _: config, get_agent_mcp_servers=lambda _: [])
+    entered, finish = asyncio.Event(), asyncio.Event()
+    native = mocks.MagicMock()
+    async def setup(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        await finish.wait()
+        return native
+    runtime.cache = namespace(get_or_create=setup)
+    monkeypatch.setattr(module, "require_agent_use_permission", mocks.AsyncMock())
+    snapshot = {key: value for key, value in config.model_dump(mode="json").items() if key in models.DynamicAgentConfigBase.model_fields}
+    context = namespace(
+        identity=ExecutionIdentity(subject="test-user", email="user@example.test", bearer="example-token"),
+        blueprint=namespace(id="example", harness=namespace(options={"runtime": snapshot}), model=config.model),
+        prompt=namespace(system="Help"),
+        binding=namespace(owner_subject="test-user", provider_session_id="example", last_run_id=None, native_state_key="example", agent_version=1, conversation_id="example"),
+        turn=namespace(traceparent=None, config_override=None, client_context=None, run_id="example-run", command="start", handoff_owner=None, attachments=[]),
+    )
+    async def produce() -> None:
+        async for _ in runtime.execute(context):
+            pytest.fail("Cancelled setup executed a model")
+    task = asyncio.create_task(produce())
+    await asyncio.wait_for(entered.wait(), 2)
+    assert await runtime.cancel_run("example-run")
+    finish.set()
+    results = await asyncio.gather(task, return_exceptions=True)
+    assert isinstance(results[0], asyncio.CancelledError)
+    native.stream.assert_not_called()
+    assert not runtime.active
+    assert db.execution_thread_leases.count_documents({"active_run": {"$ne": None}}) == 0

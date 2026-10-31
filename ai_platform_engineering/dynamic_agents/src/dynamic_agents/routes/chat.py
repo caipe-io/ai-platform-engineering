@@ -124,7 +124,7 @@ def _validate_allowed_tools_subset(
     - Cannot enable a server that is disabled (False) in base
     - Cannot add tools not in base's tool list (when base has a specific list)
     - Setting False (disable) is always allowed
-    - Setting True (all) requires True in the base configuration
+    - True and [] mean all tools and require an unrestricted base configuration
 
     Raises:
         HTTPException(400): If override violates subset constraint.
@@ -157,13 +157,13 @@ def _validate_allowed_tools_subset(
         if override_val is False:
             continue
 
-        if override_val is True:
-            if base_val is not True:
+        if override_val is True or override_val == []:
+            if base_val is not True and base_val != []:
                 raise HTTPException(status_code=400, detail="config_override cannot widen a tool list to all tools")
             continue
 
         # Override is a specific list — validate each tool
-        if isinstance(override_val, list) and isinstance(base_val, list):
+        if isinstance(override_val, list) and isinstance(base_val, list) and base_val:
             extra = set(override_val) - set(base_val)
             if extra:
                 raise HTTPException(
@@ -179,6 +179,7 @@ def _validate_allowed_tools_subset(
 # assisted-by Codex Codex-sonnet-4-6
 router = APIRouter(prefix="/chat", tags=["chat"])
 GENERIC_AGENT_ERROR = "Agent execution failed. Check server logs for details."
+CONVERSATION_BUSY_ERROR = "This conversation is active or owned by another runtime. Wait for it to finish or reconcile its session."
 
 
 class RestartRuntimeRequest(BaseModel):
@@ -379,6 +380,10 @@ async def _generate_sse_events(
         logger.warning("Agent output request failed for agent %s", agent_config.id)
         for frame in encoder.on_run_error(str(exc)):
             yield frame
+    except NativeThreadBusyError:
+        logger.info("Native conversation is busy: %s", session_id)
+        for frame in encoder.on_run_error(CONVERSATION_BUSY_ERROR, code="conversation_busy"):
+            yield frame
     except Exception:
         logger.exception(f"Error streaming from agent '{agent_config.name}'")
         for frame in encoder.on_run_error(GENERIC_AGENT_ERROR):
@@ -521,6 +526,10 @@ async def _generate_resume_sse_events(
     except (ToolCallRecoveryError, StructuredResponseError) as exc:
         logger.warning("Agent output request failed for agent %s", agent_config.id)
         for frame in encoder.on_run_error(str(exc)):
+            yield frame
+    except NativeThreadBusyError:
+        logger.info("Native conversation is busy: %s", session_id)
+        for frame in encoder.on_run_error(CONVERSATION_BUSY_ERROR, code="conversation_busy"):
             yield frame
     except Exception:
         logger.exception(f"Error resuming stream for agent '{agent_config.name}'")

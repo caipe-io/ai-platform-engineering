@@ -270,4 +270,13 @@ describe("CustomStreamAdapter", () => {
       ),
     ).resolves.toBeUndefined();
   });
+
+  it("does not report remote cancellation as successful completion", async () => {
+    mockFetch.mockResolvedValue(sseResponse(['event: done\ndata: {"outcome":"cancelled"}\n\n']));
+    const cb = callbacks();
+    await new CustomStreamAdapter().recoverRun("example", cb);
+    expect(cb.onDone).not.toHaveBeenCalled();
+    expect(cb.onError).toHaveBeenCalledWith(expect.stringContaining("stopped"));
+  });
+
 });

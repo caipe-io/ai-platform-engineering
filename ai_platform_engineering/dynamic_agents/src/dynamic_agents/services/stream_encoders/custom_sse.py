@@ -123,7 +123,7 @@ class CustomStreamEncoder(StreamEncoder[FrameT]):
         return [self._frame("done", {})]
 
     def on_run_error(self, message: str, code: str | None = None) -> list[FrameT]:
-        return [self._frame("error", {"error": message})]
+        return [self._frame("error", {"error": message, **({"code": code} if code else {})})]
 
     def on_warning(self, message: str) -> list[FrameT]:
         return [self._frame("warning", {"message": message, "namespace": []})]

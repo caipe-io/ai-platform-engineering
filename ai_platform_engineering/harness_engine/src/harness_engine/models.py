@@ -376,12 +376,12 @@ class CreateRunRequest(StrictModel):
         if self.handoff_owner and self.command != "reconcile":
             raise ValueError("Execution ownership changes require checkpoint reconciliation")
         if self.command == "reconcile":
-            if self.attachments or self.resume_data or self.message:
+            if self.attachments or self.resume_data is not None or self.message or self.resumes_run_id or self.interrupt_id:
                 raise ValueError("Reconcile only inspects the native checkpoint")
         elif self.command == "rewind":
             if not self.turn_id or not self.rewind_data or not isinstance(self.rewind_data.get("message_content"), str) or type(self.rewind_data.get("content_occurrence")) is not int or self.rewind_data["content_occurrence"] < 1:
                 raise ValueError("Rewind requires the persisted target turn and content occurrence")
-            if self.attachments or self.resume_data:
+            if self.attachments or self.resume_data is not None or self.resumes_run_id or self.interrupt_id:
                 raise ValueError("Rewind cannot include new attachments or an approval")
         elif self.command == "resume":
             if not self.resumes_run_id or not self.interrupt_id or self.resume_data is None or self.attachments:

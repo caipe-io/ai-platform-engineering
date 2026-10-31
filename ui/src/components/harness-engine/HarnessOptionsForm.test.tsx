@@ -22,3 +22,17 @@ it("preserves numeric drafts inside nested fields and commits valid numbers on b
   fireEvent.blur(field);
   expect(field).toHaveValue("-1.5");
 });
+
+it("clears a required numeric value so missing-field validation can reject the save", () => {
+  const changed = jest.fn();
+  function Example() {
+    const [value, setValue] = useState<Record<string, unknown>>({ amount: 2 });
+    return <HarnessOptionsForm schema={{ required: ["amount"], properties: { amount: { type: "number" } } }} value={value} onChange={next => { changed(next); setValue(next); }} />;
+  }
+  render(<Example />);
+  const field = screen.getByLabelText("amount");
+  fireEvent.change(field, { target: { value: "" } });
+  fireEvent.blur(field);
+  expect(changed).toHaveBeenLastCalledWith({});
+  expect(field).toHaveValue("");
+});

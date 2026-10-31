@@ -35,3 +35,9 @@ it("rejects schema features that the bounded host form cannot render", () => {
 it("keeps legacy capability panels visible without a versioned UI schema", () => {
   expect(harnessBuilderSections({ ...descriptor, ui_schema: {} }).map(section => section.renderer)).toEqual(["deep-agents-middleware"]);
 });
+
+it.each(["", "   "])("rejects an empty MIME type (%s) before staging bytes", async mime => {
+  updateOne.mockClear();
+  await expect(stageHarnessAttachments([{ data: "ZXhhbXBsZQ==", mime_type: mime }], { subject: "test-user" }, "example", "example")).rejects.toThrow("MIME");
+  expect(updateOne).not.toHaveBeenCalled();
+});

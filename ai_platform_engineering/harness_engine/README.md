@@ -25,6 +25,8 @@ service until an operator enables the Engine integration.
   transient execution context for CAS/MCP checks; it is excluded from persisted
   runs and events. Provider SDK adapters do not receive this delegated bearer.
 - A provider invocation belongs to Harness Engine, not to an SSE subscriber. Closing a browser or BFF connection only removes that subscription.
+- The chat UI subscribes through fetch-based SSE and reattaches with the admitted run ID and event cursor after a refresh or transport failure. It never reposts the prompt to recover a run.
+- Only a server terminal event confirms completion. A closed connection or unfinished saved response must not mark pending tools or the turn as done.
 - The existing BFF `/api/v1/chat/*` routes form Harness Gateway. They read the
   BFF-owned `execution_harness_id`, preserve Dynamic Agents for missing/default
   values, and translate Harness Engine canonical events for existing clients.

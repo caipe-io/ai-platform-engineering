@@ -148,3 +148,20 @@ def test_skill_snapshots_do_not_replace_shared_files_or_another_runtime_skills()
     latest = runtime._build_skill_store_backend(revised)
     assert "Updated instructions" in latest.read("/default/example/SKILL.md").file_data["content"]
     assert "Original instructions" in original.read("/default/example/SKILL.md").file_data["content"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_skill_routes_reject_sync_and_async_mutation() -> None:
+    runtime = runtime_for(MagicMock())
+    runtime._session_id = "example"
+    runtime._store = InMemoryStore()
+    files, _ = build_skills_files([{"name": "example", "content": "Original instructions"}])
+    backend = runtime._build_skill_store_backend(files)
+    path = "/default/example/SKILL.md"
+    assert backend.write("/new.md", "replace").error
+    assert (await backend.awrite("/new.md", "replace")).error
+    assert backend.edit(path, "Original", "Changed").error
+    assert (await backend.aedit(path, "Original", "Changed")).error
+    assert backend.upload_files([(path, b"replace")])[0].error
+    assert (await backend.aupload_files([(path, b"replace")]))[0].error
+    assert "Original instructions" in backend.read(path).file_data["content"]

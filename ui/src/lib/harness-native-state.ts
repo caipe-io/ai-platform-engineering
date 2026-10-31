@@ -14,6 +14,7 @@ export async function resolveHarnessNativeNamespace(raw: string, auth: AuthResul
   if (!Array.isArray(namespace) || namespace.length !== 3 || namespace.some(part => typeof part !== "string")) {
     return NextResponse.json({ error: "Invalid namespace" }, { status: 400 });
   }
+  if (namespace[2] !== "filesystem") return NextResponse.json({ error: "Only filesystem namespaces are public" }, { status: 403 });
   if (!auth.subject) return NextResponse.json({ error: "Caller identity required" }, { status: 401 });
   const workflow = await (await getCollection<WorkflowRunAccessDocument>("workflow_runs")).findOne({ _id: namespace[1] });
   if (workflow) {

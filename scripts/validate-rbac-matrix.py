@@ -169,14 +169,14 @@ def find_openfga_agent_use_route_sites() -> dict[tuple[str, str], list[str]]:
             content = path.read_text()
         except (UnicodeDecodeError, PermissionError):
             continue
-        for match in TS_OPENFGA_AGENT_USE_RE.finditer(content):
+        masked = re.sub(r"//[^\n]*|/\*[\s\S]*?\*/|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`",
+                        lambda item: " " * len(item.group()), content)
+        for match in TS_OPENFGA_AGENT_USE_RE.finditer(masked):
             line_no = content[: match.start()].count("\n") + 1
             where = f"{path.relative_to(REPO_ROOT)}:{line_no}"
-            handlers = list(handler_pattern.finditer(content))
+            handlers = list(handler_pattern.finditer(masked))
             # Mask comments and quoted text before counting delimiters. A gate
             # in a module helper is conservatively attributed to every method.
-            masked = re.sub(r"//[^\n]*|/\*[\s\S]*?\*/|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`",
-                            lambda item: " " * len(item.group()), content)
             methods = []
             for handler in handlers:
                 stack: list[str] = []
