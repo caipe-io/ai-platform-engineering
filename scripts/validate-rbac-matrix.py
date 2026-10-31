@@ -172,13 +172,34 @@ def find_openfga_agent_use_route_sites() -> dict[tuple[str, str], list[str]]:
         for match in TS_OPENFGA_AGENT_USE_RE.finditer(content):
             line_no = content[: match.start()].count("\n") + 1
             where = f"{path.relative_to(REPO_ROOT)}:{line_no}"
-            handlers = list(handler_pattern.finditer(content, 0, match.start()))
-            # A module-level helper can precede its exported handler. In that
-            # case require coverage for every method that may use the helper.
-            methods = (
-                [handlers[-1].group(1)] if handlers
-                else [handler.group(1) for handler in handler_pattern.finditer(content)]
-            )
+            handlers = list(handler_pattern.finditer(content))
+            # Mask comments and quoted text before counting delimiters. A gate
+            # in a module helper is conservatively attributed to every method.
+            masked = re.sub(r"//[^\n]*|/\*[\s\S]*?\*/|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`",
+                            lambda item: " " * len(item.group()), content)
+            methods = []
+            for handler in handlers:
+                stack: list[str] = []
+                entered = False
+                end = len(content)
+                for offset in range(handler.end(), len(masked)):
+                    char = masked[offset]
+                    if char in "({[":
+                        stack.append(char)
+                        entered = True
+                    elif char in ")}]":
+                        if stack:
+                            stack.pop()
+                        if entered and not stack and char == "}" and "function" in masked[handler.start():handler.end()]:
+                            end = offset + 1
+                            break
+                    elif char == ";" and not stack:
+                        end = offset + 1
+                        break
+                if handler.start() <= match.start() < end:
+                    methods.append(handler.group(1))
+            if not methods:
+                methods = [handler.group(1) for handler in handlers]
             for method in methods or ["UNKNOWN"]:
                 sites.setdefault((method, route_path_from_ui_file(path)), []).append(where)
     return sites

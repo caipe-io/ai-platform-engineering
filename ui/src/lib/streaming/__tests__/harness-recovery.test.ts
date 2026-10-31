@@ -22,3 +22,22 @@ it("keeps legacy EOF behavior when there is no admitted Engine run", async () =>
     expect(fetchMock).not.toHaveBeenCalled();
   } finally { fetchMock.mockRestore(); }
 });
+
+it("keeps recovering an admitted run through more than three quiet disconnects", async () => {
+  jest.useFakeTimers();
+  const fetchMock = jest.spyOn(global, "fetch");
+  for (let index = 0; index < 4; index++) fetchMock.mockResolvedValueOnce(new Response(""));
+  fetchMock.mockResolvedValueOnce(new Response('id: 1.0\nevent: RUN_FINISHED\ndata: {}\n\n'));
+  const collect = async () => {
+    const events = [];
+    for await (const event of recoverableStream(new Response("", { headers: { "X-Harness-Run-ID": "example" } }), "agui", new AbortController().signal)) events.push(event);
+    return events;
+  };
+  try {
+    const result = collect();
+    await jest.runAllTimersAsync();
+    expect((await result).map(event => event.id)).toEqual(["1.0"]);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock.mock.calls.every(call => call[1]?.method !== "POST")).toBe(true);
+  } finally { jest.useRealTimers(); fetchMock.mockRestore(); }
+});

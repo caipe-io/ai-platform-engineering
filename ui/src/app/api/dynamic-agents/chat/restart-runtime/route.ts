@@ -25,12 +25,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   const config = getServerConfig();
 
   const dynamicAgentsUrl = config.dynamicAgentsUrl;
-  if (!dynamicAgentsUrl) {
-    return NextResponse.json(
-      { success: false, error: "Dynamic agents URL not configured" },
-      { status: 500 }
-    );
-  }
+
 
   // Authenticate the request
   let accessToken: string | undefined;
@@ -106,10 +101,18 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (access.denial) return access.denial;
   const runtimeId = await resolveConversationRuntimeId(access.conversation);
   const pinned = auth.subject ? await getPinnedHarnessGatewayTarget(body.agent_id, auth.subject, runtimeId) : null;
+  if (pinned instanceof NextResponse) return pinned;
   if (pinned?.kind === "harness_engine") {
     const engine = getHarnessEngineConfig();
     if (engine instanceof NextResponse) return engine;
     return proxyHarnessEngine(engine, auth, "/api/v1/sessions/restart-runtime", { method: "POST", body: JSON.stringify({ ...body, conversation_id: runtimeId }) });
+  }
+
+  if (!dynamicAgentsUrl) {
+    return NextResponse.json(
+      { success: false, error: "Dynamic agents URL not configured" },
+      { status: 500 }
+    );
   }
 
   body.conversation_id = await getHarnessGatewayNativeThread(body.agent_id, auth.subject, runtimeId);

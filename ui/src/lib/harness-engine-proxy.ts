@@ -130,7 +130,7 @@ export async function lookupHarnessSession(
   auth: Pick<AuthResult, "subject" | "traceparent">,
   agentId: string,
   conversationId: string,
-): Promise<{ harness_id: string | null; native_thread_id?: string | null; pending_interrupt?: Record<string, unknown> | null; active_run?: import("@/types/harness-engine").HarnessRun | null; last_run?: import("@/types/harness-engine").HarnessRun | null } | NextResponse> {
+): Promise<{ agent_version?: number | null; harness_id: string | null; native_thread_id?: string | null; pending_interrupt?: Record<string, unknown> | null; active_run?: import("@/types/harness-engine").HarnessRun | null; last_run?: import("@/types/harness-engine").HarnessRun | null } | NextResponse> {
   const response = await proxyHarnessEngine(config, auth, "/api/v1/sessions/lookup", {
     method: "POST",
     body: JSON.stringify({ agent_id: agentId, conversation_id: conversationId }),

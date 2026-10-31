@@ -18,7 +18,7 @@ from dynamic_agents.config import get_settings
 from dynamic_agents.log_config import conversation_id_var
 from dynamic_agents.models import ChatRequest, ClientContext, DynamicAgentConfig, InputFile, UserContext
 from dynamic_agents.services.app_context_prompt import app_context_scope
-from dynamic_agents.services.execution_lease import reserve_native_thread
+from dynamic_agents.services.execution_lease import NativeThreadBusyError, reserve_native_thread
 from dynamic_agents.services.llm_clients import LLMConfigError
 from dynamic_agents.services.model_capabilities import supports_reasoning_effort
 from dynamic_agents.services.mongo import MongoDBService, get_mongo_service
@@ -124,7 +124,7 @@ def _validate_allowed_tools_subset(
     - Cannot enable a server that is disabled (False) in base
     - Cannot add tools not in base's tool list (when base has a specific list)
     - Setting False (disable) is always allowed
-    - Setting True (all) is allowed if base allows the server
+    - Setting True (all) requires True in the base configuration
 
     Raises:
         HTTPException(400): If override violates subset constraint.
@@ -157,8 +157,9 @@ def _validate_allowed_tools_subset(
         if override_val is False:
             continue
 
-        # "All tools" is fine if base allows the server at all
         if override_val is True:
+            if base_val is not True:
+                raise HTTPException(status_code=400, detail="config_override cannot widen a tool list to all tools")
             continue
 
         # Override is a specific list — validate each tool
@@ -656,8 +657,8 @@ async def chat_invoke(
                     return await _collect_invoke_response(runtime=runtime, request=request, user=user, agent=agent)
 
         async with AsyncExitStack() as stack:
-            await stack.enter_async_context(reserve_native_thread(mongo._db, agent, request.conversation_id, uuid4().hex))
             if persist_history:
+                await stack.enter_async_context(reserve_native_thread(mongo._db, agent, request.conversation_id, uuid4().hex))
                 runtime = await cache.get_or_create(
                     agent,
                     mcp_servers,
@@ -683,6 +684,8 @@ async def chat_invoke(
                 agent=agent,
             )
 
+    except NativeThreadBusyError:
+        return JSONResponse(status_code=409, content={"success": False, "error": "Conversation is active or owned by another runtime"})
     except RuntimeInitError as exc:
         schema_error = isinstance(exc.cause, StructuredResponseError)
         logger.warning("Agent invocation initialization failed: %s", type(exc.cause).__name__)

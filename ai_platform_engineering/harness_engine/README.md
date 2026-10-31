@@ -275,7 +275,8 @@ uv run pytest -q
 
 ## Opt-in Deep Agents integration
 
-- Install Python 3.14 and `uv sync --extra deep-agents`, or build
+- Install Python 3.14 and run `uv sync --python 3.14 --extra deep-agents`
+  from `ai_platform_engineering/harness_engine`, or build
   `ai_platform_engineering/harness_engine/build/Dockerfile.deep-agents` from the
   repository root. Provider-only installations retain their existing image.
 - Enable `HARNESS_ENGINE_DEEP_AGENTS_ENABLED=true` on both Engine and BFF.
@@ -324,6 +325,9 @@ migration so they enforce the same `execution_thread_leases` ownership fence.
   reserves the native thread, reads its persisted interrupt, and changes the
   producer owner only after successful reconciliation. Failed inspection retains
   the previous producer owner. A late producer from the old runtime is rejected.
+- A timeout or BFF restart retains the handoff fence. Repeat the authenticated
+  migration request with the same action to observe and finish the original
+  reconciliation run. Recovery never submits a new prompt or approval.
 - Pending forms and tool approvals stay in LangGraph checkpoints. Adoption reads
   them before executing a new prompt. Responses identify the exact saved
   interrupt; replayed approval keys return the original run without executing
@@ -336,6 +340,29 @@ migration so they enforce the same `execution_thread_leases` ownership fence.
   state before operator recovery; an ambiguous dispatched approval is fenced as
   degraded and cannot be replayed as a fresh start.
 
+### Recovering a stopped producer
+
+- Lease release drains in-flight Mongo writes despite repeated cancellation and
+  retries transient storage failures. A persistent failure retains the fence and
+  logs its exact lease key and run ID.
+- Stop **all** Engine and compatibility producer replicas before manual recovery.
+  Confirm the recorded run has stopped; inspect its checkpoint and pending tool
+  approval. Never clear a live or ambiguous producer's reservation.
+- After inspection, use the application database to release only that stopped
+  reservation, preserving execution ownership:
+
+  ```javascript
+  db.execution_thread_leases.updateOne(
+    { _id: "lease-key-from-log", active_run: "stopped-run-id" },
+    { $set: { active_run: null } }
+  )
+  ```
+
+- If a BFF died during an agent save, stop all BFF replicas, compare the agent's
+  saved publication pointer and tool/team grants, and reconcile those grants
+  before deleting that agent's `agent_mutation_locks` record. There is no TTL
+  takeover of an in-progress cross-service save.
+
 ### Builder and publication
 
 - Effective capabilities control model, tools, knowledge, skills and native
@@ -347,15 +374,21 @@ migration so they enforce the same `execution_thread_leases` ownership fence.
   updating agent metadata. `execution_blueprint_version` in the agent document is
   the publication pointer. New sessions use that pointer; existing sessions keep
   their pinned version. Unpublished prepared versions are not selected by the
-  gateway. Concurrent metadata changes cause the conditional publication to fail.
+  gateway. A per-agent mutation fence serializes permission changes and pointer
+  commits; stale edits fail before permission changes. A subsequent prepare uses
+  the latest Engine revision, so an unpublished version cannot block retries.
 - The builder asks users to acknowledge that a harness change applies to new
   conversations, while incompatible saved settings remain available for review.
 
 ### Validation
 
-- Engine: `uv run --extra deep-agents --extra dev pytest -q`.
+- Engine: from `ai_platform_engineering/harness_engine`, run
+  `uv run --python 3.14 --extra deep-agents --extra dev pytest -q`.
 - Runtime: from `dynamic_agents`, run
-  `uv run --project ../harness_engine --extra deep-agents --extra dev pytest -q tests`.
+  `uv run --python 3.14 --project ../harness_engine --extra deep-agents --extra dev pytest -q tests`.
+- Translated SSE uses `sequence.subframe` cursors. Reconnect reconstructs
+  translation state from retained canonical events and skips delivered
+  subframes. A missing retained prefix fails explicitly.
 - Live transport/checkpoint E2E: `tests/harness_engine/live_e2e.py` accepts an
   isolated BFF URL, a private OIDC fixture file and a private environment file.
   `--engine-container` optionally restarts only the named test Engine.

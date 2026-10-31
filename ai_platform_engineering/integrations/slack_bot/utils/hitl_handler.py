@@ -142,6 +142,8 @@ def parse_agui_interrupt(event, conversation_id: str = None, agent_id: str = Non
     for tool in payload.get("tool_approvals") or []:
       allowed &= set(tool.get("allowed_decisions") or ["approve", "reject", "edit"])
     form.actions = [action for action in form.actions if action.action_id in allowed]
+    if not form.actions:
+      form.description += "\nThis approval requires editing or separate tool decisions. Open this conversation in the web app to review and continue."
 
   return form
 

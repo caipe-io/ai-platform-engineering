@@ -12,10 +12,11 @@ authenticateRequest,
 getDynamicAgentsConfig,
 proxyRequest,
 } from "@/lib/da-proxy";
+import { authorizeConversationWriteAccess, resolveConversationRuntimeId } from "@/app/api/v1/chat/_conversation-authz";
 import { getCollection } from "@/lib/mongodb";
 import { getAgentId } from "@/types/a2a";
 import type { Conversation } from "@/types/mongodb";
-import { getPinnedHarnessGatewayTarget, getHarnessGatewayNativeThread } from "@/lib/harness-gateway";
+import { resolveHarnessGatewayTarget, getHarnessGatewayNativeThread } from "@/lib/harness-gateway";
 import { POST as clearEngineSession } from "@/app/api/harness-engine/sessions/clear/route";
 import { NextRequest,NextResponse } from "next/server";
 
@@ -45,14 +46,19 @@ export async function POST(
 
   const conversation = await (await getCollection<Conversation>("conversations")).findOne({ _id: conversationId });
   const agentId = conversation ? getAgentId(conversation) : undefined;
-  const pinned = agentId && authResult.subject ? await getPinnedHarnessGatewayTarget(agentId, authResult.subject, conversationId) : null;
+  if (!agentId || !authResult.subject) return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+  const access = await authorizeConversationWriteAccess(authResult, conversationId, agentId);
+  if (access.denial) return access.denial;
+  const runtimeId = await resolveConversationRuntimeId(access.conversation);
+  const pinned = await resolveHarnessGatewayTarget(agentId, { subject: authResult.subject, conversationId: runtimeId });
+  if (pinned instanceof NextResponse) return pinned;
   if (pinned?.kind === "harness_engine") {
     if (authResult.role !== "admin") return NextResponse.json({ error: "Admin permission is required" }, { status: 403 });
     return clearEngineSession(new NextRequest(new URL("/api/harness-engine/sessions/clear", request.url), {
       method: "POST", headers: request.headers, body: JSON.stringify({ agent_id: agentId, conversation_id: conversationId }),
     }));
   }
-  const nativeId = agentId && authResult.subject ? await getHarnessGatewayNativeThread(agentId, authResult.subject, conversationId) : conversationId;
+  const nativeId = agentId && authResult.subject ? await getHarnessGatewayNativeThread(agentId, authResult.subject, runtimeId) : conversationId;
 
   // Check DA config
   const daConfig = getDynamicAgentsConfig();

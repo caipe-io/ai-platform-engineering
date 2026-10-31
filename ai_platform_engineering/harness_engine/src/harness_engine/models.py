@@ -358,13 +358,28 @@ class CreateRunRequest(StrictModel):
 
     @model_validator(mode="after")
     def validate_command(self) -> CreateRunRequest:
+        if self.config_override is not None:
+            if set(self.config_override) - {"model", "allowed_tools"}:
+                raise ValueError("Unsupported per-turn execution override")
+            model = self.config_override.get("model", {})
+            if not isinstance(model, dict) or set(model) - {"reasoning_effort"}:
+                raise ValueError("Only model reasoning effort can be overridden per turn")
+            if "reasoning_effort" in model and model["reasoning_effort"] not in ("low", "medium", "high", "max"):
+                raise ValueError("Invalid reasoning effort override")
+            if "allowed_tools" in self.config_override:
+                tools = self.config_override["allowed_tools"]
+                if not isinstance(tools, dict) or any(
+                    not isinstance(value, bool) and not (isinstance(value, list) and all(isinstance(item, str) for item in value))
+                    for value in tools.values()
+                ):
+                    raise ValueError("Invalid allowed tools override")
         if self.handoff_owner and self.command != "reconcile":
             raise ValueError("Execution ownership changes require checkpoint reconciliation")
         if self.command == "reconcile":
             if self.attachments or self.resume_data or self.message:
                 raise ValueError("Reconcile only inspects the native checkpoint")
         elif self.command == "rewind":
-            if not self.turn_id or not self.rewind_data or not isinstance(self.rewind_data.get("message_content"), str) or not isinstance(self.rewind_data.get("content_occurrence"), int) or self.rewind_data["content_occurrence"] < 1:
+            if not self.turn_id or not self.rewind_data or not isinstance(self.rewind_data.get("message_content"), str) or type(self.rewind_data.get("content_occurrence")) is not int or self.rewind_data["content_occurrence"] < 1:
                 raise ValueError("Rewind requires the persisted target turn and content occurrence")
             if self.attachments or self.resume_data:
                 raise ValueError("Rewind cannot include new attachments or an approval")

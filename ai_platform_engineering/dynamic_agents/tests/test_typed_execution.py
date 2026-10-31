@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -11,10 +12,12 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.store.memory import InMemoryStore
 
 from dynamic_agents.models import DynamicAgentConfig
 from dynamic_agents.services.agent_runtime import AgentRuntime
 from dynamic_agents.services.execution import RuntimeEvent, TurnOutcome, execute_turn
+from dynamic_agents.services.skills import build_skills_files
 from dynamic_agents.services.stream_encoders.custom_sse import CustomStreamEncoder
 
 
@@ -100,7 +103,10 @@ async def test_real_deep_agent_pauses_then_resumes_from_native_checkpoint() -> N
     assert isinstance(first[-1], TurnOutcome)
     assert first[-1].status == "paused"
     assert first[-1].interrupt["interrupt_id"]
-    # Reconstruct the runtime while retaining only the native checkpoint.
+    # Reconstruct the graph and runtime while retaining the native checkpoint.
+    graph = create_deep_agent(
+        model, tools=[request_user_input], interrupt_on={"request_user_input": True}, checkpointer=saver
+    )
     resumed = [
         event
         async for event in execute_turn(
@@ -113,3 +119,32 @@ async def test_real_deep_agent_pauses_then_resumes_from_native_checkpoint() -> N
     assert resumed[-1].status == "completed"
     assert "Selected value received" in resumed[-1].result["content"]
     assert not (await graph.aget_state({"configurable": {"thread_id": "native-thread"}})).interrupts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resume_data", [None, '{"type":"form_input","values":{}}'])
+async def test_cancellation_before_stream_initialization_never_starts_graph(resume_data: str | None) -> None:
+    graph = MagicMock()
+    runtime = runtime_for(graph)
+    cancellation = asyncio.Event()
+    cancellation.set()
+    events = [event async for event in execute_turn(runtime, session_id="example", user_id="user@example.test", message="example", resume_data=resume_data, cancellation_event=cancellation)]
+    assert events == [TurnOutcome("cancelled")]
+    graph.astream.assert_not_called()
+
+
+def test_skill_snapshots_do_not_replace_shared_files_or_another_runtime_skills() -> None:
+    runtime = runtime_for(MagicMock())
+    runtime._session_id = "example-session"
+    runtime._store = InMemoryStore()
+    files, _ = build_skills_files([{"name": "example", "content": "---\nname: example\ndescription: Example\n---\nOriginal instructions"}])
+    original = runtime._build_skill_store_backend(files)
+    assert "Original instructions" in original.read("/default/example/SKILL.md").file_data["content"]
+    other = runtime_for(MagicMock())
+    other._session_id = "other-session"
+    other._store = runtime._store
+    assert other._build_skill_store_backend({}).read("/default/example/SKILL.md").error
+    revised, _ = build_skills_files([{"name": "example", "content": "---\nname: example\ndescription: Example\n---\nUpdated instructions"}])
+    latest = runtime._build_skill_store_backend(revised)
+    assert "Updated instructions" in latest.read("/default/example/SKILL.md").file_data["content"]
+    assert "Original instructions" in original.read("/default/example/SKILL.md").file_data["content"]

@@ -66,6 +66,8 @@ class RunCoordinator:
         if request.client_request_id:
             existing = await self._repository.find_run_request(owner_subject, request.agent_id, request.conversation_id, request.client_request_id)
             if existing is not None:
+                if request.agent_version is not None and request.agent_version != existing.agent_version:
+                    raise RunAdmissionError("Request ID was already used with a different agent version")
                 fingerprint = hashlib.sha256(request.model_copy(update={"agent_version": existing.agent_version}).model_dump_json().encode()).hexdigest()
                 if existing.request_fingerprint != fingerprint:
                     raise RunAdmissionError("Request ID was already used with different input")

@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { StreamCallbacks } from "@/lib/streaming/callbacks";
 import { apiClient } from "@/lib/api-client";
 import type { ExternalChatActivity } from "@/store/chat-store";
 import type { ChatMessage, Conversation } from "@/types/a2a";
@@ -10,7 +11,7 @@ const mockPush = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 const mockToast = jest.fn();
 const mockStreamMessage = jest.fn().mockResolvedValue(undefined);
-const mockRecoverRun = jest.fn().mockResolvedValue(undefined);
+const mockRecoverRun = jest.fn(async (_run: string, callbacks: StreamCallbacks) => { callbacks.onContent?.("Recovered final answer", []); callbacks.onDone?.(); });
 const mockChatState = {
   activeConversationId: "chat-1",
   getActiveConversation: () => mockConversation,
@@ -117,8 +118,19 @@ describe("Engine run recovery after refresh", () => {
     try {
       render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
       await waitFor(() => expect(mockRecoverRun).toHaveBeenCalledWith("run-example", expect.any(Object)));
-      expect(mockConversation.messages.at(-1)).toMatchObject({ role: "assistant", turnId: "turn-example" });
+      await waitFor(() => expect(mockConversation.messages.at(-1)).toMatchObject({ role: "assistant", turnId: "turn-example", content: "Recovered final answer", isFinal: true }));
       expect(mockStreamMessage).not.toHaveBeenCalled();
+    } finally { fetchMock.mockRestore(); }
+  });
+
+  it.each([undefined, "turn-previous"])("does not attach an unrelated running turn (%s)", async (turnId) => {
+    setConversation([message("user-example", "user", "saved prompt", { turnId: "turn-next" })]);
+    const fetchMock = status({ runtime: "harness_engine", status: "running", run_id: "run-example", turn_id: turnId });
+    try {
+      render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+      await act(async () => {});
+      expect(mockRecoverRun).not.toHaveBeenCalled();
+      expect(mockChatState.addMessage).not.toHaveBeenCalled();
     } finally { fetchMock.mockRestore(); }
   });
 

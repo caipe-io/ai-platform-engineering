@@ -167,6 +167,7 @@ export async function POST(
   let backendResponse: Response;
   try {
     const pinned = authResult.subject ? await getPinnedHarnessGatewayTarget(body.agent_id, authResult.subject, conversationId) : null;
+    if (pinned instanceof NextResponse) return pinned;
     if (pinned?.kind === "dynamic_agents" && authResult.subject) {
       backendUrl.pathname = `/api/v1/conversations/${await getHarnessGatewayNativeThread(body.agent_id, authResult.subject, conversationId)}/rewind`;
     }

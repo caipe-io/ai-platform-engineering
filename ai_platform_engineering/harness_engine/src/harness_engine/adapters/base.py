@@ -20,14 +20,18 @@ if TYPE_CHECKING:
 
 class HarnessAdapter(Protocol):
     @property
-    def descriptor(self) -> HarnessDescriptor: ...
+    def descriptor(self) -> HarnessDescriptor:
+        raise NotImplementedError
 
     @property
-    def session_manager(self) -> ProviderSessionManager: ...
+    def session_manager(self) -> ProviderSessionManager:
+        raise NotImplementedError
 
-    def evaluate(self, blueprint: AgentBlueprint) -> AdapterEvaluation: ...
+    def evaluate(self, blueprint: AgentBlueprint) -> AdapterEvaluation:
+        raise NotImplementedError
 
-    def stream(self, context: RunContext) -> AsyncIterator[CanonicalEventDraft]: ...
+    def stream(self, context: RunContext) -> AsyncIterator[CanonicalEventDraft]:
+        raise NotImplementedError
 
 
 class HarnessAdapterV2(Protocol):

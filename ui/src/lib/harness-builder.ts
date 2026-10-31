@@ -30,7 +30,19 @@ export function supportsHarnessCapability(descriptor: HarnessDescriptor | undefi
 }
 
 export function harnessBuilderSections(descriptor: HarnessDescriptor | undefined): BuilderSection[] {
-  if (!descriptor || descriptor.ui_schema.version === undefined) return [];
+  if (!descriptor) return [];
+  if (descriptor.ui_schema.version === undefined) {
+    const legacy: Array<[HarnessRenderer, string, string]> = [
+      ["agent-delegation", "multi_agent.delegation", "Agent delegation"],
+      ["deep-agents-middleware", "deep_agents.middleware", "Middleware"],
+      ["remote-agents", "remote_agents", "Remote agents"],
+      ["tool-approvals", "human_input.resume", "Tool approvals"],
+      ["workflow-tools", "workflows", "Workflow tools"],
+    ];
+    return legacy.filter(([, capability]) => supportsHarnessCapability(descriptor, capability)).map(([renderer, capability, title]) => ({
+      id: renderer, renderer, title, step: "advanced", requires: [capability], valuePath: RENDERER_PATHS[renderer],
+    }));
+  }
   if (descriptor.ui_schema.version !== 1) throw new Error("Unsupported harness editor schema version");
   const sections = descriptor.ui_schema.sections;
   if (!Array.isArray(sections) || sections.length > 32) throw new Error("Unsupported harness editor schema");

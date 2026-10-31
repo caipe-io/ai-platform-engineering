@@ -15,6 +15,7 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
+import { withAgentMutationLock } from "@/lib/agent-mutation-lock";
 import { prepareAgentExecution } from "@/lib/harness-agent-publication";
 import {
   getHarnessEngineConfig,
@@ -1226,54 +1227,77 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     await validateRagCollectionSelection(finalCollectionIds, session);
   }
 
-  const execution = await prepareAgentExecution({ ...agent, ...updateData }, requireStableSubject(session), body.harness_save);
-  if (execution) updateData.execution_blueprint_version = execution.version;
+  return withAgentMutationLock(id, async () => {
+    const current = await collection.findOne({ _id: id });
+    if (!current || new Date(current.updated_at ?? 0).getTime() !== new Date(agent.updated_at ?? 0).getTime()) {
+      throw new ApiError("The agent changed during save; reload before retrying", 409);
+    }
+    const execution = await prepareAgentExecution({ ...agent, ...updateData }, requireStableSubject(session), body.harness_save);
+    if (execution) updateData.execution_blueprint_version = execution.version;
 
-  // Resolve the unlinked SA grant state whenever the Everyone grant is being
-  // added or removed. On a global → team transition, preserve a separately
-  // assigned explicit service-account scope.
-  const { sub: unlinkedServiceAccountSub, explicitAgentIds } =
-    finalVisibility === "global" || currentVisibility === "global"
-      ? await resolveUnlinkedServiceAccountGrantState()
-      : { sub: null, explicitAgentIds: new Set<string>() };
+    // Resolve the unlinked SA grant state whenever the Everyone grant is being
+    // added or removed. On a global → team transition, preserve a separately
+    // assigned explicit service-account scope.
+    const { sub: unlinkedServiceAccountSub, explicitAgentIds } =
+      finalVisibility === "global" || currentVisibility === "global"
+        ? await resolveUnlinkedServiceAccountGrantState()
+        : { sub: null, explicitAgentIds: new Set<string>() };
 
-  await reconcileAgentRelationships({
-    agentId: id,
-    previousAllowedTools: allowedToolsFromAgent(agent),
-    nextAllowedTools: finalAllowedTools,
-    ownerSubject: agent.owner_subject ?? agent.owner_id,
-    organizationId: caipeOrgKey(),
-    ownerTeamSlug: nextOwnerTeamSlug,
-    previousOwnerTeamSlug: transferPreviousOwner,
-    nextSharedTeamSlugs: sharedTeamSlugs,
-    previousSharedTeamSlugs,
-    // Keep the wildcard `user:* user agent:<id>` grant in sync with
-    // visibility on every edit. Without this a `global → team` demote
-    // would update Mongo but leave the everyone-can-use grant behind,
-    // so non-owner-team members keep `can_use` (the SRE-agent leak).
-    // `currentVisibility` may be the legacy 'private' value on old docs;
-    // only an exact 'global' match counts as a previous wildcard grant.
-    globalUserAccess: finalVisibility === "global",
-    previousGlobalUserAccess: currentVisibility === "global",
-    unlinkedServiceAccountSub,
-    unlinkedGrantIsExplicit: explicitAgentIds.has(id),
+    const relationships = {
+      agentId: id,
+      previousAllowedTools: allowedToolsFromAgent(agent),
+      nextAllowedTools: finalAllowedTools,
+      ownerSubject: agent.owner_subject ?? agent.owner_id,
+      organizationId: caipeOrgKey(),
+      ownerTeamSlug: nextOwnerTeamSlug,
+      previousOwnerTeamSlug: transferPreviousOwner,
+      nextSharedTeamSlugs: sharedTeamSlugs,
+      previousSharedTeamSlugs,
+      // Keep the wildcard `user:* user agent:<id>` grant in sync with
+      // visibility on every edit. Without this a `global → team` demote
+      // would update Mongo but leave the everyone-can-use grant behind,
+      // so non-owner-team members keep `can_use` (the SRE-agent leak).
+      // `currentVisibility` may be the legacy 'private' value on old docs;
+      // only an exact 'global' match counts as a previous wildcard grant.
+      globalUserAccess: finalVisibility === "global",
+      previousGlobalUserAccess: currentVisibility === "global",
+      unlinkedServiceAccountSub,
+      unlinkedGrantIsExplicit: explicitAgentIds.has(id),
+    };
+    await reconcileAgentRelationships(relationships);
+
+    try {
+      const updated = await collection.findOneAndUpdate(
+        { _id: id, ...(execution && { updated_at: agent.updated_at }) },
+        Object.keys(unsetData).length > 0
+          ? { $set: updateData, $unset: unsetData }
+          : { $set: updateData },
+        { returnDocument: "after" },
+      );
+
+      if (!updated) {
+        throw new ApiError("The agent changed during save; reload before retrying", 409);
+      }
+
+      return successResponse(
+        normalizeAgentDoc(updated as unknown as Record<string, unknown>),
+      );
+    } catch (error) {
+      await reconcileAgentRelationships({
+        ...relationships,
+        previousAllowedTools: finalAllowedTools,
+        nextAllowedTools: allowedToolsFromAgent(agent),
+        ownerTeamSlug: transferPreviousOwner ?? nextOwnerTeamSlug,
+        previousOwnerTeamSlug: nextOwnerTeamSlug,
+        nextSharedTeamSlugs: previousSharedTeamSlugs,
+        previousSharedTeamSlugs: sharedTeamSlugs,
+        globalUserAccess: currentVisibility === "global",
+        previousGlobalUserAccess: finalVisibility === "global",
+      });
+      throw error;
+    }
+
   });
-
-  const updated = await collection.findOneAndUpdate(
-    { _id: id, ...(execution && { updated_at: agent.updated_at }) },
-    Object.keys(unsetData).length > 0
-      ? { $set: updateData, $unset: unsetData }
-      : { $set: updateData },
-    { returnDocument: "after" },
-  );
-
-  if (!updated) {
-    throw new ApiError("The agent changed during save; reload before retrying", 409);
-  }
-
-  return successResponse(
-    normalizeAgentDoc(updated as unknown as Record<string, unknown>),
-  );
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -1329,63 +1353,65 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
     );
   }
 
-  // Autonomous tasks are owned by a separate service (autonomous-agents)
-  // keyed on this agent's id. Cascade-delete them BEFORE removing the
-  // agent doc / OpenFGA tuples, and abort on failure: agent ids are
-  // deterministic slugs of the name, so an orphaned task left behind here
-  // would silently reappear (and start firing again) under any future
-  // agent recreated with the same name. Fail-closed keeps the whole
-  // operation safely retryable — nothing below has run yet.
-  try {
-    await cascadeDeleteAutonomousTasksForAgent(id);
-  } catch (err) {
-    console.warn("[dynamic-agents] autonomous-task cascade delete failed:", err);
-    throw new ApiError(
-      "Failed to remove autonomous tasks for this agent. Deletion aborted; retry once the autonomous-agents service is reachable.",
-      502,
-      "AUTONOMOUS_TASK_CASCADE_FAILED",
-    );
-  }
-
-  if (normalizeExecutionHarnessId(agent.execution_harness_id) !== "dynamic_agents") {
-    const config = getHarnessEngineConfig();
-    if (config instanceof NextResponse) {
+  return withAgentMutationLock(id, async () => {
+    // Autonomous tasks are owned by a separate service (autonomous-agents)
+    // keyed on this agent's id. Cascade-delete them BEFORE removing the
+    // agent doc / OpenFGA tuples, and abort on failure: agent ids are
+    // deterministic slugs of the name, so an orphaned task left behind here
+    // would silently reappear (and start firing again) under any future
+    // agent recreated with the same name. Fail-closed keeps the whole
+    // operation safely retryable — nothing below has run yet.
+    try {
+      await cascadeDeleteAutonomousTasksForAgent(id);
+    } catch (err) {
+      console.warn("[dynamic-agents] autonomous-task cascade delete failed:", err);
       throw new ApiError(
-        "Harness Engine is unavailable; deletion was aborted to avoid orphaning its provider resource.",
-        503,
-        "HARNESS_ENGINE_UNAVAILABLE",
+        "Failed to remove autonomous tasks for this agent. Deletion aborted; retry once the autonomous-agents service is reachable.",
+        502,
+        "AUTONOMOUS_TASK_CASCADE_FAILED",
       );
     }
-    const sessionValues = session as unknown as Record<string, unknown>;
-    const response = await proxyHarnessEngine(
-      config,
-      {
-        subject:
-          (sessionValues.sub as string | undefined) ??
-          agent.owner_subject ??
-          user.email,
-        traceparent: request.headers.get("traceparent") ?? undefined,
-      },
-      `/api/v1/agents/${encodeURIComponent(id)}`,
-      { method: "DELETE" },
-    );
-    if (!response.ok) {
-      const result = (await response.json().catch(() => null)) as {
-        detail?: string;
-        error?: string;
-      } | null;
-      throw new ApiError(
-        result?.detail ??
-          result?.error ??
-          "Failed to remove the agent's provider resource. Deletion was aborted.",
-        response.status,
-        "HARNESS_PROVIDER_DELETE_FAILED",
+
+    if (normalizeExecutionHarnessId(agent.execution_harness_id) !== "dynamic_agents") {
+      const config = getHarnessEngineConfig();
+      if (config instanceof NextResponse) {
+        throw new ApiError(
+          "Harness Engine is unavailable; deletion was aborted to avoid orphaning its provider resource.",
+          503,
+          "HARNESS_ENGINE_UNAVAILABLE",
+        );
+      }
+      const sessionValues = session as unknown as Record<string, unknown>;
+      const response = await proxyHarnessEngine(
+        config,
+        {
+          subject:
+            (sessionValues.sub as string | undefined) ??
+            agent.owner_subject ??
+            user.email,
+          traceparent: request.headers.get("traceparent") ?? undefined,
+        },
+        `/api/v1/agents/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
       );
+      if (!response.ok) {
+        const result = (await response.json().catch(() => null)) as {
+          detail?: string;
+          error?: string;
+        } | null;
+        throw new ApiError(
+          result?.detail ??
+            result?.error ??
+            "Failed to remove the agent's provider resource. Deletion was aborted.",
+          response.status,
+          "HARNESS_PROVIDER_DELETE_FAILED",
+        );
+      }
     }
-  }
 
-  await deleteAllAgentToolTuples(id);
-  await collection.deleteOne({ _id: id });
+    await deleteAllAgentToolTuples(id);
+    await collection.deleteOne({ _id: id });
 
-  return successResponse({ deleted: id });
+    return successResponse({ deleted: id });
+  });
 });

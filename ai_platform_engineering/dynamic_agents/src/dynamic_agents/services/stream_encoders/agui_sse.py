@@ -236,7 +236,7 @@ class AGUIStreamEncoder(StreamEncoder[FrameT]):
         agent: str,
         tool_name: str | None = None,
         tool_args: dict[str, Any] | None = None,
-        allowed_decisions: list[FrameT] | None = None,
+        allowed_decisions: list[str] | None = None,
         tool_approvals: list[dict[str, Any]] | None = None,
     ) -> list[FrameT]:
         """Emit RUN_FINISHED with outcome ``"interrupt"`` per the AG-UI spec.

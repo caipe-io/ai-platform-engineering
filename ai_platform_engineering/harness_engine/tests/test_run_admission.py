@@ -235,3 +235,14 @@ async def test_cancel_without_a_live_owner_is_unconfirmed_and_cannot_free_the_bi
     assert result.cancellation_requested and not result.cancelled
     with pytest.raises(RunAdmissionError, match="active run"):
         await second.start_run(request("request-2"), "test-user")
+
+
+async def test_idempotency_key_rejects_an_explicit_version_change(durable_repository: RunRepository) -> None:
+    first, second, compiler, _ = await coordinators(durable_repository)
+    run = await first.start_run(request(), "test-user")
+    await compiler.entered.wait()
+    with pytest.raises(RunAdmissionError, match="different agent version"):
+        await second.start_run(request().model_copy(update={"agent_version": run.agent_version + 1}), "test-user")
+    assert (await second.start_run(request(), "test-user")).run_id == run.run_id
+    compiler.resume.set()
+    await first._tasks[run.run_id]

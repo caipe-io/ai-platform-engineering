@@ -43,8 +43,9 @@ def reply(body: dict[str, Any]) -> dict[str, Any]:
                 }
             ],
         }
+    observed = " image-observed" if "image_url" in user else ""
     history = " | ".join(str(message.get("content", "")) for message in messages if message["role"] == "user")
-    return {"role": "assistant", "content": "Example response: " + history}
+    return {"role": "assistant", "content": "Example response: " + history + observed}
 
 
 class Handler(BaseHTTPRequestHandler):

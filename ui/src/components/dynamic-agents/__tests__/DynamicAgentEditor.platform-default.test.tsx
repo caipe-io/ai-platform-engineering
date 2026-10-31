@@ -214,7 +214,7 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
       "without exposing credentials or infrastructure identifiers",
     );
     fireEvent.click(screen.getByRole("button", { name: /Advanced/i }));
-    expect(screen.getByLabelText("Maximum turns")).toHaveValue(20);
+    expect(screen.getByLabelText("Maximum turns")).toHaveValue("20");
   });
 
   it("validates a provider blueprint before updating existing agent metadata", async () => {

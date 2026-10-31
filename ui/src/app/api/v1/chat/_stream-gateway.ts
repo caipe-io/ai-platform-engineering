@@ -34,6 +34,7 @@ export async function dispatchChatStream(
   // Every claimed operation returns here, including denials and unsupported operations.
   const canonicalId = await resolveConversationRuntimeId(conversation);
   const pinned = auth.subject ? await getPinnedHarnessGatewayTarget(String(body.agent_id), auth.subject, canonicalId) : null;
+  if (pinned instanceof NextResponse) return pinned;
   const appResponse = pinned ? null : await proxyAgenticAppAssistantStream(
     request, auth, conversation, body, operation,
   );

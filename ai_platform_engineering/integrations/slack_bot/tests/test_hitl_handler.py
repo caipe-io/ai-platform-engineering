@@ -396,3 +396,17 @@ def test_tool_approval_response_retains_interrupt_type_and_id(decision: str) -> 
   assert json.loads(result["resume_context"]["form_data"]) == {
     "type": "tool_approval", "interrupt_id": "example-interrupt", "decision": decision,
   }
+
+
+@pytest.mark.parametrize("approvals", [
+  [{"allowed_decisions": ["edit"]}],
+  [{"allowed_decisions": ["approve"]}, {"allowed_decisions": ["reject"]}],
+])
+def test_unsupported_approval_actions_direct_users_to_web_editor(approvals: list[dict]) -> None:
+  event = SSEEvent(type=SSEEventType.RUN_FINISHED, outcome="interrupt", interrupt={
+    "id": "example", "reason": "tool_approval", "payload": {"tool_approvals": approvals},
+  })
+  form = parse_agui_interrupt(event)
+  assert form.actions == []
+  assert "web app" in form.description
+  assert "review and continue" in form.description

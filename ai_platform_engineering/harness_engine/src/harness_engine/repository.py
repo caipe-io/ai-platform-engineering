@@ -47,19 +47,25 @@ def validate_replay(run: RunRecord, after: int, events: list[RunEvent]) -> None:
 
 
 class RunRepository(Protocol):
-    async def initialize(self) -> None: ...
+    async def initialize(self) -> None:
+        raise NotImplementedError
 
-    async def close(self) -> None: ...
+    async def close(self) -> None:
+        raise NotImplementedError
 
-    async def list_agentcore_profiles(self) -> list[RegisteredAgentCoreProfile]: ...
+    async def list_agentcore_profiles(self) -> list[RegisteredAgentCoreProfile]:
+        raise NotImplementedError
 
-    async def create_agentcore_profile(self, profile: RegisteredAgentCoreProfile) -> None: ...
+    async def create_agentcore_profile(self, profile: RegisteredAgentCoreProfile) -> None:
+        raise NotImplementedError
 
-    async def get_agent(self, agent_id: str) -> AgentRecord | None: ...
+    async def get_agent(self, agent_id: str) -> AgentRecord | None:
+        raise NotImplementedError
 
     async def get_agent_version(
         self, agent_id: str, version: int | None = None
-    ) -> AgentVersion | None: ...
+    ) -> AgentVersion | None:
+        raise NotImplementedError
 
     async def save_agent(
         self,
@@ -67,59 +73,82 @@ class RunRepository(Protocol):
         config_fingerprint: str,
         catalog_revision: str,
         expected_revision: int | None,
-    ) -> tuple[AgentRecord, AgentVersion]: ...
+    ) -> tuple[AgentRecord, AgentVersion]:
+        raise NotImplementedError
 
-    async def delete_agent(self, agent_id: str) -> bool: ...
+    async def delete_agent(self, agent_id: str) -> bool:
+        raise NotImplementedError
 
-    async def get_provider_resource(self, agent_id: str) -> ProviderResource | None: ...
+    async def get_provider_resource(self, agent_id: str) -> ProviderResource | None:
+        raise NotImplementedError
 
-    async def save_provider_resource(self, resource: ProviderResource) -> ProviderResource: ...
+    async def save_provider_resource(self, resource: ProviderResource) -> ProviderResource:
+        raise NotImplementedError
 
-    async def delete_provider_resource(self, agent_id: str) -> bool: ...
+    async def delete_provider_resource(self, agent_id: str) -> bool:
+        raise NotImplementedError
 
-    async def get_session(self, binding_id: str) -> SessionBinding | None: ...
+    async def get_session(self, binding_id: str) -> SessionBinding | None:
+        raise NotImplementedError
 
     async def get_latest_session(
         self, owner_subject: str, agent_id: str, conversation_id: str
-    ) -> SessionBinding | None: ...
+    ) -> SessionBinding | None:
+        raise NotImplementedError
 
-    async def create_session(self, binding: SessionBinding) -> SessionBinding: ...
+    async def create_session(self, binding: SessionBinding) -> SessionBinding:
+        raise NotImplementedError
 
     async def update_session_provider_id(
         self, binding_id: str, provider_session_id: str
-    ) -> SessionBinding: ...
+    ) -> SessionBinding:
+        raise NotImplementedError
 
-    async def close_session(self, binding_id: str) -> SessionBinding: ...
+    async def close_session(self, binding_id: str) -> SessionBinding:
+        raise NotImplementedError
 
-    async def set_session_interrupt(self, binding_id: str, run_id: str, interrupt: dict[str, object] | None) -> None: ...
+    async def set_session_interrupt(self, binding_id: str, run_id: str, interrupt: dict[str, object] | None) -> None:
+        raise NotImplementedError
 
-    async def admit_run(self, run: RunRecord) -> tuple[RunRecord, bool]: ...
+    async def admit_run(self, run: RunRecord) -> tuple[RunRecord, bool]:
+        raise NotImplementedError
 
-    async def claim_dispatch(self, binding_id: str, run_id: str) -> bool: ...
+    async def claim_dispatch(self, binding_id: str, run_id: str) -> bool:
+        raise NotImplementedError
 
-    async def release_run(self, binding_id: str, run_id: str) -> None: ...
+    async def release_run(self, binding_id: str, run_id: str) -> None:
+        raise NotImplementedError
 
-    async def create_run(self, run: RunRecord) -> RunRecord: ...
+    async def create_run(self, run: RunRecord) -> RunRecord:
+        raise NotImplementedError
 
-    async def find_run_request(self, owner: str, agent_id: str, conversation_id: str, request_id: str) -> RunRecord | None: ...
+    async def find_run_request(self, owner: str, agent_id: str, conversation_id: str, request_id: str) -> RunRecord | None:
+        raise NotImplementedError
 
-    async def get_run(self, run_id: str) -> RunRecord | None: ...
+    async def get_run(self, run_id: str) -> RunRecord | None:
+        raise NotImplementedError
 
-    async def request_cancellation(self, run_id: str) -> RunRecord | None: ...
+    async def request_cancellation(self, run_id: str) -> RunRecord | None:
+        raise NotImplementedError
 
     async def get_active_run(
         self, owner_subject: str, agent_id: str, conversation_id: str
-    ) -> RunRecord | None: ...
+    ) -> RunRecord | None:
+        raise NotImplementedError
 
-    async def update_run_provider_id(self, run_id: str, provider_session_id: str) -> None: ...
+    async def update_run_provider_id(self, run_id: str, provider_session_id: str) -> None:
+        raise NotImplementedError
 
     async def append_event(
         self, run_id: str, event_type: str, data: dict[str, object], status: RunStatus | None = None
-    ) -> RunEvent: ...
+    ) -> RunEvent:
+        raise NotImplementedError
 
-    async def list_events(self, run_id: str, after: int) -> list[RunEvent]: ...
+    async def list_events(self, run_id: str, after: int) -> list[RunEvent]:
+        raise NotImplementedError
 
-    async def wait_for_events(self, run_id: str, after: int, timeout: float) -> list[RunEvent]: ...
+    async def wait_for_events(self, run_id: str, after: int, timeout: float) -> list[RunEvent]:
+        raise NotImplementedError
 
 
 class InMemoryRunRepository:

@@ -137,10 +137,12 @@ def run(args: argparse.Namespace) -> None:
             except (OSError, urllib.error.URLError):
                 pass
             time.sleep(0.1)
+        else:
+            raise AssertionError("Restarted Engine never became healthy")
     events = check(start(identifier, thread, "recall-example-state"))
     content = next(event["data"]["content"] for event in events if event["event_type"] == "result.updated")
     assert "remember-example-state" in content
-    passed_check("native checkpoint continuity after Engine restart")
+    passed_check("native checkpoint continuity after Engine restart" if args.engine_container else "native checkpoint continuity across turns")
     paused = start(identifier, thread, "pause-example")
     paused_events = check(paused, "paused")
     interrupt = paused_events[-1]["data"]
@@ -184,8 +186,10 @@ def run(args: argparse.Namespace) -> None:
     namespace = json.dumps([identifier, thread, "filesystem"])
     files = call("/api/files/list?" + urllib.parse.urlencode({"fs_namespace": namespace}))
     assert "/example.txt" in files["files"], files
+    denied_status, _ = http(args.url + "/api/files/list?" + urllib.parse.urlencode({"fs_namespace": namespace}), token=other)
+    assert denied_status in {403, 404}, ("cross-owner files", denied_status)
     passed_check("native tools and persisted files")
-    check(
+    text_attachment_events = check(
         start(
             identifier,
             thread,
@@ -199,7 +203,7 @@ def run(args: argparse.Namespace) -> None:
             ],
         )
     )
-    check(
+    image_attachment_events = check(
         start(
             identifier,
             thread,
@@ -213,12 +217,20 @@ def run(args: argparse.Namespace) -> None:
             ],
         )
     )
+    assert "example attachment" in json.dumps(text_attachment_events)
+    assert "image-observed" in json.dumps(image_attachment_events)
     passed_check("authorized attachment references")
     child_events = check(start(identifier, thread, "child-example"))
     assert any(
-        event["event_type"] == "runtime.event" and event["data"].get("name") == "TOOL_CALL_START"
+        event["event_type"] == "runtime.event" and event["data"].get("name") == "TOOL_CALL_START" and event["data"].get("payload", {}).get("toolCallName") == "task"
         for event in child_events
     )
+    child_ids = {event["data"]["payload"]["toolCallId"] for event in child_events
+                 if event["event_type"] == "runtime.event" and event["data"].get("name") == "TOOL_CALL_START"
+                 and event["data"].get("payload", {}).get("toolCallName") == "task"}
+    assert any(event["data"].get("payload", {}).get("toolCallId") in child_ids
+               and "child-result" in event["data"].get("payload", {}).get("content", "")
+               for event in child_events if event["event_type"] == "runtime.event" and event["data"].get("name") == "TOOL_CALL_RESULT")
     passed_check("native general-purpose subagent")
     slow = start(identifier, thread, "slow-example")
     time.sleep(0.3)
@@ -264,6 +276,9 @@ def run(args: argparse.Namespace) -> None:
         )
     )
     after_rewind = check(start(identifier, thread, "after-rewind"))
+    assert "keep-before-rewind" in next(
+        event["data"]["content"] for event in after_rewind if event["event_type"] == "result.updated"
+    )
     assert "remove-on-rewind" not in next(
         event["data"]["content"] for event in after_rewind if event["event_type"] == "result.updated"
     )
@@ -310,7 +325,8 @@ def run(args: argparse.Namespace) -> None:
             "edited_args": {"seconds": 0.01},
         },
     )
-    check(approval_resume)
+    approval_result = check(approval_resume)
+    assert any("0.01" in json.dumps(event["data"]) for event in approval_result if event["event_type"] == "runtime.event" and event["data"].get("name") == "TOOL_CALL_RESULT")
     passed_check("persisted tool approval and authorized argument edit")
     request = urllib.request.Request(
         args.url + "/api/v1/chat/stream/start",

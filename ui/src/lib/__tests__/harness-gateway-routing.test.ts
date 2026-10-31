@@ -1,6 +1,6 @@
 /** @jest-environment node */
 import { NextResponse } from "next/server";
-import { clearHarnessGatewayBinding, resolveHarnessGatewayTarget } from "../harness-gateway";
+import { clearHarnessGatewayBinding, getPinnedHarnessGatewayTarget, resolveHarnessGatewayTarget } from "../harness-gateway";
 
 const mockFindAgent = jest.fn();
 const mockLookupSession = jest.fn();
@@ -128,4 +128,12 @@ it("uses the native checkpoint collection configured for the agent", async () =>
   mockFindNativeContext.mockResolvedValue({ _id: "checkpoint-example" });
   expect(await resolveHarnessGatewayTarget("agent-example", context)).toEqual({ kind: "dynamic_agents", harnessId: "dynamic_agents" });
   expect(mockNativeCollection).toHaveBeenCalledWith("example_checkpoints");
+});
+
+
+it("fences pinned-only callers while a session handoff is in progress", async () => {
+  await resolveHarnessGatewayTarget("agent-example", context);
+  const key = [...bindings.keys()][0];
+  bindings.set(key, { ...bindings.get(key), transition_id: "example-transition" });
+  expect((await getPinnedHarnessGatewayTarget("agent-example", context.subject, context.conversationId) as NextResponse).status).toBe(409);
 });

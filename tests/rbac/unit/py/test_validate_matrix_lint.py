@@ -256,3 +256,20 @@ def test_lint_fails_when_matrix_version_wrong(fake_repo: Path) -> None:
     assert result.returncode == 1
     assert "schema" in result.stderr
     assert "version must be 1" in result.stderr
+
+
+@pytest.mark.parametrize("position", ["before", "between", "after"])
+def test_shared_helper_gates_every_exported_method(fake_repo: Path, position: str) -> None:
+    route = fake_repo / "ui/src/app/api/admin/users/route.ts"
+    helper = "async function authorize() { await requireAgentUsePermission({ subject: 'test-user' }); }\n"
+    get = "export async function GET(request) { await authorize(); }\n"
+    post = "export const POST = withErrorHandler(async (request) => { await authorize(); });\n"
+    route.write_text({"before": helper + get + post, "between": get + helper + post, "after": get + post + helper}[position])
+    _write_matrix(fake_repo, {"version": 1, "routes": [{
+        "id": "example-agent-use", "surface": "ui_bff", "method": "GET", "path": "/api/admin/users",
+        "resource": "agent", "scope": "use", "authorization_system": "openfga", "relation": "can_use",
+        "object_type": "agent", "expectations": _OK_EXPECTATIONS,
+    }]})
+    result = _run(fake_repo)
+    assert result.returncode == 1
+    assert "gate on POST /api/admin/users" in result.stderr

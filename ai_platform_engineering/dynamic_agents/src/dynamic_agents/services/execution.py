@@ -7,6 +7,7 @@ for historical custom clients as well as AG-UI clients without parsing SSE.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import aclosing
 from dataclasses import dataclass
@@ -113,13 +114,15 @@ async def execute_turn(
     trace_id: str | None = None,
     files: list[InputFile] | None = None,
     turn_id: str | None = None,
+    cancellation_event: asyncio.Event | None = None,
 ) -> AsyncIterator[RuntimeEvent | TurnOutcome]:
     """Run the existing start/resume implementation and require an explicit outcome."""
     encoder = ExecutionEncoder()
+    cancellation = {"cancellation_event": cancellation_event} if cancellation_event is not None else {}
     stream = (
-        runtime.resume(session_id, user_id, resume_data, trace_id, encoder)
+        runtime.resume(session_id, user_id, resume_data, trace_id, encoder, **cancellation)
         if resume_data is not None
-        else runtime.stream(message, session_id, user_id, trace_id, encoder, files=files, turn_id=turn_id)
+        else runtime.stream(message, session_id, user_id, trace_id, encoder, files=files, turn_id=turn_id, **cancellation)
     )
     async with aclosing(stream):
         async for event in stream:

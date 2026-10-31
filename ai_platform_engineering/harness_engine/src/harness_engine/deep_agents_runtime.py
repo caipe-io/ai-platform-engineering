@@ -28,7 +28,7 @@ class DeepAgentsRuntime:
     def __init__(self) -> None:
         self.mongo = MongoDBService()
         self.cache = AgentRuntimeCache(mongo_service=self.mongo)
-        self.active: dict[str, Any] = {}
+        self.active: dict[str, tuple[Any, asyncio.Event]] = {}
         self._ready = False
         self._lock = asyncio.Lock()
 
@@ -81,7 +81,8 @@ class DeepAgentsRuntime:
         runtime = self.active.get(run_id)
         if runtime is None:
             return False
-        runtime.cancel()
+        runtime[1].set()
+        runtime[0].cancel()
         return True
 
     async def restart_session(self, binding: Any) -> None:
@@ -96,6 +97,24 @@ class DeepAgentsRuntime:
         )
         if not result.acknowledged:
             raise RuntimeError("Runtime reconnect was not acknowledged")
+
+    async def _load_attachments(self, context: RunContext, agent_id: str) -> list[InputFile]:
+        files: list[InputFile] = []
+        for reference in context.turn.attachments:
+            stored = await asyncio.to_thread(
+                self.mongo._db.harness_attachment_blobs.find_one,
+                {
+                    "_id": reference.id,
+                    "owner_subject": context.identity.subject,
+                    "agent_id": agent_id,
+                    "conversation_id": context.binding.conversation_id,
+                    "expires_at": {"$gt": utc_now()},
+                },
+            )
+            if stored is None:
+                raise PermissionError("Attachment is unavailable to this conversation")
+            files.append(InputFile.model_validate(stored["file"]))
+        return files
 
     async def execute(self, context: RunContext) -> AsyncIterator[CanonicalEventDraft | TurnOutcome]:
         await self.initialize()
@@ -169,6 +188,7 @@ class DeepAgentsRuntime:
                         [
                             identity.subject,
                             identity.principal_type,
+                            identity.user_context,
                             bearer,
                             context.binding.agent_version,
                             context.turn.client_context,
@@ -181,22 +201,9 @@ class DeepAgentsRuntime:
                 runtime = await self.cache.get_or_create(
                     config, servers, native_id, user=user, client_context=client_context, cache_scope=cache_scope
                 )
-                files: list[InputFile] = []
-                for reference in context.turn.attachments:
-                    stored = await asyncio.to_thread(
-                        self.mongo._db.harness_attachment_blobs.find_one,
-                        {
-                            "_id": reference.id,
-                            "owner_subject": identity.subject,
-                            "agent_id": config.id,
-                            "conversation_id": context.binding.conversation_id,
-                            "expires_at": {"$gt": utc_now()},
-                        },
-                    )
-                    if stored is None:
-                        raise PermissionError("Attachment is unavailable to this conversation")
-                    files.append(InputFile.model_validate(stored["file"]))
-                self.active[context.turn.run_id] = runtime
+                files = await self._load_attachments(context, config.id)
+                cancellation_event = asyncio.Event()
+                self.active[context.turn.run_id] = (runtime, cancellation_event)
                 if context.turn.command == "rewind":
                     target = context.turn.rewind_data or {}
                     checkpoint_id = await runtime.rewind_before_turn(
@@ -235,6 +242,7 @@ class DeepAgentsRuntime:
                             trace_id=context.turn.traceparent,
                             files=files,
                             turn_id=context.turn.turn_id,
+                            cancellation_event=cancellation_event,
                         )
                     ) as events:
                         async for event in events:

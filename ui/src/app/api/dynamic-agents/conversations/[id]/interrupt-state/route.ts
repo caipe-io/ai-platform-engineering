@@ -60,6 +60,7 @@ export async function GET(
   if (access.denial) return access.denial;
   const runtimeId = await resolveConversationRuntimeId(access.conversation);
   const pinned = authResult.subject ? await getPinnedHarnessGatewayTarget(agentId, authResult.subject, runtimeId) : null;
+  if (pinned instanceof NextResponse) return pinned;
   if (pinned?.kind === "harness_engine") {
     const config = getHarnessEngineConfig();
     if (config instanceof NextResponse) return config;

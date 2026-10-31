@@ -389,6 +389,7 @@ def create_app(
             "harness_id": harness_id,
             "binding_id": binding.binding_id if binding else None,
             "native_thread_id": binding.provider_session_id if binding else None,
+            "agent_version": binding.agent_version if binding else None,
             "pending_interrupt": binding.pending_interrupt if binding else None,
             "status": binding.status if binding else None,
             "active_run": run,

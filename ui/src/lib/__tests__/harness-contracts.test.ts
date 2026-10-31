@@ -31,3 +31,7 @@ it("rejects schema features that the bounded host form cannot render", () => {
   expect(() => validateHarnessOptionsSchema({ type: "object", properties: { examples: { type: "array", items: { type: "string" } } } })).not.toThrow();
   expect(() => validateHarnessOptionsSchema({ type: "object", properties: { value: { $ref: "https://example.test/schema" } } })).toThrow("Unsupported");
 });
+
+it("keeps legacy capability panels visible without a versioned UI schema", () => {
+  expect(harnessBuilderSections({ ...descriptor, ui_schema: {} }).map(section => section.renderer)).toEqual(["deep-agents-middleware"]);
+});

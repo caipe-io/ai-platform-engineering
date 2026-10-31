@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const mockGetAuthFromBearerOrSession = jest.fn();
 const mockRequireRbacPermission = jest.fn();
@@ -28,6 +28,8 @@ const mockResolveUnlinkedServiceAccountSub = jest.fn();
 const mockResolveUnlinkedServiceAccountGrantState = jest.fn();
 const mockGetHarnessEngineConfig = jest.fn();
 const mockProxyHarnessEngine = jest.fn();
+
+jest.mock("@/lib/agent-mutation-lock", () => ({ withAgentMutationLock: async (_id: string, operation: () => Promise<unknown>) => operation() }));
 
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
@@ -688,6 +690,24 @@ describe("dynamic agents RBAC routes", () => {
         owner_subject: "alice-sub",
       }),
     );
+  });
+
+  it("does not insert an agent when execution publication fails", async () => {
+    const insertOne = jest.fn();
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "dynamic_agents") return { findOne: async () => null, insertOne };
+      if (name === "teams") return { findOne: async () => ({ _id: "example-team", slug: "primary", members: [{ user_id: user.email, role: "admin" }] }) };
+      throw new Error(`unexpected collection ${name}`);
+    });
+    process.env.HARNESS_ENGINE_DEEP_AGENTS_ENABLED = "true";
+    mockGetHarnessEngineConfig.mockReturnValue(NextResponse.json({ error: "unavailable" }, { status: 503 }));
+    try {
+      const { POST } = await import("../route");
+      const response = await POST(request("/api/dynamic-agents", { method: "POST", body: JSON.stringify({ name: "Example", system_prompt: "Help", model: { id: "example", provider: "example" }, owner_team_slug: "primary" }) }));
+      expect(response.status).toBe(503);
+      expect(insertOne).not.toHaveBeenCalled();
+      expect(mockReconcileAgentRelationships).not.toHaveBeenCalled();
+    } finally { delete process.env.HARNESS_ENGINE_DEEP_AGENTS_ENABLED; }
   });
 
   it("validates remote timeouts against the normalized, deduplicated registry selection", async () => {

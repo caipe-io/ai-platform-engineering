@@ -15,7 +15,10 @@ export async function prepareAgentExecution(
   const harnessId = typeof agent.execution_harness_id === "string" ? agent.execution_harness_id : "dynamic_agents";
   const input = prepared as { blueprint?: Record<string, unknown>; catalog_revision?: string; config_fingerprint?: string; expected_revision?: number } | undefined;
   const native = harnessId === "dynamic_agents";
-  if (!input && !(native && (process.env.HARNESS_ENGINE_DEEP_AGENTS_ENABLED === "true" || agent.execution_blueprint_version))) return null;
+  if (!native && (!input?.blueprint || typeof input.blueprint !== "object" || Array.isArray(input.blueprint))) {
+    throw new ApiError("A validated harness blueprint is required to save this agent", 400);
+  }
+  if (!input && native && process.env.HARNESS_ENGINE_DEEP_AGENTS_ENABLED !== "true") return null;
   const config = getHarnessEngineConfig();
   if (config instanceof NextResponse) throw new ApiError("Harness Engine is required to save this execution configuration", 503);
   const id = String(agent._id);
@@ -34,12 +37,17 @@ export async function prepareAgentExecution(
   if ((blueprint.harness as { id?: string } | undefined)?.id !== harnessId) throw new ApiError("Execution harness does not match the agent", 409);
   // ModelPolicy carries execution selection, not UI-only reasoning controls.
   if (native) delete (blueprint.model as Record<string, unknown>).reasoning_effort;
+  const current = await proxyHarnessEngine(config, { subject }, `/api/v1/agents/${encodeURIComponent(id)}`);
+  if (!current.ok && current.status !== 404) throw new ApiError("Execution configuration is unavailable", 503);
+  const currentData = current.ok ? await current.json() : null;
+  const revision = currentData?.data?.record?.revision;
+  if (current.ok && !Number.isInteger(revision)) throw new ApiError("Invalid execution configuration revision", 502);
   const response = await proxyHarnessEngine(config, { subject }, `/api/v1/agents/${encodeURIComponent(id)}`, {
     method: "PUT", body: JSON.stringify({
       blueprint,
       ...(input?.catalog_revision && { catalog_revision: input.catalog_revision }),
       ...(!native && input?.config_fingerprint && { config_fingerprint: input.config_fingerprint }),
-      ...(input?.expected_revision && { expected_revision: input.expected_revision }),
+      ...(Number.isInteger(revision) && { expected_revision: revision }),
     }),
   });
   const result = await response.json().catch(() => null);

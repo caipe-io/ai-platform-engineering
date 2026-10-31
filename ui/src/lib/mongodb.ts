@@ -204,6 +204,7 @@ async function createIndexes(db: Db) {
   // doesn't prevent other indexes from being created.
 
   await Promise.all([
+    safeCreateIndex(db, 'harness_attachment_blobs', { expires_at: 1 }, { expireAfterSeconds: 0 }),
     // Session expiry is enforced on reads; TTL only reclaims expired records.
     safeCreateIndex(db, 'auth_sessions', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
     // Retire old-format records through their existing TTL after the cutover.

@@ -88,9 +88,10 @@ export async function clearHarnessGatewayBinding(agentId: string, subject: strin
   });
 }
 
-export async function getPinnedHarnessGatewayTarget(agentId: string, subject: string, conversationId: string): Promise<HarnessGatewayTarget | null> {
+export async function getPinnedHarnessGatewayTarget(agentId: string, subject: string, conversationId: string): Promise<HarnessGatewayTarget | NextResponse | null> {
   const binding = await (await getCollection<GatewayBinding>("harness_gateway_bindings")).findOne({ _id: gatewayBindingId(agentId, subject, conversationId) });
   if (!binding) return null;
+  if (binding.transition_id) return NextResponse.json({ error: "Session handoff is in progress; retry its migration to recover" }, { status: 409 });
   return { kind: binding.runtime ?? (binding.harness_id === DEFAULT_HARNESS_ID ? "dynamic_agents" : "harness_engine"), harnessId: binding.harness_id };
 }
 
@@ -238,7 +239,7 @@ export async function startHarnessGatewayRun(
   try {
     attachments = await stageHarnessAttachments(body.files, auth, String(body.agent_id), String(body.conversation_id));
   } catch (error) {
-    return NextResponse.json({ success: false, error: error instanceof Error ? error.message : "Invalid attachments" }, { status: 400 });
+    return NextResponse.json({ success: false, error: error instanceof TypeError ? error.message : "Attachment storage is unavailable" }, { status: error instanceof TypeError ? 400 : 503 });
   }
   let resume: Record<string, unknown> = {};
   if (body.command === "resume") {
@@ -263,6 +264,19 @@ export async function startHarnessGatewayRun(
     resume = { command: "resume", resume_data: response, interrupt_id: pending.interrupt_id, resumes_run_id: pending.run_id };
   }
   const published = await (await getCollection<{ _id: string; execution_blueprint_version?: number }>("dynamic_agents")).findOne({ _id: String(body.agent_id) });
+  let selectedVersion = published?.execution_blueprint_version;
+  if (selectedVersion) {
+    const saved = await lookupHarnessSession(config, auth, String(body.agent_id), String(body.conversation_id));
+    if (saved instanceof NextResponse) return saved;
+    selectedVersion = saved.harness_id ? saved.agent_version ?? selectedVersion : selectedVersion;
+  }
+  const override = body.config_override;
+  if (override !== undefined && (!override || typeof override !== "object" || Array.isArray(override) ||
+      Object.keys(override).some(key => !["model", "allowed_tools"].includes(key)) ||
+      ("model" in override && (!override.model || typeof override.model !== "object" || Array.isArray(override.model) ||
+        Object.keys(override.model).some(key => key !== "reasoning_effort"))))) {
+    return NextResponse.json({ error: "Unsupported per-turn execution override" }, { status: 400 });
+  }
   const callerHeaders: Record<string, string> = harnessId === DEFAULT_HARNESS_ID && auth.bearerToken ? {
     "X-Harness-Caller-Token": auth.bearerToken,
     "X-Harness-Caller-Type": auth.isServiceAccount ? "service_account" : "user",
@@ -275,7 +289,7 @@ export async function startHarnessGatewayRun(
       agent_id: body.agent_id,
       conversation_id: body.conversation_id,
       message: body.message ?? "",
-      ...(published?.execution_blueprint_version && { agent_version: published.execution_blueprint_version }),
+      ...(selectedVersion && { agent_version: selectedVersion }),
       ...resume,
       ...(body.command === "rewind" && { command: "rewind", rewind_data: body.rewind_data }),
       ...(body.command === "reconcile" && { command: "reconcile", ...(body.handoff_owner && { handoff_owner: body.handoff_owner }) }),
@@ -551,6 +565,7 @@ export function translateCanonicalStream(
   source: ReadableStream<Uint8Array>,
   run: HarnessRun,
   protocol: GatewayProtocol,
+  after = "0",
 ): ReadableStream<Uint8Array> {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
@@ -561,6 +576,16 @@ export function translateCanonicalStream(
     terminalSent: false,
     toolNames: new Map(),
   };
+
+  const [afterSequence, afterPart] = after.split(".").map(Number);
+  function emit(canonical: HarnessRunEvent, controller: TransformStreamDefaultController<Uint8Array>): void {
+    encodeHarnessGatewayEvent(canonical, run, protocol, state).forEach((output, part) => {
+      if (canonical.sequence < afterSequence || canonical.sequence === afterSequence &&
+          (afterPart === undefined || part <= afterPart)) return;
+      const cursor = `${canonical.sequence}.${part}`;
+      controller.enqueue(encoder.encode(output.replace(/^id:[^\n]*\n/m, `id: ${cursor}\n`)));
+    });
+  }
 
   function drain(controller: TransformStreamDefaultController<Uint8Array>, flush = false): void {
     while (true) {
@@ -579,9 +604,7 @@ export function translateCanonicalStream(
         event_type: parsed.event as HarnessRunEvent["event_type"],
         data: parsed.data,
       };
-      for (const output of encodeHarnessGatewayEvent(canonical, run, protocol, state)) {
-        controller.enqueue(encoder.encode(output));
-      }
+      emit(canonical, controller);
     }
     if (flush && buffer.trim()) {
       const parsed = parseCanonicalFrame(buffer);
@@ -592,9 +615,7 @@ export function translateCanonicalStream(
           event_type: parsed.event as HarnessRunEvent["event_type"],
           data: parsed.data,
         };
-        for (const output of encodeHarnessGatewayEvent(canonical, run, protocol, state)) {
-          controller.enqueue(encoder.encode(output));
-        }
+        emit(canonical, controller);
       }
       buffer = "";
     }

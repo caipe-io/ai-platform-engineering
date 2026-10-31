@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import type { HarnessOptionSchema } from "@/types/harness-engine";
@@ -9,6 +10,27 @@ interface Props {
   value: Record<string, unknown>;
   onChange: (value: Record<string, unknown>) => void;
   disabled?: boolean;
+}
+
+function NumericField({ id, schema, value, onChange, disabled }: {
+  id: string; schema: HarnessOptionSchema; value: unknown; onChange: (value: unknown) => void; disabled?: boolean;
+}) {
+  const external = String(value ?? schema.default ?? "");
+  const [state, setState] = useState({ external, draft: external });
+  if (state.external !== external) setState({ external, draft: external });
+  return <input id={id} type="text" inputMode={schema.type === "integer" ? "numeric" : "decimal"}
+    value={state.draft} disabled={disabled} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2"
+    onChange={event => setState({ external, draft: event.target.value })}
+    onBlur={event => {
+      const text = event.target.value.trim();
+      const number = Number(text);
+      const valid = text === "" || Number.isFinite(number) && (schema.type !== "integer" || Number.isInteger(number)) &&
+        (schema.minimum === undefined || number >= schema.minimum) && (schema.maximum === undefined || number <= schema.maximum);
+      if (valid) {
+        onChange(text === "" ? undefined : number);
+        setState({ external: text === "" ? "" : String(number), draft: text === "" ? "" : String(number) });
+      } else setState({ external, draft: external });
+    }} />;
 }
 
 function SchemaField({ schema, value, onChange, path, disabled, depth = 0 }: {
@@ -53,11 +75,11 @@ function SchemaField({ schema, value, onChange, path, disabled, depth = 0 }: {
       <option value="">Use profile default</option>
       {schema.enum.map(choice => <option key={String(choice)} value={String(choice)}>{String(choice)}</option>)}
     </Select> : schema.type === "boolean" ? <input id={id} type="checkbox" checked={Boolean(current)} disabled={disabled}
-      onChange={event => onChange(event.target.checked)} /> : ["string", "integer", "number"].includes(schema.type) ?
-      <input id={id} type={schema.type === "string" ? "text" : "number"} value={String(current)} disabled={disabled}
-        min={schema.minimum} max={schema.maximum} maxLength={Math.min(schema.maxLength ?? 100_000, 100_000)}
-        step={schema.type === "integer" ? 1 : "any"} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2"
-        onChange={event => onChange(event.target.value === "" ? undefined : schema.type === "string" ? event.target.value : Number(event.target.value))} /> :
+      onChange={event => onChange(event.target.checked)} /> : ["integer", "number"].includes(schema.type) ?
+      <NumericField id={id} schema={schema} value={value} onChange={onChange} disabled={disabled} /> : schema.type === "string" ?
+      <input id={id} type="text" value={String(current)} disabled={disabled}
+        maxLength={Math.min(schema.maxLength ?? 100_000, 100_000)} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2"
+        onChange={event => onChange(event.target.value === "" ? undefined : event.target.value)} /> :
       <span role="alert">This option requires an unsupported editor.</span>}
     {schema.description && <span className="block text-xs text-muted-foreground">{schema.description}</span>}
   </label>;
