@@ -158,10 +158,16 @@ async def test_runtime_skill_routes_reject_sync_and_async_mutation() -> None:
     files, _ = build_skills_files([{"name": "example", "content": "Original instructions"}])
     backend = runtime._build_skill_store_backend(files)
     path = "/default/example/SKILL.md"
-    assert backend.write("/new.md", "replace").error
-    assert (await backend.awrite("/new.md", "replace")).error
-    assert backend.edit(path, "Original", "Changed").error
-    assert (await backend.aedit(path, "Original", "Changed")).error
-    assert backend.upload_files([(path, b"replace")])[0].error
-    assert (await backend.aupload_files([(path, b"replace")]))[0].error
+    written = backend.write("/new.md", "replace")
+    async_written = await backend.awrite("/new.md", "replace")
+    edited = backend.edit(path, "Original", "Changed")
+    async_edited = await backend.aedit(path, "Original", "Changed")
+    uploaded = backend.upload_files([(path, b"replace")])
+    async_uploaded = await backend.aupload_files([(path, b"replace")])
+    assert written.error
+    assert async_written.error
+    assert edited.error
+    assert async_edited.error
+    assert uploaded[0].error
+    assert async_uploaded[0].error
     assert "Original instructions" in backend.read(path).file_data["content"]
