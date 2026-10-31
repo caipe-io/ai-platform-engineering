@@ -5,6 +5,8 @@ import {
 } from "@/lib/rbac/openfga";
 import type { KbPermission } from "@/lib/rbac/types";
 
+export { TEAM_TOOL_WILDCARD_SENTINEL_ID } from "./team-tool-wildcard";
+
 /**
  * Resource kinds that teams own / are granted access to, surfaced in the admin
  * Teams & Users views. OpenFGA is the single source of truth — these listings
@@ -36,13 +38,6 @@ const RESOURCE_RELATIONS: Record<TeamResourceKind, ResourceRelationSpec> = {
 };
 
 /**
- * Stripped form of the `tool:*` wildcard-intent sentinel — it appears in the
- * `tools` listing but is not a real per-server grant, so count consumers must
- * treat it as "all servers" rather than a +1 tool.
- */
-export const TEAM_TOOL_WILDCARD_SENTINEL_ID = "*";
-
-/**
  * Relation a `team:<slug>#admin` holds when the team can MANAGE a resource
  * (admin-grade access). Only agents currently distinguish manage from use.
  */
@@ -52,7 +47,7 @@ export interface TeamResourceIds {
   agents: string[];
   skills: string[];
   workflows: string[];
-  /** Tool ids the team is granted (`tool:<id>`), INCLUDING the `*` sentinel. */
+  /** Tool ids the team is granted (`tool:<id>`), including the concrete wildcard-intent marker. */
   tools: string[];
   /** Subset of `agents` the team can manage (`team:<slug>#admin manager agent:<id>`). */
   agentAdmins: string[];
