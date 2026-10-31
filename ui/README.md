@@ -119,6 +119,11 @@ and names truncate independently, with their full text available on hover.
 The Agents list shows the execution harness logo beside each name. App-defined
 agents use their app's logo instead; hovering identifies the app or harness.
 
+Hosted apps can share a platform agent for their assistant pop-ups. A shared
+agent keeps its own identity and access checks, while each app still checks
+launch access. An assistant with an app-owned `streamPath` must have a unique
+agent ID so its stream routes to exactly one app.
+
 The themed conversation picker below New Chat defaults to All chats and offers
 Web chats, API chats, Autonomous runs, Scheduled runs, and Webhook runs in that
 order, with icons and search. Automation choices appear when their platform

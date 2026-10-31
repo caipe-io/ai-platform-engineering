@@ -287,7 +287,7 @@ export function loadConfiguredAgenticApps(
     return { manifest: boundManifest, installation };
   });
 
-  const assistantIds = new Set<string>();
+  const assistantIds = new Map<string, boolean>();
   const appIds = new Set<string>();
   const mountPaths = new Map<string, string>();
   const serviceAccountClients = new Map<string, string>();
@@ -302,9 +302,17 @@ export function loadConfiguredAgenticApps(
       }
       serviceAccountClients.set(clientId, app.installation.appId);
     }
-    const assistantId = app.manifest.ui.assistant?.agentId;
-    if (assistantId && assistantIds.has(assistantId)) throw new Error("Multiple installed apps claim the assistant");
-    if (assistantId) assistantIds.add(assistantId);
+    const assistant = app.manifest.ui.assistant;
+    const assistantId = assistant?.agentId;
+    if (assistantId) {
+      const appOwned = Boolean(assistant.streamPath);
+      // An app-owned stream must resolve to one app. Platform agents may be
+      // shared by multiple app overlays without claiming their chat runtime.
+      if (assistantIds.has(assistantId) && (appOwned || assistantIds.get(assistantId))) {
+        throw new Error("Multiple installed apps claim the assistant");
+      }
+      assistantIds.set(assistantId, appOwned);
+    }
     if (appIds.has(app.installation.appId)) {
       throw new Error(
         `Duplicate External App installation: ${app.installation.appId}`,
