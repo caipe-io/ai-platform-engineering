@@ -1,5 +1,4 @@
 name: "[Release] Manual Version Release"
-description: "Manually trigger a new release by specifying the version"
 
 on:
   workflow_dispatch:
@@ -23,6 +22,8 @@ jobs:
       RELEASE_VERSION: ${{ github.event.inputs.version }}
     outputs:
       current_version: ${{ steps.validate.outputs.current_version }}
+      release_notes_url: ${{ steps.release-post.outputs.url }}
+      release_notes_version: ${{ steps.release-post.outputs.version }}
     steps:
       - name: 🔒 Harden runner
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
@@ -49,34 +50,9 @@ jobs:
         with:
           version: ${{ env.RELEASE_VERSION }}
 
-      - name: 📰 Require a release post for the minor series
-        run: |
-          set -euo pipefail
-
-          VERSION="$RELEASE_VERSION"
-
-          # Release candidates ship before their series post is written; only a
-          # final release must have published notes to link to.
-          if [[ "$VERSION" == *-rc.* ]]; then
-            echo "⏭️  $VERSION is a release candidate — series post not required yet"
-            exit 0
-          fi
-
-          BASE_VERSION="${VERSION%%-*}"
-          SERIES_MAJOR_MINOR="${BASE_VERSION%.*}"
-          SERIES_SLUG="release-${SERIES_MAJOR_MINOR//./-}-0"
-
-          if compgen -G "docs/releases/*${SERIES_SLUG}.md" > /dev/null; then
-            echo "✅ Found release post for the ${SERIES_MAJOR_MINOR}.0 series"
-            exit 0
-          fi
-
-          echo "❌ ERROR: no release post for the ${SERIES_MAJOR_MINOR}.0 series"
-          echo "   Expected a file matching: docs/releases/*${SERIES_SLUG}.md"
-          echo "   Release notes are published once per minor series and are what"
-          echo "   the in-app About dialog and GitHub Release link to, so the post"
-          echo "   must land before $VERSION is tagged."
-          exit 1
+      - name: 📰 Resolve the release post and canonical URL
+        id: release-post
+        run: python3 scripts/resolve_release_blog.py "$RELEASE_VERSION" --github-output "$GITHUB_OUTPUT"
 
       - name: 🔍 Read current version
         id: validate
@@ -160,21 +136,20 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           RELEASE_INITIATOR: ${{ github.actor }}
+          RELEASE_NOTES_URL: ${{ needs.commit-release.outputs.release_notes_url }}
+          RELEASE_NOTES_VERSION: ${{ needs.commit-release.outputs.release_notes_version }}
         run: |
           set -euo pipefail
 
           NEW_VERSION="$RELEASE_VERSION"
           echo "🔄 Creating DRAFT GitHub Release for $NEW_VERSION..."
 
-          # Release notes live once per minor series on the docs site; the release
-          # body points there instead of carrying a second hand-written narrative.
-          BASE_VERSION="${NEW_VERSION%%-*}"
-          SERIES_MAJOR_MINOR="${BASE_VERSION%.*}"
-          SERIES_URL="https://caipe.io/releases/release-${SERIES_MAJOR_MINOR}.0"
-
-          NOTES=$(printf '%s\n\n%s\n' \
-            "<!-- release-initiator:$RELEASE_INITIATOR -->" \
-            "📖 Release notes: [${SERIES_MAJOR_MINOR}.0 release notes]($SERIES_URL)")
+          # Use the same post validated before tagging, including its actual slug.
+          NOTES="<!-- release-initiator:$RELEASE_INITIATOR -->"
+          if [[ -n "$RELEASE_NOTES_URL" ]]; then
+            NOTES=$(printf '%s\n\n%s\n' "$NOTES" \
+              "📖 Release notes: [$RELEASE_NOTES_VERSION release notes]($RELEASE_NOTES_URL)")
+          fi
 
           gh release create "$NEW_VERSION" \
             --repo "${{ github.repository }}" \
