@@ -51,6 +51,16 @@ export function subscribeHarnessRun(
   const eventTypes: HarnessRunEvent["event_type"][] = [
     "run.started",
     "content.delta",
+    "runtime.event",
+    "result.updated",
+    "run.paused",
+    "reasoning.delta",
+    "tool.started",
+    "tool.completed",
+    "subagent.started",
+    "subagent.event",
+    "interrupt.requested",
+    "usage.updated",
     "run.completed",
     "run.failed",
     "run.cancelled",
@@ -64,7 +74,7 @@ export function subscribeHarnessRun(
         event_type: eventType,
         data: JSON.parse(event.data) as Record<string, unknown>,
       });
-      if (["run.completed", "run.failed", "run.cancelled"].includes(eventType)) source.close();
+      if (["run.completed", "run.failed", "run.cancelled", "run.paused"].includes(eventType)) source.close();
     });
   }
   if (options.onError) source.onerror = options.onError;

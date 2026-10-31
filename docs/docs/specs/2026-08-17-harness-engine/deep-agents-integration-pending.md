@@ -7,6 +7,8 @@
 - **Relationship:** Extends [Portable abstractions](portable-abstractions.md) and [Agent creation UI](agent-creation-ui.md). Their independent-service slice remains the implemented behavior. This proposal refines the future migration work in [Tasks](tasks.md); its interfaces are illustrative, not existing APIs.
 - **Delivery placement:** [Phase 2](delivery-phases.md) owns Deep Agents integration and the pluggable builder. External worker implementation is Phase 3; cross-harness delegation is Phase 4. PR 2401 remains Phase 1, with current-path correctness and review gates still open.
 
+> An opt-in implementation now exists. See the [Engine README](../../../../ai_platform_engineering/harness_engine/README.md#opt-in-deep-agents-integration-phase-2) for the implemented API, rollout flags, ownership fencing and validation commands. Interface pseudocode below remains design guidance; it is not a production certification.
+
 ## 1. Current and future architecture
 
 ### Current architecture — now
@@ -55,9 +57,11 @@ The future diagram shows the common execution path after Phase 2 migration. Duri
 | Reusable runtime | LangGraph execution/checkpoints, existing tools, middleware, skills, subagents and files |
 | Existing management services | Authoritative agent identity/access metadata and referenced resource configuration |
 
-## 2. Current gaps to close
+## 2. Design requirements identified in Phase 1
 
-| Current code | Pending change |
+The table records the Phase 1 gaps that motivated Phase 2; consult the implementation guide above for current behavior.
+
+| Phase 1 baseline | Phase 2 requirement |
 |---|---|
 | Adapter contract has `evaluate`, `session_manager`, `stream` | Add explicit start/resume commands, execution outcomes and cancellation signaling |
 | Coordinator treats normal stream exhaustion as completion | Distinguish completed, paused, failed and cancelled execution |

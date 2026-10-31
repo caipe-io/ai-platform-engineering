@@ -15,14 +15,17 @@ from harness_engine.models import (
     CancelActiveRunResult,
     ClearAgentSessionResult,
     CreateRunRequest,
+    ExecutionIdentity,
     RunContext,
     RunRecord,
     RunStatus,
     SessionBinding,
     TurnInput,
+    TurnOutcome,
 )
 from harness_engine.registry import HarnessRegistry
-from harness_engine.repository import RunRepository
+from harness_engine.repository import RunAdmissionError, RunRepository
+from harness_engine.resume import validate_resume_response
 from harness_engine.sessions import (
     AgentSessionClosedError,
     AgentSessionNotRunnableError,
@@ -58,14 +61,24 @@ class RunCoordinator:
         request: CreateRunRequest,
         owner_subject: str,
         traceparent: str | None = None,
+        identity: ExecutionIdentity | None = None,
     ) -> RunRecord:
+        if request.client_request_id:
+            existing = await self._repository.find_run_request(owner_subject, request.agent_id, request.conversation_id, request.client_request_id)
+            if existing is not None:
+                fingerprint = hashlib.sha256(request.model_copy(update={"agent_version": existing.agent_version}).model_dump_json().encode()).hexdigest()
+                if existing.request_fingerprint != fingerprint:
+                    raise RunAdmissionError("Request ID was already used with different input")
+                return existing
         try:
             binding, version = await self._session_manager.resolve(
-                owner_subject, request.agent_id, request.conversation_id
+                owner_subject, request.agent_id, request.conversation_id, request.agent_version
             )
         except AgentSessionNotRunnableError as exc:
             raise AgentNotRunnableError(request.agent_id) from exc
 
+        if request.command == "resume" and binding.pending_interrupt and binding.pending_interrupt.get("run_id") == request.resumes_run_id:
+            validate_resume_response(binding.pending_interrupt, request.resume_data or {})
         run = RunRecord(
             run_id=f"run-{uuid4().hex}",
             owner_subject=owner_subject,
@@ -77,14 +90,18 @@ class RunCoordinator:
             profile_id=binding.profile_id,
             provider_session_id=binding.provider_session_id,
             client_request_id=request.client_request_id,
-            request_fingerprint=hashlib.sha256(request.model_dump_json().encode()).hexdigest(),
+            turn_id=request.turn_id,
+            request_fingerprint=hashlib.sha256(request.model_copy(update={"agent_version": version.version}).model_dump_json().encode()).hexdigest(),
             traceparent=traceparent,
+            command=request.command,
+            resumes_run_id=request.resumes_run_id,
+            interrupt_id=request.interrupt_id,
         )
         run, admitted = await self._repository.admit_run(run)
         if not admitted:
             return run
         task = asyncio.create_task(
-            self._pump(run, request, version, binding), name=f"harness-run:{run.run_id}"
+            self._pump(run, request, version, binding, identity), name=f"harness-run:{run.run_id}"
         )
         self._tasks[run.run_id] = task
         self._run_bindings[run.run_id] = binding.binding_id
@@ -103,7 +120,12 @@ class RunCoordinator:
                 binding = await self._repository.get_session(run.binding_id)
                 if current is None or current.cancellation_requested or binding is None or binding.status != "active":
                     # Dispatched providers drain before their session can be reused.
-                    if (binding is None or not binding.dispatch_started) and not producer.cancelling():
+                    adapter = self._registry.adapter(run.harness_id)
+                    if binding and binding.dispatch_started and hasattr(adapter, "cancel_run"):
+                        if not await adapter.cancel_run(run.run_id):
+                            await asyncio.sleep(0.1)
+                            continue
+                    elif (binding is None or not binding.dispatch_started) and not producer.cancelling():
                         producer.cancel()
                     return
                 await asyncio.sleep(0.1)
@@ -111,7 +133,8 @@ class RunCoordinator:
             logger.exception("Harness cancellation monitor failed", extra={"run_id": run.run_id})
 
     async def _pump(
-        self, run: RunRecord, request: CreateRunRequest, version: AgentVersion, binding: SessionBinding
+        self, run: RunRecord, request: CreateRunRequest, version: AgentVersion, binding: SessionBinding,
+        identity: ExecutionIdentity | None = None,
     ) -> None:
         producer = asyncio.current_task()
         assert producer is not None
@@ -133,7 +156,8 @@ class RunCoordinator:
                 blueprint=version.blueprint,
                 binding=binding,
                 prompt=rendered_prompt,
-                turn=TurnInput(run_id=run.run_id, message=request.message, traceparent=run.traceparent),
+                turn=TurnInput(**request.model_dump(exclude={"agent_id", "agent_version", "conversation_id", "context", "client_request_id", "resumes_run_id", "interrupt_id"}), run_id=run.run_id, traceparent=run.traceparent),
+                identity=identity,
             )
 
             await self._session_manager.ensure_active(binding)
@@ -153,8 +177,18 @@ class RunCoordinator:
             if current is None or current.cancellation_requested:
                 raise asyncio.CancelledError
             adapter = self._registry.adapter(run.harness_id)
-            async with aclosing(adapter.stream(context)) as events:
+            outcome: TurnOutcome | None = None
+            v2 = adapter.descriptor.contract_version == 2
+            execution = adapter.execute(context) if v2 else adapter.stream(context)
+            async with aclosing(execution) as events:
                 async for event in events:
+                    if isinstance(event, TurnOutcome):
+                        if outcome is not None:
+                            raise RuntimeError("Adapter emitted duplicate outcomes")
+                        outcome = event
+                        continue
+                    if outcome is not None:
+                        raise RuntimeError("Adapter emitted events after its outcome")
                     current = await self._repository.get_run(run.run_id)
                     updated_binding = await self._session_manager.observe_provider_event(
                         context.binding, event
@@ -173,9 +207,21 @@ class RunCoordinator:
             if current is None or current.cancellation_requested:
                 raise asyncio.CancelledError
             await self._session_manager.ensure_active(context.binding)
-            await self._repository.append_event(
-                run.run_id, "run.completed", {}, RunStatus.COMPLETED
-            )
+            if v2 and outcome is None:
+                raise RuntimeError("Adapter did not report an execution outcome")
+            if outcome and outcome.status == "cancelled":
+                raise asyncio.CancelledError
+            if outcome and outcome.result:
+                await self._repository.append_event(run.run_id, "result.updated", outcome.result)
+            if outcome and outcome.status == "paused":
+                if not outcome.interrupt or not outcome.interrupt.get("interrupt_id"):
+                    raise RuntimeError("Paused execution requires a persisted interrupt")
+                pending = {**outcome.interrupt, "run_id": run.run_id}
+                await self._repository.set_session_interrupt(run.binding_id, run.run_id, pending)
+                await self._repository.append_event(run.run_id, "run.paused", pending, RunStatus.PAUSED)
+            else:
+                await self._repository.set_session_interrupt(run.binding_id, run.run_id, None)
+                await self._repository.append_event(run.run_id, "run.completed", {}, RunStatus.COMPLETED)
         except asyncio.CancelledError:
             await self._repository.append_event(
                 run.run_id, "run.cancelled", {}, RunStatus.CANCELLED

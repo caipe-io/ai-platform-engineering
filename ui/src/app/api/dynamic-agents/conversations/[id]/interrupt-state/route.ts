@@ -14,6 +14,10 @@ getDynamicAgentsConfig,
 proxyRequest,
 } from "@/lib/da-proxy";
 import { NextRequest,NextResponse } from "next/server";
+import { authorizeConversationReadAccess, resolveConversationRuntimeId } from "@/app/api/v1/chat/_conversation-authz";
+import { getPinnedHarnessGatewayTarget, getHarnessGatewayNativeThread } from "@/lib/harness-gateway";
+import { getHarnessEngineConfig, lookupHarnessSession } from "@/lib/harness-engine-proxy";
+import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
 
 /**
  * GET /api/dynamic-agents/conversations/[id]/interrupt-state
@@ -49,13 +53,29 @@ export async function GET(
   });
   if (authResult instanceof NextResponse) return authResult;
 
+  const denied = await requireAgentUsePermission({ subject: authResult.subject, agentId,
+    email: authResult.email, isServiceAccount: authResult.isServiceAccount });
+  if (denied) return denied;
+  const access = await authorizeConversationReadAccess(authResult, conversationId, agentId);
+  if (access.denial) return access.denial;
+  const runtimeId = await resolveConversationRuntimeId(access.conversation);
+  const pinned = authResult.subject ? await getPinnedHarnessGatewayTarget(agentId, authResult.subject, runtimeId) : null;
+  if (pinned?.kind === "harness_engine") {
+    const config = getHarnessEngineConfig();
+    if (config instanceof NextResponse) return config;
+    const saved = await lookupHarnessSession(config, authResult, agentId, runtimeId);
+    if (saved instanceof NextResponse) return saved;
+    return NextResponse.json({ success: true, has_pending_interrupt: Boolean(saved.pending_interrupt), interrupt_data: saved.pending_interrupt,
+      active_run: saved.active_run, conversation_id: conversationId, agent_id: agentId });
+  }
+
   // Check DA config
   const daConfig = getDynamicAgentsConfig();
   if (daConfig instanceof NextResponse) return daConfig;
 
   // Build backend URL
   const backendUrl = new URL(
-    `/api/v1/conversations/${conversationId}/interrupt-state`,
+    `/api/v1/conversations/${await getHarnessGatewayNativeThread(agentId, authResult.subject, runtimeId)}/interrupt-state`,
     daConfig.dynamicAgentsUrl,
   );
   backendUrl.searchParams.set("agent_id", agentId);

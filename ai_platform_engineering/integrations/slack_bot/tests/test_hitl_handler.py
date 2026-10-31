@@ -5,6 +5,8 @@
 import json
 from unittest.mock import Mock
 
+import pytest
+
 from ai_platform_engineering.integrations.slack_bot.sse_client import SSEEvent, SSEEventType
 from ai_platform_engineering.integrations.slack_bot.utils.hitl_handler import (
   parse_agui_interrupt,
@@ -312,7 +314,8 @@ class TestHITLCallbackHandler:
     assert ctx["agent_id"] == "agent-1"
     assert ctx["channel_id"] == "C123"
     form_data = json.loads(ctx["form_data"])
-    assert form_data["action"] == "approve"
+    assert form_data["type"] == "form_input"
+    assert form_data["interrupt_id"] == "int-1"
 
   def test_handle_reject(self):
     handler = HITLCallbackHandler(sse_client=Mock())
@@ -342,8 +345,8 @@ class TestHITLCallbackHandler:
     result = handler.handle_interaction(payload, slack_client)
     assert result is not None
     form_data = json.loads(result["resume_context"]["form_data"])
-    assert form_data["action"] == "reject"
-    assert "reason" in form_data
+    assert form_data["dismissed"] is True
+    assert form_data["interrupt_id"] == "int-1"
 
   def test_non_hitl_action_returns_none(self):
     handler = HITLCallbackHandler(sse_client=Mock())
@@ -377,3 +380,19 @@ class TestFormatFormSubmissionResponse:
       success=False,
     )
     assert any("submission failed" in b.get("text", {}).get("text", "") for b in blocks)
+
+
+@pytest.mark.parametrize("decision", ["approve", "reject"])
+def test_tool_approval_response_retains_interrupt_type_and_id(decision: str) -> None:
+  handler = HITLCallbackHandler(sse_client=Mock())
+  client = Mock()
+  result = handler.handle_interaction({
+    "actions": [{"action_id": "hitl_example_" + decision, "value": json.dumps({
+      "form_id": "hitl_example", "action": decision, "conversation_id": "example-thread",
+      "agent_id": "example-agent", "interrupt_id": "example-interrupt", "interrupt_type": "tool_approval",
+    })}],
+    "channel": {"id": "example-channel"}, "message": {"ts": "1"},
+  }, client)
+  assert json.loads(result["resume_context"]["form_data"]) == {
+    "type": "tool_approval", "interrupt_id": "example-interrupt", "decision": decision,
+  }

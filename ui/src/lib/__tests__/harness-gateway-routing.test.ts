@@ -20,7 +20,10 @@ jest.mock("@/lib/mongodb", () => ({
       if (!bindings.has(key._id)) bindings.set(key._id, update.$setOnInsert);
       return bindings.get(key._id);
     },
-      deleteOne: async (key: { _id: string }) => bindings.delete(key._id),
+      updateOne: async (key: { _id: string }, update: { $set?: object }) => {
+        if (update.$set) bindings.set(key._id, { ...bindings.get(key._id), ...update.$set });
+        return { matchedCount: 1 };
+      },
     };
   },
 }));
@@ -60,7 +63,7 @@ it.each([undefined, "dynamic_agents"])("keeps legacy/default marker %s available
   expect(await resolveHarnessGatewayTarget("agent-example", context)).toEqual({ kind: "dynamic_agents", harnessId: "dynamic_agents" });
 });
 
-it("adopts old Engine sessions and pins later turns until an explicit clear", async () => {
+it("adopts old Engine sessions and retains execution ownership across clear", async () => {
   mockLookupSession.mockResolvedValue({ harness_id: "claude_agent_sdk" });
   const pinned = { kind: "harness_engine", harnessId: "claude_agent_sdk" };
   expect(await resolveHarnessGatewayTarget("agent-example", context)).toEqual(pinned);
@@ -68,7 +71,7 @@ it("adopts old Engine sessions and pins later turns until an explicit clear", as
   mockLookupSession.mockResolvedValue({ harness_id: null });
   expect(await resolveHarnessGatewayTarget("agent-example", context)).toEqual(pinned);
   await clearHarnessGatewayBinding("agent-example", context.subject, context.conversationId);
-  expect(await resolveHarnessGatewayTarget("agent-example", context)).toEqual({ kind: "dynamic_agents", harnessId: "dynamic_agents" });
+  expect(await resolveHarnessGatewayTarget("agent-example", context)).toEqual({ kind: "harness_engine", harnessId: "dynamic_agents" });
 });
 
 it("keeps native conversations pinned after the agent changes to an SDK harness", async () => {

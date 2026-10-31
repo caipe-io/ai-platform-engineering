@@ -31,7 +31,9 @@ Sequence diagrams and flow narratives for "what happens when X". Pair this with 
 | App-owned operation | The checks above, interactive-user identity, installed/enabled app, app launch access and declared HTTP policy |
 | Engine run detail, event polling and replay subscription | Engine run ownership, current agent use, conversation read and matching saved agent |
 | Engine cancellation by run ID | Engine run ownership, current agent use, conversation write and matching saved agent |
-| Direct Engine run admission | Current agent use and conversation write, matching saved agent and a provider-owned Harness Gateway binding |
+| Direct Engine run admission | Current agent use and conversation write, matching saved agent and an Engine-owned Harness Gateway binding |
+| Pending interrupt inspection | Authenticated principal, current agent use, conversation read and matching saved agent before returning native or Engine approval state |
+| Native session adoption or rollback | Authenticated principal, current agent use, conversation write and matching saved agent; quiescent reconciliation under the gateway transition lock and native producer fence |
 
 - Agent selection in a request cannot override a saved conversation participant.
   Legacy conversations without an agent participant retain their existing
@@ -40,6 +42,13 @@ Sequence diagrams and flow narratives for "what happens when X". Pair this with 
   `service_account:<sub>` in CAS/OpenFGA checks. App-owned streams require an
   interactive user. Engine requests carry an internal service credential and
   the verified caller subject; provider SDKs receive no user bearer token.
+- Opt-in Deep Agents execution additionally receives the current delegated
+  bearer in transient context. It reuses native CAS and MCP authorization and
+  checks selected native child agents. Credentials are excluded from persisted
+  run/event records, and runtime cache keys include caller and credential scope.
+- Resume must identify the persisted interrupt and respond to its saved form or
+  allowed tool decision. Idempotent retries return the existing attempt;
+  uncertain dispatched approvals are fenced instead of executed again.
 - The existing Slack write exception applies only to stored Slack conversations
   and still requires agent use and a matching saved agent. History and replay
   reads require conversation read permission; the write exception grants no

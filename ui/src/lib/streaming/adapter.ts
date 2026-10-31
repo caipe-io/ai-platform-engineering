@@ -27,6 +27,9 @@ export interface StreamAdapter {
   /** Resume streaming after HITL form submission */
   resumeStream(params: StreamParams, callbacks: StreamCallbacks): Promise<void>;
 
+  /** Recover an existing Engine run without submitting another command. */
+  recoverRun(runId: string, callbacks: StreamCallbacks): Promise<void>;
+
   /** Cancel the stream on the backend */
   cancelStream(conversationId: string, agentId: string): Promise<boolean>;
 

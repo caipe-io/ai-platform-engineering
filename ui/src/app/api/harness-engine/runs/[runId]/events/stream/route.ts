@@ -1,4 +1,5 @@
 import { proxyHarnessEngineStream } from "@/lib/harness-engine-proxy";
+import { translateCanonicalStream } from "@/lib/harness-gateway";
 import { authorizeHarnessRunAccess } from "../../../../_run-authz";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -18,10 +19,14 @@ export async function GET(
   // Aborting this fetch only drops this subscriber. The run was started by a
   // separate POST and is owned by Harness Engine, so provider execution and
   // event persistence continue after the browser/BFF connection disappears.
-  return proxyHarnessEngineStream(
+  const response = await proxyHarnessEngineStream(
     access.config,
     access.auth,
     `/api/v1/runs/${encodeURIComponent(runId)}/events/stream${suffix}`,
     request.signal,
   );
+  const protocol = request.nextUrl.searchParams.get("protocol");
+  if (!response.ok || !response.body || (protocol !== "agui" && protocol !== "custom")) return response;
+  const run = (await access.response.json()).data;
+  return new Response(translateCanonicalStream(response.body, run, protocol), { status: 200, headers: { ...Object.fromEntries(response.headers), "X-Harness-Run-ID": runId } });
 }

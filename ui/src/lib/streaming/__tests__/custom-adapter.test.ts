@@ -54,6 +54,7 @@ beforeAll(() => {
 beforeEach(() => {
   jest.clearAllMocks();
   jest.spyOn(Date, "now").mockReturnValue(123456);
+  jest.spyOn(crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000001");
 });
 
 afterEach(() => {
@@ -102,6 +103,7 @@ describe("CustomStreamAdapter", () => {
         },
         body: JSON.stringify({
           message: "hello",
+          client_request_id: "00000000-0000-4000-8000-000000000001",
           conversation_id: "conversation-1",
           agent_id: "agent-1",
           protocol: "custom",
@@ -170,6 +172,7 @@ describe("CustomStreamAdapter", () => {
           conversation_id: "conversation-1",
           agent_id: "agent-1",
           resume_data: '{"repo":"demo"}',
+          client_request_id: "00000000-0000-4000-8000-000000000001",
           protocol: "custom",
         }),
       }),

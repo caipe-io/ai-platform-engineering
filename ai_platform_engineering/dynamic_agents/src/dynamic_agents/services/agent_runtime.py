@@ -2185,7 +2185,7 @@ class AgentRuntime:
             agent=self.config.name,
         )
 
-    async def has_pending_interrupt(self, session_id: str) -> dict[str, Any] | None:
+    async def has_pending_interrupt(self, session_id: str, *, strict: bool = False) -> dict[str, Any] | None:
         """Check if there's a pending interrupt for the given session.
 
         Returns a discriminated dict with ``type`` field:
@@ -2224,7 +2224,7 @@ class AgentRuntime:
                 for action in action_requests:
                     tool_name = action.get("name", "")
                     if tool_name == "request_user_input":
-                        tool_call_id = action.get("id", str(id(interrupt)))
+                        tool_call_id = action.get("id") or str(interrupt.id)
                         args = action.get("args", {})
                         logger.info(
                             f"[has_pending_interrupt] Found request_user_input interrupt: tool_call_id={tool_call_id}"
@@ -2239,9 +2239,9 @@ class AgentRuntime:
 
                 # Collect ALL tool approval action_requests
                 tool_approvals: list[dict[str, Any]] = []
-                for action in action_requests:
+                for action_index, action in enumerate(action_requests):
                     tool_name = action.get("name", "")
-                    tool_call_id = action.get("id", str(id(interrupt)))
+                    tool_call_id = action.get("id") or (str(interrupt.id) if action_index == 0 else f"{interrupt.id}:{action_index}")
                     args = action.get("args", {})
                     allowed_decisions = self._get_allowed_decisions_for_tool(tool_name)
                     tool_approvals.append(
@@ -2273,7 +2273,9 @@ class AgentRuntime:
             logger.debug("[has_pending_interrupt] No actionable interrupt found")
             return None
         except Exception as e:
-            logger.warning(f"Error checking for pending interrupt: {e}")
+            logger.warning("Error checking for pending interrupt: %s", type(e).__name__)
+            if strict:
+                raise
             return None
 
     def _get_allowed_decisions_for_tool(self, tool_name: str) -> list[str]:

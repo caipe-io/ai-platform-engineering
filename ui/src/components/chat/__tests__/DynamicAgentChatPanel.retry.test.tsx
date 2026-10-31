@@ -10,11 +10,13 @@ const mockPush = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 const mockToast = jest.fn();
 const mockStreamMessage = jest.fn().mockResolvedValue(undefined);
+const mockRecoverRun = jest.fn().mockResolvedValue(undefined);
 const mockChatState = {
   activeConversationId: "chat-1",
   getActiveConversation: () => mockConversation,
   get conversations() { return [mockConversation]; },
   isConversationStreaming: () => mockStreaming,
+  streamingConversations: new Map(),
   consumePendingMessage: () => null,
   addMessage: jest.fn((_conversationId: string, value: Omit<ChatMessage, "id" | "timestamp">, turnId?: string) => {
     const id = `new-message-${mockConversation.messages.length}`;
@@ -54,7 +56,7 @@ jest.mock("@/components/autonomous/api", () => ({
   autonomousApi: { openFollowUpChat: jest.fn(), listFollowUpChats: async () => ({}) },
 }));
 jest.mock("@/lib/streaming", () => ({
-  createStreamAdapter: () => ({ streamMessage: mockStreamMessage, abort: jest.fn() }),
+  createStreamAdapter: () => ({ streamMessage: mockStreamMessage, recoverRun: mockRecoverRun, abort: jest.fn() }),
 }));
 jest.mock("@/hooks/useDynamicAgentTimeline", () => ({ useAgentTimeline: () => ({ data: {} }) }));
 jest.mock("@/components/shared/timeline", () => ({
@@ -102,6 +104,46 @@ beforeEach(() => {
     message("u2", "user", "second question"),
     message("a2", "assistant", "second answer"),
   ]);
+});
+
+describe("Engine run recovery after refresh", () => {
+  const status = (data: Record<string, unknown>) => jest.spyOn(global, "fetch").mockResolvedValue({
+    ok: true, json: async () => ({ data }),
+  } as Response);
+
+  it.each(["running", "idle"])("rebuilds a missing assistant from a matching %s run without sending the prompt again", async (runStatus) => {
+    setConversation([message("user-example", "user", "saved prompt", { turnId: "turn-example" })]);
+    const fetchMock = status({ runtime: "harness_engine", status: runStatus, run_id: "run-example", turn_id: "turn-example" });
+    try {
+      render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+      await waitFor(() => expect(mockRecoverRun).toHaveBeenCalledWith("run-example", expect.any(Object)));
+      expect(mockConversation.messages.at(-1)).toMatchObject({ role: "assistant", turnId: "turn-example" });
+      expect(mockStreamMessage).not.toHaveBeenCalled();
+    } finally { fetchMock.mockRestore(); }
+  });
+
+  it("does not attach an earlier completed run to a later saved prompt", async () => {
+    setConversation([message("user-example", "user", "unsent prompt", { turnId: "turn-next" })]);
+    const fetchMock = status({ runtime: "harness_engine", status: "idle", run_id: "run-example", turn_id: "turn-previous" });
+    try {
+      render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/chat/stream/status", expect.any(Object)));
+      await act(async () => {});
+      expect(mockRecoverRun).not.toHaveBeenCalled();
+      expect(mockChatState.addMessage).not.toHaveBeenCalled();
+    } finally { fetchMock.mockRestore(); }
+  });
+
+  it("keeps app-owned runs in their application's lifecycle", async () => {
+    setConversation([message("user-example", "user", "saved prompt")]);
+    const fetchMock = status({ status: "running", run_id: "app-run" });
+    try {
+      render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+      await act(async () => {});
+      expect(mockRecoverRun).not.toHaveBeenCalled();
+      expect(mockChatState.addMessage).not.toHaveBeenCalled();
+    } finally { fetchMock.mockRestore(); }
+  });
 });
 
 describe("retry alongside edit", () => {

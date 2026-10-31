@@ -11,6 +11,7 @@ authenticateRequest,
 getDynamicAgentsConfig,
 proxyRequest,
 } from "@/lib/da-proxy";
+import { resolveHarnessNativeNamespace } from "@/lib/harness-native-state";
 import { NextRequest,NextResponse } from "next/server";
 
 export async function GET(request: NextRequest): Promise<Response> {
@@ -31,7 +32,9 @@ export async function GET(request: NextRequest): Promise<Response> {
   if (daConfig instanceof NextResponse) return daConfig;
 
   const backendUrl = new URL("/api/v1/files/list", daConfig.dynamicAgentsUrl);
-  backendUrl.searchParams.set("fs_namespace", fsNamespace);
+  const resolvedNamespace = await resolveHarnessNativeNamespace(fsNamespace, authResult, request.method !== "GET");
+  if (resolvedNamespace instanceof NextResponse) return resolvedNamespace;
+  backendUrl.searchParams.set("fs_namespace", resolvedNamespace);
 
   return proxyRequest(backendUrl.toString(), "GET", authResult, "[files/list]");
 }

@@ -11,6 +11,7 @@ from harness_engine.models import (
     CanonicalEventDraft,
     HarnessDescriptor,
     RunContext,
+    TurnOutcome,
 )
 
 if TYPE_CHECKING:
@@ -27,3 +28,19 @@ class HarnessAdapter(Protocol):
     def evaluate(self, blueprint: AgentBlueprint) -> AdapterEvaluation: ...
 
     def stream(self, context: RunContext) -> AsyncIterator[CanonicalEventDraft]: ...
+
+
+class HarnessAdapterV2(Protocol):
+    """An execution attempt ends with exactly one explicit, durable outcome."""
+
+    @property
+    def descriptor(self) -> HarnessDescriptor: ...
+
+    @property
+    def session_manager(self) -> ProviderSessionManager: ...
+
+    def evaluate(self, blueprint: AgentBlueprint) -> AdapterEvaluation: ...
+
+    def execute(self, context: RunContext) -> AsyncIterator[CanonicalEventDraft | TurnOutcome]: ...
+
+    async def cancel_run(self, run_id: str) -> bool: ...

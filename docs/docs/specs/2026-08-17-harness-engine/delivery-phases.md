@@ -1,6 +1,6 @@
 # Harness Engine Delivery Phases
 
-- **Updated:** 2026-10-21.
+- **Updated:** 2026-10-31.
 - **Status:** Proposed delivery scope for review; this document does not record reviewer approval or certify pending capabilities.
 - **Purpose:** One delivery sequence for PR 2401, Discussion 2405, and the Spec Kit package.
 - **Precedence:** These delivery phases supersede the original replacement-first ordering in the plan. Numbered task workstreams retain their task IDs and describe technical work, not release order. Spec Kit's own research/design workflow stages are separate.
@@ -10,7 +10,7 @@
 | Delivery phase | Scope | Status / exit gate |
 |---|---|---|
 | **1 — Independent engine and gateway** | PR 2401: opt-in AgentCore and Claude SDK adapters; unchanged Dynamic Agents default; durable engine sessions/runs/replay; current chat and app-stream contracts; honest capability-driven controls | Foundation implemented. Current-path correctness, compatibility, UI capability gating, CI and review agreement remain merge gates. |
-| **2 — Deep Agents integration and pluggable builder** | Extract/reuse the existing runtime behind `DeepAgentsAdapter`; preserve native behavior and state; add required engine lifecycle contracts; introduce reusable capability-driven editor panels | Pending, separately reviewed work. Exit requires compatibility, CAS/credential isolation, pause/resume, attachment, cancellation and migration evidence. |
+| **2 — Deep Agents integration and pluggable builder** | Reuse the existing runtime behind `DeepAgentsAdapter`; preserve native behavior and state; add explicit lifecycle contracts and capability-driven editor panels | Opt-in implementation added. See the [implementation and validation guide](../../../../ai_platform_engineering/harness_engine/README.md#opt-in-deep-agents-integration-phase-2). Experimental; rollout and review remain separate gates. |
 | **3 — External sandbox execution** | Keep `SandboxManager` inside the engine container; add a pluggable external backend such as Kubernetes Agent Sandbox; run local harness workers in isolated conversation-scoped environments | Pending. Exit requires lease/fencing, state recovery, worker identity, secret-free execution and isolation evidence. |
 | **4 — Cross-harness agent composition** | Add `DelegationBroker` to invoke authorized child agents through their own adapters and execution contexts; correlate child output, approvals and cancellation | Pending. Exit requires caller/child authorization, depth/cycle/concurrency controls, session/workspace isolation and end-to-end delegation evidence. |
 

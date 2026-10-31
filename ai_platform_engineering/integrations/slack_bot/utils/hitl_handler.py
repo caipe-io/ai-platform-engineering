@@ -77,7 +77,7 @@ def parse_agui_interrupt(event, conversation_id: str = None, agent_id: str = Non
   reason = interrupt.get("reason", "human_input")
   payload = interrupt.get("payload", {})
 
-  prompt = payload.get("prompt", "Action Required")
+  prompt = payload.get("prompt") or "Action Required"
   raw_fields = payload.get("fields", [])
   agent = payload.get("agent", "")
 
@@ -127,11 +127,21 @@ def parse_agui_interrupt(event, conversation_id: str = None, agent_id: str = Non
     )
     form.fields.append(form_field)
 
+  if reason == "tool_approval":
+    tools = payload.get("tool_approvals") or [{"tool_name": payload.get("tool_name"), "tool_args": payload.get("tool_args", {})}]
+    form.description = "\n".join(f"Tool: {tool.get('tool_name', 'unknown')}\nArguments: {json.dumps(tool.get('tool_args', {}))}" for tool in tools)[:2500]
+
   # Default approve/reject actions
   form.actions = [
     FormAction(action_id="approve", label="Approve", style="primary"),
     FormAction(action_id="reject", label="Reject", style="danger"),
   ]
+
+  if reason == "tool_approval":
+    allowed = set(payload.get("allowed_decisions") or ["approve", "reject", "edit"])
+    for tool in payload.get("tool_approvals") or []:
+      allowed &= set(tool.get("allowed_decisions") or ["approve", "reject", "edit"])
+    form.actions = [action for action in form.actions if action.action_id in allowed]
 
   return form
 
@@ -224,6 +234,7 @@ def format_hitl_form_blocks(form: HITLForm) -> List[Dict[str, Any]]:
             "conversation_id": form.conversation_id,
             "agent_id": form.agent_id,
             "interrupt_id": form.metadata.get("interrupt_id"),
+            "interrupt_type": "tool_approval" if form.metadata.get("reason") == "tool_approval" else "form_input",
           }
         ),
       }
@@ -480,10 +491,14 @@ class HITLCallbackHandler:
         )
 
       # Build form_data string for resume endpoint
-      if action_name == "reject":
-        form_data = json.dumps({"action": "reject", "reason": "User rejected"})
+      if value_data.get("interrupt_type") == "tool_approval":
+        if action_name not in {"approve", "reject"}:
+          raise ValueError("Unsupported tool approval decision")
+        form_data = json.dumps({"type": "tool_approval", "interrupt_id": interrupt_id, "decision": action_name})
+      elif action_name == "reject":
+        form_data = json.dumps({"type": "form_input", "interrupt_id": interrupt_id, "dismissed": True})
       else:
-        form_data = json.dumps({"action": "approve", "values": form_values})
+        form_data = json.dumps({"type": "form_input", "interrupt_id": interrupt_id, "values": form_values})
 
       # Return context for the caller (app.py) to process the resume stream
       return {

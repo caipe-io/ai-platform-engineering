@@ -15,6 +15,7 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
+import { prepareAgentExecution } from "@/lib/harness-agent-publication";
 import {
   getHarnessEngineConfig,
   proxyHarnessEngine,
@@ -916,6 +917,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     updated_at: now.toISOString(),
   };
 
+  const execution = await prepareAgentExecution(doc as unknown as Record<string, unknown>, ownerSubject, body.harness_save);
+  if (execution) doc.execution_blueprint_version = execution.version;
+
   // Only resolve the unlinked SA sub when it is needed. Global agents are
   // available to callers without a linked user identity (Slack/Webex bots),
   // while team agents continue to rely on explicit scopes.
@@ -1222,6 +1226,9 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     await validateRagCollectionSelection(finalCollectionIds, session);
   }
 
+  const execution = await prepareAgentExecution({ ...agent, ...updateData }, requireStableSubject(session), body.harness_save);
+  if (execution) updateData.execution_blueprint_version = execution.version;
+
   // Resolve the unlinked SA grant state whenever the Everyone grant is being
   // added or removed. On a global → team transition, preserve a separately
   // assigned explicit service-account scope.
@@ -1253,7 +1260,7 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
   });
 
   const updated = await collection.findOneAndUpdate(
-    { _id: id },
+    { _id: id, ...(execution && { updated_at: agent.updated_at }) },
     Object.keys(unsetData).length > 0
       ? { $set: updateData, $unset: unsetData }
       : { $set: updateData },
@@ -1261,7 +1268,7 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
   );
 
   if (!updated) {
-    throw new ApiError("Failed to update agent", 500);
+    throw new ApiError("The agent changed during save; reload before retrying", 409);
   }
 
   return successResponse(

@@ -255,6 +255,7 @@ export function ChatPanel({
     contextId?: string;
     // SSE/Dynamic Agent specific fields
     isSSE?: boolean;
+    interruptId?: string;
     agentId?: string;
   } | null>(null);
 
@@ -833,6 +834,7 @@ export function ChatPanel({
                     input_fields: inputFields,
                   },
                   contextId: conversationId,
+                  interruptId: idata.interrupt_id,
                   isSSE: true,
                   agentId: agentId,
                 });
@@ -1012,7 +1014,7 @@ export function ChatPanel({
     const inputEvent = [...streamEventsFromConv].reverse().find((e) => e.type === "input_required");
 
     if (inputEvent && inputEvent.inputRequiredData) {
-       const { prompt, fields } = inputEvent.inputRequiredData;
+       const { prompt, fields, interrupt_id: savedInterruptId } = inputEvent.inputRequiredData;
 
        // Check if already answered
        const assistantIdx = messages.findIndex(m => m.id === lastMsg.id);
@@ -1044,6 +1046,7 @@ export function ChatPanel({
             input_fields: inputFields,
           },
           contextId: activeConversationId,
+          interruptId: savedInterruptId,
           isSSE: true,
           agentId: agentId,
        });
@@ -1206,6 +1209,7 @@ export function ChatPanel({
         },
         contextId: convId,
         isSSE: true,
+        interruptId,
         agentId,
       });
 
@@ -1334,6 +1338,57 @@ export function ChatPanel({
     setConversationStreaming(conversationId, null);
     // Store's setConversationStreaming(null) hook auto-saves after 500ms.
   }, [updateMessage, setConversationStreaming, agentName]);
+
+  const recoveryChecked = useRef(new Set<string>());
+  const recoveryMessageId = conversation?.messages?.at(-1)?.id;
+  const recoveryMessageRole = conversation?.messages?.at(-1)?.role;
+  const recoveryMessageFinal = conversation?.messages?.at(-1)?.isFinal;
+  const recoveryTurnId = conversation?.messages?.at(-1)?.turnId;
+  useEffect(() => {
+    const checked = recoveryChecked.current;
+    if (!activeConversationId || isLoadingMessages || isThisConversationStreaming || isRemoteResponse || isAutonomousHistory || panelReadOnly) return;
+    if (!recoveryMessageId || !["assistant", "user"].includes(recoveryMessageRole ?? "") || checked.has(activeConversationId)) return;
+    checked.add(activeConversationId);
+    let disposed = false;
+    let subscribed = false;
+    void (async () => {
+      const response = await fetch("/api/v1/chat/stream/status", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent_id: agentId, conversation_id: activeConversationId }) });
+      if (!response.ok || disposed) return;
+      const { data } = await response.json();
+      if (data?.runtime !== "harness_engine" || !data.run_id || data.status === "waiting_for_input") return;
+      if (data.turn_id && recoveryTurnId && data.turn_id !== recoveryTurnId) return;
+      if (data.status !== "running" && (recoveryMessageRole === "assistant" ? recoveryMessageFinal : !data.turn_id || data.turn_id !== recoveryTurnId)) return;
+      // A popup and the full chat share this store. Only one subscriber rebuilds
+      // the current turn; its command and checkpoints remain server-owned.
+      if (useChatStore.getState().streamingConversations.has(activeConversationId)) return;
+      subscribed = true;
+      // Periodic persistence omits an unfinished assistant placeholder. Rebuild
+      // it from the admitted run rather than submitting the saved prompt again.
+      const assistantId = recoveryMessageRole === "assistant" ? recoveryMessageId : addMessage(
+        activeConversationId, { role: "assistant", content: "", isFinal: false }, recoveryTurnId,
+      );
+      const adapter = createStreamAdapter({ protocol: agentProtocol as "custom" | "agui" });
+      const state: StreamLoopState = { accumulatedText: "", rawStreamContent: "", hitlFormRequested: false, hasError: false };
+      clearStreamEvents(activeConversationId);
+      updateMessage(activeConversationId, assistantId, { isFinal: false });
+      setConversationStreaming(activeConversationId, { conversationId: activeConversationId, messageId: assistantId,
+        client: { abort: () => adapter.abort() }, streamAdapter: adapter });
+      try {
+        await adapter.recoverRun(data.run_id, buildStreamCallbacks(activeConversationId, assistantId, state, new Map()));
+      } catch (error) {
+        state.hasError = true;
+        state.errorMessage = error instanceof Error ? error.message : "Run recovery failed";
+      }
+      finalizeStreamLoop(activeConversationId, assistantId, state);
+    })().catch(error => console.error("[DynamicAgent] Run status recovery failed", error));
+    return () => {
+      disposed = true;
+      if (!subscribed) checked.delete(activeConversationId);
+    };
+  }, [activeConversationId, agentId, agentProtocol, isLoadingMessages, isThisConversationStreaming, isRemoteResponse,
+    isAutonomousHistory, panelReadOnly, recoveryMessageId, recoveryMessageRole, recoveryMessageFinal, recoveryTurnId, addMessage, clearStreamEvents, updateMessage, setConversationStreaming,
+    buildStreamCallbacks, finalizeStreamLoop]);
 
   // A queued batch renders as separate user bubbles but is sent as one prompt,
   // producing one coherent assistant response for the whole batch.
@@ -2008,7 +2063,7 @@ export function ChatPanel({
     };
 
     // Send form data as discriminated resume payload
-    const formDataJson = JSON.stringify({ type: "form_input", values: formData });
+    const formDataJson = JSON.stringify({ type: "form_input", values: formData, interrupt_id: pendingUserInput.interruptId });
 
     setConversationStreaming(activeConversationId, {
       conversationId: activeConversationId,
@@ -2130,6 +2185,7 @@ export function ChatPanel({
         }),
       };
     }
+    resumePayload.interrupt_id = pendingToolApproval.interruptId;
     const resumeData = JSON.stringify(resumePayload);
 
     setConversationStreaming(activeConversationId, {
@@ -2566,7 +2622,7 @@ export function ChatPanel({
                         protocol: agentProtocol as "custom" | "agui",
                       });
                       // Fire-and-forget: resume with rejection message
-                      const dismissalPayload = JSON.stringify({ type: "form_input", dismissed: true });
+                      const dismissalPayload = JSON.stringify({ type: "form_input", dismissed: true, interrupt_id: pendingUserInput.interruptId });
                       dismissAdapter.resumeStream(
                         {
                           conversationId: activeConversationId,

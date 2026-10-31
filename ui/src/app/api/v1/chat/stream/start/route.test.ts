@@ -21,6 +21,8 @@ jest.mock("@/lib/da-proxy", () => ({
   proxySSEStream: (...args: unknown[]) => mockDynamicStream(...args),
 }));
 jest.mock("@/lib/harness-gateway", () => ({
+  getPinnedHarnessGatewayTarget: async () => null,
+  getHarnessGatewayNativeThread: async (_agent: string, _subject: string, thread: string) => thread,
   resolveHarnessGatewayTarget: (...args: unknown[]) => mockResolveHarness(...args),
 }));
 jest.mock("@/lib/api-middleware", () => ({
