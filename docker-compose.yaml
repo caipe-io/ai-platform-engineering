@@ -16,9 +16,12 @@ services:
   ####################################################################################################
 
   # Official GitHub MCP server for all-in-one mode.
+  # The image defaults to stdio, which exits as soon as stdin closes in a detached container.
+  # Run the http subcommand to serve streamable HTTP on port 8082.
   github-mcp-server:
     image: ghcr.io/github/github-mcp-server:latest
     container_name: github-mcp-server
+    command: ["http", "--port", "8082"]
     environment:
       - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PERSONAL_ACCESS_TOKEN}
     ports: ["18000:8082"]
