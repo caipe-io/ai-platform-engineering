@@ -141,6 +141,13 @@ jobs:
 from frontmatter. Both dotted legacy slugs and current hyphenated slugs work.
 The selected version and URL pass unchanged to the draft-release job.
 
+Finalization checks the link recorded in the draft body before publication,
+retrying for about nine minutes while the independent docs deployment finishes.
+A missing, ambiguous, or unavailable link fails the step and leaves the release
+as a draft. After repairing or deploying the post, re-run the failed finalize
+job to retry publication. RC cleanup and post-release scans only follow an
+actual publication.
+
 A stable release requires a single, non-draft post with a valid slug. An RC
 without a matching post omits the link instead of publishing a guessed URL.
 Run the resolver and release-body wiring tests with:

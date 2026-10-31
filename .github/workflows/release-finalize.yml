@@ -176,20 +176,36 @@ jobs:
       - name: 🚀 Publish release
         id: publish-release
         if: steps.check-cis.outputs.all_passed == 'true'
+        timeout-minutes: 12
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.payload.outputs.tag }}
         run: |
+          set -euo pipefail
+
           echo "🚀 Publishing release $TAG..."
 
           # Check if release exists and is a draft
-          RELEASE_INFO=$(gh release view "$TAG" --repo="${{ github.repository }}" --json isDraft,url 2>/dev/null || echo '{"isDraft":false}')
+          RELEASE_INFO=$(gh release view "$TAG" --repo="${{ github.repository }}" --json isDraft,url,body)
           IS_DRAFT=$(echo "$RELEASE_INFO" | jq -r '.isDraft')
 
           if [[ "$IS_DRAFT" != "true" ]]; then
             echo "ℹ️ Release $TAG is not a draft (already published or doesn't exist)"
             exit 0
           fi
+
+          # Docs deploy independently of image CI. Keep the release as a draft
+          # until the exact link in its body is reachable on the public site.
+          NOTES_URL=$(jq -r '.body // ""' <<< "$RELEASE_INFO" | tr -d '\r' | sed -nE \
+            's@^📖 Release notes: \[[^]]+ release notes\]\((https://caipe\.io/releases/[A-Za-z0-9][A-Za-z0-9._-]*)\)$@\1@p')
+          if ! [[ "$NOTES_URL" =~ ^https://caipe\.io/releases/[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "❌ Expected exactly one release-notes link in the draft body; leaving release as a draft"
+            exit 1
+          fi
+          echo "📰 Waiting for release notes: $NOTES_URL"
+          curl --fail --silent --show-error --location \
+            --retry 10 --retry-delay 30 --retry-all-errors \
+            --connect-timeout 10 --max-time 20 --output /dev/null "$NOTES_URL"
 
           # Publish the release
           gh release edit "$TAG" --repo="${{ github.repository }}" --draft=false
@@ -199,7 +215,7 @@ jobs:
           echo "🔗 $(echo "$RELEASE_INFO" | jq -r '.url')"
 
       - name: 🧹 Clean up old RC tags
-        if: steps.check-cis.outputs.all_passed == 'true'
+        if: steps.publish-release.outputs.published == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.payload.outputs.tag }}
@@ -348,6 +364,7 @@ jobs:
           ALL_PASSED: ${{ steps.check-cis.outputs.all_passed }}
           ANY_FAILED: ${{ steps.check-cis.outputs.any_failed }}
           ANY_RUNNING: ${{ steps.check-cis.outputs.any_running }}
+          PUBLISHED: ${{ steps.publish-release.outputs.published }}
         run: |
           echo "## Release Finalize Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -357,11 +374,14 @@ jobs:
           echo "| Triggered by | \`${{ steps.payload.outputs.workflow }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [[ "$ALL_PASSED" == "true" ]]; then
+          if [[ "$PUBLISHED" == "true" ]]; then
             echo "### ✅ Release Published" >> $GITHUB_STEP_SUMMARY
             echo "All CI builds passed. Release has been published." >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "🧹 Old RC tags (for versions < \`$TAG\`) have been cleaned up." >> $GITHUB_STEP_SUMMARY
+          elif [[ "$ALL_PASSED" == "true" ]]; then
+            echo "### ⚠️ Release Not Published" >> $GITHUB_STEP_SUMMARY
+            echo "CI passed, but this run did not publish the release. Check the publication step, including release-notes availability." >> $GITHUB_STEP_SUMMARY
           elif [[ "$ANY_FAILED" == "true" ]]; then
             echo "### ❌ Release Failed" >> $GITHUB_STEP_SUMMARY
             echo "One or more CI builds failed. Release remains as draft." >> $GITHUB_STEP_SUMMARY

@@ -31,10 +31,11 @@ def resolve_release_blog(releases_dir: Path, version: str) -> dict[str, str]:
         post = posts[0]
         text = post.read_text(encoding="utf-8")
         frontmatter = re.match(r"\A---[ \t]*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)", text)
-        slug = SLUG_PATTERN.search(frontmatter.group(1)) if frontmatter else None
+        slug_lines = re.findall(r"^slug[ \t]*:.*$", frontmatter.group(1), re.MULTILINE) if frontmatter else []
+        slug = SLUG_PATTERN.fullmatch(slug_lines[0]) if len(slug_lines) == 1 else None
         if not slug:
-            raise ValueError(f"{post}: set a single-path slug in YAML frontmatter")
-        if re.search(r"^draft:[ \t]*true[ \t]*$", frontmatter.group(1), re.MULTILINE):
+            raise ValueError(f"{post}: set exactly one single-path slug in YAML frontmatter")
+        if re.search(r"^draft:[ \t]*(?:true|True|TRUE)[ \t]*(?:#.*)?$", frontmatter.group(1), re.MULTILINE):
             raise ValueError(f"{post}: release notes must not be a draft")
         slug_value = next(value for value in slug.groups() if value is not None)
         return {"version": candidate, "url": f"https://caipe.io/releases/{slug_value}"}
