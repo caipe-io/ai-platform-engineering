@@ -42,6 +42,13 @@ tags:
 
 # Global configuration shared across all subcharts
 global:
+  # Include portable runtimes whenever the UI is installed. Provider profiles
+  # below remain operator-owned. Disable to run only Dynamic Agents.
+  harnessEngine:
+    enabled: true
+    tokenSecretName: ""
+    tokenSecretKey: HARNESS_ENGINE_INTERNAL_TOKEN
+
   # -- Global image tag override. When set, overrides the default appVersion-based
   # image tag for ALL subcharts (MCP servers, dynamic agents, UI, etc.) in a single place.
   # Individual subchart `image.tag` values still take highest precedence.
@@ -1742,3 +1749,32 @@ rag-stack:
 
   milvus:
     enabled: true
+
+# Independent Claude SDK / AgentCore execution service. Enabled with the UI.
+harnessEngine:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/caipe-io/caipe-harness-engine
+    tag: ""
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  serviceAccount:
+    annotations: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  # Existing Secrets containing provider environment variables, never blueprints.
+  providerSecrets: []
+  # Reuse the UI's database credentials; only MONGODB_URI is read from it.
+  mongodbSecretName: ""
+  mongodbSecretKey: MONGODB_URI
+  mongodbDatabase: harness_engine
+  claudeSDKProfiles: {}
+  agentcoreRuntimes: {}
+  env: {}

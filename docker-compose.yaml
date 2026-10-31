@@ -27,7 +27,7 @@ services:
       - mcp-servers
 
   mcp-backstage:
-    image: ghcr.io/cnoe-io/mcp-backstage:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-backstage:${IMAGE_TAG:-1.3.4}
     container_name: mcp-backstage
     env_file: [.env]
     ports: ["18001:8000"]
@@ -49,7 +49,7 @@ services:
   # ArgoCD MCP
 
   mcp-argocd:
-    image: ghcr.io/cnoe-io/mcp-argocd:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-argocd:${IMAGE_TAG:-1.3.4}
     container_name: mcp-argocd
     env_file: [.env]
     ports: ["18002:8000"]
@@ -87,7 +87,7 @@ services:
   # Jira MCP
 
   mcp-jira:
-    image: ghcr.io/cnoe-io/mcp-jira:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-jira:${IMAGE_TAG:-1.3.4}
     container_name: mcp-jira
     env_file: [.env]
     ports: ["18004:8000"]
@@ -109,7 +109,7 @@ services:
   # Komodor MCP
 
   mcp-komodor:
-    image: ghcr.io/cnoe-io/mcp-komodor:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-komodor:${IMAGE_TAG:-1.3.4}
     container_name: mcp-komodor
     env_file: [.env]
     ports: ["18005:8000"]
@@ -130,7 +130,7 @@ services:
   # PagerDuty MCP
 
   mcp-pagerduty:
-    image: ghcr.io/cnoe-io/mcp-pagerduty:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-pagerduty:${IMAGE_TAG:-1.3.4}
     container_name: mcp-pagerduty
     env_file: [.env]
     ports: ["18006:8000"]
@@ -180,7 +180,7 @@ services:
   # Splunk
 
   mcp-splunk:
-    image: ghcr.io/cnoe-io/mcp-splunk:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-splunk:${IMAGE_TAG:-1.3.4}
     container_name: mcp-splunk
     env_file: [.env]
     ports: ["18008:8000"]
@@ -202,7 +202,7 @@ services:
   # Webex
 
   mcp-webex:
-    image: ghcr.io/cnoe-io/mcp-webex:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-webex:${IMAGE_TAG:-1.3.4}
     container_name: mcp-webex
     env_file: [.env]
     ports: ["18009:8000"]
@@ -224,7 +224,7 @@ services:
   # NetUtils MCP
 
   mcp-netutils:
-    image: ghcr.io/cnoe-io/mcp-netutils:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-netutils:${IMAGE_TAG:-1.3.4}
     container_name: mcp-netutils
     env_file: [.env]
     ports: ["18011:8000"]
@@ -247,7 +247,7 @@ services:
   # site-specific Graph grant. It is intentionally excluded from mcp-servers so
   # the credential-free OSS first-install path remains runnable.
   mcp-sharepoint:
-    image: ghcr.io/cnoe-io/mcp-sharepoint:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/caipe-io/mcp-sharepoint:${IMAGE_TAG:-1.3.4}
     container_name: mcp-sharepoint
     env_file: [.env]
     ports: ["18014:8000"]
@@ -361,7 +361,7 @@ services:
   #   - Configure via MONGODB_* environment variables
   #   - See mongodb service configuration above
   caipe-ui:
-    image: ghcr.io/cnoe-io/caipe-ui:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-ui:${IMAGE_TAG:-1.3.4}
     container_name: caipe-ui
     ports: ["3000:3000"]
     env_file:
@@ -370,7 +370,7 @@ services:
       - NODE_ENV=production
       # Safe release metadata shown by System Health. A specific
       # PLATFORM_COMPONENT_VERSION_* value may override this shared tag.
-      - CAIPE_RELEASE_VERSION=${IMAGE_TAG:-0.5.66}
+      - CAIPE_RELEASE_VERSION=${IMAGE_TAG:-1.3.4}
       # Pass the active Compose profile set through to the UI so product
       # health can show profile-enabled integrations as degraded/down even
       # when their container crashes before serving traffic.
@@ -437,6 +437,8 @@ services:
       # Compact header shortcut that reuses the existing feedback dialog.
       - PROVIDE_FEEDBACK_ENABLED=${PROVIDE_FEEDBACK_ENABLED:-false}
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
+      - HARNESS_ENGINE_URL=${HARNESS_ENGINE_URL:-http://harness-engine:8010}
+      - HARNESS_ENGINE_INTERNAL_TOKEN=${HARNESS_ENGINE_INTERNAL_TOKEN:-local-development-only}
       # Connections & Secrets. Docker Compose reads provider bootstrap values
       # from .env; Kubernetes deployments use ESO to inject the same env names.
       - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-false}
@@ -491,7 +493,7 @@ services:
     build:
       context: .
       dockerfile: build/Dockerfile.audit-service
-    image: ghcr.io/cnoe-io/caipe-audit-service:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-audit-service:${IMAGE_TAG:-1.3.4}
     container_name: audit-service
     ports:
       - "127.0.0.1:${AUDIT_SERVICE_PORT:-8010}:8010"
@@ -542,7 +544,7 @@ services:
   #                                      RAG Services                                                #
   ####################################################################################################
   rag-server:
-    image: ghcr.io/cnoe-io/caipe-rag-server:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-rag-server:${IMAGE_TAG:-1.3.4}
     container_name: rag-server
     # Network alias keeps the legacy `rag_server` hostname working for any
     # client that still has it hardcoded. AGW's hickory-dns resolver rejects
@@ -593,8 +595,34 @@ services:
   #
   # Ports:
   #   - 8100: Dynamic Agents API (proxied via UI at /api/dynamic-agents)
+  # Portable execution backends, available with the standard agent profile.
+  # Provider profiles stay empty until an operator configures credentials/targets.
+  harness-engine:
+    image: ghcr.io/caipe-io/caipe-harness-engine:${HARNESS_ENGINE_IMAGE_TAG:-${IMAGE_TAG:-1.3.4}}
+    build:
+      context: .
+      dockerfile: ai_platform_engineering/harness_engine/build/Dockerfile
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      HARNESS_ENGINE_INTERNAL_TOKEN: ${HARNESS_ENGINE_INTERNAL_TOKEN:-local-development-only}
+      HARNESS_ENGINE_STORAGE_BACKEND: mongodb
+      HARNESS_ENGINE_MONGODB_URI: ${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/harness_engine?authSource=admin}
+      HARNESS_ENGINE_MONGODB_DATABASE: harness_engine
+      HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON: ${HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON:-{}}
+      HARNESS_ENGINE_AGENTCORE_RUNTIMES_JSON: ${HARNESS_ENGINE_AGENTCORE_RUNTIMES_JSON:-{}}
+    tmpfs:
+      - /workspace:rw,nosuid,nodev,mode=1777,size=512m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles: [dynamic-agents, harness-engine]
+
   dynamic-agents:
-    image: ghcr.io/cnoe-io/caipe-dynamic-agents:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-dynamic-agents:${IMAGE_TAG:-1.3.4}
     container_name: dynamic-agents
     ports: ["8100:8001"]
     volumes:
@@ -660,7 +688,7 @@ services:
   # Ports:
   #   - 8002: Autonomous Agents API (proxied via UI at /api/autonomous, admin-only)
   autonomous-agents:
-    image: ghcr.io/cnoe-io/caipe-autonomous-agents:${IMAGE_TAG:-0.2.36}
+    image: ghcr.io/caipe-io/caipe-autonomous-agents:${IMAGE_TAG:-1.3.4}
     container_name: autonomous-agents
     # Bind to loopback only -- the FastAPI service has no auth layer of
     # its own; auth and admin gating live in the UI's /api/autonomous
@@ -722,7 +750,7 @@ services:
       - autonomous-agents
 
   agent_ontology:
-    image: ghcr.io/cnoe-io/caipe-rag-agent-ontology:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-rag-agent-ontology:${IMAGE_TAG:-1.3.4}
     container_name: agent_ontology
     ports: ["8098:8098"]
     environment:
@@ -741,7 +769,7 @@ services:
 
 
   web_ingestor:
-    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-rag-ingestors:${IMAGE_TAG:-1.3.4}
     container_name: web-ingestor
     environment:
       - INGESTOR_TYPE=webloader
@@ -759,7 +787,7 @@ services:
       - web_ingestor
 
   jira_ingestor:
-    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-rag-ingestors:${IMAGE_TAG:-1.3.4}
     container_name: jira-ingestor
     environment:
       - INGESTOR_TYPE=jira
@@ -778,7 +806,7 @@ services:
       - jira-ingestor
 
   confluence_ingestor:
-    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-rag-ingestors:${IMAGE_TAG:-1.3.4}
     container_name: confluence-ingestor
     environment:
       - INGESTOR_TYPE=confluence
@@ -799,7 +827,7 @@ services:
       - confluence-ingestor
 
   slack_ingestor:
-    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-rag-ingestors:${IMAGE_TAG:-1.3.4}
     container_name: slack-ingestor
     environment:
       - INGESTOR_TYPE=slack
@@ -821,7 +849,7 @@ services:
       - slack-ingestor
 
   webex_ingestor:
-    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-rag-ingestors:${IMAGE_TAG:-1.3.4}
     container_name: webex-ingestor
     environment:
       - INGESTOR_TYPE=webex
@@ -1125,7 +1153,7 @@ services:
   #                                 Slack Bot Integration                                            #
   ####################################################################################################
   slack-bot:
-    image: ghcr.io/cnoe-io/caipe-slack-bot:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-slack-bot:${IMAGE_TAG:-1.3.4}
     container_name: slack-bot
     env_file: [.env]
     ports: ["8030:3000"]
@@ -1162,7 +1190,7 @@ services:
   #                                 Webex Bot Integration                                            #
   ####################################################################################################
   webex-bot:
-    image: ghcr.io/cnoe-io/caipe-webex-bot:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-webex-bot:${IMAGE_TAG:-1.3.4}
     container_name: webex-bot
     env_file: [.env]
     ports: ["8032:3002"]
@@ -1581,7 +1609,7 @@ services:
     build:
       context: ./deploy/agentgateway
       dockerfile: Dockerfile.config-bridge
-    image: ghcr.io/cnoe-io/agentgateway-config-bridge:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/agentgateway-config-bridge:${IMAGE_TAG:-1.3.4}
     container_name: agentgateway-config-bridge
     restart: unless-stopped
     read_only: true
