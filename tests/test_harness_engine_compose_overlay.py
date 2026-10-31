@@ -37,7 +37,7 @@ def test_preview_overlay_adds_harness_engine_without_overriding_dynamic_agents()
     assert services["caipe-ui"]["environment"]["HARNESS_ENGINE_URL"] == (
         "http://harness-engine:8010"
     )
-    assert services["langfuse-web"]["ports"] == ["127.0.0.1:3001:3000"]
+    assert services["langfuse-web"]["ports"] == ["127.0.0.1:${LANGFUSE_PORT:-3001}:3000"]
     assert services["rag-server"]["environment"]["EMBEDDINGS_PROVIDER"] == "ollama"
     assert services["rag-server"]["depends_on"]["ollama-models"]["condition"] == (
         "service_completed_successfully"
