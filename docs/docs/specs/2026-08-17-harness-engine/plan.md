@@ -37,7 +37,7 @@ each adapter owns its native checkpoint/session representation
 **Target Platform**: Independent Linux control-plane container calling the managed AgentCore Runtime plane; local memory repository is test/development only
 **Project Type**: New backend service plus additive Next.js BFF routes and agent-editor overlay
 **Performance Goals**: Compatibility control-plane overhead within 10% excluding declared sandbox startup; canonical translation under 25 ms p95 per event batch; warm worker readiness under 5 seconds p95 and cold readiness under 30 seconds p95; no more than 20% control-plane memory growth
-**Phase 1 constraints**: Zero Dynamic Agents runtime changes; fail closed before provider invocation; no arbitrary AgentCore ARN or execution role from browser/agent data; no user bearer propagation into experimental provider calls; no BFF affinity; no automatic fallback after side effects. Phase 2 separately specifies governed caller delegation for existing tool behavior.
+**Phase 1 constraints**: Zero Dynamic Agents runtime changes; fail closed before provider invocation; no arbitrary AgentCore ARN or execution role from browser/agent data; no user bearer propagation into experimental provider calls; no BFF affinity; no automatic fallback after side effects. Deep Agents integration specifies governed caller delegation for existing tool behavior.
 **Scale/Scope**: Opt-in AgentCore and Claude SDK; horizontally scaled BFF and Harness Engine readers over a shared Mongo event log; Deep Agents integration and sandbox workers follow the staged delivery gates
 
 ## Constitution Check
@@ -191,7 +191,7 @@ charts/ai-platform-engineering/charts/dynamic-agents/
 └── templates/                           # control plane, RBAC, policies, profiles/pools
 ```
 
-**Structure Decision**: Phase 1 creates `ai_platform_engineering/harness_engine/` as a separate package, image, API, persistence boundary and test suite. Extend the existing BFF chat routes with Harness Gateway and add `/api/harness-engine/*` controls. Preserve `ai_platform_engineering/dynamic_agents/`; Phase 2 integration is separately specified and reversible.
+**Structure Decision**: Phase 1 creates `ai_platform_engineering/harness_engine/` as a separate package, image, API, persistence boundary and test suite. Extend the existing BFF chat routes with Harness Gateway and add `/api/harness-engine/*` controls. Preserve `ai_platform_engineering/dynamic_agents/`; Native runtime integration is separately specified and reversible.
 
 ### Implemented vertical-slice structure
 
@@ -347,7 +347,7 @@ These are the same delivery phases published in [Discussion 2405](https://github
 
 **Exit:** Approved Phase 1 scope and current-path correctness/compatibility evidence. No claim of Deep Agents integration, sandbox isolation or cross-harness delegation.
 
-### Phase 2 — Deep Agents integration and pluggable builder
+### Deep Agents integration and pluggable builder
 
 - Extract and reuse the existing runtime behind `DeepAgentsAdapter`; preserve its graph, tools, middleware, skills and native subagents.
 - Add typed events, completed/paused/cancelled outcomes, authorized resume, attachments and caller-scoped credential handling.
@@ -373,7 +373,7 @@ These are the same delivery phases published in [Discussion 2405](https://github
 - Enforce compatible capabilities, target permissions, cycle/depth/concurrency controls and budgets.
 - Enable reusable delegation UI only for qualified adapter/deployment combinations.
 
-**Exit:** Cross-harness delegation and child-run visibility pass authorization, lifecycle and isolation conformance. Existing Deep Agents native subagents remain available through Phase 2 parity.
+**Exit:** Cross-harness delegation and child-run visibility pass authorization, lifecycle and isolation conformance. Existing Deep Agents native subagents remain available through native runtime compatibility.
 
 Additional harnesses, long-term memory, process-failure takeover and ACP are separately scoped extensions. Capability declarations and certification follow demonstrated implementations, not roadmap position.
 

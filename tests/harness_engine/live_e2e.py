@@ -75,7 +75,7 @@ def run(args: argparse.Namespace) -> None:
     def conversation(agent: str) -> str:
         return call(
             "/api/chat/conversations",
-            {"agent_id": agent, "title": "Example phase two", "client_type": "webui"},
+            {"agent_id": agent, "title": "Example session lifecycle", "client_type": "webui"},
             expected=201,
         )["data"]["conversation"]["_id"]
 
@@ -104,7 +104,7 @@ def run(args: argparse.Namespace) -> None:
     agent = call(
         "/api/dynamic-agents",
         {
-            "name": "Example phase two " + uuid4().hex[:8],
+            "name": "Example session lifecycle " + uuid4().hex[:8],
             "description": "Isolated lifecycle fixture",
             "system_prompt": "Use the requested tool and return the result.",
             "model": {"provider": "openai-compatible", "id": "example-model"},
@@ -397,5 +397,5 @@ if __name__ == "__main__":
     parser.add_argument("--engine-container")
     parser.add_argument("--replica-url")
     parser.add_argument("--engine-url", default="http://127.0.0.1:8310")
-    parser.add_argument("--output", default="phase2-e2e-result.json")
+    parser.add_argument("--output", default="harness-e2e-result.json")
     run(parser.parse_args())

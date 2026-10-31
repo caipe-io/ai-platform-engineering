@@ -4,10 +4,10 @@ const { readFileSync, mkdirSync, writeFileSync } = require('node:fs');
 const { randomUUID } = require('node:crypto');
 
 (async () => {
-  const fixture = JSON.parse(readFileSync(process.env.PHASE2_FIXTURE, 'utf8'));
+  const fixture = JSON.parse(readFileSync(process.env.HARNESS_E2E_FIXTURE, 'utf8'));
   const base = process.env.CAIPE_UI_BASE_URL;
-  const output = process.env.PHASE2_REPORT_DIR;
-  if (!base || !output) throw new Error('CAIPE_UI_BASE_URL and PHASE2_REPORT_DIR are required');
+  const output = process.env.HARNESS_E2E_REPORT_DIR;
+  if (!base || !output) throw new Error('CAIPE_UI_BASE_URL and HARNESS_E2E_REPORT_DIR are required');
   mkdirSync(output, { recursive: true });
   writeFileSync(output + '/browser-result.json', JSON.stringify({ status: 'running' }));
   const browser = await chromium.launch({ headless: true });

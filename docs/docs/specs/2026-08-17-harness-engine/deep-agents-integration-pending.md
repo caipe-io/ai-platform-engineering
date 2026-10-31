@@ -1,13 +1,13 @@
-# Pending: Deep Agents Adapter and Pluggable Agent Builder
+# Deep Agents Adapter and Pluggable Agent Builder
 
-- **Status:** Proposal / pending work. No runtime or UI implementation is included.
+- **Status:** Opt-in implementation with design sketches. See the implementation guide for current APIs and supported behavior.
 - **Date:** 2026-10-21.
 - **Code baseline:** PR 2401, `f882ad9babeab2a5d5e0bfa690cd8f43c3a88266`.
 - **Scope:** Integrate the existing Deep Agents runtime into Harness Engine without rewriting its graph, tool, skill, or middleware behavior; make builder features conditional on adapter capabilities.
-- **Relationship:** Extends [Portable abstractions](portable-abstractions.md) and [Agent creation UI](agent-creation-ui.md). Their independent-service slice remains the implemented behavior. This proposal refines the future migration work in [Tasks](tasks.md); its interfaces are illustrative, not existing APIs.
-- **Delivery placement:** [Phase 2](delivery-phases.md) owns Deep Agents integration and the pluggable builder. External worker implementation is Phase 3; cross-harness delegation is Phase 4. PR 2401 remains Phase 1, with current-path correctness and review gates still open.
+- **Relationship:** Extends [Portable abstractions](portable-abstractions.md) and [Agent creation UI](agent-creation-ui.md). Interface sketches are illustrative; the implementation guide and source contracts define the supported APIs.
+- **Scope boundaries:** Deep Agents integration and the pluggable builder are described here. External worker execution and cross-harness delegation have separate delivery and qualification gates in the [roadmap](delivery-phases.md).
 
-> An opt-in implementation now exists. See the [Engine README](../../../../ai_platform_engineering/harness_engine/README.md#opt-in-deep-agents-integration-phase-2) for the implemented API, rollout flags, ownership fencing and validation commands. Interface pseudocode below remains design guidance; it is not a production certification.
+> See the [Engine README](https://github.com/caipe-io/ai-platform-engineering/blob/main/ai_platform_engineering/harness_engine/README.md#opt-in-deep-agents-integration) for the implemented API, rollout flags, ownership fencing and validation commands. Interface pseudocode below remains design guidance; it is not a production certification.
 
 ## 1. Current and future architecture
 
@@ -26,7 +26,7 @@ flowchart TD
 
 Deep Agents executes through its existing service. The separate Harness Engine executes the other harnesses, while app-defined assistants use their declared streams.
 
-### Phase 2 architecture — proposed integration
+### Opt-in Deep Agents execution
 
 ```mermaid
 flowchart TD
@@ -42,11 +42,11 @@ flowchart TD
     Gateway -->|App-defined assistant| App["App's declared chat stream"]
 ```
 
-The future diagram shows the common execution path after Phase 2 migration. During rollout, existing compatibility routes and the engine adapter reuse one Deep Agents implementation; unmigrated conversations continue through their existing service. It does not imply isolated workers or cross-harness delegation are already present. The [Phase 3–4 target diagram](delivery-phases.md#target-architecture-after-all-four-phases) adds those boundaries.
+The diagram shows the common execution path after native session adoption. During rollout, existing compatibility routes and the engine adapter reuse one Deep Agents implementation; unmigrated conversations continue through their existing service. It does not imply isolated workers or cross-harness delegation are already present. The [target architecture](delivery-phases.md#target-architecture-after-all-four-phases) adds those boundaries.
 
 - Each conversation epoch has **one execution authority**; the two paths never execute the same turn.
 - Engine integration and retirement of the separate service are separate milestones.
-- `SandboxManager` can remain in the engine container while an external backend provisions workers in Phase 3. Phase 2 may retain the explicit in-process compatibility mode; production full-harness isolation requires Phase 3 evidence.
+- Deep Agents integration retains an explicit in-process compatibility mode. Full-harness isolation requires separate worker qualification; `SandboxManager` can remain in the engine container while an external backend provisions workers.
 - App-defined assistants keep their declared stream contract and pinned execution owner.
 
 | Owner | Responsibility |
@@ -57,11 +57,11 @@ The future diagram shows the common execution path after Phase 2 migration. Duri
 | Reusable runtime | LangGraph execution/checkpoints, existing tools, middleware, skills, subagents and files |
 | Existing management services | Authoritative agent identity/access metadata and referenced resource configuration |
 
-## 2. Design requirements identified in Phase 1
+## 2. Integration requirements
 
-The table records the Phase 1 gaps that motivated Phase 2; consult the implementation guide above for current behavior.
+The table records the independent Engine gaps that motivated native runtime integration; consult the implementation guide above for current behavior.
 
-| Phase 1 baseline | Phase 2 requirement |
+| Independent Engine baseline | Deep Agents integration requirement |
 |---|---|
 | Adapter contract has `evaluate`, `session_manager`, `stream` | Add explicit start/resume commands, execution outcomes and cancellation signaling |
 | Coordinator treats normal stream exhaustion as completion | Distinguish completed, paused, failed and cancelled execution |

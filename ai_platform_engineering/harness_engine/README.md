@@ -273,7 +273,7 @@ uv run ruff check src tests
 uv run pytest -q
 ```
 
-## Opt-in Deep Agents integration (Phase 2)
+## Opt-in Deep Agents integration
 
 - Install Python 3.14 and `uv sync --extra deep-agents`, or build
   `ai_platform_engineering/harness_engine/build/Dockerfile.deep-agents` from the
@@ -360,7 +360,7 @@ migration so they enforce the same `execution_thread_leases` ownership fence.
   isolated BFF URL, a private OIDC fixture file and a private environment file.
   `--engine-container` optionally restarts only the named test Engine.
 - Chromium: `tests/harness_engine/browser_e2e.cjs` uses real SSO and the live chat
-  UI. Supply `CAIPE_UI_BASE_URL`, `PHASE2_FIXTURE` and `PHASE2_REPORT_DIR`.
+  UI. Supply `CAIPE_UI_BASE_URL`, `HARNESS_E2E_FIXTURE` and `HARNESS_E2E_REPORT_DIR`.
 - Live fixtures are environment-owned secrets, not repository files. The fixture
   JSON supplies `client`, `secret` and `password` for the isolated OIDC client
   and `test-admin` / `test-user` identities. The environment file supplies
