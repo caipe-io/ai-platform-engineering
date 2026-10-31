@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { getAgenticAppRoutingSnapshot, loadConfiguredAgenticApps } from "../config";
+import example from "../../../../examples/agentic-apps/shared/manifest.json";
 
 describe("External Apps deployment config", () => {
   const previousEnabled = process.env.AGENTIC_APPS_INSTALL_ENABLED;
@@ -166,6 +167,22 @@ describe("External Apps deployment config", () => {
     });
   });
 
+  it("allows multiple apps to use a shared platform agent", () => {
+    withConfig(sharedAssistantConfig(false, false), (path) => {
+      expect(loadConfiguredAgenticApps(path).map((app) => app.manifest.ui.assistant?.agentId))
+        .toEqual(["shared-agent", "shared-agent"]);
+    });
+  });
+
+  it.each([[true, false], [false, true], [true, true]])(
+    "rejects a shared assistant ID when an app owns its stream (%s, %s)",
+    (firstStream, secondStream) => {
+      withConfig(sharedAssistantConfig(firstStream, secondStream), (path) => {
+        expect(() => loadConfiguredAgenticApps(path)).toThrow(/Multiple installed apps claim the assistant/);
+      });
+    },
+  );
+
   it("rejects unsafe origins and mount paths", () => {
     withConfig(validConfig().replace("http://example-app.example.svc", "file:///tmp/app"), (path) => {
       expect(() => loadConfiguredAgenticApps(path)).toThrow(/HTTP\(S\)/);
@@ -241,6 +258,29 @@ function withConfig(config: string, assertion: (path: string) => void): void {
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+}
+
+function sharedAssistantConfig(firstStream: boolean, secondStream: boolean): string {
+  const packages = ["example-app", "second-app"].map((id, index) => {
+    const manifest = structuredClone(example) as typeof example & { ui: typeof example.ui & { assistant?: Record<string, string> } };
+    manifest.id = id;
+    manifest.runtime.mountPath = `/apps/${id}`;
+    manifest.ui.routes = [{ id: "home", path: `/${id}` }];
+    manifest.provides.mcp = [];
+    manifest.ui.profiles = [{ id: "hosted", mode: "iframe" }];
+    manifest.api.mounts = [];
+    manifest.ui.assistant = {
+      agentId: "shared-agent", label: "Ask", name: "Assistant",
+      ...((index === 0 ? firstStream : secondStream) ? { streamPath: `/api/${id}/chat` } : {}),
+    };
+    manifest.access.policyActions.push({ action: "proxy:POST", defaultEffect: "allow", requiredScopes: [] });
+    return { package_id: id, manifest };
+  });
+  const installations = packages.map(({ package_id }) => ({
+    app_id: package_id, package_id, selected_ui_profile: "hosted",
+    runtime_origin_override: `http://${package_id}.example.test`,
+  }));
+  return JSON.stringify({ agentic_apps: { packages, installations } });
 }
 
 function validConfig(): string {

@@ -18,12 +18,21 @@ export function projectAgentAppIdentity<T extends DynamicAgentConfig>(
     console.error("[AgentCatalog] Application configuration is unavailable", error instanceof Error ? error.message : String(error));
     throw new ApiError("Application configuration unavailable", 503);
   }
-  const byAgent = new Map<string, (typeof apps)[number]>();
+  const byAgent = new Map<string, (typeof apps)[number] | null>();
   for (const app of apps) {
     const id = app.manifest.ui.assistant?.agentId;
     if (!id) continue;
-    if (byAgent.has(id)) throw new ApiError("Ambiguous application agent ownership", 503);
-    byAgent.set(id, app);
+    if (byAgent.has(id)) {
+      const previous = byAgent.get(id);
+      if (previous?.manifest.ui.assistant?.streamPath || app.manifest.ui.assistant?.streamPath) {
+        throw new ApiError("Ambiguous application agent ownership", 503);
+      }
+      // Shared platform agents retain their own identity and agent-level access;
+      // each app still checks its own launch access before rendering its overlay.
+      byAgent.set(id, null);
+    } else {
+      byAgent.set(id, app);
+    }
   }
   const user = agenticAppUserContextFromSession(session);
   const client = session.authMethod === "bearer" &&
