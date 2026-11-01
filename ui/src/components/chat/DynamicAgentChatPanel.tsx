@@ -6,6 +6,7 @@ import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
 import { ContextUsageIndicator } from "@/components/chat/ContextUsageIndicator";
 import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
+import { ConversationViewers } from "@/components/chat/ConversationViewers";
 import type { TaskItem } from "@/components/shared/timeline";
 import { MarkdownRenderer } from "@/components/shared/timeline";
 import { ReportProblemDialog } from "@/components/ticket/ReportProblemDialog";
@@ -2394,12 +2395,14 @@ export function ChatPanel({
             {agentName || agentId}
           </p>
         </div>
+        <ConversationViewers conversationId={activeConversationId} />
         {agent ? (
           <AgentHarnessBadge harnessId={agent.execution_harness_id} presentation={agent.presentation} />
         ) : (
           <Skeleton className="h-6 w-24 rounded-full" />
         )}
       </div>}
+      {!showAgentHeader && <ConversationViewers conversationId={activeConversationId} className="self-end px-3 py-1" />}
 
       {/* Messages Area */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">

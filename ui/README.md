@@ -72,6 +72,15 @@ Self-contained cookies, including those from the older `mint-test-session.mjs`
 benchmark helper, are deliberately rejected. Benchmarks should use a real OIDC
 login session until that helper is migrated.
 
+### Live chat viewers
+
+- The chat header shows unique viewers and their open browser session count. Select the indicator to see names and session counts.
+- The full chat and in-app panel share one presence connection within a page. Separate tabs, windows, and browser profiles count separately, including background tabs.
+- Presence uses the conversation's existing read permission. Authenticated identities are supplied by the BFF; viewing does not grant permission to execute or stop a run.
+- BFF replicas share short-lived MongoDB `conversation_viewers` leases. Updates arrive over a separate SSE subscription every five seconds; permission and session validity are rechecked every fifteen seconds.
+- Disconnects remove the lease. Crashed connections expire after thirty seconds; queries exclude expired leases before MongoDB's TTL cleanup runs.
+- This is conversation presence, independent of execution-stream subscribers, durable run events, and replay cursors. It requires MongoDB storage.
+
 ### Agent Builder harness controls
 
 - Deep Agents retains its model, tools, knowledge, skills, and Advanced controls.
