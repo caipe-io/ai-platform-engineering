@@ -1,5 +1,5 @@
 /** @jest-environment node */
-import { invokeHarnessGatewayRun } from "../harness-gateway";
+import { invokeHarnessGatewayRun, startHarnessGatewayRun } from "../harness-gateway";
 
 jest.mock("@/lib/mongodb", () => ({ getCollection: async () => ({ findOne: async () => null, updateOne: async () => ({ matchedCount: 1 }) }) }));
 
@@ -15,6 +15,19 @@ beforeEach(() => {
 });
 
 afterEach(() => jest.restoreAllMocks());
+
+it.each(["dynamic_agents", "claude_agent_sdk", "claude_agent_sdk_remote", "agentcore"])(
+  "delegates the current caller only to runtimes that need caller-scoped tools: %s", async harnessId => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(new Response(
+      JSON.stringify({ success: true, data: { ...run, harness_id: harnessId, status: "queued" } }),
+    ));
+    await startHarnessGatewayRun({ agent_id: run.agent_id, conversation_id: run.conversation_id, message: "hello" },
+      { subject: "test-user", bearerToken: "test-caller-token" }, harnessId);
+    const headers = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers["X-Harness-Caller-Token"]).toBe(harnessId === "agentcore" ? undefined : "test-caller-token");
+    expect(headers.Authorization).toBe("Bearer test-internal-token");
+  },
+);
 
 it.each(["completed", "failed", "cancelled"])("consumes the committed event tail before returning %s", async (status) => {
   const reply = (data: unknown) => new Response(JSON.stringify({ success: true, data }), { status: 200 });

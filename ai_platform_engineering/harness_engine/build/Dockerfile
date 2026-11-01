@@ -14,6 +14,7 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONPATH="/app/src" \
     HARNESS_ENGINE_HOST="0.0.0.0" \
     HARNESS_ENGINE_PORT="8010"
+RUN mkdir -p /workspace && chown 65532:65532 /workspace
 USER 65532:65532
 EXPOSE 8010
 CMD ["python", "-m", "harness_engine.main"]

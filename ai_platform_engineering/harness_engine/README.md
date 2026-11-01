@@ -23,7 +23,8 @@ service until an operator enables the Engine integration.
 - The BFF authenticates and authorizes callers, then uses an internal service
   credential. Deep Agents additionally receives the current delegated bearer in
   transient execution context for CAS/MCP checks; it is excluded from persisted
-  runs and events. Provider SDK adapters do not receive this delegated bearer.
+  runs and events. Claude SDK tool brokers receive the delegated bearer only
+  for caller-scoped BFF requests, including across a private worker connection.
 - A provider invocation belongs to Harness Engine, not to an SSE subscriber. Closing a browser or BFF connection only removes that subscription.
 - The chat UI subscribes through fetch-based SSE and reattaches with the admitted run ID and event cursor after a refresh or transport failure. It never reposts the prompt to recover a run.
 - Only a server terminal event confirms completion. A closed connection or unfinished saved response must not mark pending tools or the turn as done.
@@ -43,9 +44,8 @@ service until an operator enables the Engine integration.
 
 ## Agent Builder harness status
 
-- The compatibility service remains the **Stable** default. The opt-in Engine
-  integration for LangChain Deep Agents is **Experimental**.
-- Claude SDK and AgentCore are **Experimental** CAIPE integrations. Agent Builder
+- LangChain Deep Agents is **Stable**, including its opt-in Engine integration.
+- Claude SDK (local and remote worker) and AgentCore are **Experimental** CAIPE integrations. Agent Builder
   shows the catalog's certification status in the harness dropdown and beside
   the selected harness. `certified` is labeled **Stable**; `blocked` is labeled
   **Blocked** and remains disabled.
@@ -246,6 +246,12 @@ actions should be restricted to the deployment account/Region Harness,
 runtime, memory, and default workload-identity directory ARN patterns.
 - `HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON`: alias-to-operator-owned Claude
   policy, for example `{"safe":{"model":"claude-example","cwd":"/workspace","permission_mode":"dontAsk"}}`.
+- `HARNESS_ENGINE_CLAUDE_TOOL_BROKER_URL`: BFF service URL for selected MCP
+  tools; defaults to `AUTHZ_SERVICE_URL`. MCP execution additionally requires
+  the BFF's existing AgentGateway and signed agent-context configuration.
+- `HARNESS_ENGINE_CLAUDE_WORKER_PROFILES_JSON`: private worker connections,
+  for example `{"primary":{"url":"https://worker.example.test","token":"<worker-service-secret>","profile_id":"safe","tools_enabled":true}}`.
+  Only profile aliases and capability flags appear in the public catalog.
 - `HARNESS_ENGINE_EVENT_RETENTION_SECONDS`: TTL for replay events.
 
 With the MongoDB backend, the Claude adapter mirrors the SDK's provider
@@ -255,6 +261,51 @@ resume contract. Keeping both in shared storage lets another Harness Engine
 replica resume the thread without depending on a container's local
 `~/.claude` directory. The SDK's local working copy lives under `/tmp` and is
 disposable.
+
+### Claude SDK execution and MCP tools
+
+- Choose **Claude Agent SDK** for an Engine-local SDK process or **Claude Agent
+  SDK (Remote worker)** for a separately deployed worker. Operator profiles own
+  model credentials, model ID, workspace root and SDK permission mode.
+- SDK built-in shell/filesystem tools and settings discovery are disabled.
+  Each binding gets its own working directory. These directories provide
+  separation, not an operating-system sandbox.
+- Selected MCP tools use an in-process SDK MCP server. Calls return through
+  the BFF under the original caller and real agent, then through AgentGateway.
+  Every list/call rechecks current agent use, conversation write, enabled
+  servers, pinned tools and current tool grants. MCP credentials stay in CAIPE.
+- SDK MCP tools currently require `approval_policy: "never"`; Agent Builder
+  explains this when tools are selected. Approval-dependent blueprints are
+  rejected. Side-effecting tool calls are sent once and never retried after an
+  ambiguous response.
+- Text, reasoning, tool start/end and native session changes enter the same
+  canonical durable event log used by the web UI, Slack and Webex gateway.
+
+### Remote Claude SDK workers
+
+- Deploy the provider image with `python -m harness_engine.claude_worker`.
+  Configure MongoDB, the local SDK profile map, provider credentials, BFF tool
+  broker URL and a worker-specific `HARNESS_ENGINE_INTERNAL_TOKEN`.
+- Match that token and local profile ID in the parent's private worker map.
+  Set `tools_enabled: true` only when the worker's broker is configured.
+  Use private networking or HTTPS; neither service token nor delegated bearer
+  should travel across an untrusted plaintext connection.
+- The worker requires MongoDB and uses the configured database name with a
+  `_claude_worker` suffix. Worker replicas must share that database and SDK
+  profile policy. Transcripts resume across container replacement without a
+  shared local workspace volume.
+- Parent admission keeps the original `run_id`. Idempotent worker admission,
+  persisted stop requests and ordered event replay work across worker replicas.
+  The Engine releases its reservation only after worker execution drains.
+  Unknown worker state emits `execution_unconfirmed` and keeps the session
+  reserved. Reconnecting does not start another producer.
+- A lost producer still requires operator reconciliation before clear. This
+  implementation does not take over an in-flight SDK process after a crash.
+  Portable file workspaces, subagents and per-tool approvals remain unsupported.
+
+The optional [worker overlay](../../deploy/harness-engine/compose.claude-sdk.yaml)
+adds a worker to the Deep Agents overlay. It is also a template for a separate
+worker host; replace its URL with that host's private HTTPS endpoint.
 
 The UI BFF requires:
 

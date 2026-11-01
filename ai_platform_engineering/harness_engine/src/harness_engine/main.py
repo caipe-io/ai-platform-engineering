@@ -18,6 +18,7 @@ from pymongo.errors import PyMongoError
 
 from harness_engine.adapters import AgentCoreAdapter, ClaudeSDKAdapter
 from harness_engine.adapters.base import HarnessAdapter
+from harness_engine.adapters.claude_remote import RemoteClaudeSDKAdapter
 from harness_engine.adapters.deep_agents import DeepAgentsAdapter
 from harness_engine.brokers import DefaultPromptCompiler
 from harness_engine.config import Settings
@@ -76,6 +77,7 @@ def create_app(
             resolved_settings, resource_repository=resolved_repository
         ),
         ClaudeSDKAdapter(resolved_settings),
+        RemoteClaudeSDKAdapter(resolved_settings),
     ]
     if adapters is None and resolved_settings.deep_agents_enabled:
         resolved_adapters.append(DeepAgentsAdapter())
@@ -360,6 +362,8 @@ def create_app(
                         raise HTTPException(409, f"Harness does not support {capability}")
                 if descriptor.id == "dynamic_agents" and identity is None:
                     raise HTTPException(401, "Deep Agents requires delegated caller credentials")
+                if descriptor.id in {"claude_agent_sdk", "claude_agent_sdk_remote"} and version.blueprint.tools.bindings and identity is None:
+                    raise HTTPException(401, "SDK MCP tools require delegated caller credentials")
             run = await coordinator.start_run(body, subject, traceparent, identity)
         except AgentNotRunnableError as exc:
             raise HTTPException(

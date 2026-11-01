@@ -1,0 +1,33 @@
+# Optional: layer after docker-compose.yaml and compose.deep-agents.yaml.
+# Provider credentials belong in the deployment's .env, never agent drafts.
+services:
+  harness-engine:
+    environment:
+      HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON: ${HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON:?set local SDK profiles}
+      HARNESS_ENGINE_CLAUDE_WORKER_PROFILES_JSON: ${HARNESS_ENGINE_CLAUDE_WORKER_PROFILES_JSON:?set private worker connections}
+      HARNESS_ENGINE_CLAUDE_TOOL_BROKER_URL: http://caipe-ui:3000
+
+  claude-sdk-worker:
+    profiles: [harness-engine]
+    build:
+      context: .
+      dockerfile: ai_platform_engineering/harness_engine/build/Dockerfile
+    image: caipe-claude-sdk-worker:local
+    command: [python, -m, harness_engine.claude_worker]
+    restart: unless-stopped
+    environment:
+      HARNESS_ENGINE_INTERNAL_TOKEN: ${CLAUDE_WORKER_INTERNAL_TOKEN:?set a distinct private worker token}
+      HARNESS_ENGINE_STORAGE_BACKEND: mongodb
+      HARNESS_ENGINE_MONGODB_URI: ${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/harness_engine?authSource=admin}
+      HARNESS_ENGINE_MONGODB_DATABASE: ${HARNESS_ENGINE_MONGODB_DATABASE:-harness_engine}
+      HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON: ${HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON:?set local SDK profiles}
+      HARNESS_ENGINE_CLAUDE_TOOL_BROKER_URL: http://caipe-ui:3000
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s

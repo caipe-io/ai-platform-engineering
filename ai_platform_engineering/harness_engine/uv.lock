@@ -190,6 +190,7 @@ dependencies = [
     { name = "boto3" },
     { name = "claude-agent-sdk" },
     { name = "fastapi" },
+    { name = "httpx2" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pymongo" },
@@ -201,7 +202,6 @@ deep-agents = [
     { name = "dynamic-agents", marker = "python_full_version >= '3.14'" },
 ]
 dev = [
-    { name = "httpx2" },
     { name = "mongomock" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -214,7 +214,7 @@ requires-dist = [
     { name = "claude-agent-sdk", specifier = "==0.2.139" },
     { name = "dynamic-agents", marker = "python_full_version >= '3.14' and extra == 'deep-agents'", editable = "../dynamic_agents" },
     { name = "fastapi", specifier = "==0.141.1" },
-    { name = "httpx2", marker = "extra == 'dev'", specifier = "==2.12.0" },
+    { name = "httpx2", specifier = "==2.12.0" },
     { name = "mongomock", marker = "extra == 'dev'", specifier = "==4.3.0" },
     { name = "pydantic", specifier = "==2.13.4" },
     { name = "pydantic-settings", specifier = "==2.15.0" },

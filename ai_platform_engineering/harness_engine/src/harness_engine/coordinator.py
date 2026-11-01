@@ -8,6 +8,7 @@ import logging
 from contextlib import aclosing, suppress
 from uuid import uuid4
 
+from harness_engine.adapters.base import ExecutionUnconfirmedError
 from harness_engine.brokers import PromptCompiler
 from harness_engine.models import (
     TERMINAL_RUN_STATUSES,
@@ -16,6 +17,7 @@ from harness_engine.models import (
     ClearAgentSessionResult,
     CreateRunRequest,
     ExecutionIdentity,
+    RenderedPrompt,
     RunContext,
     RunRecord,
     RunStatus,
@@ -102,9 +104,14 @@ class RunCoordinator:
         run, admitted = await self._repository.admit_run(run)
         if not admitted:
             return run
-        task = asyncio.create_task(
-            self._pump(run, request, version, binding, identity), name=f"harness-run:{run.run_id}"
-        )
+        self._launch(run, request, version, binding, identity)
+        return run
+
+    def _launch(self, run: RunRecord, request: CreateRunRequest, version: AgentVersion,
+                binding: SessionBinding, identity: ExecutionIdentity | None,
+                prepared_prompt: RenderedPrompt | None = None) -> None:
+        task = asyncio.create_task(self._pump(run, request, version, binding, identity, prepared_prompt),
+                                   name=f"harness-run:{run.run_id}")
         self._tasks[run.run_id] = task
         self._run_bindings[run.run_id] = binding.binding_id
 
@@ -113,6 +120,34 @@ class RunCoordinator:
             self._run_bindings.pop(run.run_id, None)
 
         task.add_done_callback(forget)
+
+    async def start_context(self, context: RunContext) -> RunRecord:
+        """Admit a trusted worker request using the same producer fence and pump."""
+        fingerprint = hashlib.sha256(context.model_dump_json().encode()).hexdigest()
+        prior = await self._repository.get_run(context.turn.run_id)
+        if prior is not None:
+            if prior.owner_subject != context.binding.owner_subject or prior.request_fingerprint != fingerprint:
+                raise RunAdmissionError("Worker run ID was already used with different input")
+            return prior
+        binding = await self._repository.create_session(context.binding.model_copy(update={
+            "active_run": None, "last_run_id": None, "dispatch_started": False,
+            "pending_interrupt": None, "resume_run_id": None,
+        }))
+        for field in ("owner_subject", "agent_id", "conversation_id", "agent_version", "harness_id", "profile_id", "provider_session_id", "epoch"):
+            if getattr(binding, field) != getattr(context.binding, field):
+                raise RunAdmissionError("Worker session does not match the admitted context")
+        run = RunRecord(run_id=context.turn.run_id, owner_subject=binding.owner_subject,
+            agent_id=binding.agent_id, agent_version=binding.agent_version, conversation_id=binding.conversation_id,
+            binding_id=binding.binding_id, harness_id=binding.harness_id, profile_id=binding.profile_id,
+            provider_session_id=binding.provider_session_id, client_request_id=context.turn.run_id,
+            request_fingerprint=fingerprint, turn_id=context.turn.turn_id, traceparent=context.turn.traceparent)
+        run, admitted = await self._repository.admit_run(run)
+        if admitted:
+            version = AgentVersion(agent_id=binding.agent_id, version=binding.agent_version,
+                blueprint=context.blueprint, config_fingerprint=fingerprint, catalog_revision="worker-context")
+            request = CreateRunRequest(agent_id=binding.agent_id, conversation_id=binding.conversation_id,
+                                       **context.turn.model_dump(exclude={"run_id", "traceparent"}))
+            self._launch(run, request, version, binding, context.identity, context.prompt)
         return run
 
     async def _watch_cancellation(self, run: RunRecord, producer: asyncio.Task[None]) -> None:
@@ -137,13 +172,15 @@ class RunCoordinator:
     async def _pump(
         self, run: RunRecord, request: CreateRunRequest, version: AgentVersion, binding: SessionBinding,
         identity: ExecutionIdentity | None = None,
+        prepared_prompt: RenderedPrompt | None = None,
     ) -> None:
         producer = asyncio.current_task()
         assert producer is not None
         watcher = asyncio.create_task(self._watch_cancellation(run, producer))
+        release_reservation = True
         try:
             await self._session_manager.ensure_active(binding)
-            rendered_prompt = await self._prompt_compiler.compile(version.blueprint)
+            rendered_prompt = prepared_prompt or await self._prompt_compiler.compile(version.blueprint)
             if request.context:
                 rendered_prompt = rendered_prompt.model_copy(
                     update={
@@ -224,6 +261,12 @@ class RunCoordinator:
             else:
                 await self._repository.set_session_interrupt(run.binding_id, run.run_id, None)
                 await self._repository.append_event(run.run_id, "run.completed", {}, RunStatus.COMPLETED)
+        except ExecutionUnconfirmedError:
+            release_reservation = False
+            logger.error("Remote execution could not be confirmed", extra={"run_id": run.run_id})
+            await self._repository.append_event(run.run_id, "run.failed", {
+                "code": "execution_unconfirmed", "message": "The remote worker may still be running; its session remains reserved",
+            }, RunStatus.FAILED)
         except asyncio.CancelledError:
             await self._repository.append_event(
                 run.run_id, "run.cancelled", {}, RunStatus.CANCELLED
@@ -249,7 +292,8 @@ class RunCoordinator:
             watcher.cancel()
             with suppress(asyncio.CancelledError):
                 await watcher
-            await self._repository.release_run(run.binding_id, run.run_id)
+            if release_reservation:
+                await self._repository.release_run(run.binding_id, run.run_id)
 
     async def cancel(self, run_id: str) -> RunRecord | None:
         run = await self._repository.request_cancellation(run_id)

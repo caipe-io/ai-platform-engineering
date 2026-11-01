@@ -62,7 +62,7 @@ export interface HarnessDescriptor {
   display_name: string;
   adapter_version: string;
   contract_version: number;
-  execution_mode: "provider_managed" | "sandbox_pod" | "in_process";
+  execution_mode: "provider_managed" | "sandbox_pod" | "in_process" | "remote_worker";
   availability: "available" | "misconfigured" | "unavailable";
   certification: "experimental" | "certified" | "blocked";
   profiles: HarnessProfile[];

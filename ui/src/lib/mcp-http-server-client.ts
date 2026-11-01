@@ -226,6 +226,7 @@ async function buildMcpRequestHeaders(input: {
   server: MCPServerConfig;
   viaAgentGateway: boolean;
   serverId: string;
+  agentId?: string;
 }): Promise<Record<string, string>> {
   try {
     const { headers } = await resolveMcpHeaderCredentials({
@@ -235,9 +236,13 @@ async function buildMcpRequestHeaders(input: {
       viaAgentGateway: input.viaAgentGateway,
       retrievalCaller: "mcp-http-server-client",
     });
+    const contextHeaders = buildAgentContextHeaders(input.agentId ?? diagnosticAgentId(input.serverId, input.session));
+    if (input.agentId && Object.keys(contextHeaders).length === 0) {
+      throw new ApiError("Agent context signing is unavailable", 503, "AGENT_CONTEXT_UNAVAILABLE");
+    }
     return {
       ...headers,
-      ...buildAgentContextHeaders(diagnosticAgentId(input.serverId, input.session)),
+      ...contextHeaders,
     };
   } catch (error) {
     if (error instanceof Error && error.message === "MCP_AUTH_REQUIRED") {
@@ -256,10 +261,11 @@ export async function listHttpMcpTools(input: {
   session: AuthSession;
   server: MCPServerConfig & { endpoint: string };
   serverId: string;
+  agentId?: string;
 }): Promise<{ tools: MCPToolInfo[]; sessionId?: string }> {
   const viaAgentGateway = isAgentGatewayEndpoint(input.server);
   const diagnosticAgent = diagnosticAgentId(input.serverId, input.session);
-  const diagnosticTuples = viaAgentGateway
+  const diagnosticTuples = viaAgentGateway && !input.agentId
     ? await grantDiagnosticAgentAccess(input.serverId, diagnosticAgent, input.session)
     : [];
 
@@ -270,6 +276,7 @@ export async function listHttpMcpTools(input: {
       server: input.server,
       viaAgentGateway,
       serverId: input.serverId,
+      agentId: input.agentId,
     });
 
     const first = await mcpJsonRpc({
@@ -330,6 +337,37 @@ export async function listHttpMcpTools(input: {
   } finally {
     await revokeDiagnosticAgentAccess(diagnosticTuples, "mcp-http-server-client");
   }
+}
+
+/** Invoke once under the real agent policy; retries must never repeat tool side effects. */
+export async function callHttpMcpTool(input: {
+  request: NextRequest;
+  session: AuthSession;
+  server: MCPServerConfig & { endpoint: string };
+  serverId: string;
+  agentId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+}): Promise<unknown> {
+  const headers = await buildMcpRequestHeaders({ ...input, viaAgentGateway: true });
+  const initialized = await mcpJsonRpc({ endpoint: input.server.endpoint, headers,
+    payload: { jsonrpc: "2.0", id: crypto.randomUUID(), method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "harness-tool-broker", version: "1" } } } });
+  if (!initialized.ok || (initialized.payload as { error?: unknown })?.error) {
+    throw new ApiError("MCP initialization failed", 502, "MCP_INIT_FAILED");
+  }
+  const ready = await mcpJsonRpc({ endpoint: input.server.endpoint, headers, sessionId: initialized.sessionId,
+    payload: { jsonrpc: "2.0", method: "notifications/initialized" } });
+  if (!ready.ok) throw new ApiError("MCP initialization was not acknowledged", 502, "MCP_INIT_FAILED");
+  const result = await mcpJsonRpc({ endpoint: input.server.endpoint, headers,
+    sessionId: initialized.sessionId, timeoutMs: 900_000,
+    payload: { jsonrpc: "2.0", id: crypto.randomUUID(), method: "tools/call",
+      params: { name: input.toolName, arguments: input.args } } });
+  const payload = result.payload as { result?: unknown; error?: unknown } | null;
+  if (!result.ok || !payload || payload.error || payload.result === undefined) {
+    throw new ApiError("MCP tool invocation failed; the request was not retried", 502, "MCP_CALL_FAILED");
+  }
+  return payload.result;
 }
 
 export async function listDirectHttpMcpTools(input: {

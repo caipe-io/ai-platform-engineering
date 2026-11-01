@@ -8,7 +8,7 @@ RUN uv sync --frozen --no-dev --extra deep-agents
 FROM python:3.14-slim-bookworm
 WORKDIR /app/ai_platform_engineering/harness_engine
 COPY --from=builder /app /app
-RUN mkdir -p /var/lib/caipe-attachments && chown 1001:1001 /var/lib/caipe-attachments
+RUN mkdir -p /var/lib/caipe-attachments /workspace && chown 1001:1001 /var/lib/caipe-attachments /workspace
 ENV PATH="/app/ai_platform_engineering/harness_engine/.venv/bin:${PATH}" \
     HARNESS_ENGINE_DEEP_AGENTS_ENABLED="true" \
     HARNESS_ENGINE_HOST="0.0.0.0" \

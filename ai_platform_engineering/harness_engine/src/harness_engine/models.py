@@ -54,6 +54,7 @@ class ExecutionMode(StrEnum):
     PROVIDER_MANAGED = "provider_managed"
     SANDBOX_POD = "sandbox_pod"
     IN_PROCESS = "in_process"
+    REMOTE_WORKER = "remote_worker"
 
 
 class CapabilityResult(StrictModel):

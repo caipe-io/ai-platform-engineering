@@ -1452,7 +1452,7 @@ export function DynamicAgentEditor({
           },
           prompt: { system: systemPrompt, variables: {}, context_sources: [] },
           model: supportsConfiguredModel ? { policy: "configured", id: modelId, provider: modelProvider } : { policy: "harness_default" },
-          tools: { bindings: toolBindings, approval_policy: "sensitive_only" },
+          tools: { bindings: toolBindings, approval_policy: supportsTools && !supportsApprovals ? "never" : "sensitive_only" },
           thread: { persistence: "durable" },
           memory: { enabled: false },
           workspace: { persistence: "none" },
@@ -2810,6 +2810,11 @@ export function DynamicAgentEditor({
             {/* Tools Step */}
             {activeStep === "tools" && (
               <div className="space-y-6 pt-2">
+                {!isDeepAgents && supportsTools && !supportsApprovals && (
+                  <p className="text-sm text-muted-foreground">
+                    Selected MCP tools run without per-call approval. Your agent and account permissions are checked for each call.
+                  </p>
+                )}
                 {/* Built-in Tools */}
                 {supportsBuiltinTools && <BuiltinToolsPicker
                   value={builtinTools}

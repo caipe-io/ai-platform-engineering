@@ -83,7 +83,7 @@ async def test_claude_adapter_maps_messages_and_resumes_session(settings) -> Non
     assert options.permission_mode == "dontAsk"
     assert options.session_store is transcript_store
     assert options.session_store_flush == "eager"
-    assert options.env["CLAUDE_CONFIG_DIR"] == "/tmp/claude-agent-sdk"
+    assert options.env["CLAUDE_CONFIG_DIR"].startswith("/tmp/claude-agent-sdk/")
     assert options.setting_sources == []
     assert options.tools == []
     command = SubprocessCLITransport(
