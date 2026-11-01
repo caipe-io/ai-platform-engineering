@@ -52,6 +52,8 @@ service until an operator enables the Engine integration.
 
 ## Connect an existing AgentCore deployment
 
+- Agent Builder lists **Amazon Bedrock AgentCore (Remote sessions) — Experimental**.
+  CAIPE keeps the native `runtimeSessionId` pinned to the conversation binding.
 - In **Agent Builder → Execution harness**, a platform administrator chooses
   **Add existing AgentCore agent**, enters a connection ID beginning with `existing-`, a Harness or
   Runtime ARN, its matching AWS Region, and a qualifier.

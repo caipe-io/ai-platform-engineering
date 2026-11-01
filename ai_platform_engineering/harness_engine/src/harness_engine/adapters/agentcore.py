@@ -108,7 +108,7 @@ class AgentCoreAdapter:
         ]
         return HarnessDescriptor(
             id="agentcore",
-            display_name="Amazon Bedrock AgentCore",
+            display_name="Amazon Bedrock AgentCore (Remote sessions)",
             adapter_version="1.0.0",
             execution_mode=ExecutionMode.PROVIDER_MANAGED,
             availability="available" if profiles else "misconfigured",
