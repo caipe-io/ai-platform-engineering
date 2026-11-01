@@ -8,11 +8,13 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx2 as httpx
+import mongomock
 import pytest
 from claude_agent_sdk import (
     AssistantMessage,
     InMemorySessionStore,
     ResultMessage,
+    SessionStore,
     StreamEvent,
     SystemMessage,
     TextBlock,
@@ -24,6 +26,7 @@ from pydantic import SecretStr
 
 from harness_engine.adapters.claude_remote import RemoteClaudeSDKAdapter
 from harness_engine.adapters.claude_sdk import ClaudeSDKAdapter
+from harness_engine.claude_session_store import MongoClaudeSessionStore
 from harness_engine.claude_tools import ClaudeToolBroker
 from harness_engine.claude_worker import create_worker_app
 from harness_engine.config import Settings
@@ -167,21 +170,46 @@ def configured_worker(settings: Settings) -> Settings:
 class SplitWorkerTransport(httpx.AsyncBaseTransport):
     """Dispatch on one replica and inspect/cancel through another."""
 
-    def __init__(self, producer: Any, replica: Any) -> None:
+    def __init__(
+        self, producer: Any, replica: Any, *, replacement: bool = False, drop_first_receipt: bool = False
+    ) -> None:
         self.producer = httpx.ASGITransport(app=producer)
         self.replica = httpx.ASGITransport(app=replica)
+        self.replacement = replacement
+        self.drop_first_receipt = drop_first_receipt
+        self.run_ids: list[str] = []
+        self.dispatches: list[str] = []
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        target = self.producer if request.method == "POST" else self.replica
-        return await target.handle_async_request(request)
+        target = self.replica
+        if request.method == "POST":
+            run_id = json.loads(request.content)["turn"]["run_id"]
+            if run_id not in self.run_ids:
+                self.run_ids.append(run_id)
+            replace = self.replacement and self.run_ids.index(run_id) > 0
+            target = self.replica if replace else self.producer
+            self.dispatches.append("replica" if replace else "producer")
+        response = await target.handle_async_request(request)
+        if request.method == "POST" and self.drop_first_receipt:
+            self.drop_first_receipt = False
+            raise httpx.ConnectError("Admission receipt lost after dispatch", request=request)
+        return response
 
 
 @asynccontextmanager
 async def pair(
-    settings: Settings, query: Any, *, options: dict[str, Any] | None = None
+    settings: Settings,
+    query: Any,
+    *,
+    options: dict[str, Any] | None = None,
+    replacement: bool = False,
+    drop_first_receipt: bool = False,
+    transcript_stores: tuple[SessionStore, SessionStore] | None = None,
 ) -> AsyncIterator[tuple[httpx.AsyncClient, InMemoryRunRepository, Any]]:
     worker_repo = InMemoryRunRepository()
-    local = ClaudeSDKAdapter(settings, query_fn=query, transcript_store=InMemorySessionStore())
+    shared_store = InMemorySessionStore()
+    producer_store, replica_store = transcript_stores or (shared_store, shared_store)
+    local = ClaudeSDKAdapter(settings, query_fn=query, transcript_store=producer_store)
     worker = create_worker_app(
         settings=settings.model_copy(update={"internal_token": "test-worker-secret"}),
         repository=worker_repo,
@@ -190,9 +218,10 @@ async def pair(
     replica = create_worker_app(
         settings=settings.model_copy(update={"internal_token": "test-worker-secret"}),
         repository=worker_repo,
-        adapter=ClaudeSDKAdapter(settings, query_fn=query, transcript_store=InMemorySessionStore()),
+        adapter=ClaudeSDKAdapter(settings, query_fn=query, transcript_store=replica_store),
     )
-    remote = RemoteClaudeSDKAdapter(configured_worker(settings), SplitWorkerTransport(worker, replica))
+    transport = SplitWorkerTransport(worker, replica, replacement=replacement, drop_first_receipt=drop_first_receipt)
+    remote = RemoteClaudeSDKAdapter(configured_worker(settings), transport)
     parent_repo = InMemoryRunRepository()
     parent = create_app(settings=settings, repository=parent_repo, adapters=[remote])
     async with (
@@ -212,7 +241,7 @@ async def pair(
                 },
             )
             assert saved.status_code == 200, saved.text
-            yield client, parent_repo, worker
+            yield client, parent_repo, transport
 
 
 async def terminal(client: httpx.AsyncClient, run_id: str) -> dict[str, Any]:
@@ -224,16 +253,48 @@ async def terminal(client: httpx.AsyncClient, run_id: str) -> dict[str, Any]:
     pytest.fail("Execution did not drain")
 
 
-async def test_remote_worker_preserves_session_and_idempotent_admission(settings: Settings) -> None:
+async def released_binding(repo: InMemoryRunRepository, binding_id: str) -> SessionBinding:
+    # Terminal publication precedes the coordinator's final reservation release.
+    for _ in range(400):
+        binding = await repo.get_session(binding_id)
+        if binding is not None and binding.active_run is None:
+            return binding
+        await asyncio.sleep(0.01)
+    pytest.fail("Producer did not release its reservation")
+
+
+async def test_remote_worker_preserves_session_and_idempotent_admission(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
     resumed = []
+    mongo = mongomock.MongoClient(tz_aware=True)
+    monkeypatch.setattr("harness_engine.claude_session_store.MongoClient", lambda *_args, **_kwargs: mongo)
+    stores = (
+        MongoClaudeSessionStore("mongodb://example.test", "example"),
+        MongoClaudeSessionStore("mongodb://example.test", "example"),
+    )
+    entry = json.loads('{"type":"user","uuid":"entry-example","content":"first-turn transcript"}')
 
     async def query(**kwargs: Any) -> AsyncIterator[Any]:
-        resumed.append(kwargs["options"].resume)
+        options = kwargs["options"]
+        resumed.append(options.resume)
+        key = {"project_key": options.cwd, "session_id": "session-example"}
+        if options.resume is None:
+            assert options.session_store is stores[0]
+            await options.session_store.append(key, [entry])
+        else:
+            assert options.session_store is stores[1]
+            assert await options.session_store.load(key) == [entry]
+            assert await options.session_store.load({**key, "project_key": "other-project"}) is None
         yield SystemMessage(subtype="init", data={"session_id": "session-example"})
         yield AssistantMessage(content=[TextBlock(text="remote answer")], model="example")
         yield result()
 
-    async with pair(settings, query) as (client, repo, _):
+    async with pair(settings, query, replacement=True, drop_first_receipt=True, transcript_stores=stores) as (
+        client,
+        repo,
+        transport,
+    ):
         body = {
             "agent_id": "agent-example",
             "conversation_id": "conversation-example",
@@ -245,12 +306,14 @@ async def test_remote_worker_preserves_session_and_idempotent_admission(settings
         run_id = first.json()["data"]["run_id"]
         done = await terminal(client, run_id)
         assert done["run"]["status"] == "completed"
+        await released_binding(repo, first.json()["data"]["binding_id"])
         retry = await client.post("/api/v1/runs", json=body)
         assert retry.json()["data"]["run_id"] == run_id
         second = await client.post("/api/v1/runs", json={**body, "message": "two", "client_request_id": "request-next"})
         second_page = await terminal(client, second.json()["data"]["run_id"])
         assert second_page["run"]["status"] == "completed"
         assert resumed == [None, "session-example"]
+        assert transport.dispatches == ["producer", "producer", "replica"]
         assert [event["sequence"] for event in done["events"]] == list(range(1, len(done["events"]) + 1))
         assert "test-worker-secret" not in json.dumps(done)
         denied = await client.get(f"/api/v1/runs/{run_id}", headers=auth_headers("other-user"))
@@ -282,7 +345,7 @@ async def test_remote_cancellation_drains_before_releasing_the_parent(settings: 
         page = await terminal(client, started["run_id"])
         assert page["run"]["status"] == "cancelled"
         assert closed.is_set()
-        binding = await repo.get_session(started["binding_id"])
+        binding = await released_binding(repo, started["binding_id"])
         assert binding.active_run is None
 
 
@@ -493,7 +556,7 @@ async def test_worker_validation_denial_releases_parent_without_dispatch(setting
             page = await terminal(client, run["run_id"])
             assert page["run"]["status"] == "failed"
             assert page["events"][-1]["data"]["code"] == "provider_error"
-            assert (await repo.get_session(run["binding_id"])).active_run is None
+            assert (await released_binding(repo, run["binding_id"])).active_run is None
         assert not dispatched
 
 
@@ -570,7 +633,7 @@ async def test_parent_cleanup_polls_state_without_requiring_events(settings: Set
             ).json()["data"]
             page = await terminal(client, run["run_id"])
             assert page["events"][-1]["data"]["code"] == "provider_error"
-            assert (await repo.get_session(run["binding_id"])).active_run is None
+            assert (await released_binding(repo, run["binding_id"])).active_run is None
             assert paths[-1].endswith("/state")
 
 

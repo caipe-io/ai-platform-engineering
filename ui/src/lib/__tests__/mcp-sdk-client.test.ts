@@ -1,5 +1,6 @@
 /** @jest-environment node */
 import { NextRequest } from "next/server";
+import { createHmac } from "crypto";
 const mockWrite = jest.fn();
 jest.mock("@/lib/rbac/openfga", () => ({ writeOpenFgaTuples: (...args: unknown[]) => mockWrite(...args) }));
 jest.mock("@/lib/mcp-credential-headers", () => ({ resolveMcpHeaderCredentials: async () => ({ headers: { Authorization: "Bearer caller-test-token" } }) }));
@@ -21,6 +22,11 @@ it("uses the real signed agent context without granting diagnostic access", asyn
     const signed = JSON.parse(Buffer.from(headers["X-CAIPE-Agent-Context"], "base64url").toString());
     expect(signed).toMatchObject({ agent_id: "agent-example", kind: "dynamic" });
     expect(headers.Authorization).toBe("Bearer caller-test-token");
+    expect(headers["X-CAIPE-Agent-Context-Signature"]).toBe(
+      createHmac("sha256", "example-signing-key-for-unit-tests")
+        .update(headers["X-CAIPE-Agent-Context"])
+        .digest("hex"),
+    );
     expect(mockWrite).not.toHaveBeenCalled();
   } finally { fetchMock.mockRestore(); }
 });
