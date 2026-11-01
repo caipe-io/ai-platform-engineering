@@ -26,7 +26,8 @@ export const POST = withErrorHandler(async (
   const body = await request.json().catch(() => null);
   if (!body || !["list", "call"].includes(body.operation)) throw new ApiError("Expected list or call", 400);
   const run = (await access.response.json()).data;
-  if (run.status !== "running" || !["claude_agent_sdk", "claude_agent_sdk_remote"].includes(run.harness_id)) {
+  if (run.status !== "running" || run.cancellation_requested ||
+      !["claude_agent_sdk", "claude_agent_sdk_remote"].includes(run.harness_id)) {
     throw new ApiError("Tools require an active SDK run", 409);
   }
   const saved = await proxyHarnessEngine(access.config, access.auth,

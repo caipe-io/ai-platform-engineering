@@ -80,6 +80,14 @@ it.each(["completed", "cancelled", "failed"])("does not execute tools for a %s r
   expect(call).not.toHaveBeenCalled();
 });
 
+it("rejects new tools after Stop is recorded while the producer is still draining", async () => {
+  authorize.mockResolvedValue({ auth: { authenticatedUser: { session } }, config: {},
+    response: Response.json({ data: { ...run, status: "running", cancellation_requested: true } }) });
+  expect((await POST(request({ operation: "call", tool_id: "example.lookup", arguments: {} }), params)).status).toBe(409);
+  expect(call).not.toHaveBeenCalled();
+  expect(proxy).not.toHaveBeenCalled();
+});
+
 it("rejects unavailable approval semantics instead of silently downgrading them", async () => {
   proxy.mockResolvedValue(Response.json({ data: { version: { blueprint: { id: run.agent_id, tools: { bindings: [{ tool_id: "example.lookup" }], approval_policy: "always" } } } } }));
   expect((await POST(request({ operation: "list" }), params)).status).toBe(409);
