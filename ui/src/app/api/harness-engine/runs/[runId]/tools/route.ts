@@ -38,10 +38,10 @@ export const POST = withErrorHandler(async (
     throw new ApiError("SDK tools require an explicit policy without per-call approvals", 409);
   }
   const agent = await (await getCollection<DynamicAgentConfig>("dynamic_agents")).findOne({ _id: run.agent_id });
-  if (!agent?.enabled) throw new ApiError("Agent is disabled or unavailable", 403);
+  if (!agent || agent.enabled === false) throw new ApiError("Agent is disabled or unavailable", 403);
   const gateway = process.env.AGENT_GATEWAY_URL?.trim();
   if (!gateway) throw new ApiError("AgentGateway is required for SDK tools", 503);
-  const servers = await (await getCollection<MCPServerConfig>("mcp_servers")).find({ enabled: true }).toArray();
+  const servers = await (await getCollection<MCPServerConfig>("mcp_servers")).find({ enabled: { $ne: false } }).toArray();
   const bindings = blueprint.tools.bindings.map(binding => {
     const matches = servers.filter(server => binding.tool_id.startsWith(`${server._id}.`));
     matches.sort((a, b) => String(b._id).length - String(a._id).length);

@@ -297,6 +297,7 @@ disposable.
 - Parent admission keeps the original `run_id`. Idempotent worker admission,
   persisted stop requests and ordered event replay work across worker replicas.
   The Engine releases its reservation only after worker execution drains.
+  Stop and drain status read worker metadata independently of replay retention.
   Unknown worker state emits `execution_unconfirmed` and keeps the session
   reserved. Reconnecting does not start another producer.
 - A lost producer still requires operator reconciliation before clear. This

@@ -36,7 +36,7 @@ from harness_engine.models import (
     SessionBinding,
     TurnInput,
 )
-from harness_engine.repository import InMemoryRunRepository
+from harness_engine.repository import InMemoryRunRepository, ReplayGapError
 from tests.conftest import auth_headers, blueprint
 
 
@@ -177,7 +177,9 @@ class SplitWorkerTransport(httpx.AsyncBaseTransport):
 
 
 @asynccontextmanager
-async def pair(settings: Settings, query: Any) -> AsyncIterator[tuple[httpx.AsyncClient, InMemoryRunRepository, Any]]:
+async def pair(
+    settings: Settings, query: Any, *, options: dict[str, Any] | None = None
+) -> AsyncIterator[tuple[httpx.AsyncClient, InMemoryRunRepository, Any]]:
     worker_repo = InMemoryRunRepository()
     local = ClaudeSDKAdapter(settings, query_fn=query, transcript_store=InMemorySessionStore())
     worker = create_worker_app(
@@ -203,7 +205,11 @@ async def pair(settings: Settings, query: Any) -> AsyncIterator[tuple[httpx.Asyn
         ) as client:
             saved = await client.put(
                 "/api/v1/agents/agent-example",
-                json={"blueprint": blueprint(harness_id="claude_agent_sdk_remote", profile_id="remote", options={})},
+                json={
+                    "blueprint": blueprint(
+                        harness_id="claude_agent_sdk_remote", profile_id="remote", options=options or {}
+                    )
+                },
             )
             assert saved.status_code == 200, saved.text
             yield client, parent_repo, worker
@@ -280,9 +286,12 @@ async def test_remote_cancellation_drains_before_releasing_the_parent(settings: 
         assert binding.active_run is None
 
 
-async def test_unconfirmed_worker_keeps_the_session_reserved(settings: Settings) -> None:
+@pytest.mark.parametrize("admission_conflict", [False, True])
+async def test_unconfirmed_worker_keeps_the_session_reserved(settings: Settings, admission_conflict: bool) -> None:
     def unavailable(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
+            if admission_conflict:
+                return httpx.Response(409, json={"detail": "Existing producer has different input"})
             run_id = json.loads(request.content)["turn"]["run_id"]
             return httpx.Response(202, json={"success": True, "data": {"run": {"run_id": run_id}}})
         raise httpx.ConnectError("worker unavailable", request=request)
@@ -374,9 +383,17 @@ def test_worker_requires_durable_storage_by_default(settings: Settings) -> None:
 
 
 def test_invalid_worker_configuration_does_not_log_its_credentials(settings: Settings) -> None:
-    configured = settings.model_copy(update={"claude_worker_profiles_json": SecretStr(json.dumps({
-        "primary": {"url": "invalid", "token": "private-example-token", "profile_id": "safe"},
-    }))})
+    configured = settings.model_copy(
+        update={
+            "claude_worker_profiles_json": SecretStr(
+                json.dumps(
+                    {
+                        "primary": {"url": "invalid", "token": "private-example-token", "profile_id": "safe"},
+                    }
+                )
+            )
+        }
+    )
     with pytest.raises(ValueError) as error:
         configured.claude_worker_profiles()
     assert "private-example-token" not in "".join(traceback.format_exception(error.value))
@@ -433,3 +450,183 @@ async def test_cancelled_sdk_tool_drains_the_dispatched_call_without_retry(
     with pytest.raises(asyncio.CancelledError):
         await task
     assert count == 1
+
+
+async def test_broker_exposes_duplicate_bindings_only_once(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    exposed: list[Any] = []
+    ctx = context()
+    ctx.blueprint.tools.bindings.append(ctx.blueprint.tools.bindings[0])
+    schema = {"tool_id": "example.lookup", "input_schema": {"type": "object"}}
+    transport = httpx.MockTransport(
+        lambda _: httpx.Response(200, json={"success": True, "data": {"tools": [schema, schema]}})
+    )
+
+    def sdk_server(**kwargs: Any) -> dict[str, Any]:
+        exposed.extend(kwargs["tools"])
+        return {}
+
+    monkeypatch.setattr("harness_engine.claude_tools.create_sdk_mcp_server", sdk_server)
+    broker = ClaudeToolBroker(
+        settings.model_copy(update={"claude_tool_broker_url": "http://broker.example.test"}), transport
+    )
+    async with broker.bind(ctx) as (_, names):
+        assert names == {"mcp__caipe__tool_0": "example.lookup"}
+        assert len(exposed) == 1
+
+
+async def test_worker_validation_denial_releases_parent_without_dispatch(settings: Settings) -> None:
+    dispatched = False
+
+    async def query(**_: Any) -> AsyncIterator[Any]:
+        nonlocal dispatched
+        dispatched = True
+        yield result()
+
+    async with pair(settings, query, options={"permission_mode": "plan"}) as (client, repo, _):
+        for message in ["first", "second"]:
+            response = await client.post(
+                "/api/v1/runs",
+                json={"agent_id": "agent-example", "conversation_id": "conversation-example", "message": message},
+            )
+            assert response.status_code == 202
+            run = response.json()["data"]
+            page = await terminal(client, run["run_id"])
+            assert page["run"]["status"] == "failed"
+            assert page["events"][-1]["data"]["code"] == "provider_error"
+            assert (await repo.get_session(run["binding_id"])).active_run is None
+        assert not dispatched
+
+
+async def test_worker_stop_and_drain_do_not_require_replay_history(settings: Settings) -> None:
+    class ExpiredReplayRepository(InMemoryRunRepository):
+        async def list_events(self, run_id: str, after: int = 0) -> list[Any]:
+            raise ReplayGapError("Expired event prefix")
+
+    entered = asyncio.Event()
+
+    async def query(**_: Any) -> AsyncIterator[Any]:
+        entered.set()
+        yield SystemMessage(subtype="init", data={"session_id": "session-example"})
+        await asyncio.Event().wait()
+
+    repo = ExpiredReplayRepository()
+    worker = create_worker_app(settings=settings, repository=repo, adapter=ClaudeSDKAdapter(settings, query_fn=query))
+    ctx = context()
+    ctx.blueprint.tools.bindings = []
+    async with worker.router.lifespan_context(worker):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=worker), base_url="http://worker.example.test", headers=auth_headers()
+        ) as client:
+            assert (await client.post("/api/v1/worker/runs", json=ctx.model_dump(mode="json"))).status_code == 202
+            await asyncio.wait_for(entered.wait(), 2)
+            path = f"/api/v1/worker/runs/{ctx.turn.run_id}"
+            assert (await client.get(path)).status_code == 409
+            stopped = await client.delete(path)
+            assert stopped.status_code == 200
+            for _ in range(50):
+                state = (await client.get(path + "/state")).json()["data"]
+                if state["drained"]:
+                    break
+                await asyncio.sleep(0.01)
+            assert state["drained"]
+            assert state["run"]["status"] == "cancelled"
+            assert (await client.get(path + "/state", headers=auth_headers("other-user"))).status_code == 404
+
+
+@pytest.mark.parametrize("drain_poll", [1, 3])
+async def test_parent_cleanup_polls_state_without_requiring_events(settings: Settings, drain_poll: int) -> None:
+    paths: list[str] = []
+    polls = 0
+
+    def worker(request: httpx.Request) -> httpx.Response:
+        nonlocal polls
+        paths.append(request.url.path)
+        if request.method == "POST":
+            run_id = json.loads(request.content)["turn"]["run_id"]
+            return httpx.Response(202, json={"success": True, "data": {"run": {"run_id": run_id}}})
+        if request.method == "DELETE":
+            return httpx.Response(200, json={"success": True, "data": {"drained": False}})
+        if request.url.path.endswith("/state"):
+            polls += 1
+            return httpx.Response(200, json={"success": True, "data": {"drained": polls >= drain_poll}})
+        return httpx.Response(409, json={"detail": "Expired event prefix"})
+
+    remote = RemoteClaudeSDKAdapter(configured_worker(settings), httpx.MockTransport(worker))
+    repo = InMemoryRunRepository()
+    app = create_app(settings=settings, repository=repo, adapters=[remote])
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://engine.example.test", headers=auth_headers()
+        ) as client:
+            await client.put(
+                "/api/v1/agents/agent-example",
+                json={"blueprint": blueprint(harness_id="claude_agent_sdk_remote", profile_id="remote", options={})},
+            )
+            run = (
+                await client.post(
+                    "/api/v1/runs",
+                    json={"agent_id": "agent-example", "conversation_id": "conversation-example", "message": "one"},
+                )
+            ).json()["data"]
+            page = await terminal(client, run["run_id"])
+            assert page["events"][-1]["data"]["code"] == "provider_error"
+            assert (await repo.get_session(run["binding_id"])).active_run is None
+            assert paths[-1].endswith("/state")
+
+
+async def test_remote_completion_consumes_the_committed_event_tail(settings: Settings) -> None:
+    cursors: list[int] = []
+    run_id = ""
+
+    def worker(request: httpx.Request) -> httpx.Response:
+        nonlocal run_id
+        if request.method == "POST":
+            run_id = json.loads(request.content)["turn"]["run_id"]
+            return httpx.Response(202, json={"success": True, "data": {"run": {"run_id": run_id}}})
+        cursor = int(request.url.params.get("after", "0"))
+        cursors.append(cursor)
+        # Completion can commit between the event-prefix read and metadata read.
+        events = (
+            [{"run_id": run_id, "sequence": 1, "event_type": "content.delta", "data": {"text": "first"}}]
+            if cursor == 0
+            else [
+                {"run_id": run_id, "sequence": 2, "event_type": "content.delta", "data": {"text": " second"}},
+                {"run_id": run_id, "sequence": 3, "event_type": "run.completed", "data": {}},
+            ]
+        )
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "run": {"run_id": run_id, "status": "completed", "last_sequence": 3},
+                    "events": events,
+                    "drained": True,
+                },
+            },
+        )
+
+    remote = RemoteClaudeSDKAdapter(configured_worker(settings), httpx.MockTransport(worker))
+    repo = InMemoryRunRepository()
+    app = create_app(settings=settings, repository=repo, adapters=[remote])
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://engine.example.test", headers=auth_headers()
+        ) as client:
+            await client.put(
+                "/api/v1/agents/agent-example",
+                json={"blueprint": blueprint(harness_id="claude_agent_sdk_remote", profile_id="remote", options={})},
+            )
+            run = (
+                await client.post(
+                    "/api/v1/runs",
+                    json={"agent_id": "agent-example", "conversation_id": "conversation-example", "message": "one"},
+                )
+            ).json()["data"]
+            page = await terminal(client, run["run_id"])
+            assert page["run"]["status"] == "completed"
+            assert [e["data"]["text"] for e in page["events"] if e["event_type"] == "content.delta"] == [
+                "first",
+                " second",
+            ]
+            assert cursors == [0, 1]

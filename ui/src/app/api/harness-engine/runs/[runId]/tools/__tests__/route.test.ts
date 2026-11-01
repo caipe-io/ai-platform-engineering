@@ -93,3 +93,21 @@ it("rejects unavailable approval semantics instead of silently downgrading them"
   expect((await POST(request({ operation: "list" }), params)).status).toBe(409);
   expect(list).not.toHaveBeenCalled();
 });
+
+it("accepts a legacy agent without an enabled field", async () => {
+  getCollection.mockImplementation(async (name: string) => name === "dynamic_agents" ? { findOne: async () => ({ ...agent, enabled: undefined }) } : { find: () => ({ toArray: async () => [server] }) });
+  expect((await POST(request({ operation: "list" }), params)).status).toBe(200);
+});
+
+it.each([["missing", null], ["disabled", { ...agent, enabled: false }]])("rejects a %s agent", async (_name, record) => {
+  getCollection.mockImplementation(async (name: string) => name === "dynamic_agents" ? { findOne: async () => record } : { find: () => ({ toArray: async () => [server] }) });
+  expect((await POST(request({ operation: "call", tool_id: "example.lookup", arguments: {} }), params)).status).toBe(403);
+  expect(call).not.toHaveBeenCalled();
+});
+
+it("includes legacy MCP servers without an enabled field", async () => {
+  const find = jest.fn(() => ({ toArray: async () => [{ ...server, enabled: undefined }] }));
+  getCollection.mockImplementation(async (name: string) => name === "dynamic_agents" ? { findOne: async () => agent } : { find });
+  expect((await POST(request({ operation: "list" }), params)).status).toBe(200);
+  expect(find).toHaveBeenCalledWith({ enabled: { $ne: false } });
+});

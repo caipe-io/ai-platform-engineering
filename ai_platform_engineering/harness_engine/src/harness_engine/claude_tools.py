@@ -43,17 +43,16 @@ class ClaudeToolBroker:
             if not body.get("success"):
                 raise PermissionError("The tool broker rejected the selected tools")
             schemas = body["data"]["tools"]
-            expected = {binding.tool_id for binding in context.blueprint.tools.bindings}
-            if len(schemas) != len(expected) or {tool["tool_id"] for tool in schemas} != expected:
+            selected_ids = list(dict.fromkeys(binding.tool_id for binding in context.blueprint.tools.bindings))
+            if {tool["tool_id"] for tool in schemas} != set(selected_ids):
                 raise ValueError("The tool broker returned a different allowlist")
             tools: list[SdkMcpTool[Any]] = []
             names: dict[str, str] = {}
             pending: set[asyncio.Task[dict[str, Any]]] = set()
             by_id = {schema["tool_id"]: schema for schema in schemas}
-            for index, binding in enumerate(context.blueprint.tools.bindings):
-                schema = by_id[binding.tool_id]
+            for index, tool_id in enumerate(selected_ids):
+                schema = by_id[tool_id]
                 alias = f"tool_{index}"
-                tool_id = schema["tool_id"]
                 names[f"mcp__caipe__{alias}"] = tool_id
 
                 def handler_for(selected: str) -> Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]:

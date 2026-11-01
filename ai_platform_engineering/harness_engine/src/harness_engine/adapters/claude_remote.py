@@ -186,7 +186,11 @@ class RemoteClaudeSDKAdapter:
                         if event.event_type not in {"run.started", "run.completed", "run.cancelled", "run.failed"}:
                             yield CanonicalEventDraft(event_type=event.event_type, data=event.data)
                     status = page["run"]["status"]
-                    if status in {"completed", "failed", "cancelled"} and page["drained"]:
+                    if (
+                        status in {"completed", "failed", "cancelled"}
+                        and page["drained"]
+                        and cursor >= page["run"]["last_sequence"]
+                    ):
                         drained = True
                         if status == "failed":
                             raise RuntimeError("Remote SDK execution failed")
@@ -205,9 +209,9 @@ class RemoteClaudeSDKAdapter:
                             if stopped["drained"]:
                                 drained = True
                                 break
-                            stopped = await self._request(
-                                client, "GET", f"/api/v1/worker/runs/{run_id}", params={"wait": 1}
-                            )
+                            await asyncio.sleep(0.1)
+                            stopped = await self._request(client, "GET", f"/api/v1/worker/runs/{run_id}/state")
+                        drained = bool(stopped["drained"])
                     except (httpx.HTTPError, ValueError, KeyError, ExecutionUnconfirmedError) as error:
                         logger.warning(
                             "Worker stop could not be confirmed",
