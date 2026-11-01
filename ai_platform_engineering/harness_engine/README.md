@@ -46,8 +46,8 @@ service until an operator enables the Engine integration.
 
 - LangChain Deep Agents is **Stable**, including its opt-in Engine integration.
 - Claude SDK (local and remote worker) and AgentCore are **Experimental** CAIPE integrations. Agent Builder
-  shows the catalog's certification status in the harness dropdown and beside
-  the selected harness. `certified` is labeled **Stable**; `blocked` is labeled
+  shows the catalog's certification status on each harness option.
+  `certified` is labeled **Stable**; `blocked` is labeled
   **Blocked** and remains disabled.
 
 ## Connect an existing AgentCore deployment

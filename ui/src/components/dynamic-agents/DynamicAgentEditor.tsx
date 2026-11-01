@@ -15,7 +15,6 @@ import { HarnessFeaturePanels } from "@/components/harness-engine/HarnessFeature
 import { harnessBuilderSections, supportsHarnessCapability, validateHarnessOptionsSchema } from "@/lib/harness-builder";
 import { HarnessOptionsForm } from "@/components/harness-engine/HarnessOptionsForm";
 import { UnsavedChangesDialog } from "@/components/shared/UnsavedChangesDialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -157,22 +156,10 @@ const VISIBILITY_OPTIONS: {
   },
 ];
 
-const HARNESS_STATUS_PRESENTATION: Record<
-  HarnessDescriptor["certification"],
-  { label: string; className: string }
-> = {
-  certified: {
-    label: "Stable",
-    className: "border-emerald-500/30 bg-emerald-500/10",
-  },
-  experimental: {
-    label: "Experimental",
-    className: "border-amber-500/30 bg-amber-500/10",
-  },
-  blocked: {
-    label: "Blocked",
-    className: "border-destructive/30 bg-destructive/10",
-  },
+const HARNESS_STATUS_LABELS: Record<HarnessDescriptor["certification"], string> = {
+  certified: "Stable",
+  experimental: "Experimental",
+  blocked: "Blocked",
 };
 
 interface TeamOption {
@@ -594,9 +581,6 @@ export function DynamicAgentEditor({
   const isDeepAgents = harnessId === "dynamic_agents";
   const [harnessSwitchConfirmed, setHarnessSwitchConfirmed] = React.useState(false);
   const requiresHarnessConfirmation = isEditing && harnessId !== (agent?.execution_harness_id || "dynamic_agents");
-  const selectedHarnessStatus = selectedHarness
-    ? HARNESS_STATUS_PRESENTATION[selectedHarness.certification]
-    : isDeepAgents ? HARNESS_STATUS_PRESENTATION.certified : undefined;
   const supportsTools = supportsHarnessCapability(selectedHarness, "tools.broker", isDeepAgents);
   const supportsKnowledge = supportsHarnessCapability(selectedHarness, "knowledge", isDeepAgents);
   const supportsSkills = supportsHarnessCapability(selectedHarness, "skills", isDeepAgents);
@@ -1780,17 +1764,10 @@ export function DynamicAgentEditor({
             {activeStep === "basic" && (
               <div className="space-y-4 pt-2">
                 <div className="space-y-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Label htmlFor="harnessId">Execution harness</Label>
-                    {selectedHarnessStatus && (
-                      <Badge variant="outline" className={selectedHarnessStatus.className}>
-                        {selectedHarnessStatus.label}
-                      </Badge>
-                    )}
-                  </div>
                   <div className="p-3 rounded-lg border-2 border-primary/20 bg-primary/5 space-y-3">
                     <Select
                       id="harnessId"
+                      aria-label="Execution harness"
                       value={harnessId}
                       onChange={(event) => {
                         if (event.target.value === "__add_existing_agentcore__") setConnectionDialogOpen(true);
@@ -1800,7 +1777,7 @@ export function DynamicAgentEditor({
                       className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-medium shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <option value="dynamic_agents">
-                        LangChain Deep Agents (default) — {HARNESS_STATUS_PRESENTATION[harnessDescriptors.find(item => item.id === "dynamic_agents")?.certification ?? "certified"].label}
+                        LangChain Deep Agents (default) — {HARNESS_STATUS_LABELS[harnessDescriptors.find(item => item.id === "dynamic_agents")?.certification ?? "certified"]}
                       </option>
                       {!isDeepAgents && !selectedHarness && (
                         <option value={harnessId}>{harnessId} (unavailable)</option>
@@ -1814,7 +1791,7 @@ export function DynamicAgentEditor({
                             descriptor.certification === "blocked"
                           }
                         >
-                          {descriptor.display_name} — {HARNESS_STATUS_PRESENTATION[descriptor.certification].label}
+                          {descriptor.display_name} — {HARNESS_STATUS_LABELS[descriptor.certification]}
                         </option>
                       ))}
                       {connectionConfigured !== null && (
