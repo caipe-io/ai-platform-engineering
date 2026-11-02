@@ -153,7 +153,7 @@ async def lifespan(app: FastAPI):
                     try:
                         _ = await copy_cleanup
                     except asyncio.CancelledError:
-                        pass
+                        pass  # Expected: copy_cleanup.cancel() is called during shutdown above
                     except Exception:  # noqa: BLE001 — an already-failed worker must not skip shutdown
                         logger.exception("Follow-up recovery worker failed before shutdown")
                 finally:
