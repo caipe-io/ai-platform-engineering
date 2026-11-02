@@ -894,6 +894,155 @@ def test_seed_config_from_bootstrap_marks_reconcile_ok(tmp_path: Path) -> None:
     assert bridge._reconcile_ok_path(config_path).is_file()
 
 
+def _runtime_dump(paths: set[str]) -> dict:
+    return {
+        "binds": [{"listeners": {"listener-key": {"routes": {
+            str(index): {"matches": [{"path": {"pathPrefix": path}}]}
+            for index, path in enumerate(sorted(paths))
+        }}}}],
+    }
+
+
+def test_public_mcp_paths_uses_runtime_binds_not_desired_config() -> None:
+    dump = _runtime_dump({"/mcp/primary", "/mcp//default/primary", "/healthz"})
+    dump["config"] = _runtime_dump({"/mcp/secondary"})
+
+    assert bridge.public_mcp_paths(dump) == {"/mcp/primary"}
+    with pytest.raises(ValueError, match="bind list"):
+        bridge.public_mcp_paths({"config": dump})
+
+
+def test_reconcile_retries_failed_reload_then_recovers_without_target_changes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    baseline = _baseline_config()
+    bridge.write_config_atomically(config_path, baseline)
+    installed = {"/mcp/rag"}
+    clock = [100.0]
+    monkeypatch.setattr(bridge.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(bridge, "_load_targets", lambda: [
+        bridge.McpGatewayTarget(id="primary", upstream_url="http://primary.example.test/mcp")
+    ])
+
+    def fetch(url: str) -> dict:
+        if url.endswith("/config_dump"):
+            # A failed JWKS load leaves bootstrap routes active even though
+            # /config already exposes the newly published desired file.
+            return _runtime_dump(installed | {"/mcp//default/primary"})
+        assert url == "http://gateway.example.test:15000/config"
+        return json.loads(config_path.read_text())
+
+    monkeypatch.setattr(bridge, "fetch_agentgateway_config", fetch)
+    retry_state = bridge.ReloadRetryState()
+
+    def reconcile() -> dict:
+        return bridge.reconcile_once(
+            config_path=config_path,
+            admin_config_url="http://gateway.example.test:15000/config",
+            retry_state=retry_state,
+        )
+
+    first = reconcile()
+    desired_bytes = config_path.read_bytes()
+    first_inode = config_path.stat().st_ino
+    assert first["changed"] is True
+    assert first["runtime_ready"] is False
+    assert first["reload_retried"] is False
+    assert first["missing_paths"] == ["/mcp/primary"]
+    assert not (tmp_path / bridge.RUNTIME_READY_MARKER).exists()
+
+    clock[0] += 4
+    assert reconcile()["reload_retried"] is False
+    assert config_path.stat().st_ino == first_inode
+
+    clock[0] += 1
+    retried = reconcile()
+    assert retried["changed"] is False
+    assert retried["reload_retried"] is True
+    assert config_path.stat().st_ino != first_inode
+    assert config_path.read_bytes() == desired_bytes
+    assert stat.S_IMODE(config_path.stat().st_mode) == 0o644
+    assert retry_state.next_retry_at == 115
+
+    clock[0] = 110
+    assert reconcile()["reload_retried"] is False
+    installed.clear()
+    installed.add("/mcp/primary")
+    clock[0] = 115
+    recovered_inode = config_path.stat().st_ino
+    assert reconcile()["runtime_ready"] is True
+    assert (tmp_path / bridge.RUNTIME_READY_MARKER).is_file()
+    assert config_path.stat().st_ino == recovered_inode
+    assert retry_state.delay_seconds == bridge.RELOAD_RETRY_INITIAL_SECONDS
+
+
+def test_runtime_unavailable_does_not_acknowledge_or_republish(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    rendered = _baseline_config()
+    bridge.write_config_atomically(config_path, rendered)
+    marker = tmp_path / bridge.RUNTIME_READY_MARKER
+    marker.touch()
+    original_inode = config_path.stat().st_ino
+
+    def unavailable(_url: str) -> dict:
+        raise urllib.error.URLError("admin unavailable")
+
+    monkeypatch.setattr(bridge, "fetch_agentgateway_config", unavailable)
+    result = bridge.verify_runtime_config(
+        config_path=config_path,
+        rendered=rendered,
+        admin_config_url="http://gateway.example.test:15000/config",
+        changed=False,
+        retry_state=bridge.ReloadRetryState(),
+    )
+
+    assert result["reason"] == "runtime_unavailable"
+    assert result["reload_retried"] is False
+    assert not marker.exists()
+    assert config_path.stat().st_ino == original_inode
+
+
+@pytest.mark.parametrize("dump", [{"config": {"binds": []}}, {"binds": [{}]}])
+def test_malformed_runtime_dump_does_not_trigger_blind_reload(
+    tmp_path: Path, monkeypatch, dump: dict
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    rendered = _baseline_config()
+    bridge.write_config_atomically(config_path, rendered)
+    original_inode = config_path.stat().st_ino
+    monkeypatch.setattr(bridge, "fetch_agentgateway_config", lambda _url: dump)
+
+    result = bridge.verify_runtime_config(
+        config_path=config_path,
+        rendered=rendered,
+        admin_config_url="http://gateway.example.test:15000/config",
+        changed=False,
+        retry_state=bridge.ReloadRetryState(),
+    )
+
+    assert result["reason"] == "runtime_unavailable"
+    assert result["reload_retried"] is False
+    assert config_path.stat().st_ino == original_inode
+
+
+def test_reload_retry_backoff_is_capped_and_resets() -> None:
+    state = bridge.ReloadRetryState()
+    delays = []
+    now = 100.0
+    for _ in range(8):
+        state.published(now)
+        delays.append(state.next_retry_at - now)
+        now = state.next_retry_at
+
+    assert delays == [5, 10, 20, 40, 60, 60, 60, 60]
+    state.reset()
+    state.published(now)
+    assert state.next_retry_at - now == 5
+
+
 def test_apply_agentgateway_logging_defaults_to_info() -> None:
     config = _baseline_config()
     assert config["config"]["logging"]["level"] == "debug"

@@ -22,6 +22,7 @@ import stat
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,9 @@ import yaml
 
 LOGGER = logging.getLogger("agentgateway-config-bridge")
 RECONCILE_OK_MARKER = ".reconcile_ok"
+RUNTIME_READY_MARKER = ".runtime_ready"
+RELOAD_RETRY_INITIAL_SECONDS = 5.0
+RELOAD_RETRY_MAX_SECONDS = 60.0
 SAFE_TARGET_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 PUBLISHED_CONFIG_MODE = 0o644
 _VALID_AGENTGATEWAY_LOG_LEVELS = frozenset({"trace", "debug", "info", "warn", "error"})
@@ -140,6 +144,111 @@ class McpGatewayTarget:
     id: str
     upstream_url: str
     credential_sources: tuple[dict[str, Any], ...] = ()
+
+
+@dataclass
+class ReloadRetryState:
+    """Rate-limit reload events while the proxy has not installed the file."""
+
+    next_retry_at: float = 0.0
+    delay_seconds: float = RELOAD_RETRY_INITIAL_SECONDS
+
+    def published(self, now: float) -> None:
+        self.next_retry_at = now + self.delay_seconds
+        self.delay_seconds = min(self.delay_seconds * 2, RELOAD_RETRY_MAX_SECONDS)
+
+    def reset(self) -> None:
+        self.next_retry_at = 0.0
+        self.delay_seconds = RELOAD_RETRY_INITIAL_SECONDS
+
+
+def _clear_runtime_ready(config_path: Path) -> None:
+    (config_path.parent / RUNTIME_READY_MARKER).unlink(missing_ok=True)
+
+
+def public_mcp_paths(config: dict[str, Any]) -> set[str]:
+    """Extract public route matches from desired or installed bind trees.
+
+    Runtime listeners/routes are maps, while file listeners/routes are lists.
+    Only inspect binds: other dump fields must not acknowledge desired routes.
+    Internal MCP subroutes such as /mcp//default/... are not public routes.
+    """
+
+    binds = config.get("binds")
+    if not isinstance(binds, list):
+        raise ValueError("AgentGateway config has no bind list")
+    paths: set[str] = set()
+
+    def objects(value: Any) -> list[dict[str, Any]]:
+        if isinstance(value, dict):
+            value = list(value.values())
+        if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+            raise ValueError("AgentGateway bind tree contains an invalid collection")
+        return value
+
+    for bind in objects(binds):
+        for listener in objects(bind.get("listeners")):
+            for route in objects(listener.get("routes", {})):
+                for match in objects(route.get("matches", [])):
+                    path = match.get("path", {})
+                    if not isinstance(path, dict):
+                        raise ValueError("AgentGateway route match has an invalid path")
+                    for key in ("pathPrefix", "exact"):
+                        item = path.get(key)
+                        if isinstance(item, str) and re.fullmatch(r"/mcp/[A-Za-z0-9._-]+", item):
+                            paths.add(item)
+    return paths
+
+
+def verify_runtime_config(
+    *,
+    config_path: Path,
+    rendered: dict[str, Any],
+    admin_config_url: str,
+    changed: bool,
+    retry_state: ReloadRetryState,
+) -> dict[str, Any]:
+    """Acknowledge installed public routes, retrying failed reloads with backoff."""
+
+    now = time.monotonic()
+    if changed:
+        _clear_runtime_ready(config_path)
+        retry_state.reset()
+        retry_state.published(now)
+    dump_url = urllib.parse.urljoin(admin_config_url, "config_dump")
+    try:
+        installed = public_mcp_paths(fetch_agentgateway_config(dump_url))
+    except (OSError, urllib.error.URLError, json.JSONDecodeError, ValueError) as exc:
+        _clear_runtime_ready(config_path)
+        LOGGER.warning("Cannot verify installed AgentGateway routes: %s", exc)
+        return {"runtime_ready": False, "reload_retried": False, "reason": "runtime_unavailable"}
+
+    expected = public_mcp_paths(rendered)
+    missing = sorted(expected - installed)
+    unexpected = sorted(installed - expected)
+    if not missing and not unexpected:
+        (config_path.parent / RUNTIME_READY_MARKER).touch()
+        retry_state.reset()
+        return {"runtime_ready": True, "reload_retried": False}
+
+    _clear_runtime_ready(config_path)
+    retried = not changed and now >= retry_state.next_retry_at
+    if retried:
+        # AgentGateway v1.1 does not retry a failed reload itself. Republish the
+        # same policy-preserving bytes atomically to trigger another file event.
+        write_config_atomically(config_path, rendered, force=True)
+        retry_state.published(now)
+        LOGGER.warning(
+            "AgentGateway runtime routes differ; retriggered reload (missing=%s, unexpected=%s)",
+            missing,
+            unexpected,
+        )
+    return {
+        "runtime_ready": False,
+        "reload_retried": retried,
+        "missing_paths": missing,
+        "unexpected_paths": unexpected,
+    }
 
 
 def _reconcile_ok_path(config_path: Path) -> Path:
@@ -617,7 +726,7 @@ def merge_agentgateway_mcp_routes(
 
 
 def fetch_agentgateway_config(admin_config_url: str) -> dict[str, Any]:
-    """Fetch the current live AgentGateway config from the admin endpoint."""
+    """Fetch an admin object (/config is desired, /config_dump is installed)."""
 
     with urllib.request.urlopen(admin_config_url, timeout=5) as response:
         payload = response.read().decode("utf-8")
@@ -702,12 +811,12 @@ def apply_agentgateway_jwt_auth(config: dict[str, Any]) -> None:
                 jwt_auth["audiences"] = audiences
 
 
-def write_config_atomically(path: Path, config: dict[str, Any]) -> bool:
-    """Write config as JSON/YAML-compatible content; return true when changed."""
+def write_config_atomically(path: Path, config: dict[str, Any], *, force: bool = False) -> bool:
+    """Publish JSON/YAML atomically; force retriggers reload with identical bytes."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     rendered = json.dumps(config, indent=2, sort_keys=False) + "\n"
-    if path.exists() and path.read_text(encoding="utf-8") == rendered:
+    if not force and path.exists() and path.read_text(encoding="utf-8") == rendered:
         _ensure_published_config_mode(path)
         return False
 
@@ -833,9 +942,11 @@ def reconcile_once(
     config_path: Path,
     admin_config_url: str,
     bootstrap_path: Path | None = None,
+    retry_state: ReloadRetryState | None = None,
 ) -> dict[str, Any]:
     """Render and write one AgentGateway config generation."""
 
+    retry_state = retry_state if retry_state is not None else ReloadRetryState()
     try:
         targets = _load_targets()
     except (OSError, urllib.error.URLError, json.JSONDecodeError, ValueError) as exc:
@@ -846,6 +957,7 @@ def reconcile_once(
                 exc,
             )
             _mark_reconcile_ok(config_path)
+            _clear_runtime_ready(config_path)
             return {
                 "changed": False,
                 "skipped": True,
@@ -867,6 +979,7 @@ def reconcile_once(
                 exc,
             )
             _mark_reconcile_ok(config_path)
+            _clear_runtime_ready(config_path)
             return {
                 "targets": [target.id for target in targets],
                 "target_count": len(targets),
@@ -888,6 +1001,13 @@ def reconcile_once(
         "changed": changed,
         "config_path": str(config_path),
     }
+    result.update(verify_runtime_config(
+        config_path=config_path,
+        rendered=rendered,
+        admin_config_url=admin_config_url,
+        changed=changed,
+        retry_state=retry_state,
+    ))
     if changed:
         LOGGER.info("AgentGateway MCP config reconciled: %s", result)
     else:
@@ -915,6 +1035,8 @@ def main() -> None:
     )
     poll_seconds = float(os.getenv("AGENTGATEWAY_CONFIG_BRIDGE_POLL_SECONDS", "5"))
     seed_config_from_bootstrap(config_path, bootstrap_path)
+    _clear_runtime_ready(config_path)
+    retry_state = ReloadRetryState()
 
     while True:
         try:
@@ -922,8 +1044,10 @@ def main() -> None:
                 config_path=config_path,
                 admin_config_url=admin_config_url,
                 bootstrap_path=bootstrap_path,
+                retry_state=retry_state,
             )
         except Exception:
+            _clear_runtime_ready(config_path)
             LOGGER.exception("AgentGateway MCP config reconciliation failed")
         time.sleep(poll_seconds)
 
