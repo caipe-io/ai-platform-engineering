@@ -45,6 +45,9 @@ def _provider_configuration(
     configuration: dict[str, object] = {
         "executionRoleArn": profile.execution_role_arn or "",
         "systemPrompt": [{"text": blueprint.prompt.system}],
+        # Portable AgentCore tool bindings are unavailable; do not inherit the
+        # provider's built-in shell or filesystem tools for managed agents.
+        "allowedTools": [],
     }
     if profile.model_id:
         configuration["model"] = {

@@ -224,6 +224,9 @@ Harness Engine variables use the `HARNESS_ENGINE_` prefix:
   When AWS explicitly confirms that a token's resource was deleted, replicas
   derive the same replacement token. A bounded walk handles retained deletion
   tombstones without dispatching a new creation after an ambiguous failure.
+  CAIPE-managed Harnesses explicitly disable provider built-in tools while
+  portable AgentCore tool bindings remain unavailable. Shared, externally
+  managed connections retain their operator-owned tool configuration.
 - `HARNESS_ENGINE_AGENTCORE_PROVISION_TIMEOUT_SECONDS` and
   `HARNESS_ENGINE_AGENTCORE_PROVISION_POLL_SECONDS`: readiness polling bounds
   for per-agent Harness creation.
@@ -250,6 +253,9 @@ Creation permissions use `Resource: *` with an `aws:RequestedRegion`
 condition because the provider resources do not exist yet. Existing-resource
 actions should be restricted to the deployment account/Region Harness,
 runtime, memory, and default workload-identity directory ARN patterns.
+Tag-on-create authorization also covers the managed child resources before
+their IDs exist. Child memory and runtime names can use the parent Harness
+name directly; verify returned ARNs when defining the resource prefixes.
 - `HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON`: alias-to-operator-owned Claude
   policy, for example `{"safe":{"model":"claude-example","cwd":"/workspace","permission_mode":"dontAsk"}}`.
 - `HARNESS_ENGINE_CLAUDE_TOOL_BROKER_URL`: BFF service URL for selected MCP

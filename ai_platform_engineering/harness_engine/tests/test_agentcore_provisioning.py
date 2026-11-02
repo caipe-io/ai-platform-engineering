@@ -87,6 +87,7 @@ async def test_provisioner_creates_and_reuses_one_harness_per_agent() -> None:
     assert client.create_calls[0]["systemPrompt"] == [
         {"text": "Be helpful to {{audience}}."}
     ]
+    assert client.create_calls[0]["allowedTools"] == []
     assert client.create_calls[0]["tags"] == {
         "caipe:managed-by": "harness-engine",
         "caipe:agent-id": "agent-example",
@@ -116,6 +117,7 @@ async def test_provisioner_creates_and_reuses_one_harness_per_agent() -> None:
     assert client.update_calls[0]["systemPrompt"] == [
         {"text": "Use the revised instructions."}
     ]
+    assert client.update_calls[0]["allowedTools"] == []
 
 
 def test_agent_api_provisions_and_deletes_the_server_owned_harness() -> None:
