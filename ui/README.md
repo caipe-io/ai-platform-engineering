@@ -86,6 +86,7 @@ login session until that helper is migrated.
 
 - Eligible Deep Agents chats show **Migrate to Harness Engine** above the messages. Conversation write access and agent-use permission are required.
 - Migration preserves messages, LangGraph checkpoints, files, and pending approvals. Future responses run independently of browser refreshes; existing LangGraph history was already persistent.
+- Active Engine responses do not trigger the chat's browser refresh warning after the server confirms run admission. Legacy streams and requests awaiting admission keep the warning.
 - Finish or stop an active execution first. Both Engine reservations and the native checkpoint's producer lease are checked; the native execution fence also protects the handoff from concurrent requests.
 - Confirm the migration in the dialog. The current draft stays in place and no prompt or approval is submitted.
 - If the connection is interrupted, reopen the chat and select **Resume migration**. The server reuses the original handoff rather than creating a second execution.

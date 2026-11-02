@@ -21,6 +21,9 @@ import { CustomStreamAdapter } from "./clients/browser-custom-consumer";
 // ═══════════════════════════════════════════════════════════════
 
 export interface StreamAdapter {
+  /** True after the server confirms a run that can survive a page refresh. */
+  readonly canRecoverOnRefresh?: boolean;
+
   /** Stream events for a new user message */
   streamMessage(params: StreamParams, callbacks: StreamCallbacks): Promise<void>;
 

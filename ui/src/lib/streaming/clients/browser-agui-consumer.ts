@@ -33,6 +33,11 @@ const CANCEL_URL = `${STREAM_BASE}/cancel`;
 export class AGUIStreamAdapter implements StreamAdapter {
   private abortController: AbortController | null = null;
   private protocolState: AGUIProtocolState;
+  private persistentRun = false;
+
+  get canRecoverOnRefresh(): boolean {
+    return this.persistentRun;
+  }
 
   constructor() {
     this.protocolState = createAGUIProtocolState();
@@ -115,6 +120,7 @@ export class AGUIStreamAdapter implements StreamAdapter {
   // ── Private: shared stream loop ────────────────────────────
 
   private async _stream(url: string, body: string | undefined, callbacks: StreamCallbacks): Promise<void> {
+    this.persistentRun = false;
     resetProtocolState(this.protocolState);
 
     if (this.abortController) {
@@ -149,6 +155,7 @@ export class AGUIStreamAdapter implements StreamAdapter {
         );
       }
 
+      this.persistentRun = Boolean(response.headers.get("X-Harness-Run-ID"));
       for await (const raw of recoverableStream(response, "agui", this.abortController.signal)) {
         this._emitRawEvent(raw, callbacks);
 

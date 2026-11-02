@@ -174,6 +174,40 @@ describe('chat-store', () => {
     window.localStorage.clear();
   });
 
+  describe('browser refresh', () => {
+    it.each([
+      ['no active streams', [], false],
+      ['admitted Engine runs', [true, true], false],
+      ['legacy or unconfirmed runs', [undefined], true],
+      ['requests awaiting admission', [false], true],
+      ['mixed Engine and legacy runs', [true, undefined], true],
+    ] as const)('%s', (_name, recoveryStates, warns) => {
+      const originalSave = useChatStore.getState().saveMessagesToServer;
+      const save = jest.fn().mockResolvedValue(undefined);
+      useChatStore.setState({
+        saveMessagesToServer: save,
+        streamingConversations: new Map(recoveryStates.map((canRecoverOnRefresh, index) => {
+          const conversationId = `example-${index}`;
+          return [conversationId, {
+            conversationId, messageId: `message-${index}`, client: { abort: jest.fn() },
+            streamAdapter: canRecoverOnRefresh === undefined ? undefined : {
+              canRecoverOnRefresh, streamMessage: jest.fn(), resumeStream: jest.fn(),
+              recoverRun: jest.fn(), cancelStream: jest.fn(), abort: jest.fn(),
+            },
+          }];
+        })),
+      });
+      try {
+        const event = new Event('beforeunload', { cancelable: true });
+        window.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(warns);
+        expect(save).toHaveBeenCalledTimes(recoveryStates.length);
+      } finally {
+        useChatStore.setState({ saveMessagesToServer: originalSave, streamingConversations: new Map() });
+      }
+    });
+  });
+
   describe('context usage', () => {
     const usage = {
       used_tokens: 71_000,

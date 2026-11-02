@@ -1751,19 +1751,21 @@ if (typeof window !== 'undefined') {
   });
 
   // Fallback: beforeunload for older browsers and explicit tab close.
-  // Also prompts the user to confirm if any conversations are actively streaming,
-  // so they don't accidentally lose an in-flight response.
+  // Engine runs survive a subscriber disconnect. Warn only for streams whose
+  // server has not confirmed refresh recovery, including legacy execution.
   window.addEventListener('beforeunload', (e: BeforeUnloadEvent) => {
     saveInflightConversations();
 
     const state = useChatStore.getState();
-    if (state.streamingConversations.size > 0) {
+    const interruptedCount = [...state.streamingConversations.values()].filter(
+      stream => !stream.streamAdapter?.canRecoverOnRefresh,
+    ).length;
+    if (interruptedCount > 0) {
       e.preventDefault();
-      const count = state.streamingConversations.size;
       const msg =
-        count === 1
+        interruptedCount === 1
           ? 'You have 1 live chat receiving a response. Refreshing will interrupt it.'
-          : `You have ${count} live chats receiving responses. Refreshing will interrupt them.`;
+          : `You have ${interruptedCount} live chats receiving responses. Refreshing will interrupt them.`;
       e.returnValue = msg;
     }
   });

@@ -28,6 +28,11 @@ const CANCEL_URL = `${STREAM_BASE}/cancel`;
 
 export class CustomStreamAdapter implements StreamAdapter {
   private abortController: AbortController | null = null;
+  private persistentRun = false;
+
+  get canRecoverOnRefresh(): boolean {
+    return this.persistentRun;
+  }
 
   abort(): void {
     if (this.abortController) {
@@ -106,6 +111,7 @@ export class CustomStreamAdapter implements StreamAdapter {
   }
 
   private async _stream(url: string, body: string | undefined, callbacks: StreamCallbacks): Promise<void> {
+    this.persistentRun = false;
     if (this.abortController) {
       this.abortController.abort();
     }
@@ -132,6 +138,7 @@ export class CustomStreamAdapter implements StreamAdapter {
         throw await buildStreamErrorFromResponse(response);
       }
 
+      this.persistentRun = Boolean(response.headers.get("X-Harness-Run-ID"));
       for await (const raw of recoverableStream(response, "custom", this.abortController.signal)) {
         this._emitRawEvent(raw, callbacks);
         const terminal = this._dispatchEvent(raw, callbacks);
