@@ -132,8 +132,32 @@ jobs:
 - [GitHub Container Registry Documentation](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 - [act - Local GitHub Actions](https://github.com/nektos/act)
 
+
+### Release blog links
+
+`release-manual.yml` resolves the documentation link before tagging, using
+`scripts/resolve_release_blog.py`. It prefers the exact patch-release post in
+`docs/releases`, then the same minor's `.0` post, and reads the actual `slug`
+from frontmatter. Both dotted legacy slugs and current hyphenated slugs work.
+The selected version and URL pass unchanged to the draft-release job.
+
+Finalization checks the link recorded in the draft body before publication,
+retrying for about nine minutes while the independent docs deployment finishes.
+A missing, ambiguous, or unavailable link fails the step and leaves the release
+as a draft. After repairing or deploying the post, re-run the failed finalize
+job to retry publication. RC cleanup and post-release scans only follow an
+actual publication.
+
+A stable release requires a single, non-draft post with a valid slug. An RC
+without a matching post omits the link instead of publishing a guessed URL.
+Run the resolver and release-body wiring tests with:
+
+```bash
+uv run --no-project --with pytest pytest -q tests/test_release_blog_links.py
+```
+
+
 ---
 
 **Last Updated:** October 30, 2025  
 **Maintainer:** Platform Engineering Team
-
