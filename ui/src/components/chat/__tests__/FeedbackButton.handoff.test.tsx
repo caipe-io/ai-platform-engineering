@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { FeedbackButton, type Feedback } from "../FeedbackButton";
 
 const mockSubmitFeedback = jest.fn();
@@ -117,5 +117,75 @@ it("records an enhancement with the chosen feature and validates its optional li
   fireEvent.click(screen.getByRole("button", { name: "Submit Report" }));
   await screen.findByRole("heading", { name: "Ticket Created" });
   expect(mockSubmitFeedback).toHaveBeenCalledWith(expect.objectContaining({ reason: "Enhancement" }));
-  expect(mockCreateTicket.mock.calls[0][0].request).toEqual(expect.objectContaining({ issueType: "Enhancement", feature: "Content" }));
+  expect(mockCreateTicket.mock.calls[0][0].request).toEqual(expect.objectContaining({ issueType: "Enhancement", feature: "Content", relatedUrl: "https://example.test/item" }));
+});
+
+it("clears an active thumbs-down instead of reopening the report", async () => {
+  render(<ChatFeedback />); await openReport(); fillReport();
+  fireEvent.click(screen.getByRole("button", { name: "Submit Report" }));
+  await screen.findByRole("heading", { name: "Ticket Created" });
+  fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+  fireEvent.click(screen.getByTitle("Not helpful"));
+  expect(screen.queryByRole("heading", { name: "Provide Feedback" })).not.toBeInTheDocument();
+  expect(mockSubmitFeedback).toHaveBeenCalledTimes(1);
+  await openReport();
+  expect(screen.getByRole("heading", { name: "Provide Feedback" })).toBeInTheDocument();
+});
+it("reuses the saved rating after closing a failed report but submits updated report details", async () => {
+  mockCreateTicket.mockRejectedValueOnce(new Error("App unavailable"));
+  render(<ChatFeedback />); await openReport(); fillReport();
+  fireEvent.click(screen.getByRole("button", { name: "Submit Report" }));
+  await screen.findByText("App unavailable");
+  fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+  fireEvent.click(screen.getByTitle("Not helpful")); // Clear the active rating.
+  await openReport(); fillReport();
+  fireEvent.change(screen.getByLabelText("Short title *"), { target: { value: "Updated report details" } });
+  fireEvent.click(screen.getByRole("button", { name: "Submit Report" }));
+  await screen.findByRole("heading", { name: "Ticket Created" });
+  expect(mockSubmitFeedback).toHaveBeenCalledTimes(1);
+  expect(mockCreateTicket).toHaveBeenCalledTimes(2);
+  expect(mockCreateTicket.mock.calls[1][0].request.feedbackContext.additionalFeedback).toContain("Updated report details");
+});
+it("closes a pending report without creating a ticket after the rating settles", async () => {
+  let finish!: (value: { success: boolean }) => void;
+  mockSubmitFeedback.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  render(<ChatFeedback />); await openReport(); fillReport();
+  fireEvent.click(screen.getByRole("button", { name: "Submit Report" }));
+  fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+  await act(async () => { finish({ success: true }); });
+  expect(mockSubmitFeedback).toHaveBeenCalledTimes(1);
+  expect(mockCreateTicket).not.toHaveBeenCalled();
+});
+it("shares a pending rating across close and reopen without duplicating it", async () => {
+  let finish!: (value: { success: boolean }) => void;
+  mockSubmitFeedback.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  render(<ChatFeedback />); await openReport(); fillReport();
+  fireEvent.click(screen.getByRole("button", { name: "Submit Report" }));
+  fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+  await openReport(); fillReport();
+  fireEvent.change(screen.getByLabelText("Short title *"), { target: { value: "New attempt" } });
+  fireEvent.click(screen.getByRole("button", { name: "Submit Report" }));
+  expect(mockSubmitFeedback).toHaveBeenCalledTimes(1);
+  await act(async () => { finish({ success: true }); });
+  await screen.findByRole("heading", { name: "Ticket Created" });
+  expect(mockCreateTicket).toHaveBeenCalledTimes(1);
+  expect(mockCreateTicket.mock.calls[0][0].request.feedbackContext.additionalFeedback).toContain("New attempt");
+});
+it("keeps a new report's fields when a cancelled rating attempt fails late", async () => {
+  let finish!: (value: { success: boolean; message: string }) => void;
+  mockSubmitFeedback.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  render(<ChatFeedback />); await openReport(); fillReport();
+  fireEvent.click(screen.getByRole("button", { name: "Submit Report" }));
+  fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+  await openReport(); fillReport();
+  fireEvent.change(screen.getByLabelText("Short title *"), { target: { value: "Preserve the new form" } });
+  fireEvent.click(screen.getByRole("button", { name: "Submit Report" }));
+  await act(async () => { finish({ success: false, message: "Rating unavailable" }); });
+  await screen.findByText("Rating unavailable");
+  expect(mockCreateTicket).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await screen.findByRole("heading", { name: "Ticket Created" });
+  expect(mockSubmitFeedback).toHaveBeenCalledTimes(2);
+  expect(mockCreateTicket).toHaveBeenCalledTimes(1);
+  expect(mockCreateTicket.mock.calls[0][0].request.title).toBe("Preserve the new form");
 });

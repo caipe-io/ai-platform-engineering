@@ -11,6 +11,8 @@ import { appGitHubFeedbackSettings, createGitHubFeedback, createPlatformGitHubFe
 import { parseFeedbackFeatures, platformFeedbackFeatures } from "@/lib/feedback-features";
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
 import { requireConversationResourcePermission } from "@/lib/rbac/conversation-implicit-authz";
+import { readBodyWithLimit } from "@/lib/request-body";
+import { DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES } from "@/types/agentic-app";
 import type { ConfiguredAgenticApp } from "@/types/agentic-app";
 
 type Reporter = NonNullable<AuthResult["authenticatedUser"]>;
@@ -75,20 +77,28 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const app = resolved?.installation.feedbackPath || resolved?.installation.feedbackGitHub ? resolved : undefined;
   const user = agenticAppUserContextFromSession(auth.authenticatedUser.session, auth.authenticatedUser.user.role);
   const platformLabel = process.env.FEEDBACK_PLATFORM_LABEL?.trim() || cfg.appName;
+  let platformCapabilities: ReturnType<typeof platformFeedbackCapabilities> | undefined;
+  try { platformCapabilities = platformFeedbackCapabilities(); }
+  catch (error) {
+    if (!(error instanceof ApiError && error.statusCode === 503)) throw error;
+  }
   const components = [
-    { appId: null, label: platformLabel },
+    ...(platformCapabilities ? [{ appId: null, label: platformLabel }] : []),
     ...loadConfiguredAgenticApps().filter(item => (item.installation.feedbackPath || item.installation.feedbackGitHub) && canLaunchAgenticApp(item, user))
       .map(item => ({ appId: item.installation.appId, label: item.manifest.displayName })),
   ];
   if (app && !canLaunchAgenticApp(app, user)) throw new ApiError("Feedback app is unavailable", 403);
+  if (!app && !platformCapabilities && (componentId === null || !components.length || query.get("view") !== "components")) {
+    throw new ApiError("The platform feedback handler is not configured", 503);
+  }
   if (query.get("view") === "components") return NextResponse.json({ success: true, data: {
-    appId: app?.installation.appId ?? null, components,
+    appId: app?.installation.appId ?? (platformCapabilities ? null : components[0].appId), components,
   } }, { headers: { "Cache-Control": "private, no-store" } });
   let features: string[];
   let screenshotsEnabled: boolean | undefined;
   if (!app) {
     features = platformFeedbackFeatures(process.env.FEEDBACK_FEATURES);
-    screenshotsEnabled = platformFeedbackCapabilities().screenshotsEnabled;
+    screenshotsEnabled = platformCapabilities!.screenshotsEnabled;
   }
   else {
     features = app.installation.feedbackFeatures ?? ["Other"];
@@ -102,7 +112,10 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
         const body = await response.json();
         if (typeof body?.data?.screenshotsEnabled === "boolean") screenshotsEnabled = body.data.screenshotsEnabled;
         if (body?.data?.features !== undefined) features = parseFeedbackFeatures(body.data.features);
-      } else if (![404, 405].includes(response.status)) return response;
+      } else if (![404, 405].includes(response.status)) {
+        const denial = response.status === 403 ? await response.clone().json().catch(() => null) : null;
+        if (denial?.error !== "policy_denied" || denial.reasonCode !== "action_not_declared") return response;
+      }
     }
   }
   return NextResponse.json({ success: true, data: {
@@ -110,13 +123,19 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   } }, { headers: { "Cache-Control": "private, no-store" } });
 });
 
-/** App provider handling stays in the app; the platform flow remains the default. */
+/** Registered component ownership determines the handler; failures never change it. */
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const auth = await authenticateRequest(request, { resource: "feedback", scope: "submit" });
   if (auth instanceof NextResponse) return auth;
   if (!auth.authenticatedUser || auth.isServiceAccount) throw new ApiError("Sign in to submit feedback", 403);
   if (!getServerConfig().reportProblemEnabled) throw new ApiError("Feedback reporting is disabled", 503);
-  const body = await request.json().catch(() => null);
+  const limit = DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES;
+  if (Number(request.headers.get("content-length")) > limit) throw new ApiError("Feedback request body is too large", 413);
+  const bytes = await readBodyWithLimit(request, limit);
+  if (bytes === null) throw new ApiError("Feedback request body is too large", 413);
+  let body;
+  try { body = JSON.parse(new TextDecoder().decode(bytes)); }
+  catch { throw new ApiError("Invalid feedback JSON", 400); }
   const app = await feedbackApp(body?.contextUrl, body?.conversationId, auth.authenticatedUser, body?.componentId);
   if (app?.installation.feedbackGitHub) {
     if (!canLaunchAgenticApp(app, agenticAppUserContextFromSession(auth.authenticatedUser.session, auth.authenticatedUser.user.role))) throw new ApiError("Feedback component is unavailable", 403);
@@ -124,16 +143,21 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return NextResponse.json({ success: true, data });
   }
   if (!app?.installation.feedbackPath) {
+    platformFeedbackCapabilities();
     if (platformFeedbackHandler() === "github") {
       const data = await createPlatformGitHubFeedback(body, auth.authenticatedUser.user.email, request.signal);
       return NextResponse.json({ success: true, data });
     }
-    return NextResponse.json({ success: true, data: { handled: false } });
+    return NextResponse.json({ success: true, data: { handled: false, componentId: null } });
   }
   const headers = new Headers(request.headers);
   headers.delete("content-length");
-  return proxy(new Request(new URL(app.installation.feedbackPath, request.url), {
+  const response = await proxy(new Request(new URL(app.installation.feedbackPath, request.url), {
     method: "POST", headers, signal: request.signal,
     body: JSON.stringify({ ...body, userEmail: auth.authenticatedUser.user.email }),
   }), app, auth.authenticatedUser);
+  if (response.ok && (await response.clone().json().catch(() => null))?.data?.handled === false) {
+    throw new ApiError("The app did not return a feedback receipt", 502);
+  }
+  return response;
 });

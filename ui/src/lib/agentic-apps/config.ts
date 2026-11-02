@@ -356,7 +356,7 @@ export function loadConfiguredAgenticApps(
       app.installation.runtimeOriginOverride ??
       app.manifest.runtime?.origin;
     if (
-      (app.manifest.runtime || app.manifest.api.mounts.length > 0) &&
+      (app.manifest.runtime || app.manifest.api.mounts.length > 0 || app.installation.feedbackPath) &&
       app.installation.installed &&
       app.installation.enabled &&
       !origin

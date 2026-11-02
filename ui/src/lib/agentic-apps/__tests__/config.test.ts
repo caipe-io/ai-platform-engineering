@@ -29,6 +29,21 @@ describe("External Apps deployment config", () => {
     }); } finally { if (previous === undefined) delete process.env.AGENTIC_APPS_CONFIG_PATH; else process.env.AGENTIC_APPS_CONFIG_PATH = previous; }
   });
 
+  it("requires an origin for a feedback-only app without runtime or API mounts", () => {
+    withConfig(validConfig(), path => {
+      const manifest = { ...loadConfiguredAgenticApps(path)[0].manifest, version: "1.0.0",
+        ui: { profiles: [], routes: [] }, api: { mounts: [] }, surfaces: { showInHub: false, navOrder: 50 } };
+      delete manifest.runtime;
+      const config = { agentic_apps: {
+        packages: [{ package_id: "example-app", manifest }],
+        installations: [{ app_id: "example-app", package_id: "example-app", feedback_path: "/api/example/feedback" }],
+      } };
+      withConfig(JSON.stringify(config), feedbackPath => {
+        expect(() => loadConfiguredAgenticApps(feedbackPath)).toThrow(/requires a runtime origin/);
+      });
+    });
+  });
+
   it("loads an optional app-owned feedback path", () => {
     withConfig(validConfig().replace("      installed: true", "      feedback_path: /api/example/feedback\n      installed: true"), path => {
       expect(loadConfiguredAgenticApps(path)[0].installation.feedbackPath).toBe("/api/example/feedback");

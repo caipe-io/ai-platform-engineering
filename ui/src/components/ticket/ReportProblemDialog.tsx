@@ -354,8 +354,10 @@ export function ReportProblemDialog({
       }
     } catch (err) {
       if ((err instanceof Error && err.name === "AbortError") || controller.signal.aborted) {
-        appendLog("Cancelled by user.");
-        resetState();
+        if (abortControllerRef.current === controller) {
+          appendLog("Cancelled by user.");
+          resetState();
+        }
         return;
       }
       appendLog(`Error: ${getErrorMessage(err, "") || "Unknown error"}`);

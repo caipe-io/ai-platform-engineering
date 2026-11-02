@@ -19,7 +19,7 @@ it("accepts the app receipt without starting an agent", async () => {
   expect(mockStream).not.toHaveBeenCalled();
 });
 it("keeps the existing agent flow for explicit no-handler responses", async () => {
-  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ data: { handled: false } }) });
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ data: { handled: false, componentId: null } }) });
   mockStream.mockImplementation(async (_request, callbacks) => callbacks.onContent("Created TEST-1 https://jira.example.test/browse/TEST-1"));
   expect((await submit())?.id).toBe("TEST-1");
   expect(mockStream).toHaveBeenCalledTimes(1);
@@ -53,4 +53,31 @@ it("dispatches an explicit component through the server even when the legacy app
   global.fetch = jest.fn().mockResolvedValue({ ok: false, json: async () => ({ error: "Unavailable" }) });
   await expect(createTicketViaAgent({ request: { description: "Feedback", userEmail: "reporter@example.test", contextUrl: "https://host.example.test/chat", componentId: "example" } })).rejects.toThrow("Unavailable");
   expect(mockStream).not.toHaveBeenCalled();
+});
+
+it.each(["", "   "])("rejects an empty receipt ID %j without reporting success", async id => {
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ data: { id, provider: "github" } }) });
+  await expect(submit()).rejects.toThrow("feedback receipt");
+  expect(mockResult).not.toHaveBeenCalled();
+  expect(mockStream).not.toHaveBeenCalled();
+});
+it.each([undefined, "example"])("rejects app-owned unhandled responses for selection %s", async componentId => {
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ data: { handled: false } }) });
+  await expect(createTicketViaAgent({ request: { description: "Feedback", userEmail: "reporter@example.test", contextUrl: "https://host.example.test/projects", componentId } })).rejects.toThrow("feedback receipt");
+  expect(mockStream).not.toHaveBeenCalled();
+});
+it("never accepts platform fallback for an explicitly selected app", async () => {
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ data: { handled: false, componentId: null } }) });
+  await expect(createTicketViaAgent({ request: { description: "Feedback", userEmail: "reporter@example.test", contextUrl: "https://host.example.test/projects", componentId: "example" } })).rejects.toThrow("feedback receipt");
+  expect(mockStream).not.toHaveBeenCalled();
+});
+it("resolves enhancement intent against the Jira project's supported types", async () => {
+  mockAppsEnabled = false;
+  mockStream.mockImplementation(async (_request, callbacks) => callbacks.onContent("Created TEST-1"));
+  await createTicketViaAgent({ request: { description: "Improve navigation", issueType: "Enhancement", userEmail: "reporter@example.test", contextUrl: "https://host.example.test/chat" } });
+  const prompt = mockStream.mock.calls[0][0].message;
+  expect(prompt).toContain("feedback category is Enhancement");
+  expect(prompt).toContain("Resolve an issue type supported by Jira project TEST");
+  expect(prompt).toContain("ask the reporter instead of guessing");
+  expect(prompt).not.toContain("Set the issue type to Enhancement");
 });

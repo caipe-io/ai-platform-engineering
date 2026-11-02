@@ -51,7 +51,7 @@ export function FeedbackButton({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
   const [reportingNegative, setReportingNegative] = useState(false);
-  const reportedRatingRef = useRef<FeedbackContext | null>(null);
+  const reportedRatingRef = useRef<Promise<void> | null>(null);
   const [submitError, setSubmitError] = useState("");
   const submittingRef = useRef(false);
 
@@ -63,8 +63,7 @@ export function FeedbackButton({
     setSubmitError("");
     setAdditionalFeedback("");
 
-    if (type === "dislike" && reportProblemEnabled) {
-      reportedRatingRef.current = null;
+    if (type === "dislike" && reportProblemEnabled && feedback?.type !== "dislike") {
       setReportingNegative(true);
       setDialogOpen(false);
       setReportDialogOpen(true);
@@ -150,14 +149,20 @@ export function FeedbackButton({
   };
 
   const handleReportFeedback = async (request: TicketRequest): Promise<FeedbackContext> => {
-    if (reportedRatingRef.current) return reportedRatingRef.current;
     const context: FeedbackContext = {
       feedbackType: "dislike",
       reason: request.issueType || "Bug",
       additionalFeedback: request.description,
     };
-    await recordFeedback(context);
-    reportedRatingRef.current = context;
+    // Keep the first saved rating across closes/retries, including an in-flight
+    // save. The ticket always receives the details from the current attempt.
+    if (!reportedRatingRef.current) {
+      reportedRatingRef.current = recordFeedback(context).catch(error => {
+        reportedRatingRef.current = null;
+        throw error;
+      });
+    }
+    await reportedRatingRef.current;
     return context;
   };
 

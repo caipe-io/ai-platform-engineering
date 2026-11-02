@@ -467,5 +467,5 @@ Declare `ui.assistant.overlay: "host"` to use CAIPE's popup. Optional
 
 - Iframe apps check `bridge.getCapabilities()?.feedback` and call `bridge.openFeedback({ feature })`.
 - Native extensions use the optional `feedback.open({ feature })` prop.
-- Both open the host's `ReportProblemDialog` with the calling component selected. The authorized component registry supplies features and the app-owned handler.
-- Feedback requires a registered `feedback_path` and enabled host reporting. Unsupported or disabled hosts do not advertise the iframe capability. Apps may retain a standalone form for hosts without this capability.
+- Both open the host's `ReportProblemDialog` with the calling component selected. The authorized component registry supplies features and the registered component handler.
+- Feedback requires a registered host-managed handler or app-owned `feedback_path`, plus enabled host reporting. Unsupported or disabled hosts do not advertise the iframe capability. Apps may retain a standalone form for hosts without this capability.

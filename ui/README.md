@@ -206,7 +206,7 @@ agentic_apps:
       feedback_path: /api/example/feedback
 ```
 
-`feedback_path` is a canonical path relative to the app runtime. CAIPE selects
+`feedback_path` requires a runtime origin, including for feedback-only apps. It is a canonical path relative to that runtime. CAIPE selects
 it from the current app page and forwards submissions through the existing app
 proxy, including its availability, user access, POST policy and token checks.
 The app backend owns the provider, repository/project/space, credentials and
@@ -228,7 +228,7 @@ The form requires a short title and reproduction steps (Bug), or a goal
 (Enhancement), and includes a Feature category, expected/actual results and an
 optional related link. Closing it records nothing. Explicit submission records
 the negative response feedback with the selected issue type and report details,
-then creates the report. Retrying report creation reuses that recorded rating.
+then creates the report. Closing and reopening a failed report reuses the pending or saved rating. The first successful rating retains its original details; each ticket attempt uses the current report details.
 Requests include `title`, `issueType`, `feature`, labeled `sections` and
 `relatedUrl`, plus a plain-text `description` for existing handlers. App forms
 retain their own feature lists. The page URL retains its query parameters and
@@ -301,6 +301,8 @@ FEEDBACK_GITHUB_SCREENSHOTS_REPO=example/feedback-assets
 
 - `github` creates an issue directly through GitHub's REST API and returns its
   receipt. It does not ask an agent to create the issue.
+- Unconfigured platform destinations are omitted from the component picker. Requests are limited to 10 MiB before JSON parsing; an app capability GET may be undeclared, while explicit policy denials remain errors.
+- `FEEDBACK_HANDLER=agent` retains Jira/GitHub agent reporting and requires an enabled provider and project/repository. Jira feedback categories are resolved against supported project issue types, rather than used as literal issue-type names.
 - No handler is enabled by default. Missing handler, repository or dedicated
   credential returns 503. `agent` requires an explicit operator opt-in.
 - Repository and token overrides are server-only. The handler uses only `FEEDBACK_GITHUB_REPO` and

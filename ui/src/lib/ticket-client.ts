@@ -157,7 +157,11 @@ function buildPrompt(request: TicketRequest): string {
     ? "\n\nA screenshot was captured by the reporter and is available as a base64 PNG attachment. Include a note in the ticket description that a screenshot was provided."
     : "";
 
-  return `Create ${target} with the following details:\n${descriptionLines.join("\n")}\n\nSet the issue type to ${request.issueType || "Bug"}. Add the label "${label}" to the ticket. Include the Context URL in the description so the team can navigate directly to the conversation.${chatNote}${screenshotNote}`;
+  const issueTypeInstruction = provider === "jira"
+    ? `The feedback category is ${request.issueType || "Bug"}. Resolve an issue type supported by Jira project ${project} before creating the issue. Treat the category as intent, not a literal Jira issue-type name. For an enhancement, choose a supported improvement, feature or task type. If the available types cannot be confirmed, ask the reporter instead of guessing.`
+    : `Set the issue type to ${request.issueType || "Bug"}.`;
+
+  return `Create ${target} with the following details:\n${descriptionLines.join("\n")}\n\n${issueTypeInstruction} Add the label "${label}" to the ticket. Include the Context URL in the description so the team can navigate directly to the conversation.${chatNote}${screenshotNote}`;
 }
 
 /**
@@ -219,12 +223,15 @@ export async function createTicketViaAgent(
     if (!response.ok) throw new Error(body.error || `Feedback submission failed (${response.status})`);
     if (body.data?.handled !== false) {
       const result = body.data;
-      if (!result || typeof result.id !== "string" || !["github", "jira", "gitlab", "webex"].includes(result.provider)) {
+      if (!result || typeof result.id !== "string" || !result.id.trim() || !["github", "jira", "gitlab", "webex"].includes(result.provider)) {
         throw new Error("The app did not return a feedback receipt");
       }
       const ticket: TicketResult = { ...result, url: typeof result.url === "string" ? result.url : "" };
       onResult?.(ticket);
       return ticket;
+    }
+    if (body.data.componentId !== null || typeof request.componentId === "string") {
+      throw new Error("The app did not return a feedback receipt");
     }
   }
   const prompt = buildPrompt(request);

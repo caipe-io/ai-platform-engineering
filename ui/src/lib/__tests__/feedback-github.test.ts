@@ -1,7 +1,9 @@
 /** @jest-environment node */
+let mockAgentConfig: { ticketEnabled: boolean; ticketProvider: string | null; jiraTicketProject: string | null };
 jest.mock("@/lib/version", () => ({ readVersionInfo: () => ({ version: "1.2.3-test", gitCommit: "1".repeat(40) }) }));
 jest.mock("@/lib/config", () => ({ getServerConfig: () => ({
   githubTicketRepo: "example/legacy", githubTicketLabel: "feedback", appName: "Platform",
+  ...mockAgentConfig,
 }) }));
 jest.mock("@/lib/api-middleware", () => ({ ApiError: class extends Error {
   constructor(message: string, public statusCode: number) { super(message); }
@@ -17,6 +19,7 @@ const request = { description: "Saving fails after opening the page.", title: "S
   contextUrl: "https://host.example.test/chat", userEmail: "spoof@example.test", repo: "another/destination" };
 const create = (change = {}, signal = new AbortController().signal) => createPlatformGitHubFeedback({ ...request, ...change }, "reporter@example.test", signal);
 beforeEach(() => {
+  mockAgentConfig = { ticketEnabled: true, ticketProvider: "jira", jiraTicketProject: "TEST" };
   keys.forEach(key => delete process.env[key]);
   process.env.FEEDBACK_HANDLER = "github";
   process.env.FEEDBACK_GITHUB_REPO = "example/feedback";
@@ -160,4 +163,14 @@ it.each([{ labels: "invalid" }, { typeLabels: { Incident: "bug" } }, { titlePref
 it.each([{ browser: "x".repeat(201) }, { source: "unknown" }, { relatedUrl: "javascript:alert(1)" }, { appContext: { projectSlug: 42 } }])("validates optional diagnostics before provider writes: %j", async change => {
   await expect(create(change)).rejects.toMatchObject({ statusCode: 400 });
   expect(global.fetch).not.toHaveBeenCalled();
+});
+
+it("keeps an explicitly configured Jira agent available", () => {
+  process.env.FEEDBACK_HANDLER = "agent";
+  expect(platformFeedbackCapabilities()).toEqual({});
+});
+it.each([{ ticketEnabled: false }, { ticketProvider: null }, { jiraTicketProject: " " }])("rejects an unconfigured agent destination: %j", change => {
+  process.env.FEEDBACK_HANDLER = "agent";
+  Object.assign(mockAgentConfig, change);
+  expect(platformFeedbackCapabilities).toThrow("ticket provider is not configured");
 });

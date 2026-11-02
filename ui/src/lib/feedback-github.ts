@@ -36,7 +36,12 @@ function settings() {
 }
 
 export function platformFeedbackCapabilities(): { screenshotsEnabled?: boolean } {
-  return platformFeedbackHandler() === "github" ? { screenshotsEnabled: Boolean(settings().assets) } : {};
+  if (platformFeedbackHandler() === "github") return { screenshotsEnabled: Boolean(settings().assets) };
+  const cfg = getServerConfig();
+  if (!cfg.ticketEnabled || !(cfg.ticketProvider === "jira" ? cfg.jiraTicketProject : cfg.ticketProvider === "github" ? cfg.githubTicketRepo : undefined)?.trim()) {
+    throw new ApiError("The platform feedback agent's ticket provider is not configured", 503);
+  }
+  return {};
 }
 
 export function appGitHubFeedbackSettings(app: ConfiguredAgenticApp) {

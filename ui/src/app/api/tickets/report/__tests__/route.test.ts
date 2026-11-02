@@ -7,13 +7,14 @@ const mockProxy = jest.fn();
 const mockConversation = jest.fn();
 const mockResourcePermission = jest.fn();
 const mockPlatformFeedback = jest.fn();
+const mockPlatformCapabilities = jest.fn();
 let mockPlatformHandler = "agent";
 let mockMongoConfigured = false;
 jest.mock("@/lib/feedback-github", () => ({
   appGitHubFeedbackSettings: () => ({ repo: "example/product", token: "test-app-token", features: ["Publishing"] }),
   createGitHubFeedback: (...args: unknown[]) => mockPlatformFeedback(...args),
   platformFeedbackHandler: () => mockPlatformHandler,
-  platformFeedbackCapabilities: () => ({}),
+  platformFeedbackCapabilities: () => mockPlatformCapabilities(),
   createPlatformGitHubFeedback: (...args: unknown[]) => mockPlatformFeedback(...args),
 }));
 jest.mock("@/lib/da-proxy", () => ({ authenticateRequest: (...args: unknown[]) => mockAuth(...args) }));
@@ -32,6 +33,7 @@ jest.mock("@/lib/api-middleware", () => ({
   },
 }));
 import { GET, POST } from "../route";
+import { ApiError } from "@/lib/api-middleware";
 
 const originalFeatures = process.env.FEEDBACK_FEATURES;
 const originalPlatformLabel = process.env.FEEDBACK_PLATFORM_LABEL;
@@ -50,6 +52,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockMongoConfigured = false;
   mockPlatformHandler = "agent";
+  mockPlatformCapabilities.mockReset().mockReturnValue({});
   delete process.env.FEEDBACK_FEATURES;
   delete process.env.FEEDBACK_PLATFORM_LABEL;
   mockResourcePermission.mockResolvedValue(undefined);
@@ -71,7 +74,7 @@ it("explicitly preserves platform fallback when no app handler is registered", a
   const configured = app();
   delete configured.installation.feedbackPath;
   mockApps.mockReturnValue([configured]);
-  expect(await (await post()).json()).toEqual({ success: true, data: { handled: false } });
+  expect(await (await post()).json()).toEqual({ success: true, data: { handled: false, componentId: null } });
   expect(mockProxy).not.toHaveBeenCalled();
 });
 it("does not mistake a neighboring platform route for an app", async () => {
@@ -190,6 +193,7 @@ it("selects a registered app's features and handler from a platform page", async
   mockProxy.mockResolvedValue(Response.json({ data: { features: ["Publishing", "Other"] } }));
   expect((await (await componentOptions("example")).json()).data.appId).toBe("example");
   mockProxy.mockClear();
+  mockProxy.mockResolvedValue(Response.json({ data: { id: "42", provider: "github" } }));
   expect((await post({ contextUrl: "https://host.example.test/chat", componentId: "example", feature: "Publishing" })).status).toBe(200);
   expect(await mockProxy.mock.calls[0][1].params).toEqual({ appId: "example", path: ["api", "example", "feedback"] });
 });
@@ -261,5 +265,64 @@ it("checks app launch access before creating an inferred host-managed report", a
     feedbackGitHub: { repository: "example/product", tokenEnv: "FEEDBACK_EXAMPLE_TOKEN" }, feedbackFeatures: ["Publishing"] } }]);
   expect((await post()).status).toBe(403);
   expect(mockPlatformFeedback).not.toHaveBeenCalled();
+  expect(mockProxy).not.toHaveBeenCalled();
+});
+
+it("accepts a POST-only app's undeclared discovery GET without platform categories", async () => {
+  mockProxy.mockResolvedValue(Response.json({ error: "policy_denied", reasonCode: "action_not_declared" }, { status: 403 }));
+  const response = await options();
+  expect(response.status).toBe(200);
+  expect((await response.json()).data).toMatchObject({ appId: "example", features: ["Other"] });
+});
+it.each(["declared_denied", undefined])("preserves category discovery denials with reason %s", async reasonCode => {
+  mockProxy.mockResolvedValue(Response.json({ error: "policy_denied", reasonCode }, { status: 403 }));
+  const response = await options();
+  expect(response.status).toBe(403);
+  expect(await response.json()).toEqual({ error: "policy_denied", ...(reasonCode ? { reasonCode } : {}) });
+});
+it("never forwards an app's unhandled response as platform fallback", async () => {
+  mockProxy.mockResolvedValue(Response.json({ data: { handled: false, componentId: null } }));
+  expect((await post()).status).toBe(502);
+  expect(mockPlatformFeedback).not.toHaveBeenCalled();
+});
+it("excludes an unconfigured platform while leaving registered apps usable", async () => {
+  mockPlatformCapabilities.mockImplementation(() => { throw new ApiError("Not configured", 503); });
+  const response = await options();
+  expect(response.status).toBe(200);
+  expect((await response.json()).data.components).toEqual([{ appId: "example", label: "Example app" }]);
+  expect((await componentOptions(null)).status).toBe(503);
+  expect((await post({ componentId: null })).status).toBe(503);
+  mockProxy.mockClear();
+  const registry = await GET(new NextRequest("https://host.example.test/api/tickets/report?" + new URLSearchParams({
+    contextUrl: "https://host.example.test/chat", view: "components",
+  })));
+  expect((await registry.json()).data).toEqual({ appId: "example", components: [{ appId: "example", label: "Example app" }] });
+  expect(mockProxy).not.toHaveBeenCalled();
+});
+it("rejects oversized declared bodies without reading or dispatching", async () => {
+  const request = new NextRequest("https://host.example.test/api/tickets/report", {
+    method: "POST", headers: { "content-length": String(11 * 1024 * 1024) }, body: "{}",
+  });
+  const reader = jest.spyOn(request.body!, "getReader");
+  expect((await POST(request)).status).toBe(413);
+  expect(reader).not.toHaveBeenCalled();
+  expect(mockApps).not.toHaveBeenCalled();
+});
+it.each([undefined, "1"])("cancels oversized streamed bodies with content length %s before parsing", async contentLength => {
+  const cancel = jest.fn();
+  const stream = new ReadableStream({
+    start(controller) { controller.enqueue(new Uint8Array(11 * 1024 * 1024)); }, cancel,
+  });
+  const request = new NextRequest("https://host.example.test/api/tickets/report", {
+    method: "POST", headers: contentLength ? { "content-length": contentLength } : {}, body: stream,
+    duplex: "half",
+  } as RequestInit);
+  expect((await POST(request)).status).toBe(413);
+  expect(cancel).toHaveBeenCalledTimes(1);
+  expect(mockApps).not.toHaveBeenCalled();
+  expect(mockProxy).not.toHaveBeenCalled();
+});
+it("rejects invalid JSON without dispatching", async () => {
+  expect((await POST(new NextRequest("https://host.example.test/api/tickets/report", { method: "POST", body: "{" }))).status).toBe(400);
   expect(mockProxy).not.toHaveBeenCalled();
 });
