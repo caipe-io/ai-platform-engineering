@@ -69,6 +69,8 @@ All configuration is via environment variables on the `dynamic-agents` service:
 
 Self-registration uses the `agntcy-dir` Python SDK to push OASF records directly via gRPC to the Directory Store service. No `dirctl` binary is required. Optionally, records are published to the routing layer for network-wide discovery by other Directory peers.
 
+The SDK is declared in the `directory` optional dependency extra. The published Dynamic Agents image includes that extra so operators can turn self-registration on with environment variables. When installing Dynamic Agents from source, run `uv sync --extra directory` to use self-registration; installations without the extra can still use inbound REST sync.
+
 ## Deployment
 
 ### Docker Compose (via deploy.sh)

@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = "==3.14.*"
 
 [manifest]
@@ -24,6 +24,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a8/35/55b15fd6467ed4e40860badd5fd2040dd4612f879c98a9c196f5ee4349c9/a2a_sdk-1.2.2.tar.gz", hash = "sha256:09be001a90fae9634d54041471feca1014201ec22f7107f0883309a2b4027a15", size = 431163, upload-time = "2026-10-05T09:50:44.569Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/25/ce/1f00b7f1cd5691b78045e495d7c46af810557414695cf68b1847e2b5e25d/a2a_sdk-1.2.2-py3-none-any.whl", hash = "sha256:f2aa9692f3e3034f58ebff501e091d43affa416878c734fd63016ae0b8ea8c66", size = 275972, upload-time = "2026-10-05T09:50:42.784Z" },
+]
+
+[[package]]
+name = "agntcy-dir"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "pyasn1" },
+    { name = "spiffe" },
+    { name = "spiffe-tls" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/73/e6/f171bc96414a5ac2657c5ae89712bdd74d43b1125ec6f826c5c633ed7a29/agntcy_dir-1.0.0.tar.gz", hash = "sha256:e39e8e5364b19635e27bf194207a623ea72661a4f2b96f89e6b6feee487c9564", size = 64954, upload-time = "2026-02-20T10:38:44.868Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0d/02/e030d66e6344ecf845e56752769a447b2424dc52dcd327f60fa173f0b316/agntcy_dir-1.0.0-py3-none-any.whl", hash = "sha256:db9f2167c1b90a08b25719fc9b686570535a013ea26e39ab3221c8c9264b24e2", size = 104002, upload-time = "2026-02-20T10:38:43.755Z" },
 ]
 
 [[package]]
@@ -409,6 +424,7 @@ dependencies = [
     { name = "boto3" },
     { name = "deepagents" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "jinja2" },
     { name = "jsonschema" },
     { name = "langchain" },
@@ -440,6 +456,9 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
+directory = [
+    { name = "agntcy-dir" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -449,10 +468,12 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "a2a-sdk", specifier = "==1.2.2" },
+    { name = "agntcy-dir", marker = "extra == 'directory'", specifier = ">=1.0.0" },
     { name = "beautifulsoup4", specifier = "==4.15.0" },
     { name = "boto3", specifier = "==1.43.16" },
     { name = "deepagents", specifier = "==0.6.8" },
     { name = "fastapi", specifier = "==0.141.1" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "jinja2", specifier = "==3.1.6" },
     { name = "jsonschema", specifier = "==4.26.0" },
     { name = "langchain", specifier = "==1.4.6" },
@@ -480,7 +501,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.16.4" },
     { name = "uvicorn", extras = ["standard"], specifier = "==0.52.4" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["directory", "dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "ruff", specifier = "==0.16.4" }]
@@ -1684,6 +1705,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pem"
+version = "23.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/05/86/16c0b6789816f8d53f2f208b5a090c9197da8a6dae4d490554bb1bedbb09/pem-23.1.0.tar.gz", hash = "sha256:06503ff2441a111f853ce4e8b9eb9d5fedb488ebdbf560115d3dd53a1b4afc73", size = 43796, upload-time = "2023-06-21T10:24:40.539Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c9/97/8299a481ae6c08494b5d53511e6a4746775d8a354c685c69d8796b2ed482/pem-23.1.0-py3-none-any.whl", hash = "sha256:78bbb1e75b737891350cb9499cbba31da5d59545f360f44163c0bc751cad55d3", size = 9195, upload-time = "2023-06-21T10:24:39.164Z" },
+]
+
+[[package]]
 name = "pluggy"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1914,6 +1944,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d9/aa/3eb266ffc74ec52bbf6dd92d311ab4fc3225c2ac8f1a2e6abe98f7288867/pymongo_search_utils-0.3.0.tar.gz", hash = "sha256:56148987ce9ff191eb1cd0f56c01d3dae497a3cb6d7b7db75ec894a9afcbe418", size = 13728, upload-time = "2026-02-03T22:18:24.481Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/55/ed/87d3ed0e45b9230bacb9edcb913d515e6756bc2df3384e5f192662c38ce8/pymongo_search_utils-0.3.0-py3-none-any.whl", hash = "sha256:9b9ef8dfbd57da530ce7c2bde10aec8f462605080a9ed4e9a41679170c8742bf", size = 19467, upload-time = "2026-02-03T22:18:23.398Z" },
+]
+
+[[package]]
+name = "pyopenssl"
+version = "26.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3f/e8/7325d258199b159eb2c03fe32107533e2832e70e63f4fb88a6aa00023201/pyopenssl-26.4.0.tar.gz", hash = "sha256:28dfcce0162b9211413e26dfbfdf1d24317fbeba18fc93c12400a1856b2a0bc7", size = 182046, upload-time = "2026-08-01T19:50:50.512Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/51/ad/2cf6d3fa2fae5c79e1ed9960c0d42badd0f94d81dd12b50604cdc839e648/pyopenssl-26.4.0-py3-none-any.whl", hash = "sha256:f0eb0cb2d581d3ad2b9c489468485e7f2ab6727d08401bcf9d824c3caddf3c1c", size = 56026, upload-time = "2026-08-01T19:50:48.94Z" },
 ]
 
 [[package]]
@@ -2203,6 +2245,38 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/80/f1/93422647dd7e461f23d254e6b2bfa687a85b53aeb4903fcdbb74474d4584/soupsieve-2.9.tar.gz", hash = "sha256:acee8417325c5653e1377dc31eccad59eb82cbc65942afe6174c53b3aaad63fc", size = 122122, upload-time = "2026-07-19T01:35:18.425Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7b/d6/3185ab5ad1280319b31986898f3206dd7227cd75e293d4dba2a5e6bf27a0/soupsieve-2.9-py3-none-any.whl", hash = "sha256:a2b2c76d67df2382d245409fd71e321a571717e58463efa32ace87dcadac2c12", size = 37387, upload-time = "2026-07-19T01:35:17.106Z" },
+]
+
+[[package]]
+name = "spiffe"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "grpcio" },
+    { name = "pem" },
+    { name = "protobuf" },
+    { name = "pyasn1" },
+    { name = "pyasn1-modules" },
+    { name = "pyjwt", extra = ["crypto"] },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0c/eb/05f82d87b9f7f0b714c887768c4941595fd35cfcbb0a6ea5e0adceee011c/spiffe-0.4.0.tar.gz", hash = "sha256:47372f000c489e4f7d2b810fd33ee1ff1e574d327116996c11e93fa47831f2bd", size = 44687, upload-time = "2026-10-29T16:32:48.914Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c6/69/98212b7564db9ad87acee5eb882ff0f5abddcb95739f9606834696f9eae3/spiffe-0.4.0-py3-none-any.whl", hash = "sha256:7eb153709314e0bff86975cb4f20b1da8d949360e1d630eeda1ac20d0524117c", size = 61791, upload-time = "2026-10-29T16:32:47.921Z" },
+]
+
+[[package]]
+name = "spiffe-tls"
+version = "0.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "idna" },
+    { name = "pyopenssl" },
+    { name = "spiffe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d1/05/b228494ec606317737d83ec7c97c45e9e1905234c4fff56f970dab867b01/spiffe_tls-0.4.1.tar.gz", hash = "sha256:dc2012f1fed6b73ddd5b7a4ccb7599b341f2863fcb85c9fd3a7340a43f189c13", size = 21163, upload-time = "2026-10-29T16:34:24.287Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/80/31/f2da2b201935b2c35b58b5c1b9981d1ce0ae3336a05fec1c20517f69a890/spiffe_tls-0.4.1-py3-none-any.whl", hash = "sha256:036a9bd9f1531a6bbebdadbe2b32191d31d7daf346e0d3713bc6ba96375f0722", size = 26955, upload-time = "2026-10-29T16:34:23.154Z" },
 ]
 
 [[package]]
