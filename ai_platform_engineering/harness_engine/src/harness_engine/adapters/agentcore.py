@@ -225,13 +225,12 @@ class AgentCoreAdapter:
     ) -> AsyncIterator[CanonicalEventDraft]:
         if not context.binding.provider_session_id:
             raise RuntimeError("AgentCore session manager did not assign a runtime session ID")
+        actor_id = "caipe-user-" + hashlib.sha256(context.binding.owner_subject.encode()).hexdigest()[:32]
         request: dict[str, Any] = {
             "harnessArn": target.arn,
             "runtimeSessionId": context.binding.provider_session_id,
-            "runtimeUserId": (
-                "caipe-user-"
-                + hashlib.sha256(context.binding.owner_subject.encode()).hexdigest()[:32]
-            ),
+            "runtimeUserId": actor_id,
+            "actorId": actor_id,
             "qualifier": target.qualifier,
             "messages": [
                 {
@@ -260,7 +259,7 @@ class AgentCoreAdapter:
                 break
             if not isinstance(raw, dict):
                 continue
-            for error_type in ("runtimeClientError", "runtimeServerError"):
+            for error_type in ("runtimeClientError", "internalServerException", "validationException"):
                 if error_type in raw:
                     logger.error(
                         "AgentCore %s for run %s (AWS request %s)",

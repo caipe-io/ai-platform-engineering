@@ -152,10 +152,11 @@ async def test_agentcore_adapter_invokes_managed_harness() -> None:
         "00-11111111111111111111111111111111-2222222222222222-01"
     )
     assert call["runtimeUserId"] != "test-user"
+    assert call["actorId"] == call["runtimeUserId"]
     assert "Authorization" not in call
 
 
-@pytest.mark.parametrize("error_type", ["runtimeClientError", "runtimeServerError"])
+@pytest.mark.parametrize("error_type", ["runtimeClientError", "internalServerException", "validationException"])
 async def test_agentcore_rejects_provider_errors_after_partial_content(error_type: str) -> None:
     client = FakeManagedHarnessClient([
         {"contentBlockDelta": {"delta": {"text": "partial"}}},
