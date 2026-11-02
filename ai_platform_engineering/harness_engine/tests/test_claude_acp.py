@@ -55,6 +55,12 @@ async def test_process_session_reload_ignores_history_and_preserves_policy(setti
     assert options["settingSources"] == []
     assert options["allowDangerouslySkipPermissions"] is False
     assert "caller-test-token" not in json.dumps(policy)
+    limits = json.loads((Path(settings.claude_sdk_profiles()["safe"].cwd) / directory / "tool-limits.json").read_text())
+    assert limits == {
+        "MCP_TOOL_TIMEOUT": "900000",
+        "CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT": "900000",
+        "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS": "0",
+    }
 
 
 async def test_process_cancellation_sends_acp_cancel_and_exits(settings: Settings) -> None:

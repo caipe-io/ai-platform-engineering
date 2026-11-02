@@ -58,6 +58,9 @@ flowchart LR
   stopping and invoking tools retain the execution-owner and write checks.
 - MCP calls are not automatically retried after an ambiguous result. Dispatched
   calls drain before the session reservation is released.
+- Claude's MCP execution and idle limits are 15 minutes, below the broker's
+  16-minute request limit. Automatic MCP backgrounding is disabled so the turn
+  waits for its dispatched tools, including across browser refreshes.
 - Selected MCP tools currently require `approval_policy: never`. Interactive
   tool approvals and user-input forms are not supported by this integration.
 - Native workspace/shell tools are disabled by default. If an operator enables

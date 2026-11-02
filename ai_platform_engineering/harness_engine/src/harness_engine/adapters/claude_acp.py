@@ -142,6 +142,11 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
         }
         env = {key: os.environ[key] for key in provider_keys if key in os.environ}
         env["CLAUDE_CONFIG_DIR"] = str(workspace / ".claude")
+        # Keep a tool in this turn until it returns. Claude's HTTP MCP client
+        # otherwise times out at 60 seconds, before the broker's 16-minute limit.
+        env["MCP_TOOL_TIMEOUT"] = "900000"
+        env["CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT"] = "900000"
+        env["CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS"] = "0"
         client = ACPEventClient()
         async with managed_acp_process(
             client,

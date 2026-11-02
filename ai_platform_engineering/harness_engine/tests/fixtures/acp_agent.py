@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -23,6 +24,18 @@ def main() -> None:
             result = {"protocolVersion": 1, "agentCapabilities": {"loadSession": True}, "authMethods": []}
         elif method == "session/new":
             Path("session.json").write_text(json.dumps(params))
+            Path("tool-limits.json").write_text(
+                json.dumps(
+                    {
+                        key: os.environ.get(key)
+                        for key in (
+                            "MCP_TOOL_TIMEOUT",
+                            "CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT",
+                            "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS",
+                        )
+                    }
+                )
+            )
             result = {"sessionId": "session-example"}
         elif method == "session/load":
             assert Path("session.json").exists()
