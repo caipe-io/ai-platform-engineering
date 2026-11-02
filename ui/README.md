@@ -78,7 +78,8 @@ login session until that helper is migrated.
 - The full chat and in-app panel share one presence connection within a page. Separate tabs, windows, and browser profiles count separately, including background tabs.
 - Presence uses the conversation's existing read permission. Authenticated identities are supplied by the BFF; viewing does not grant permission to execute or stop a run.
 - BFF replicas share short-lived MongoDB `conversation_viewers` leases. Updates arrive over a separate SSE subscription every five seconds; permission and session validity are rechecked every fifteen seconds.
-- Disconnects remove the lease. Crashed connections expire after thirty seconds; queries exclude expired leases before MongoDB's TTL cleanup runs.
+- Lease renewal runs independently of roster queries. Disconnects remove the lease; crashed connections expire after thirty seconds. Queries exclude expired leases, and active subscriptions reclaim them every minute even if the TTL index is unavailable.
+- Failed presence connections retry with exponential backoff from five seconds to one minute. A valid roster resets the backoff.
 - This is conversation presence, independent of execution-stream subscribers, durable run events, and replay cursors. It requires MongoDB storage.
 
 ### Agent Builder harness controls
@@ -90,7 +91,7 @@ login session until that helper is migrated.
 - `/api/dynamic-agents` requires `model` for Deep Agents. Engine-backed metadata may omit it; switching back to Deep Agents requires a valid model.
 - Saved Deep Agents settings remain in metadata while another harness is selected and are excluded from its execution blueprint.
 
-See [Agent Creation UI Architecture](../docs/docs/specs/2026-08-17-harness-engine/agent-creation-ui.md) for Phase 1 behavior and the Phase 2 contract.
+See [Agent Creation UI Architecture](../docs/docs/specs/2026-08-17-harness-engine/agent-creation-ui.md) for the authoring flow and runtime profile contract.
 
 ## Development Commands
 

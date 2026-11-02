@@ -16,6 +16,7 @@ interface ViewerLease {
 const REFRESH_MS = 5_000;
 const LEASE_MS = 30_000;
 const REAUTHORIZE_MS = 15_000;
+const CLEANUP_MS = 60_000;
 
 /** Presence belongs to the visible chat, independently of its agent/run lifecycle. */
 export function conversationPresenceStream(
@@ -41,23 +42,48 @@ export function conversationPresenceStream(
   return new ReadableStream({
     async start(controller) {
       let leases: Awaited<ReturnType<typeof getCollection<ViewerLease>>> | undefined;
+      let renewal: Promise<void> | undefined;
       try {
         leases = await getCollection<ViewerLease>("conversation_viewers");
-        let reauthorizeAt = Date.now() + REAUTHORIZE_MS;
-        while (!stop.signal.aborted) {
-          if (Date.now() >= reauthorizeAt) {
-            if (!(await canRead())) {
-              if (!stop.signal.aborted) controller.enqueue(encoder.encode("event: access-revoked\ndata: {}\n\n"));
-              break;
-            }
-            reauthorizeAt = Date.now() + REAUTHORIZE_MS;
-          }
-          if (stop.signal.aborted) break;
-          const now = new Date();
-          await leases.updateOne({ _id: connectionId }, { $set: {
+        const collection = leases;
+        const renew = async () => {
+          if (stop.signal.aborted) return;
+          await collection.updateOne({ _id: connectionId }, { $set: {
             conversation_id: conversationId, viewer_id: viewerId, name,
-            expires_at: new Date(now.getTime() + LEASE_MS),
+            expires_at: new Date(Date.now() + LEASE_MS),
           } }, { upsert: true });
+        };
+        await renew();
+        // Slow roster reads must not let a connected viewer's lease expire.
+        renewal = (async () => {
+          while (!stop.signal.aborted) {
+            await delay(REFRESH_MS, undefined, { signal: stop.signal });
+            await renew();
+          }
+        })().catch(error => {
+          if (!stop.signal.aborted) console.warn("[chat-presence] Lease renewal failed:", error);
+          stop.abort();
+        });
+        let reauthorizeAt = Date.now() + REAUTHORIZE_MS;
+        const authorized = async () => {
+          if (stop.signal.aborted) return false;
+          if (Date.now() < reauthorizeAt) return true;
+          if (!(await canRead())) {
+            if (!stop.signal.aborted) controller.enqueue(encoder.encode("event: access-revoked\ndata: {}\n\n"));
+            return false;
+          }
+          reauthorizeAt = Date.now() + REAUTHORIZE_MS;
+          return !stop.signal.aborted;
+        };
+        let cleanupAt = 0;
+        while (await authorized()) {
+          // TTL is an optimization: reclaim stale leases even if its index is
+          // unavailable, including leases from conversations no longer open.
+          if (Date.now() >= cleanupAt) {
+            await leases.deleteMany({ expires_at: { $lte: new Date() } });
+            cleanupAt = Date.now() + CLEANUP_MS;
+          }
+          const now = new Date();
           const groups = await leases.aggregate<{ _id: string; name: string; sessions: number }>([
             { $match: { conversation_id: conversationId, expires_at: { $gt: now } } },
             { $group: { _id: "$viewer_id", name: { $max: "$name" }, sessions: { $sum: 1 } } },
@@ -67,13 +93,16 @@ export function conversationPresenceStream(
             viewers: groups.map(({ _id, ...viewer }) => ({ id: _id, ...viewer })),
             sessionCount: groups.reduce((total, viewer) => total + viewer.sessions, 0),
           };
-          if (stop.signal.aborted) break;
+          // A slow query may have crossed the authorization deadline.
+          if (!(await authorized())) break;
           controller.enqueue(encoder.encode(`event: presence\ndata: ${JSON.stringify(snapshot)}\n\n`));
           await delay(REFRESH_MS, undefined, { signal: stop.signal });
         }
       } catch (error) {
         if (!stop.signal.aborted) console.warn("[chat-presence] Subscription failed:", error);
       } finally {
+        stop.abort();
+        await renewal;
         clearTimeout(deadline);
         signal.removeEventListener("abort", onAbort);
         try { await leases?.deleteOne({ _id: connectionId }); }

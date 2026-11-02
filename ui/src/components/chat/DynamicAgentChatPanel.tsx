@@ -2395,14 +2395,14 @@ export function ChatPanel({
             {agentName || agentId}
           </p>
         </div>
-        <ConversationViewers conversationId={activeConversationId} />
+        <ConversationViewers conversationId={conversationId ?? activeConversationId} />
         {agent ? (
           <AgentHarnessBadge harnessId={agent.execution_harness_id} presentation={agent.presentation} />
         ) : (
           <Skeleton className="h-6 w-24 rounded-full" />
         )}
       </div>}
-      {!showAgentHeader && <ConversationViewers conversationId={activeConversationId} className="self-end px-3 py-1" />}
+      {!showAgentHeader && <ConversationViewers conversationId={conversationId ?? activeConversationId} className="self-end px-3 py-1" />}
 
       {/* Messages Area */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">

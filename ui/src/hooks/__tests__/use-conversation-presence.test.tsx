@@ -15,7 +15,7 @@ beforeEach(() => {
   TestEventSource.instances = [];
   Object.defineProperty(globalThis, "EventSource", { configurable: true, value: TestEventSource });
 });
-afterEach(() => { Reflect.deleteProperty(globalThis, "EventSource"); });
+afterEach(() => { jest.useRealTimers(); Reflect.deleteProperty(globalThis, "EventSource"); });
 
 it("shares one subscription per conversation in a document until its last consumer leaves", () => {
   const first = renderHook(() => useConversationPresence("chat-example"));
@@ -69,4 +69,25 @@ it("retries a closed connection when a chat is still being saved and cancels ret
   act(() => jest.advanceTimersByTime(5_000));
   expect(TestEventSource.instances).toHaveLength(2);
   jest.useRealTimers();
+});
+
+it("backs off persistent failures to one minute and resets after valid presence", () => {
+  jest.useFakeTimers();
+  const hook = renderHook(() => useConversationPresence("chat-example"));
+  const delays = [5_000, 10_000, 20_000, 40_000, 60_000, 60_000];
+  delays.forEach((delay, index) => {
+    const source = TestEventSource.instances[index];
+    act(() => source.dispatchEvent(new Event("error")));
+    expect(source.close).toHaveBeenCalledTimes(1);
+    act(() => jest.advanceTimersByTime(delay - 1));
+    expect(TestEventSource.instances).toHaveLength(index + 1);
+    act(() => jest.advanceTimersByTime(1));
+    expect(TestEventSource.instances).toHaveLength(index + 2);
+  });
+  const recovered = TestEventSource.instances.at(-1)!;
+  act(() => recovered.publish({ viewers: [], sessionCount: 0 }));
+  act(() => recovered.dispatchEvent(new Event("error")));
+  act(() => jest.advanceTimersByTime(5_000));
+  expect(TestEventSource.instances).toHaveLength(delays.length + 2);
+  hook.unmount();
 });

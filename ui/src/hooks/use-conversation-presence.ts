@@ -37,6 +37,7 @@ function subscribe(id: string, listener: () => void): () => void {
       current.snapshot = snapshot;
       current.listeners.forEach(notify => notify());
     };
+    let retryMs = 5_000;
     const connect = () => {
       if (!current.active) return;
       const source = new EventSource(`/api/chat/conversations/${encodeURIComponent(id)}/presence`);
@@ -44,18 +45,23 @@ function subscribe(id: string, listener: () => void): () => void {
       source.addEventListener("presence", (event) => {
         try {
           const snapshot: unknown = JSON.parse((event as MessageEvent<string>).data);
-          publish(isPresence(snapshot) ? snapshot : null);
+          if (isPresence(snapshot)) {
+            retryMs = 5_000;
+            publish(snapshot);
+          } else publish(null);
         }
         catch { publish(null); }
       });
       source.addEventListener("error", () => {
+        if (!current.active || current.source !== source) return;
         publish(null);
-        // Non-200 responses can permanently close native EventSource. A new
-        // chat may not have finished saving when its first viewer connects.
-        if (source.readyState === EventSource.CLOSED && current.active) {
-          clearTimeout(current.retry);
-          current.retry = setTimeout(connect, 5_000);
-        }
+        // Own retries so persistent failures back off, including non-200
+        // responses while a new conversation is still being saved.
+        source.close();
+        current.source = null;
+        clearTimeout(current.retry);
+        current.retry = setTimeout(connect, retryMs);
+        retryMs = Math.min(retryMs * 2, 60_000);
       });
       source.addEventListener("access-revoked", () => {
         current.active = false;

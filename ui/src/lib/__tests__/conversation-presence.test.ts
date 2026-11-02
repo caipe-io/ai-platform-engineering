@@ -3,9 +3,10 @@ import { conversationPresenceStream } from "../conversation-presence";
 
 const mockUpdate = jest.fn();
 const mockDelete = jest.fn();
+const mockDeleteExpired = jest.fn();
 const mockAggregate = jest.fn();
 jest.mock("@/lib/mongodb", () => ({ getCollection: async () => ({
-  updateOne: mockUpdate, deleteOne: mockDelete, aggregate: mockAggregate,
+  updateOne: mockUpdate, deleteOne: mockDelete, deleteMany: mockDeleteExpired, aggregate: mockAggregate,
 }) }));
 jest.mock("timers/promises", () => ({ setTimeout: (ms: number, value: unknown, { signal }: { signal: AbortSignal }) =>
   new Promise((resolve, reject) => {
@@ -26,6 +27,11 @@ beforeEach(() => {
   leases = new Map();
   mockUpdate.mockImplementation(async ({ _id }, { $set }) => { leases.set(_id, $set); });
   mockDelete.mockImplementation(async ({ _id }) => { leases.delete(_id); });
+  mockDeleteExpired.mockImplementation(async ({ expires_at }) => {
+    for (const [id, lease] of leases) {
+      if ((lease.expires_at as Date) <= expires_at.$lte) leases.delete(id);
+    }
+  });
   mockAggregate.mockImplementation(([{ $match }]) => ({ toArray: async () => {
     const groups = new Map<string, { _id: string; name: unknown; sessions: number }>();
     for (const lease of leases.values()) {
@@ -102,4 +108,46 @@ it("does not register an already disconnected request", async () => {
   const reader = conversationPresenceStream("chat-example", auth, abort.signal, async () => true).getReader();
   expect((await reader.read()).done).toBe(true);
   expect(mockUpdate).not.toHaveBeenCalled();
+});
+
+it("renews a connected viewer while a roster query exceeds the lease lifetime", async () => {
+  let finishQuery!: (groups: unknown[]) => void;
+  mockAggregate.mockImplementationOnce(() => ({ toArray: () => new Promise(resolve => { finishQuery = resolve; }) }));
+  const reader = conversationPresenceStream("chat-example", auth, new AbortController().signal, async () => true).getReader();
+  await jest.advanceTimersByTimeAsync(35_000);
+  expect(mockUpdate).toHaveBeenCalledTimes(8);
+  expect([...leases.values()][0].expires_at).toEqual(new Date(Date.now() + 30_000));
+  finishQuery([]);
+  await snapshot(reader);
+  await reader.cancel();
+  await jest.advanceTimersByTimeAsync(0);
+  expect(leases.size).toBe(0);
+});
+
+it("rechecks access after a slow roster query before sending viewer names", async () => {
+  let finishQuery!: (groups: unknown[]) => void;
+  mockAggregate.mockImplementationOnce(() => ({ toArray: () => new Promise(resolve => { finishQuery = resolve; }) }));
+  const canRead = jest.fn().mockResolvedValue(false);
+  const reader = conversationPresenceStream("chat-example", auth, new AbortController().signal, canRead).getReader();
+  await jest.advanceTimersByTimeAsync(20_000);
+  finishQuery([{ _id: "secondary", name: "Secondary User", sessions: 1 }]);
+  const event = new TextDecoder().decode((await reader.read()).value);
+  expect(event).toContain("event: access-revoked");
+  expect(event).not.toContain("Secondary User");
+  expect((await reader.read()).done).toBe(true);
+  expect(canRead).toHaveBeenCalledTimes(1);
+  expect(leases.size).toBe(0);
+});
+
+it("periodically reclaims crashed connections even without a TTL index", async () => {
+  const reader = conversationPresenceStream("chat-example", auth, new AbortController().signal, async () => true).getReader();
+  await snapshot(reader);
+  leases.set("crashed", { conversation_id: "closed-chat", expires_at: new Date(Date.now() + 30_000) });
+  await jest.advanceTimersByTimeAsync(60_000);
+  expect(mockDeleteExpired).toHaveBeenCalledTimes(2);
+  expect(leases.has("crashed")).toBe(false);
+  expect(leases.size).toBe(1);
+  await reader.cancel();
+  await jest.advanceTimersByTimeAsync(0);
+  expect(leases.size).toBe(0);
 });
