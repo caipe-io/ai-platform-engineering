@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -26,6 +27,8 @@ from harness_engine.models import (
 )
 from harness_engine.repository import RunRepository
 from harness_engine.sessions import DeterministicProviderSessionManager, ProviderSessionManager
+
+logger = logging.getLogger(__name__)
 
 
 class AgentCoreDataClient(Protocol):
@@ -257,6 +260,15 @@ class AgentCoreAdapter:
                 break
             if not isinstance(raw, dict):
                 continue
+            for error_type in ("runtimeClientError", "runtimeServerError"):
+                if error_type in raw:
+                    logger.error(
+                        "AgentCore %s for run %s (AWS request %s)",
+                        error_type,
+                        context.turn.run_id,
+                        response.get("ResponseMetadata", {}).get("RequestId", "unknown"),
+                    )
+                    raise RuntimeError(f"AgentCore reported {error_type}")
             delta = raw.get("contentBlockDelta", {}).get("delta", {})
             text = delta.get("text")
             if text:
