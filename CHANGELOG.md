@@ -1,3 +1,9 @@
+## 1.3.6 (2026-11-02)
+
+### Fix
+
+- **ui**: clarify curated release note version targeting (#3204)
+
 ## 1.3.5 (2026-11-02)
 
 ### Feat
