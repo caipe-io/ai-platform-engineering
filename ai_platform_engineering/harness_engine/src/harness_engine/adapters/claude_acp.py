@@ -32,14 +32,18 @@ from harness_engine.models import (
 
 
 class ACPEventClient:
-    def __init__(self) -> None:
+    def __init__(self, tool_names: dict[str, str] | None = None) -> None:
         self.events: asyncio.Queue[CanonicalEventDraft] = asyncio.Queue(maxsize=64)
         self.replaying = True
+        self.tool_names = tool_names or {}
 
     async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
         if not self.replaying:
             event = canonical_update(update.model_dump(mode="json", by_alias=True))
             if event is not None:
+                if event.event_type == "tool.started":
+                    name = event.data["tool_name"]
+                    event.data["tool_name"] = self.tool_names.get(name, name)
                 await self.events.put(event)
 
     async def request_permission(self, **kwargs: Any) -> RequestPermissionResponse:
@@ -99,11 +103,11 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
         return result
 
     @asynccontextmanager
-    async def _bind_tools(self, context: RunContext) -> AsyncIterator[tuple[list[HttpMcpServer], list[str]]]:
+    async def _bind_tools(self, context: RunContext) -> AsyncIterator[tuple[list[HttpMcpServer], dict[str, str]]]:
         if self._tool_bridge is None:
             if context.blueprint.tools.bindings:
                 raise PermissionError("The Claude ACP worker tool bridge is not configured")
-            yield [], []
+            yield [], {}
         else:
             async with self._tool_bridge.bind(context, self._tool_broker) as tools:
                 yield tools
@@ -115,7 +119,7 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
                     yield event
 
     async def _stream(
-        self, context: RunContext, mcp_servers: list[HttpMcpServer], tool_names: list[str]
+        self, context: RunContext, mcp_servers: list[HttpMcpServer], tool_names: dict[str, str]
     ) -> AsyncIterator[CanonicalEventDraft]:
         profile = self._profile(context.binding.profile_id)
         options = ClaudeHarnessOptions.model_validate(context.blueprint.harness.options)
@@ -147,7 +151,7 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
         env["MCP_TOOL_TIMEOUT"] = "900000"
         env["CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT"] = "900000"
         env["CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS"] = "0"
-        client = ACPEventClient()
+        client = ACPEventClient(tool_names)
         async with managed_acp_process(
             client,
             self._command,
@@ -172,7 +176,7 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
                         "maxTurns": options.max_turns,
                         "settingSources": [],
                         "tools": self._tools,
-                        "allowedTools": self._tools + tool_names,
+                        "allowedTools": self._tools + list(tool_names),
                         "allowDangerouslySkipPermissions": False,
                     }
                 },

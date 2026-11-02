@@ -4,10 +4,12 @@ import json
 from typing import Any
 
 import httpx2 as httpx
+from acp.schema import ToolCallStart
 from fastapi import FastAPI
 from pydantic import SecretStr
 
 from harness_engine.acp_events import canonical_update
+from harness_engine.adapters.claude_acp import ACPEventClient
 from harness_engine.adapters.claude_remote import RemoteClaudeSDKAdapter
 from harness_engine.claude_acp_tools import ClaudeACPToolBridge
 from harness_engine.claude_tools import ClaudeToolBroker
@@ -57,7 +59,7 @@ async def test_acp_mcp_capability_scope_revocation_and_caller_identity(settings:
     app = FastAPI()
     app.mount("/internal/claude-tools", bridge)
     async with bridge.bind(context(), broker) as (servers, names):
-        assert names == ["mcp__caipe__tool_0"]
+        assert names == {"mcp__caipe__tool_0": "example.lookup"}
         server = servers[0]
         assert "caller-test-token" not in server.model_dump_json()
         assert configured.internal_token not in server.model_dump_json()
@@ -148,3 +150,17 @@ def test_denied_acp_tool_uses_the_canonical_completion_error_contract() -> None:
     assert event.event_type == "tool.completed"
     assert event.data["error"] == "Claude tool failed"
     assert event.data["result"] == "Access denied"
+
+
+async def test_acp_tool_timeline_uses_selected_tool_name() -> None:
+    client = ACPEventClient({"mcp__caipe__tool_0": "example.lookup"})
+    client.replaying = False
+    await client.session_update(
+        "session-example",
+        ToolCallStart(
+            session_update="tool_call", tool_call_id="call-example", title="mcp__caipe__tool_0", status="in_progress"
+        ),
+    )
+    event = client.events.get_nowait()
+    assert event.data["tool_name"] == "example.lookup"
+    assert event.data["tool_call_id"] == "call-example"

@@ -56,9 +56,9 @@ class ClaudeACPToolBridge:
         self,
         context: RunContext,
         broker: ClaudeToolBroker,
-    ) -> AsyncIterator[tuple[list[HttpMcpServer], list[str]]]:
+    ) -> AsyncIterator[tuple[list[HttpMcpServer], dict[str, str]]]:
         if not context.blueprint.tools.bindings:
-            yield [], []
+            yield [], {}
             return
         async with broker.bind_tools(context) as (tools, names):
             server = Server("caipe")
@@ -97,7 +97,7 @@ class ClaudeACPToolBridge:
                                 headers=[HttpHeader(name="Authorization", value=f"Bearer {token}")],
                             )
                         ],
-                        list(names),
+                        names,
                     )
                 finally:
                     self._sessions.pop(run_id, None)
