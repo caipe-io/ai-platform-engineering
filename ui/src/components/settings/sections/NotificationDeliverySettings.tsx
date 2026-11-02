@@ -406,8 +406,8 @@ export function NotificationDeliverySettings({
                 <div key={event.id} className="space-y-2 rounded-lg border p-3">
                   <NotificationPreferenceSwitch
                     label={event.label}
-                    checked={event.subscription.enabled !== false}
-                    disabled={saving || source.subscription.enabled === false}
+                    checked={!event.operatorDisabled && event.subscription.enabled !== false}
+                    disabled={saving || source.subscription.enabled === false || event.operatorDisabled}
                     onCheckedChange={(enabled) =>
                       void save({
                         sourceId: source.id,
@@ -416,6 +416,7 @@ export function NotificationDeliverySettings({
                       })
                     }
                   />
+                  {event.operatorDisabled && <p className="text-xs text-muted-foreground">Disabled by an administrator.</p>}
                   {event.description && (
                     <p className="text-xs text-muted-foreground">
                       {event.description}
@@ -436,11 +437,13 @@ export function NotificationDeliverySettings({
                             aria-label={`${event.label}: ${LABELS[channel]}`}
                             checked={
                               channels[channel] &&
+                              !event.operatorDisabled &&
+                              (event.allowedChannels?.includes(channel) ?? true) &&
                               (event.subscription.channels?.[channel] ??
                                 source.subscription.channels?.[channel] ??
                                 true)
                             }
-                            disabled={saving || !channels[channel]}
+                            disabled={saving || !channels[channel] || event.operatorDisabled || (event.allowedChannels !== undefined && !event.allowedChannels.includes(channel))}
                             onChange={(change) =>
                               void save({
                                 sourceId: source.id,
