@@ -9,6 +9,7 @@ import {
   isHarnessEngineConfigured,
   lookupHarnessSession,
   type HarnessEngineConfig,
+  type HarnessConversationReadScope,
 } from "@/lib/harness-engine-proxy";
 import { getCollection } from "@/lib/mongodb";
 import { stageHarnessAttachments } from "@/lib/harness-attachments";
@@ -113,6 +114,27 @@ export async function getHarnessGatewayStatus(body: Record<string, unknown>, aut
     run_status: saved.active_run?.status ?? saved.last_run?.status,
     turn_id: saved.active_run?.turn_id ?? saved.last_run?.turn_id ?? null,
     pending_interrupt: saved.pending_interrupt,
+  } });
+}
+
+/** Read an existing Engine conversation without admitting or rebinding a run. */
+export async function getHarnessConversationStatus(
+  auth: AuthResult, scope: HarnessConversationReadScope,
+): Promise<Response | null> {
+  const binding = await (await getCollection<GatewayBinding>("harness_gateway_bindings")).findOne({
+    agent_id: scope.agentId, conversation_id: scope.conversationId,
+    $or: [{ runtime: "harness_engine" }, { runtime: { $exists: false }, harness_id: { $ne: DEFAULT_HARNESS_ID } }],
+  });
+  if (!binding) return null;
+  const config = getHarnessEngineConfig();
+  if (config instanceof NextResponse) return config;
+  const saved = await lookupHarnessSession(config, auth, scope.agentId, scope.conversationId, scope);
+  if (saved instanceof NextResponse) return saved;
+  const run = saved.active_run ?? saved.last_run;
+  return NextResponse.json({ success: true, data: {
+    runtime: "harness_engine", status: saved.active_run ? "running" : saved.pending_interrupt ? "waiting_for_input" : "idle",
+    run_id: run?.run_id ?? null, run_status: run?.status, turn_id: run?.turn_id ?? null,
+    last_sequence: run?.last_sequence ?? 0,
   } });
 }
 
@@ -679,6 +701,7 @@ export async function streamHarnessGatewayRun(
       ...SSE_HEADERS,
       "X-Harness-Run-ID": started.run.run_id,
       "X-Harness-ID": started.run.harness_id,
+      "X-Harness-Conversation-ID": started.run.conversation_id,
     },
   });
 }

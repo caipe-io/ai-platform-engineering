@@ -104,10 +104,17 @@ service until an operator enables the Engine integration.
   agent; an authorized request cannot substitute another agent's runtime.
 - Direct Engine admission also verifies the pinned gateway target is a
   provider runtime, preserving native session ownership.
-- Run detail, polling and replay subscriptions retain Engine owner checks and
-  recheck current agent use plus conversation read in the BFF. Cancellation by
-  run ID requires conversation write. Keeping a run ID does not retain revoked
-  access.
+- Shared viewers can read Engine status and replay with current conversation
+  read permission. The BFF derives the agent from the saved conversation and
+  supplies a bounded internal read scope; the real viewer identity is retained.
+  The Engine rejects that scope on mutation routes. Browser headers cannot
+  grant this scope, and a run from another conversation cannot be substituted.
+- Execution controls retain agent use, conversation write, and Engine owner
+  checks. Keeping a run ID does not retain revoked access. Passive replay never
+  writes transcript messages from the viewer's browser.
+- A conversation keeps its original agent. Recovery with another agent creates
+  a separate empty chat; it preserves the original history, sharing, and binding.
+  An agent hidden by permissions is shown as unavailable, never assumed deleted.
 - Service accounts retain their principal classification in platform checks.
   Engine uses internal credentials plus the verified caller subject; app-owned
   streams use the exact authenticated interactive user.

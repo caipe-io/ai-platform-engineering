@@ -128,6 +128,9 @@ class RunRepository(Protocol):
     async def get_run(self, run_id: str) -> RunRecord | None:
         raise NotImplementedError
 
+    async def get_latest_conversation_run(self, agent_id: str, conversation_id: str) -> RunRecord | None:
+        raise NotImplementedError
+
     async def request_cancellation(self, run_id: str) -> RunRecord | None:
         raise NotImplementedError
 
@@ -384,6 +387,12 @@ class InMemoryRunRepository:
         run = self._runs.get(run_id)
         return run.model_copy(deep=True) if run else None
 
+    async def get_latest_conversation_run(self, agent_id: str, conversation_id: str) -> RunRecord | None:
+        matches = [run for run in self._runs.values()
+                   if run.agent_id == agent_id and run.conversation_id == conversation_id]
+        latest = max(matches, key=lambda run: run.created_at) if matches else None
+        return latest.model_copy(deep=True) if latest else None
+
     async def request_cancellation(self, run_id: str) -> RunRecord | None:
         async with self._lock:
             run = self._runs.get(run_id)
@@ -480,6 +489,8 @@ class MongoRunRepository:
                 unique=True,
             )
             self._db.harness_runs.create_index("run_id", unique=True)
+            self._db.harness_runs.create_index([("agent_id", ASCENDING), ("conversation_id", ASCENDING), ("created_at", DESCENDING)])
+            self._db.harness_sessions.create_index([("agent_id", ASCENDING), ("conversation_id", ASCENDING), ("active_run.created_at", DESCENDING)])
             self._db.harness_runs.create_index(
                 [("owner_subject", ASCENDING), ("agent_id", ASCENDING), ("conversation_id", ASCENDING), ("client_request_id", ASCENDING)],
                 unique=True,
@@ -785,6 +796,20 @@ class MongoRunRepository:
                     self._db.harness_runs.update_one({"run_id": run_id}, {"$setOnInsert": doc}, upsert=True)
             return RunRecord.model_validate(doc) if doc else None
         return await asyncio.to_thread(read)
+
+    async def get_latest_conversation_run(self, agent_id: str, conversation_id: str) -> RunRecord | None:
+        def read() -> RunRecord | None:
+            query = {"agent_id": agent_id, "conversation_id": conversation_id}
+            doc = self._db.harness_runs.find_one(query, {"_id": 0, "pending_event": 0}, sort=[("created_at", DESCENDING)])
+            reserved = self._db.harness_sessions.find_one(
+                {**query, "active_run.run_id": {"$exists": True}},
+                {"active_run": 1}, sort=[("active_run.created_at", DESCENDING)],
+            )
+            candidates = [RunRecord.model_validate(value) for value in (doc, (reserved or {}).get("active_run")) if value]
+            return max(candidates, key=lambda run: run.created_at) if candidates else None
+
+        latest = await asyncio.to_thread(read)
+        return await self.get_run(latest.run_id) if latest else None
 
     async def request_cancellation(self, run_id: str) -> RunRecord | None:
         # Materialize a reservation snapshot before updating the durable request.

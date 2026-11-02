@@ -27,8 +27,9 @@ export async function GET(
     access.auth,
     `/api/v1/runs/${encodeURIComponent(runId)}/events/stream${suffix}`,
     request.signal,
+    access.readScope,
   );
   if (!response.ok || !response.body || (protocol !== "agui" && protocol !== "custom")) return response;
   const run = (await access.response.json()).data;
-  return new Response(translateCanonicalStream(response.body, run, protocol, after ?? "0"), { status: 200, headers: { ...Object.fromEntries(response.headers), "X-Harness-Run-ID": runId } });
+  return new Response(translateCanonicalStream(response.body, run, protocol, after ?? "0"), { status: 200, headers: { ...Object.fromEntries(response.headers), "X-Harness-Run-ID": runId, "X-Harness-Conversation-ID": run.conversation_id } });
 }

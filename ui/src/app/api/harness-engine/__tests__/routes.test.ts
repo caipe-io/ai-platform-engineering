@@ -98,6 +98,62 @@ describe("Harness Engine BFF session routes", () => {
     expect(JSON.stringify(fetchMock.mock.calls[0][1]?.headers)).not.toContain("must-not-leave-bff");
   });
 
+  it.each([["detail", getRun], ["events", getEvents], ["stream", streamRun]] as const)(
+    "lets a shared reader follow %s with bounded conversation scope and their own identity", async (name, handler) => {
+      mockAuthenticateRequest.mockResolvedValue({ subject: "viewer", email: "viewer@example.test" });
+      mockAuthorizeConversationReadAccess.mockResolvedValue({ denial: null, conversation: {
+        _id: "conversation-example", participants: [{ type: "agent", id: "agent-example" }],
+      } });
+      const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async input => {
+        if (String(input).endsWith("/runs/run-1")) return NextResponse.json({ success: true, data: ownedRun });
+        return name === "stream" ? new Response("data: {}\n\n") : NextResponse.json({ success: true, data: { events: [] } });
+      });
+      const response = await handler(new NextRequest("https://example.test/api/harness-engine/runs/run-1?conversation_id=conversation-example", {
+        headers: { "X-Harness-Read-Agent": "injected-agent", "X-Harness-Engine-Subject": "injected-user" },
+      }), { params: Promise.resolve({ runId: "run-1" }) });
+      expect(response.status).toBe(200);
+      expect(mockRequireAgentUsePermission).not.toHaveBeenCalled();
+      expect(mockAuthorizeConversationWriteAccess).not.toHaveBeenCalled();
+      for (const [, init] of fetchMock.mock.calls) expect(init?.headers).toMatchObject({
+        "X-Harness-Engine-Subject": "viewer", "X-Harness-Read-Agent": "agent-example",
+        "X-Harness-Read-Conversation": "conversation-example", Authorization: "Bearer internal-test-token",
+      });
+    },
+  );
+
+  it("rejects revoked shared reads before contacting the Engine", async () => {
+    const denial = NextResponse.json({ error: "Denied" }, { status: 403 });
+    mockAuthorizeConversationReadAccess.mockResolvedValue({ denial, conversation: null });
+    const fetchMock = jest.spyOn(global, "fetch");
+    const response = await getRun(new NextRequest("https://example.test/api/harness-engine/runs/run-1?conversation_id=conversation-example"), {
+      params: Promise.resolve({ runId: "run-1" }),
+    });
+    expect(response).toBe(denial);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a run outside the authorized conversation even if the Engine returns it", async () => {
+    mockAuthorizeConversationReadAccess.mockResolvedValue({ denial: null, conversation: {
+      participants: [{ type: "agent", id: "agent-example" }],
+    } });
+    jest.spyOn(global, "fetch").mockResolvedValue(NextResponse.json({ success: true, data: ownedRun }));
+    const response = await getRun(new NextRequest("https://example.test/api/harness-engine/runs/run-1?conversation_id=another-conversation"), {
+      params: Promise.resolve({ runId: "run-1" }),
+    });
+    expect(response.status).toBe(404);
+  });
+
+  it("does not use conversation read scope for cancellation", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(NextResponse.json({ detail: "Run not found" }, { status: 404 }));
+    mockAuthenticateRequest.mockResolvedValue({ subject: "viewer" });
+    const response = await cancelRun(new NextRequest("https://example.test/api/harness-engine/runs/run-1?conversation_id=conversation-example", {
+      method: "DELETE", headers: { "X-Harness-Read-Conversation": "conversation-example" },
+    }), { params: Promise.resolve({ runId: "run-1" }) });
+    expect(response.status).toBe(404);
+    expect(mockAuthorizeConversationReadAccess).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls[0][1]?.headers).not.toHaveProperty("X-Harness-Read-Conversation");
+  });
+
   it("resumes an SSE subscription from Last-Event-ID without owning provider execution", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async input =>
       String(input).endsWith("/runs/run-1")

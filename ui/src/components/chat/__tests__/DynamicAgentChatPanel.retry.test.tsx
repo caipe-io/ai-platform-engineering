@@ -37,6 +37,7 @@ const mockChatState = {
   messageHistory: {},
   setContextUsage: jest.fn(),
   loadOlderMessagesFromServer: jest.fn().mockResolvedValue(undefined),
+  createConversation: jest.fn().mockResolvedValue("new-chat"),
 };
 
 jest.mock("@/store/chat-store", () => ({
@@ -112,12 +113,25 @@ describe("Engine run recovery after refresh", () => {
     ok: true, json: async () => ({ data }),
   } as Response);
 
+  it("replays a shared read-only response without submitting a prompt or enabling controls", async () => {
+    setConversation([message("assistant-example", "assistant", "partial", { turnId: "turn-example", isFinal: false })]);
+    const fetchMock = status({ runtime: "harness_engine", status: "idle", run_id: "run-example", turn_id: "turn-example" });
+    try {
+      render(<ChatPanel agentId="example-agent" conversationId="chat-1" readOnly readOnlyReason="agent_unavailable" />);
+      await waitFor(() => expect(mockRecoverRun).toHaveBeenCalledWith("run-example", expect.any(Object), "chat-1"));
+      expect(mockChatState.setConversationStreaming).toHaveBeenCalledWith("chat-1", expect.objectContaining({ isReplay: true, readOnly: true }));
+      await waitFor(() => expect(mockConversation.messages[0]).toMatchObject({ isFinal: true, content: "Recovered final answer" }));
+      expect(screen.queryByRole("textbox")).toBeNull();
+      expect(mockStreamMessage).not.toHaveBeenCalled();
+    } finally { fetchMock.mockRestore(); }
+  });
+
   it.each(["running", "idle"])("rebuilds a missing assistant from a matching %s run without sending the prompt again", async (runStatus) => {
     setConversation([message("user-example", "user", "saved prompt", { turnId: "turn-example" })]);
     const fetchMock = status({ runtime: "harness_engine", status: runStatus, run_id: "run-example", turn_id: "turn-example" });
     try {
       render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
-      await waitFor(() => expect(mockRecoverRun).toHaveBeenCalledWith("run-example", expect.any(Object)));
+      await waitFor(() => expect(mockRecoverRun).toHaveBeenCalledWith("run-example", expect.any(Object), "chat-1"));
       await waitFor(() => expect(mockConversation.messages.at(-1)).toMatchObject({ role: "assistant", turnId: "turn-example", content: "Recovered final answer", isFinal: true }));
       expect(mockStreamMessage).not.toHaveBeenCalled();
     } finally { fetchMock.mockRestore(); }
@@ -168,6 +182,27 @@ describe("Engine run recovery after refresh", () => {
       expect(mockChatState.addMessage).not.toHaveBeenCalled();
     } finally { fetchMock.mockRestore(); }
   });
+});
+
+it("starts a separate chat from the agent picker and leaves the shared source untouched", async () => {
+  const original = { ...mockConversation, participants: [{ type: "agent" as const, id: "original-agent" }], sharing: { shared_with: ["viewer@example.test"] } };
+  mockConversation = original;
+  const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ success: true, data: [
+    { _id: "other-agent", name: "Other Agent", enabled: true },
+  ] }) } as Response);
+  const update = jest.spyOn(apiClient, "updateConversation");
+  try {
+    render(<ChatPanel agentId="original-agent" conversationId="chat-1" readOnly readOnlyReason="agent_unavailable" />);
+    fireEvent.click(screen.getByRole("button", { name: "New chat with another agent" }));
+    expect(screen.getByRole("button", { name: "Start new chat" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("combobox"));
+    fireEvent.click(await screen.findByRole("option", { name: "Other Agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start new chat" }));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/chat/new-chat"));
+    expect(mockChatState.createConversation).toHaveBeenCalledWith("other-agent", { activate: false });
+    expect(mockConversation).toBe(original);
+    expect(update).not.toHaveBeenCalled();
+  } finally { fetchMock.mockRestore(); update.mockRestore(); }
 });
 
 describe("retry alongside edit", () => {

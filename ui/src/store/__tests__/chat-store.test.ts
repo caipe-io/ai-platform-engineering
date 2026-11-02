@@ -110,6 +110,29 @@ describe('chat-store', () => {
     resetStore();
   });
 
+  it('keeps replay subscriptions read-only through periodic save, cancellation, and completion', async () => {
+    const conv = makeConversation({ messages: [makeMessage({ role: 'assistant' })] });
+    const cancelStream = jest.fn();
+    useChatStore.setState({ conversations: [conv], activeConversationId: conv.id });
+    useChatStore.getState().setConversationStreaming(conv.id, { conversationId: conv.id, messageId: conv.messages[0].id,
+      client: { abort: jest.fn() }, streamAdapter: { cancelStream } as unknown as import('@/lib/streaming').StreamAdapter,
+      isReplay: true, readOnly: true });
+    await useChatStore.getState().saveMessagesToServer(conv.id);
+    useChatStore.getState().cancelConversationRequest(conv.id);
+    expect(cancelStream).not.toHaveBeenCalled();
+    expect(useChatStore.getState().isConversationStreaming(conv.id)).toBe(true);
+    useChatStore.getState().setConversationStreaming(conv.id, null);
+    await jest.runAllTimersAsync();
+    expect(mockApiClient.addMessage).not.toHaveBeenCalled();
+  });
+
+  it.each(['shared_readonly', 'admin_audit'] as const)('never persists a %s transcript from a viewer browser', async accessLevel => {
+    const conv = makeConversation({ accessLevel, messages: [makeMessage()] });
+    useChatStore.setState({ conversations: [conv] });
+    await useChatStore.getState().saveMessagesToServer(conv.id);
+    expect(mockApiClient.addMessage).not.toHaveBeenCalled();
+  });
+
   it('preserves an explicit title when the first user message arrives', async () => {
     const id = await useChatStore.getState().createConversation('example-agent', { title: 'Example assistant' });
     useChatStore.getState().addMessage(id, { role: 'user', content: 'First question' });

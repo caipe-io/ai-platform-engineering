@@ -113,8 +113,9 @@ export class AGUIStreamAdapter implements StreamAdapter {
     await this._stream(url, body, callbacks);
   }
 
-  async recoverRun(runId: string, callbacks: StreamCallbacks): Promise<void> {
-    await this._stream(`/api/harness-engine/runs/${encodeURIComponent(runId)}/events/stream?after=0&protocol=agui`, undefined, callbacks);
+  async recoverRun(runId: string, callbacks: StreamCallbacks, conversationId?: string): Promise<void> {
+    const scope = conversationId ? `&conversation_id=${encodeURIComponent(conversationId)}` : "";
+    await this._stream(`/api/harness-engine/runs/${encodeURIComponent(runId)}/events/stream?after=0&protocol=agui${scope}`, undefined, callbacks);
   }
 
   // ── Private: shared stream loop ────────────────────────────

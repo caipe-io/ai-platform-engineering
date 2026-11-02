@@ -31,7 +31,7 @@ export interface StreamAdapter {
   resumeStream(params: StreamParams, callbacks: StreamCallbacks): Promise<void>;
 
   /** Recover an existing Engine run without submitting another command. */
-  recoverRun(runId: string, callbacks: StreamCallbacks): Promise<void>;
+  recoverRun(runId: string, callbacks: StreamCallbacks, conversationId?: string): Promise<void>;
 
   /** Cancel the stream on the backend */
   cancelStream(conversationId: string, agentId: string): Promise<boolean>;

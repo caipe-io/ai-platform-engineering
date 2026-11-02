@@ -42,7 +42,7 @@ describe("fetchAgentInfoForChat", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/dynamic-agents/available");
   });
 
-  it("keeps a missing agent marked as deleted after the fallback misses", async () => {
+  it("does not confuse a permission-hidden agent with deletion", async () => {
     fetchMock
       .mockResolvedValueOnce({ ok: false, status: 404 })
       .mockResolvedValueOnce({
@@ -52,7 +52,8 @@ describe("fetchAgentInfoForChat", () => {
 
     await expect(fetchAgentInfoForChat("agent-missing")).resolves.toEqual({
       agent: null,
-      notFound: true,
+      notFound: false,
+      unavailable: true,
     });
   });
 });

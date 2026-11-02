@@ -73,6 +73,10 @@ interface StreamingState {
   client: { abort: () => void };
   // For Dynamic Agents: adapter reference for backend cancellation
   streamAdapter?: StreamAdapter;
+  /** Replay is projected locally; the Engine publishes the authoritative transcript. */
+  isReplay?: boolean;
+  /** View-only subscriptions must never send execution controls. */
+  readOnly?: boolean;
 }
 
 interface MessageHistoryState {
@@ -503,6 +507,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       },
 
       setConversationStreaming: (conversationId: string, state: StreamingState | null) => {
+        const wasReplay = get().streamingConversations.get(conversationId)?.isReplay;
         set((prev: ChatState) => {
           const newMap = new Map(prev.streamingConversations);
           if (state) {
@@ -540,6 +545,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
           // Reset periodic save counter for this conversation
           eventCountSinceLastSave.delete(conversationId);
+          if (wasReplay) return;
           // Mark save as pending — prevents loadMessagesFromServer from
           // overwriting the correct in-memory state with stale MongoDB data
           // before this save completes.
@@ -567,6 +573,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         const state = get();
         const streamingState = state.streamingConversations.get(conversationId);
         if (streamingState) {
+          if (streamingState.readOnly) return;
           // Get conversation to check if it's a Dynamic Agent
           const conv = state.conversations.find((c: Conversation) => c.id === conversationId);
           
@@ -615,6 +622,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           // Reset periodic save counter and save to MongoDB after cancel —
           // previously skipped because cancel bypassed setConversationStreaming(null).
           eventCountSinceLastSave.delete(conversationId);
+          if (streamingState.isReplay) return;
           pendingSaveTimestamps.set(conversationId, Date.now());
           setTimeout(() => {
             get().saveMessagesToServer(conversationId)
@@ -1103,6 +1111,8 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         const state = get();
         const conv = state.conversations.find((c: Conversation) => c.id === conversationId);
         if (!conv || conv.messages.length === 0) return;
+        if (conv.accessLevel === 'shared_readonly' || conv.accessLevel === 'admin_audit' ||
+            state.streamingConversations.get(conversationId)?.isReplay) return;
 
         // Stream events during streaming are stored at the conversation level
         // (conv.streamEvents) via addStreamEvent(). To persist them to MongoDB,

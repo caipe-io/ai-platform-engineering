@@ -34,7 +34,7 @@ import { createStreamEvent,FILE_TOOL_NAMES,TODO_TOOL_NAME,type StreamEvent } fro
 import { cn,deduplicateByKey,generateId } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import { useFeatureFlagStore } from "@/store/feature-flag-store";
-import { buildParticipants,ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
+import { ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
 import type { DynamicAgentConfig,ReasoningEffort } from "@/types/dynamic-agent";
 import { AnimatePresence,motion,useReducedMotion } from "framer-motion";
 import { Activity,AlertTriangle,ArrowDown,ArrowLeft,Check,Copy,Loader2,Paperclip,Pencil,RotateCcw,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
@@ -43,6 +43,8 @@ import { AgentPicker } from "@/components/ui/agent-picker";
 import { signIn,useSession } from "next-auth/react";
 import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { pushWithNavigationProgress } from "@/lib/navigation-progress";
 import React,{ useCallback,useEffect,useMemo,useRef,useState } from "react";
 import TextareaAutosize from "react-textarea-autosize";
 import { AgentTimeline,type SubagentLookupInfo } from "./DynamicAgentTimeline";
@@ -57,7 +59,7 @@ import { useSlashCommands } from "./useSlashCommands";
 import { RunFollowUpButton } from "@/components/autonomous/RunFollowUpButton";
 import { useAutonomousFollowUps } from "@/hooks/use-autonomous-follow-ups";
 
-type ReadOnlyReason = 'admin_audit' | 'shared_readonly' | 'agent_deleted' | 'agent_disabled';
+type ReadOnlyReason = 'admin_audit' | 'shared_readonly' | 'agent_deleted' | 'agent_disabled' | 'agent_unavailable';
 
 /**
  * A message waiting in the composer queue while a turn streams. Carries any
@@ -114,8 +116,6 @@ interface ChatPanelProps {
   agentId: string; // Mandatory for Dynamic Agents
   agent?: DynamicAgentConfig | null; // Full agent config object
   isLoadingMessages?: boolean; // Whether messages are still loading (show skeleton)
-  /** Called after a deprecated conversation is linked to a usable agent. */
-  onAgentRelinked?: (agentId: string) => void;
   /** Bounded, host-validated metadata attached to each app-assistant turn. */
   clientContext?: Record<string, unknown>;
   composerDraft?: AssistantDraft | null;
@@ -141,7 +141,6 @@ export function ChatPanel({
   agentId,
   agent,
   isLoadingMessages,
-  onAgentRelinked,
   clientContext: suppliedClientContext,
   composerDraft,
   onComposerDraftApplied,
@@ -154,6 +153,7 @@ export function ChatPanel({
   const agentSkills = agent?.skills;
   const { data: session } = useSession();
   const { toast } = useToast();
+  const router = useRouter();
   const initializeFeatureFlags = useFeatureFlagStore((s) => s.initialize);
   const autoScrollEnabled = useFeatureFlagStore((s) => s.flags.autoScroll ?? true);
   const showTimestamps = useFeatureFlagStore((s) => s.flags.showTimestamps ?? false);
@@ -216,12 +216,9 @@ export function ChatPanel({
   const [feedbackFormOpen, setFeedbackFormOpen] = useState(false);
   const [feedbackChatContext, setFeedbackChatContext] = useState<string>();
   const showFeedbackPrompt = Boolean(feedbackPrompt && getConfig("reportProblemEnabled"));
-  const [hasRelinkedAgent, setHasRelinkedAgent] = useState(false);
-  const relinkRestoresWriteAccess = hasRelinkedAgent && (
-    readOnlyReason === 'agent_deleted' || readOnlyReason === 'agent_disabled'
-  );
-  const panelReadOnly = readOnly && !relinkRestoresWriteAccess;
-  const panelReadOnlyReason = hasRelinkedAgent ? undefined : readOnlyReason;
+  const panelReadOnly = readOnly;
+  const panelReadOnlyReason = readOnlyReason;
+  const [startingNewChat, setStartingNewChat] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
@@ -322,39 +319,29 @@ export function ChatPanel({
     setFeedbackChatContext(undefined);
   }, [conversationId, activeConversationId]);
 
-  // Re-link this deprecated/deleted-agent conversation to the platform default agent,
-  // then reload the page so ChatContainer picks up the new participants.
-  const handleStartNewConversation = useCallback(async () => {
-    if (!conversationId) return;
-    setHasRelinkedAgent(true);
+  // A different agent starts a separate chat. The original history, sharing,
+  // and runtime binding remain attached to the original conversation.
+  const startNewChat = useCallback(async (chosenId?: string) => {
+    if (startingNewChat) return;
+    setStartingNewChat(true);
     try {
-      const agentId = await resolveUsableChatAgentId();
-      const newParticipants = buildParticipants(agentId);
-      await apiClient.updateConversation(conversationId, {
-        participants: newParticipants,
-      });
-      setHasRelinkedAgent(true);
-      // Patch the Zustand store in-place so ChatContainer sees the new participants
-      // immediately — it skips the API fetch when the conversation is already cached.
-      useChatStore.setState((state) => ({
-        conversations: state.conversations.map((c) =>
-          c.id === conversationId ? { ...c, participants: newParticipants } : c,
-        ),
-      }));
-      onAgentRelinked?.(agentId);
+      const nextAgentId = chosenId ?? await resolveUsableChatAgentId();
+      const id = await createConversation(nextAgentId, { activate: false });
+      pushWithNavigationProgress(router, `/chat/${encodeURIComponent(id)}`);
     } catch (err) {
-      setHasRelinkedAgent(false);
-      toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
+      toast(`Could not start a new chat: ${(err as Error).message}`, "error", 8000);
+    } finally {
+      setStartingNewChat(false);
     }
-  }, [conversationId, onAgentRelinked, toast]);
+  }, [createConversation, router, startingNewChat, toast]);
 
-  // "Choose agent" picker state — loaded lazily when the deprecated-agent banner is shown.
+  // New-chat agent picker, loaded only while agent recovery actions are visible.
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const [availableAgents, setAvailableAgents] = useState<{ value: string; label: string }[]>([]);
   const [chosenAgentId, setChosenAgentId] = useState("");
 
   useEffect(() => {
-    const isDeprecatedBanner = readOnlyReason === 'agent_deleted' || readOnlyReason === 'agent_disabled';
+    const isDeprecatedBanner = ['agent_deleted', 'agent_disabled', 'agent_unavailable'].includes(readOnlyReason ?? '');
     if (!isDeprecatedBanner || availableAgents.length > 0) return;
     fetch("/api/dynamic-agents/available", { cache: "no-store" })
       .then((r) => r.json())
@@ -366,25 +353,6 @@ export function ChatPanel({
       })
       .catch(() => {/* non-critical — picker just stays empty */});
   }, [readOnlyReason, availableAgents.length]);
-
-  const handleResumeWithChosenAgent = useCallback(async () => {
-    if (!conversationId || !chosenAgentId) return;
-    setHasRelinkedAgent(true);
-    try {
-      const newParticipants = buildParticipants(chosenAgentId);
-      await apiClient.updateConversation(conversationId, { participants: newParticipants });
-      setHasRelinkedAgent(true);
-      useChatStore.setState((state) => ({
-        conversations: state.conversations.map((c) =>
-          c.id === conversationId ? { ...c, participants: newParticipants } : c,
-        ),
-      }));
-      onAgentRelinked?.(chosenAgentId);
-    } catch (err) {
-      setHasRelinkedAgent(false);
-      toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
-    }
-  }, [conversationId, chosenAgentId, onAgentRelinked, toast]);
 
   // Slash command registry
   const slashCommands = useSlashCommands(agentSkills, agent?.allowed_tools, agent?.subagents);
@@ -755,7 +723,7 @@ export function ChatPanel({
   // ═══════════════════════════════════════════════════════════════
   useEffect(() => {
     // Skip if no conversationId (new conversation) or agentId
-    if (!conversationId || !agentId || isAutonomousHistory) return;
+    if (!conversationId || !agentId || isAutonomousHistory || panelReadOnly) return;
     
     // Wait for messages to be loaded (race condition on page refresh:
     // this effect can fire before ChatContainer finishes loading messages
@@ -856,7 +824,7 @@ export function ChatPanel({
     };
 
     checkInterruptState();
-  }, [conversationId, agentId, isLoadingMessages, isThisConversationStreaming, hasAssistantMessageForInterruptCheck, isAutonomousHistory, isRemoteResponse]);
+  }, [conversationId, agentId, isLoadingMessages, isThisConversationStreaming, hasAssistantMessageForInterruptCheck, isAutonomousHistory, isRemoteResponse, panelReadOnly]);
 
   // ═══════════════════════════════════════════════════════════════
   // FILES & TASKS FETCH (for timeline display in latest message)
@@ -1355,7 +1323,7 @@ export function ChatPanel({
   const recoveryTurnId = conversation?.messages?.at(-1)?.turnId;
   useEffect(() => {
     const checked = recoveryChecked.current;
-    if (!activeConversationId || isLoadingMessages || isThisConversationStreaming || isRemoteResponse || isAutonomousHistory || panelReadOnly) return;
+    if (!activeConversationId || isLoadingMessages || isThisConversationStreaming || isAutonomousHistory) return;
     if (!recoveryMessageId || !["assistant", "user"].includes(recoveryMessageRole ?? "") || checked.has(activeConversationId)) return;
     checked.add(activeConversationId);
     let disposed = false;
@@ -1384,9 +1352,9 @@ export function ChatPanel({
       clearStreamEvents(activeConversationId);
       updateMessage(activeConversationId, assistantId, { isFinal: false });
       setConversationStreaming(activeConversationId, { conversationId: activeConversationId, messageId: assistantId,
-        client: { abort: () => adapter.abort() }, streamAdapter: adapter });
+        client: { abort: () => adapter.abort() }, streamAdapter: adapter, isReplay: true, readOnly: panelReadOnly });
       try {
-        await adapter.recoverRun(data.run_id, buildStreamCallbacks(activeConversationId, assistantId, state, new Map()));
+        await adapter.recoverRun(data.run_id, buildStreamCallbacks(activeConversationId, assistantId, state, new Map()), activeConversationId);
       } catch (error) {
         state.hasError = true;
         state.errorMessage = error instanceof Error ? error.message : "Run recovery failed";
@@ -2600,7 +2568,7 @@ export function ChatPanel({
                           timelineTasks={timelineTasks}
                           onFileDownload={handleTimelineFileDownload}
                           getFileContent={handleGetFileContent}
-                          onFileDelete={handleTimelineFileDelete}
+                          onFileDelete={panelReadOnly ? undefined : handleTimelineFileDelete}
                           isDownloadingFile={isDownloadingFile}
                           downloadingFilePath={downloadingFilePath}
                            isDeletingFile={isDeletingFile}
@@ -2627,7 +2595,7 @@ export function ChatPanel({
             </AnimatePresence>
 
             {/* User Input Form */}
-            {pendingUserInput && pendingUserInput.metadata.input_fields && (
+            {!panelReadOnly && pendingUserInput && pendingUserInput.metadata.input_fields && (
               <MetadataInputForm
                 messageId={pendingUserInput.messageId}
                 title={pendingUserInput.metadata.input_title}
@@ -2665,7 +2633,7 @@ export function ChatPanel({
             )}
 
             {/* Tool Approval Card */}
-            {pendingToolApproval && (() => {
+            {!panelReadOnly && pendingToolApproval && (() => {
               const currentTool = pendingToolApproval.tools[pendingToolApproval.currentIndex];
               const total = pendingToolApproval.tools.length;
               const current = pendingToolApproval.currentIndex + 1;
@@ -2751,6 +2719,11 @@ export function ChatPanel({
                   <span className="text-sm font-medium">Agent No Longer Available</span>
                   <span className="text-xs text-red-600 dark:text-red-500">— This agent has been deprecated or deleted. You can view the history but cannot send new messages.</span>
                 </>
+              ) : panelReadOnlyReason === 'agent_unavailable' ? (
+                <>
+                  <span className="text-sm font-medium">Agent unavailable for new messages</span>
+                  <span className="text-xs">— Agent access may be restricted. You can still view this chat and follow its existing response. Ask the owner to check access.</span>
+                </>
               ) : panelReadOnlyReason === 'agent_disabled' ? (
                 <>
                   <span className="text-sm font-medium">Agent Disabled</span>
@@ -2771,7 +2744,7 @@ export function ChatPanel({
               <ArrowLeft className="h-3 w-3" />
               Back to Feedback
             </NavigationProgressLink>
-            ) : (panelReadOnlyReason === 'agent_deleted' || panelReadOnlyReason === 'agent_disabled') ? (
+            ) : ['agent_deleted', 'agent_disabled', 'agent_unavailable'].includes(panelReadOnlyReason ?? '') ? (
             <div className="flex items-center gap-2 flex-wrap">
               {showAgentPicker ? (
                 <>
@@ -2785,11 +2758,11 @@ export function ChatPanel({
                     />
                   </div>
                   <button
-                    onClick={handleResumeWithChosenAgent}
-                    disabled={!chosenAgentId}
+                    onClick={() => void startNewChat(chosenAgentId)}
+                    disabled={!chosenAgentId || startingNewChat}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-red-600/20 text-red-700 dark:text-red-300 hover:bg-red-600/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Resume
+                    Start new chat
                   </button>
                   <button
                     onClick={() => setShowAgentPicker(false)}
@@ -2801,16 +2774,17 @@ export function ChatPanel({
               ) : (
                 <>
                   <button
-                    onClick={handleStartNewConversation}
+                    onClick={() => void startNewChat()}
+                    disabled={startingNewChat}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-red-600/20 text-red-700 dark:text-red-300 hover:bg-red-600/30 transition-colors"
                   >
-                    Resume with default agent
+                    New chat with default agent
                   </button>
                   <button
                     onClick={() => setShowAgentPicker(true)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-muted text-muted-foreground hover:bg-muted/80 transition-colors"
                   >
-                    Choose agent
+                    New chat with another agent
                   </button>
                 </>
               )}

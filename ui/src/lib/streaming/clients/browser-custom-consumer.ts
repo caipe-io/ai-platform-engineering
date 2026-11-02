@@ -106,8 +106,9 @@ export class CustomStreamAdapter implements StreamAdapter {
 
   // ── Private: shared stream loop ────────────────────────────
 
-  async recoverRun(runId: string, callbacks: StreamCallbacks): Promise<void> {
-    await this._stream(`/api/harness-engine/runs/${encodeURIComponent(runId)}/events/stream?after=0&protocol=custom`, undefined, callbacks);
+  async recoverRun(runId: string, callbacks: StreamCallbacks, conversationId?: string): Promise<void> {
+    const scope = conversationId ? `&conversation_id=${encodeURIComponent(conversationId)}` : "";
+    await this._stream(`/api/harness-engine/runs/${encodeURIComponent(runId)}/events/stream?after=0&protocol=custom${scope}`, undefined, callbacks);
   }
 
   private async _stream(url: string, body: string | undefined, callbacks: StreamCallbacks): Promise<void> {
