@@ -300,28 +300,100 @@ disposable.
 - Text, reasoning, tool start/end and native session changes enter the same
   canonical durable event log used by the web UI, Slack and Webex gateway.
 
-### Remote Claude SDK workers
+### Remote Claude workers over ACP
+
+```mermaid
+sequenceDiagram
+    participant UI as Web UI / bot
+    participant Engine as Harness Engine
+    participant Worker as Private worker
+    participant Agent as SDK or Claude Code ACP
+    UI->>Engine: Start a durable run
+    Engine->>Worker: ACP initialize, session/new or session/resume
+    Engine->>Worker: session/prompt (same run ID, replay cursor)
+    Worker->>Agent: SDK call or ACP over stdio
+    Agent-->>Worker: Text and tool updates
+    Worker-->>Engine: session/update and final prompt result
+    Engine-->>UI: Persisted canonical events
+    Note over UI,Worker: Subscriber disconnects do not cancel the producer
+```
 
 - Deploy the provider image with `python -m harness_engine.claude_worker`.
-  Configure MongoDB, the local SDK profile map, provider credentials, BFF tool
+  Configure MongoDB, local SDK profiles, provider credentials, the BFF tool
   broker URL and a worker-specific `HARNESS_ENGINE_INTERNAL_TOKEN`.
-- Match that token and local profile ID in the parent's private worker map.
-  Set `tools_enabled: true` only when the worker's broker is configured.
-  Use private networking or HTTPS; neither service token nor delegated bearer
-  should travel across an untrusted plaintext connection.
-- The worker requires MongoDB and uses the configured database name with a
-  `_claude_worker` suffix. Worker replicas must share that database and SDK
-  profile policy. Transcripts resume across container replacement without a
-  shared local workspace volume.
-- Parent admission keeps the original `run_id`. Idempotent worker admission,
-  persisted stop requests and ordered event replay work across worker replicas.
-  The Engine releases its reservation only after worker execution drains.
-  Stop and drain status read worker metadata independently of replay retention.
-  Unknown worker state emits `execution_unconfirmed` and keeps the session
-  reserved. Reconnecting does not start another producer.
-- A lost producer still requires operator reconciliation before clear. This
-  implementation does not take over an in-flight SDK process after a crash.
-  Portable file workspaces, subagents and per-tool approvals remain unsupported.
+- The parent uses ACP v1 at `POST /acp`. Match the token and local profile ID
+  in `HARNESS_ENGINE_CLAUDE_WORKER_PROFILES_JSON`. Only operators select
+  endpoints, commands, model credentials and workspace roots.
+- Set `tools_enabled: true` only for an SDK worker with its broker configured.
+  Use private networking or HTTPS for service and delegated caller credentials.
+- SDK transcripts, admission records and event journals use the configured
+  MongoDB database with a `_claude_worker` suffix. Replicas share this database
+  and profile policy. SDK session continuation survives container replacement
+  without a local transcript volume.
+- Parent admission retains the original `run_id`. A transport disconnect
+  reattaches to the same admitted prompt and resumes from its committed cursor;
+  it never dispatches a second producer. Completion requires the full event tail
+  and a confirmed worker drain. Stop/status remain available after event expiry.
+- A lost producer requires operator reconciliation. In-flight process takeover,
+  portable file workspace leasing, subagents and interactive tool approvals are
+  unsupported.
+
+#### ACP network transport contract
+
+[ACP v1](https://agentclientprotocol.com/protocol/v1/transports) standardizes
+stdio and permits custom transports. **This private HTTP/NDJSON transport is
+not the proposed Streamable HTTP transport.** It requires the negotiated
+`caipe.io/harness` extension and is not a generic public ACP endpoint.
+
+- Authenticate each request using the worker service bearer and original
+  `X-Harness-Engine-Subject`; delegate tool credentials only in
+  `X-Harness-Caller-Token`. Credentials never appear in ACP notifications.
+- Call `initialize` with `protocolVersion: 1`, then send
+  `ACP-Protocol-Version: 1` on session requests. HTTP is stateless; every request
+  repeats authenticated identity and negotiated protocol version.
+- `session/new` / `session/resume` carry the admitted `RunContext` in
+  `params._meta["caipe.io/harness"].context`. The session ID is the opaque
+  Engine binding ID. Worker policy overrides client workspace and MCP choices.
+  `session/load` is not advertised: UI history comes from the Engine journal.
+- `session/prompt` returns newline-delimited JSON-RPC `session/update`
+  notifications followed by its final response, after the producer drains.
+  Blank lines are transport heartbeats. No prompt receipt is treated as completion.
+- Each update carries the sequenced canonical event in
+  `params._meta["caipe.io/harness"].event`. Canonical events without an ACP v1
+  representation use `_caipe/event`. Reattach using the original context and
+  `_meta["caipe.io/harness"].after`; the prompt ID remains the run ID.
+- `session/cancel` is a notification with `sessionId` and extension `runId`.
+  `_caipe/run_state` is the extension request for metadata and drain confirmation.
+  Both check subject, run and session scope independently of retained events.
+- The old `/api/v1/worker/runs` endpoints remain for rolling upgrades. Upgrade
+  workers before the Engine; the new Engine requires ACP and does not silently
+  fall back to legacy execution.
+
+#### Experimental Claude Code ACP worker
+
+The [upstream Claude ACP adapter](https://github.com/agentclientprotocol/claude-agent-acp)
+is built on the Claude Agent SDK. This optional backend runs that executable
+inside the remote worker; it does not introduce another browser session manager.
+
+- Build with `ai_platform_engineering/harness_engine/build/Dockerfile.claude-acp`.
+  It pins `@agentclientprotocol/claude-agent-acp` to `0.100.0` and uses the
+  Python ACP SDK for the local stdio connection.
+- Set `HARNESS_ENGINE_CLAUDE_ACP_COMMAND` to a JSON argv array; the image already
+  supplies its installed executable. Set the parent's worker profile
+  `runtime` to `claude_code_acp` and `tools_enabled` to `false`.
+- Keep the same MongoDB settings and mount a persistent volume at the profile's
+  workspace root (for example `/workspace`). Each binding has a separate
+  directory and `CLAUDE_CONFIG_DIR`; `session/load` reloads the provider transcript
+  after a process restart. These files are **not** mirrored by the Python SDK's
+  Mongo transcript store. Pin the worker to its volume; automatic cross-worker
+  continuation is not certified for this backend.
+- `HARNESS_ENGINE_CLAUDE_ACP_TOOLS` is an operator-owned JSON allowlist, empty by
+  default. Settings discovery and permission bypass are disabled; interactive
+  permission requests are declined. The CAIPE MCP broker is not yet supported
+  by this experimental backend; selected MCP bindings are rejected.
+- No OpenShell or per-session Kubernetes pod allocation is implied. Run a
+  non-root worker with only its own credentials and an isolated workspace.
+  Directories alone do not provide operating-system sandboxing.
 
 The optional [worker overlay](../../deploy/harness-engine/compose.claude-sdk.yaml)
 adds a worker to the Deep Agents overlay. It is also a template for a separate

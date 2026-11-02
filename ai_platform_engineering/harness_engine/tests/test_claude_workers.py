@@ -24,6 +24,7 @@ from claude_agent_sdk import (
 )
 from pydantic import SecretStr
 
+from harness_engine.acp_events import EXTENSION
 from harness_engine.adapters.claude_remote import RemoteClaudeSDKAdapter
 from harness_engine.adapters.claude_sdk import ClaudeSDKAdapter
 from harness_engine.claude_session_store import MongoClaudeSessionStore
@@ -36,11 +37,16 @@ from harness_engine.models import (
     ExecutionIdentity,
     RenderedPrompt,
     RunContext,
+    RunEvent,
     SessionBinding,
     TurnInput,
 )
 from harness_engine.repository import InMemoryRunRepository, ReplayGapError
 from tests.conftest import auth_headers, blueprint
+
+
+def rpc_response(rpc: dict[str, Any], data: dict[str, Any]) -> httpx.Response:
+    return httpx.Response(200, json={"jsonrpc": "2.0", "id": rpc["id"], "result": data})
 
 
 def result(session_id: str = "session-example") -> ResultMessage:
@@ -182,15 +188,16 @@ class SplitWorkerTransport(httpx.AsyncBaseTransport):
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         target = self.replica
-        if request.method == "POST":
-            run_id = json.loads(request.content)["turn"]["run_id"]
+        prompt = json.loads(request.content).get("method") == "session/prompt"
+        if prompt:
+            run_id = json.loads(request.content)["params"]["_meta"][EXTENSION]["context"]["turn"]["run_id"]
             if run_id not in self.run_ids:
                 self.run_ids.append(run_id)
             replace = self.replacement and self.run_ids.index(run_id) > 0
             target = self.replica if replace else self.producer
             self.dispatches.append("replica" if replace else "producer")
         response = await target.handle_async_request(request)
-        if request.method == "POST" and self.drop_first_receipt:
+        if prompt and self.drop_first_receipt:
             self.drop_first_receipt = False
             raise httpx.ConnectError("Admission receipt lost after dispatch", request=request)
         return response
@@ -352,11 +359,13 @@ async def test_remote_cancellation_drains_before_releasing_the_parent(settings: 
 @pytest.mark.parametrize("admission_conflict", [False, True])
 async def test_unconfirmed_worker_keeps_the_session_reserved(settings: Settings, admission_conflict: bool) -> None:
     def unavailable(request: httpx.Request) -> httpx.Response:
-        if request.method == "POST":
-            if admission_conflict:
-                return httpx.Response(409, json={"detail": "Existing producer has different input"})
-            run_id = json.loads(request.content)["turn"]["run_id"]
-            return httpx.Response(202, json={"success": True, "data": {"run": {"run_id": run_id}}})
+        rpc = json.loads(request.content)
+        if rpc["method"] == "initialize":
+            return rpc_response(rpc, {"protocolVersion": 1, "_meta": {EXTENSION: {"durableReplay": True}}})
+        if rpc["method"] == "session/new":
+            return rpc_response(rpc, {"sessionId": "example"})
+        if rpc["method"] == "session/prompt" and admission_conflict:
+            return httpx.Response(409, json={"detail": "Existing producer has different input"})
         raise httpx.ConnectError("worker unavailable", request=request)
 
     remote = RemoteClaudeSDKAdapter(configured_worker(settings), httpx.MockTransport(unavailable))
@@ -603,16 +612,25 @@ async def test_parent_cleanup_polls_state_without_requiring_events(settings: Set
 
     def worker(request: httpx.Request) -> httpx.Response:
         nonlocal polls
-        paths.append(request.url.path)
-        if request.method == "POST":
-            run_id = json.loads(request.content)["turn"]["run_id"]
-            return httpx.Response(202, json={"success": True, "data": {"run": {"run_id": run_id}}})
-        if request.method == "DELETE":
-            return httpx.Response(200, json={"success": True, "data": {"drained": False}})
-        if request.url.path.endswith("/state"):
+        rpc = json.loads(request.content)
+        method = rpc["method"]
+        paths.append(method)
+        if method == "initialize":
+            return rpc_response(rpc, {"protocolVersion": 1, "_meta": {EXTENSION: {"durableReplay": True}}})
+        if method == "session/new":
+            return rpc_response(rpc, {"sessionId": "example"})
+        if method == "session/cancel":
+            return httpx.Response(204)
+        if method == "_caipe/run_state":
             polls += 1
-            return httpx.Response(200, json={"success": True, "data": {"drained": polls >= drain_poll}})
-        return httpx.Response(409, json={"detail": "Expired event prefix"})
+            return rpc_response(rpc, {"drained": polls >= drain_poll})
+        return httpx.Response(
+            200,
+            content=json.dumps(
+                {"jsonrpc": "2.0", "id": rpc["id"], "error": {"code": -32001, "message": "Expired prefix"}}
+            )
+            + "\n",
+        )
 
     remote = RemoteClaudeSDKAdapter(configured_worker(settings), httpx.MockTransport(worker))
     repo = InMemoryRunRepository()
@@ -634,62 +652,38 @@ async def test_parent_cleanup_polls_state_without_requiring_events(settings: Set
             page = await terminal(client, run["run_id"])
             assert page["events"][-1]["data"]["code"] == "provider_error"
             assert (await released_binding(repo, run["binding_id"])).active_run is None
-            assert paths[-1].endswith("/state")
+            assert paths[-1] == "_caipe/run_state"
 
 
-async def test_remote_completion_consumes_the_committed_event_tail(settings: Settings) -> None:
+async def test_remote_completion_consumes_the_committed_event_tail(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = InMemoryRunRepository.list_events
     cursors: list[int] = []
-    run_id = ""
 
-    def worker(request: httpx.Request) -> httpx.Response:
-        nonlocal run_id
-        if request.method == "POST":
-            run_id = json.loads(request.content)["turn"]["run_id"]
-            return httpx.Response(202, json={"success": True, "data": {"run": {"run_id": run_id}}})
-        cursor = int(request.url.params.get("after", "0"))
-        cursors.append(cursor)
-        # Completion can commit between the event-prefix read and metadata read.
-        events = (
-            [{"run_id": run_id, "sequence": 1, "event_type": "content.delta", "data": {"text": "first"}}]
-            if cursor == 0
-            else [
-                {"run_id": run_id, "sequence": 2, "event_type": "content.delta", "data": {"text": " second"}},
-                {"run_id": run_id, "sequence": 3, "event_type": "run.completed", "data": {}},
-            ]
-        )
-        return httpx.Response(
-            200,
-            json={
-                "success": True,
-                "data": {
-                    "run": {"run_id": run_id, "status": "completed", "last_sequence": 3},
-                    "events": events,
-                    "drained": True,
-                },
-            },
-        )
+    async def prefix(self: Any, run_id: str, after: int) -> list[RunEvent]:
+        events = await original(self, run_id, after)
+        # Simulate metadata completion racing a prefix read on the worker only.
+        if run_id.startswith("run-") and events:
+            cursors.append(after)
+        return events[:1]
 
-    remote = RemoteClaudeSDKAdapter(configured_worker(settings), httpx.MockTransport(worker))
-    repo = InMemoryRunRepository()
-    app = create_app(settings=settings, repository=repo, adapters=[remote])
-    async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://engine.example.test", headers=auth_headers()
-        ) as client:
-            await client.put(
-                "/api/v1/agents/agent-example",
-                json={"blueprint": blueprint(harness_id="claude_agent_sdk_remote", profile_id="remote", options={})},
+    async def query(**_: Any) -> AsyncIterator[Any]:
+        yield SystemMessage(subtype="init", data={"session_id": "session-example"})
+        yield AssistantMessage(content=[TextBlock(text="first second")], model="example")
+        yield result()
+
+    monkeypatch.setattr(InMemoryRunRepository, "list_events", prefix)
+    async with pair(settings, query) as (client, repo, _):
+        run = (
+            await client.post(
+                "/api/v1/runs",
+                json={"agent_id": "agent-example", "conversation_id": "conversation-example", "message": "one"},
             )
-            run = (
-                await client.post(
-                    "/api/v1/runs",
-                    json={"agent_id": "agent-example", "conversation_id": "conversation-example", "message": "one"},
-                )
-            ).json()["data"]
-            page = await terminal(client, run["run_id"])
-            assert page["run"]["status"] == "completed"
-            assert [e["data"]["text"] for e in page["events"] if e["event_type"] == "content.delta"] == [
-                "first",
-                " second",
-            ]
-            assert cursors == [0, 1]
+        ).json()["data"]
+        await terminal(client, run["run_id"])
+        await released_binding(repo, run["binding_id"])
+        events = await original(repo, run["run_id"], 0)
+        assert [e.data["text"] for e in events if e.event_type == "content.delta"] == ["first second"]
+        assert events[-1].event_type == "run.completed"
+        assert max(cursors) > 1

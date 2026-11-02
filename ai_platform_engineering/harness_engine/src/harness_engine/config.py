@@ -74,6 +74,7 @@ class ClaudeWorkerProfile(BaseModel):
     profile_id: str = Field(..., pattern=r"^[A-Za-z0-9_.-]{1,64}$")
     description: str = Field("", max_length=512)
     tools_enabled: bool = False
+    runtime: Literal["sdk", "claude_code_acp"] = "sdk"
 
     @model_validator(mode="after")
     def validate_connection(self) -> ClaudeWorkerProfile:
@@ -105,6 +106,8 @@ class Settings(BaseSettings):
     claude_sdk_profiles_json: str = "{}"
     claude_worker_profiles_json: SecretStr = SecretStr("{}")
     claude_tool_broker_url: str | None = None
+    claude_acp_command: list[str] = Field(default_factory=list)
+    claude_acp_tools: list[str] = Field(default_factory=list)
     deep_agents_enabled: bool = False
 
     def agentcore_targets(self) -> dict[str, AgentCoreRuntimeTarget]:

@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Independent multi-harness control plane with durable reconnectable runs"
 requires-python = ">=3.13,<4.0"
 dependencies = [
+    "agent-client-protocol==0.12.1",
     "boto3==1.43.16",
     "claude-agent-sdk==0.2.139",
     "fastapi==0.141.1",

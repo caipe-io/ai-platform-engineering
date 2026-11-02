@@ -375,7 +375,7 @@ These are the same delivery phases published in [Discussion 2405](https://github
 
 **Exit:** Cross-harness delegation and child-run visibility pass authorization, lifecycle and isolation conformance. Existing Deep Agents native subagents remain available through native runtime compatibility.
 
-Additional harnesses, long-term memory, process-failure takeover and ACP are separately scoped extensions. Capability declarations and certification follow demonstrated implementations, not roadmap position.
+Additional harnesses, long-term memory, process-failure takeover and general-purpose ACP interoperability are separately scoped extensions. Claude remote workers use ACP v1 over the private, durable HTTP/NDJSON transport documented in the Harness Engine README. Capability declarations and certification follow demonstrated implementations, not roadmap position.
 
 ## Testing Strategy
 

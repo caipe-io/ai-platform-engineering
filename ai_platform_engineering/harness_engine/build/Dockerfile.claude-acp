@@ -1,0 +1,24 @@
+# Optional experimental worker: Python control plane and the upstream Claude ACP executable.
+FROM node:24-bookworm-slim AS acp
+WORKDIR /opt/claude-acp
+RUN npm install --omit=dev --ignore-scripts --save-exact @agentclientprotocol/claude-agent-acp@0.100.0
+
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+WORKDIR /app
+COPY ai_platform_engineering/harness_engine/pyproject.toml ai_platform_engineering/harness_engine/uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+COPY ai_platform_engineering/harness_engine/src ./src
+
+FROM python:3.13-slim-bookworm
+WORKDIR /app
+COPY --from=acp /usr/local/bin/node /usr/local/bin/node
+COPY --from=acp /opt/claude-acp /opt/claude-acp
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/src /app/src
+ENV PATH="/app/.venv/bin:${PATH}" \
+    PYTHONPATH="/app/src" \
+    HARNESS_ENGINE_CLAUDE_ACP_COMMAND='["node","/opt/claude-acp/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"]'
+RUN mkdir -p /workspace && chown 65532:65532 /workspace
+USER 65532:65532
+EXPOSE 8010
+CMD ["python", "-m", "harness_engine.claude_worker"]
