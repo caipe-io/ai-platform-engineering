@@ -239,6 +239,7 @@ const sidebars: SidebarsConfig = {
       items: [
         { type: 'doc', id: 'architecture/index', label: 'Solution Architecture' },
         { type: 'doc', id: 'architecture/gateway', label: 'AgentGateway' },
+        { type: 'doc', id: 'architecture/claude-acp', label: 'Claude ACP' },
         { type: 'doc', id: 'architecture/scheduler', label: 'Scheduler' },
         { type: 'doc', id: 'architecture/autonomous-agents', label: 'Autonomous Agents' },
         {

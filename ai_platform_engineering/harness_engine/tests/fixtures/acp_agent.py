@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,18 @@ def main() -> None:
                 }
             )
         elif method == "session/prompt":
+            if params["prompt"][0]["text"] == "spawn-child":
+                child = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-c",
+                        'import time; from pathlib import Path; time.sleep(0.6); Path("orphan-write").touch()',
+                    ],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                Path("child.pid").write_text(str(child.pid))
             if params["prompt"][0]["text"] == "wait":
                 waiting_id = rpc["id"]
                 continue

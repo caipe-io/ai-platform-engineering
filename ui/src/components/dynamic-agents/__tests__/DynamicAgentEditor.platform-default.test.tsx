@@ -96,8 +96,9 @@ const editAgent = {
   updated_at: "2026-04-29T00:00:00Z",
 };
 
-function mockFetch(platformDefaultId: string | null, includeHarnesses = false) {
-  const fetchMock = jest.fn(async (url: RequestInfo | URL) => {
+function mockFetch(platformDefaultId: string | null, includeHarnesses: boolean | "claude-acp" = false) {
+  const fetchMock = jest.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
+    void _init;
     const u = typeof url === "string" ? url : url.toString();
     if (u.includes("/api/dynamic-agents/models")) {
       return jsonResponse({
@@ -125,8 +126,8 @@ function mockFetch(platformDefaultId: string | null, includeHarnesses = false) {
         data: {
           catalog_revision: "catalog-1",
           harnesses: includeHarnesses ? [{
-            id: "claude_agent_sdk",
-            display_name: "Claude Agent SDK",
+            id: includeHarnesses === "claude-acp" ? "claude_code_acp" : "claude_agent_sdk",
+            display_name: includeHarnesses === "claude-acp" ? "Claude (ACP)" : "Claude Agent SDK",
             adapter_version: "1.0.0",
             contract_version: 1,
             execution_mode: "in_process",
@@ -134,7 +135,7 @@ function mockFetch(platformDefaultId: string | null, includeHarnesses = false) {
             certification: "experimental",
             profiles: [{
               id: "safe",
-              harness_id: "claude_agent_sdk",
+              harness_id: includeHarnesses === "claude-acp" ? "claude_code_acp" : "claude_agent_sdk",
               display_name: "Safe",
               description: "",
               available: true,
@@ -146,7 +147,7 @@ function mockFetch(platformDefaultId: string | null, includeHarnesses = false) {
               },
             },
             ui_schema: {},
-            capabilities: {},
+            capabilities: includeHarnesses === "claude-acp" ? { "tools.broker": { level: "emulated", constraints: { approval_policy: ["never"] } } } : {},
           }] : [],
         },
       });
@@ -321,4 +322,25 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
       screen.getByText(/Configure tools, knowledge, and skills for LangChain Deep/),
     ).toBeInTheDocument();
   });
+});
+
+
+it("prepares a Claude ACP blueprint with its profile and caller-authorized tool policy", async () => {
+  const fetchMock = mockFetch(null, "claude-acp");
+  render(<DynamicAgentEditor agent={editAgent} onCancel={jest.fn()} onSave={jest.fn()} />);
+  await flushAsync();
+  fireEvent.change(screen.getByLabelText("Execution harness"), { target: { value: "claude_code_acp" } });
+  expect(screen.getByRole("region", { name: "Claude configuration" })).toHaveTextContent("Responses continue when you refresh");
+  expect(screen.getByLabelText("Operator profile")).toHaveValue("safe");
+  fireEvent.click(screen.getByText("Access and authentication"));
+  expect(screen.getByText(/Tool access is checked for every call/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Tools/ })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("checkbox", { name: /existing conversations keep/i }));
+  fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+  await flushAsync();
+  const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/harness-engine/agent-drafts/validate"));
+  expect(call).toBeDefined();
+  const payload = JSON.parse(String(call?.[1]?.body));
+  expect(payload.blueprint).toMatchObject({ harness: { id: "claude_code_acp", profile_id: "safe" },
+    model: { policy: "harness_default" }, tools: { approval_policy: "never" }, thread: { persistence: "durable" } });
 });

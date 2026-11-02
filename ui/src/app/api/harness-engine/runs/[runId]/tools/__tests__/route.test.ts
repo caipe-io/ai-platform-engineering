@@ -111,3 +111,13 @@ it("includes legacy MCP servers without an enabled field", async () => {
   expect((await POST(request({ operation: "list" }), params)).status).toBe(200);
   expect(find).toHaveBeenCalledWith({ enabled: { $ne: false } });
 });
+
+
+it("authorizes Claude ACP tools through the same caller-scoped AgentGateway path", async () => {
+  authorize.mockResolvedValue({ auth: { subject: "test-user", authenticatedUser: { session } }, config: {},
+    response: NextResponse.json({ success: true, data: { ...run, harness_id: "claude_code_acp" } }) });
+  const response = await POST(request({ operation: "call", tool_id: "example.lookup", arguments: { query: "example" } }), params);
+  expect(response.status).toBe(200);
+  expect(call).toHaveBeenCalledWith(expect.objectContaining({ agentId: "agent-example", session,
+    server: expect.objectContaining({ source: "agentgateway" }) }));
+});

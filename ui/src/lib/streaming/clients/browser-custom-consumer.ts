@@ -140,6 +140,8 @@ export class CustomStreamAdapter implements StreamAdapter {
       }
 
       this.persistentRun = Boolean(response.headers.get("X-Harness-Run-ID"));
+      const harnessId = response.headers.get("X-Harness-ID");
+      if (this.persistentRun && harnessId) callbacks.onRuntime?.(harnessId);
       for await (const raw of recoverableStream(response, "custom", this.abortController.signal)) {
         this._emitRawEvent(raw, callbacks);
         const terminal = this._dispatchEvent(raw, callbacks);

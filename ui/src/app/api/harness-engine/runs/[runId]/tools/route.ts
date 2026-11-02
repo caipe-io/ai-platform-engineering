@@ -13,7 +13,7 @@ import type { AgentBlueprint } from "@/types/harness-engine";
 export const runtime = "nodejs";
 export const maxDuration = 960;
 
-/** SDK tool calls retain the user's identity and the real agent's current policy. */
+/** Claude tool calls retain the user's identity and the real agent's current policy. */
 export const POST = withErrorHandler(async (
   request: NextRequest,
   context: { params: Promise<{ runId: string }> },
@@ -27,20 +27,20 @@ export const POST = withErrorHandler(async (
   if (!body || !["list", "call"].includes(body.operation)) throw new ApiError("Expected list or call", 400);
   const run = (await access.response.json()).data;
   if (run.status !== "running" || run.cancellation_requested ||
-      !["claude_agent_sdk", "claude_agent_sdk_remote"].includes(run.harness_id)) {
-    throw new ApiError("Tools require an active SDK run", 409);
+      !["claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp"].includes(run.harness_id)) {
+    throw new ApiError("Tools require an active Claude run", 409);
   }
   const saved = await proxyHarnessEngine(access.config, access.auth,
     `/api/v1/agents/${encodeURIComponent(run.agent_id)}?version=${run.agent_version}`);
   if (!saved.ok) throw new ApiError("Pinned execution configuration is unavailable", 503);
   const blueprint = (await saved.json()).data?.version?.blueprint as AgentBlueprint | undefined;
   if (!blueprint || blueprint.id !== run.agent_id || blueprint.tools?.approval_policy !== "never") {
-    throw new ApiError("SDK tools require an explicit policy without per-call approvals", 409);
+    throw new ApiError("Claude tools require an explicit policy without per-call approvals", 409);
   }
   const agent = await (await getCollection<DynamicAgentConfig>("dynamic_agents")).findOne({ _id: run.agent_id });
   if (!agent || agent.enabled === false) throw new ApiError("Agent is disabled or unavailable", 403);
   const gateway = process.env.AGENT_GATEWAY_URL?.trim();
-  if (!gateway) throw new ApiError("AgentGateway is required for SDK tools", 503);
+  if (!gateway) throw new ApiError("AgentGateway is required for Claude tools", 503);
   const servers = await (await getCollection<MCPServerConfig>("mcp_servers")).find({ enabled: { $ne: false } }).toArray();
   const bindings = blueprint.tools.bindings.map(binding => {
     const matches = servers.filter(server => binding.tool_id.startsWith(`${server._id}.`));

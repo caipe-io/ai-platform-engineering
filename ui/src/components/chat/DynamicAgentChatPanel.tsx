@@ -5,6 +5,7 @@ import { useComposerDraft } from "@/hooks/use-composer-draft";
 import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
 import { ContextUsageIndicator } from "@/components/chat/ContextUsageIndicator";
+import { ClaudeSessionPanel } from "@/components/chat/ClaudeSessionPanel";
 import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
 import { ConversationRuntimeMigration } from "@/components/chat/ConversationRuntimeMigration";
 import { ConversationViewers } from "@/components/chat/ConversationViewers";
@@ -213,6 +214,8 @@ export function ChatPanel({
   );
 
   const [input, setInput] = useState("");
+  const [observedRuntime, setObservedRuntime] = useState<{ conversationId: string; harnessId: string } | null>(null);
+
   const [feedbackFormOpen, setFeedbackFormOpen] = useState(false);
   const [feedbackChatContext, setFeedbackChatContext] = useState<string>();
   const showFeedbackPrompt = Boolean(feedbackPrompt && getConfig("reportProblemEnabled"));
@@ -1081,6 +1084,7 @@ export function ChatPanel({
     };
 
     return {
+    onRuntime(harnessId) { setObservedRuntime({ conversationId: convId, harnessId }); },
     onContent(text, namespace) {
       loopState.accumulatedText += text;
       loopState.rawStreamContent += text;
@@ -1334,6 +1338,9 @@ export function ChatPanel({
       const response = await fetchChatRunStatus(agentId, activeConversationId, recoveryController.signal);
       if (!response.ok || disposed) return;
       const { data } = await response.json();
+      if (data?.runtime === "harness_engine" && typeof data.harness_id === "string") {
+        setObservedRuntime({ conversationId: activeConversationId, harnessId: data.harness_id });
+      }
       if (data?.runtime !== "harness_engine" || !data.run_id || data.status === "waiting_for_input") return;
       // Maintenance runs (handoff/rewind) have no chat turn identity. They must
       // never replace an unfinished answer or confirm that earlier turn.
@@ -2380,6 +2387,13 @@ export function ChatPanel({
         !agent?.presentation?.app && getStorageMode() === "mongodb" && (
           <ConversationRuntimeMigration key={`${agentId}:${conversationId}`} agentId={agentId} conversationId={conversationId}
             busy={isConversationStreaming(conversationId) || Boolean(migrationActivity)} />
+        )}
+
+      {!agent?.presentation?.app && (observedRuntime?.conversationId === activeConversationId
+        ? observedRuntime.harnessId === "claude_code_acp"
+        : !conversation?.messages.length && agent?.execution_harness_id === "claude_code_acp") && (
+          <ClaudeSessionPanel activity={externalActivity?.state ?? (isThisConversationStreaming ? "running" : "idle")}
+            readOnly={panelReadOnly || Boolean(readOnlySubscription)} />
         )}
 
       {/* Messages Area */}

@@ -8,6 +8,7 @@ describe.each([
 ] as const)('%s refresh recovery', (_protocol, Adapter, terminal) => {
   it.each([true, false])('uses server run admission (admitted=%s)', async admitted => {
     const adapter = new Adapter();
+    const onRuntime = jest.fn();
     const response = Promise.withResolvers<Response>();
     const received = Promise.withResolvers<void>();
     let controller: ReadableStreamDefaultController<Uint8Array>;
@@ -17,12 +18,15 @@ describe.each([
     try {
       const stream = adapter.streamMessage({ conversationId: 'example-chat', agentId: 'example-agent', message: 'Example' }, {
         onRawEvent: () => received.resolve(),
+        onRuntime,
       });
       expect(adapter.canRecoverOnRefresh).toBe(false);
-      response.resolve(new Response(body, { headers: admitted ? { 'X-Harness-Run-ID': 'example-run' } : {} }));
+      response.resolve(new Response(body, { headers: admitted ? { 'X-Harness-Run-ID': 'example-run', 'X-Harness-ID': 'claude_code_acp' } : {} }));
       controller!.enqueue(encoder.encode('event: heartbeat\ndata: {}\n\n'));
       await received.promise;
       expect(adapter.canRecoverOnRefresh).toBe(admitted);
+      if (admitted) expect(onRuntime).toHaveBeenCalledWith("claude_code_acp");
+      else expect(onRuntime).not.toHaveBeenCalled();
       controller!.enqueue(encoder.encode(`event: ${terminal}\ndata: {"outcome":"success"}\n\n`));
       controller!.close();
       await stream;

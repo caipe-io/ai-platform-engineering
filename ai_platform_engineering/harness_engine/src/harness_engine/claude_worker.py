@@ -19,6 +19,7 @@ from harness_engine.acp_events import EXTENSION, event_notification
 from harness_engine.adapters.claude_acp import ClaudeACPAdapter
 from harness_engine.adapters.claude_sdk import ClaudeSDKAdapter
 from harness_engine.brokers import DefaultPromptCompiler
+from harness_engine.claude_acp_tools import ClaudeACPToolBridge
 from harness_engine.config import Settings
 from harness_engine.coordinator import RunCoordinator
 from harness_engine.models import TERMINAL_RUN_STATUSES, ExecutionIdentity, RunContext, RunRecord
@@ -49,8 +50,11 @@ def create_worker_app(
         if config.storage_backend == "mongodb"
         else InMemoryRunRepository()
     )
+    tool_bridge = ClaudeACPToolBridge(config.port)
     local = adapter or (
-        ClaudeACPAdapter(worker_config) if config.claude_acp_command else ClaudeSDKAdapter(worker_config)
+        ClaudeACPAdapter(worker_config, tool_bridge=tool_bridge)
+        if config.claude_acp_command
+        else ClaudeSDKAdapter(worker_config)
     )
     registry = HarnessRegistry([local])
     sessions = CAIPEAgentSessionManager(repo, registry, config.internal_token.encode())
@@ -67,6 +71,7 @@ def create_worker_app(
 
     app = FastAPI(title="Claude SDK worker", lifespan=lifespan)
     app.state.repository = repo
+    app.mount("/internal/claude-tools", tool_bridge)
 
     async def caller(
         authorization: Annotated[str | None, Header()] = None,

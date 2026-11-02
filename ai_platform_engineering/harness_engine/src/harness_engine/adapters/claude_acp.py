@@ -6,16 +6,18 @@ import asyncio
 import hashlib
 import os
 from collections.abc import AsyncIterator
-from contextlib import suppress
+from contextlib import aclosing, asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
-from acp import RequestError, spawn_agent_process
-from acp.schema import ClientCapabilities, RequestPermissionResponse, TextContentBlock
+from acp import RequestError
+from acp.schema import ClientCapabilities, HttpMcpServer, RequestPermissionResponse, TextContentBlock
 
 from harness_engine.acp_events import canonical_update
 from harness_engine.adapters.base import ExecutionUnconfirmedError
 from harness_engine.adapters.claude_sdk import ClaudeHarnessOptions, ClaudeSDKAdapter
+from harness_engine.claude_acp_process import managed_acp_process
+from harness_engine.claude_acp_tools import ClaudeACPToolBridge
 from harness_engine.config import Settings
 from harness_engine.models import (
     AdapterEvaluation,
@@ -53,8 +55,9 @@ class ACPEventClient:
 
 
 class ClaudeACPAdapter(ClaudeSDKAdapter):
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, tool_bridge: ClaudeACPToolBridge | None = None) -> None:
         super().__init__(settings)
+        self._tool_bridge = tool_bridge
         self._command = settings.claude_acp_command
         self._tools = settings.claude_acp_tools
 
@@ -66,7 +69,13 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
                 "display_name": "Claude Code ACP worker",
                 "capabilities": {
                     **descriptor.capabilities,
-                    "tools.broker": CapabilityResult(level=CapabilityLevel.UNAVAILABLE),
+                    "tools.broker": CapabilityResult(
+                        level=CapabilityLevel.EMULATED
+                        if self._tool_bridge and self._tool_broker.url
+                        else CapabilityLevel.UNAVAILABLE,
+                        explanation="Selected MCP tools retain caller and agent authorization through CAIPE",
+                        constraints={"approval_policy": ["never"]},
+                    ),
                     "session.cross_replica": CapabilityResult(
                         level=CapabilityLevel.UNAVAILABLE,
                         explanation="Provider transcripts require the worker's persistent workspace volume",
@@ -77,19 +86,37 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
 
     def evaluate(self, blueprint: AgentBlueprint) -> AdapterEvaluation:
         result = super().evaluate(blueprint)
-        if blueprint.tools.bindings:
+        if blueprint.tools.bindings and self._tool_bridge is None:
             result.issues.append(
                 ValidationIssue(
                     path="tools.bindings",
                     capability="tools.broker",
                     level=CapabilityLevel.UNAVAILABLE,
                     severity="error",
-                    message="The experimental Claude Code ACP worker does not expose the CAIPE MCP broker",
+                    message="The Claude ACP worker tool bridge is not configured",
                 )
             )
         return result
 
+    @asynccontextmanager
+    async def _bind_tools(self, context: RunContext) -> AsyncIterator[tuple[list[HttpMcpServer], list[str]]]:
+        if self._tool_bridge is None:
+            if context.blueprint.tools.bindings:
+                raise PermissionError("The Claude ACP worker tool bridge is not configured")
+            yield [], []
+        else:
+            async with self._tool_bridge.bind(context, self._tool_broker) as tools:
+                yield tools
+
     async def stream(self, context: RunContext) -> AsyncIterator[CanonicalEventDraft]:
+        async with self._bind_tools(context) as (mcp_servers, tool_names):
+            async with aclosing(self._stream(context, mcp_servers, tool_names)) as events:
+                async for event in events:
+                    yield event
+
+    async def _stream(
+        self, context: RunContext, mcp_servers: list[HttpMcpServer], tool_names: list[str]
+    ) -> AsyncIterator[CanonicalEventDraft]:
         profile = self._profile(context.binding.profile_id)
         options = ClaudeHarnessOptions.model_validate(context.blueprint.harness.options)
         workspace = Path(profile.cwd) / hashlib.sha256(context.binding.binding_id.encode()).hexdigest()
@@ -116,12 +143,21 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
         env = {key: os.environ[key] for key in provider_keys if key in os.environ}
         env["CLAUDE_CONFIG_DIR"] = str(workspace / ".claude")
         client = ACPEventClient()
-        async with spawn_agent_process(
-            client, *self._command, env=env, cwd=workspace, transport_kwargs={"stderr": asyncio.subprocess.DEVNULL}
-        ) as (connection, _process):
+        async with managed_acp_process(
+            client,
+            self._command,
+            env=env,
+            cwd=workspace,
+            run_id=context.turn.run_id,
+        ) as connection:
             initialized = await connection.initialize(protocol_version=1, client_capabilities=ClientCapabilities())
             if initialized.protocol_version != 1:
                 raise ValueError("The configured agent did not negotiate ACP v1")
+            if mcp_servers and (
+                not initialized.agent_capabilities.mcp_capabilities
+                or not initialized.agent_capabilities.mcp_capabilities.http
+            ):
+                raise ValueError("The configured ACP agent does not support HTTP MCP servers")
             # These are upstream Claude ACP extension options, never agent-draft commands.
             meta = {
                 "systemPrompt": context.prompt.system,
@@ -131,7 +167,7 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
                         "maxTurns": options.max_turns,
                         "settingSources": [],
                         "tools": self._tools,
-                        "allowedTools": self._tools,
+                        "allowedTools": self._tools + tool_names,
                         "allowDangerouslySkipPermissions": False,
                     }
                 },
@@ -140,9 +176,11 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
             if session_id:
                 if not initialized.agent_capabilities or not initialized.agent_capabilities.load_session:
                     raise ValueError("The configured ACP agent cannot reload persistent sessions")
-                await connection.load_session(cwd=str(workspace), session_id=session_id, mcp_servers=[], **meta)
+                await connection.load_session(
+                    cwd=str(workspace), session_id=session_id, mcp_servers=mcp_servers, **meta
+                )
             else:
-                session = await connection.new_session(cwd=str(workspace), mcp_servers=[], **meta)
+                session = await connection.new_session(cwd=str(workspace), mcp_servers=mcp_servers, **meta)
                 session_id = session.session_id
                 yield CanonicalEventDraft(event_type="session.updated", data={"provider_session_id": session_id})
             if profile.permission_mode == "plan":
@@ -195,3 +233,12 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
                         raise ExecutionUnconfirmedError(
                             "ACP cancellation response was lost; retain the session reservation"
                         ) from None
+                client.replaying = True
+                capabilities = (
+                    initialized.agent_capabilities.session_capabilities if initialized.agent_capabilities else None
+                )
+                if capabilities and capabilities.close is not None:
+                    try:
+                        await asyncio.wait_for(connection.close_session(session_id=session_id), timeout=10)
+                    except (TimeoutError, ConnectionError, RequestError):
+                        raise ExecutionUnconfirmedError("ACP session closure could not be confirmed") from None

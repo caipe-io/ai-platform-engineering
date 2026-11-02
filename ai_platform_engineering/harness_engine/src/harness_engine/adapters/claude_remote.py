@@ -43,13 +43,21 @@ class RemoteAttempt:
 
 
 class RemoteClaudeSDKAdapter:
-    def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None) -> None:
-        self._profiles = settings.claude_worker_profiles()
+    def __init__(
+        self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None, *, claude_acp: bool = False
+    ) -> None:
+        self._profiles = {
+            key: value
+            for key, value in settings.claude_worker_profiles().items()
+            if not claude_acp or value.runtime == "claude_code_acp"
+        }
+        self._harness_id = "claude_code_acp" if claude_acp else "claude_agent_sdk_remote"
+        self._claude_acp = claude_acp
         self._template = ClaudeSDKAdapter(settings.model_copy(update={"storage_backend": "memory"}))
         self._transport = transport
         self._active: dict[str, RemoteAttempt] = {}
         self.session_manager = EventAssignedProviderSessionManager(
-            "claude_agent_sdk_remote", checkpoint_strategy="adapter_store"
+            self._harness_id, checkpoint_strategy="adapter_store"
         )
 
     @property
@@ -57,14 +65,14 @@ class RemoteClaudeSDKAdapter:
         native = CapabilityResult(level=CapabilityLevel.NATIVE)
         return self._template.descriptor.model_copy(
             update={
-                "id": "claude_agent_sdk_remote",
-                "display_name": "Claude Agent SDK (Remote worker)",
+                "id": self._harness_id,
+                "display_name": "Claude (ACP)" if self._claude_acp else "Claude Agent SDK (Remote worker)",
                 "execution_mode": ExecutionMode.REMOTE_WORKER,
                 "availability": "available" if self._profiles else "misconfigured",
                 "profiles": [
                     HarnessProfile(
                         id=alias,
-                        harness_id="claude_agent_sdk_remote",
+                        harness_id=self._harness_id,
                         display_name=alias,
                         description=profile.description,
                     )
@@ -93,16 +101,6 @@ class RemoteClaudeSDKAdapter:
     def evaluate(self, blueprint: AgentBlueprint) -> AdapterEvaluation:
         result = self._template.evaluate(blueprint)
         profile = self._profiles.get(blueprint.harness.profile_id)
-        if profile is not None and profile.runtime == "claude_code_acp" and blueprint.tools.bindings:
-            result.issues.append(
-                ValidationIssue(
-                    path="tools.bindings",
-                    capability="tools.broker",
-                    level=CapabilityLevel.UNAVAILABLE,
-                    severity="error",
-                    message="The experimental Claude Code ACP worker does not expose the CAIPE MCP broker",
-                )
-            )
         if blueprint.tools.bindings and profile is not None and not profile.tools_enabled:
             result.issues.append(
                 ValidationIssue(

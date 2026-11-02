@@ -9,6 +9,7 @@ dependencies = [
     "claude-agent-sdk==0.2.139",
     "fastapi==0.141.1",
     "httpx2==2.12.0",
+    "mcp==1.30.0",
     "pydantic==2.13.4",
     "pydantic-settings==2.15.0",
     "pymongo==4.19.0",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -258,3 +259,19 @@ async def test_network_worker_forwards_original_tool_identity(settings: Settings
     assert received == ["caller-test-token"]
     assert events[-1].status == "completed"
     assert "caller-test-token" not in "".join(e.model_dump_json() for e in events)
+
+
+async def test_completed_turn_drains_provider_children_before_releasing_its_session(settings: Settings) -> None:
+    ctx = context()
+    ctx.blueprint.tools.bindings = []
+    ctx.turn.message = "spawn-child"
+    events = [event async for event in process_adapter(settings).execute(ctx)]
+    assert events[-1].status == "completed"
+    directory = (
+        Path(settings.claude_sdk_profiles()["safe"].cwd) / hashlib.sha256(ctx.binding.binding_id.encode()).hexdigest()
+    )
+    child_pid = int((directory / "child.pid").read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
+    await asyncio.sleep(0.7)
+    assert not (directory / "orphan-write").exists()

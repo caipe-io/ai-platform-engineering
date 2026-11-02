@@ -39,6 +39,12 @@ const HARNESS_PRESENTATIONS: Record<string, HarnessPresentation> = {
       "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300",
     dotClassName: "bg-violet-500",
   },
+  claude_code_acp: {
+    id: "claude_code_acp", label: "Claude (ACP)", shortLabel: "Claude ACP",
+    logoSrc: "/provider-logos/claude.svg",
+    badgeClassName: "border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300",
+    dotClassName: "bg-orange-500",
+  },
   claude_agent_sdk_remote: {
     id: "claude_agent_sdk_remote",
     label: "Claude Agent SDK (Remote worker)",

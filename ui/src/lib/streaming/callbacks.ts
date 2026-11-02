@@ -67,6 +67,9 @@ export interface StreamParams {
 // ═══════════════════════════════════════════════════════════════
 
 export interface StreamCallbacks {
+  /** Server-confirmed runtime for an admitted, pinned Engine conversation. */
+  onRuntime?(harnessId: string): void;
+
   /** Streaming text content arrived */
   onContent?(text: string, namespace: string[]): void;
 

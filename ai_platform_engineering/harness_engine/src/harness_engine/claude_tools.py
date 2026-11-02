@@ -25,8 +25,13 @@ class ClaudeToolBroker:
 
     @asynccontextmanager
     async def bind(self, context: RunContext) -> AsyncIterator[tuple[dict[str, Any], dict[str, str]]]:
+        async with self.bind_tools(context) as (tools, names):
+            yield ({"caipe": create_sdk_mcp_server(name="caipe", version="1", tools=tools)} if tools else {}), names
+
+    @asynccontextmanager
+    async def bind_tools(self, context: RunContext) -> AsyncIterator[tuple[list[SdkMcpTool[Any]], dict[str, str]]]:
         if not context.blueprint.tools.bindings:
-            yield {}, {}
+            yield [], {}
             return
         if not self.url or context.identity is None or context.identity.subject != context.binding.owner_subject:
             raise PermissionError("Selected tools require the CAIPE broker and delegated caller identity")
@@ -102,7 +107,7 @@ class ClaudeToolBroker:
                     )
                 )
             try:
-                yield {"caipe": create_sdk_mcp_server(name="caipe", version="1", tools=tools)}, names
+                yield tools, names
             finally:
                 if pending:
                     outcomes = await asyncio.gather(*pending, return_exceptions=True)

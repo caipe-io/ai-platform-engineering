@@ -108,6 +108,7 @@ export async function getHarnessGatewayStatus(body: Record<string, unknown>, aut
   if (saved instanceof NextResponse) return saved;
   return NextResponse.json({ success: true, data: {
     runtime: "harness_engine",
+    harness_id: saved.harness_id,
     status: saved.active_run ? "running" : saved.pending_interrupt ? "waiting_for_input" : "idle",
     run_id: saved.active_run?.run_id ?? saved.pending_interrupt?.run_id ?? saved.last_run?.run_id ?? null,
     last_sequence: saved.active_run?.last_sequence ?? saved.last_run?.last_sequence ?? 0,
@@ -132,7 +133,7 @@ export async function getHarnessConversationStatus(
   if (saved instanceof NextResponse) return saved;
   const run = saved.active_run ?? saved.last_run;
   return NextResponse.json({ success: true, data: {
-    runtime: "harness_engine", status: saved.active_run ? "running" : saved.pending_interrupt ? "waiting_for_input" : "idle",
+    runtime: "harness_engine", harness_id: saved.harness_id, status: saved.active_run ? "running" : saved.pending_interrupt ? "waiting_for_input" : "idle",
     run_id: run?.run_id ?? null, run_status: run?.status, turn_id: run?.turn_id ?? null,
     last_sequence: run?.last_sequence ?? 0, is_run_owner: run?.owner_subject === auth.subject,
   } });
@@ -299,7 +300,7 @@ export async function startHarnessGatewayRun(
         Object.keys(override.model).some(key => key !== "reasoning_effort"))))) {
     return NextResponse.json({ error: "Unsupported per-turn execution override" }, { status: 400 });
   }
-  const usesCallerIdentity = [DEFAULT_HARNESS_ID, "claude_agent_sdk", "claude_agent_sdk_remote"].includes(harnessId);
+  const usesCallerIdentity = [DEFAULT_HARNESS_ID, "claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp"].includes(harnessId);
   const callerHeaders: Record<string, string> = usesCallerIdentity && auth.bearerToken ? {
     "X-Harness-Caller-Token": auth.bearerToken,
     "X-Harness-Caller-Type": auth.isServiceAccount ? "service_account" : "user",

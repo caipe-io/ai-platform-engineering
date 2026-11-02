@@ -78,6 +78,7 @@ def create_app(
         ),
         ClaudeSDKAdapter(resolved_settings),
         RemoteClaudeSDKAdapter(resolved_settings),
+        RemoteClaudeSDKAdapter(resolved_settings, claude_acp=True),
     ]
     if adapters is None and resolved_settings.deep_agents_enabled:
         resolved_adapters.append(DeepAgentsAdapter())
@@ -386,7 +387,7 @@ def create_app(
                         raise HTTPException(409, f"Harness does not support {capability}")
                 if descriptor.id == "dynamic_agents" and identity is None:
                     raise HTTPException(401, "Deep Agents requires delegated caller credentials")
-                if descriptor.id in {"claude_agent_sdk", "claude_agent_sdk_remote"} and version.blueprint.tools.bindings and identity is None:
+                if descriptor.id in {"claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp"} and version.blueprint.tools.bindings and identity is None:
                     raise HTTPException(401, "SDK MCP tools require delegated caller credentials")
             run = await coordinator.start_run(body, subject, traceparent, identity)
         except AgentNotRunnableError as exc:

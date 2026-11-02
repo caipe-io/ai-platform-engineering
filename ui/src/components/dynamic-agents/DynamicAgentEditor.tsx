@@ -12,6 +12,7 @@ import {
 } from "@/components/ai-review";
 import { TeamOwnershipFields } from "@/components/rbac/TeamOwnershipFields";
 import { HarnessFeaturePanels } from "@/components/harness-engine/HarnessFeaturePanels";
+import { ClaudeACPSettings } from "@/components/harness-engine/ClaudeACPSettings";
 import { harnessBuilderSections, supportsHarnessCapability, validateHarnessOptionsSchema } from "@/lib/harness-builder";
 import { HarnessOptionsForm } from "@/components/harness-engine/HarnessOptionsForm";
 import { UnsavedChangesDialog } from "@/components/shared/UnsavedChangesDialog";
@@ -1857,7 +1858,9 @@ export function DynamicAgentEditor({
                         </p>
                       </div>
                     )}
-                    {isDeepAgents ? (
+                    {harnessId === "claude_code_acp" && selectedHarness ? (
+                      <ClaudeACPSettings descriptor={selectedHarness} profileId={harnessProfileId} />
+                    ) : isDeepAgents ? (
                       <p className="text-xs text-muted-foreground">
                         Configure tools, knowledge, and skills for LangChain Deep
                         Agents. Subagents, approvals, and middleware are under Advanced.

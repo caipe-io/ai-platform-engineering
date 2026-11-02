@@ -324,7 +324,7 @@ sequenceDiagram
 - The parent uses ACP v1 at `POST /acp`. Match the token and local profile ID
   in `HARNESS_ENGINE_CLAUDE_WORKER_PROFILES_JSON`. Only operators select
   endpoints, commands, model credentials and workspace roots.
-- Set `tools_enabled: true` only for an SDK worker with its broker configured.
+- Set `tools_enabled: true` only for a Claude worker with its broker configured.
   Use private networking or HTTPS for service and delegated caller credentials.
 - SDK transcripts, admission records and event journals use the configured
   MongoDB database with a `_claude_worker` suffix. Replicas share this database
@@ -369,6 +369,12 @@ not the proposed Streamable HTTP transport.** It requires the negotiated
   workers before the Engine; the new Engine requires ACP and does not silently
   fall back to legacy execution.
 
+#### Claude (ACP) in Agent Builder and chat
+
+Select **Claude (ACP)** and an operator profile to use the native builder,
+conversation UI, tool timeline and refresh recovery. The session panel explains
+shared-viewer access. See [authentication and authorization](../../docs/docs/architecture/claude-acp.md).
+
 #### Experimental Claude Code ACP worker
 
 The [upstream Claude ACP adapter](https://github.com/agentclientprotocol/claude-agent-acp)
@@ -380,7 +386,8 @@ inside the remote worker; it does not introduce another browser session manager.
   Python ACP SDK for the local stdio connection.
 - Set `HARNESS_ENGINE_CLAUDE_ACP_COMMAND` to a JSON argv array; the image already
   supplies its installed executable. Set the parent's worker profile
-  `runtime` to `claude_code_acp` and `tools_enabled` to `false`.
+  `runtime` to `claude_code_acp`. Set `tools_enabled: true` when the worker
+  has its CAIPE tool broker configured.
 - Keep the same MongoDB settings and mount a persistent volume at the profile's
   workspace root (for example `/workspace`). Each binding has a separate
   directory and `CLAUDE_CONFIG_DIR`; `session/load` reloads the provider transcript
@@ -389,8 +396,9 @@ inside the remote worker; it does not introduce another browser session manager.
   continuation is not certified for this backend.
 - `HARNESS_ENGINE_CLAUDE_ACP_TOOLS` is an operator-owned JSON allowlist, empty by
   default. Settings discovery and permission bypass are disabled; interactive
-  permission requests are declined. The CAIPE MCP broker is not yet supported
-  by this experimental backend; selected MCP bindings are rejected.
+  permission requests are declined. Selected MCP bindings use a run-scoped
+  loopback MCP bridge to the existing caller-authorized CAIPE broker and
+  AgentGateway. User and service credentials are not passed to the Claude process.
 - No OpenShell or per-session Kubernetes pod allocation is implied. Run a
   non-root worker with only its own credentials and an isolated workspace.
   Directories alone do not provide operating-system sandboxing.

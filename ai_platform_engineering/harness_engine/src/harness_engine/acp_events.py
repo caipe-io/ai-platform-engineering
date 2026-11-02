@@ -61,10 +61,11 @@ def canonical_update(update: dict[str, Any]) -> CanonicalEventDraft | None:
         )
     if kind == "tool_call_update" and update.get("status") in {"completed", "failed"}:
         return CanonicalEventDraft(
-            event_type="tool.completed" if update["status"] == "completed" else "tool.failed",
+            event_type="tool.completed",
             data={
                 "tool_call_id": update["toolCallId"],
                 "result": update.get("rawOutput", update.get("content", [])),
+                **({"error": "Claude tool failed"} if update["status"] == "failed" else {}),
             },
         )
     return None
