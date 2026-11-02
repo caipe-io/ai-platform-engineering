@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
+import pytest
+from botocore.exceptions import ClientError, ReadTimeoutError
 from fastapi.testclient import TestClient
 
+from harness_engine.config import Settings
 from harness_engine.main import create_app
 from harness_engine.models import AgentBlueprint
-from harness_engine.provisioning import AgentCoreHarnessProvisioner
+from harness_engine.provisioning import AgentCoreHarnessProvisioner, ProviderProvisioningError
 from harness_engine.repository import InMemoryRunRepository
 from tests.conftest import FakeHarnessAdapter, auth_headers, blueprint
 
@@ -45,9 +49,7 @@ class FakeAgentCoreControlClient:
         return {"harness": {**self.harness, "status": "DELETING"}}
 
 
-def per_agent_settings():
-    from harness_engine.config import Settings
-
+def per_agent_settings() -> Settings:
     return Settings(
         internal_token="test-internal-token-value",
         storage_backend="memory",
@@ -153,3 +155,79 @@ def test_agent_api_provisions_and_deletes_the_server_owned_harness() -> None:
     assert control_client.delete_calls[0]["harnessId"] == (
         "caipe_example-AbCdEf1234"
     )
+
+
+class RetiredTokenClient(FakeAgentCoreControlClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.retired: set[str] = set()
+        self.active: dict[str, dict[str, str]] = {}
+
+    def create_harness(self, **kwargs: object) -> dict[str, Any]:
+        self.create_calls.append(kwargs)
+        token = str(kwargs["clientToken"])
+        if token in self.retired:
+            raise ClientError({"Error": {"Code": "ConflictException", "Message":
+                f"Resource previously created with clientToken {token} has since been deleted."
+            }}, "CreateHarness")
+        if token not in self.active:
+            self.active[token] = {**self.harness, "harnessId": f"example-{len(self.retired):010d}"}
+            self.active[token]["arn"] = f"arn:aws:bedrock-agentcore:us-east-2:111122223333:harness/{self.active[token]['harnessId']}"
+        return {"harness": self.active[token].copy()}
+
+    def delete_harness(self, **kwargs: object) -> dict[str, Any]:
+        self.delete_calls.append(kwargs)
+        for token, harness in list(self.active.items()):
+            if harness["harnessId"] == kwargs["harnessId"]:
+                self.retired.add(token)
+                del self.active[token]
+        return {"harness": {"status": "DELETING"}}
+
+
+async def test_deleted_creation_generations_converge_across_replicas() -> None:
+    client = RetiredTokenClient()
+    settings = per_agent_settings()
+    first = AgentCoreHarnessProvisioner(settings, control_clients={"us-east-2": client})
+    draft = AgentBlueprint.model_validate(blueprint())
+    original, _ = await first.ensure(draft, None)
+    assert original is not None
+    await first.delete(original)
+    second = AgentCoreHarnessProvisioner(settings, control_clients={"us-east-2": client})
+    resources = await asyncio.gather(first.ensure(draft, None), second.ensure(draft, None))
+    assert resources[0][0] is not None and resources[1][0] is not None
+    assert resources[0][0].arn == resources[1][0].arn != original.arn
+    assert len(client.active) == 1
+    replacement_tokens = {str(call["clientToken"]) for call in client.create_calls if call["clientToken"] not in client.retired}
+    assert len(replacement_tokens) == 1
+
+
+@pytest.mark.parametrize("failure", [
+    ClientError({"Error": {"Code": "ConflictException", "Message": "Another operation is in progress"}}, "CreateHarness"),
+    ReadTimeoutError(endpoint_url="https://example.test"),
+])
+async def test_unknown_creation_outcomes_do_not_rotate_tokens(failure: Exception) -> None:
+    class FailingClient(FakeAgentCoreControlClient):
+        def create_harness(self, **kwargs: object) -> dict[str, Any]:
+            self.create_calls.append(kwargs)
+            raise failure
+
+    client = FailingClient()
+    provisioner = AgentCoreHarnessProvisioner(per_agent_settings(), control_clients={"us-east-2": client})
+    with pytest.raises((ProviderProvisioningError, ReadTimeoutError)):
+        await provisioner.ensure(AgentBlueprint.model_validate(blueprint()), None)
+    assert len(client.create_calls) == 1
+    assert not client.delete_calls
+
+
+async def test_retired_token_walk_is_bounded() -> None:
+    class AlwaysRetiredClient(RetiredTokenClient):
+        def create_harness(self, **kwargs: object) -> dict[str, Any]:
+            self.retired.add(str(kwargs["clientToken"]))
+            return super().create_harness(**kwargs)
+
+    client = AlwaysRetiredClient()
+    provisioner = AgentCoreHarnessProvisioner(per_agent_settings(), control_clients={"us-east-2": client})
+    with pytest.raises(ProviderProvisioningError, match="Too many retired"):
+        await asyncio.wait_for(provisioner.ensure(AgentBlueprint.model_validate(blueprint()), None), timeout=2)
+    assert 1 < len(client.create_calls) <= 32
+    assert len({call["clientToken"] for call in client.create_calls}) == len(client.create_calls)

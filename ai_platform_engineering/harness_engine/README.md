@@ -220,6 +220,10 @@ Harness Engine variables use the `HARNESS_ENGINE_` prefix:
   `harness_provider_resources` collection. Provider-relevant edits update the
   same AWS Harness in place. Agent blueprints and browser responses contain
   only the profile ID.
+  Creation retries retain their idempotency token when the outcome is unknown.
+  When AWS explicitly confirms that a token's resource was deleted, replicas
+  derive the same replacement token. A bounded walk handles retained deletion
+  tombstones without dispatching a new creation after an ambiguous failure.
 - `HARNESS_ENGINE_AGENTCORE_PROVISION_TIMEOUT_SECONDS` and
   `HARNESS_ENGINE_AGENTCORE_PROVISION_POLL_SECONDS`: readiness polling bounds
   for per-agent Harness creation.
