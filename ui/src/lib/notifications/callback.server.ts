@@ -1,3 +1,4 @@
+import { notificationPolicyAllows } from "./event-policy.server";
 import { ApiError } from "@/lib/api-error";
 import {
   canLaunchAgenticApp,
@@ -52,6 +53,9 @@ export async function resolveNotificationCallback(
       } as never);
   if (!delivery && !inbox) throw new ApiError("Notification unavailable", 404);
   const sourceId = delivery?.sourceId ?? inbox?.source_id ?? "platform";
+  const eventType = delivery?.eventType ?? inbox?.event_type;
+  if (eventType && !(sourceId === "platform" && eventType === "approval.requested") && !(await notificationPolicyAllows(sourceId, eventType, subject)))
+    throw new ApiError("Notification unavailable", 404);
   if (sourceId.startsWith("app:")) {
     const app = getConfiguredAgenticApp(sourceId.slice(4));
     if (!app || !canLaunchAgenticApp(app, user))

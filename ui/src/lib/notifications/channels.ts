@@ -71,7 +71,7 @@ export interface NotificationSourceView {
   label: string;
   subscription: NotificationSubscription;
   events: Array<
-    NotificationTypeRegistration & { subscription: NotificationSubscription }
+    NotificationTypeRegistration & { subscription: NotificationSubscription; operatorDisabled?: boolean; allowedChannels?: NotificationChannel[] }
   >;
 }
 

@@ -1,4 +1,13 @@
 /** @jest-environment node */
+import { notificationPolicyAllows } from "@/lib/notifications/event-policy.server";
+
+jest.mock("@/lib/notifications/event-policy.server", () => ({
+  notificationPolicyAllows: jest.fn(async () => true),
+  notificationPolicyInboxFilter: jest.fn(async () => ({})),
+  notificationEventPolicy: jest.fn(async (_source: string, event: string) => ({
+    defaultEnabled: jest.requireActual("@/lib/notifications/taxonomy").NOTIFICATION_EVENT_CATALOG[event]?.defaultEnabled ?? true,
+  })),
+}));
 import {
   notificationCallbackPath,
   notificationCallbackUri,
@@ -148,4 +157,15 @@ it.each([
   await expect(
     resolveNotificationCallback(marker, "test-user", {}),
   ).rejects.toMatchObject({ statusCode: 404 });
+});
+
+it("rejects a queued callback after audience access is revoked", async () => {
+  mockFind.mockResolvedValue({ ...delivery, eventType: "service.degraded" });
+  jest.mocked(notificationPolicyAllows).mockResolvedValueOnce(false);
+  await expect(resolveNotificationCallback(marker, "test-user", { roles: ["user"] })).rejects.toMatchObject({ statusCode: 404 });
+});
+it("does not treat an app event named approval.requested as a platform approval", async () => {
+  mockFind.mockResolvedValue({ ...delivery, sourceId: "app:example", eventType: "approval.requested" });
+  jest.mocked(notificationPolicyAllows).mockResolvedValueOnce(false);
+  await expect(resolveNotificationCallback(marker, "test-user", { roles: ["user"] })).rejects.toMatchObject({ statusCode: 404 });
 });

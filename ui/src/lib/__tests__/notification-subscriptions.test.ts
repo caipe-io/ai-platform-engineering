@@ -1,5 +1,13 @@
 /** @jest-environment node */
 
+jest.mock("@/lib/notifications/event-policy.server", () => ({
+  notificationPolicyAllows: jest.fn(async () => true),
+  notificationPolicyInboxFilter: jest.fn(async () => ({})),
+  notificationEventPolicy: jest.fn(async (_source: string, event: string) => ({
+    defaultEnabled: jest.requireActual("@/lib/notifications/taxonomy").NOTIFICATION_EVENT_CATALOG[event]?.defaultEnabled ?? true,
+  })),
+}));
+
 import {
   registerAppNotificationTypes,
   writeSubscription,
