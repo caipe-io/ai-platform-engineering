@@ -379,6 +379,9 @@ migration so they enforce the same `execution_thread_leases` ownership fence.
 
 ### Migration and rollback
 
+- Eligible, writable legacy Deep Agents chats expose **Migrate to Harness Engine** in the chat panel. The UI checks eligibility without creating a run, requires confirmation, and preserves the composer draft. **Resume migration** recovers an interrupted handoff using its original transition.
+- Migration checks both Engine reservations and native producer leases. An active execution must finish or stop before the handoff; a concurrent producer is also blocked by the native ownership fence.
+
 - New unbound chats use Engine when the BFF flag is enabled.
 - Existing native checkpoint IDs stay unchanged. Automatic adoption of an
   unbound native context additionally requires

@@ -6,6 +6,7 @@ import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
 import { ContextUsageIndicator } from "@/components/chat/ContextUsageIndicator";
 import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
+import { ConversationRuntimeMigration } from "@/components/chat/ConversationRuntimeMigration";
 import { ConversationViewers } from "@/components/chat/ConversationViewers";
 import type { TaskItem } from "@/components/shared/timeline";
 import { MarkdownRenderer } from "@/components/shared/timeline";
@@ -596,6 +597,7 @@ export function ChatPanel({
     ? isConversationStreaming(activeConversationId)
     : false;
   const externalActivity = useChatStore(state => activeConversationId ? state.externalActivity[activeConversationId] : undefined);
+  const migrationActivity = useChatStore(state => conversationId ? state.externalActivity[conversationId] : undefined);
   const isRemoteResponse = !!externalActivity && !isThisConversationStreaming;
   const stageDraftAttachment = useCallback((id: string, file: File) => {
     setAttachments((current) => current.some((item) => item.id === id) ? current : [...current, { id, file }]);
@@ -2403,6 +2405,13 @@ export function ChatPanel({
         )}
       </div>}
       {!showAgentHeader && <ConversationViewers conversationId={conversationId ?? activeConversationId} className="self-end px-3 py-1" />}
+
+      {conversationId && !panelReadOnly && !isAutonomousHistory && !isLoadingMessages &&
+        (!agent?.execution_harness_id || agent.execution_harness_id === "dynamic_agents") &&
+        !agent?.presentation?.app && getStorageMode() === "mongodb" && (
+          <ConversationRuntimeMigration key={`${agentId}:${conversationId}`} agentId={agentId} conversationId={conversationId}
+            busy={isConversationStreaming(conversationId) || Boolean(migrationActivity)} />
+        )}
 
       {/* Messages Area */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">

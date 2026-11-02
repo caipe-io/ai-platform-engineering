@@ -82,6 +82,15 @@ login session until that helper is migrated.
 - Failed presence connections retry with exponential backoff from five seconds to one minute. A valid roster resets the backoff.
 - This is conversation presence, independent of execution-stream subscribers, durable run events, and replay cursors. It requires MongoDB storage.
 
+### Migrate an existing conversation
+
+- Eligible Deep Agents chats show **Migrate to Harness Engine** above the messages. Conversation write access and agent-use permission are required.
+- Migration preserves messages, LangGraph checkpoints, files, and pending approvals. Future responses run independently of browser refreshes; existing LangGraph history was already persistent.
+- Finish or stop an active execution first. Both Engine reservations and the native checkpoint's producer lease are checked; the native execution fence also protects the handoff from concurrent requests.
+- Confirm the migration in the dialog. The current draft stays in place and no prompt or approval is submitted.
+- If the connection is interrupted, reopen the chat and select **Resume migration**. The server reuses the original handoff rather than creating a second execution.
+- The action is hidden for Engine-managed chats, app-owned assistants, other harnesses, read-only history, and deployments without the Deep Agents integration enabled.
+
 ### Agent Builder harness controls
 
 - Deep Agents retains its model, tools, knowledge, skills, and Advanced controls.
