@@ -9,3 +9,13 @@ it("does not complete a running tool when server completion is unknown", () => {
   expect(data.segments.at(-1)).toMatchObject({ type: "status", status: "unknown" });
   expect(JSON.stringify(data)).not.toContain('"status":"completed"');
 });
+
+it('marks unfinished work stopped without reporting tool success or failure', () => {
+  const manager = createTimelineManager();
+  manager.pushToolStart({ tool_call_id: 'example-call', tool_name: 'wait' }, []);
+  manager.finalize('cancelled');
+  const data = manager.getGroupedData();
+  expect(JSON.stringify(data)).toContain('"status":"cancelled"');
+  expect(data.segments.at(-1)).toMatchObject({ type: 'status', status: 'cancelled' });
+  expect(JSON.stringify(data)).not.toMatch(/"status":"(completed|failed|running)"/);
+});

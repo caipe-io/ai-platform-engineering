@@ -113,6 +113,7 @@ export async function getHarnessGatewayStatus(body: Record<string, unknown>, aut
     run_id: saved.active_run?.run_id ?? saved.pending_interrupt?.run_id ?? saved.last_run?.run_id ?? null,
     last_sequence: saved.active_run?.last_sequence ?? saved.last_run?.last_sequence ?? 0,
     run_status: saved.active_run?.status ?? saved.last_run?.status,
+    cancellation_requested: saved.active_run?.cancellation_requested ?? false,
     turn_id: saved.active_run?.turn_id ?? saved.last_run?.turn_id ?? null,
     pending_interrupt: saved.pending_interrupt,
   } });
@@ -135,6 +136,7 @@ export async function getHarnessConversationStatus(
   return NextResponse.json({ success: true, data: {
     runtime: "harness_engine", harness_id: saved.harness_id, status: saved.active_run ? "running" : saved.pending_interrupt ? "waiting_for_input" : "idle",
     run_id: run?.run_id ?? null, run_status: run?.status, turn_id: run?.turn_id ?? null,
+    cancellation_requested: saved.active_run?.cancellation_requested ?? false,
     last_sequence: run?.last_sequence ?? 0, is_run_owner: run?.owner_subject === auth.subject,
   } });
 }

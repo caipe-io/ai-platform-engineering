@@ -31,6 +31,7 @@ const mockChatState = {
   appendToMessage: jest.fn(),
   clearStreamEvents: jest.fn(),
   setConversationStreaming: jest.fn(),
+  cancelConversationRequest: jest.fn(),
   loadMessagesFromServer: jest.fn(),
   externalActivity: {} as Record<string, ExternalChatActivity>,
   contextUsageByConversation: {},
@@ -98,6 +99,7 @@ const mockAttachment = { mime_type: "text/plain", name: "example.txt", data: "ZX
 beforeEach(() => {
   jest.clearAllMocks();
   mockStreaming = false;
+  mockChatState.streamingConversations.clear();
   mockChatState.externalActivity = {};
   HTMLElement.prototype.scrollIntoView = jest.fn();
   setConversation([
@@ -112,6 +114,51 @@ describe("Engine run recovery after refresh", () => {
   const status = (data: Record<string, unknown>) => jest.spyOn(global, "fetch").mockResolvedValue({
     ok: true, json: async () => ({ data }),
   } as Response);
+
+  it('restores pending Stop after refresh and records a confirmed stop without an error', async () => {
+    setConversation([message('assistant-example', 'assistant', 'partial', { turnId: 'turn-example', isFinal: false })]);
+    const fetchMock = status({ runtime: 'harness_engine', status: 'running', run_id: 'run-example', turn_id: 'turn-example', cancellation_requested: true });
+    mockRecoverRun.mockImplementationOnce(async (_id, callbacks) => { callbacks.onCancelled?.(); });
+    try {
+      render(<ChatPanel agentId='example-agent' conversationId='chat-1' />);
+      await waitFor(() => expect(mockConversation.messages[0]).toMatchObject({ isFinal: true, turnStatus: 'cancelled' }));
+      expect(mockChatState.setConversationStreaming).toHaveBeenCalledWith('chat-1', expect.objectContaining({ stopping: true }));
+      expect(mockConversation.messages[0].content).not.toContain('Error');
+      expect(mockStreamMessage).not.toHaveBeenCalled();
+    } finally { fetchMock.mockRestore(); }
+  });
+
+  it('blocks Enter and Cmd+Enter while Stop is pending and preserves the draft', async () => {
+    mockStreaming = true;
+    mockChatState.streamingConversations.set('chat-1', { stopping: true });
+    render(<ChatPanel agentId='example-agent' conversationId='chat-1' />);
+    expect(screen.getByRole('button', { name: 'Stopping response' })).toBeDisabled();
+    const composer = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(composer, { target: { value: 'next question' } });
+    fireEvent.keyDown(composer, { key: 'Enter', metaKey: true });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await act(async () => {});
+    expect(composer).toHaveValue('next question');
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+    expect(screen.getByText(/Waiting for active work to finish/)).toBeInTheDocument();
+  });
+
+  it('queues Cmd+Enter behind confirmed stop instead of sending after a fixed delay', async () => {
+    mockStreaming = true;
+    mockChatState.streamingConversations.set('chat-1', { streamAdapter: { canRecoverOnRefresh: true } });
+    const { rerender } = render(<ChatPanel agentId='example-agent' conversationId='chat-1' />);
+    const composer = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(composer, { target: { value: 'replacement question' } });
+    fireEvent.keyDown(composer, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(mockChatState.cancelConversationRequest).toHaveBeenCalledWith('chat-1'));
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+    expect(composer).toHaveValue('');
+    mockStreaming = false;
+    mockChatState.streamingConversations.clear();
+    rerender(<ChatPanel agentId='example-agent' conversationId='chat-1' />);
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
+    expect(lastRequest()).toMatchObject({ message: 'replacement question' });
+  });
 
   it("replays a shared read-only response without submitting a prompt or enabling controls", async () => {
     setConversation([message("assistant-example", "assistant", "partial", { turnId: "turn-example", isFinal: false })]);

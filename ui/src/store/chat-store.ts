@@ -75,6 +75,9 @@ interface StreamingState {
   streamAdapter?: StreamAdapter;
   /** View-only subscriptions must never send execution controls. */
   readOnly?: boolean;
+  /** Keep the subscription and execution fence until the server confirms stop. */
+  stopping?: boolean;
+  stopError?: string;
 }
 
 interface MessageHistoryState {
@@ -574,6 +577,27 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           if (streamingState.readOnly) return;
           // Get conversation to check if it's a Dynamic Agent
           const conv = state.conversations.find((c: Conversation) => c.id === conversationId);
+          const persistentAdapter = streamingState.streamAdapter;
+          if (persistentAdapter?.canRecoverOnRefresh) {
+            if (streamingState.stopping) return;
+            const agentId = conv ? getAgentId(conv) : undefined;
+            if (!agentId) return;
+            const pending = { ...streamingState, stopping: true, stopError: undefined };
+            set({ streamingConversations: new Map(get().streamingConversations).set(conversationId, pending) });
+            void persistentAdapter.cancelStream(conversationId, agentId).catch((error) => {
+              console.error('[ChatStore] Backend cancel failed:', error);
+              return false;
+            }).then((accepted) => {
+              // A completed response or a newer turn must not be changed by a
+              // late cancellation reply. Keep following the current producer.
+              if (!accepted && get().streamingConversations.get(conversationId) === pending) {
+                set({ streamingConversations: new Map(get().streamingConversations).set(conversationId, {
+                  ...pending, stopping: false, stopError: 'Could not confirm Stop. The response is still active; try again.',
+                }) });
+              }
+            });
+            return;
+          }
           
           // For Dynamic Agents, send backend cancel request before aborting client
           if (streamingState.streamAdapter) {

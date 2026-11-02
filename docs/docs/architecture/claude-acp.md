@@ -17,6 +17,10 @@ flow as other CAIPE agents. The integration is experimental.
    activity and explains shared-viewer access.
 4. Refresh or reopen the chat to reconnect to the server-owned run. Starting
    another browser subscription does not start another Claude process.
+5. **Stop** cancels the current response and keeps the chat open. While an
+   already-dispatched tool drains, the composer shows **Stopping** and waits
+   for server confirmation before sending another prompt. Refresh preserves
+   that state. Confirmed cancellation is shown as **Stopped**, not an error.
 
 Model access and workspace policy are deployment settings. Agent authors cannot
 supply a worker URL, executable command, provider credential or permission bypass.

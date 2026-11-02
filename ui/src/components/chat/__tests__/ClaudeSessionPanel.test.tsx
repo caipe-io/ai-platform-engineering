@@ -10,4 +10,6 @@ it("shows reconnection progress and shared-viewer restrictions", () => {
   expect(screen.getByRole("status")).toHaveTextContent("Working");
   expect(screen.queryByText("Viewing shared session")).not.toBeInTheDocument();
   expect(screen.getByText(/Refreshing or closing this page does not stop a response/)).toBeInTheDocument();
+  rerender(<ClaudeSessionPanel activity="stopping" readOnly={false} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Stopping");
 });

@@ -16,6 +16,7 @@ export interface HarnessRun {
   resumes_run_id?: string | null;
   interrupt_id?: string | null;
   status: HarnessRunStatus;
+  cancellation_requested?: boolean;
   last_sequence: number;
 }
 

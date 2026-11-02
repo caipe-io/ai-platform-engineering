@@ -3,10 +3,10 @@
 import { Folder, Radio, ShieldCheck } from "lucide-react";
 
 export function ClaudeSessionPanel({ activity, readOnly }: {
-  activity: "checking" | "running" | "saving" | "idle";
+  activity: "checking" | "running" | "saving" | "idle" | "stopping";
   readOnly: boolean;
 }) {
-  const label = { checking: "Reconnecting", running: "Working", saving: "Saving response", idle: "Ready" }[activity];
+  const label = { checking: "Reconnecting", running: "Working", saving: "Saving response", idle: "Ready", stopping: "Stopping" }[activity];
   return <details className="mx-3 my-2 shrink-0 rounded-lg border border-orange-500/20 bg-orange-500/5 px-3 py-2 text-xs" aria-label="Claude session">
     <summary className="flex cursor-pointer flex-wrap items-center gap-2">
       <Radio className="h-3.5 w-3.5 text-orange-500" aria-hidden="true" />

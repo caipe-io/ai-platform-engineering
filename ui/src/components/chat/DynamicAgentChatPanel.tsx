@@ -568,6 +568,8 @@ export function ChatPanel({
     ? isConversationStreaming(activeConversationId)
     : false;
   const readOnlySubscription = useChatStore(state => activeConversationId ? state.streamingConversations.get(activeConversationId)?.readOnly : false);
+  const isStopping = useChatStore(state => activeConversationId ? state.streamingConversations.get(activeConversationId)?.stopping === true : false);
+  const stopError = useChatStore(state => activeConversationId ? state.streamingConversations.get(activeConversationId)?.stopError : undefined);
   const externalActivity = useChatStore(state => activeConversationId ? state.externalActivity[activeConversationId] : undefined);
   const migrationActivity = useChatStore(state => conversationId ? state.externalActivity[conversationId] : undefined);
   const isRemoteResponse = !!externalActivity && !isThisConversationStreaming;
@@ -1047,6 +1049,7 @@ export function ChatPanel({
     hasError: boolean;
     errorMessage?: string;
     serverCompleted?: boolean;
+    serverCancelled?: boolean;
     /** Epoch ms when the turn was submitted — used to derive latency_ms. */
     startedAt?: number;
   }
@@ -1253,6 +1256,11 @@ export function ChatPanel({
       loopState.serverCompleted = true;
     },
 
+    onCancelled() {
+      loopState.serverCompleted = true;
+      loopState.serverCancelled = true;
+    },
+
     onError(message) {
       console.error("[DynamicAgent] Stream error event:", message);
       loopState.hasError = true;
@@ -1287,7 +1295,7 @@ export function ChatPanel({
       state.errorMessage = "The connection ended before the server confirmed completion.";
     }
     const isFinal = !state.hitlFormRequested;
-    const turnStatus: TurnStatus = state.hitlFormRequested
+    const turnStatus: TurnStatus = state.serverCancelled ? "cancelled" : state.hitlFormRequested
       ? "waiting_for_input"
       : state.hasError
         ? "interrupted"
@@ -1296,7 +1304,7 @@ export function ChatPanel({
     // Client-measured end-to-end latency for the turn. Only recorded on a
     // clean completion (a HITL pause or error would skew response-time stats).
     const latencyMs =
-      isFinal && !state.hasError && state.startedAt != null
+      isFinal && !state.hasError && !state.serverCancelled && state.startedAt != null
         ? Date.now() - state.startedAt
         : undefined;
 
@@ -1310,6 +1318,7 @@ export function ChatPanel({
       content: finalContent,
       rawStreamContent: state.rawStreamContent,
       isFinal,
+      isInterrupted: false,
       turnStatus,
       ...(state.errorMessage ? { error: state.errorMessage } : {}),
       streamEvents: turnStreamEvents.length > 0 ? turnStreamEvents : undefined,
@@ -1360,7 +1369,8 @@ export function ChatPanel({
       clearStreamEvents(activeConversationId);
       updateMessage(activeConversationId, assistantId, { isFinal: false });
       setConversationStreaming(activeConversationId, { conversationId: activeConversationId, messageId: assistantId,
-        client: { abort: () => adapter.abort() }, streamAdapter: adapter, readOnly: panelReadOnly || data.is_run_owner === false });
+        client: { abort: () => adapter.abort() }, streamAdapter: adapter, readOnly: panelReadOnly || data.is_run_owner === false,
+        stopping: data.cancellation_requested === true });
       try {
         await adapter.recoverRun(data.run_id, buildStreamCallbacks(activeConversationId, assistantId, state, new Map()), activeConversationId);
       } catch (error) {
@@ -1931,6 +1941,7 @@ export function ChatPanel({
 
   // Wrapper for form submission that uses input state
   const handleSubmit = useCallback(async (forceSend = false) => {
+    if (isStopping) return;
     // Allow a turn with text OR attachments (a file-only send is valid).
     if (!input.trim() && attachments.length === 0) return;
 
@@ -1975,6 +1986,15 @@ export function ChatPanel({
 
     // If streaming and force sending, stop current task first
     if (isThisConversationStreaming && forceSend) {
+      if (activeConversationId && useChatStore.getState().streamingConversations.get(activeConversationId)?.streamAdapter?.canRecoverOnRefresh) {
+        // Keep the replacement prompt queued behind the server's stop/drain
+        // fence. A fixed delay cannot prove that a dispatched tool has ended.
+        setQueuedMessages([{ id: generateId(), text: input.trim(), files: encodedFiles }]);
+        setInput("");
+        setAttachments([]);
+        handleStop();
+        return;
+      }
       handleStop();
       // Clear queued messages when force sending
       setQueuedMessages([]);
@@ -1994,7 +2014,7 @@ export function ChatPanel({
     setAttachments([]);
 
     await submitMessage(message, encodedFiles);
-  }, [input, attachments, submitMessage, isThisConversationStreaming, pendingUserInput, slashCommands, executeSlashCommand, handleEffortCommand, handleStop]);
+  }, [input, attachments, submitMessage, isThisConversationStreaming, isStopping, activeConversationId, pendingUserInput, slashCommands, executeSlashCommand, handleEffortCommand, handleStop]);
 
   // Auto-submit pending message from use case selection
   useEffect(() => {
@@ -2392,7 +2412,7 @@ export function ChatPanel({
       {!agent?.presentation?.app && (observedRuntime?.conversationId === activeConversationId
         ? observedRuntime.harnessId === "claude_code_acp"
         : !conversation?.messages.length && agent?.execution_harness_id === "claude_code_acp") && (
-          <ClaudeSessionPanel activity={externalActivity?.state ?? (isThisConversationStreaming ? "running" : "idle")}
+          <ClaudeSessionPanel activity={isStopping ? "stopping" : externalActivity?.state ?? (isThisConversationStreaming ? "running" : "idle")}
             readOnly={panelReadOnly || Boolean(readOnlySubscription)} />
         )}
 
@@ -3049,6 +3069,8 @@ export function ChatPanel({
               {/* Staged attachment previews (above the input row). */}
               {composerHeader}
               <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
+              {isStopping && <p role="status" className="mb-2 text-xs text-muted-foreground">Stopping… Waiting for active work to finish. You can send another message once the server confirms.</p>}
+              {stopError && <p role="alert" className="mb-2 text-xs text-destructive">{stopError}</p>}
 
               <div className="relative z-20 flex items-center">
                 <AnimatePresence initial={false} mode="wait">
@@ -3083,7 +3105,7 @@ export function ChatPanel({
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
                   placeholder={
-                    isRemoteResponse ? "Response is continuing in another view…" : isThisConversationStreaming
+                    isStopping ? "Draft your next message while this response stops…" : isRemoteResponse ? "Response is continuing in another view…" : isThisConversationStreaming
                       ? `Type to queue another message${queuedMessages.length > 0 ? ` (${queuedMessages.length} queued)` : ""}, or Cmd+Enter to send now...`
                       : placeholder ?? `Ask anything, or type / to see commands, skills, and agents...`
                   }
@@ -3137,13 +3159,13 @@ export function ChatPanel({
                     <Button
                       size="icon"
                       onClick={handleStop}
-                      disabled={readOnlySubscription}
+                      disabled={readOnlySubscription || isStopping}
                       variant="destructive"
                       className="h-8 w-8 rounded-full"
-                      title="Stop generating"
-                      aria-label="Stop generating"
+                      title={isStopping ? "Stopping response" : "Stop generating"}
+                      aria-label={isStopping ? "Stopping response" : "Stop generating"}
                     >
-                      <Square className="h-4 w-4" />
+                      {isStopping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
                     </Button>
                   ) : (
                     <Button
@@ -3567,6 +3589,7 @@ const ChatMessage = React.memo(function ChatMessage({
           // ── Assistant message ──
           <>
             {effectiveTurnStatus === "unknown" && <p role="status" className="mb-3 text-xs text-muted-foreground">Completion has not been confirmed by the server.</p>}
+            {effectiveTurnStatus === "cancelled" && <p role="status" className="mb-3 text-xs text-muted-foreground">Response stopped</p>}
             {/* Recovery / interrupted banner */}
             {(isRecovering || !isStreaming && (message.isInterrupted || effectiveTurnStatus === "interrupted")) && (
               <motion.div

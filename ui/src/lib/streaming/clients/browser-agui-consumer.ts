@@ -51,7 +51,7 @@ export class AGUIStreamAdapter implements StreamAdapter {
   }
 
   async cancelStream(conversationId: string, agentId: string): Promise<boolean> {
-    this.abort();
+    if (!this.persistentRun) this.abort();
 
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -72,7 +72,7 @@ export class AGUIStreamAdapter implements StreamAdapter {
       }
 
       const result = await response.json();
-      return result.cancelled ?? false;
+      return result.cancelled === true || result.cancellation_requested === true;
     } catch (error) {
       console.error("[AGUIAdapter] Cancel error:", error);
       return false;

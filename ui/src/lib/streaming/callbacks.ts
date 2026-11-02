@@ -127,6 +127,9 @@ export interface StreamCallbacks {
   /** Stream completed successfully */
   onDone?(): void;
 
+  /** The server confirmed that the response stopped. */
+  onCancelled?(): void;
+
   /** Unrecoverable error */
   onError?(message: string): void;
 

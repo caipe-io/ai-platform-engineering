@@ -42,7 +42,7 @@ export class CustomStreamAdapter implements StreamAdapter {
   }
 
   async cancelStream(conversationId: string, agentId: string): Promise<boolean> {
-    this.abort();
+    if (!this.persistentRun) this.abort();
 
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -63,7 +63,7 @@ export class CustomStreamAdapter implements StreamAdapter {
       }
 
       const result = await response.json();
-      return result.cancelled ?? false;
+      return result.cancelled === true || result.cancellation_requested === true;
     } catch (error) {
       console.error("[CustomAdapter] Cancel error:", error);
       return false;
@@ -247,8 +247,10 @@ export class CustomStreamAdapter implements StreamAdapter {
 
         case "done": {
           const parsed = JSON.parse(data);
-          if (parsed.outcome === "cancelled") callbacks.onError?.("The run was stopped before completion.");
-          else callbacks.onDone?.();
+          if (parsed.outcome === "cancelled") {
+            if (callbacks.onCancelled) callbacks.onCancelled();
+            else callbacks.onError?.("The run was stopped before completion.");
+          } else callbacks.onDone?.();
           return true;
         }
 

@@ -207,7 +207,8 @@ function handleRunFinished(
   const outcome = parsed.outcome as string;
 
   if (outcome === "cancelled") {
-    callbacks.onError?.("The run was stopped before completion.");
+    if (callbacks.onCancelled) callbacks.onCancelled();
+    else callbacks.onError?.("The run was stopped before completion.");
     return true;
   }
 

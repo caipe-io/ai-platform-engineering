@@ -49,6 +49,7 @@ import { getLastActiveConversationId, resolveChatNavigationPath, useChatStore } 
 import { apiClient } from '@/lib/api-client';
 import { createStreamEvent } from '@/lib/streaming/types';
 import type { Conversation, ChatMessage } from '@/types/a2a';
+import type { StreamAdapter } from '@/lib/streaming/adapter';
 
 // Get typed mock references
 const mockApiClient = apiClient as jest.Mocked<typeof apiClient>;
@@ -1876,6 +1877,38 @@ describe('chat-store', () => {
   // --------------------------------------------------------------------------
 
   describe('cancelConversationRequest', () => {
+    it('retains the Engine subscription and draft until the dispatched work drains', async () => {
+      const conv = makeConversation({ id: 'example-stop', participants: [{ type: 'agent', id: 'example-agent' }] });
+      conv.messages = [makeMessage({ id: 'example-response', role: 'assistant', content: 'partial', isFinal: false })];
+      const cancel = jest.fn().mockResolvedValue(true);
+      const abort = jest.fn();
+      useChatStore.setState({ conversations: [conv], activeConversationId: conv.id, isStreaming: true,
+        streamingConversations: new Map([[conv.id, { conversationId: conv.id, messageId: 'example-response', client: { abort },
+          streamAdapter: { canRecoverOnRefresh: true, cancelStream: cancel } as unknown as StreamAdapter }]]) });
+      useChatStore.getState().cancelConversationRequest(conv.id);
+      useChatStore.getState().cancelConversationRequest(conv.id);
+      await Promise.resolve();
+      jest.advanceTimersByTime(1000);
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(abort).not.toHaveBeenCalled();
+      expect(useChatStore.getState().streamingConversations.get(conv.id)?.stopping).toBe(true);
+      expect(useChatStore.getState().isConversationStreaming(conv.id)).toBe(true);
+      expect(useChatStore.getState().conversations[0].messages[0]).toMatchObject({ content: 'partial', isFinal: false });
+    });
+
+    it('keeps following the response when cancellation is rejected', async () => {
+      const conv = makeConversation({ id: 'example-stop', participants: [{ type: 'agent', id: 'example-agent' }] });
+      const abort = jest.fn();
+      useChatStore.setState({ conversations: [conv], isStreaming: true,
+        streamingConversations: new Map([[conv.id, { conversationId: conv.id, messageId: 'example-response', client: { abort },
+          streamAdapter: { canRecoverOnRefresh: true, cancelStream: async () => false } as unknown as StreamAdapter }]]) });
+      useChatStore.getState().cancelConversationRequest(conv.id);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(useChatStore.getState().streamingConversations.get(conv.id)).toMatchObject({ stopping: false, stopError: expect.stringContaining('Could not confirm Stop') });
+      expect(abort).not.toHaveBeenCalled();
+    });
+
     it('does not save to MongoDB after cancelling (server-side persistence handles it)', async () => {
       const conv = makeConversation({ id: 'cancel-save-test' });
       const msg = makeMessage({
