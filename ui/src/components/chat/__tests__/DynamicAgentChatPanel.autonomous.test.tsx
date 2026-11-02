@@ -22,6 +22,7 @@ const mockChatState = {
   setConversationStreaming: jest.fn(),
   loadMessagesFromServer: jest.fn(),
   externalActivity: {},
+  streamingConversations: new Map(),
   contextUsageByConversation: {},
   messageHistory: {},
   setContextUsage: jest.fn(),
