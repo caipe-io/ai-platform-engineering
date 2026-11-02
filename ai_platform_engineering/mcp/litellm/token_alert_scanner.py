@@ -316,15 +316,9 @@ async def run_periodic_scanner() -> None:
 
   logger.info("Starting LiteLLM token alert scanner with interval=%s seconds", interval_seconds)
   while True:
-    result = await scan_token_usage_alerts()
-    logger.info(
-      "LiteLLM token alert scan completed: status=%s targets=%s sent=%s deduped=%s dry_run=%s",
-      result.get("status"),
-      result.get("targets_checked"),
-      result.get("notifications_sent"),
-      result.get("notifications_deduped"),
-      result.get("dry_run"),
-    )
+    await scan_token_usage_alerts()
+    # The result includes target identifiers and alert details; keep it out of logs.
+    logger.info("LiteLLM token alert scan completed")
     await asyncio.sleep(interval_seconds)
 
 

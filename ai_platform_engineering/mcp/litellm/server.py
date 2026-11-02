@@ -234,7 +234,7 @@ from tools import audit_id
 
 from tools import user_available_users
 
-from mcp_litellm.tools import token_usage_alerts
+from tools import token_usage_alerts
 import token_alert_scanner
 
 

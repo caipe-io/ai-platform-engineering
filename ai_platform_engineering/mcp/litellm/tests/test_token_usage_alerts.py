@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault("LITELLM_API_URL", "https://litellm.test")
 os.environ.setdefault("LITELLM_API_KEY", "test-token")
 
-from mcp_litellm.tools import token_usage_alerts  # noqa: E402
+from tools import token_usage_alerts  # noqa: E402
 
 
 def test_evaluate_token_usage_alert_suppresses_notification_when_disabled():
