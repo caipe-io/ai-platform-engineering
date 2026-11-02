@@ -1,3 +1,13 @@
+## 1.3.5 (2026-11-02)
+
+### Feat
+
+- **feedback**: unify component reports through the host (#2397)
+
+### Fix
+
+- **github-mcp**: run github-mcp-server in http mode in docker-compose (#3193)
+
 ## 1.3.4 (2026-10-30)
 
 ### Feat
