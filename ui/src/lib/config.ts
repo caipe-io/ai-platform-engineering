@@ -113,6 +113,14 @@ export interface Config {
    */
   dynamicAgentsEnabled: boolean;
   /**
+   * Whether the CAIPE Platform MCP server (`POST /api/mcp`) is enabled.
+   *
+   * Disabled by default: the endpoint 404s (not 401/403) so a deployment
+   * that hasn't opted in doesn't advertise the surface. Set
+   * `CAIPE_MCP_ENABLED=true` to enable. See `lib/mcp/guard.ts`.
+   */
+  platformMcpEnabled: boolean;
+  /**
    * Whether the admin Feedback tab and feedback API are enabled.
    * Enabled by default. Set FEEDBACK_ENABLED=false to disable.
    */
@@ -267,6 +275,7 @@ const DEFAULT_CONFIG: Config = {
   workflowsEnabled: false,
   projectsEnabled: false,
   dynamicAgentsEnabled: false,
+  platformMcpEnabled: false,
   feedbackEnabled: true,
   allowBuiltinSkillMutation: false,
   auditLogsEnabled: false,
@@ -379,6 +388,7 @@ export function getServerConfig(): Config {
   const workflowsEnabled = env('WORKFLOWS_ENABLED') === 'true';
   const projectsEnabled = env('PROJECTS_ENABLED') === 'true';
   const dynamicAgentsEnabled = env('DYNAMIC_AGENTS_ENABLED') === 'true';
+  const platformMcpEnabled = env('CAIPE_MCP_ENABLED') === 'true';
   const feedbackEnabled = env('FEEDBACK_ENABLED') !== 'false';
   // Default `false` (locked). Must mirror the server-side check in
   // `lib/builtin-skill-policy.ts` so the UI never offers an action
@@ -469,6 +479,7 @@ export function getServerConfig(): Config {
     workflowsEnabled,
     projectsEnabled,
     dynamicAgentsEnabled,
+    platformMcpEnabled,
     feedbackEnabled,
     allowBuiltinSkillMutation,
     auditLogsEnabled,
