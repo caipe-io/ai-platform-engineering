@@ -8,7 +8,7 @@ import { ApiError, requireConversationAccess, validateConversationId, withErrorH
 import { getServerConfig } from "@/lib/config";
 import { authenticateRequest, type AuthResult } from "@/lib/da-proxy";
 import { appGitHubFeedbackSettings, createGitHubFeedback, createPlatformGitHubFeedback, platformFeedbackCapabilities, platformFeedbackHandler } from "@/lib/feedback-github";
-import { parseFeedbackFeatures, platformFeedbackFeatures } from "@/lib/feedback-features";
+import { parseFeedbackFeatures, platformFeedbackFeatures, type FeedbackDestination } from "@/lib/feedback-features";
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
 import { requireConversationResourcePermission } from "@/lib/rbac/conversation-implicit-authz";
 import { readBodyWithLimit } from "@/lib/request-body";
@@ -96,13 +96,19 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   } }, { headers: { "Cache-Control": "private, no-store" } });
   let features: string[];
   let screenshotsEnabled: boolean | undefined;
+  let destination: FeedbackDestination | undefined;
   if (!app) {
     features = platformFeedbackFeatures(process.env.FEEDBACK_FEATURES);
     screenshotsEnabled = platformCapabilities!.screenshotsEnabled;
+    destination = platformCapabilities!.destination;
   }
   else {
     features = app.installation.feedbackFeatures ?? ["Other"];
-    if (app.installation.feedbackGitHub) screenshotsEnabled = Boolean(appGitHubFeedbackSettings(app).assets);
+    if (app.installation.feedbackGitHub) {
+      const settings = appGitHubFeedbackSettings(app);
+      screenshotsEnabled = Boolean(settings.assets);
+      destination = { provider: "github", repository: settings.repo };
+    }
     else if (!app.installation.feedbackFeatures && app.installation.feedbackPath) {
       const response = await proxy(new Request(new URL(app.installation.feedbackPath, request.url), {
         headers: request.headers, signal: request.signal,
@@ -119,7 +125,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     }
   }
   return NextResponse.json({ success: true, data: {
-    appId: app?.installation.appId ?? null, label: app?.manifest.displayName ?? platformLabel, features, components, screenshotsEnabled,
+    appId: app?.installation.appId ?? null, label: app?.manifest.displayName ?? platformLabel, features, components, screenshotsEnabled, destination,
   } }, { headers: { "Cache-Control": "private, no-store" } });
 });
 

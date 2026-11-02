@@ -77,9 +77,9 @@ it.each([{ description: "" }, { title: "x".repeat(121) }, { issueType: "invalid"
   expect(global.fetch).not.toHaveBeenCalled();
 });
 it("reports screenshot capability and uploads before creating the issue", async () => {
-  expect(platformFeedbackCapabilities()).toEqual({ screenshotsEnabled: false });
+  expect(platformFeedbackCapabilities()).toEqual({ screenshotsEnabled: false, destination: { provider: "github", repository: "example/feedback" } });
   process.env.FEEDBACK_GITHUB_SCREENSHOTS_REPO = "example/assets";
-  expect(platformFeedbackCapabilities()).toEqual({ screenshotsEnabled: true });
+  expect(platformFeedbackCapabilities()).toEqual({ screenshotsEnabled: true, destination: { provider: "github", repository: "example/feedback" } });
   (global.fetch as jest.Mock).mockResolvedValueOnce(Response.json({ content: { html_url: "https://github.com/example/assets/blob/main/feedback/image.png?token=temporary" } }));
   await create({ screenshotDataUrl: "data:image/png;base64,AQID" });
   const calls = (global.fetch as jest.Mock).mock.calls;
@@ -167,7 +167,7 @@ it.each([{ browser: "x".repeat(201) }, { source: "unknown" }, { relatedUrl: "jav
 
 it("keeps an explicitly configured Jira agent available", () => {
   process.env.FEEDBACK_HANDLER = "agent";
-  expect(platformFeedbackCapabilities()).toEqual({});
+  expect(platformFeedbackCapabilities()).toEqual({ destination: { provider: "jira", project: "TEST" } });
 });
 it.each([{ ticketEnabled: false }, { ticketProvider: null }, { jiraTicketProject: " " }])("rejects an unconfigured agent destination: %j", change => {
   process.env.FEEDBACK_HANDLER = "agent";

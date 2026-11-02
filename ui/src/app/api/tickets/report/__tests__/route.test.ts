@@ -326,3 +326,18 @@ it("rejects invalid JSON without dispatching", async () => {
   expect((await POST(new NextRequest("https://host.example.test/api/tickets/report", { method: "POST", body: "{" }))).status).toBe(400);
   expect(mockProxy).not.toHaveBeenCalled();
 });
+
+it("returns the configured destination without exposing app credentials", async () => {
+  mockApps.mockReturnValue([{ ...app(), installation: { ...app().installation, feedbackPath: undefined,
+    feedbackGitHub: { repository: "example/product", tokenEnv: "FEEDBACK_EXAMPLE_TOKEN" }, feedbackFeatures: ["Publishing"] } }]);
+  const response = await componentOptions("example");
+  const metadata = await response.json();
+  expect(metadata.data.destination).toEqual({ provider: "github", repository: "example/product" });
+  expect(JSON.stringify(metadata)).not.toContain("test-app-token");
+  expect(JSON.stringify(metadata)).not.toContain("tokenEnv");
+});
+it("returns the platform's destination independently of the calling app", async () => {
+  mockPlatformCapabilities.mockReturnValue({ destination: { provider: "github", repository: "example/platform-feedback" } });
+  const response = await componentOptions(null, "https://host.example.test/projects/example");
+  expect((await response.json()).data.destination).toEqual({ provider: "github", repository: "example/platform-feedback" });
+});

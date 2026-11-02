@@ -89,6 +89,7 @@ jest.mock("lucide-react", () => ({
   ChevronUp: () => <span data-testid="icon-chevron-up" />,
   Copy: () => <span data-testid="icon-copy" />,
   ExternalLink: () => <span data-testid="icon-external" />,
+  GitBranch: () => <span data-testid="icon-branch" />,
   Loader2: () => <span data-testid="icon-loader" />,
   Monitor: () => <span data-testid="icon-monitor" />,
   RefreshCw: () => <span data-testid="icon-refresh" />,
@@ -337,16 +338,19 @@ it("changes features and submission destination together while retaining the rep
   let finish!: (value: unknown) => void;
   mockFetchFeedbackOptions.mockImplementation((_url, _conversation, _signal, component) => component === "example"
     ? new Promise(resolve => { finish = resolve; })
-    : Promise.resolve({ appId: null, label: "Platform", features: ["Chat", "Other"] }));
+    : Promise.resolve({ appId: null, label: "Platform", features: ["Chat", "Other"], destination: { provider: "github", repository: "example/platform-feedback" } }));
   mockCreateTicketViaAgent.mockResolvedValue({ id: "42", provider: "github", url: "" });
   render(<ReportProblemDialog open onOpenChange={jest.fn()} />);
   await fillRequiredFields();
   fireEvent.change(screen.getByLabelText("Feature"), { target: { value: "Chat" } });
+  expect(screen.getByText("→ GitHub issue in example/platform-feedback")).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Component *"), { target: { value: "app:example" } });
+  expect(screen.queryByText("→ GitHub issue in example/platform-feedback")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Submit Report" })).toBeDisabled();
   expect(screen.getByLabelText("Feature")).toBeDisabled();
-  finish({ appId: "example", label: "Example app", features: ["Publishing", "Other"] });
+  finish({ appId: "example", label: "Example app", features: ["Publishing", "Other"], destination: { provider: "github", repository: "example/app-feedback" } });
   await waitFor(() => expect(screen.getByLabelText("Feature")).toBeEnabled());
+  expect(screen.getByText("→ GitHub issue in example/app-feedback")).toBeInTheDocument();
   expect(screen.getByLabelText("Short title *")).toHaveValue("The page fails to load");
   expect(screen.getByLabelText("Feature")).toHaveValue("Other");
   expect(screen.queryByRole("option", { name: "Chat" })).not.toBeInTheDocument();
@@ -385,4 +389,11 @@ it("submits optional impact from the expanded details section", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Annoying" }));
   fireEvent.click(screen.getByRole("button", { name: "Submit Report" }));
   await waitFor(() => expect(mockCreateTicketViaAgent).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ severity: "Annoying", description: expect.stringContaining("Impact: Annoying") }) })));
+});
+
+it("shows the configured Jira project for an agent-backed destination", async () => {
+  mockFetchFeedbackOptions.mockResolvedValue({ appId: null, label: "Platform", features: ["Other"],
+    destination: { provider: "jira", project: "TEST" } });
+  render(<ReportProblemDialog open onOpenChange={jest.fn()} />);
+  expect(await screen.findByText("→ Jira issue in TEST")).toBeInTheDocument();
 });

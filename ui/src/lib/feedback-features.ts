@@ -1,6 +1,10 @@
 export const FEEDBACK_SEVERITIES = ["Blocks my work", "Annoying", "Minor"] as const;
 export type FeedbackSeverity = (typeof FEEDBACK_SEVERITIES)[number];
 
+export type FeedbackDestination =
+  | { provider: "github"; repository: string }
+  | { provider: "jira"; project: string };
+
 /** Default platform areas; apps provide their own report features. */
 export const DEFAULT_PLATFORM_FEEDBACK_FEATURES = [
   "Chat", "Connected Credentials", "Knowledge Bases", "Skills", "Workflows",

@@ -28,4 +28,3 @@ export async function readBodyWithLimit(request: Request, limit: number): Promis
   }
   return total === body.byteLength ? body.buffer : body.buffer.slice(0, total);
 }
-

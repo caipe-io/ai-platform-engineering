@@ -268,7 +268,7 @@ submission while categories load, and offers a retry on discovery failure.
 
 ### Feedback components
 
-- The shared feedback form selects **Component** before **Feature**.
+- The shared feedback form selects **Component** before **Feature**. It displays the selected GitHub repository or Jira project returned by the host configuration; changing components updates that destination.
 - The platform is first; `FEEDBACK_PLATFORM_LABEL` can override its component label
   independently of application branding. Installed, enabled apps with a registered `feedback_path`
   follow in registration order, filtered by the reporter's app access policy.

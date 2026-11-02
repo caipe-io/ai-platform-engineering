@@ -5,7 +5,7 @@ import { readVersionInfo } from "@/lib/version";
 import { ApiError } from "@/lib/api-middleware";
 import { getServerConfig } from "@/lib/config";
 import type { ConfiguredAgenticApp } from "@/types/agentic-app";
-import { FEEDBACK_SEVERITIES, platformFeedbackFeatures } from "@/lib/feedback-features";
+import { FEEDBACK_SEVERITIES, platformFeedbackFeatures, type FeedbackDestination } from "@/lib/feedback-features";
 
 export function platformFeedbackHandler(): "agent" | "github" {
   const handler = process.env.FEEDBACK_HANDLER;
@@ -35,13 +35,18 @@ function settings() {
     component: process.env.FEEDBACK_PLATFORM_LABEL || cfg.appName, features: platformFeedbackFeatures(process.env.FEEDBACK_FEATURES) };
 }
 
-export function platformFeedbackCapabilities(): { screenshotsEnabled?: boolean } {
-  if (platformFeedbackHandler() === "github") return { screenshotsEnabled: Boolean(settings().assets) };
+export function platformFeedbackCapabilities(): { screenshotsEnabled?: boolean; destination: FeedbackDestination } {
+  if (platformFeedbackHandler() === "github") {
+    const cfg = settings();
+    return { screenshotsEnabled: Boolean(cfg.assets), destination: { provider: "github", repository: cfg.repo } };
+  }
   const cfg = getServerConfig();
   if (!cfg.ticketEnabled || !(cfg.ticketProvider === "jira" ? cfg.jiraTicketProject : cfg.ticketProvider === "github" ? cfg.githubTicketRepo : undefined)?.trim()) {
     throw new ApiError("The platform feedback agent's ticket provider is not configured", 503);
   }
-  return {};
+  return { destination: cfg.ticketProvider === "jira"
+    ? { provider: "jira", project: cfg.jiraTicketProject!.trim() }
+    : { provider: "github", repository: repository(cfg.githubTicketRepo) } };
 }
 
 export function appGitHubFeedbackSettings(app: ConfiguredAgenticApp) {

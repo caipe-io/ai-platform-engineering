@@ -1,6 +1,6 @@
 "use client";
 
-import type { FeedbackSeverity } from "@/lib/feedback-features";
+import type { FeedbackDestination, FeedbackSeverity } from "@/lib/feedback-features";
 import { apiClient } from "@/lib/api-client";
 import { resolveUsableChatAgent } from "@/lib/chat-agent-selection";
 import { getConfig } from "@/lib/config";
@@ -43,6 +43,7 @@ export interface FeedbackComponent {
 export interface FeedbackOptions extends FeedbackComponent {
   features: string[];
   screenshotsEnabled?: boolean;
+  destination?: FeedbackDestination;
 }
 
 export interface FeedbackComponents {

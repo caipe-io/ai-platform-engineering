@@ -31,6 +31,7 @@ ChevronDown,
 ChevronUp,
 Copy,
 ExternalLink,
+GitBranch,
 Loader2,
 Monitor,
 RefreshCw,
@@ -450,6 +451,15 @@ export function ReportProblemDialog({
                 </Select>
               </div>
             </div>
+
+            {options?.destination && (
+              <p className="flex items-center gap-2 text-xs text-muted-foreground sm:col-span-2">
+                <GitBranch aria-hidden="true" className="h-4 w-4 shrink-0" />
+                <span className="break-all">{options.destination.provider === "github"
+                  ? `→ GitHub issue in ${options.destination.repository}`
+                  : `→ Jira issue in ${options.destination.project}`}</span>
+              </p>
+            )}
 
             {feedbackContext && (
               <div className="rounded-md bg-muted/50 border border-border/50 px-3 py-2 text-xs text-muted-foreground sm:col-span-2">
