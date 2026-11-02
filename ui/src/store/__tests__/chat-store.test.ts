@@ -116,7 +116,7 @@ describe('chat-store', () => {
     useChatStore.setState({ conversations: [conv], activeConversationId: conv.id });
     useChatStore.getState().setConversationStreaming(conv.id, { conversationId: conv.id, messageId: conv.messages[0].id,
       client: { abort: jest.fn() }, streamAdapter: { cancelStream } as unknown as import('@/lib/streaming').StreamAdapter,
-      isReplay: true, readOnly: true });
+      readOnly: true });
     await useChatStore.getState().saveMessagesToServer(conv.id);
     useChatStore.getState().cancelConversationRequest(conv.id);
     expect(cancelStream).not.toHaveBeenCalled();
@@ -131,6 +131,18 @@ describe('chat-store', () => {
     useChatStore.setState({ conversations: [conv] });
     await useChatStore.getState().saveMessagesToServer(conv.id);
     expect(mockApiClient.addMessage).not.toHaveBeenCalled();
+  });
+
+  it('persists the final answer after an owner reconnects to their Engine run', async () => {
+    const conv = makeConversation({ accessLevel: 'owner', messages: [makeMessage({ role: 'assistant', isFinal: true })] });
+    useChatStore.setState({ conversations: [conv], activeConversationId: conv.id });
+    useChatStore.getState().setConversationStreaming(conv.id, { conversationId: conv.id, messageId: conv.messages[0].id,
+      client: { abort: jest.fn() }, readOnly: false });
+    useChatStore.getState().setConversationStreaming(conv.id, null);
+    await jest.runAllTimersAsync();
+    expect(mockApiClient.addMessage).toHaveBeenCalledWith(conv.id, expect.objectContaining({
+      role: 'assistant', metadata: expect.objectContaining({ is_final: true }),
+    }));
   });
 
   it('preserves an explicit title when the first user message arrives', async () => {

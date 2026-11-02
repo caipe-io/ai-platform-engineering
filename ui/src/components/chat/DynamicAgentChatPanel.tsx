@@ -564,6 +564,7 @@ export function ChatPanel({
   const isThisConversationStreaming = activeConversationId
     ? isConversationStreaming(activeConversationId)
     : false;
+  const readOnlySubscription = useChatStore(state => activeConversationId ? state.streamingConversations.get(activeConversationId)?.readOnly : false);
   const externalActivity = useChatStore(state => activeConversationId ? state.externalActivity[activeConversationId] : undefined);
   const migrationActivity = useChatStore(state => conversationId ? state.externalActivity[conversationId] : undefined);
   const isRemoteResponse = !!externalActivity && !isThisConversationStreaming;
@@ -1352,7 +1353,7 @@ export function ChatPanel({
       clearStreamEvents(activeConversationId);
       updateMessage(activeConversationId, assistantId, { isFinal: false });
       setConversationStreaming(activeConversationId, { conversationId: activeConversationId, messageId: assistantId,
-        client: { abort: () => adapter.abort() }, streamAdapter: adapter, isReplay: true, readOnly: panelReadOnly });
+        client: { abort: () => adapter.abort() }, streamAdapter: adapter, readOnly: panelReadOnly || data.is_run_owner === false });
       try {
         await adapter.recoverRun(data.run_id, buildStreamCallbacks(activeConversationId, assistantId, state, new Map()), activeConversationId);
       } catch (error) {
@@ -3122,6 +3123,7 @@ export function ChatPanel({
                     <Button
                       size="icon"
                       onClick={handleStop}
+                      disabled={readOnlySubscription}
                       variant="destructive"
                       className="h-8 w-8 rounded-full"
                       title="Stop generating"

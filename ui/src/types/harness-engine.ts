@@ -2,6 +2,7 @@ export type HarnessRunStatus = "queued" | "running" | "paused" | "completed" | "
 
 export interface HarnessRun {
   run_id: string;
+  owner_subject?: string;
   agent_id: string;
   conversation_id: string;
   agent_version: number;

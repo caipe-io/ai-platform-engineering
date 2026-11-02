@@ -110,8 +110,8 @@ service until an operator enables the Engine integration.
   The Engine rejects that scope on mutation routes. Browser headers cannot
   grant this scope, and a run from another conversation cannot be substituted.
 - Execution controls retain agent use, conversation write, and Engine owner
-  checks. Keeping a run ID does not retain revoked access. Passive replay never
-  writes transcript messages from the viewer's browser.
+  checks. Keeping a run ID does not retain revoked access. Read-only viewers never
+  write transcript messages; the run owner retains final-answer persistence.
 - A conversation keeps its original agent. Recovery with another agent creates
   a separate empty chat; it preserves the original history, sharing, and binding.
   An agent hidden by permissions is shown as unavailable, never assumed deleted.

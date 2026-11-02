@@ -134,7 +134,7 @@ export async function getHarnessConversationStatus(
   return NextResponse.json({ success: true, data: {
     runtime: "harness_engine", status: saved.active_run ? "running" : saved.pending_interrupt ? "waiting_for_input" : "idle",
     run_id: run?.run_id ?? null, run_status: run?.status, turn_id: run?.turn_id ?? null,
-    last_sequence: run?.last_sequence ?? 0,
+    last_sequence: run?.last_sequence ?? 0, is_run_owner: run?.owner_subject === auth.subject,
   } });
 }
 
