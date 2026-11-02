@@ -430,6 +430,8 @@ credentialSecretRefs: []
 # Slack bot admin sync/reload uses OIDC_CLIENT_ID/OIDC_CLIENT_SECRET. Webex bot
 # admin sync/reload still requires WEBEX_BOT_ADMIN_CLIENT_SECRET when enabled.
 existingSecret: ""
+# Optional feature credentials may be absent without preventing UI startup.
+existingSecretOptional: false
 
 # ---------- Keycloak Admin REST client wiring ----------
 #

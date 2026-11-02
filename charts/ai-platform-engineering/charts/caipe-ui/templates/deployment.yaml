@@ -209,6 +209,7 @@ spec:
             {{- if .Values.existingSecret }}
             - secretRef:
                 name: {{ .Values.existingSecret }}
+                optional: {{ .Values.existingSecretOptional | default false }}
             {{- end }}
             {{- if .Values.externalSecrets.enabled }}
             # Mount ExternalSecret as environment variables (sensitive data)

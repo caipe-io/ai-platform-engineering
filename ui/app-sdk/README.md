@@ -462,3 +462,10 @@ Declare `ui.assistant.overlay: "host"` to use CAIPE's popup. Optional
   the host ignores invalid drafts.
 - Existing `openAssistant(context)` calls remain compatible. The wire format is
   the optional `draft: { id, text }` field on `caipe.agenticApp.assistant.open.v1`.
+
+### Shared feedback form
+
+- Iframe apps check `bridge.getCapabilities()?.feedback` and call `bridge.openFeedback({ feature })`.
+- Native extensions use the optional `feedback.open({ feature })` prop.
+- Both open the host's `ReportProblemDialog` with the calling component selected. The authorized component registry supplies features and the registered component handler.
+- Feedback requires a registered host-managed handler or app-owned `feedback_path`, plus enabled host reporting. Unsupported or disabled hosts do not advertise the iframe capability. Apps may retain a standalone form for hosts without this capability.

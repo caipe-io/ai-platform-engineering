@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import { parseFeedbackIssueStyle } from "@/lib/feedback-issue-style";
+import { parseFeedbackFeatures } from "@/lib/feedback-features";
 import { RESERVED_HOST_PATHS, pathsOverlap } from "../../../app-sdk/reserved-paths.mjs";
 import { agenticAppHostPaths } from "./host-routes";
 import { load as loadYaml } from "js-yaml";
@@ -58,6 +60,8 @@ type RawInstallation = {
   access_overrides?: unknown;
   host_route_claims?: unknown;
   navigation_overrides?: unknown;
+  feedback_path?: unknown;
+  feedback_features?: unknown;
   selected_ui_profile?: unknown;
   app_version?: unknown;
   bindings?: unknown;
@@ -159,6 +163,8 @@ export function loadConfiguredAgenticApps(
     }
   });
 
+  const feedbackHandlers = process.env.FEEDBACK_COMPONENTS_JSON === undefined ? {} :
+    asRecord(JSON.parse(process.env.FEEDBACK_COMPONENTS_JSON), "FEEDBACK_COMPONENTS_JSON");
   const apps: ConfiguredAgenticApp[] = rawInstallations.map((entry, index) => {
     const path = `agentic_apps.installations[${index}]`;
     const raw = asRecord(entry, path) as RawInstallation;
@@ -214,6 +220,10 @@ export function loadConfiguredAgenticApps(
         : {}),
       ...(raw.host_route_claims !== undefined
         ? { hostRouteClaims: requiredStringArray(raw.host_route_claims, `${path}.host_route_claims`, true) } : {}),
+      ...(raw.feedback_features !== undefined
+        ? { feedbackFeatures: parseFeedbackFeatures(raw.feedback_features, `${path}.feedback_features`) } : {}),
+      ...(raw.feedback_path !== undefined
+        ? { feedbackPath: requiredFeedbackPath(raw.feedback_path, `${path}.feedback_path`) } : {}),
       ...(raw.navigation_overrides !== undefined
         ? { navigationOverrides: parseNavigationOverrides(raw.navigation_overrides, `${path}.navigation_overrides`) } : {}),
       ...(raw.access_overrides !== undefined
@@ -237,6 +247,21 @@ export function loadConfiguredAgenticApps(
       throw new Error(
         `${path}: select an explicit UI profile for a multi-profile application`,
       );
+    if (Object.hasOwn(feedbackHandlers, appId)) {
+      const feedback = asRecord(feedbackHandlers[appId], `Feedback component ${appId}`);
+      if (feedback.handler !== "github") throw new Error(`Unsupported feedback handler for ${appId}`);
+      const repository = requiredString(feedback.repository, "Feedback repository");
+      const tokenEnv = requiredString(feedback.tokenEnv, "Feedback token environment key");
+      const validRepo = (value: string) => /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+$/.test(value) && ![".", ".."].includes(value.split("/")[1]);
+      if (!validRepo(repository) || !/^FEEDBACK_[A-Z][A-Z0-9_]*_TOKEN$/.test(tokenEnv)) throw new Error(`Invalid feedback destination for ${appId}`);
+      const screenshotsRepository = feedback.screenshotsRepository === undefined ? undefined : requiredString(feedback.screenshotsRepository, "Feedback screenshots repository");
+      if (screenshotsRepository && !validRepo(screenshotsRepository)) throw new Error(`Invalid feedback screenshots repository for ${appId}`);
+      installation.feedbackGitHub = { repository, tokenEnv, screenshotsRepository,
+        ...(feedback.style === undefined ? {} : { style: parseFeedbackIssueStyle(feedback.style) }),
+        ...(feedback.label === undefined ? {} : { label: requiredString(feedback.label, "Feedback label") }) };
+      installation.feedbackFeatures = parseFeedbackFeatures(feedback.features, `Feedback features for ${appId}`);
+      delete installation.feedbackPath;
+    }
     if (
       installation.bindings?.runtimeOrigin &&
       installation.runtimeOriginOverride &&
@@ -331,7 +356,7 @@ export function loadConfiguredAgenticApps(
       app.installation.runtimeOriginOverride ??
       app.manifest.runtime?.origin;
     if (
-      (app.manifest.runtime || app.manifest.api.mounts.length > 0) &&
+      (app.manifest.runtime || app.manifest.api.mounts.length > 0 || app.installation.feedbackPath) &&
       app.installation.installed &&
       app.installation.enabled &&
       !origin
@@ -870,4 +895,12 @@ function requiredHttpOrigin(
     throw new Error(`${path} must be an HTTP(S) origin without credentials`);
   }
   return allowPath ? parsed.toString() : parsed.origin;
+}
+
+function requiredFeedbackPath(value: unknown, label: string): string {
+  const path = requiredString(value, label);
+  if (!/^\/[a-zA-Z0-9_/-]+$/.test(path) || path.includes("//")) {
+    throw new Error(`${label} must be a canonical app-relative path without query parameters`);
+  }
+  return path;
 }

@@ -5,6 +5,10 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
+import { parseFeedbackAppContext } from "@/lib/feedback-issue-style";
+import { requestFrameFeedbackContext } from "@/lib/agentic-apps/feedback-handoff";
+import { ReportProblemDialog } from "@/components/ticket/ReportProblemDialog";
+import { getConfig } from "@/lib/config";
 import { useVersion } from "@/hooks/use-version";
 import { OPEN_APPLICATION_SEARCH_EVENT } from "@/lib/navigation-events";
 import { ASSISTANT_EXTENSIONS, validateAssistantConfiguration, type AssistantConfiguration } from "../../../app-sdk/assistant-options.mjs";
@@ -73,6 +77,7 @@ export function AgenticAppShell({
   const [assistantContext, setAssistantContext] =
     useState<AgenticAppAssistantContextRecord | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [feedbackRequest, setFeedbackRequest] = useState<{ feature?: string; requestId?: string; appContext?: Record<string, string> } | null>(null);
   const [assistantDraft, setAssistantDraft] = useState<(AssistantDraft & { appId: string }) | null>(null);
   const consumedDrafts = useRef(new Set<string>());
   const [assistantBinding, setAssistantBinding] = useState<{
@@ -97,6 +102,7 @@ export function AgenticAppShell({
       setAssistantContext(null);
       setConfiguration(null);
       setAssistantOpen(false);
+      setFeedbackRequest(null);
       setAssistantDraft(null);
       consumedDrafts.current.clear();
       setAssistantBinding(null);
@@ -106,6 +112,7 @@ export function AgenticAppShell({
     });
   }, [appId, identity, sessionStatus]);
 
+  const feedbackEnabled = state.status === "ready" && state.app.feedbackEnabled === true && Boolean(getConfig("reportProblemEnabled"));
   const requestedAgentId = state.status === "ready" ? state.app.assistantAgentId : undefined;
   const assistantBindingKey = `${identity}:${appId}:${requestedAgentId ?? "default"}`;
   const assistantAgent =
@@ -225,7 +232,7 @@ export function AgenticAppShell({
     const target = iframeRef.current?.contentWindow;
     const envelope = { version: "1.0", appId };
     target?.postMessage({ ...envelope, type: "caipe.agenticApp.bridge.capabilities.v1",
-      capabilities: { hostBuild, assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured, navigation: true, queryNavigation: true, pathNavigation: true, breadcrumbs: true, breadcrumbPresentation: true, hostShortcuts: ["search"], composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
+      capabilities: { hostBuild, feedback: feedbackEnabled, assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured, navigation: true, queryNavigation: true, pathNavigation: true, breadcrumbs: true, breadcrumbPresentation: true, hostShortcuts: ["search"], composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
     target?.postMessage({ ...envelope, type: "caipe.agenticApp.navigation.v1",
       href: window.location.pathname + window.location.search + window.location.hash }, window.location.origin);
   }
@@ -241,7 +248,7 @@ export function AgenticAppShell({
       function reply(error?: string) {
         expectedSource.postMessage({ type: error ? "caipe.agenticApp.bridge.error.v1" : "caipe.agenticApp.bridge.capabilities.v1",
           version: "1.0", appId, ...(error ? { error } : { capabilities: {
-            hostBuild, assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured, navigation: true, queryNavigation: true, pathNavigation: true, breadcrumbs: true, breadcrumbPresentation: true, hostShortcuts: ["search"], composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: app.assistantOptions,
+            hostBuild, feedback: feedbackEnabled, assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured, navigation: true, queryNavigation: true, pathNavigation: true, breadcrumbs: true, breadcrumbPresentation: true, hostShortcuts: ["search"], composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: app.assistantOptions,
           } }) }, window.location.origin);
       }
       if (message.version !== "1.0") { reply("unsupported_version"); setBridgeError("This app uses an unsupported bridge version."); return; }
@@ -251,6 +258,17 @@ export function AgenticAppShell({
           href: window.location.pathname + window.location.search + window.location.hash }, window.location.origin);
         expectedSource.postMessage({ type: "caipe.agenticApp.assistant.state.v1", version: "1.0", appId,
           open: assistantOpen }, window.location.origin);
+        return;
+      }
+      if (message.type === "caipe.agenticApp.feedback.open.v1") {
+        if (!feedbackEnabled) { reply("feedback_unavailable"); return; }
+        if (message.feature !== undefined && (typeof message.feature !== "string" || message.feature.length > 40)) { reply("invalid_feedback_feature"); return; }
+        // The connected app selects only itself; the server registry still authorizes it.
+        if (message.requestId !== undefined && (typeof message.requestId !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(message.requestId))) { reply("invalid_feedback_request"); return; }
+        let appContext: Record<string, string> | undefined;
+        try { appContext = parseFeedbackAppContext(message.appContext); }
+        catch { reply("invalid_feedback_context"); return; }
+        setFeedbackRequest({ feature: message.feature, requestId: message.requestId, appContext });
         return;
       }
       if (message.type === "caipe.agenticApp.shortcut.v1") {
@@ -317,15 +335,15 @@ export function AgenticAppShell({
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [appId, assistantConfigured, assistantAgent, assistantOpen, publicPath, router, state, session, hostBuild]);
+  }, [appId, assistantConfigured, assistantAgent, assistantOpen, publicPath, router, state, session, hostBuild, feedbackEnabled]);
 
   useEffect(() => {
     const target = iframeRef.current?.contentWindow;
     if (!target || state.status !== "ready") return;
     target.postMessage({ type: "caipe.agenticApp.bridge.capabilities.v1", version: "1.0", appId,
-      capabilities: { hostBuild, assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured,
+      capabilities: { hostBuild, feedback: feedbackEnabled, assistant: assistantConfigured && Boolean(assistantAgent), context: assistantConfigured, assistantDraft: assistantConfigured,
         navigation: true, queryNavigation: true, pathNavigation: true, breadcrumbs: true, breadcrumbPresentation: true, hostShortcuts: ["search"], composerExtensions: [...ASSISTANT_EXTENSIONS], assistantOptions: state.app.assistantOptions } }, window.location.origin);
-  }, [appId, assistantAgent, assistantConfigured, state, hostBuild]);
+  }, [appId, assistantAgent, assistantConfigured, state, hostBuild, feedbackEnabled]);
 
   useEffect(() => {
     iframeRef.current?.contentWindow?.postMessage({ type: "caipe.agenticApp.assistant.state.v1", version: "1.0", appId, open: assistantOpen }, window.location.origin);
@@ -390,6 +408,16 @@ export function AgenticAppShell({
         title={state.app.displayName}
         allow="clipboard-read; clipboard-write"
       />
+      {feedbackRequest && <ReportProblemDialog open onOpenChange={open => { if (!open) {
+        if (feedbackRequest.requestId) iframeRef.current?.contentWindow?.postMessage({ type: "caipe.agenticApp.feedback.closed.v1", version: "1.0", appId, requestId: feedbackRequest.requestId }, window.location.origin);
+        setFeedbackRequest(null);
+      } }}
+        initialComponentId={appId} initialFeature={feedbackRequest.feature} appContext={feedbackRequest.appContext}
+        onBeforeSubmit={feedbackRequest.requestId ? request => {
+          const frame = iframeRef.current?.contentWindow;
+          if (!frame) return Promise.reject(new Error("The feedback app is unavailable"));
+          return requestFrameFeedbackContext(frame, appId, feedbackRequest.requestId!, request);
+        } : undefined} />}
       {assistantConfigured && assistantAgent && (configuration?.visible ?? !state.app.assistantOptions?.requireConfiguration) ? (
         <AgenticAppAssistantOverlay
           assistantAgent={assistantAgent.config}

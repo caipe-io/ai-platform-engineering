@@ -3124,7 +3124,7 @@ export function ChatPanel({
       )}
 
       {showFeedbackPrompt && feedbackFormOpen && (
-        <ReportProblemDialog open={feedbackFormOpen} onOpenChange={setFeedbackFormOpen} chatContext={feedbackChatContext} />
+        <ReportProblemDialog conversationId={conversationId ?? activeConversationId ?? undefined} open={feedbackFormOpen} onOpenChange={setFeedbackFormOpen} chatContext={feedbackChatContext} />
       )}
       <RewindConfirmationDialog
         open={isRewindConfirmationOpen}
