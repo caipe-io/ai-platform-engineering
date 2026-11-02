@@ -193,3 +193,141 @@ access token to the selected runtime. The browser does not attach a bearer token
   their bearer identity and do not inherit browser administrator privileges.
 - Conversation-write, agent-use and app installation admission checks remain in
   force for every operation. Keep admin-only app policies unchanged.
+
+## App feedback
+
+Apps can opt into the existing report dialog through their deployment installation:
+
+```yaml
+agentic_apps:
+  installations:
+    - app_id: example
+      package_id: example
+      feedback_path: /api/example/feedback
+```
+
+`feedback_path` is a canonical path relative to the app runtime. CAIPE selects
+it from the current app page and forwards submissions through the existing app
+proxy, including its availability, user access, POST policy and token checks.
+The app backend owns the provider, repository/project/space, credentials and
+attachments. It must derive reporter identity from its authenticated caller.
+Return `{ "success": true, "data": { "id": "42", "url": "https://example.test/report/42", "provider": "github" } }`.
+Supported receipt labels are `github`, `jira`, `gitlab` and `webex`; the URL may
+be empty when the provider has no link.
+
+The compatibility endpoint `/api/tickets/report` also accepts existing app
+clients. Apps without `feedback_path` use the platform's existing configured
+agent flow. A failed app submission is shown to the reporter and never silently
+rerouted to that platform flow. No app SDK or provider dependency is added.
+MCP provider registration and notification integration are tracked in #3151.
+
+Clicking **thumbs down opens Provide Feedback directly** when
+`REPORT_PROBLEM_ENABLED` is enabled, including installations whose app handles
+reports without a global ticket provider. There is no intermediate reason dialog.
+The form requires a short title and reproduction steps (Bug), or a goal
+(Enhancement), and includes a Feature category, expected/actual results and an
+optional related link. Closing it records nothing. Explicit submission records
+the negative response feedback with the selected issue type and report details,
+then creates the report. Retrying report creation reuses that recorded rating.
+Requests include `title`, `issueType`, `feature`, labeled `sections` and
+`relatedUrl`, plus a plain-text `description` for existing handlers. App forms
+retain their own feature lists. The page URL retains its query parameters and
+fragment, and chat excerpts remain opt-in. Positive ratings and installations
+with reporting disabled retain the lightweight response-feedback dialog.
+
+### Feedback feature categories
+
+- Platform defaults cover Chat, Connected Credentials, Knowledge Bases, Skills,
+  Workflows, Agents, MCP Servers, LLM Models, Schedules, Settings and Other.
+- Set `FEEDBACK_FEATURES` to a JSON string array to replace the platform list:
+
+  ```bash
+  FEEDBACK_FEATURES='["Chat","Connected Credentials","Other"]'
+  ```
+
+- An app can publish `data.features` from GET on its registered `feedback_path`.
+  Its embedded form can consume that same capability response. The host never
+  substitutes platform areas for an app's features.
+- A deployment can override the host form's app list in its installation:
+
+  ```yaml
+  agentic_apps:
+    installations:
+      - app_id: example
+        package_id: example
+        feedback_path: /api/example/feedback
+        feedback_features: [Routing, Publishing, Other]
+  ```
+
+Lists contain 1–32 labels, each up to 40 characters. An app without a feature
+list or capability GET offers Other. Category requests require feedback-submit
+access and the app's launch policy. Reports from shared Chat also resolve the
+canonical conversation's app binding after conversation-read authorization;
+the category list and report destination use the same binding. The form blocks
+submission while categories load, and offers a retry on discovery failure.
+
+### Feedback components
+
+- The shared feedback form selects **Component** before **Feature**.
+- The platform is first; `FEEDBACK_PLATFORM_LABEL` can override its component label
+  independently of application branding. Installed, enabled apps with a registered `feedback_path`
+  follow in registration order, filtered by the reporter's app access policy.
+- Opening the form defaults to the current page/conversation's component. Changing
+  Component preserves the report text, reloads features, and resets the feature
+  choice before allowing submission.
+- Component discovery uses authenticated `GET /api/tickets/report?view=components`;
+  it does not contact every app's feedback service. Features load only for the
+  selected component through its configured `feedback_features` or capability GET.
+- Explicit requests use `componentId`: `null` for the platform, an installation app
+  ID for an app. GET encodes platform selection as `componentId=`. Omitting it
+  retains context-based routing for existing clients.
+- Submission uses the selected registered handler. App launch policy, proxy
+  authorization, and conversation read checks still apply. Provider failures do
+  not reroute to another component.
+
+### Platform feedback handler
+
+Each app owns the provider, credentials and destination behind its registered
+`feedback_path`. The platform component independently selects its default handler:
+
+```dotenv
+FEEDBACK_HANDLER=github
+FEEDBACK_GITHUB_REPO=example/feedback
+FEEDBACK_GITHUB_TOKEN=your-server-side-service-token
+# Optional overrides:
+FEEDBACK_GITHUB_LABEL=feedback
+FEEDBACK_GITHUB_SCREENSHOTS_REPO=example/feedback-assets
+```
+
+- `github` creates an issue directly through GitHub's REST API and returns its
+  receipt. It does not ask an agent to create the issue.
+- No handler is enabled by default. Missing handler, repository or dedicated
+  credential returns 503. `agent` requires an explicit operator opt-in.
+- Repository and token overrides are server-only. The handler uses only `FEEDBACK_GITHUB_REPO` and
+  `FEEDBACK_GITHUB_TOKEN`; legacy provider settings are not fallbacks. Browser payloads cannot choose a repository or token.
+- The issue includes the report text, type, feature, authenticated reporter,
+  context URL and any explicitly included chat excerpt. Labels come from platform
+  configuration and the selected issue type.
+- GitHub failures are surfaced without retrying creation or invoking another
+  component's handler. App reports still go exclusively to their app handler.
+- Screenshots require an explicitly configured assets repository. The form hides
+  capture/upload controls when the handler reports no screenshot support. An
+  existing attachment must be removed before submitting to an unsupported handler.
+- The service credential needs [Issues write permission](https://docs.github.com/en/rest/issues/issues#create-an-issue)
+  on the feedback repo. Optional asset uploads also need
+  [Contents write permission](https://docs.github.com/en/rest/repos/contents#create-or-update-file-contents)
+  on the assets repo. No service token is returned to the browser.
+
+### Host-managed app feedback
+
+Configure `FEEDBACK_COMPONENTS_JSON` with installed app IDs mapped to `handler: "github"`, `repository`, `tokenEnv`, and `features`. Optional `screenshotsRepository` and `label` configure issue attachments and labels. The token environment key must match `FEEDBACK_*_TOKEN`; credential values stay in deployment secrets.
+
+The canonical app loader applies these registrations to installed components, replacing any legacy app-owned `feedback_path` for that component. The shared `/api/tickets/report` API validates access, features, and authenticated reporter attribution, then creates the issue in the configured repository. Missing credentials fail closed. Apps need neither a feedback endpoint nor GitHub credentials. Other apps may still register their own `feedback_path`.
+
+### Issue style and diagnostic context
+
+- Platform: `FEEDBACK_GITHUB_STYLE_JSON` controls `titlePrefix`, base `labels`, `typeLabels`, `featureLabels`, and named `contextFields`.
+- Installed components: set the same object under the handler's `style` in `FEEDBACK_COMPONENTS_JSON`. Browser-supplied labels, destinations, assignments and build values cannot override these rules.
+- `titlePrefix: true` creates `[User Feedback][Component][Type]: Short title`. Unmapped features add no label. Impact stays in the body; priority and assignment remain triage decisions.
+- The body includes the authenticated reporter, host version/commit, browser family/major version and OS, entry point, page/related URLs, impact and configured app context. Apps may supply project/page and their own version/commit through the host capability. App-supplied diagnostics are descriptive context, while host build metadata is read server-side.
+- Configure labels that exist in the destination repository. The shared handler does not create or rename repository labels.

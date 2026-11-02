@@ -1,8 +1,10 @@
 "use client";
 
+import { FEEDBACK_SEVERITIES, describeFeedbackBrowser, type FeedbackSeverity } from "@/lib/feedback-features";
 import { getErrorMessage } from "@/lib/error-utils";
 
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import {
 Dialog,
 DialogContent,
@@ -10,11 +12,15 @@ DialogDescription,
 DialogHeader,
 DialogTitle,
 } from "@/components/ui/dialog";
-import { getConfig } from "@/lib/config";
 import {
 createTicketViaAgent,
+fetchFeedbackOptions,
+fetchFeedbackComponents,
+type FeedbackComponent,
+type FeedbackOptions,
 type FeedbackContext,
 type TicketResult,
+type TicketRequest,
 } from "@/lib/ticket-client";
 import { AnimatePresence,motion } from "framer-motion";
 import Image from "next/image";
@@ -34,9 +40,22 @@ Upload,
 X
 } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { usePathname } from "next/navigation";
 import React,{ useCallback,useEffect,useId,useRef,useState } from "react";
 import { createPortal } from "react-dom";
+
+const REPORT_FIELDS = {
+  Bug: [
+    { key: "steps", label: "Steps to reproduce", required: true, placeholder: "1. Open the page\n2. Click ...\n3. ..." },
+    { key: "expected", label: "What I expected", required: false, placeholder: "What should have happened" },
+    { key: "actual", label: "What happened instead", required: false, placeholder: "What happened instead" },
+  ],
+  Enhancement: [
+    { key: "goal", label: "What I am trying to do", required: true, placeholder: "What you want to get done" },
+    { key: "today", label: "How I do it today", required: false, placeholder: "Your current workaround, if any" },
+    { key: "who", label: "Who else needs this", required: false, placeholder: "Who would benefit" },
+  ],
+} as const;
+const FIELD_CLASS = "w-full px-3 py-2 text-sm bg-muted/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50";
 
 type DialogStatus = "idle" | "submitting" | "success" | "error";
 
@@ -45,8 +64,15 @@ interface ReportProblemDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Pre-populated feedback context for the combo flow */
   feedbackContext?: FeedbackContext;
+  /** Record response feedback on an explicit submission, before creating its report. */
+  onBeforeSubmit?: (request: TicketRequest) => Promise<FeedbackContext>;
   /** Optional visible chat excerpt; sent only after the reporter opts in. */
   chatContext?: string;
+  conversationId?: string;
+  /** Select the calling app through the authorized component registry. */
+  initialComponentId?: string | null;
+  initialFeature?: string;
+  appContext?: Record<string, string>;
 }
 
 interface ImageCaptureConstructor {
@@ -59,12 +85,35 @@ export function ReportProblemDialog({
   open,
   onOpenChange,
   feedbackContext,
+  onBeforeSubmit,
   chatContext,
+  conversationId,
+  initialComponentId,
+  initialFeature,
+  appContext,
 }: ReportProblemDialogProps) {
   const { data: session } = useSession();
-  const pathname = usePathname();
 
-  const [description, setDescription] = useState("");
+  const [issueType, setIssueType] = useState<"Bug" | "Enhancement">("Bug");
+  const [title, setTitle] = useState("");
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [options, setOptions] = useState<FeedbackOptions | null>(null);
+  const [components, setComponents] = useState<FeedbackComponent[]>([]);
+  const [componentId, setComponentId] = useState<string | null | undefined>(undefined);
+  const [registryAttempt, setRegistryAttempt] = useState(0);
+  const [optionsError, setOptionsError] = useState("");
+  const [optionsAttempt, setOptionsAttempt] = useState(0);
+  const [feature, setFeature] = useState<string>("Other");
+  const [relatedUrl, setRelatedUrl] = useState("");
+  const fieldId = useId();
+  const fields = REPORT_FIELDS[issueType];
+  const validRelatedUrl = !relatedUrl.trim() || (() => {
+    try { return ["http:", "https:"].includes(new URL(relatedUrl.trim()).protocol); }
+    catch { return false; }
+  })();
+  const sections = fields.flatMap(field => values[field.key]?.trim() ? [{ label: field.label, value: values[field.key].trim() }] : []);
+
+  const [severity, setSeverity] = useState<FeedbackSeverity>();
   const [includeChatContext, setIncludeChatContext] = useState(false);
   const [chatContextDraft, setChatContextDraft] = useState("");
   const [status, setStatus] = useState<DialogStatus>("idle");
@@ -73,6 +122,7 @@ export function ReportProblemDialog({
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [showDebug, setShowDebug] = useState(false);
   const [screenshotDataUrl, setScreenshotDataUrl] = useState<string | null>(null);
+  const canSubmit = Boolean(options) && (!screenshotDataUrl || options?.screenshotsEnabled !== false) && Boolean(title.trim()) && fields.every(field => !field.required || values[field.key]?.trim()) && validRelatedUrl;
   const [isCapturing, setIsCapturing] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
@@ -81,13 +131,54 @@ export function ReportProblemDialog({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileInputId = useId();
 
-  const provider = getConfig("ticketProvider");
-  const providerLabel = provider === "jira" ? "Jira" : provider === "github" ? "GitHub" : "";
+  const reportDescription = [
+    title.trim(),
+    ...sections.map(section => `${section.label}:\n${section.value}`),
+    feedbackContext && `Feedback: ${feedbackContext.reason}`,
+    feedbackContext?.additionalFeedback,
+    severity && `Impact: ${severity}`,
+    options && `Component: ${options.label}`,
+    `Feature: ${feature}`,
+    relatedUrl.trim() && `Link: ${relatedUrl.trim()}`,
+  ].filter(Boolean).join("\n\n");
 
   const contextUrl =
     typeof window !== "undefined"
-      ? `${window.location.origin}${pathname}`
+      ? window.location.href
       : "";
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    setComponents([]);
+    setComponentId(undefined);
+    setOptions(null);
+    setOptionsError("");
+    void fetchFeedbackComponents(contextUrl, conversationId, controller.signal, initialComponentId).then(data => {
+      if (controller.signal.aborted) return;
+      setComponents(data.components);
+      setComponentId(data.appId);
+    }).catch(error => {
+      if (!controller.signal.aborted) setOptionsError(error instanceof Error ? error.message : "Could not load feedback components");
+    });
+    return () => controller.abort();
+  }, [open, contextUrl, conversationId, registryAttempt, initialComponentId]);
+
+  useEffect(() => {
+    if (!open || !components.length || componentId === undefined) return;
+    const controller = new AbortController();
+    setOptions(null);
+    setOptionsError("");
+    void fetchFeedbackOptions(contextUrl, conversationId, controller.signal, componentId).then(data => {
+      if (controller.signal.aborted) return;
+      setOptions(data);
+      setFeature(componentId === initialComponentId && initialFeature && data.features.includes(initialFeature)
+        ? initialFeature : data.features.includes("Other") ? "Other" : data.features[0]);
+    }).catch(error => {
+      if (!controller.signal.aborted) setOptionsError(error instanceof Error ? error.message : "Could not load feedback categories");
+    });
+    return () => controller.abort();
+  }, [open, components.length, componentId, contextUrl, conversationId, optionsAttempt, initialComponentId, initialFeature]);
 
   useEffect(() => {
     if (showDebug && debugEndRef.current) {
@@ -96,7 +187,15 @@ export function ReportProblemDialog({
   }, [debugLog, showDebug]);
 
   const resetState = useCallback(() => {
-    setDescription("");
+    setIssueType("Bug");
+    setComponents([]);
+    setComponentId(undefined);
+    setOptions(null);
+    setFeature("Other");
+    setTitle("");
+    setValues({});
+    setRelatedUrl("");
+    setSeverity(undefined);
     setIncludeChatContext(false);
     setChatContextDraft("");
     setStatus("idle");
@@ -194,7 +293,7 @@ export function ReportProblemDialog({
   }, []);
 
   const handleSubmit = useCallback(async () => {
-    if (!description.trim() && !feedbackContext) return;
+    if (!canSubmit || abortControllerRef.current) return;
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -206,23 +305,35 @@ export function ReportProblemDialog({
 
     const userEmail = session?.user?.email || "unknown";
 
-    appendLog(`Creating ${providerLabel} ticket...`);
+    appendLog("Submitting feedback...");
     appendLog(`Reporter: ${userEmail}`);
     appendLog(`Context: ${contextUrl}`);
 
     try {
+      const request: TicketRequest = {
+        description: reportDescription,
+        title: title.trim(),
+        issueType,
+        feature,
+        severity,
+        sections,
+        relatedUrl: relatedUrl.trim() || undefined,
+        browser: describeFeedbackBrowser(navigator.userAgent),
+        source: onBeforeSubmit || conversationId || feedbackContext ? "chat-feedback" : initialComponentId ? "app" : "header",
+        appContext: options?.appId === initialComponentId ? appContext : undefined,
+        userEmail,
+        contextUrl,
+        conversationId,
+        componentId: options?.appId,
+        feedbackContext,
+        screenshotDataUrl: screenshotDataUrl ?? undefined,
+        ...(includeChatContext && chatContext && chatContextDraft.trim()
+          ? { chatContext: chatContextDraft.trim() } : {}),
+      };
+      const submittedContext = await onBeforeSubmit?.(request);
+      if (controller.signal.aborted) return;
       const result = await createTicketViaAgent({
-        request: {
-          description: feedbackContext
-            ? `${feedbackContext.reason}: ${feedbackContext.additionalFeedback || description || "(no additional details)"}`
-            : description,
-          userEmail,
-          contextUrl,
-          feedbackContext,
-          screenshotDataUrl: screenshotDataUrl ?? undefined,
-          ...(includeChatContext && chatContext && chatContextDraft.trim()
-            ? { chatContext: chatContextDraft.trim() } : {}),
-        },
+        request: { ...request, feedbackContext: submittedContext ?? request.feedbackContext },
         signal: controller.signal,
         onEvent: (_event, logLine) => {
           appendLog(logLine);
@@ -250,13 +361,26 @@ export function ReportProblemDialog({
       appendLog(`Error: ${getErrorMessage(err, "") || "Unknown error"}`);
       setErrorMessage(getErrorMessage(err, "") || "Failed to create ticket");
       setStatus("error");
+    } finally {
+      if (abortControllerRef.current === controller) abortControllerRef.current = null;
     }
   }, [
-    description,
+    canSubmit,
+    options,
+    reportDescription,
+    title,
+    issueType,
+    feature,
+    severity,
+    sections,
+    relatedUrl,
+    appContext,
+    initialComponentId,
     feedbackContext,
+    onBeforeSubmit,
     session,
     contextUrl,
-    providerLabel,
+    conversationId,
     screenshotDataUrl,
     includeChatContext,
     chatContext,
@@ -271,27 +395,24 @@ export function ReportProblemDialog({
   }, [resetState]);
 
   const handleCopyDescription = useCallback(() => {
-    const text = feedbackContext
-      ? `${feedbackContext.reason}: ${feedbackContext.additionalFeedback || description}`
-      : description;
-    navigator.clipboard.writeText(text);
-  }, [description, feedbackContext]);
+    navigator.clipboard.writeText(reportDescription);
+  }, [reportDescription]);
 
   return (
     <>
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-md max-h-[90dvh] overflow-y-auto">
+      <DialogContent className="w-[calc(100vw-2rem)] max-w-3xl max-h-[90dvh] gap-3 overflow-y-auto p-5 sm:p-6">
         <DialogHeader>
           <DialogTitle>
             {status === "success"
               ? "Ticket Created"
               : status === "error"
                 ? "Something Went Wrong"
-                : `Report a Problem${providerLabel ? ` via ${providerLabel}` : ""}`}
+                : "Provide Feedback"}
           </DialogTitle>
           <DialogDescription>
             {status === "idle" &&
-              "Describe the issue briefly. A ticket will be created and assigned to the team."}
+              "Tell us what happened. Fields marked * are required."}
             {status === "submitting" && "Creating your ticket..."}
             {status === "success" && "Your ticket has been created successfully."}
             {status === "error" && "We couldn't create the ticket. You can retry or copy your description."}
@@ -300,9 +421,36 @@ export function ReportProblemDialog({
 
         {/* Idle: input form */}
         {status === "idle" && (
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-x-4">
+            <div className="flex min-w-0 flex-col gap-3 sm:col-span-2 sm:flex-row sm:items-center sm:gap-4">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <label htmlFor={`${fieldId}-component`} className="shrink-0 text-xs font-medium text-muted-foreground">Component *</label>
+                <Select id={`${fieldId}-component`} required disabled={!components.length} className="min-w-0 flex-1"
+                  value={componentId === undefined ? "" : componentId === null ? "platform" : `app:${componentId}`}
+                  onChange={event => {
+                    const next = event.target.value === "platform" ? null : event.target.value.slice(4);
+                    if (next !== componentId) {
+                      setOptions(null);
+                      setFeature("Other");
+                      setComponentId(next);
+                    }
+                  }}>
+                  {!components.length && <option value="">{optionsError ? "Components unavailable" : "Loading components…"}</option>}
+                  {components.map(item => <option key={item.appId === null ? "platform" : `app:${item.appId}`}
+                    value={item.appId === null ? "platform" : `app:${item.appId}`}>{item.label}</option>)}
+                </Select>
+              </div>
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <label htmlFor={`${fieldId}-feature`} className="shrink-0 text-xs font-medium text-muted-foreground">Feature</label>
+                <Select id={`${fieldId}-feature`} value={feature} disabled={!options} className="min-w-0 flex-1" onChange={event => setFeature(event.target.value)}>
+                  {!options && <option value="Other">{optionsError ? "Categories unavailable" : "Loading categories…"}</option>}
+                  {options?.features.map(item => <option key={item} value={item}>{item}</option>)}
+                </Select>
+              </div>
+            </div>
+
             {feedbackContext && (
-              <div className="rounded-md bg-muted/50 border border-border/50 px-3 py-2 text-xs text-muted-foreground">
+              <div className="rounded-md bg-muted/50 border border-border/50 px-3 py-2 text-xs text-muted-foreground sm:col-span-2">
                 <span className="font-medium">Feedback:</span>{" "}
                 {feedbackContext.feedbackType === "dislike" ? "👎" : "👍"}{" "}
                 {feedbackContext.reason}
@@ -312,17 +460,59 @@ export function ReportProblemDialog({
               </div>
             )}
 
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder={
-                feedbackContext
-                  ? "Add more details for the ticket (optional)"
-                  : "What went wrong? Be as specific as you can."
-              }
-              className="w-full h-24 px-3 py-2 text-sm bg-muted/50 border border-border rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
-              autoFocus
-            />
+            <fieldset className="space-y-1 sm:col-span-2">
+              <legend className="text-xs font-medium text-muted-foreground">Type *</legend>
+              <div className="flex flex-wrap gap-1.5">
+                {(["Bug", "Enhancement"] as const).map(type => (
+                  <button key={type} type="button" aria-pressed={issueType === type}
+                    onClick={() => setIssueType(type)}
+                    className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${issueType === type ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>
+                    {type}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            {optionsError && <div role="alert" className="text-xs text-destructive sm:col-span-2">{optionsError} <button type="button" className="underline" onClick={() => components.length ? setOptionsAttempt(value => value + 1) : setRegistryAttempt(value => value + 1)}>Retry categories</button></div>}
+
+            <div className="space-y-1 sm:col-span-2">
+              <div className="flex items-baseline justify-between text-xs text-muted-foreground">
+                <label htmlFor={`${fieldId}-title`} className="font-medium">Short title *</label>
+                <span>{title.length}/60</span>
+              </div>
+              <input id={`${fieldId}-title`} value={title} onChange={event => setTitle(event.target.value)}
+                maxLength={60} required autoFocus placeholder="One line that names the problem" className={FIELD_CLASS} />
+            </div>
+            {fields.map(field => (
+              <div key={field.key} className={`space-y-1 ${field.required ? "sm:col-span-2" : ""}`}>
+                <label htmlFor={`${fieldId}-${field.key}`} className="text-xs font-medium text-muted-foreground">
+                  {field.label}{field.required ? " *" : ""}
+                </label>
+                <textarea id={`${fieldId}-${field.key}`} required={field.required} value={values[field.key] ?? ""}
+                  maxLength={4000} onChange={event => setValues(current => ({ ...current, [field.key]: event.target.value }))}
+                  placeholder={field.placeholder} className={`${FIELD_CLASS} ${field.required ? "h-20" : "h-16"} resize-y`} />
+              </div>
+            ))}
+            <div className="space-y-1 sm:col-span-2">
+              <label htmlFor={`${fieldId}-link`} className="text-xs font-medium text-muted-foreground">Link (optional)</label>
+              <input id={`${fieldId}-link`} type="url" value={relatedUrl} maxLength={2000}
+                onChange={event => setRelatedUrl(event.target.value)} aria-invalid={!validRelatedUrl}
+                placeholder="Paste the page or item this is about" className={FIELD_CLASS} />
+              {!validRelatedUrl && <p role="alert" className="text-xs text-destructive">Use a link starting with http:// or https://.</p>}
+            </div>
+
+            <details open className="rounded-lg border border-border px-3 py-2 sm:col-span-2">
+              <summary className="cursor-pointer text-xs font-medium text-muted-foreground">More details (optional)</summary>
+              <div className="mt-3 space-y-3">
+                <fieldset className="space-y-2">
+                  <legend className="text-xs font-medium text-muted-foreground">How much does it affect you?</legend>
+                  <div className="flex flex-wrap gap-1.5">
+                    {FEEDBACK_SEVERITIES.map(value => <button key={value} type="button" aria-pressed={severity === value}
+                      onClick={() => setSeverity(current => current === value ? undefined : value)}
+                      className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${severity === value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>
+                      {value}
+                    </button>)}
+                  </div>
+                </fieldset>
 
             {chatContext && (
               <div className="space-y-2 rounded-lg border border-border p-3">
@@ -373,7 +563,7 @@ export function ReportProblemDialog({
                   Screenshot attached
                 </div>
               </div>
-            ) : (
+            ) : options?.screenshotsEnabled !== false ? (
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -404,19 +594,25 @@ export function ReportProblemDialog({
                   onChange={handleFileUpload}
                 />
               </div>
-            )}
+            ) : null}
+            {screenshotDataUrl && options?.screenshotsEnabled === false && <p role="alert" className="text-xs text-destructive">This component does not support screenshots. Remove the image to submit.</p>}
 
-            <p className="text-[10px] text-muted-foreground/60 text-center break-words">
+              </div>
+            </details>
+
+            <div className="space-y-3 sm:col-span-2">
+            <p className="text-center text-xs text-muted-foreground break-words">
               The current page URL and your email will be included in the ticket.
             </p>
 
             <Button
               onClick={handleSubmit}
-              disabled={!description.trim() && !feedbackContext}
+              disabled={!canSubmit}
               className="w-full gap-2"
             >
               Submit Report
             </Button>
+            </div>
           </div>
         )}
 
@@ -522,7 +718,7 @@ export function ReportProblemDialog({
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-1"
                 >
-                  Open in {providerLabel}
+                  Open in {{ jira: "Jira", github: "GitHub", gitlab: "GitLab", webex: "Webex" }[ticketResult.provider]}
                   <ExternalLink className="h-3 w-3" />
                 </a>
               )}

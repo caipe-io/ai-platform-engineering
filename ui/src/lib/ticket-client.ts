@@ -1,5 +1,6 @@
 "use client";
 
+import type { FeedbackSeverity } from "@/lib/feedback-features";
 import { apiClient } from "@/lib/api-client";
 import { resolveUsableChatAgent } from "@/lib/chat-agent-selection";
 import { getConfig } from "@/lib/config";
@@ -14,18 +15,74 @@ export interface FeedbackContext {
 
 export interface TicketRequest {
   description: string;
+  title?: string;
+  issueType?: "Bug" | "Enhancement";
+  feature?: string;
+  severity?: FeedbackSeverity;
+  sections?: Array<{ label: string; value: string }>;
+  relatedUrl?: string;
+  browser?: string;
+  source?: "header" | "app" | "chat-feedback";
+  appContext?: Record<string, string>;
   userEmail: string;
   contextUrl: string;
+  conversationId?: string;
+  /** null selects the platform; an app ID selects its registered feedback handler. */
+  componentId?: string | null;
   feedbackContext?: FeedbackContext;
   screenshotDataUrl?: string;
   /** Reporter-approved, editable excerpt from the current chat. */
   chatContext?: string;
 }
 
+export interface FeedbackComponent {
+  appId: string | null;
+  label: string;
+}
+
+export interface FeedbackOptions extends FeedbackComponent {
+  features: string[];
+  screenshotsEnabled?: boolean;
+}
+
+export interface FeedbackComponents {
+  appId: string | null;
+  components: FeedbackComponent[];
+}
+
+async function feedbackMetadata(query: URLSearchParams, signal?: AbortSignal) {
+  const response = await fetch(`/api/tickets/report?${query}`, { signal, cache: "no-store" });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Could not load feedback categories");
+  return body.data;
+}
+
+export async function fetchFeedbackComponents(contextUrl: string, conversationId?: string, signal?: AbortSignal, componentId?: string | null): Promise<FeedbackComponents> {
+  const query = new URLSearchParams({ contextUrl, view: "components", ...(conversationId ? { conversationId } : {}) });
+  if (componentId !== undefined) query.set("componentId", componentId ?? "");
+  const data = await feedbackMetadata(query, signal);
+  if (!data || componentId !== undefined && data.appId !== componentId || !Array.isArray(data.components) || !data.components.length || data.components.some((item: FeedbackComponent) =>
+    !item || !(item.appId === null || typeof item.appId === "string" && item.appId.length > 0) || typeof item.label !== "string" || !item.label.trim()) ||
+    !data.components.some((item: FeedbackComponent) => item.appId === data.appId)) {
+    throw new Error("Invalid feedback components returned by the server");
+  }
+  return data;
+}
+
+export async function fetchFeedbackOptions(contextUrl: string, conversationId?: string, signal?: AbortSignal, componentId?: string | null): Promise<FeedbackOptions> {
+  const query = new URLSearchParams({ contextUrl, ...(conversationId ? { conversationId } : {}) });
+  if (componentId !== undefined) query.set("componentId", componentId ?? "");
+  const data = await feedbackMetadata(query, signal);
+  if (!data || componentId !== undefined && data.appId !== componentId || !Array.isArray(data.features) || !data.features.length || data.features.some((item: unknown) => typeof item !== "string")) {
+    throw new Error("Invalid feedback categories returned by the server");
+  }
+  return data;
+}
+
 export interface TicketResult {
   id: string;
   url: string;
-  provider: "jira" | "github";
+  provider: "jira" | "github" | "gitlab" | "webex";
 }
 
 export interface TicketStreamEvent {
@@ -100,7 +157,7 @@ function buildPrompt(request: TicketRequest): string {
     ? "\n\nA screenshot was captured by the reporter and is available as a base64 PNG attachment. Include a note in the ticket description that a screenshot was provided."
     : "";
 
-  return `Create ${target} with the following details:\n${descriptionLines.join("\n")}\n\nSet the issue type to Bug. Add the label "${label}" to the ticket. Include the Context URL in the description so the team can navigate directly to the conversation.${chatNote}${screenshotNote}`;
+  return `Create ${target} with the following details:\n${descriptionLines.join("\n")}\n\nSet the issue type to ${request.issueType || "Bug"}. Add the label "${label}" to the ticket. Include the Context URL in the description so the team can navigate directly to the conversation.${chatNote}${screenshotNote}`;
 }
 
 /**
@@ -153,6 +210,23 @@ export async function createTicketViaAgent(
   options: CreateTicketOptions
 ): Promise<TicketResult | null> {
   const { request, onEvent, onResult, signal } = options;
+  if (request.componentId !== undefined || getConfig("agenticAppsEnabled")) {
+    const response = await fetch("/api/tickets/report", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request), signal,
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `Feedback submission failed (${response.status})`);
+    if (body.data?.handled !== false) {
+      const result = body.data;
+      if (!result || typeof result.id !== "string" || !["github", "jira", "gitlab", "webex"].includes(result.provider)) {
+        throw new Error("The app did not return a feedback receipt");
+      }
+      const ticket: TicketResult = { ...result, url: typeof result.url === "string" ? result.url : "" };
+      onResult?.(ticket);
+      return ticket;
+    }
+  }
   const prompt = buildPrompt(request);
 
   let finalContent = "";

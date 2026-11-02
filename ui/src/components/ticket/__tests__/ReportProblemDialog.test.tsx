@@ -37,9 +37,13 @@ jest.mock("@/lib/config", () => ({
 }));
 
 const mockCreateTicketViaAgent = jest.fn();
+const mockFetchFeedbackOptions = jest.fn();
+const mockFetchFeedbackComponents = jest.fn();
 
 jest.mock("@/lib/ticket-client", () => ({
   createTicketViaAgent: (opts: unknown) => mockCreateTicketViaAgent(opts),
+  fetchFeedbackOptions: (...args: unknown[]) => mockFetchFeedbackOptions(...args),
+  fetchFeedbackComponents: (...args: unknown[]) => mockFetchFeedbackComponents(...args),
 }));
 
 jest.mock("next-auth/react", () => ({
@@ -149,10 +153,21 @@ import { ReportProblemDialog } from "../ReportProblemDialog";
 // Tests
 // ============================================================================
 
+beforeEach(() => {
+  mockFetchFeedbackComponents.mockReset().mockResolvedValue({ appId: null, components: [{ appId: null, label: "Platform" }] });
+});
+
+async function fillRequiredFields() {
+  await waitFor(() => expect(screen.getByLabelText("Feature")).toBeEnabled());
+  fireEvent.change(screen.getByLabelText("Short title *"), { target: { value: "The page fails to load" } });
+  fireEvent.change(screen.getByLabelText("Steps to reproduce *"), { target: { value: "Open the page" } });
+}
+
 describe("ReportProblemDialog", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockTicketProvider = "jira";
+    mockFetchFeedbackOptions.mockReset().mockResolvedValue({ appId: null, label: "Platform", features: ["Other", "Chat"] });
   });
 
   it("renders dialog with title when open", () => {
@@ -160,18 +175,16 @@ describe("ReportProblemDialog", () => {
       <ReportProblemDialog open={true} onOpenChange={jest.fn()} />
     );
     expect(screen.getByTestId("dialog-title")).toHaveTextContent(
-      "Report a Problem via Jira"
+      "Provide Feedback"
     );
   });
 
-  it("renders description textarea", () => {
+  it("renders the report steps textarea", () => {
     render(
       <ReportProblemDialog open={true} onOpenChange={jest.fn()} />
     );
     expect(
-      screen.getByPlaceholderText(
-        "What went wrong? Be as specific as you can."
-      )
+      screen.getByLabelText("Steps to reproduce *")
     ).toBeInTheDocument();
   });
 
@@ -183,7 +196,7 @@ describe("ReportProblemDialog", () => {
     expect(submitBtn).toBeDisabled();
   });
 
-  it("submit button is enabled when feedbackContext is provided", () => {
+  it("requires report fields even when feedbackContext is provided", () => {
     render(
       <ReportProblemDialog
         open={true}
@@ -195,7 +208,7 @@ describe("ReportProblemDialog", () => {
       />
     );
     const submitBtn = screen.getByText("Submit Report");
-    expect(submitBtn).not.toBeDisabled();
+    expect(submitBtn).toBeDisabled();
   });
 
   it("shows feedback context in combo flow", () => {
@@ -225,11 +238,10 @@ describe("ReportProblemDialog", () => {
       <ReportProblemDialog open={true} onOpenChange={jest.fn()} />
     );
 
-    const textarea = screen.getByPlaceholderText(
-      "What went wrong? Be as specific as you can."
-    );
+    const textarea = screen.getByLabelText("Steps to reproduce *");
     fireEvent.change(textarea, { target: { value: "Something broke" } });
 
+    await fillRequiredFields();
     const submitBtn = screen.getByText("Submit Report");
     fireEvent.click(submitBtn);
 
@@ -250,11 +262,10 @@ describe("ReportProblemDialog", () => {
     );
 
     fireEvent.change(
-      screen.getByPlaceholderText(
-        "What went wrong? Be as specific as you can."
-      ),
+      screen.getByLabelText("Steps to reproduce *"),
       { target: { value: "Something broke" } }
     );
+    await fillRequiredFields();
     fireEvent.click(screen.getByText("Submit Report"));
 
     await waitFor(() => {
@@ -272,11 +283,10 @@ describe("ReportProblemDialog", () => {
     );
 
     fireEvent.change(
-      screen.getByPlaceholderText(
-        "What went wrong? Be as specific as you can."
-      ),
+      screen.getByLabelText("Steps to reproduce *"),
       { target: { value: "Bug report" } }
     );
+    await fillRequiredFields();
     fireEvent.click(screen.getByText("Submit Report"));
 
     await waitFor(() => {
@@ -291,13 +301,88 @@ describe("ReportProblemDialog", () => {
     expect(screen.queryByTestId("dialog")).not.toBeInTheDocument();
   });
 
-  it("uses GitHub label when ticketProvider is github", () => {
+  it("keeps the dialog title neutral when a global provider is configured", () => {
     mockTicketProvider = "github";
     render(
       <ReportProblemDialog open={true} onOpenChange={jest.fn()} />
     );
     expect(screen.getByTestId("dialog-title")).toHaveTextContent(
-      "Report a Problem via GitHub"
+      "Provide Feedback"
     );
   });
+});
+
+it("shows the owning app's configured features and scope", async () => {
+  mockFetchFeedbackComponents.mockResolvedValue({ appId: "example", components: [{ appId: null, label: "Platform" }, { appId: "example", label: "Example app" }] });
+  mockFetchFeedbackOptions.mockResolvedValue({ appId: "example", label: "Example app", features: ["Routing", "Publishing"] });
+  render(<ReportProblemDialog open onOpenChange={jest.fn()} conversationId="test-conversation" />);
+  await waitFor(() => expect(screen.getByLabelText("Feature")).toHaveValue("Routing"));
+  expect(screen.getByLabelText("Component *")).toHaveValue("app:example");
+  expect(screen.queryByRole("button", { name: "Edit component" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "Chat" })).not.toBeInTheDocument();
+  expect(mockFetchFeedbackOptions).toHaveBeenCalledWith(window.location.href, "test-conversation", expect.any(AbortSignal), "example");
+});
+it("blocks reports while categories fail to load and supports retry", async () => {
+  mockFetchFeedbackOptions.mockRejectedValueOnce(new Error("Categories unavailable"))
+    .mockResolvedValue({ appId: null, label: "Platform", features: ["Other", "Chat"] });
+  render(<ReportProblemDialog open onOpenChange={jest.fn()} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Categories unavailable");
+  expect(screen.getByRole("button", { name: "Submit Report" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Retry categories" }));
+  await waitFor(() => expect(screen.getByLabelText("Feature")).toBeEnabled());
+});
+
+it("changes features and submission destination together while retaining the report", async () => {
+  mockFetchFeedbackComponents.mockResolvedValue({ appId: null, components: [{ appId: null, label: "Platform" }, { appId: "example", label: "Example app" }] });
+  let finish!: (value: unknown) => void;
+  mockFetchFeedbackOptions.mockImplementation((_url, _conversation, _signal, component) => component === "example"
+    ? new Promise(resolve => { finish = resolve; })
+    : Promise.resolve({ appId: null, label: "Platform", features: ["Chat", "Other"] }));
+  mockCreateTicketViaAgent.mockResolvedValue({ id: "42", provider: "github", url: "" });
+  render(<ReportProblemDialog open onOpenChange={jest.fn()} />);
+  await fillRequiredFields();
+  fireEvent.change(screen.getByLabelText("Feature"), { target: { value: "Chat" } });
+  fireEvent.change(screen.getByLabelText("Component *"), { target: { value: "app:example" } });
+  expect(screen.getByRole("button", { name: "Submit Report" })).toBeDisabled();
+  expect(screen.getByLabelText("Feature")).toBeDisabled();
+  finish({ appId: "example", label: "Example app", features: ["Publishing", "Other"] });
+  await waitFor(() => expect(screen.getByLabelText("Feature")).toBeEnabled());
+  expect(screen.getByLabelText("Short title *")).toHaveValue("The page fails to load");
+  expect(screen.getByLabelText("Feature")).toHaveValue("Other");
+  expect(screen.queryByRole("option", { name: "Chat" })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Feature"), { target: { value: "Publishing" } });
+  fireEvent.click(screen.getByRole("button", { name: "Submit Report" }));
+  await waitFor(() => expect(mockCreateTicketViaAgent).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ componentId: "example", feature: "Publishing" }) })));
+});
+
+it("does not offer screenshot capture when the selected handler cannot attach images", async () => {
+  mockFetchFeedbackOptions.mockResolvedValue({ appId: null, label: "Platform", features: ["Other"], screenshotsEnabled: false });
+  render(<ReportProblemDialog open onOpenChange={jest.fn()} />);
+  await waitFor(() => expect(screen.getByLabelText("Feature")).toBeEnabled());
+  expect(screen.queryByRole("button", { name: "Auto-capture screen" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Upload image")).not.toBeInTheDocument();
+});
+
+
+it("preselects the calling component and its feature through the authorized registry", async () => {
+  mockFetchFeedbackComponents.mockResolvedValue({ appId: "example", components: [{ appId: null, label: "Platform" }, { appId: "example", label: "Example app" }] });
+  mockFetchFeedbackOptions.mockResolvedValue({ appId: "example", label: "Example app", features: ["Other", "Publishing"] });
+  render(<ReportProblemDialog open onOpenChange={jest.fn()} initialComponentId="example" initialFeature="Publishing" />);
+  await waitFor(() => expect(screen.getByLabelText("Feature")).toHaveValue("Publishing"));
+  expect(screen.getByLabelText("Component *")).toHaveValue("app:example");
+  expect(screen.queryByRole("button", { name: "Edit component" })).not.toBeInTheDocument();
+  expect(mockFetchFeedbackComponents).toHaveBeenCalledWith(window.location.href, undefined, expect.any(AbortSignal), "example");
+});
+
+
+it("submits optional impact from the expanded details section", async () => {
+  mockFetchFeedbackOptions.mockResolvedValue({ appId: null, label: "Platform", features: ["Other"] });
+  mockCreateTicketViaAgent.mockResolvedValue({ id: "42", provider: "github", url: "https://example.test/issues/42" });
+  render(<ReportProblemDialog open onOpenChange={jest.fn()} />);
+  await fillRequiredFields();
+  expect(screen.getByText("How much does it affect you?").closest("details")).toHaveAttribute("open");
+  for (const label of ["Blocks my work", "Annoying", "Minor"]) expect(screen.getByRole("button", { name: label })).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(screen.getByRole("button", { name: "Annoying" }));
+  fireEvent.click(screen.getByRole("button", { name: "Submit Report" }));
+  await waitFor(() => expect(mockCreateTicketViaAgent).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ severity: "Annoying", description: expect.stringContaining("Impact: Annoying") }) })));
 });

@@ -14,6 +14,7 @@ export function buildPublicAgenticApp(
   const icon = resolveAgenticAppIcon(app.manifest.id, app.manifest.catalog?.icon);
   return {
     appId: app.installation.appId,
+    feedbackEnabled: Boolean(app.installation.feedbackPath || app.installation.feedbackGitHub),
     assistantEnabled: Boolean(app.manifest.ui.assistant),
     ...(app.manifest.ui.assistant ? {
       assistantOptions: app.manifest.ui.assistant.hostOptions,

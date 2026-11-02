@@ -29,6 +29,17 @@ describe("External Apps deployment config", () => {
     }); } finally { if (previous === undefined) delete process.env.AGENTIC_APPS_CONFIG_PATH; else process.env.AGENTIC_APPS_CONFIG_PATH = previous; }
   });
 
+  it("loads an optional app-owned feedback path", () => {
+    withConfig(validConfig().replace("      installed: true", "      feedback_path: /api/example/feedback\n      installed: true"), path => {
+      expect(loadConfiguredAgenticApps(path)[0].installation.feedbackPath).toBe("/api/example/feedback");
+    });
+  });
+  it.each(["https://other.example.test/report", "/api/../admin", "/api/feedback?repo=other", "/api//feedback"])("rejects unsafe feedback paths %s", feedbackPath => {
+    withConfig(validConfig().replace("      installed: true", `      feedback_path: ${feedbackPath}\n      installed: true`), path => {
+      expect(() => loadConfiguredAgenticApps(path)).toThrow(/feedback_path/);
+    });
+  });
+
   it("loads and joins generic packages and installations", () => {
     withConfig(validConfig(), (path) => {
       expect(loadConfiguredAgenticApps(path)).toEqual([
@@ -280,3 +291,31 @@ function validConfig(): string {
       runtime_origin_override: http://example-app.example.svc
 `;
 }
+
+it("loads deployment-owned feedback features", () => {
+  const previous = process.env.AGENTIC_APPS_INSTALL_ENABLED;
+  process.env.AGENTIC_APPS_INSTALL_ENABLED = "true";
+  try { withConfig(validConfig().replace("      installed: true", "      feedback_features: [Routing, Other]\n      installed: true"), path => {
+    expect(loadConfiguredAgenticApps(path)[0].installation.feedbackFeatures).toEqual(["Routing", "Other"]);
+  }); } finally { if (previous === undefined) delete process.env.AGENTIC_APPS_INSTALL_ENABLED; else process.env.AGENTIC_APPS_INSTALL_ENABLED = previous; }
+});
+
+
+it("registers host-managed feedback from deployment settings and replaces the app endpoint", () => {
+  const original = process.env.FEEDBACK_COMPONENTS_JSON;
+  const enabled = process.env.AGENTIC_APPS_INSTALL_ENABLED;
+  process.env.AGENTIC_APPS_INSTALL_ENABLED = "true";
+  try {
+    process.env.FEEDBACK_COMPONENTS_JSON = JSON.stringify({ "example-app": { handler: "github", repository: "example/product", tokenEnv: "FEEDBACK_EXAMPLE_TOKEN", features: ["Publishing", "Other"], style: { labels: ["user-feedback"], titlePrefix: true } } });
+    withConfig(validConfig().replace("      installed: true", "      feedback_path: /api/example/feedback\n      installed: true"), path => {
+      const app = loadConfiguredAgenticApps(path)[0];
+      expect(app.installation.feedbackGitHub).toEqual(expect.objectContaining({ repository: "example/product", tokenEnv: "FEEDBACK_EXAMPLE_TOKEN" }));
+      expect(app.installation.feedbackPath).toBeUndefined();
+      expect(app.installation.feedbackFeatures).toEqual(["Publishing", "Other"]);
+      expect(app.installation.feedbackGitHub?.style).toEqual({ labels: ["user-feedback"], titlePrefix: true });
+    });
+  } finally {
+    if (original === undefined) delete process.env.FEEDBACK_COMPONENTS_JSON; else process.env.FEEDBACK_COMPONENTS_JSON = original;
+    if (enabled === undefined) delete process.env.AGENTIC_APPS_INSTALL_ENABLED; else process.env.AGENTIC_APPS_INSTALL_ENABLED = enabled;
+  }
+});
