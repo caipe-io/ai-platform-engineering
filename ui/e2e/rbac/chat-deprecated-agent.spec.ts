@@ -1,5 +1,3 @@
-// assisted-by claude code claude-sonnet-4-6
-
 import { expect, test } from "@playwright/test";
 
 import {
@@ -12,12 +10,12 @@ import { mockedRbacEnabled } from "./_mocked-rbac";
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const CHAT_MEMBER_SESSION = {
-  email: "member@caipe.local",
+  email: "member@example.test",
   subject: "playwright-deprecated-agent-sub",
 };
 
 const DELETED_AGENT_ID = "deleted-agent-id";
-const DEFAULT_AGENT_ID = "sre-agent-default-id";
+const DEFAULT_AGENT_ID = "example-default-agent";
 const CONV_HEALTHY_AGENT_ID = "00000000-dead-beef-cafe-000000000099";
 
 const CONV_UNLINKED_ID = "conv-unlinked-no-participants";
@@ -132,7 +130,7 @@ async function bootDeletedAgentConversation(
   const env = minimalSessionEnv();
 
   // installChatBootMocks WITH agentId → participants has the agent entry.
-  // Override both catalog membership and detail lookup to represent deletion.
+  // A missing catalog entry and masked 404 do not prove that the agent was deleted.
   await installChatBootMocks(page, env, { conversationId, agentId });
 
   // Register overrides AFTER installChatBootMocks — LIFO wins.
@@ -147,7 +145,7 @@ async function bootDeletedAgentConversation(
     });
   });
 
-  // Override the per-agent lookup to 404 — simulates a deleted/deprecated agent.
+  // Missing read permission and deletion share the same masked detail response.
   await page.route(`**/api/dynamic-agents/agents/${agentId}`, async (route) => {
     await route.fulfill({
       status: 404,
@@ -210,7 +208,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await dismissReleaseUpgradeDialog(page);
 
     await expect(page.getByText("Agent No Longer Available")).toBeVisible({ timeout: 10_000 });
-    const ctaButton = page.getByRole("button", { name: /Resume with default agent/i });
+    const ctaButton = page.getByRole("button", { name: /New chat with default agent/i });
     await expect(ctaButton).toBeVisible();
   });
 
@@ -246,16 +244,16 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
 
   // ── Scenario B: agent participant exists but agent returns 404 ─────────────
 
-  test("shows 'Agent No Longer Available' banner when agent participant returns 404", async ({
+  test("shows 'Agent unavailable for new messages' banner when agent participant returns 404", async ({
     page,
   }) => {
     await bootDeletedAgentConversation(page);
     await page.goto(`/chat/${CONV_DELETED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
-    await expect(page.getByText("Agent No Longer Available")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Agent unavailable for new messages")).toBeVisible({ timeout: 10_000 });
     await expect(
-      page.getByText(/deprecated or deleted/i),
+      page.getByText(/Agent access may be restricted/i),
     ).toBeVisible();
   });
 
@@ -276,20 +274,20 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await page.goto(`/chat/${CONV_DELETED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
-    await expect(page.getByText("Agent No Longer Available")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Agent unavailable for new messages")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole("textbox", { name: "Message" })).not.toBeVisible({ timeout: 3_000 });
   });
 
-  test("'Resume with default agent' CTA link is shown in the banner for deleted agent", async ({
+  test("'New chat with default agent' CTA link is shown in the banner for deleted agent", async ({
     page,
   }) => {
     await bootDeletedAgentConversation(page);
     await page.goto(`/chat/${CONV_DELETED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
-    await expect(page.getByText("Agent No Longer Available")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Agent unavailable for new messages")).toBeVisible({ timeout: 10_000 });
 
-    const ctaButton = page.getByRole("button", { name: /Resume with default agent/i });
+    const ctaButton = page.getByRole("button", { name: /New chat with default agent/i });
     await expect(ctaButton).toBeVisible();
   });
 
@@ -319,11 +317,11 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await page.goto(`/chat/${CONV_HEALTHY_AGENT_ID}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
-    await expect(page.getByText("Agent No Longer Available")).not.toBeVisible({ timeout: 4_000 });
+    await expect(page.getByText("Agent unavailable for new messages")).not.toBeVisible({ timeout: 4_000 });
     await expect(page.getByText("Agent no longer available")).not.toBeVisible({ timeout: 1_000 });
   });
 
-  // ── Scenario C: clicking "Resume with default agent" re-links the conversation ──
+  // ── Scenario C: another agent starts an empty chat and preserves the source ──
 
   // Helper: override platform-config + available after bootDeletedAgentConversation so that
   // resolveUsableChatAgentId() resolves to DEFAULT_AGENT_ID (not the 404 deleted agent).
@@ -334,7 +332,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
   ) {
     const agentFixture = {
       _id: defaultAgentId,
-      name: "Default Agent SRE",
+      name: "Example Default Agent",
       enabled: true,
       skills: [],
       ui: {},
@@ -366,97 +364,51 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     });
   }
 
-  test("clicking 'Resume with default agent' dismisses the banner and shows the composer (deleted-agent)", async ({
-    page,
-  }) => {
-    await bootDeletedAgentConversation(page);
-    // LIFO: these override the boot mocks so resolution uses DEFAULT_AGENT_ID, not the 404 agent.
+  async function verifyNewChatPreservesSource(
+    page: import("@playwright/test").Page,
+    sourceId: string,
+    banner: string,
+  ) {
     await mockDefaultAgentResolution(page);
-    await page.route(`**/api/chat/conversations/${CONV_DELETED_AGENT_ID}`, async (route) => {
-      if (route.request().method() === "PUT") {
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({ success: true, data: {} }),
-        });
-        return;
-      }
-      await route.fallback();
+    const newId = "00000000-0000-4000-8000-000000000123";
+    const sourceWrites: string[] = [];
+    let createdBody: Record<string, unknown> | undefined;
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === `/api/chat/conversations/${sourceId}` &&
+          ["PUT", "DELETE"].includes(request.method())) sourceWrites.push(request.method());
     });
-
-    await page.goto(`/chat/${CONV_DELETED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
+    await page.route("**/api/chat/conversations", async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      createdBody = route.request().postDataJSON();
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        success: true, data: { conversation: { _id: newId }, created: true },
+      }) });
+    });
+    await page.goto(`/chat/${sourceId}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
-    await expect(page.getByText("Agent No Longer Available")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(banner)).toBeVisible();
+    await page.getByRole("button", { name: /New chat with default agent/i }).click();
+    await expect(page).toHaveURL(new RegExp(`/chat/${newId}$`));
+    await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
+    expect(createdBody).toMatchObject({ agent_id: DEFAULT_AGENT_ID, client_type: "webui" });
+    expect(sourceWrites).toEqual([]);
+    await page.goto(`/chat/${sourceId}`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByText(banner)).toBeVisible();
+    await expect(page.getByText(HISTORICAL_MESSAGES[0].content)).toBeVisible();
+    expect(sourceWrites).toEqual([]);
+  }
 
-    await page.getByRole("button", { name: /Resume with default agent/i }).click();
-
-    await expect(page.getByText("Agent No Longer Available")).not.toBeVisible({ timeout: 8_000 });
-    await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible({ timeout: 8_000 });
+  test("a new default-agent chat preserves the unavailable agent conversation", async ({ page }) => {
+    await bootDeletedAgentConversation(page);
+    await verifyNewChatPreservesSource(page, CONV_DELETED_AGENT_ID, "Agent unavailable for new messages");
   });
 
-  test("clicking 'Resume with default agent' dismisses the banner and shows the composer (unlinked)", async ({
-    page,
-  }) => {
+  test("a new default-agent chat preserves an unlinked conversation", async ({ page }) => {
     await bootUnlinkedConversation(page);
-    await mockDefaultAgentResolution(page);
-    await page.route(`**/api/chat/conversations/${CONV_UNLINKED_ID}`, async (route) => {
-      if (route.request().method() === "PUT") {
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({ success: true, data: {} }),
-        });
-        return;
-      }
-      await route.fallback();
-    });
-
-    await page.goto(`/chat/${CONV_UNLINKED_ID}`, { waitUntil: "domcontentloaded" });
-    await dismissReleaseUpgradeDialog(page);
-    await expect(page.getByText("Agent No Longer Available")).toBeVisible({ timeout: 10_000 });
-
-    await page.getByRole("button", { name: /Resume with default agent/i }).click();
-
-    await expect(page.getByText("Agent No Longer Available")).not.toBeVisible({ timeout: 8_000 });
-    await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible({ timeout: 8_000 });
+    await verifyNewChatPreservesSource(page, CONV_UNLINKED_ID, "Agent No Longer Available");
   });
 
-  test("PUT /api/chat/conversations/[id] is called with participants when resuming", async ({
-    page,
-  }) => {
-    await bootDeletedAgentConversation(page);
-    await mockDefaultAgentResolution(page);
-
-    let capturedBody: unknown = null;
-    await page.route(`**/api/chat/conversations/${CONV_DELETED_AGENT_ID}`, async (route) => {
-      if (route.request().method() === "PUT") {
-        capturedBody = JSON.parse(route.request().postData() ?? "{}");
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({ success: true, data: {} }),
-        });
-        return;
-      }
-      await route.fallback();
-    });
-
-    await page.goto(`/chat/${CONV_DELETED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
-    await dismissReleaseUpgradeDialog(page);
-    await expect(page.getByText("Agent No Longer Available")).toBeVisible({ timeout: 10_000 });
-
-    await page.getByRole("button", { name: /Resume with default agent/i }).click();
-
-    await expect(page.getByText("Agent No Longer Available")).not.toBeVisible({ timeout: 8_000 });
-    await expect.poll(() => capturedBody, { timeout: 20_000 }).not.toBeNull();
-    expect(capturedBody).toMatchObject({
-      participants: expect.arrayContaining([
-        expect.objectContaining({ type: "agent", id: DEFAULT_AGENT_ID }),
-      ]),
-    });
-  });
-
-  test("'Choose agent' button opens agent picker in the deprecated-agent banner", async ({
+  test("the new-chat picker does not resume or rebind the original conversation", async ({
     page,
   }) => {
     await bootDeletedAgentConversation(page);
@@ -464,13 +416,13 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
 
     await page.goto(`/chat/${CONV_DELETED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
-    await expect(page.getByText("Agent No Longer Available")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Agent unavailable for new messages")).toBeVisible({ timeout: 10_000 });
 
-    await page.getByRole("button", { name: /Choose agent/i }).click();
+    await page.getByRole("button", { name: /New chat with another agent/i }).click();
 
-    // AgentPicker trigger should appear; Resume button is disabled until an agent is selected.
+    // Starting a separate chat requires choosing its agent first.
     await expect(page.getByText(/Select an agent/i)).toBeVisible({ timeout: 4_000 });
-    await expect(page.getByRole("button", { name: /^Resume$/i })).toBeDisabled();
+    await expect(page.getByRole("button", { name: /^Start new chat$/i })).toBeDisabled();
   });
 
   // ── Scenario D: deprecated agent (participant exists, agent 404) with empty history ─
@@ -487,7 +439,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await page.goto(`/chat/${CONV_DEPRECATED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
-    await expect(page.getByText("Agent No Longer Available")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Agent unavailable for new messages")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole("textbox", { name: "Message" })).not.toBeVisible({ timeout: 3_000 });
   });
 });
