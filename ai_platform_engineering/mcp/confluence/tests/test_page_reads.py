@@ -86,3 +86,63 @@ async def test_space_discovery_keeps_cursor_after_filtering_empty_batch(monkeypa
     monkeypatch.setattr(page_reads, "make_api_request", request)
     result = await get_spaces(param_keys=["SECONDARY"])
     assert result == {"results": [], "next_cursor": "next", "complete": False}
+
+
+TITLES = ["Café résumé", "日本語のページ", "Ünïcödé 🙂 план", "e\u0301 combining"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("title", TITLES)
+async def test_non_ascii_title_survives_get_page_and_chunks(monkeypatch: pytest.MonkeyPatch, title: str) -> None:
+    body = "<p>" + "é漢🙂" * 5000 + "</p>"
+    payload = response(body)
+    payload["results"][0]["content"]["title"] = title
+
+    async def request(*args: Any, **kwargs: Any) -> tuple[bool, dict[str, Any]]:
+        return True, payload
+
+    monkeypatch.setattr(page_reads, "make_api_request", request)
+    chunk = await page_reads.confluence_get_page("123")
+    chunks = []
+    while True:
+        assert chunk["title"] == title
+        assert len(json.dumps(chunk, ensure_ascii=False).encode()) <= 8000
+        chunks.append(chunk["body"])
+        if chunk["next_offset"] is None:
+            break
+        chunk = await page_reads.confluence_get_page_chunk("123", chunk["content_revision"], chunk["next_offset"])
+    assert "".join(chunks) == body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("title", TITLES)
+async def test_non_ascii_title_survives_search_and_is_emitted_unescaped(monkeypatch: pytest.MonkeyPatch, title: str) -> None:
+    payload = response("unused")
+    payload["results"][0]["content"]["title"] = title
+
+    async def request(*args: Any, **kwargs: Any) -> tuple[bool, dict[str, Any]]:
+        return True, payload
+
+    monkeypatch.setattr(page_reads, "make_api_request", request)
+    assert (await page_reads.confluence_search("type=page"))["results"][0]["title"] == title
+    result = await page_reads.inline_json_tool(page_reads.confluence_search)("type=page")
+    assert title in result.content[0].text and "\\u" not in result.content[0].text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("limit", "fits"), [(5, True), (10, False)])
+async def test_long_multibyte_titles_are_truncated_by_characters_and_bounded_by_bytes(monkeypatch: pytest.MonkeyPatch, limit: int, fits: bool) -> None:
+    title = "🙂" * 300
+    payload = {"results": [{"content": {"id": str(i), "title": title, "space": {"key": "EXAMPLE"}, "version": {"number": 1}}} for i in range(limit)]}
+
+    async def request(*args: Any, **kwargs: Any) -> tuple[bool, dict[str, Any]]:
+        return True, payload
+
+    monkeypatch.setattr(page_reads, "make_api_request", request)
+    if not fits:
+        with pytest.raises(ToolError, match="smaller limit"):
+            await page_reads.confluence_search("type=page", limit=limit)
+        return
+    result = await page_reads.inline_json_tool(page_reads.confluence_search)("type=page", limit=limit)
+    titles = [item["title"] for item in json.loads(result.content[0].text)["results"]]
+    assert titles == ["🙂" * 256] * limit

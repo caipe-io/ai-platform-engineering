@@ -333,7 +333,7 @@ async def make_api_request(
                     error = response_error(response.status_code)
                     error["retryable"] = method == "GET" and error["retryable"]
                     return False, error
-                if response.status_code == 204 and method != "GET":
+                if method != "GET" and not response.content.strip():
                     return True, {"status": "success"}
                 try:
                     payload = response.json()

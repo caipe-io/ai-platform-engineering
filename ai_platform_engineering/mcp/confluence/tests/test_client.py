@@ -1,3 +1,4 @@
+import json
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -87,3 +88,51 @@ async def test_html_login_is_not_successful_page_data(monkeypatch: pytest.Monkey
     install_transport(monkeypatch, lambda request: httpx.Response(200, text="<html>Sign in</html>"))
     ok, error = await client.make_api_request("/search")
     assert ok is False and error["code"] == "invalid_response"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("method", "status"), [("POST", 200), ("POST", 201), ("PUT", 200), ("PUT", 202), ("PATCH", 200), ("DELETE", 200), ("DELETE", 204)])
+async def test_write_success_with_empty_body_is_not_an_error(monkeypatch: pytest.MonkeyPatch, method: str, status: int) -> None:
+    monkeypatch.setattr(client, "validate_prerequisites", lambda **kwargs: (True, {"token": "example-token", "email": "test-user@example.test", "url": "https://example.test/wiki", "auth_scheme": "basic"}))
+    requests = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(status, content=b"")
+
+    install_transport(monkeypatch, handle)
+    ok, payload = await client.make_api_request("/content", method=method, data={"title": "Example"})
+    assert ok is True and payload == {"status": "success"}
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_read_with_empty_body_is_still_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(client, "validate_prerequisites", lambda **kwargs: (True, {"token": "example-token", "email": "test-user@example.test", "url": "https://example.test/wiki", "auth_scheme": "basic"}))
+    install_transport(monkeypatch, lambda request: httpx.Response(200, content=b""))
+    ok, error = await client.make_api_request("/search")
+    assert ok is False and error["code"] == "invalid_response"
+
+
+@pytest.mark.asyncio
+async def test_write_with_html_body_is_still_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(client, "validate_prerequisites", lambda **kwargs: (True, {"token": "example-token", "email": "test-user@example.test", "url": "https://example.test/wiki", "auth_scheme": "basic"}))
+    install_transport(monkeypatch, lambda request: httpx.Response(200, text="<html>Sign in</html>"))
+    ok, error = await client.make_api_request("/content", method="POST", data={"title": "Example"})
+    assert ok is False and error["code"] == "invalid_response"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("title", ["Café résumé", "日本語のページ", "Ünïcödé 🙂 план", "e\u0301 combining"])
+async def test_non_ascii_title_is_sent_as_utf8_json(monkeypatch: pytest.MonkeyPatch, title: str) -> None:
+    monkeypatch.setattr(client, "validate_prerequisites", lambda **kwargs: (True, {"token": "example-token", "email": "test-user@example.test", "url": "https://example.test/wiki", "auth_scheme": "basic"}))
+    seen = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json={"id": "1", "title": title})
+
+    install_transport(monkeypatch, handle)
+    ok, payload = await client.make_api_request("/content", method="POST", data={"title": title})
+    assert ok is True and payload["title"] == title
+    assert seen == [{"title": title}]
