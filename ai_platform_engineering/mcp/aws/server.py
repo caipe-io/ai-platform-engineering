@@ -59,7 +59,8 @@ RESTRICT_KUBECTL_ATTACH = os.getenv("RESTRICT_KUBECTL_ATTACH", "false").lower() 
 RESTRICT_KUBECTL_CP = os.getenv("RESTRICT_KUBECTL_CP", "false").lower() == "true"
 RESTRICT_KUBECTL_PORT_FORWARD = os.getenv("RESTRICT_KUBECTL_PORT_FORWARD", "false").lower() == "true"
 
-MAX_OUTPUT_SIZE = int(os.getenv("AWS_CLI_MAX_OUTPUT_SIZE", "20000"))
+MAX_OUTPUT_SIZE = max(0, int(os.getenv("AWS_CLI_MAX_OUTPUT_SIZE", "20000")))
+MAX_CAPTURE_SIZE = max(1, int(os.getenv("AWS_CLI_MAX_CAPTURE_SIZE", "16777216")))
 MAX_CONCURRENT_AWS_CALLS = int(os.getenv("MAX_CONCURRENT_AWS_CALLS", "10"))
 MAX_CONCURRENT_KUBECTL_CALLS = int(os.getenv("MAX_CONCURRENT_KUBECTL_CALLS", "5"))
 
@@ -67,6 +68,11 @@ _aws_cli_semaphore: asyncio.Semaphore
 _kubectl_semaphore: asyncio.Semaphore
 
 logger = logging.getLogger(__name__)
+
+
+class CaptureLimitExceeded(RuntimeError):
+    """A subprocess exceeded its per-stream capture budget."""
+
 
 _SUPPORTED_CREDENTIAL_SOURCES = {
     "Environment",
@@ -325,10 +331,10 @@ async def aws_cli_execute(
         try:
             with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
                 process = await asyncio.create_subprocess_exec(
-                    *full_command, stdout=stdout, stderr=stderr, env={**os.environ},
+                    *full_command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env={**os.environ},
                 )
                 try:
-                    await _wait_for_process(process, AWS_CLI_TIMEOUT)
+                    await _wait_for_process(process, AWS_CLI_TIMEOUT, stdout, stderr)
                 except TimeoutError:
                     return f"❌ Command timed out after {AWS_CLI_TIMEOUT} seconds."
                 if process.returncode != 0:
@@ -337,6 +343,8 @@ async def aws_cli_execute(
                     return await _apply_jq(stdout, jq_filter)
                 return _read_captured_output(stdout) or "✅ Command completed (no output)."
 
+        except CaptureLimitExceeded as exc:
+            return f"❌ {exc}"
         except FileNotFoundError:
             return "❌ AWS CLI not found. Ensure it is installed in the container."
         except Exception as exc:
@@ -344,17 +352,42 @@ async def aws_cli_execute(
             return f"❌ Error: {exc}"
 
 
-async def _wait_for_process(process: asyncio.subprocess.Process, timeout: float) -> None:
-    """Kill and reap the child before capture files close on timeout/cancellation."""
+async def _drain_capture(reader: asyncio.StreamReader, capture: BinaryIO, stream: str) -> None:
+    """Spool complete chunks to disk without exceeding the capture budget."""
+    total = 0
+    while chunk := await reader.read(65536):
+        total += len(chunk)
+        if total > MAX_CAPTURE_SIZE:
+            raise CaptureLimitExceeded(f"{stream} exceeded AWS_CLI_MAX_CAPTURE_SIZE ({MAX_CAPTURE_SIZE} bytes).")
+        capture.write(chunk)
+
+
+async def _wait_for_process(
+    process: asyncio.subprocess.Process, timeout: float,
+    stdout: BinaryIO | None = None, stderr: BinaryIO | None = None,
+) -> None:
+    """Drain both pipes while waiting; kill and reap on failure or cancellation."""
+    tasks = [asyncio.create_task(process.wait())]
+    if stdout is not None and stderr is not None:
+        assert process.stdout is not None and process.stderr is not None
+        tasks.extend([
+            asyncio.create_task(_drain_capture(process.stdout, stdout, "stdout")),
+            asyncio.create_task(_drain_capture(process.stderr, stderr, "stderr")),
+        ])
     try:
-        await asyncio.wait_for(process.wait(), timeout=timeout)
-    except (TimeoutError, asyncio.CancelledError):
+        await asyncio.wait_for(asyncio.gather(*tasks), timeout=timeout)
+    except (Exception, asyncio.CancelledError):
         if process.returncode is None:
             try:
                 process.kill()
             except ProcessLookupError:
                 pass  # The process may have exited between the check and kill.
-        await process.wait()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        # After killing the child, consume the bounded pipe buffers so a paused
+        # pipe transport cannot hold up reaping. No capture files grow here.
+        await process.communicate()
         raise
 
 
@@ -373,14 +406,21 @@ async def _apply_jq(data: BinaryIO, jq_filter: str) -> str:
     with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         try:
             data.seek(0)
-            proc = await asyncio.create_subprocess_exec("jq", jq_filter, stdin=data, stdout=stdout, stderr=stderr)
-            await _wait_for_process(proc, JQ_TIMEOUT)
+            proc = await asyncio.create_subprocess_exec(
+                "jq", jq_filter, stdin=data, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            await _wait_for_process(proc, JQ_TIMEOUT, stdout, stderr)
             if proc.returncode == 0:
                 return _read_captured_output(stdout)
-            logger.warning("jq filter exited with status %s", proc.returncode)
+            stderr_text = _read_captured_output(stderr)
+            logger.warning("jq filter exited with status %s: %s", proc.returncode, stderr_text)
+            return f"⚠️ jq filter failed ({stderr_text}), showing raw output:\n\n{_read_captured_output(data)}"
+        except CaptureLimitExceeded as exc:
+            logger.warning("jq capture failed: %s", exc)
+            return f"❌ jq {exc}"
         except (OSError, TimeoutError) as exc:
-            logger.warning("jq processing failed: %s", type(exc).__name__)
-        return f"⚠️ jq filtering failed, showing raw output:\n\n{_read_captured_output(data)}"
+            logger.warning("jq processing failed: %s", exc)
+            return f"⚠️ jq processing failed ({exc}), showing raw output:\n\n{_read_captured_output(data)}"
 
 
 # ---------------------------------------------------------------------------

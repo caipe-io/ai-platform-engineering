@@ -1,5 +1,5 @@
 from types import ModuleType
-from typing import Any, Optional
+from typing import Callable, Optional
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -66,13 +66,8 @@ async def test_eks_legacy_alias_reaches_executor(server: ModuleType, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_aws_legacy_alias_reaches_cli(server: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    process = Mock(returncode=0)
-    process.wait = AsyncMock(return_value=0)
-    async def spawn_process(*args: str, **kwargs: Any) -> Mock:
-        kwargs["stdout"].write(b"{}")
-        return process
-    spawn = AsyncMock(side_effect=spawn_process)
+async def test_aws_legacy_alias_reaches_cli(server: ModuleType, monkeypatch: pytest.MonkeyPatch, completed_process: Callable[..., Mock]) -> None:
+    spawn = AsyncMock(return_value=completed_process(stdout=b"{}"))
     monkeypatch.setattr(server.asyncio, "create_subprocess_exec", spawn)
     assert await server.aws_cli_execute("sts get-caller-identity", account="primary") == "{}"
     assert spawn.call_args.args[:3] == ("aws", "--profile", "primary")

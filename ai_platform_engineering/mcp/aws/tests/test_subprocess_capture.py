@@ -1,7 +1,8 @@
 import asyncio
+import runpy
 import sys
 import tempfile
-from typing import Any
+from typing import Any, Callable
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -24,19 +25,20 @@ def test_quoted_jmespath_pipe_is_one_argument(server: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_exec_argv_and_full_input_jq_before_truncation(server: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_exec_argv_and_full_input_jq_before_truncation(server: Any, monkeypatch: pytest.MonkeyPatch, completed_process: Callable[..., Mock]) -> None:
     calls: list[tuple] = []
     raw = b'{"items": ["example", "another"]}'
     query = "Items[?Key=='Name']|[0]"
     def process(*args: str, **kwargs: Any) -> Mock:
         calls.append(args)
+        assert kwargs["stdout"] == asyncio.subprocess.PIPE
+        assert kwargs["stderr"] == asyncio.subprocess.PIPE
         if args[0] == "aws":
-            kwargs["stdout"].write(raw)
+            return completed_process(stdout=raw)
         else:
             assert args == ("jq", ".items | length")
             assert kwargs["stdin"].read() == raw
-            kwargs["stdout"].write(b"2")
-        return Mock(returncode=0, wait=AsyncMock(return_value=0))
+            return completed_process(stdout=b"2")
     monkeypatch.setattr(server, "MAX_OUTPUT_SIZE", 3)
     monkeypatch.setattr(server.asyncio, "create_subprocess_exec", AsyncMock(side_effect=process))
     monkeypatch.setattr(server.asyncio, "create_subprocess_shell", AsyncMock(side_effect=AssertionError("no shell")))
@@ -49,8 +51,8 @@ async def test_exec_argv_and_full_input_jq_before_truncation(server: Any, monkey
 
 @pytest.mark.parametrize("flag", ["--region eu-west-1", "--region=eu-west-1"])
 @pytest.mark.asyncio
-async def test_explicit_region_is_not_duplicated(server: Any, monkeypatch: pytest.MonkeyPatch, flag: str) -> None:
-    spawn = AsyncMock(return_value=Mock(returncode=0, wait=AsyncMock(return_value=0)))
+async def test_explicit_region_is_not_duplicated(server: Any, monkeypatch: pytest.MonkeyPatch, flag: str, completed_process: Callable[..., Mock]) -> None:
+    spawn = AsyncMock(return_value=completed_process())
     monkeypatch.setattr(server.asyncio, "create_subprocess_exec", spawn)
     await server.aws_cli_execute(f"eks list-clusters {flag}", profile="primary")
     assert sum(arg.startswith("--region") for arg in spawn.call_args.args) == 1
@@ -83,8 +85,8 @@ async def test_cancellation_kills_and_reaps_real_child(server: Any) -> None:
     task = asyncio.create_task(server._wait_for_process(process, 30))
     await asyncio.sleep(0)
     task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    result = await asyncio.gather(task, return_exceptions=True)
+    assert isinstance(result[0], asyncio.CancelledError)
     assert process.returncode is not None
 
 
@@ -96,5 +98,122 @@ async def test_jq_failure_returns_bounded_raw_capture(server: Any, monkeypatch: 
     with tempfile.TemporaryFile() as data:
         data.write(b"0123456789")
         result = await server._apply_jq(data, ".items")
-    assert "filtering failed" in result
+    assert "processing failed" in result
     assert result.endswith("0123\n\n... [Truncated. Total: 10 bytes]")
+
+
+@pytest.mark.parametrize("configured", ["-100", "0"])
+def test_nonpositive_output_limit_never_reads_unbounded(server: Any, monkeypatch: pytest.MonkeyPatch, configured: str) -> None:
+    monkeypatch.setenv("AWS_CLI_MAX_OUTPUT_SIZE", configured)
+    namespace = runpy.run_path(server.__file__)
+    assert namespace["MAX_OUTPUT_SIZE"] == 0
+    with tempfile.TemporaryFile() as data:
+        data.write(b"example")
+        assert namespace["_read_captured_output"](data) == "\n\n... [Truncated. Total: 7 bytes]"
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+@pytest.mark.asyncio
+async def test_capture_limit_kills_reaps_and_bounds_disk(server: Any, monkeypatch: pytest.MonkeyPatch, stream: str) -> None:
+    monkeypatch.setattr(server, "MAX_CAPTURE_SIZE", 1024)
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", f"import sys,time; sys.{stream}.write('x'*1000000); sys.{stream}.flush(); time.sleep(60)",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        with pytest.raises(server.CaptureLimitExceeded, match=f"{stream} exceeded AWS_CLI_MAX_CAPTURE_SIZE \\(1024 bytes\\)"):
+            await asyncio.wait_for(server._wait_for_process(process, 5, stdout, stderr), timeout=10)
+        assert stdout.seek(0, 2) <= 1024
+        assert stderr.seek(0, 2) <= 1024
+    assert process.returncode is not None
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+@pytest.mark.asyncio
+async def test_pipe_capture_cleanup_on_timeout_and_cancellation(server: Any, cancel: bool) -> None:
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", "import sys,time; sys.stdout.write('example'); sys.stdout.flush(); time.sleep(60)",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        task = asyncio.create_task(server._wait_for_process(process, 30 if cancel else 0.05, stdout, stderr))
+        if cancel:
+            await asyncio.sleep(0)
+            task.cancel()
+        result = await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=10)
+    assert isinstance(result[0], asyncio.CancelledError if cancel else TimeoutError)
+    assert process.returncode is not None
+
+
+@pytest.mark.asyncio
+async def test_aws_capture_limit_is_an_explicit_failure(server: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    spawn = asyncio.create_subprocess_exec
+    processes = []
+    async def child(*args: str, **kwargs: Any) -> asyncio.subprocess.Process:
+        process = await spawn(sys.executable, "-c", "import sys; sys.stdout.write('x'*1000000)", **kwargs)
+        processes.append(process)
+        return process
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", child)
+    monkeypatch.setattr(server, "MAX_CAPTURE_SIZE", 1024)
+    result = await server.aws_cli_execute("sts get-caller-identity", profile="primary")
+    assert result == "❌ stdout exceeded AWS_CLI_MAX_CAPTURE_SIZE (1024 bytes)."
+    assert processes[0].returncode is not None
+
+
+@pytest.mark.asyncio
+async def test_jq_capture_limit_never_returns_partial_json(server: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    spawn = asyncio.create_subprocess_exec
+    async def child(*args: str, **kwargs: Any) -> asyncio.subprocess.Process:
+        return await spawn(sys.executable, "-c", "import sys; sys.stdout.write('['+'1,'*1000000+']')", **kwargs)
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", child)
+    monkeypatch.setattr(server, "MAX_CAPTURE_SIZE", 1024)
+    with tempfile.TemporaryFile() as data:
+        data.write(b"{}")
+        result = await server._apply_jq(data, ".")
+    assert result == "❌ jq stdout exceeded AWS_CLI_MAX_CAPTURE_SIZE (1024 bytes)."
+
+
+@pytest.mark.asyncio
+async def test_jq_stderr_is_preserved_and_bounded(server: Any, monkeypatch: pytest.MonkeyPatch, completed_process: Callable[..., Mock], caplog: pytest.LogCaptureFixture) -> None:
+    monkeypatch.setattr(server, "MAX_OUTPUT_SIZE", 12)
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", AsyncMock(return_value=completed_process(stderr=b"syntax error: details", returncode=3)))
+    with tempfile.TemporaryFile() as data:
+        data.write(b'{"items":[]}')
+        result = await server._apply_jq(data, "invalid")
+    assert "syntax error\n\n... [Truncated. Total: 21 bytes]" in result
+    assert "syntax error" in caplog.text
+    assert result.endswith('{"items":[]}')
+
+
+@pytest.mark.asyncio
+async def test_jq_os_error_message_is_preserved(server: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", AsyncMock(side_effect=OSError("example spawn failure")))
+    with tempfile.TemporaryFile() as data:
+        data.write(b"{}")
+        result = await server._apply_jq(data, ".")
+    assert "example spawn failure" in result
+    assert "example spawn failure" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_jq_timeout_wiring_reaps_real_child(server: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    spawn = asyncio.create_subprocess_exec
+    processes = []
+    async def child(*args: str, **kwargs: Any) -> asyncio.subprocess.Process:
+        process = await spawn(sys.executable, "-c", "import time; time.sleep(60)", **kwargs)
+        processes.append(process)
+        return process
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", child)
+    monkeypatch.setattr(server, "JQ_TIMEOUT", 0.05)
+    try:
+        with tempfile.TemporaryFile() as data:
+            data.write(b"{}")
+            result = await asyncio.wait_for(server._apply_jq(data, "."), timeout=5)
+        assert "processing failed" in result
+        assert result.endswith("{}")
+        assert processes[0].returncode is not None
+    finally:
+        for process in processes:
+            if process.returncode is None:
+                process.kill()
+                await process.communicate()

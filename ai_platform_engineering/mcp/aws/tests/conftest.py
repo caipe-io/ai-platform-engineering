@@ -2,8 +2,23 @@ import asyncio
 import importlib.util
 from pathlib import Path
 from types import ModuleType
+from typing import Callable
+from unittest.mock import AsyncMock, Mock
 
 import pytest
+
+
+@pytest.fixture
+def completed_process() -> Callable[..., Mock]:
+    def make(stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0) -> Mock:
+        readers = []
+        for data in (stdout, stderr):
+            reader = asyncio.StreamReader()
+            reader.feed_data(data)
+            reader.feed_eof()
+            readers.append(reader)
+        return Mock(stdout=readers[0], stderr=readers[1], returncode=returncode, wait=AsyncMock(return_value=returncode))
+    return make
 
 
 @pytest.fixture

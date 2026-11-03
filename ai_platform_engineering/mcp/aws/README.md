@@ -24,7 +24,8 @@ AWS MCP Server that exposes `aws_cli_execute` and `eks_kubectl_execute` as
 | `AWS_CLI_MAX_EXECUTION_TIME` | `30` | Timeout (seconds) for AWS CLI commands |
 | `MAX_CONCURRENT_AWS_CALLS` | `10` | Maximum concurrent AWS CLI subprocesses; lower for memory/disk-constrained deployments |
 | `KUBECTL_MAX_EXECUTION_TIME` | `45` | Timeout (seconds) for kubectl commands |
-| `AWS_CLI_MAX_OUTPUT_SIZE` | `20000` | Maximum captured output bytes returned before a truncation notice |
+| `AWS_CLI_MAX_OUTPUT_SIZE` | `20000` | Maximum captured output bytes returned before a truncation notice; negative values become zero |
+| `AWS_CLI_MAX_CAPTURE_SIZE` | `16777216` | Per-stream disk capture budget in bytes for AWS CLI and jq (16 MiB); minimum 1 byte |
 | `RESTRICT_KUBECTL_SECRETS` | `true` | Block `kubectl get/describe secret(s)` |
 | `RESTRICT_KUBECTL_PROXY` | `true` | Block `kubectl proxy` |
 | `RESTRICT_KUBECTL_EXEC` | `false` | Block `kubectl exec` |
@@ -70,11 +71,19 @@ pipelines. Pass the account using `profile`/`account`, not an embedded
 `--profile` flag. Existing destructive-operation checks are retained; they are
 not a substitute for read-only IAM permissions.
 
-AWS CLI and `jq` stdout/stderr use temporary files, with bounded reads into
-memory. `jq` sees the full CLI output before truncation. Timeout or request
-cancellation kills and reaps the child process. Capture files close on exit.
-This bounds application-level output buffering, not total process memory or
-temporary-disk usage; size ephemeral storage and concurrency accordingly.
+AWS CLI and `jq` stdout/stderr are drained concurrently into temporary files,
+each limited by `AWS_CLI_MAX_CAPTURE_SIZE`. Exceeding that separate capture
+budget kills and reaps the child and returns an explicit error naming the limit.
+Within the capture budget, `jq` sees the full CLI output before response
+truncation; exceeding `AWS_CLI_MAX_OUTPUT_SIZE` alone does not kill the child.
+Timeout or request cancellation also kills and reaps the child. Capture files
+close on exit. jq failures retain bounded stderr or the process error alongside
+the bounded raw-output fallback.
+
+The AWS phase can hold two capture files; jq can hold the AWS captures plus its
+own two files (at most four capture budgets per call). Size ephemeral storage
+and concurrency accordingly. These limits do not bound the child process's own
+memory or files it creates independently.
 
 ## Running locally
 
