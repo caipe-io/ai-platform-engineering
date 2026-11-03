@@ -6,6 +6,7 @@ import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
 import { ContextUsageIndicator } from "@/components/chat/ContextUsageIndicator";
 import { ClaudeSessionPanel } from "@/components/chat/ClaudeSessionPanel";
+import { ApiConversationIndicator } from "@/components/chat/ApiConversationIndicator";
 import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
 import { ConversationRuntimeMigration } from "@/components/chat/ConversationRuntimeMigration";
 import { ConversationViewers } from "@/components/chat/ConversationViewers";
@@ -38,7 +39,7 @@ import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import { ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
 import type { DynamicAgentConfig,ReasoningEffort } from "@/types/dynamic-agent";
 import { AnimatePresence,motion,useReducedMotion } from "framer-motion";
-import { Activity,AlertTriangle,ArrowDown,ArrowLeft,Check,Copy,Loader2,Paperclip,Pencil,RotateCcw,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
+import { Activity,ArrowDown,ArrowLeft,Check,Copy,Loader2,Paperclip,Pencil,RotateCcw,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
 import { AgentPicker } from "@/components/ui/agent-picker";
 import { signIn,useSession } from "next-auth/react";
@@ -2371,10 +2372,28 @@ export function ChatPanel({
     }
   };
 
+  const showClaudeSession = !agent?.presentation?.app && (observedRuntime?.conversationId === activeConversationId
+    ? observedRuntime.harnessId === "claude_code_acp"
+    : !conversation?.messages.length && agent?.execution_harness_id === "claude_code_acp");
+  const headerControls = (
+    <div className="flex max-w-full flex-wrap items-center justify-end gap-1">
+      {apiConversation && <ApiConversationIndicator readOnly={panelReadOnly} />}
+      <ConversationViewers conversationId={conversationId ?? activeConversationId} />
+      {showClaudeSession ? (
+        <ClaudeSessionPanel activity={isStopping ? "stopping" : externalActivity?.state ?? (isThisConversationStreaming ? "running" : "idle")}
+          readOnly={panelReadOnly || Boolean(readOnlySubscription)} />
+      ) : showAgentHeader && (agent ? (
+        <AgentHarnessBadge harnessId={agent.execution_harness_id} presentation={agent.presentation} />
+      ) : (
+        <Skeleton className="h-6 w-24 rounded-full" />
+      ))}
+    </div>
+  );
+
   return (
     <div className="h-full w-full flex flex-col bg-background relative">
       {showAgentHeader && <div
-        className="flex min-h-14 shrink-0 items-center gap-3 bg-gradient-to-r from-primary/[0.06] via-background/70 to-background px-4 py-2"
+        className="flex min-h-14 shrink-0 flex-wrap items-center gap-3 bg-gradient-to-r from-primary/[0.06] via-background/70 to-background px-4 py-2"
         aria-label={`Chat: ${conversationTitle}`}
       >
         <AgentAvatar
@@ -2393,27 +2412,15 @@ export function ChatPanel({
             {agentName || agentId}
           </p>
         </div>
-        <ConversationViewers conversationId={conversationId ?? activeConversationId} />
-        {agent ? (
-          <AgentHarnessBadge harnessId={agent.execution_harness_id} presentation={agent.presentation} />
-        ) : (
-          <Skeleton className="h-6 w-24 rounded-full" />
-        )}
+        {headerControls}
       </div>}
-      {!showAgentHeader && <ConversationViewers conversationId={conversationId ?? activeConversationId} className="self-end px-3 py-1" />}
+      {!showAgentHeader && <div className="shrink-0 self-end px-3 py-1">{headerControls}</div>}
 
       {conversationId && !panelReadOnly && !isAutonomousHistory && !isLoadingMessages &&
         (!agent?.execution_harness_id || agent.execution_harness_id === "dynamic_agents") &&
         !agent?.presentation?.app && getStorageMode() === "mongodb" && (
           <ConversationRuntimeMigration key={`${agentId}:${conversationId}`} agentId={agentId} conversationId={conversationId}
             busy={isConversationStreaming(conversationId) || Boolean(migrationActivity)} />
-        )}
-
-      {!agent?.presentation?.app && (observedRuntime?.conversationId === activeConversationId
-        ? observedRuntime.harnessId === "claude_code_acp"
-        : !conversation?.messages.length && agent?.execution_harness_id === "claude_code_acp") && (
-          <ClaudeSessionPanel activity={isStopping ? "stopping" : externalActivity?.state ?? (isThisConversationStreaming ? "running" : "idle")}
-            readOnly={panelReadOnly || Boolean(readOnlySubscription)} />
         )}
 
       {/* Messages Area */}
@@ -2722,21 +2729,6 @@ export function ChatPanel({
           </motion.div>
         )}
       </AnimatePresence>
-
-      {apiConversation && (
-        <div
-          role="note"
-          className="shrink-0 border-t border-amber-500/30 bg-amber-500/10 px-6 py-2.5 text-amber-800 dark:text-amber-300"
-        >
-          <div className="mx-auto flex max-w-7xl items-start gap-2">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <p className="text-xs">
-              <span className="font-medium">API-linked chat.</span>{" "}
-              Messages sent here update the same conversation used by the API. Continuing here may interfere with that API chat, especially if both clients send at the same time.
-            </p>
-          </div>
-        </div>
-      )}
 
       {/* Input Area - Fixed bottom, doesn't scroll */}
       {panelReadOnly ? (

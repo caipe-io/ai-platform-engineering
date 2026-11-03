@@ -1,23 +1,40 @@
 "use client";
 
-import { Folder, Radio, ShieldCheck } from "lucide-react";
+import { Folder, Loader2, Radio, ShieldCheck } from "lucide-react";
+import { useId, useState } from "react";
+
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 export function ClaudeSessionPanel({ activity, readOnly }: {
   activity: "checking" | "running" | "saving" | "idle" | "stopping";
   readOnly: boolean;
 }) {
+  const [open, setOpen] = useState(false);
+  const detailsId = useId();
   const label = { checking: "Reconnecting", running: "Working", saving: "Saving response", idle: "Ready", stopping: "Stopping" }[activity];
-  return <details className="mx-3 my-2 shrink-0 rounded-lg border border-orange-500/20 bg-orange-500/5 px-3 py-2 text-xs" aria-label="Claude session">
-    <summary className="flex cursor-pointer flex-wrap items-center gap-2">
-      <Radio className="h-3.5 w-3.5 text-orange-500" aria-hidden="true" />
-      <span className="font-medium">Claude (ACP)</span>
-      <span role="status" aria-live="polite" className="text-muted-foreground">{label}</span>
-      {readOnly && <span className="text-muted-foreground">Viewing shared session</span>}
-      <span className="ml-auto text-muted-foreground">Session details</span>
-    </summary>
-    <div className="mt-3 grid gap-3 text-muted-foreground sm:grid-cols-2">
-      <p className="flex gap-2"><Folder className="h-4 w-4 shrink-0" aria-hidden="true" />This conversation keeps its Claude session. Refreshing or closing this page does not stop a response.</p>
-      <p className="flex gap-2"><ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />{readOnly ? "You can follow this response. Sending messages or stopping work requires additional access." : "Your agent and tool permissions apply to each request. Model access is managed by your administrator."}</p>
-    </div>
-  </details>;
+  return (
+    <Popover open={open} onOpenChange={setOpen} className="shrink-0">
+      <PopoverTrigger asChild>
+        <Button type="button" variant="ghost" size="sm" className="h-8 gap-1.5 px-2 text-xs text-muted-foreground"
+          aria-label={`Claude session: ${label}`} aria-expanded={open} aria-controls={detailsId} title="Claude session details">
+          {activity === "idle"
+            ? <Radio className="h-3.5 w-3.5" aria-hidden="true" />
+            : <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
+          <span>Claude</span>
+          <span role="status" aria-live="polite" className={activity === "idle" ? "sr-only" : undefined}>{label}</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-80 max-w-[calc(100vw-1rem)] p-4">
+        <div id={detailsId} className="space-y-3">
+          <div>
+            <p className="text-sm font-medium">Claude session</p>
+            <p className="mt-1 text-xs text-muted-foreground">Claude (ACP) · {label}{readOnly ? " · Viewing shared session" : ""}</p>
+          </div>
+          <p className="flex gap-2 text-xs text-muted-foreground"><Folder className="h-4 w-4 shrink-0" aria-hidden="true" />This conversation keeps its Claude session. Refreshing or closing this page does not stop a response.</p>
+          <p className="flex gap-2 text-xs text-muted-foreground"><ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />{readOnly ? "You can follow this response. Sending messages or stopping work requires additional access." : "Your agent and tool permissions apply to each request. Model access is managed by your administrator."}</p>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }

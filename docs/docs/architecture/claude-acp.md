@@ -13,8 +13,9 @@ flow as other CAIPE agents. The integration is experimental.
 
 1. Select **Claude (ACP)** and an available **Operator profile** in Agent Builder.
 2. Write the agent instructions and choose individual MCP tools in **Tools**.
-3. Save the agent and start a chat. The Claude session panel shows response
-   activity and explains shared-viewer access.
+3. Save the agent and start a chat. The **Claude** control in the chat header
+   shows response activity. Open it for persistence and shared-viewer details.
+   API-connected chats show a compact **API** control with connection details.
 4. Refresh or reopen the chat to reconnect to the server-owned run. Starting
    another browser subscription does not start another Claude process.
 5. **Stop** cancels the current response and keeps the chat open. While an
