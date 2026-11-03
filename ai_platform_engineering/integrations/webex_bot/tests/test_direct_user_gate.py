@@ -359,3 +359,115 @@ def test_parser_carries_direct_identity_and_bot() -> None:
     assert parsed.is_direct is True
     assert parsed.person_email == "user@example.com"
     assert parsed.bot_id == "secondary"
+
+
+@pytest.mark.parametrize("allowed", [True, False])
+def test_auto_link_continues_original_dm_once_with_existing_agent_access(
+    monkeypatch: pytest.MonkeyPatch, allowed: bool,
+) -> None:
+    monkeypatch.setenv("WEBEX_DM_AUTO_LINK_ENABLED", "true")
+
+    class AutoIdentity(_Identity):
+        async def auto_link(self, webex_user_id: str, bot_id: str) -> Optional[str]:
+            assert webex_user_id == "person1234"
+            assert bot_id == "secondary"
+            return "kc-user-1"
+
+    dispatches = []
+
+    identity = AutoIdentity(user_id=None)
+    result = asyncio.run(app_module.handle_webex_message(
+        _event(), identity_linker=identity,
+        direct_user_resolver=_DirectUsers(WebexDirectUserAccess(True, "kc-user-1", "agent-primary", "allowlist_route")),
+        team_resolver=_NeverTeam(), obo_exchanger=_Obo(), route_resolver=_NeverRoutes(),
+        rebac_checker=_NeverSpaceGrant(), dm_authz_checker=_DmAuthz(allowed=allowed),
+        dispatcher=lambda payload: _dispatch(dispatches, payload),
+    ))
+    assert len(dispatches) == int(allowed)
+    assert result.allowed is allowed
+    if allowed:
+        assert dispatches[0]["text"] == "hello"
+        assert dispatches[0]["agent_id"] == "agent-primary"
+
+
+def test_auto_link_failure_retains_explicit_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WEBEX_DM_AUTO_LINK_ENABLED", "true")
+
+    class AutoIdentity(_Identity):
+        async def auto_link(self, *args: Any, **kwargs: Any) -> Optional[str]:
+            return None
+
+    identity = AutoIdentity(user_id=None)
+    direct_users = _DirectUsers(WebexDirectUserAccess(False, None, None, "not_onboarded"))
+    result = _run(direct_users, identity)
+    assert result.reason_code == app_module.REASON_USER_NOT_LINKED
+    assert result.linking_url
+    assert direct_users.calls == []
+
+
+def test_auto_link_does_not_bypass_dm_onboarding(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WEBEX_DM_AUTO_LINK_ENABLED", "true")
+
+    class AutoIdentity(_Identity):
+        async def auto_link(self, *args: Any, **kwargs: Any) -> Optional[str]:
+            return "kc-user-1"
+
+    result = _run(_DirectUsers(WebexDirectUserAccess(False, None, None, "not_onboarded")), AutoIdentity(user_id=None))
+    assert result.reason_code == app_module.REASON_DM_NOT_ONBOARDED
+    assert not result.dispatched
+
+
+def test_disabled_mode_never_attempts_automatic_matching(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("WEBEX_DM_AUTO_LINK_ENABLED", raising=False)
+
+    class AutoIdentity(_Identity):
+        async def auto_link(self, *args: Any, **kwargs: Any) -> Optional[str]:
+            raise AssertionError("auto linking must be opt-in")
+
+    result = _run(_DirectUsers(WebexDirectUserAccess(False, None, None, "not_onboarded")), AutoIdentity(user_id=None))
+    assert result.reason_code == app_module.REASON_USER_NOT_LINKED
+
+
+def test_auto_link_retry_dispatches_original_message_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WEBEX_DM_AUTO_LINK_ENABLED", "true")
+    monkeypatch.setenv("WEBEX_DM_AUTO_LINK_ALLOWED_ORG_ID", "org-primary")
+    monkeypatch.setenv("MONGODB_URI", "mongodb://example.test")
+    event = {**_event(), "id": "message1234"}
+    reservations = []
+    dispatches = []
+
+    async def reserve(bot_id: str, message_id: str) -> bool:
+        key = (bot_id, message_id)
+        if key in reservations:
+            return False
+        reservations.append(key)
+        return True
+
+    monkeypatch.setattr(app_module, "reserve_dm_dispatch", reserve)
+
+    async def handle() -> app_module.WebexMessageResult:
+        return await app_module.handle_webex_message(
+            event, identity_linker=_Identity(),
+            direct_user_resolver=_DirectUsers(WebexDirectUserAccess(True, "kc-user-1", "agent-primary", "allowlist_route")),
+            obo_exchanger=_Obo(), dm_authz_checker=_DmAuthz(),
+            dispatcher=lambda payload: _dispatch(dispatches, payload),
+        )
+
+    assert asyncio.run(handle()).dispatched
+    assert asyncio.run(handle()).ignored
+    assert len(dispatches) == 1
+
+
+def test_disabled_dm_policy_never_attempts_auto_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WEBEX_DM_AUTO_LINK_ENABLED", "true")
+    monkeypatch.setenv("WEBEX_INTEGRATION_BOTS_JSON", json.dumps([{
+        "id": "secondary", "name": "Secondary", "tokenEnv": "SECONDARY_TOKEN",
+        "spaces": {"accessMode": "allowlist"}, "directMessages": {"accessMode": "disabled"},
+    }]))
+
+    class AutoIdentity(_Identity):
+        async def auto_link(self, *args: Any, **kwargs: Any) -> Optional[str]:
+            raise AssertionError("disabled DMs must not link identities")
+
+    result = _run(_DirectUsers(WebexDirectUserAccess(False, None, None, "disabled")), AutoIdentity(user_id=None))
+    assert result.reason_code == app_module.REASON_DM_DISABLED

@@ -2075,8 +2075,9 @@ export async function findRealmUserIdsByAttribute(
   const ids: string[] = [];
 
   for (const user of users) {
-    const value = readAttributeValue(user.attributes, attributeName);
-    if (value !== trimmed) continue;
+    const attributes = user.attributes as Record<string, unknown> | undefined;
+    const values = attributes?.[attributeName];
+    if (!Array.isArray(values) || !values.some((value) => typeof value === "string" && value.trim() === trimmed)) continue;
     const id = user.id;
     if (id !== undefined && id !== null) {
       ids.push(String(id));

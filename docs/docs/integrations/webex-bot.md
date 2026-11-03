@@ -220,6 +220,24 @@ runtime exchanges the matched deployment user's identity for an OBO bearer and
 checks that user can access the selected agent through OpenFGA. A missing,
 disabled, or mismatched user mapping fails closed.
 
+### Optional DM Identity Auto-Linking
+
+- Explicit platform SSO + Webex OAuth linking is the default.
+- `WEBEX_DM_AUTO_LINK_ENABLED=true` and `WEBEX_DM_AUTO_LINK_ALLOWED_ORG_ID`
+  opt in to matching authenticated Webex provider data to one existing, enabled
+  account with a verified matching email. Trust the organization's email lifecycle
+  and protect directory identity attributes before enabling.
+- Missing, ambiguous, untrusted, disabled, conflicting, or previously unlinked
+  identities retain the explicit link flow. No accounts are provisioned.
+- `all_users` controls DM admission; auto-linking establishes identity. Matching
+  grants no permissions and creates no routes. Bot selection, route policy,
+  OBO, and agent authorization still apply.
+- Successful setup acknowledges the link and continues the original DM.
+  Unlink/revoke suppresses automatic relinking until explicit OAuth linking.
+
+See the [runtime guide](https://github.com/caipe-io/ai-platform-engineering/blob/main/ai_platform_engineering/integrations/webex_bot/README.md#optional-webex-dm-identity-auto-linking)
+for configuration, audit outcomes, concurrent retries, and interrupted-write recovery.
+
 ## Routing and Authorization
 
 Bot-specific ownership is stored in MongoDB:
