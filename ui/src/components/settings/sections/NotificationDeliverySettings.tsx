@@ -7,6 +7,7 @@ import { NotificationPreferenceSwitch } from "@/components/notifications/Notific
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
 import { SettingsSwitch } from "@/components/settings/shared/SettingsSwitch";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   DEFAULT_NOTIFICATION_CHANNELS,
@@ -78,6 +79,7 @@ export function NotificationDeliverySettings({
   const [available, setAvailable] = useState<ChannelChoices>({ in_app: true });
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [unsubscribeChannel, setUnsubscribeChannel] = useState<NotificationChannel | null>(null);
   const [saving, setSaving] = useState(false);
   const browserReady = false;
   const [quiet, setQuiet] = useState({
@@ -150,20 +152,22 @@ export function NotificationDeliverySettings({
     }));
   }, [load]);
 
-  async function save(patch: Record<string, unknown>) {
+  async function save(patch: Record<string, unknown>, successMessage = "Notification preferences saved."): Promise<boolean> {
     setSaving(true);
     setError(null);
     setMessage(null);
     try {
       await jsonRequest("/api/notifications/subscriptions", patch);
       await load();
-      setMessage("Notification preferences saved.");
+      setMessage(successMessage);
+      return true;
     } catch (reason) {
       setError(
         reason instanceof Error
           ? reason.message
           : "Could not save notification preferences",
       );
+      return false;
     } finally {
       setSaving(false);
     }
@@ -207,6 +211,16 @@ export function NotificationDeliverySettings({
     (section === "apps" && source.id.startsWith("app:")));
   return (
     <div className="space-y-6">
+      <Dialog open={unsubscribeChannel !== null} onOpenChange={(open) => { if (!open && !saving) setUnsubscribeChannel(null); }}>
+        <DialogContent><DialogHeader><DialogTitle>Unsubscribe from all {unsubscribeChannel ? LABELS[unsubscribeChannel] : ""}?</DialogTitle><DialogDescription>Stop this delivery channel across all apps and platform event subscriptions. Other channels, followed resources, and notification history stay unchanged. Re-enable the channel to use your saved event preferences again. Delivery already in progress may finish.</DialogDescription></DialogHeader>
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          <div className="flex justify-end gap-3"><Button variant="outline" disabled={saving} onClick={() => setUnsubscribeChannel(null)}>Cancel</Button><Button disabled={saving} onClick={() => {
+            if (!unsubscribeChannel) return;
+            const channel = unsubscribeChannel;
+            void save({ channels: { [channel]: false } }, `Unsubscribed from all ${LABELS[channel]} notifications.`).then((saved) => { if (saved) setUnsubscribeChannel(null); });
+          }}>{saving ? "Saving…" : "Confirm unsubscribe"}</Button></div>
+        </DialogContent>
+      </Dialog>
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}
@@ -276,19 +290,22 @@ export function NotificationDeliverySettings({
               <Button
                 size="sm"
                 variant="ghost"
-                disabled={!channels[channel] || !available[channel]}
+                disabled={saving || !channels[channel] || !available[channel]}
                 onClick={() => void test(channel)}
               >
                 <Send className="mr-1 h-3 w-3" />
                 Test
+              </Button>
+              <Button size="sm" variant="outline" disabled={saving || !channels[channel]} onClick={() => setUnsubscribeChannel(channel)} aria-label={`Unsubscribe from all ${LABELS[channel]}`}>
+                Unsubscribe from all
               </Button>
               <SettingsSwitch
                 label={`Enable ${LABELS[channel]}`}
                 checked={channels[channel]}
                 disabled={
                   saving ||
-                  !available[channel] ||
-                  (channel === "web_push" && !browserReady)
+                  (!channels[channel] && (!available[channel] ||
+                  (channel === "web_push" && !browserReady)))
                 }
                 onCheckedChange={(enabled) =>
                   void toggleChannel(channel, enabled)
