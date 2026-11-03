@@ -953,6 +953,7 @@ class MongoService:
                 conv_ids.add(conv_id)
 
         await self._runs().delete_many({"task_id": task_id})
+        await self._trigger_instances().delete_many({"task_id": task_id})
         await self._messages().delete_many({"conversation_id": {"$in": list(conv_ids)}})
         await self._conversations().delete_many(
             {"$or": [{"_id": {"$in": list(conv_ids)}}, {"task_id": task_id}]}

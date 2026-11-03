@@ -259,3 +259,50 @@ async def test_new_manual_request_respects_real_capacity_and_accepted_retry_reco
     assert retry.status_code == 200
     assert retry.run_id == first.run_id
     assert webhook_runtime.webhook_dispatch_pending() == 1
+
+
+async def test_recovery_capacity_backpressures_without_evicting_failed_rollbacks(mongo: MongoService) -> None:
+    requests = [{**arguments(), "dedup_key": DedupKey(key=f"example-task:manual:{i}", strategy="manual")}
+        for i in range(3)]
+    with patch.object(webhook_runtime, "get_mongo_service", return_value=mongo), patch.object(
+        webhook_runtime, "_MANUAL_RECOVERY_CAPACITY", 2
+    ):
+        with patch.object(mongo, "delete_unqueued_trigger_instance", AsyncMock(side_effect=RuntimeError("Rollback unavailable"))):
+            with patch.object(webhook_runtime, "_enqueue_webhook_run", side_effect=RuntimeError("Queue unavailable")):
+                for args in requests[:2]:
+                    with pytest.raises(RuntimeError, match="Queue unavailable"):
+                        await webhook_runtime.dispatch_webhook_run(**args)
+            with patch.object(mongo, "record_trigger_instance", wraps=mongo.record_trigger_instance) as record:
+                with pytest.raises(HTTPException) as caught:
+                    await webhook_runtime.dispatch_webhook_run(**requests[2])
+                assert caught.value.status_code == 503
+                record.assert_not_called()
+            assert len(webhook_runtime._failed_manual_claims) == 2
+        # A fresh request cleans one old rollback after Mongo recovers,
+        # and both original UUIDs can subsequently be submitted again.
+        for args in [requests[2], *requests[:2]]:
+            with patch.object(webhook_runtime, "_enqueue_webhook_run"):
+                assert (await webhook_runtime.dispatch_webhook_run(**args)).status_code == 202
+        assert not webhook_runtime._failed_manual_claims
+        assert not webhook_runtime._manual_claims_inflight
+
+
+async def test_recovery_capacity_accounts_for_claim_writes_still_in_flight(mongo: MongoService) -> None:
+    record = mongo.record_trigger_instance
+
+    async def record_with_another_request(doc: dict) -> tuple:
+        second = {**arguments(), "dedup_key": DedupKey(key="example-task:manual:second", strategy="manual")}
+        with pytest.raises(HTTPException) as caught:
+            await webhook_runtime.dispatch_webhook_run(**second)
+        assert caught.value.status_code == 503
+        assert await mongo.get_trigger_instance(second["dedup_key"].key) is None
+        return await record(doc)
+
+    with patch.object(webhook_runtime, "get_mongo_service", return_value=mongo), patch.object(
+        webhook_runtime, "_MANUAL_RECOVERY_CAPACITY", 1
+    ), patch.object(mongo, "record_trigger_instance", record_with_another_request), patch.object(
+        webhook_runtime, "_enqueue_webhook_run"
+    ):
+        assert (await webhook_runtime.dispatch_webhook_run(**arguments())).status_code == 202
+    assert not webhook_runtime._failed_manual_claims
+    assert not webhook_runtime._manual_claims_inflight

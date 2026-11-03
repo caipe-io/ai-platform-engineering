@@ -520,7 +520,11 @@ Clients must retain the same UUID, never accept an unconfirmed ID as success.
 
 Failed claims and failed enqueues attempt rollback without hiding the original
 error. If rollback fails, a bounded process-local cache lets the next retry
-reconcile that known-failed attempt after Mongo recovers. Unknown pending
+reconcile that known-failed attempt after Mongo recovers. Recovery slots are
+reserved before claim writes; when all slots are occupied, fresh requests get
+503 before writing a claim. Failed rollback state is never evicted. New requests
+also retry the oldest rollback when capacity is full, so admission resumes when
+Mongo recovers. Unknown pending
 claims, including after a process restart, fail closed with 503 until acceptance
 can be confirmed or the claim expires; they are not speculatively executed.
 
