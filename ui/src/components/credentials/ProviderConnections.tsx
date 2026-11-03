@@ -399,6 +399,9 @@ export function ProviderConnections() {
                   // to preserve a prior custom narrowing on relink.
                   const hasCustomSelection =
                     Boolean(scopeOverrides[connector.id]) || Boolean(connection?.requestedScopes);
+                  const savedScopes = connection?.requestedScopes ?? allowedScopes;
+                  const permissionsChanged = selectedScopes.length !== savedScopes.length ||
+                    selectedScopes.some((scope) => !savedScopes.includes(scope));
                   const selectionEmpty = allowedScopes.length > 0 && selectedScopes.length === 0;
                   const advancedOpen = Boolean(expandedAdvanced[connector.id]);
                   const toggleScope = (scope: string) => {
@@ -577,8 +580,8 @@ export function ProviderConnections() {
                               {profileLabel} permissions requested
                             </legend>
                             <p className="text-xs text-muted-foreground">
-                              Choose which permissions this app can request. You can only pick from
-                              what this connection allows.
+                              Choose the permissions to request when connecting. Available permissions
+                              are configured by your administrator.
                             </p>
                             <div className="flex flex-wrap gap-2">
                               {allowedScopes.map((scope) => {
@@ -604,12 +607,21 @@ export function ProviderConnections() {
                                 );
                               })}
                             </div>
-                            {connection?.requestedScopes && connection.requestedScopes.length > 0 && (
+                            {connected && (
                               <p className="text-xs text-muted-foreground">
-                                Current permissions: {connection.requestedScopes.join(", ")}
+                                {connection?.grantedScopes?.length
+                                  ? `Granted by ${profileLabel}: ${connection.grantedScopes.join(", ")}`
+                                  : "The provider did not report the granted permissions."}
                               </p>
                             )}
-                            {connected && (
+                            {connector.provider === "github" && (
+                              <p className="text-xs text-muted-foreground">
+                                <code>repo</code> allows repository reads and writes; <code>read:user</code> reads
+                                your profile. Organization approval and your agent’s selected tools and
+                                access grants are also required. Reconnecting does not approve an organization.
+                              </p>
+                            )}
+                            {connected && permissionsChanged && (
                               <p className="text-xs text-amber-700 dark:text-amber-300">
                                 Reconnect {profileLabel} for permission changes to take effect.
                               </p>
