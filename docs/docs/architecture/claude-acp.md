@@ -18,6 +18,9 @@ Both use Harness Gateway authorization, Engine-owned runs and cursor replay.
 They have separate worker profiles, databases and persistent workspace volumes.
 Adding the CLI does not migrate or rebind existing SDK conversations.
 
+See the [Claude ACP threat model](../security/claude-acp-threat-model.md) for
+credential lifetimes, trust boundaries, required deployment controls and residual risks.
+
 ## Agent author workflow
 
 1. Select **Claude Agent SDK (ACP)** or **Claude Code CLI (ACP)** and an available

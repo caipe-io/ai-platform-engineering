@@ -56,6 +56,9 @@ service until an operator enables the Engine integration.
 - The optional `deploy/harness-engine/compose.claude-cli-acp.yaml` overlay adds the
   CLI worker. See [Claude ACP architecture](../../docs/docs/architecture/claude-acp.md)
   for connection settings, native tool policy and persistence boundaries.
+- Read the [Claude ACP threat model](../../docs/docs/security/claude-acp-threat-model.md)
+  before enabling native tools or sharing workers across trust domains. It covers
+  capability lifetime, caller/provider credentials, cancellation and isolation limits.
 
 ## Connect an existing AgentCore deployment
 
