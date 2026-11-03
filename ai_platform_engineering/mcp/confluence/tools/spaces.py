@@ -7,8 +7,9 @@
 
 import logging
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from api.client import make_api_request
+from tools.page_reads import confluence_list_spaces
 
 # Configure logging - use LOG_LEVEL from environment or default to INFO
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -18,109 +19,42 @@ logger = logging.getLogger("mcp_tools")
 
 
 async def get_spaces(
-  param_ids: List[int] = None,
-  param_keys: List[str] = None,
-  param_type: str = None,
-  param_status: str = None,
-  param_labels: List[str] = None,
-  param_favorited_by: str = None,
-  param_not_favorited_by: str = None,
-  param_sort: str = None,
-  param_description_format: str = None,
-  param_include_icon: bool = None,
-  param_cursor: str = None,
-  param_limit: int = None
+  param_ids: Optional[List[int]] = None,
+  param_keys: Optional[List[str]] = None,
+  param_type: Optional[str] = None,
+  param_status: Optional[str] = None,
+  param_labels: Optional[List[str]] = None,
+  param_favorited_by: Optional[str] = None,
+  param_not_favorited_by: Optional[str] = None,
+  param_sort: Optional[str] = None,
+  param_description_format: Optional[str] = None,
+  param_include_icon: Optional[bool] = None,
+  param_cursor: Optional[str] = None,
+  param_limit: Optional[int] = None
 ) -> Dict[str, Any]:
+    """List bounded space metadata through classic-scope CQL.
+
+    Filters apply to the current provider batch. Follow next_cursor even when
+    filtering leaves an empty batch; complete refers to provider enumeration.
+    Description/icon expansion and legacy sort/favorite/label filters fail
+    explicitly rather than calling a retired endpoint or ignoring filters.
     """
-    Get spaces
+    if any(value is not None for value in (param_labels, param_favorited_by, param_not_favorited_by, param_sort, param_description_format)) or param_include_icon:
+        raise ValueError("Space description/icon, label, favorite and sort filters are unsupported by this bounded CQL reader")
+    result = await confluence_list_spaces(param_limit if param_limit is not None else 5, param_cursor)
+    spaces = result["results"]
+    if param_ids:
+        spaces = [space for space in spaces if str(space["id"]) in {str(value) for value in param_ids}]
+    if param_keys:
+        spaces = [space for space in spaces if space["key"] in param_keys]
+    if param_type:
+        spaces = [space for space in spaces if space["type"] == param_type]
+    if param_status:
+        if any(space["status"] is None for space in spaces):
+            raise ValueError("Provider space metadata has no status; status filtering cannot be verified")
+        spaces = [space for space in spaces if space["status"] == param_status]
+    return {**result, "results": spaces}
 
-    OpenAPI Description:
-        Returns all spaces. The results will be sorted by id ascending. The number of results is limited by the `limit` parameter and
-additional results (if available) will be available through the `next` URL present in the `Link` response header.
-
-**[Permissions](https://confluence.atlassian.com/x/_AozKw) required**:
-Permission to access the Confluence site ('Can use' global permission).
-Only spaces that the user has permission to view will be returned.
-
-    Args:
-
-        param_ids (List[int]): Filter the results to spaces based on their IDs. Multiple IDs can be specified as a comma-separated list.
-
-        param_keys (List[str]): Filter the results to spaces based on their keys. Multiple keys can be specified as a comma-separated list.
-
-        param_type (str): Filter the results to spaces based on their type.
-
-        param_status (str): Filter the results to spaces based on their status.
-
-        param_labels (List[str]): Filter the results to spaces based on their labels. Multiple labels can be specified as a comma-separated list.
-
-        param_favorited_by (str): Filter the results to spaces favorited by the user with the specified account ID.
-
-        param_not_favorited_by (str): Filter the results to spaces NOT favorited by the user with the specified account ID.
-
-        param_sort (str): Used to sort the result by a particular field.
-
-        param_description_format (str): The content format type to be returned in the `description` field of the response. If available, the representation will be available under a response field of the same name under the `description` field.
-
-        param_include_icon (bool): If the icon for the space should be fetched or not.
-
-        param_cursor (str): Used for pagination, this opaque cursor will be returned in the `next` URL in the `Link` response header. Use the relative URL in the `Link` header to retrieve the `next` set of results.
-
-        param_limit (int): Maximum number of spaces per result to return. If more results exist, use the `Link` response header to retrieve a relative URL that will return the next set of results.
-
-
-    Returns:
-        Dict[str, Any]: The JSON response from the API call.
-
-    Raises:
-        Exception: If the API request fails or returns an error.
-    """
-    logger.debug("Making GET request to /spaces")
-
-    params = {}
-    data = {}
-
-    # Only add parameters if they have values
-    if param_ids is not None:
-        params["ids"] = param_ids
-    if param_keys is not None:
-        params["keys"] = param_keys
-    if param_type is not None:
-        params["type"] = param_type
-    if param_status is not None:
-        params["status"] = param_status
-    if param_labels is not None:
-        params["labels"] = param_labels
-    if param_favorited_by is not None:
-        params["favorited-by"] = param_favorited_by
-    if param_not_favorited_by is not None:
-        params["not-favorited-by"] = param_not_favorited_by
-    if param_sort is not None:
-        params["sort"] = param_sort
-    if param_description_format is not None:
-        params["description-format"] = param_description_format
-    if param_include_icon is not None:
-        params["include-icon"] = param_include_icon
-    if param_cursor is not None:
-        params["cursor"] = param_cursor
-    if param_limit is not None:
-        params["limit"] = param_limit
-
-
-
-    success, response = await make_api_request(
-        "/space",
-        method="GET",
-        params=params,
-        data=data
-    )
-
-    if not success:
-        error_details = response.get('error', 'Request failed')
-        error_message = f"Failed to get spaces: {error_details}"
-        logger.error(error_message)
-        raise Exception(error_message)
-    return response
 
 async def create_space() -> Dict[str, Any]:
     """
