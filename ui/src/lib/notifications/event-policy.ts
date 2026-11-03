@@ -12,4 +12,7 @@ export interface NotificationEventPolicy {
   allowedChannels: NotificationChannel[];
   revision: number;
   locked: boolean;
+  retired?: boolean;
+  /** Pending deliveries accepted before this instant must not replay after restoration. */
+  discardBefore?: string;
 }

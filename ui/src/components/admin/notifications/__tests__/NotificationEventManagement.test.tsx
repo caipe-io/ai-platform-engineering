@@ -39,3 +39,34 @@ it("prevents writes during an admin preview", async () => {
   await screen.findByText("Service degraded");
   expect(screen.getByRole("button", { name: "Save event", hidden: true })).toBeDisabled();
 });
+
+it("requires confirmation before retiring an app event", async () => {
+  const appEvent = { ...event, sourceId: "app:example", eventType: "report.ready", label: "Report ready", audience: "recipients" };
+  mockFetch.mockResolvedValue(reply([{ id: "app:example", label: "Example app", events: [appEvent] }]));
+  render(<NotificationEventManagement />);
+  await screen.findByRole("tab", { name: "App events" });
+  fireEvent.mouseDown(screen.getByRole("tab", { name: "App events" }), { button: 0, ctrlKey: false });
+  fireEvent.click(await screen.findByRole("button", { name: "Retire event", hidden: true }));
+  expect(mockFetch.mock.calls.some((call) => call[1]?.method === "PATCH")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel", hidden: true }));
+  expect(screen.queryByRole("button", { name: "Confirm retirement", hidden: true })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Retire event", hidden: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm retirement", hidden: true }));
+  await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("/api/admin/notifications/events", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ sourceId: "app:example", eventType: "report.ready", revision: 0, action: "retire" }) })));
+});
+it("hides retired events by default and offers explicit restoration", async () => {
+  mockFetch.mockResolvedValue(reply([{ id: "app:example", label: "Example app", events: [{ ...event, sourceId: "app:example", eventType: "report.ready", label: "Report ready", retired: true, revision: 1 }] }]));
+  render(<NotificationEventManagement />);
+  await screen.findByRole("tab", { name: "App events" });
+  fireEvent.mouseDown(screen.getByRole("tab", { name: "App events" }), { button: 0, ctrlKey: false });
+  await screen.findByLabelText("Show retired events");
+  expect(screen.queryByText("Report ready")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Show retired events"));
+  fireEvent.click(screen.getByRole("button", { name: "Restore event", hidden: true }));
+  await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("/api/admin/notifications/events", expect.objectContaining({ method: "PATCH", body: expect.stringContaining('"action":"restore"') })));
+});
+it("never offers retirement for built-in platform events", async () => {
+  render(<NotificationEventManagement />);
+  await screen.findByText("Service degraded");
+  expect(screen.queryByRole("button", { name: "Retire event", hidden: true })).not.toBeInTheDocument();
+});

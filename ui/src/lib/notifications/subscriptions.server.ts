@@ -278,7 +278,7 @@ export async function listNotificationSources(
       const policy = await notificationEventPolicy(source._id, event.id);
       return { ...event, label: policy.label, description: policy.description,
         operatorDisabled: !policy.enabled, allowedChannels: policy.allowedChannels,
-        audienceAllowed: policy.audience !== "organization_admins" || admin,
+        audienceAllowed: !policy.retired && (policy.audience !== "organization_admins" || admin),
         subscription: { ...byKey.get(notificationKey(subject, source._id, event.id)),
           enabled: source._id === "platform" && isNotificationEventType(event.id)
             ? isNotificationEnabled(event.id, settings?.notification_preferences, policy.defaultEnabled)
@@ -295,8 +295,9 @@ export async function deliveryAllowed(
   sourceId: string,
   eventType: string,
   channel: NotificationChannel,
+  acceptedAt?: Date,
 ): Promise<boolean> {
-  if (!(await notificationPolicyAllows(sourceId, eventType, subject, channel))) return false;
+  if (!(await notificationPolicyAllows(sourceId, eventType, subject, channel, { acceptedAt }))) return false;
   const policy = await notificationEventPolicy(sourceId, eventType);
   const { global, source, events } = await readSourceSubscriptions(
     subject,
