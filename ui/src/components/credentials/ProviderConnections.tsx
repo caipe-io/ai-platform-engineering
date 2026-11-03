@@ -615,7 +615,7 @@ export function ProviderConnections() {
                               </p>
                             )}
                             {connector.provider === "github" && (
-                              <p className="text-xs text-muted-foreground">
+                              <p className="max-w-prose text-xs text-muted-foreground">
                                 <code>repo</code> allows repository reads and writes; <code>read:user</code> reads
                                 your profile. Organization approval and your agent’s selected tools and
                                 access grants are also required. Reconnecting does not approve an organization.
