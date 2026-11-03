@@ -31,7 +31,7 @@ from .webex_agent_routes import (
 )
 from .webex_bot_catalog import configured_webex_bots
 from .webex_config_models import WebexBotConfig
-from .webex_ids import canonicalize_webex_space_id
+from .webex_ids import canonicalize_webex_space_id, is_valid_webex_person_id
 from .webex_space_discovery import (
     DEFAULT_CACHE_TTL_SECONDS,
     MAX_PAGE_SIZE,
@@ -347,6 +347,25 @@ class WebexBotAdminService:
             "bot_id": selected.id if selected is not None else "default",
         }
 
+    def notify_identity_linked(self, *, bot_id: str, webex_user_id: str) -> dict[str, Any]:
+        """Acknowledge identity linking without claiming that agent access is granted."""
+        if not is_valid_webex_person_id(webex_user_id):
+            raise ValueError("Invalid Webex person ID")
+        bot = next((item for item in configured_webex_bots() if item.id == bot_id), None)
+        if bot is None:
+            raise ValueError("Unknown Webex bot")
+        token = os.environ.get(bot.token_env, "").strip()
+        if not token:
+            raise RuntimeError("Webex bot is unavailable")
+        response = requests.post(
+            "https://webexapis.com/v1/messages",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"toPersonId": webex_user_id, "markdown": "Your Webex identity is now linked. Send your question again in this conversation. Agent access is checked separately when you send a message."},
+            timeout=10,
+        )
+        response.raise_for_status()
+        return {"notified": True}
+
     def sync_from_config(
         self,
         *,
@@ -613,6 +632,22 @@ class _WebexAdminRequestHandler(BaseHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Webex admin config sync failed: %s", exc)
                 self._write_json({"error": str(exc)}, status=500)
+            return
+        if path == "/admin/webex/identity-linked":
+            if not self._authorize(scope_env="WEBEX_ADMIN_NOTIFICATION_SCOPE"):
+                return
+            try:
+                self._write_json(self.service.notify_identity_linked(
+                    bot_id=_required_string(body.get("bot_id"), "bot_id"),
+                    webex_user_id=_required_string(body.get("webex_user_id"), "webex_user_id"),
+                ))
+            except ValueError as exc:
+                self._write_json({"error": str(exc)}, status=400)
+            except RuntimeError as exc:
+                self._write_json({"error": str(exc)}, status=503)
+            except requests.RequestException:
+                logger.warning("Webex identity confirmation delivery failed")
+                self._write_json({"error": "webex_api_unavailable"}, status=502)
             return
         if path == "/admin/webex/notifications":
             if not self._authorize(scope_env="WEBEX_ADMIN_NOTIFICATION_SCOPE"):
