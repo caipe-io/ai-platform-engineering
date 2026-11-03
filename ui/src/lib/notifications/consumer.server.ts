@@ -1,3 +1,4 @@
+import { notificationEventPolicy, notificationPolicyAllows } from "./event-policy.server";
 import { enqueueNotification } from "@/lib/notifications/delivery.server";
 import { getCollection } from "@/lib/mongodb";
 import {
@@ -61,10 +62,12 @@ export async function publishNotificationEvent(
 export async function storeNotificationEnvelope(
   envelope: NotificationEnvelope,
 ): Promise<NotificationPublishOutcome> {
+  if (!(await notificationPolicyAllows("platform", envelope.type, envelope.recipient_subject))) return "disabled";
+  const policy = await notificationEventPolicy("platform", envelope.type);
   const preferences = await loadNotificationPreferences(
     envelope.recipient_email,
   );
-  if (!isNotificationEnabled(envelope.type, preferences)) {
+  if (!isNotificationEnabled(envelope.type, preferences, policy.defaultEnabled)) {
     return "disabled";
   }
 

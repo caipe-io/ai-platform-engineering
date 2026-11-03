@@ -20,6 +20,7 @@ export interface NotificationPreferences {
 export function isNotificationEnabled(
   type: NotificationEventType,
   preferences: NotificationPreferences | null | undefined,
+  defaultEnabled = NOTIFICATION_EVENT_CATALOG[type].defaultEnabled,
 ): boolean {
   const explicitEvent = preferences?.events?.[type];
   if (typeof explicitEvent === "boolean") return explicitEvent;
@@ -28,7 +29,7 @@ export function isNotificationEnabled(
   const explicitCategory = preferences?.categories?.[category];
   if (typeof explicitCategory === "boolean") return explicitCategory;
 
-  return NOTIFICATION_EVENT_CATALOG[type].defaultEnabled;
+  return defaultEnabled;
 }
 
 /** A patch value of `null` removes the explicit override and returns to the default. */

@@ -1,3 +1,4 @@
+import { notificationEventPolicy, notificationPolicyAllows } from "./event-policy.server";
 import { NOTIFICATION_EVENT_COPY } from "./copy";
 import { createHash } from "node:crypto";
 import { hasOrganizationAdmin } from "@/lib/rbac/platform-admin";
@@ -33,6 +34,7 @@ export interface SourceRegistration {
   _id: string;
   label: string;
   events: NotificationTypeRegistration[];
+  operatorEvents?: NotificationTypeRegistration[];
   updatedAt: Date;
 }
 interface SubscriptionDocument extends NotificationSubscription {
@@ -52,12 +54,19 @@ export async function registerAppNotificationTypes(
   label: string,
   input: unknown,
 ): Promise<void> {
+  const events = validateNotificationTypes(input);
+  const collection = await getCollection<SourceRegistration>("notification_sources");
+  await collection.updateOne({ _id: `app:${appId}` }, { $set: { label, events, updatedAt: new Date() } }, { upsert: true });
+}
+
+export function validateNotificationTypes(input: unknown): NotificationTypeRegistration[] {
   if (!Array.isArray(input) || input.length < 1 || input.length > 30)
     throw new ApiError("Register 1 to 30 notification types", 400);
   const events = input.map((raw): NotificationTypeRegistration => {
     if (
       !raw ||
       typeof raw !== "object" ||
+      typeof raw.id !== "string" ||
       !/^[a-z][a-z0-9_.-]{0,63}$/.test(raw.id) ||
       typeof raw.label !== "string" ||
       !raw.label.trim() ||
@@ -78,14 +87,7 @@ export async function registerAppNotificationTypes(
   });
   if (new Set(events.map((event) => event.id)).size !== events.length)
     throw new ApiError("Notification type ids must be unique", 400);
-  const collection = await getCollection<SourceRegistration>(
-    "notification_sources",
-  );
-  await collection.updateOne(
-    { _id: `app:${appId}` },
-    { $set: { label, events, updatedAt: new Date() } },
-    { upsert: true },
-  );
+  return events;
 }
 
 export async function getNotificationSource(
@@ -106,9 +108,9 @@ export async function getNotificationSource(
     sourceId.startsWith("app:") ? sourceId.slice(4) : "",
   );
   if (!app?.installation.installed || !app.installation.enabled) return null;
-  return (
-    await getCollection<SourceRegistration>("notification_sources")
-  ).findOne({ _id: sourceId });
+  const source = await (await getCollection<SourceRegistration>("notification_sources")).findOne({ _id: sourceId });
+  if (!source) return null;
+  return { ...source, events: [...new Map([...(source.events ?? []), ...(source.operatorEvents ?? [])].map((event) => [event.id, event])).values()] };
 }
 
 export async function readSubscription(
@@ -267,27 +269,25 @@ export async function listNotificationSources(
         { projection: { notification_preferences: 1 } },
       )
     : null;
-  return [platform!, ...registrations].map((source) => ({
+  const admin = await hasOrganizationAdmin({ sub: subject, user: { email } });
+  return Promise.all([platform!, ...registrations].map(async (source) => ({
     id: source._id,
     label: source.label,
-    subscription: byKey.get(notificationKey(subject, source._id, "*")) ?? {
-      enabled: source._id === "platform",
-    },
-    events: source.events.map((event) => ({
-      ...event,
-      subscription: {
-        ...byKey.get(notificationKey(subject, source._id, event.id)),
-        ...(source._id === "platform" && isNotificationEventType(event.id)
-          ? {
-              enabled: isNotificationEnabled(
-                event.id,
-                settings?.notification_preferences,
-              ),
-            }
-          : {}),
-      },
-    })),
-  }));
+    subscription: byKey.get(notificationKey(subject, source._id, "*")) ?? { enabled: source._id === "platform" },
+    events: (await Promise.all([...new Map([...(source.events ?? []), ...(source.operatorEvents ?? [])].map((event) => [event.id, event])).values()].map(async (event) => {
+      const policy = await notificationEventPolicy(source._id, event.id);
+      return { ...event, label: policy.label, description: policy.description,
+        operatorDisabled: !policy.enabled, allowedChannels: policy.allowedChannels,
+        audienceAllowed: policy.audience !== "organization_admins" || admin,
+        subscription: { ...byKey.get(notificationKey(subject, source._id, event.id)),
+          enabled: source._id === "platform" && isNotificationEventType(event.id)
+            ? isNotificationEnabled(event.id, settings?.notification_preferences, policy.defaultEnabled)
+            : byKey.get(notificationKey(subject, source._id, event.id))?.enabled ?? policy.defaultEnabled,
+        },
+      };
+    }))).filter((event) => event.audienceAllowed),
+  })));
+
 }
 
 export async function deliveryAllowed(
@@ -296,6 +296,8 @@ export async function deliveryAllowed(
   eventType: string,
   channel: NotificationChannel,
 ): Promise<boolean> {
+  if (!(await notificationPolicyAllows(sourceId, eventType, subject, channel))) return false;
+  const policy = await notificationEventPolicy(sourceId, eventType);
   const { global, source, events } = await readSourceSubscriptions(
     subject,
     sourceId,
@@ -337,10 +339,11 @@ export async function deliveryAllowed(
         })))
     )
       return false;
-    if (!isNotificationEnabled(eventType, settings?.notification_preferences))
+    if (!isNotificationEnabled(eventType, settings?.notification_preferences, policy.defaultEnabled))
       return false;
   }
   if (sourceId !== "platform") {
+    if (events.get(eventType)?.enabled === undefined && !policy.defaultEnabled) return false;
     const app = getConfiguredAgenticApp(
       sourceId.startsWith("app:") ? sourceId.slice(4) : "",
     );

@@ -1,5 +1,13 @@
 /** @jest-environment node */
 
+jest.mock("@/lib/notifications/event-policy.server", () => ({
+  notificationPolicyAllows: jest.fn(async () => true),
+  notificationPolicyInboxFilter: jest.fn(async () => ({})),
+  notificationEventPolicy: jest.fn(async (_source: string, event: string) => ({
+    defaultEnabled: jest.requireActual("@/lib/notifications/taxonomy").NOTIFICATION_EVENT_CATALOG[event]?.defaultEnabled ?? true,
+  })),
+}));
+
 import {
   registerAppNotificationTypes,
   writeSubscription,
@@ -132,4 +140,8 @@ describe("notification subscriptions and app boundaries", () => {
     expect(mockIdentity).not.toHaveBeenCalled();
     expect(mockRoles).not.toHaveBeenCalled();
   });
+});
+
+it("rejects an array masquerading as an app event identifier", async () => {
+  await expect(registerAppNotificationTypes("example-app", "Example", [{ id: ["report.ready"], label: "Report" }])).rejects.toMatchObject({ statusCode: 400 });
 });

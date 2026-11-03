@@ -54,6 +54,8 @@ async function notifyPublicationRequestCreated(
   try {
     await createInAppNotification({
       eventKey: publicationNotificationKey(request._id, "requested"),
+      sourceId: "platform",
+      eventType: "approval.requested",
       recipientUserSubjects: request.approver_user_subjects,
       recipientTeamSlugs: request.approver_team_slugs,
       recipientOrganizationAdmins: true,

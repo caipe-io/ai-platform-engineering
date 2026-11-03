@@ -1,3 +1,4 @@
+import { notificationPolicyAllows } from "./event-policy.server";
 import { randomUUID } from "node:crypto";
 
 import { createInAppNotification } from "@/lib/in-app-notifications.server";
@@ -33,6 +34,8 @@ export async function enqueueNotification(
 ): Promise<void> {
   if (process.env.NOTIFICATION_EVENTS_ENABLED === "false")
     throw new Error("Notifications are disabled");
+  if (!(await notificationPolicyAllows(input.sourceId, input.eventType, input.recipient.subject)))
+    throw new Error("Notification event policy denied this recipient");
   await (
     await getCollection<NotificationJob>("notification_jobs")
   ).updateOne(

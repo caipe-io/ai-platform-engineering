@@ -1,3 +1,4 @@
+import { notificationPolicyInboxFilter } from "@/lib/notifications/event-policy.server";
 import { notificationCallbackPath } from "@/lib/notifications/callback";
 import { randomUUID } from "node:crypto";
 
@@ -63,6 +64,7 @@ async function notificationAudienceQuery(
     );
   }
   return {
+    ...(await notificationPolicyInboxFilter(subject, organizationAdmin)),
     archived_at: { $exists: false },
     ...(options.allowedAppSourceIds ? { $and: [{ $or: [
       { source_id: { $exists: false } }, { source_id: "platform" }, { source_id: { $in: options.allowedAppSourceIds } },
