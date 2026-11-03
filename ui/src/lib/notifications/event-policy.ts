@@ -12,4 +12,7 @@ export interface NotificationEventPolicy {
   allowedChannels: NotificationChannel[];
   revision: number;
   locked: boolean;
+  retired?: boolean;
+  /** Advances on retirement/restoration so older queued deliveries cannot replay. */
+  deliveryGeneration?: number;
 }

@@ -1,3 +1,4 @@
+import { notificationEventPolicy } from "@/lib/notifications/event-policy.server";
 import { notificationCallbackUri } from "@/lib/notifications/callback";
 import { consumeNotificationQuota } from "@/lib/notifications/limits.server";
 import { canLaunchAgenticApp, agenticAppUserContextFromSession } from "@/lib/agentic-apps/access";
@@ -92,6 +93,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const source = await getNotificationSource(`app:${app.manifest.id}`);
   if (source) {
     if (typeof body.eventType !== "string" || !source.events.some((event) => event.id === body.eventType)) throw new ApiError("Select a registered notification eventType", 400);
+    if ((await notificationEventPolicy(sourceId, body.eventType)).retired) return successResponse({ queued: 0, skipped: recipients.length, retired: true }, 202);
     const audience = await resolveRecipients((recipients as string[]).map((subject) => ({ subject })), { includeOrgAdmins: false });
     await consumeNotificationQuota(sourceId, 200, Math.max(1, audience.recipients.length));
     for (const recipient of audience.recipients) await consumeNotificationQuota(`recipient:${recipient.subject}`, 20);

@@ -10,3 +10,14 @@
 - App subscriptions and external delivery remain opt-in. A policy cannot subscribe users or configure arbitrary external destinations.
 - Audience restrictions apply at queue acceptance, delivery, inbox reads and callback resolution. Resource-specific project/document authorization is still a separate production requirement.
 - Changes use revision checks and the platform audit backend. Concurrent editors must reload on HTTP 409.
+
+## Retiring app events
+
+- Open an app event and choose **Retire event → Confirm retirement**.
+- Retirement is reversible and applies to the registration, not existing notification history or subscriptions.
+- Publisher re-registration cannot clear retirement. Retired types are hidden from personal subscription controls.
+- New publications are acknowledged as skipped; pending deliveries stop. Delivery already in progress may finish.
+- Select **Show retired events → Restore event** to permit future notifications. Pending/skipped notifications are not replayed.
+- If the publisher removed its declaration, register the same event ID again before restoring. The tombstone remains visible to admins meanwhile.
+- Built-in platform events cannot be retired. Optional platform events can be disabled; approval-workflow policies remain protected.
+- Both lifecycle actions require an organization admin, use revision guards and write platform audit events.

@@ -4,7 +4,7 @@ import { ApiError, getAuthFromBearerOrSession, successResponse, withErrorHandler
 import { hasOrganizationAdmin } from "@/lib/rbac/platform-admin";
 import { logOpenFgaRebacAuditEvent } from "@/lib/rbac/audit";
 import { readNotificationJson } from "@/lib/notifications/http.server";
-import { listNotificationEventPolicies, updateNotificationEventPolicy } from "@/lib/notifications/event-policy.server";
+import { changeNotificationEventLifecycle, listNotificationEventPolicies, updateNotificationEventPolicy } from "@/lib/notifications/event-policy.server";
 
 async function requireOperator(request: NextRequest): Promise<string> {
   const { session } = await getAuthFromBearerOrSession(request);
@@ -17,8 +17,11 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 });
 export const PATCH = withErrorHandler(async (request: NextRequest) => {
   const actor = await requireOperator(request);
-  const policy = await updateNotificationEventPolicy(await readNotificationJson(request), actor);
-  logOpenFgaRebacAuditEvent({ sub: actor, operation: "notification.event_policy.update", scope: "admin", resourceRef: `notification:${policy.sourceId}:${policy.eventType}`, correlationId: `revision:${policy.revision}` });
+  const body = await readNotificationJson(request);
+  const policy = body?.action !== undefined
+    ? await changeNotificationEventLifecycle(body, actor)
+    : await updateNotificationEventPolicy(body, actor);
+  logOpenFgaRebacAuditEvent({ sub: actor, operation: body?.action === "retire" ? "notification.event.retire" : body?.action === "restore" ? "notification.event.restore" : "notification.event_policy.update", scope: "admin", resourceRef: `notification:${policy.sourceId}:${policy.eventType}`, correlationId: `revision:${policy.revision}` });
   return successResponse(policy);
 });
 

@@ -1,6 +1,10 @@
 /**
+
  * @jest-environment node
  */
+
+const mockEventPolicy = jest.fn();
+jest.mock("@/lib/notifications/event-policy.server", () => ({ notificationEventPolicy: (...args: unknown[]) => mockEventPolicy(...args) }));
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -76,6 +80,7 @@ const post = (body: unknown) =>
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockEventPolicy.mockResolvedValue({ retired: false });
   mockGetAuth.mockResolvedValue({ session: { isServiceAccount: true, serviceAccountClientId: "example-client" } });
   mockFindProducer.mockReturnValue(app);
   mockCreate.mockResolvedValue(true);
@@ -190,4 +195,13 @@ describe("POST /api/notifications", () => {
     expect((await post({ ...valid, href })).status).toBe(201);
     expect(mockCreate.mock.calls[0][0].href).toBe(href);
   });
+});
+
+it("acknowledges retired publications without queuing delivery", async () => {
+  mockSource.mockResolvedValue({ events: [{ id: "report.ready" }] });
+  mockEventPolicy.mockResolvedValue({ retired: true });
+  const response = await post({ ...valid, eventType: "report.ready" });
+  expect(response.status).toBe(202);
+  expect(await response.json()).toMatchObject({ data: { queued: 0, skipped: 1, retired: true } });
+  expect(mockEnqueue).not.toHaveBeenCalled();
 });

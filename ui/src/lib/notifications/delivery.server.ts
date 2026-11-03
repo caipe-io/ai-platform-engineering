@@ -1,4 +1,5 @@
-import { notificationPolicyAllows } from "./event-policy.server";
+import { ApiError } from "@/lib/api-error";
+import { notificationEventPolicy, notificationPolicyAllows } from "./event-policy.server";
 import { randomUUID } from "node:crypto";
 
 import { createInAppNotification } from "@/lib/in-app-notifications.server";
@@ -35,7 +36,8 @@ export async function enqueueNotification(
   if (process.env.NOTIFICATION_EVENTS_ENABLED === "false")
     throw new Error("Notifications are disabled");
   if (!(await notificationPolicyAllows(input.sourceId, input.eventType, input.recipient.subject)))
-    throw new Error("Notification event policy denied this recipient");
+    throw new ApiError("Notification event policy denied this recipient", 403);
+  const policy = await notificationEventPolicy(input.sourceId, input.eventType);
   await (
     await getCollection<NotificationJob>("notification_jobs")
   ).updateOne(
@@ -43,6 +45,7 @@ export async function enqueueNotification(
     {
       $setOnInsert: {
         ...input,
+        eventGeneration: policy.deliveryGeneration ?? 0,
         expanded: false,
         createdAt: new Date(),
         expiresAt: new Date(Date.now() + 90 * 86400_000),
@@ -142,6 +145,7 @@ export async function runNotificationDeliveriesOnce(): Promise<number> {
           delivery.sourceId,
           delivery.eventType,
           delivery.channel,
+          delivery.eventGeneration ?? 0,
         );
         if (allowed && delivery.channel !== "in_app") {
           const [global, source] = await Promise.all([
