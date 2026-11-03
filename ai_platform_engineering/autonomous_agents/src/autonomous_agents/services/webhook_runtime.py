@@ -67,6 +67,9 @@ class _QueuedWebhookRun:
 
 _task_queues: dict[str, deque[_QueuedWebhookRun]] = {}
 _task_drainers: set[str] = set()
+# Only locally failed attempts are safe to roll back on a retry. Bound this
+# recovery cache; unknown pending claims fail closed instead of firing again.
+_failed_manual_claims: deque[tuple[str, str]] = deque(maxlen=1024)
 _execution_loop: asyncio.AbstractEventLoop | None = None
 _global_execution_semaphore: asyncio.Semaphore | None = None
 _global_execution_limit = 0
@@ -163,6 +166,7 @@ def _reset_dispatch_limiter_for_tests() -> None:
         _dispatch_pending_by_owner.clear()
         _task_queues.clear()
         _task_drainers.clear()
+        _failed_manual_claims.clear()
     _execution_loop = None
     _global_execution_semaphore = None
     _global_execution_limit = 0
@@ -430,6 +434,60 @@ async def _claim_or_log(
         ) from exc
 
 
+async def _rollback_manual_claim(dedup_key: str, run_id: str) -> bool:
+    failed = (dedup_key, run_id)
+    if failed not in _failed_manual_claims:
+        _failed_manual_claims.append(failed)
+    try:
+        await get_mongo_service().delete_unqueued_trigger_instance(dedup_key, run_id)
+    except Exception:
+        # Preserve the original dispatch error. A later retry can reconcile
+        # this known-unaccepted attempt once Mongo recovers.
+        logger.exception("Manual claim rollback failed (key=%s, run_id=%s)", dedup_key, run_id)
+        return False
+    if failed in _failed_manual_claims:
+        _failed_manual_claims.remove(failed)
+    return True
+
+
+async def _recover_manual_run(task_id: str, dedup_key: DedupKey) -> DispatchOutcome | None:
+    pending = HTTPException(
+        status_code=503,
+        detail="Manual run acceptance is not confirmed; retry with the same ID.",
+        headers={"Retry-After": "1"},
+    )
+    try:
+        mongo = get_mongo_service()
+        existing = await mongo.get_trigger_instance(dedup_key.key)
+        if not existing:
+            return None
+        run_id = existing.get("run_id")
+        if not run_id:
+            raise pending
+        if (dedup_key.key, run_id) in _failed_manual_claims:
+            if not await _rollback_manual_claim(dedup_key.key, run_id):
+                raise pending
+            return None
+        accepted = existing.get("manual_queue_accepted") is True
+        if not accepted:
+            with _dispatch_lock:
+                accepted = any(
+                    job.run_id == run_id and job.trigger_instance_id == dedup_key.key
+                    for job in _task_queues.get(task_id, ())
+                )
+            accepted = accepted or await mongo.trigger_run_exists(task_id, run_id)
+        if not accepted:
+            raise pending
+        return DispatchOutcome(
+            status_code=200, run_id=run_id, claimed=False,
+            trigger_instance_id=dedup_key.key, dedup_strategy=dedup_key.strategy,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise pending from exc
+
+
 async def dispatch_webhook_run(
     *,
     task: TaskDefinition,
@@ -473,15 +531,9 @@ async def dispatch_webhook_run(
     # A manual retry recovers an accepted run even while the queue is full.
     # The atomic claim below still arbitrates simultaneous first submissions.
     if dedup_key.strategy == "manual" and dedup_key.key:
-        try:
-            existing = await get_mongo_service().get_trigger_instance(dedup_key.key)
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail="Could not recover manual request; retry with the same ID.") from exc
-        if existing:
-            if not existing.get("run_id"):
-                raise HTTPException(status_code=503, detail="Manual request is being recorded; retry with the same ID.", headers={"Retry-After": "1"})
-            return DispatchOutcome(status_code=200, run_id=existing["run_id"], claimed=False,
-                trigger_instance_id=dedup_key.key, dedup_strategy=dedup_key.strategy)
+        recovered = await _recover_manual_run(task.id, dedup_key)
+        if recovered:
+            return recovered
 
     dispatch_lease, rejected_scope = _try_reserve_queue_slot(
         task,
@@ -543,6 +595,8 @@ async def dispatch_webhook_run(
         claim = await _claim_or_log(task_id=task.id, dedup_key=dedup_key, body=body, run_id=manual_run_id)
     except Exception:
         _release_queue_slot(dispatch_lease)
+        if manual_run_id is not None:
+            await _rollback_manual_claim(dedup_key.key, manual_run_id)
         raise
 
     if not claim.claimed:
@@ -551,7 +605,10 @@ async def dispatch_webhook_run(
         # correlate. Status 200 distinguishes "we accepted it
         # already" from a fresh 202.
         _release_queue_slot(dispatch_lease)
-        if dedup_key.strategy == "manual" and not claim.existing_run_id:
+        if dedup_key.strategy == "manual":
+            recovered = await _recover_manual_run(task.id, dedup_key)
+            if recovered:
+                return recovered
             raise HTTPException(status_code=503, detail="Manual request is being recorded; retry with the same ID.", headers={"Retry-After": "1"})
         return DispatchOutcome(
             status_code=200,
@@ -595,8 +652,16 @@ async def dispatch_webhook_run(
     except Exception:
         _release_queue_slot(dispatch_lease)
         if manual_run_id is not None:
-            await get_mongo_service().delete_unqueued_trigger_instance(claim.dedup_key, run_id)
+            await _rollback_manual_claim(claim.dedup_key, run_id)
         raise
+
+    if manual_run_id is not None:
+        try:
+            await get_mongo_service().mark_manual_trigger_queued(claim.dedup_key, run_id)
+        except Exception:
+            # The job is already queued. Retries may confirm it through the
+            # live FIFO or run history without mistaking a claim for acceptance.
+            logger.exception("Manual queue acceptance update failed (run_id=%s)", run_id)
 
     return DispatchOutcome(
         status_code=202,

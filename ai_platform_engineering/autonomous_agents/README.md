@@ -512,10 +512,17 @@ JSON returns 422, and the 32 KiB raw-body limit applies to every manual POST.
 
 Manual retries look up an existing claim before reserving queue capacity, so
 an already accepted request can recover its run ID even when queues are full.
-The run ID is written atomically with the manual claim. If enqueueing fails,
-the claim is removed so the same UUID can be retried. A legacy pending claim
-without a run ID returns 503 with `Retry-After: 1`; clients must retain the
-same UUID, never accept an empty ID.
+The run ID is written atomically with the manual claim; queue acceptance is
+recorded only after enqueueing succeeds. Retries return 200 only with that
+acceptance marker, a matching live FIFO entry, or a matching persisted run.
+An unconfirmed claim returns 503 with `Retry-After: 1`, even if it has a run ID.
+Clients must retain the same UUID, never accept an unconfirmed ID as success.
+
+Failed claims and failed enqueues attempt rollback without hiding the original
+error. If rollback fails, a bounded process-local cache lets the next retry
+reconcile that known-failed attempt after Mongo recovers. Unknown pending
+claims, including after a process restart, fail closed with 503 until acceptance
+can be confirmed or the claim expires; they are not speculatively executed.
 
 This API uses the existing task-management trust boundary: only the authenticated
 UI proxy may supply caller identity/admin headers. The service does not verify

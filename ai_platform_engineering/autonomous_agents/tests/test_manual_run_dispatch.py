@@ -8,7 +8,7 @@ from fastapi import BackgroundTasks, HTTPException
 from mongomock_motor import AsyncMongoMockClient
 
 from autonomous_agents.config import Settings
-from autonomous_agents.models import TaskDefinition, WebhookTrigger
+from autonomous_agents.models import TaskDefinition, TaskRun, TaskStatus, WebhookTrigger
 from autonomous_agents.services import webhook_runtime
 from autonomous_agents.services.mongo import MongoService
 from autonomous_agents.services.trigger_instances import DedupKey
@@ -24,7 +24,8 @@ def arguments() -> dict:
 
 
 async def test_manual_retry_recovers_original_run_even_with_full_queues() -> None:
-    mongo = SimpleNamespace(get_trigger_instance=AsyncMock(return_value={"run_id": "original-run"}))
+    mongo = SimpleNamespace(get_trigger_instance=AsyncMock(return_value={
+        "run_id": "original-run", "manual_queue_accepted": True}))
     with patch.object(webhook_runtime, "get_mongo_service", return_value=mongo), patch.object(
         webhook_runtime, "_try_reserve_queue_slot", side_effect=AssertionError("Duplicate reserved capacity")
     ):
@@ -125,3 +126,116 @@ async def test_failed_enqueue_cleanup_preserves_another_run_claim(mongo: MongoSe
     await mongo.record_trigger_instance({"_id": key, "run_id": "replacement-run"})
     await mongo.delete_unqueued_trigger_instance(key, "failed-run")
     assert (await mongo.get_trigger_instance(key))["run_id"] == "replacement-run"
+
+
+@pytest.mark.parametrize("failure_stage", ["claim", "enqueue"])
+async def test_committed_claim_and_failed_rollback_never_report_phantom_acceptance(
+    mongo: MongoService, failure_stage: str
+) -> None:
+    record = mongo.record_trigger_instance
+
+    async def commit_then_raise(doc: dict) -> None:
+        await record(doc)
+        raise RuntimeError("Claim acknowledgement lost")
+
+    with patch.object(webhook_runtime, "get_mongo_service", return_value=mongo):
+        with patch.object(mongo, "delete_unqueued_trigger_instance", AsyncMock(side_effect=RuntimeError("Rollback unavailable"))):
+            if failure_stage == "claim":
+                with patch.object(mongo, "record_trigger_instance", commit_then_raise), patch.object(
+                    webhook_runtime, "_enqueue_webhook_run"
+                ) as enqueue:
+                    with pytest.raises(HTTPException) as caught:
+                        await webhook_runtime.dispatch_webhook_run(**arguments())
+                    assert caught.value.status_code == 503
+                    enqueue.assert_not_called()
+            else:
+                with patch.object(webhook_runtime, "_enqueue_webhook_run", side_effect=RuntimeError("Original enqueue error")):
+                    with pytest.raises(RuntimeError, match="Original enqueue error"):
+                        await webhook_runtime.dispatch_webhook_run(**arguments())
+            row = await mongo.get_trigger_instance(arguments()["dedup_key"].key)
+            assert row["run_id"]
+            with patch.object(webhook_runtime, "_enqueue_webhook_run") as enqueue:
+                with pytest.raises(HTTPException) as retry_error:
+                    await webhook_runtime.dispatch_webhook_run(**arguments())
+                assert retry_error.value.status_code == 503
+                assert retry_error.value.headers["Retry-After"] == "1"
+                enqueue.assert_not_called()
+        assert webhook_runtime.webhook_dispatch_pending() == 0
+        with patch.object(webhook_runtime, "_enqueue_webhook_run") as enqueue:
+            recovered = await webhook_runtime.dispatch_webhook_run(**arguments())
+            duplicate = await webhook_runtime.dispatch_webhook_run(**arguments())
+        assert recovered.status_code == 202
+        assert duplicate.status_code == 200
+        assert duplicate.run_id == recovered.run_id
+        enqueue.assert_called_once()
+
+
+async def test_committed_claim_with_lost_acknowledgement_is_rolled_back(mongo: MongoService) -> None:
+    record = mongo.record_trigger_instance
+
+    async def commit_then_raise(doc: dict) -> None:
+        await record(doc)
+        raise RuntimeError("Claim acknowledgement lost")
+
+    with patch.object(webhook_runtime, "get_mongo_service", return_value=mongo):
+        with patch.object(mongo, "record_trigger_instance", commit_then_raise), patch.object(
+            webhook_runtime, "_enqueue_webhook_run"
+        ) as enqueue:
+            with pytest.raises(HTTPException) as caught:
+                await webhook_runtime.dispatch_webhook_run(**arguments())
+            assert caught.value.status_code == 503
+            enqueue.assert_not_called()
+        assert await mongo.get_trigger_instance(arguments()["dedup_key"].key) is None
+        with patch.object(webhook_runtime, "_enqueue_webhook_run"):
+            assert (await webhook_runtime.dispatch_webhook_run(**arguments())).status_code == 202
+
+
+async def test_concurrent_retry_cannot_accept_claim_before_enqueue(mongo: MongoService) -> None:
+    record = mongo.record_trigger_instance
+
+    async def record_and_retry(doc: dict) -> tuple:
+        result = await record(doc)
+        with pytest.raises(HTTPException) as caught:
+            await webhook_runtime.dispatch_webhook_run(**arguments())
+        assert caught.value.status_code == 503
+        return result
+
+    with patch.object(webhook_runtime, "get_mongo_service", return_value=mongo), patch.object(
+        mongo, "record_trigger_instance", record_and_retry
+    ), patch.object(webhook_runtime, "_enqueue_webhook_run") as enqueue:
+        assert (await webhook_runtime.dispatch_webhook_run(**arguments())).status_code == 202
+        enqueue.assert_called_once()
+
+
+async def test_live_queue_confirms_acceptance_when_marker_update_fails(mongo: MongoService) -> None:
+    with patch.object(webhook_runtime, "get_mongo_service", return_value=mongo), patch.object(
+        mongo, "mark_manual_trigger_queued", AsyncMock(side_effect=RuntimeError("Marker unavailable"))
+    ):
+        first = await webhook_runtime.dispatch_webhook_run(**arguments())
+        retry = await webhook_runtime.dispatch_webhook_run(**arguments())
+    assert first.status_code == 202
+    assert retry.status_code == 200
+    assert retry.run_id == first.run_id
+    assert webhook_runtime.webhook_dispatch_pending() == 1
+
+
+@pytest.mark.parametrize("recorded_task_id", [None, "other-task", "example-task"])
+async def test_unconfirmed_claim_requires_queue_or_matching_run_evidence(
+    mongo: MongoService, recorded_task_id: str | None
+) -> None:
+    await mongo.record_trigger_instance({"_id": arguments()["dedup_key"].key, "run_id": "original-run"})
+    if recorded_task_id:
+        await mongo.record_run(TaskRun(run_id="original-run", task_id=recorded_task_id,
+            task_name="Example", status=TaskStatus.SUCCESS))
+    with patch.object(webhook_runtime, "get_mongo_service", return_value=mongo), patch.object(
+        webhook_runtime, "_enqueue_webhook_run"
+    ) as enqueue:
+        if recorded_task_id == "example-task":
+            outcome = await webhook_runtime.dispatch_webhook_run(**arguments())
+            assert outcome.status_code == 200
+            assert outcome.run_id == "original-run"
+        else:
+            with pytest.raises(HTTPException) as caught:
+                await webhook_runtime.dispatch_webhook_run(**arguments())
+            assert caught.value.status_code == 503
+        enqueue.assert_not_called()
