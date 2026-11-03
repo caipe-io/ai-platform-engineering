@@ -239,3 +239,23 @@ async def test_unconfirmed_claim_requires_queue_or_matching_run_evidence(
                 await webhook_runtime.dispatch_webhook_run(**arguments())
             assert caught.value.status_code == 503
         enqueue.assert_not_called()
+
+
+@pytest.mark.parametrize("limit", ["max_pending_per_task", "max_pending_per_owner",
+    "max_pending_global", "max_pending_payload_bytes_global"])
+async def test_new_manual_request_respects_real_capacity_and_accepted_retry_recovers(
+    mongo: MongoService, limit: str
+) -> None:
+    first_args = arguments()
+    first_args[limit] = len(first_args["body"]) if limit.endswith("bytes_global") else 1
+    second_args = {**first_args, "dedup_key": DedupKey(key="example-task:manual:second-request", strategy="manual")}
+    with patch.object(webhook_runtime, "get_mongo_service", return_value=mongo):
+        first = await webhook_runtime.dispatch_webhook_run(**first_args)
+        with pytest.raises(HTTPException) as caught:
+            await webhook_runtime.dispatch_webhook_run(**second_args)
+        assert caught.value.status_code == 429
+        assert await mongo.get_trigger_instance(second_args["dedup_key"].key) is None
+        retry = await webhook_runtime.dispatch_webhook_run(**first_args)
+    assert retry.status_code == 200
+    assert retry.run_id == first.run_id
+    assert webhook_runtime.webhook_dispatch_pending() == 1
