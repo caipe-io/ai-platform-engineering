@@ -91,7 +91,7 @@ services:
     - MCP_HOST=0.0.0.0
     - MCP_PORT=8000
     volumes:
-    - ../ai_platform_engineering/agents/cloudability/mcp/mcp_cloudability:/app/mcp_cloudability
+    - ../ai_platform_engineering/mcp/cloudability:/app/ai_platform_engineering/mcp/cloudability
     build:
       context: ..
       dockerfile: build/agents/Dockerfile.mcp

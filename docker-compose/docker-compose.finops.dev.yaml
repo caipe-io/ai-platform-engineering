@@ -121,7 +121,7 @@ services:
       - APPTIO_ENVIRONMENT_ID=${APPTIO_ENVIRONMENT_ID:-}
       - SERVER_NAME=${CLOUDABILITY_SERVER_NAME:-Cloudability}
     volumes:
-      - ./ai_platform_engineering/agents/cloudability/mcp/mcp_cloudability:/app/mcp_cloudability
+      - ./ai_platform_engineering/mcp/cloudability:/app/ai_platform_engineering/mcp/cloudability
     build:
       context: .
       dockerfile: build/agents/Dockerfile.mcp
