@@ -489,3 +489,20 @@ Follow the project-wide contribution guidelines in [AGENTS.md](../../../../AGENT
 - Branch naming: `prebuild/feat/autonomous-agents-<description>`
 - Commits: conventional commits + DCO sign-off (`git commit -s`)
 - Lint before committing: `uv run ruff check src/`
+
+### Manual runs with context
+
+`GET /api/v1/tasks/{id}` advertises `manual_run_context_version: 1`.
+Authenticated task owners and administrators can POST to
+`/api/v1/tasks/{id}/run` with `{ "request_id": "<UUID>", "context": { ... } }`.
+The task must be enabled. Context is untrusted JSON limited to 16 KiB;
+`_caipe_manual_request` is reserved for server-stamped caller provenance.
+Task instructions and tool permissions remain unchanged.
+
+The response includes `run_id`; poll the existing task run-history endpoint.
+Reuse the same request UUID after an uncertain response to get the original
+run instead of scheduling another one (within the trigger-record retention
+window). New UUIDs represent new intents. This uses the shared process-local
+FIFO, concurrency limits, backpressure and Mongo trigger claims; queued work
+is not durable across process restarts. An empty-body POST preserves the
+legacy manual trigger behavior.

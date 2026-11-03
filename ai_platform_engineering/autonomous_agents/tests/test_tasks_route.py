@@ -1580,3 +1580,56 @@ class TestAdminAuditLogging:
         assert admin_log_lines == [], (
             "owner deleting their own task should not emit the admin audit line"
         )
+
+
+class TestManualRunContext:
+    payload = {
+        "request_id": "b6a6d8ec-8f03-46b7-a21f-09af26d6ee00",
+        "context": {"pull_request": {"number": 42, "head": {"sha": "a" * 40}}},
+    }
+
+    def test_context_uses_authenticated_queue_and_stable_retry_key(self, client: TestClient):
+        tid = _create_task(client, _cron_task(), headers=_user_headers("owner@example.com"))
+        outcome = type("Outcome", (), {"status_code": 202, "run_id": "run-1"})()
+        dispatch = AsyncMock(return_value=outcome)
+        with patch.object(tasks_route, "dispatch_webhook_run", dispatch), patch.object(tasks_route, "execute_task") as execute:
+            for _ in range(2):
+                result = client.post(f"/api/v1/tasks/{tid}/run", json=self.payload, headers=_user_headers("owner@example.com"))
+                assert result.status_code == 202
+                assert result.json()["run_id"] == "run-1"
+            execute.assert_not_called()
+        calls = [call.kwargs for call in dispatch.call_args_list]
+        assert calls[0]["dedup_key"] == calls[1]["dedup_key"]
+        assert calls[0]["dedup_key"].strategy == "manual"
+        assert calls[0]["context"]["_caipe_manual_request"] == {
+            "source": "authenticated_ui", "actor": "owner@example.com", "request_id": self.payload["request_id"],
+        }
+        assert calls[0]["context"]["pull_request"]["number"] == 42
+        assert client.get(f"/api/v1/tasks/{tid}", headers=_user_headers("owner@example.com")).json()["manual_run_context_version"] == 1
+
+    @pytest.mark.parametrize("case,expected", [("other-owner", 403), ("anonymous", 403), ("disabled", 409)])
+    def test_context_cannot_bypass_task_access_or_enablement(self, client: TestClient, case: str, expected: int):
+        tid = _create_task(client, _cron_task(enabled=case != "disabled"), headers=_user_headers("owner@example.com"))
+        headers = {} if case == "anonymous" else _user_headers("other@example.com" if case == "other-owner" else "owner@example.com")
+        with patch.object(tasks_route, "dispatch_webhook_run", AsyncMock()) as dispatch:
+            response = client.post(f"/api/v1/tasks/{tid}/run", json=self.payload, headers=headers)
+            assert response.status_code == expected
+            dispatch.assert_not_called()
+
+    @pytest.mark.parametrize("payload", [
+        {"request_id": "invalid", "context": {}},
+        {"request_id": "b6a6d8ec-8f03-46b7-a21f-09af26d6ee00", "context": {"value": "x" * 16385}},
+        {"request_id": "b6a6d8ec-8f03-46b7-a21f-09af26d6ee00", "context": {"_caipe_manual_request": {"actor": "forged"}}},
+    ])
+    def test_invalid_context_is_rejected(self, client: TestClient, payload: dict):
+        tid = _create_task(client, _cron_task(), headers=_user_headers("owner@example.com"))
+        with patch.object(tasks_route, "dispatch_webhook_run", AsyncMock()) as dispatch:
+            response = client.post(f"/api/v1/tasks/{tid}/run", json=payload, headers=_user_headers("owner@example.com"))
+            assert response.status_code == 422
+            dispatch.assert_not_called()
+
+    def test_context_preserves_queue_backpressure(self, client: TestClient):
+        tid = _create_task(client, _cron_task(), headers=_user_headers("owner@example.com"))
+        with patch.object(tasks_route, "dispatch_webhook_run", AsyncMock(side_effect=HTTPException(429, "Queue full"))):
+            response = client.post(f"/api/v1/tasks/{tid}/run", json=self.payload, headers=_user_headers("owner@example.com"))
+            assert response.status_code == 429

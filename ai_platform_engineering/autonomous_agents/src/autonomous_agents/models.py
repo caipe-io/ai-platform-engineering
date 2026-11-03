@@ -1,9 +1,11 @@
 """Pydantic models for Autonomous Agents service."""
 
+import json
 import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal, Optional
+from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -486,3 +488,19 @@ class WebhookPayload(BaseModel):
     source: str | None = None
     event: str | None = None
     data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ManualTaskRunCreate(BaseModel):
+    """Idempotent manual run with a bounded, untrusted event snapshot."""
+
+    request_id: UUID
+    context: dict[str, Any]
+
+    @field_validator("context")
+    @classmethod
+    def bounded_context(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if len(json.dumps(value, allow_nan=False).encode("utf-8")) > 16384:
+            raise ValueError("Manual run context must be at most 16 KiB")
+        if "_caipe_manual_request" in value:
+            raise ValueError("Manual request provenance is reserved")
+        return value

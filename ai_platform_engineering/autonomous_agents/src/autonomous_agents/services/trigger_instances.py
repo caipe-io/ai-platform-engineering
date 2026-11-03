@@ -53,7 +53,7 @@ if TYPE_CHECKING:  # pragma: no cover - import-cycle break
 
 logger = logging.getLogger("autonomous_agents")
 
-DedupStrategy = Literal["header", "signature", "none"]
+DedupStrategy = Literal["header", "signature", "none", "manual"]
 
 
 @dataclass(frozen=True)
