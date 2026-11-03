@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { NotificationDeliverySettings } from "../NotificationDeliverySettings";
 
@@ -77,4 +77,34 @@ describe("notification delivery settings", () => {
       ),
     );
   });
+});
+
+it.each(["web_push", "webex", "slack"])("unsubscribes globally from %s even when its provider is unavailable", async (channel) => {
+  const labels: Record<string, string> = { web_push: "Browser web push", webex: "Webex", slack: "Slack" };
+  const enabledView = { ...view, global: { channels: { ...view.global.channels, [channel]: true } } };
+  global.fetch = jest.fn(async (url, options) => {
+    if (options?.method === "PATCH") return response({ saved: true }) as Response;
+    if (String(url).endsWith("/channels")) return response({ in_app: true }) as Response;
+    return response(enabledView) as Response;
+  });
+  render(<NotificationDeliverySettings section="delivery" />);
+  fireEvent.click(await screen.findByRole("button", { name: `Unsubscribe from all ${labels[channel]}` }));
+  expect((fetch as jest.Mock).mock.calls.some((call) => call[1]?.method === "PATCH")).toBe(false);
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: `Unsubscribe from all ${labels[channel]}` }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm unsubscribe" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/notifications/subscriptions", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ channels: { [channel]: false } }) })));
+  expect(await screen.findByRole("status")).toHaveTextContent(`Unsubscribed from all ${labels[channel]} notifications.`);
+});
+it("keeps the unsubscribe dialog open on a rejected preference update", async () => {
+  global.fetch = jest.fn(async (url, options) => {
+    if (options?.method === "PATCH") return { ok: false, json: async () => ({ success: false, error: "Could not save" }) } as Response;
+    if (String(url).endsWith("/channels")) return response({ in_app: true }) as Response;
+    return response(view) as Response;
+  });
+  render(<NotificationDeliverySettings section="delivery" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Unsubscribe from all In-app inbox" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm unsubscribe" }));
+  await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveTextContent("Could not save"));
 });

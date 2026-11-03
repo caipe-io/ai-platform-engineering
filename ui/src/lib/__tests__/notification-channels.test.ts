@@ -54,6 +54,20 @@ describe("notification channel preferences", () => {
       ),
     ).toBe(true);
   });
+  it.each(["in_app", "web_push", "webex", "slack"] as const)(
+    "global %s unsubscribe overrides every source/event opt-in without affecting another channel",
+    (channel) => {
+      const preferences = { channels: { in_app: true, web_push: true, webex: true, slack: true, [channel]: false } };
+      const source = { enabled: true, channels: { [channel]: true } };
+      const event = { enabled: true, channels: { [channel]: true } };
+      expect(channelEnabled(channel, preferences, source, event)).toBe(false);
+      expect(channelEnabled(channel, preferences, source, event, false)).toBe(false);
+      const other = channel === "slack" ? "webex" : "slack";
+      expect(channelEnabled(other, preferences, source, event)).toBe(true);
+      expect(source.channels[channel]).toBe(true);
+      expect(event.channels[channel]).toBe(true);
+    },
+  );
   it("defers quiet hours across midnight and daylight saving changes", () => {
     const preferences = {
       quietHours: {
