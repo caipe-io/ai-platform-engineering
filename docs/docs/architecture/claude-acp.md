@@ -107,8 +107,10 @@ use an Agent SDK query client to execute prompts.
 - `CLAUDE_CLI_ACP_NATIVE_TOOLS` is an operator-owned JSON list, empty by default.
   For example, `["Read","Glob","Grep"]` enables native read tools. Native tools
   execute in the worker's OS/workspace boundary, independently of MCP/CAS grants.
-- The CLI runs with `--bare`, explicit tool permissions, strict MCP configuration
-  and no permission bypass. Agent instructions append to the CLI's own prompt.
+- The CLI runs without `--bare`. Explicit tool permissions, strict MCP configuration
+  and no permission bypass still apply. Settings-file discovery and slash commands
+  remain disabled. Workspace `CLAUDE.md` instructions can load alongside the agent
+  instructions appended to the CLI's own prompt.
 - The worker translates CLI streaming text/tool events into ACP. Each turn uses
   `--session-id` or `--resume` with the same saved native UUID. An absent transcript
   fails instead of silently starting a new conversation.

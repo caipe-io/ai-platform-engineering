@@ -144,7 +144,7 @@ class ClaudeCodeCLIAgent(Agent):
             mcp_file.chmod(0o600)
             instructions.chmod(0o600)
             command = [
-                *self.command, "--bare", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+                *self.command, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                 "--model", self.options["model"], "--max-turns", str(self.options["maxTurns"]),
                 "--permission-mode", self.mode, "--tools", ",".join(self.options["tools"]),
                 "--allowedTools", ",".join(self.options["allowedTools"]),

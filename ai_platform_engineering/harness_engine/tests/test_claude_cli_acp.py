@@ -67,7 +67,9 @@ async def test_cli_streams_once_and_keeps_capabilities_out_of_argv(tmp_path: Pat
     assert "example-capability" not in json.dumps(args)
     assert recorded["mcp"]["mcpServers"]["caipe"]["headers"]["Authorization"] == "Bearer example-capability"
     assert args[args.index("--tools") + 1] == ""
-    assert "--strict-mcp-config" in args and "--bare" in args
+    assert "--strict-mcp-config" in args and "--bare" not in args
+    assert args[args.index("--setting-sources") + 1] == ""
+    assert "--disable-slash-commands" in args
     assert "--dangerously-skip-permissions" not in args
     assert not list(tmp_path.glob(".caipe-cli-turn-*"))
     replacement = ClaudeCodeCLIAgent([sys.executable, str(FIXTURE)])
