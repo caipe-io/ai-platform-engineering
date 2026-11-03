@@ -89,6 +89,7 @@ jobs:
             "[CI][MCP] MCP Servers Docker Build and Push"
             "[CI] CAIPE RAG Build and Push"
             "[CI] Dynamic Agents Build and Push"
+            "[CI] Harness Engine Build and Push"
             "[CI] Autonomous Agents Build and Push"
             "[CI] CAIPE UI Build and Push"
             "[CI] Audit Service Build and Push"
