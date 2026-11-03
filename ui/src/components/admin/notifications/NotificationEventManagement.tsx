@@ -79,7 +79,7 @@ export function NotificationEventManagement({ readOnly = false }: { readOnly?: b
         {apps.length ? <><label className="block text-sm">Installed app<Select value={selected} onChange={(change) => setSourceId(change.target.value)}>{apps.map((app) => <option key={app.id} value={app.id}>{app.label}</option>)}</Select></label>
           {editors(apps.find((app) => app.id === selected))}
           <form onSubmit={(change) => void register(change)} className="space-y-3 rounded-lg border p-4"><h3 className="font-medium">Register an app event</h3><p className="text-sm text-muted-foreground">The app needs a bound notification publisher. Registering a type does not implement its trigger or subscribe users.</p>
-            <label className="block text-sm">Event ID<Input required pattern="[a-z][a-z0-9_.-]{0,63}" maxLength={64} value={eventId} disabled={readOnly || saving} onChange={(change) => setEventId(change.target.value)} placeholder="report.ready" /></label>
+            <label className="block text-sm">Event ID<Input required pattern={"[a-z][a-z0-9_.\\-]{0,63}"} maxLength={64} value={eventId} disabled={readOnly || saving} onChange={(change) => setEventId(change.target.value)} placeholder="report.ready" /></label>
             <label className="block text-sm">Event label<Input required maxLength={100} value={label} disabled={readOnly || saving} onChange={(change) => setLabel(change.target.value)} /></label>
             <label className="block text-sm">Event description<Input maxLength={300} value={description} disabled={readOnly || saving} onChange={(change) => setDescription(change.target.value)} /></label>
             <Button type="submit" disabled={readOnly || saving}>{saving ? "Registering…" : "Register event"}</Button>
