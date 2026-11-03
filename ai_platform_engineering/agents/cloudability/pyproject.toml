@@ -1,0 +1,76 @@
+[project]
+name = "agent_cloudability"
+version = "0.1.0"
+license = "Apache-2.0"
+description = "A Cloudability natural language agent using LangChain, LangGraph, and MCP."
+readme = "README.md"
+authors = [
+    { name = "CNOE Contributors" },
+]
+maintainers = [
+    { name = "CNOE Contributors" },
+]
+requires-python = ">=3.13,<4.0"
+dependencies = [
+    "a2a-sdk==0.3.0",
+    "agentevals==0.0.7",
+    "agntcy-app-sdk==0.4.5",
+    "slim-bindings==0.6.3",
+    "click==8.3.1",
+    "langchain-anthropic==1.0.0",
+    "langchain-core==1.1.2",
+    "langchain-mcp-adapters==0.2.1",
+    "langchain-openai==1.1.0",
+    "langgraph==1.0.4",
+    "pytest==8.3.5",
+    "tabulate==0.9.0",
+    "rich==14.1.0",
+    "sseclient==0.0.27",
+    "fastapi==0.115.11",
+    "uvicorn==0.35.0",
+    "httpx==0.28.1",
+    "httpx-sse==0.4.3",
+    "python-dotenv==1.2.1",
+    "cnoe-agent-utils==0.3.9",
+    "pydantic==2.12.5",
+    "fastmcp==2.13.3",
+    "mcp==1.21.0",
+    "mcp-cloudability",
+    "prometheus_client==0.23.1",
+    "typing-extensions==4.15.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.poetry.scripts]
+agent_cloudability_a2a = "agent_cloudability.__main__:main"
+
+[tool.poetry.group.dev.dependencies]
+pytest-asyncio = "^1.0.0"
+pytest-cov = "^6.1.1"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 140
+indent-width = 2
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = ["F403"]
+
+[tool.pytest.ini_options]
+markers = [
+    "unit: marks tests as unit tests",
+    "integration: marks tests as integration tests",
+    "parsers: marks tests as parser tests",
+]
+
+[tool.uv.sources]
+mcp-cloudability = { path = "mcp" }
