@@ -22,6 +22,7 @@ import {
   decisionContext,
   enforceSubjectBinding,
   isValidId,
+  isValidResourceId,
   parseAction,
   parseGrantee,
   parseGrantIntent,
@@ -123,6 +124,25 @@ describe("parsers", () => {
     expect(() => parseAction("frobnicate")).toThrow(HttpAuthzError);
     expect(parseResourceType("task")).toBe("task");
     expect(() => parseResourceType("nope")).toThrow(HttpAuthzError);
+  });
+});
+
+describe("canonical MCP tool resource IDs", () => {
+  it("accepts exact server/tool IDs while preserving flat tool IDs", () => {
+    expect(parseResource({ type: "tool", id: "mcp-example/read_item" })).toEqual({
+      type: "tool", id: "mcp-example/read_item",
+    });
+    expect(isValidResourceId("tool", "example-tool")).toBe(true);
+    expect(isValidResourceId("agent", "mcp-example/read_item")).toBe(false);
+  });
+
+  it.each([
+    "/read_item", "mcp-example/", "mcp-example/*", "*/read_item",
+    "mcp-example/read/item", "../read_item", "mcp-example/..",
+    "mcp-example/read#caller", "mcp-example/tool:read", "mcp-example/read%2Fitem",
+    "mcp-example/read item", `mcp-example/${"a".repeat(256)}`,
+  ])("rejects malformed or broadened tool ID %s", (id) => {
+    expect(() => parseResource({ type: "tool", id })).toThrow(HttpAuthzError);
   });
 });
 

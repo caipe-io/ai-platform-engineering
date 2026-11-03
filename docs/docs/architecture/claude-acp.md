@@ -58,6 +58,14 @@ flowchart LR
 - The Claude process receives neither the user's bearer token nor the worker's
   internal service credential. Its MCP capability cannot invoke another run or
   expand the selected tool set.
+- Provider-backed MCP servers resolve the execution caller's own connected
+  credential in the BFF. The user's app token authenticates to AgentGateway;
+  the provider token travels separately on `X-CAIPE-Provider-Token` and is
+  forwarded according to the MCP route's upstream authentication policy.
+- When AgentGateway caller-tool checks are enabled, the caller also needs
+  `call` permission on each selected `tool:<server-id>/<tool-name>`. The
+  Access API accepts these exact tool IDs for grants, checks and revocation;
+  an agent-use grant or a connected account alone does not grant tool access.
 - Shared readers may follow a response without agent-use permission. Sending,
   stopping and invoking tools retain the execution-owner and write checks.
 - MCP calls are not automatically retried after an ambiguous result. Dispatched
