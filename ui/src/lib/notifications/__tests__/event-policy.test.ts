@@ -52,3 +52,7 @@ it("uses operator defaults only when the user has not made an explicit choice", 
   expect(isNotificationEnabled("agent.started", null, true)).toBe(true);
   expect(isNotificationEnabled("agent.started", { events: { "agent.started": false } }, true)).toBe(false);
 });
+
+it("rejects an array masquerading as an audience string", async () => {
+  await expect(updateNotificationEventPolicy({ ...patch, audience: ["recipients"] }, "operator")).rejects.toMatchObject({ statusCode: 400 });
+});

@@ -141,3 +141,7 @@ describe("notification subscriptions and app boundaries", () => {
     expect(mockRoles).not.toHaveBeenCalled();
   });
 });
+
+it("rejects an array masquerading as an app event identifier", async () => {
+  await expect(registerAppNotificationTypes("example-app", "Example", [{ id: ["report.ready"], label: "Report" }])).rejects.toMatchObject({ statusCode: 400 });
+});
