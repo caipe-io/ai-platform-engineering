@@ -28,6 +28,14 @@ export const gradientThemes: readonly GradientTheme[] = [
     preview: "from-[hsl(173,80%,40%)] to-[hsl(270,75%,60%)]"
   },
   {
+    id: "neon",
+    label: "Neon (Cyan → Magenta)",
+    description: "Bright, electric grid glow",
+    from: "hsl(187,85%,53%)",
+    to: "hsl(292,85%,60%)",
+    preview: "from-[hsl(187,85%,53%)] to-[hsl(292,85%,60%)]"
+  },
+  {
     id: "minimal",
     label: "Minimal (Gray → Dark Gray)",
     description: "Subtle, professional",
