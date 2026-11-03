@@ -73,4 +73,4 @@ markers = [
 ]
 
 [tool.uv.sources]
-mcp-cloudability = { path = "mcp" }
+mcp-cloudability = { path = "../../mcp/cloudability" }

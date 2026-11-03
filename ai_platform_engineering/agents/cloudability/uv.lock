@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 5
 requires-python = ">=3.13, <4.0"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -75,7 +75,7 @@ requires-dist = [
     { name = "langchain-openai", specifier = "==1.1.0" },
     { name = "langgraph", specifier = "==1.0.4" },
     { name = "mcp", specifier = "==1.21.0" },
-    { name = "mcp-cloudability", directory = "mcp" },
+    { name = "mcp-cloudability", directory = "../../mcp/cloudability" },
     { name = "prometheus-client", specifier = "==0.23.1" },
     { name = "pydantic", specifier = "==2.12.5" },
     { name = "pytest", specifier = "==8.3.5" },
@@ -2170,7 +2170,7 @@ cli = [
 [[package]]
 name = "mcp-cloudability"
 version = "0.1.0"
-source = { directory = "mcp" }
+source = { directory = "../../mcp/cloudability" }
 dependencies = [
     { name = "fastmcp" },
     { name = "httpx" },
@@ -2182,16 +2182,16 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "black", marker = "extra == 'dev'" },
+    { name = "black", marker = "extra == 'dev'", specifier = "==26.5.1" },
     { name = "fastmcp", specifier = "==2.13.3" },
     { name = "httpx", specifier = "==0.28.1" },
-    { name = "isort", marker = "extra == 'dev'" },
+    { name = "isort", marker = "extra == 'dev'", specifier = "==8.0.1" },
     { name = "mcp", specifier = "==1.21.0" },
-    { name = "mypy", marker = "extra == 'dev'" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = "==2.1.0" },
     { name = "pydantic", specifier = "==2.12.5" },
-    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = "==9.0.3" },
     { name = "python-dotenv", specifier = "==1.2.1" },
-    { name = "ruff", marker = "extra == 'dev'" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.17" },
     { name = "typing-extensions", specifier = "==4.15.0" },
 ]
 provides-extras = ["dev"]
