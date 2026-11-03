@@ -21,7 +21,7 @@ RUN ln -s /opt/claude-cli/node_modules/.bin/claude /usr/local/bin/claude \
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONPATH="/app/src" \
     HARNESS_ENGINE_CLAUDE_ACP_RUNTIME=claude_code_cli_acp \
-    HARNESS_ENGINE_CLAUDE_ACP_COMMAND='["python","-m","harness_engine.claude_cli_acp"]'
+    HARNESS_ENGINE_CLAUDE_ACP_COMMAND='["python","/app/src/harness_engine/claude_cli_acp.py"]'
 USER 65532:65532
 EXPOSE 8010
 CMD ["python", "-m", "harness_engine.claude_worker"]

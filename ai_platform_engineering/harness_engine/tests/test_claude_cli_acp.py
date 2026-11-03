@@ -120,7 +120,7 @@ async def test_cli_uses_the_official_acp_stdio_transport(settings: Settings, tmp
     executable.chmod(0o700)
     monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
     adapter = ClaudeACPAdapter(settings.model_copy(update={
-        "claude_acp_command": [sys.executable, "-m", "harness_engine.claude_cli_acp"],
+        "claude_acp_command": [sys.executable, str(Path(__file__).parents[1] / "src/harness_engine/claude_cli_acp.py")],
         "claude_acp_runtime": "claude_code_cli_acp",
     }))
     ctx = context()

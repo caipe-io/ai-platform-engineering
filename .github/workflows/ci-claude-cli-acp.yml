@@ -32,3 +32,18 @@ jobs:
         run: |
           docker run --rm --entrypoint claude claude-cli-acp:test --version
           docker run --rm --entrypoint python claude-cli-acp:test -c 'from harness_engine.claude_cli_acp import ClaudeCodeCLIAgent; from harness_engine.config import Settings; assert Settings().claude_acp_runtime == "claude_code_cli_acp"'
+      - name: Initialize ACP with the worker subprocess environment
+        run: |
+          docker run --rm -i --entrypoint python claude-cli-acp:test - <<'PY'
+          import asyncio
+          import os
+          from pathlib import Path
+          from harness_engine.adapters.claude_acp import ACPEventClient
+          from harness_engine.claude_acp_process import managed_acp_process
+          from harness_engine.config import Settings
+          async def main() -> None:
+              async with managed_acp_process(ACPEventClient(), Settings().claude_acp_command,
+                  env={"PATH": os.environ["PATH"], "HOME": "/workspace"}, cwd=Path("/workspace"), run_id="startup-check") as connection:
+                  assert (await connection.initialize(protocol_version=1)).protocol_version == 1
+          asyncio.run(main())
+          PY
