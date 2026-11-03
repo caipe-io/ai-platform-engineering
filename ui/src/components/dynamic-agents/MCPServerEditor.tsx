@@ -27,6 +27,7 @@ import { normalizeCustomProviderCredentialSource } from "@/lib/mcp-credential-sc
 import type {
 MCPCredentialSource,
 MCPServerConfig,
+MCPServerConfigWithPermissions,
 MCPServerConfigCreate,
 MCPServerConfigUpdate,
 TransportType,
@@ -42,7 +43,7 @@ export interface MCPServerInitialValues {
 }
 
 interface MCPServerEditorProps {
-  server: MCPServerConfig | null; // null = creating new
+  server: MCPServerConfig | MCPServerConfigWithPermissions | null; // null = creating new
   readOnly?: boolean;
   onSave: () => void;
   onCancel: () => void;
@@ -189,6 +190,9 @@ function normalizedCredentialSource(
 
 export function MCPServerEditor({ server, readOnly, onSave, onCancel, initialValues }: MCPServerEditorProps) {
   const isEditing = !!server;
+  const canManageServer = server && "permissions" in server
+    ? server.permissions.can_manage
+    : !readOnly;
 
   // Form state
   const [id, setId] = React.useState(server?._id || "");
@@ -466,17 +470,45 @@ export function MCPServerEditor({ server, readOnly, onSave, onCancel, initialVal
   };
 
   const handleProbeCredentials = async () => {
+    if (!server) {
+      setError("Save the MCP server before testing its AgentGateway connection");
+      return;
+    }
     setCredentialProbeLoading(true);
     setCredentialProbe(null);
     setError(null);
     try {
+      if (!canManageServer) {
+        const response = await fetch(
+          `/api/mcp-servers/probe?id=${encodeURIComponent(server._id)}`,
+          { method: "POST" },
+        );
+        const payload = (await response.json()) as {
+          success?: boolean;
+          data?: { success?: boolean };
+          error?: string;
+        };
+        if (!response.ok || payload.success === false || payload.data?.success !== true) {
+          throw new Error(payload.error || "Could not test connection");
+        }
+        setCredentialProbe({
+          ok: true,
+          status: response.status || 200,
+          credentialOrigins: [],
+          missingCredentials: [],
+        });
+        return;
+      }
       const normalizedSources = credentialSources
         .map((source) => normalizedCredentialSource(source, providerConnectionOptions))
         .filter((source): source is MCPCredentialSource => source !== null);
       const response = await fetch("/api/mcp-servers/credential-probe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: endpoint, credential_sources: normalizedSources }),
+        body: JSON.stringify({
+          server_id: server._id,
+          credential_sources: normalizedSources,
+        }),
       });
       const payload = (await response.json()) as {
         success?: boolean;
@@ -1024,6 +1056,7 @@ export function MCPServerEditor({ server, readOnly, onSave, onCancel, initialVal
                     >
                       <option value="secret_ref">Saved secret</option>
                       <option value="provider_connection">Connected app</option>
+                      <option value="caller_token">Caller token</option>
                     </Select>
                     <Select
                       aria-label="Credential target"
@@ -1177,45 +1210,9 @@ export function MCPServerEditor({ server, readOnly, onSave, onCancel, initialVal
             )}
           </div>
 
-          {/* Test Connection */}
-          {credentialSources.length > 0 && endpoint.trim() && (
+          {/* Test Connection details */}
+          {credentialProbe && (
             <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleProbeCredentials}
-                  disabled={loading || readOnly || credentialProbeLoading || !endpoint.trim()}
-                >
-                  {credentialProbeLoading ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                      Testing...
-                    </>
-                  ) : (
-                    "Test Connection"
-                  )}
-                </Button>
-                {credentialProbe && (() => {
-                  const hasMissing = credentialProbe.missingCredentials.length > 0;
-                  const fullyOk = credentialProbe.ok && !hasMissing;
-                  const reachableButAuth = credentialProbe.ok && hasMissing;
-                  const colorClass = fullyOk
-                    ? "text-green-600 dark:text-green-400"
-                    : reachableButAuth
-                      ? "text-yellow-600 dark:text-yellow-400"
-                      : "text-destructive";
-                  const label = fullyOk
-                    ? `Connected (HTTP ${credentialProbe.status})`
-                    : reachableButAuth
-                      ? `Reachable (HTTP ${credentialProbe.status}) — credentials not resolved`
-                      : credentialProbe.error
-                        ? credentialProbe.error
-                        : `Failed (HTTP ${credentialProbe.status})`;
-                  return <span className={`text-sm font-medium ${colorClass}`}>{label}</span>;
-                })()}
-              </div>
               {credentialProbe && credentialProbe.missingCredentials.length > 0 && (() => {
                 const providerSources = credentialSources.filter(
                   (s) => s.kind === "provider_connection" && s.provider,
@@ -1294,29 +1291,67 @@ export function MCPServerEditor({ server, readOnly, onSave, onCancel, initialVal
           </fieldset>
 
           {/* Actions */}
-          <div className="flex items-center justify-end gap-2 pt-4 border-t">
-            {readOnly && (
-              <span className="text-xs text-muted-foreground mr-auto">
-                Config-driven — managed by configuration file
-              </span>
-            )}
-            <Button type="button" variant="outline" onClick={onCancel} disabled={loading}>
-              {readOnly ? "Close" : "Cancel"}
-            </Button>
-            {!readOnly && (
-              <Button type="submit" disabled={loading || !isValid}>
-                {loading ? (
+          <div className="flex flex-col gap-3 pt-4 border-t sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="border-violet-400 bg-violet-500/15 text-foreground hover:border-violet-300 hover:bg-violet-500/25"
+                onClick={handleProbeCredentials}
+                disabled={loading || credentialProbeLoading || !endpoint.trim() || !server}
+                title={!server ? "Save this server before testing through AgentGateway" : undefined}
+              >
+                {credentialProbeLoading ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    {isEditing ? "Saving..." : "Creating..."}
+                    Testing...
                   </>
-                ) : isEditing ? (
-                  "Save Changes"
                 ) : (
-                  "Create Server"
+                  "Test Connection"
                 )}
               </Button>
-            )}
+              {credentialProbe && (() => {
+                const hasMissing = credentialProbe.missingCredentials.length > 0;
+                const fullyOk = credentialProbe.ok && !hasMissing;
+                const colorClass = fullyOk
+                  ? "text-green-600 dark:text-green-400"
+                  : hasMissing
+                    ? "text-yellow-600 dark:text-yellow-400"
+                    : "text-destructive";
+                const label = fullyOk
+                  ? `Connected (HTTP ${credentialProbe.status})`
+                  : hasMissing
+                    ? "Credentials not resolved"
+                    : credentialProbe.error
+                      ? credentialProbe.error
+                      : `Failed (HTTP ${credentialProbe.status})`;
+                return <span className={`text-sm font-medium ${colorClass}`}>{label}</span>;
+              })()}
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              {readOnly && (
+                <span className="mr-2 text-xs text-muted-foreground">
+                  Config-driven — managed by configuration file
+                </span>
+              )}
+              <Button type="button" variant="outline" onClick={onCancel} disabled={loading}>
+                {readOnly ? "Close" : "Cancel"}
+              </Button>
+              {!readOnly && (
+                <Button type="submit" disabled={loading || !isValid}>
+                  {loading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      {isEditing ? "Saving..." : "Creating..."}
+                    </>
+                  ) : isEditing ? (
+                    "Save Changes"
+                  ) : (
+                    "Create Server"
+                  )}
+                </Button>
+              )}
+            </div>
           </div>
         </form>
       </CardContent>
