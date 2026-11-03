@@ -71,12 +71,13 @@ pipelines. Pass the account using `profile`/`account`, not an embedded
 `--profile` flag. Existing destructive-operation checks are retained; they are
 not a substitute for read-only IAM permissions.
 
-AWS CLI and `jq` stdout/stderr are drained concurrently into temporary files,
-each limited by `AWS_CLI_MAX_CAPTURE_SIZE`. Exceeding that separate capture
+For `aws_cli_execute`, AWS CLI and `jq` stdout/stderr are drained concurrently
+into temporary files, each limited by `AWS_CLI_MAX_CAPTURE_SIZE`. Exceeding that separate capture
 budget kills and reaps the child and returns an explicit error naming the limit.
 Within the capture budget, `jq` sees the full CLI output before response
 truncation; exceeding `AWS_CLI_MAX_OUTPUT_SIZE` alone does not kill the child.
-Timeout or request cancellation also kills and reaps the child. Capture files
+Timeout or request cancellation also terminates the process group on POSIX;
+pipe cleanup has a separate two-second deadline. Capture files
 close on exit. jq failures retain bounded stderr or the process error alongside
 the bounded raw-output fallback.
 
@@ -84,6 +85,9 @@ The AWS phase can hold two capture files; jq can hold the AWS captures plus its
 own two files (at most four capture budgets per call). Size ephemeral storage
 and concurrency accordingly. These limits do not bound the child process's own
 memory or files it creates independently.
+
+`eks_kubectl_execute` runs `aws eks update-kubeconfig` and `kubectl` through
+in-memory pipes. Those calls do not use `AWS_CLI_MAX_CAPTURE_SIZE`.
 
 ## Running locally
 

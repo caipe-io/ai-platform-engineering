@@ -1,7 +1,10 @@
 import asyncio
+import os
 import runpy
+import signal
 import sys
 import tempfile
+from pathlib import Path
 from typing import Any, Callable
 from unittest.mock import AsyncMock, Mock
 
@@ -217,3 +220,41 @@ async def test_jq_timeout_wiring_reaps_real_child(server: Any, monkeypatch: pyte
             if process.returncode is None:
                 process.kill()
                 await process.communicate()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX session and process-group behavior")
+@pytest.mark.parametrize("escaped", [False, True])
+@pytest.mark.asyncio
+async def test_descendant_pipe_cannot_hold_cleanup_open(
+    server: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture, escaped: bool,
+) -> None:
+    pid_file = tmp_path / "descendant.pid"
+    code = (
+        "import subprocess,sys,time; "
+        f"p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'],start_new_session={escaped}); "
+        "open(sys.argv[1],'w').write(str(p.pid)); time.sleep(60)"
+    )
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", code, str(pid_file), start_new_session=True,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    monkeypatch.setattr(server, "PROCESS_CLEANUP_TIMEOUT", 0.05)
+    try:
+        async def ready() -> None:
+            while not pid_file.exists() or not pid_file.read_text():
+                await asyncio.sleep(0.01)
+        await asyncio.wait_for(ready(), timeout=5)
+        with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(server._wait_for_process(process, 0.05, stdout, stderr, process_group=True), timeout=2)
+        assert process.returncode is not None
+        assert ("pipe cleanup exceeded" in caplog.text) is escaped
+    finally:
+        if process.returncode is None:
+            os.killpg(process.pid, signal.SIGKILL)
+        if escaped and pid_file.exists() and pid_file.read_text():
+            try:
+                os.killpg(int(pid_file.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        await asyncio.wait_for(process.communicate(), timeout=2)

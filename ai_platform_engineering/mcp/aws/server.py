@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import shlex
+import signal
 import tempfile
 from typing import BinaryIO, Optional
 
@@ -51,6 +52,7 @@ BLOCKED_COMMAND_PATTERNS = [
 AWS_CLI_TIMEOUT = int(os.getenv("AWS_CLI_MAX_EXECUTION_TIME", "30"))
 KUBECTL_TIMEOUT = int(os.getenv("KUBECTL_MAX_EXECUTION_TIME", "45"))
 JQ_TIMEOUT = 10
+PROCESS_CLEANUP_TIMEOUT = 2
 
 RESTRICT_KUBECTL_SECRETS = os.getenv("RESTRICT_KUBECTL_SECRETS", "true").lower() == "true"
 RESTRICT_KUBECTL_PROXY = os.getenv("RESTRICT_KUBECTL_PROXY", "true").lower() == "true"
@@ -332,9 +334,10 @@ async def aws_cli_execute(
             with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
                 process = await asyncio.create_subprocess_exec(
                     *full_command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env={**os.environ},
+                    start_new_session=os.name == "posix",
                 )
                 try:
-                    await _wait_for_process(process, AWS_CLI_TIMEOUT, stdout, stderr)
+                    await _wait_for_process(process, AWS_CLI_TIMEOUT, stdout, stderr, process_group=os.name == "posix")
                 except TimeoutError:
                     return f"❌ Command timed out after {AWS_CLI_TIMEOUT} seconds."
                 if process.returncode != 0:
@@ -365,6 +368,7 @@ async def _drain_capture(reader: asyncio.StreamReader, capture: BinaryIO, stream
 async def _wait_for_process(
     process: asyncio.subprocess.Process, timeout: float,
     stdout: BinaryIO | None = None, stderr: BinaryIO | None = None,
+    *, process_group: bool = False,
 ) -> None:
     """Drain both pipes while waiting; kill and reap on failure or cancellation."""
     tasks = [asyncio.create_task(process.wait())]
@@ -377,7 +381,12 @@ async def _wait_for_process(
     try:
         await asyncio.wait_for(asyncio.gather(*tasks), timeout=timeout)
     except (Exception, asyncio.CancelledError):
-        if process.returncode is None:
+        if process_group:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # The session and its descendants have already exited.
+        elif process.returncode is None:
             try:
                 process.kill()
             except ProcessLookupError:
@@ -385,9 +394,12 @@ async def _wait_for_process(
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        # After killing the child, consume the bounded pipe buffers so a paused
-        # pipe transport cannot hold up reaping. No capture files grow here.
-        await process.communicate()
+        # A descendant that escaped the process group can still hold a pipe.
+        # Limit cleanup so a failed request cannot retain its semaphore slot.
+        try:
+            await asyncio.wait_for(process.communicate(), timeout=PROCESS_CLEANUP_TIMEOUT)
+        except TimeoutError:
+            logger.warning("Subprocess pipe cleanup exceeded %s seconds", PROCESS_CLEANUP_TIMEOUT)
         raise
 
 
@@ -408,8 +420,9 @@ async def _apply_jq(data: BinaryIO, jq_filter: str) -> str:
             data.seek(0)
             proc = await asyncio.create_subprocess_exec(
                 "jq", jq_filter, stdin=data, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                start_new_session=os.name == "posix",
             )
-            await _wait_for_process(proc, JQ_TIMEOUT, stdout, stderr)
+            await _wait_for_process(proc, JQ_TIMEOUT, stdout, stderr, process_group=os.name == "posix")
             if proc.returncode == 0:
                 return _read_captured_output(stdout)
             stderr_text = _read_captured_output(stderr)
