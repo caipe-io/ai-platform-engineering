@@ -466,6 +466,19 @@ async def dispatch_webhook_run(
           (audit trail "delivery X -> run Y"), not the source of truth
           for whether the task ran; the task still fires.
     """
+    # A manual retry recovers an accepted run even while the queue is full.
+    # The atomic claim below still arbitrates simultaneous first submissions.
+    if dedup_key.strategy == "manual" and dedup_key.key:
+        try:
+            existing = await get_mongo_service().get_trigger_instance(dedup_key.key)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Could not recover manual request; retry with the same ID.") from exc
+        if existing:
+            if not existing.get("run_id"):
+                raise HTTPException(status_code=503, detail="Manual request is being recorded; retry with the same ID.", headers={"Retry-After": "1"})
+            return DispatchOutcome(status_code=200, run_id=existing["run_id"], claimed=False,
+                trigger_instance_id=dedup_key.key, dedup_strategy=dedup_key.strategy)
+
     dispatch_lease, rejected_scope = _try_reserve_queue_slot(
         task,
         payload_bytes=len(body),
@@ -531,6 +544,8 @@ async def dispatch_webhook_run(
         # correlate. Status 200 distinguishes "we accepted it
         # already" from a fresh 202.
         _release_queue_slot(dispatch_lease)
+        if dedup_key.strategy == "manual" and not claim.existing_run_id:
+            raise HTTPException(status_code=503, detail="Manual request is being recorded; retry with the same ID.", headers={"Retry-After": "1"})
         return DispatchOutcome(
             status_code=200,
             run_id=claim.existing_run_id or "",

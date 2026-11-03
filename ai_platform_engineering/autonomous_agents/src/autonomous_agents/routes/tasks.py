@@ -13,6 +13,7 @@ import secrets
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, status
+from pydantic import ValidationError
 
 from autonomous_agents.config import get_settings
 from autonomous_agents.models import (
@@ -48,6 +49,7 @@ from autonomous_agents.services.task_runner import (
     task_chat_history_publishing_enabled,
 )
 from autonomous_agents.services.trigger_instances import DedupKey
+from autonomous_agents.services.webhook_limits import read_limited_webhook_body
 from autonomous_agents.services.webhook_runtime import dispatch_webhook_run
 
 logger = logging.getLogger("autonomous_agents")
@@ -705,7 +707,6 @@ async def trigger_task_manually(
     request: Request,
     response: Response,
     background_tasks: BackgroundTasks,
-    payload: ManualTaskRunCreate | None = None,
 ) -> dict:
     """Trigger the task, optionally queueing authenticated, idempotent context."""
     task = await get_task_store().get(task_id)
@@ -718,6 +719,12 @@ async def trigger_task_manually(
             "Admin %s acted on task %s (%r) owned by %s (action=%s)",
             caller_email, task_id, task.name, task.owner_id, "trigger",
         )
+
+    raw = await read_limited_webhook_body(request, max_bytes=32768)
+    try:
+        payload = ManualTaskRunCreate.model_validate_json(raw) if raw.strip() not in (b"", b"null") else None
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_context=False, include_input=False)) from exc
 
     if payload is not None:
         if not caller_email:

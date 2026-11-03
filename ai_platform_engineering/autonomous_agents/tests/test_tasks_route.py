@@ -1633,3 +1633,19 @@ class TestManualRunContext:
         with patch.object(tasks_route, "dispatch_webhook_run", AsyncMock(side_effect=HTTPException(429, "Queue full"))):
             response = client.post(f"/api/v1/tasks/{tid}/run", json=self.payload, headers=_user_headers("owner@example.com"))
             assert response.status_code == 429
+
+    def test_raw_body_is_bounded_before_json_parsing(self, client: TestClient):
+        tid = _create_task(client, _cron_task(), headers=_user_headers("owner@example.com"))
+        with patch.object(tasks_route, "dispatch_webhook_run", AsyncMock()) as dispatch:
+            response = client.post(f"/api/v1/tasks/{tid}/run", content=b"x" * 32769,
+                headers={**_user_headers("owner@example.com"), "Content-Type": "application/json"})
+            assert response.status_code == 413
+            dispatch.assert_not_called()
+
+    def test_malformed_json_cannot_dispatch(self, client: TestClient):
+        tid = _create_task(client, _cron_task(), headers=_user_headers("owner@example.com"))
+        with patch.object(tasks_route, "dispatch_webhook_run", AsyncMock()) as dispatch:
+            response = client.post(f"/api/v1/tasks/{tid}/run", content=b"not-json",
+                headers={**_user_headers("owner@example.com"), "Content-Type": "application/json"})
+            assert response.status_code == 422
+            dispatch.assert_not_called()
