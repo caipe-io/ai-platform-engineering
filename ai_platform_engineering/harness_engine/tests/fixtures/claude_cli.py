@@ -19,6 +19,7 @@ def main() -> None:
     policy = {"arguments": args, "mcp": json.loads(Path(args[args.index("--mcp-config") + 1]).read_text())}
     Path("cli-policy.json").write_text(json.dumps(policy))
     prompt = sys.stdin.read()
+    emit({"type": "system", "subtype": "init", "session_id": session})
     if prompt == "wait":
         def stop(signum: int, frame: object) -> None:
             Path("cli-cancelled").touch()

@@ -93,6 +93,8 @@ async def test_cli_stop_drains_process_and_rejects_a_concurrent_prompt(tmp_path:
     assert (await asyncio.wait_for(task, 3)).stop_reason == "cancelled"
     assert agent.process is None and (tmp_path / "cli-cancelled").exists()
     assert not list(tmp_path.glob(".caipe-cli-turn-*"))
+    assert (await agent.prompt(session, [TextContentBlock(type="text", text="continue")])).stop_reason == "end_turn"
+    assert "--resume" in json.loads((tmp_path / "cli-policy.json").read_text())["arguments"]
 
 
 @pytest.mark.parametrize("message", ["missing-result", "failed-result"])

@@ -133,6 +133,7 @@ class ClaudeCodeCLIAgent(Agent):
             return await self.run_prompt(session_id, prompt)
         finally:
             self.prompting = False
+            self.cancelled = False
 
     async def run_prompt(self, session_id: str, prompt: list[Any]) -> PromptResponse:
         with TemporaryDirectory(prefix=".caipe-cli-turn-", dir=self.cwd) as directory:
@@ -175,7 +176,9 @@ class ClaudeCodeCLIAgent(Agent):
                     if event.get("session_id", session_id) != session_id:
                         raise ValueError("CLI returned a different session")
                     kind = event.get("type")
-                    if kind == "stream_event":
+                    if kind == "system" and event.get("subtype") == "init":
+                        self.resume = True
+                    elif kind == "stream_event" and not event.get("parent_tool_use_id"):
                         delta = event.get("event", {}).get("delta", {})
                         if delta.get("type") in {"text_delta", "thinking_delta"}:
                             thought = delta["type"] == "thinking_delta"
