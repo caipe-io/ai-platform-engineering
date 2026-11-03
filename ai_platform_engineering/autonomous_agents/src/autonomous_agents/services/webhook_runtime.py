@@ -396,6 +396,7 @@ async def _claim_or_log(
     task_id: str,
     dedup_key: DedupKey,
     body: bytes,
+    run_id: str | None = None,
 ) -> TriggerClaim:
     """Wrap :func:`claim_trigger_instance` so a Mongo error becomes a 503.
 
@@ -412,6 +413,7 @@ async def _claim_or_log(
             task_id=task_id,
             dedup_key=dedup_key,
             body=body,
+            run_id=run_id,
         )
     except HTTPException:
         raise
@@ -464,7 +466,9 @@ async def dispatch_webhook_run(
         * ``attach_run_to_trigger_instance`` failure after a successful
           claim -> swallowed and logged. The dedup row is observability
           (audit trail "delivery X -> run Y"), not the source of truth
-          for whether the task ran; the task still fires.
+          for whether the task ran; the task still fires. Manual requests
+          instead store the run ID atomically with the claim, and remove
+          their claim if queue insertion fails.
     """
     # A manual retry recovers an accepted run even while the queue is full.
     # The atomic claim below still arbitrates simultaneous first submissions.
@@ -532,8 +536,11 @@ async def dispatch_webhook_run(
             dedup_strategy=dedup_key.strategy,
         )
 
+    # Manual retries depend on this mapping, so write it atomically with the
+    # claim rather than using the best-effort audit attachment below.
+    manual_run_id = str(uuid.uuid4()) if dedup_key.strategy == "manual" else None
     try:
-        claim = await _claim_or_log(task_id=task.id, dedup_key=dedup_key, body=body)
+        claim = await _claim_or_log(task_id=task.id, dedup_key=dedup_key, body=body, run_id=manual_run_id)
     except Exception:
         _release_queue_slot(dispatch_lease)
         raise
@@ -554,22 +561,22 @@ async def dispatch_webhook_run(
             dedup_strategy=claim.strategy,
         )
 
-    # New delivery: pre-allocate a run id (so we can return it in the
-    # 202 without waiting for the task to start) and back-link it onto
-    # the just-claimed row before appending to the task FIFO.
-    run_id = str(uuid.uuid4())
-    try:
-        await get_mongo_service().attach_run_to_trigger_instance(
-            claim.dedup_key, run_id
-        )
-    except Exception as exc:  # noqa: BLE001 -- audit-only, never block
-        logger.warning(
-            "[%s] Failed to pre-attach run_id=%s to trigger_instance=%s: %s",
-            task.id,
-            run_id,
-            claim.dedup_key,
-            exc,
-        )
+    # Manual claims already contain their run ID. Webhook claims keep the
+    # best-effort audit attachment before appending to the task FIFO.
+    run_id = manual_run_id or str(uuid.uuid4())
+    if manual_run_id is None:
+        try:
+            await get_mongo_service().attach_run_to_trigger_instance(
+                claim.dedup_key, run_id
+            )
+        except Exception as exc:  # noqa: BLE001 -- audit-only, never block
+            logger.warning(
+                "[%s] Failed to pre-attach run_id=%s to trigger_instance=%s: %s",
+                task.id,
+                run_id,
+                claim.dedup_key,
+                exc,
+            )
 
     try:
         _enqueue_webhook_run(
@@ -587,6 +594,8 @@ async def dispatch_webhook_run(
         )
     except Exception:
         _release_queue_slot(dispatch_lease)
+        if manual_run_id is not None:
+            await get_mongo_service().delete_unqueued_trigger_instance(claim.dedup_key, run_id)
         raise
 
     return DispatchOutcome(

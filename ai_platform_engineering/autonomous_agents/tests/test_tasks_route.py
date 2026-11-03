@@ -1588,6 +1588,19 @@ class TestManualRunContext:
         "context": {"pull_request": {"number": 42, "head": {"sha": "a" * 40}}},
     }
 
+    @pytest.mark.parametrize("body", [b"", b"null", b"{}", b'{"legacy_option": true}'])
+    def test_legacy_json_clients_still_trigger(self, client: TestClient, body: bytes) -> None:
+        tid = _create_task(client, _cron_task(), headers=_user_headers("owner@example.com"))
+        with patch.object(tasks_route, "dispatch_webhook_run", AsyncMock()) as dispatch, patch.object(
+            tasks_route, "execute_task", AsyncMock()
+        ) as execute:
+            response = client.post(f"/api/v1/tasks/{tid}/run", content=body,
+                headers={**_user_headers("owner@example.com"), "Content-Type": "application/json"})
+            assert response.status_code == 200
+            assert response.json()["status"] == "triggered"
+            execute.assert_called_once()
+            dispatch.assert_not_called()
+
     def test_context_uses_authenticated_queue_and_stable_retry_key(self, client: TestClient):
         tid = _create_task(client, _cron_task(), headers=_user_headers("owner@example.com"))
         outcome = type("Outcome", (), {"status_code": 202, "run_id": "run-1"})()
@@ -1617,6 +1630,8 @@ class TestManualRunContext:
             dispatch.assert_not_called()
 
     @pytest.mark.parametrize("payload", [
+        {"request_id": "b6a6d8ec-8f03-46b7-a21f-09af26d6ee00"},
+        {"context": {}},
         {"request_id": "invalid", "context": {}},
         {"request_id": "b6a6d8ec-8f03-46b7-a21f-09af26d6ee00", "context": {"value": "x" * 16385}},
         {"request_id": "b6a6d8ec-8f03-46b7-a21f-09af26d6ee00", "context": {"_caipe_manual_request": {"actor": "forged"}}},

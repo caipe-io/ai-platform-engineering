@@ -722,7 +722,14 @@ async def trigger_task_manually(
 
     raw = await read_limited_webhook_body(request, max_bytes=32768)
     try:
-        payload = ManualTaskRunCreate.model_validate_json(raw) if raw.strip() not in (b"", b"null") else None
+        data = json.loads(raw) if raw.strip() else None
+        # JSON clients historically sent {} or unrelated options to this
+        # endpoint. Only the new fields opt a caller into context validation.
+        if isinstance(data, dict) and not {"request_id", "context"}.intersection(data):
+            data = None
+        payload = ManualTaskRunCreate.model_validate(data) if data is not None else None
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="Manual run body must be valid JSON") from exc
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors(include_context=False, include_input=False)) from exc
 

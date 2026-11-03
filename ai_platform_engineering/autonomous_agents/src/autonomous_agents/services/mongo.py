@@ -589,6 +589,10 @@ class MongoService:
                 exc,
             )
 
+    async def delete_unqueued_trigger_instance(self, dedup_key: str, run_id: str) -> None:
+        """Roll back a failed enqueue without deleting a replacement claim."""
+        await self._trigger_instances().delete_one({"_id": dedup_key, "run_id": run_id})
+
     async def lookup_webex_thread(self, message_id: str) -> dict[str, Any] | None:
         """Return the raw thread-map document for ``message_id`` or None.
 
