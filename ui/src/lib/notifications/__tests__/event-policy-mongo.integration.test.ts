@@ -52,7 +52,7 @@ run("event policy MongoDB integration", () => {
     await registerAppNotificationTypes("example", "Example", [{ id: "report.ready", label: "Report" }]);
     await mockDb.collection("users").insertOne({ email: "test-user@example.test", keycloak_sub: "test-user" });
     const input = { id: "example-event", sourceId: "app:example", sourceLabel: "Example", eventType: "report.ready", recipient: { subject: "test-user", email: "test-user@example.test" }, title: "Report", message: "Example report", href: "/apps/example/report", severity: "info" as const };
-    await enqueueNotification(input);
+    await enqueueNotification({ ...input, eventGeneration: 999 });
     await mockDb.collection("in_app_notifications").insertOne({ source_id: "app:example", event_type: "report.ready", recipient_user_subjects: ["test-user"], href: input.href });
     await changeNotificationEventLifecycle({ action: "retire", sourceId: "app:example", eventType: "report.ready", revision: 0 }, "operator");
     await registerAppNotificationTypes("example", "Example", [{ id: "other.ready", label: "Other" }]);
@@ -71,8 +71,9 @@ run("event policy MongoDB integration", () => {
     const restored = await changeNotificationEventLifecycle({ action: "restore", sourceId: "app:example", eventType: "report.ready", revision: 1 }, "operator");
     expect(restored.retired).toBe(false);
     const job = await mockDb.collection("notification_jobs").findOne({});
-    expect(await notificationPolicyAllows("app:example", "report.ready", "test-user", "in_app", { acceptedAt: job!.createdAt })).toBe(false);
-    expect(await notificationPolicyAllows("app:example", "report.ready", "test-user", "in_app", { acceptedAt: new Date(Date.parse(restored.discardBefore!) + 1) })).toBe(true);
+    expect(job!.eventGeneration).toBe(0);
+    expect(await notificationPolicyAllows("app:example", "report.ready", "test-user", "in_app", { eventGeneration: job!.eventGeneration ?? 0 })).toBe(false);
+    expect(await notificationPolicyAllows("app:example", "report.ready", "test-user", "in_app", { eventGeneration: restored.deliveryGeneration })).toBe(true);
     expect(await mockDb.collection("notification_deliveries").countDocuments({ status: "skipped" })).toBe(3);
     await expect(changeNotificationEventLifecycle({ action: "retire", sourceId: "app:example", eventType: "report.ready", revision: 1 }, "operator")).rejects.toMatchObject({ statusCode: 409 });
   });

@@ -1,4 +1,5 @@
 /** @jest-environment node */
+jest.mock("@/lib/notifications/event-policy.server", () => ({ notificationPolicyAllows: jest.fn(async () => true), notificationEventPolicy: jest.fn(async () => ({ deliveryGeneration: 0 })) }));
 
 import { MongoClient, type Db } from "mongodb";
 import {

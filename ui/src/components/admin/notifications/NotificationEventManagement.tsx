@@ -34,7 +34,7 @@ function EventEditor({ event, readOnly, onSaved }: { event: NotificationEventPol
   async function save(change: FormEvent): Promise<void> {
     change.preventDefault(); setSaving(true); setError("");
     try {
-      const { locked: _locked, retired: _retired, discardBefore: _discardBefore, ...policy } = draft; void _locked; void _retired; void _discardBefore;
+      const { locked: _locked, retired: _retired, deliveryGeneration: _deliveryGeneration, ...policy } = draft; void _locked; void _retired; void _deliveryGeneration;
       await request("PATCH", policy); await onSaved();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save policy"); }
     finally { setSaving(false); }
@@ -54,12 +54,14 @@ function EventEditor({ event, readOnly, onSaved }: { event: NotificationEventPol
       <p className="text-xs text-muted-foreground">User opt-ins and access checks still apply. This policy never subscribes users or grants access.</p>
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {draft.retired && <p className="text-sm text-muted-foreground">Retired. Future delivery is blocked; notification history and subscriptions are preserved.</p>}
+      <div className="flex flex-wrap items-start gap-3">
       {!draft.retired && !draft.locked && <Button disabled={disabled || !draft.allowedChannels.length} type="submit">{saving ? "Saving…" : "Save event"}</Button>}
       {event.sourceId.startsWith("app:") && (draft.retired
         ? <Button type="button" variant="outline" disabled={readOnly || saving} onClick={() => void changeLifecycle("restore")}>Restore event</Button>
         : confirmRetire
-          ? <div className="space-y-3 rounded-md border p-3"><p role="alert" className="text-sm">Retire this event? Future delivery will stop. History is kept and you can restore it. Delivery already in progress may finish.</p><div className="flex gap-2"><Button type="button" variant="destructive" disabled={readOnly || saving} onClick={() => void changeLifecycle("retire")}>Confirm retirement</Button><Button type="button" variant="outline" disabled={saving} onClick={() => setConfirmRetire(false)}>Cancel</Button></div></div>
+          ? <div className="w-full space-y-3 rounded-md border p-3"><p role="alert" className="text-sm">Retire this event? Future delivery will stop. History is kept and you can restore it. Delivery already in progress may finish.</p><div className="flex gap-2"><Button type="button" variant="destructive" disabled={readOnly || saving} onClick={() => void changeLifecycle("retire")}>Confirm retirement</Button><Button type="button" variant="outline" disabled={saving} onClick={() => setConfirmRetire(false)}>Cancel</Button></div></div>
           : <Button type="button" variant="outline" disabled={readOnly || saving} onClick={() => setConfirmRetire(true)}>Retire event</Button>)}
+      </div>
     </form>
   </details>;
 }

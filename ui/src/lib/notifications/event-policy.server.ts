@@ -45,7 +45,7 @@ export async function notificationEventPolicy(sourceId: string, eventType: strin
   return { ...base, label: stored.label, description: stored.description, enabled: stored.enabled,
     defaultEnabled: stored.defaultEnabled, allowedChannels: stored.allowedChannels,
     audience: base.audience === "organization_admins" ? base.audience : stored.audience,
-    revision: stored.revision, retired: stored.retired === true, ...(stored.discardBefore ? { discardBefore: stored.discardBefore } : {}) };
+    revision: stored.revision, retired: stored.retired === true, deliveryGeneration: stored.deliveryGeneration ?? 0 };
 }
 
 export async function listNotificationEventPolicies(): Promise<Array<{ id: string; label: string; events: NotificationEventPolicy[] }>> {
@@ -112,12 +112,12 @@ export async function changeNotificationEventLifecycle(input: unknown, actor: st
     const registration = await (await getCollection<Registration>("notification_sources")).findOne({ _id: raw.sourceId });
     if (![...(registration?.events ?? []), ...(registration?.operatorEvents ?? [])].some((event) => event.id === raw.eventType)) throw new ApiError("Register this event again before restoring it", 409);
   }
-  return persistEventPolicy(current, { ...current, retired: raw.action === "retire", discardBefore: new Date().toISOString(), revision: Number(raw.revision) + 1 }, Number(raw.revision), actor);
+  return persistEventPolicy(current, { ...current, retired: raw.action === "retire", deliveryGeneration: (current.deliveryGeneration ?? 0) + 1, revision: Number(raw.revision) + 1 }, Number(raw.revision), actor);
 }
 
-export async function notificationPolicyAllows(sourceId: string, eventType: string, subject: string, channel?: NotificationChannel, options: { history?: boolean; acceptedAt?: Date } = {}): Promise<boolean> {
+export async function notificationPolicyAllows(sourceId: string, eventType: string, subject: string, channel?: NotificationChannel, options: { history?: boolean; eventGeneration?: number } = {}): Promise<boolean> {
   const policy = await notificationEventPolicy(sourceId, eventType);
-  if (!options.history && (policy.retired || (options.acceptedAt && policy.discardBefore && options.acceptedAt.getTime() <= Date.parse(policy.discardBefore)))) return false;
+  if (!options.history && (policy.retired || (options.eventGeneration !== undefined && options.eventGeneration !== (policy.deliveryGeneration ?? 0)))) return false;
   if (!policy.enabled || (channel && !policy.allowedChannels.includes(channel))) return false;
   // Workflow-only events cannot be fabricated by generic publishers.
   if (policy.audience === "approval_reviewers") return false;

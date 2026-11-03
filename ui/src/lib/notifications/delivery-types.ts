@@ -6,6 +6,8 @@ export interface NotificationDispatch {
   sourceId: string;
   sourceLabel: string;
   eventType: string;
+  /** Server-owned lifecycle generation captured at durable acceptance. */
+  eventGeneration?: number;
   recipient: { subject: string; email: string };
   title: string;
   message: string;

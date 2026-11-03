@@ -13,6 +13,6 @@ export interface NotificationEventPolicy {
   revision: number;
   locked: boolean;
   retired?: boolean;
-  /** Pending deliveries accepted before this instant must not replay after restoration. */
-  discardBefore?: string;
+  /** Advances on retirement/restoration so older queued deliveries cannot replay. */
+  deliveryGeneration?: number;
 }

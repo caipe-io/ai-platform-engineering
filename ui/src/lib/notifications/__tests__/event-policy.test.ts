@@ -68,9 +68,9 @@ it("blocks future delivery for retired app events but preserves authorized histo
   expect(JSON.stringify(await notificationPolicyInboxFilter("user", false))).not.toContain("report.ready");
 });
 it("does not replay pending deliveries after restoration", async () => {
-  mockFindOne.mockResolvedValue({ ...patch, retired: false, revision: 2, discardBefore: "2026-01-01T12:00:00.000Z" });
-  expect(await notificationPolicyAllows("app:example", "report.ready", "user", "in_app", { acceptedAt: new Date("2026-01-01T11:59:00Z") })).toBe(false);
-  expect(await notificationPolicyAllows("app:example", "report.ready", "user", "in_app", { acceptedAt: new Date("2026-01-01T12:01:00Z") })).toBe(true);
+  mockFindOne.mockResolvedValue({ ...patch, retired: false, revision: 2, deliveryGeneration: 2 });
+  expect(await notificationPolicyAllows("app:example", "report.ready", "user", "in_app", { eventGeneration: 0 })).toBe(false);
+  expect(await notificationPolicyAllows("app:example", "report.ready", "user", "in_app", { eventGeneration: 2 })).toBe(true);
 });
 it("rejects stale lifecycle actions and direct edits to retired events", async () => {
   mockFindOne.mockResolvedValue({ ...patch, retired: true, revision: 1 });

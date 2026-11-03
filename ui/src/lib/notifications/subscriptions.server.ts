@@ -295,9 +295,9 @@ export async function deliveryAllowed(
   sourceId: string,
   eventType: string,
   channel: NotificationChannel,
-  acceptedAt?: Date,
+  eventGeneration = 0,
 ): Promise<boolean> {
-  if (!(await notificationPolicyAllows(sourceId, eventType, subject, channel, { acceptedAt }))) return false;
+  if (!(await notificationPolicyAllows(sourceId, eventType, subject, channel, { eventGeneration }))) return false;
   const policy = await notificationEventPolicy(sourceId, eventType);
   const { global, source, events } = await readSourceSubscriptions(
     subject,
