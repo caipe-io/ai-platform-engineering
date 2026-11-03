@@ -1,0 +1,34 @@
+name: Claude Code CLI ACP worker
+
+on:
+  pull_request:
+    paths:
+      - ai_platform_engineering/harness_engine/**
+      - .github/workflows/ci-claude-cli-acp.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-cli-acp-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+      - name: Build the standalone CLI worker
+        run: docker build -f ai_platform_engineering/harness_engine/build/Dockerfile.claude-cli-acp -t claude-cli-acp:test .
+      - name: Verify the installed CLI and ACP entry point
+        run: |
+          docker run --rm --entrypoint claude claude-cli-acp:test --version
+          docker run --rm --entrypoint python claude-cli-acp:test -c 'from harness_engine.claude_cli_acp import ClaudeCodeCLIAgent; from harness_engine.config import Settings; assert Settings().claude_acp_runtime == "claude_code_cli_acp"'

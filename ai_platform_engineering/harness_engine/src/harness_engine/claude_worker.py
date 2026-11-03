@@ -198,7 +198,7 @@ def create_worker_app(
                         EXTENSION: {
                             "transport": "http-ndjson-v1",
                             "durableReplay": True,
-                            "runtime": "claude_code_acp" if config.claude_acp_command else "sdk",
+                            "runtime": config.claude_acp_runtime if config.claude_acp_command else "sdk",
                         }
                     },
                 }

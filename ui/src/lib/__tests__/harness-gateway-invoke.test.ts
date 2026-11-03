@@ -16,7 +16,7 @@ beforeEach(() => {
 
 afterEach(() => jest.restoreAllMocks());
 
-it.each(["dynamic_agents", "claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp", "agentcore"])(
+it.each(["dynamic_agents", "claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp", "claude_code_cli_acp", "agentcore"])(
   "delegates the current caller only to runtimes that need caller-scoped tools: %s", async harnessId => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(new Response(
       JSON.stringify({ success: true, data: { ...run, harness_id: harnessId, status: "queued" } }),

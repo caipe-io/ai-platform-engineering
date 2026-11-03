@@ -130,7 +130,7 @@ def test_claude_catalog_filters_profiles_without_exposing_credentials(settings: 
     )
     descriptor = RemoteClaudeSDKAdapter(configured, claude_acp=True).descriptor
     assert descriptor.id == "claude_code_acp"
-    assert descriptor.display_name == "Claude (ACP)"
+    assert descriptor.display_name == "Claude Agent SDK (ACP)"
     assert [profile.id for profile in descriptor.profiles] == ["primary"]
     assert descriptor.capabilities["tools.broker"].level == "emulated"
     assert descriptor.capabilities["session.cross_replica"].level == "unavailable"

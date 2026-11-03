@@ -113,9 +113,9 @@ it("includes legacy MCP servers without an enabled field", async () => {
 });
 
 
-it("authorizes Claude ACP tools through the same caller-scoped AgentGateway path", async () => {
+it.each(["claude_code_acp", "claude_code_cli_acp"])("authorizes %s tools through the same caller-scoped AgentGateway path", async harnessId => {
   authorize.mockResolvedValue({ auth: { subject: "test-user", authenticatedUser: { session } }, config: {},
-    response: NextResponse.json({ success: true, data: { ...run, harness_id: "claude_code_acp" } }) });
+    response: NextResponse.json({ success: true, data: { ...run, harness_id: harnessId } }) });
   const response = await POST(request({ operation: "call", tool_id: "example.lookup", arguments: { query: "example" } }), params);
   expect(response.status).toBe(200);
   expect(call).toHaveBeenCalledWith(expect.objectContaining({ agentId: "agent-example", session,

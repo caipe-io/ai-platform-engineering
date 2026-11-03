@@ -1,4 +1,4 @@
-"""Experimental Claude Code ACP subprocess behind the durable worker boundary."""
+"""Experimental Claude ACP subprocess behind the durable worker boundary."""
 
 from __future__ import annotations
 
@@ -64,13 +64,14 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
         self._tool_bridge = tool_bridge
         self._command = settings.claude_acp_command
         self._tools = settings.claude_acp_tools
+        self._runtime = settings.claude_acp_runtime
 
     @property
     def descriptor(self) -> HarnessDescriptor:
         descriptor = super().descriptor
         return descriptor.model_copy(
             update={
-                "display_name": "Claude Code ACP worker",
+                "display_name": "Claude Code CLI ACP worker" if self._runtime == "claude_code_cli_acp" else "Claude Agent SDK ACP worker",
                 "capabilities": {
                     **descriptor.capabilities,
                     "tools.broker": CapabilityResult(

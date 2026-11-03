@@ -2373,14 +2373,15 @@ export function ChatPanel({
   };
 
   const showClaudeSession = !agent?.presentation?.app && (observedRuntime?.conversationId === activeConversationId
-    ? observedRuntime.harnessId === "claude_code_acp"
-    : !conversation?.messages.length && agent?.execution_harness_id === "claude_code_acp");
+    ? ["claude_code_acp", "claude_code_cli_acp"].includes(observedRuntime.harnessId ?? "")
+    : !conversation?.messages.length && ["claude_code_acp", "claude_code_cli_acp"].includes(agent?.execution_harness_id ?? ""));
   const headerControls = (
     <div className="flex max-w-full flex-wrap items-center justify-end gap-1">
       {apiConversation && <ApiConversationIndicator readOnly={panelReadOnly} />}
       <ConversationViewers conversationId={conversationId ?? activeConversationId} />
       {showClaudeSession ? (
         <ClaudeSessionPanel activity={isStopping ? "stopping" : externalActivity?.state ?? (isThisConversationStreaming ? "running" : "idle")}
+          cli={(observedRuntime?.conversationId === activeConversationId ? observedRuntime.harnessId : agent?.execution_harness_id) === "claude_code_cli_acp"}
           readOnly={panelReadOnly || Boolean(readOnlySubscription)} />
       ) : showAgentHeader && (agent ? (
         <AgentHarnessBadge harnessId={agent.execution_harness_id} presentation={agent.presentation} />

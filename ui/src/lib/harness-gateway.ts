@@ -302,7 +302,7 @@ export async function startHarnessGatewayRun(
         Object.keys(override.model).some(key => key !== "reasoning_effort"))))) {
     return NextResponse.json({ error: "Unsupported per-turn execution override" }, { status: 400 });
   }
-  const usesCallerIdentity = [DEFAULT_HARNESS_ID, "claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp"].includes(harnessId);
+  const usesCallerIdentity = [DEFAULT_HARNESS_ID, "claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp", "claude_code_cli_acp"].includes(harnessId);
   const callerHeaders: Record<string, string> = usesCallerIdentity && auth.bearerToken ? {
     "X-Harness-Caller-Token": auth.bearerToken,
     "X-Harness-Caller-Type": auth.isServiceAccount ? "service_account" : "user",

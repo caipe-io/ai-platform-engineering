@@ -1858,7 +1858,7 @@ export function DynamicAgentEditor({
                         </p>
                       </div>
                     )}
-                    {harnessId === "claude_code_acp" && selectedHarness ? (
+                    {["claude_code_acp", "claude_code_cli_acp"].includes(harnessId) && selectedHarness ? (
                       <ClaudeACPSettings descriptor={selectedHarness} profileId={harnessProfileId} />
                     ) : isDeepAgents ? (
                       <p className="text-xs text-muted-foreground">

@@ -1,0 +1,40 @@
+# Optional: layer after docker-compose.yaml and compose.deep-agents.yaml.
+# Add a runtime=claude_code_cli_acp profile to the Engine's private worker map.
+services:
+  harness-engine:
+    environment:
+      HARNESS_ENGINE_CLAUDE_WORKER_PROFILES_JSON: ${HARNESS_ENGINE_CLAUDE_WORKER_PROFILES_JSON:?set private worker connections}
+
+  claude-cli-acp-worker:
+    profiles: [harness-engine]
+    build:
+      context: .
+      dockerfile: ai_platform_engineering/harness_engine/build/Dockerfile.claude-cli-acp
+    image: caipe-claude-cli-acp-worker:local
+    restart: unless-stopped
+    init: true
+    environment:
+      HARNESS_ENGINE_INTERNAL_TOKEN: ${CLAUDE_CLI_ACP_WORKER_INTERNAL_TOKEN:?set a distinct private worker token}
+      HARNESS_ENGINE_STORAGE_BACKEND: mongodb
+      HARNESS_ENGINE_MONGODB_URI: ${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/harness_engine?authSource=admin}
+      HARNESS_ENGINE_MONGODB_DATABASE: ${CLAUDE_CLI_ACP_MONGODB_DATABASE:-harness_claude_cli_acp}
+      HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON: ${CLAUDE_CLI_ACP_PROFILES_JSON:?set Claude model and workspace profiles}
+      HARNESS_ENGINE_CLAUDE_TOOL_BROKER_URL: http://caipe-ui:3000
+      HARNESS_ENGINE_CLAUDE_ACP_RUNTIME: claude_code_cli_acp
+      HARNESS_ENGINE_CLAUDE_ACP_TOOLS: ${CLAUDE_CLI_ACP_NATIVE_TOOLS:-[]}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+      CLAUDE_CODE_USE_BEDROCK: ${CLAUDE_CODE_USE_BEDROCK:-0}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+    volumes:
+      - claude-cli-acp-workspace:/workspace
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  claude-cli-acp-workspace:

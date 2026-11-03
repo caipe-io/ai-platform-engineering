@@ -49,6 +49,13 @@ service until an operator enables the Engine integration.
   shows the catalog's certification status on each harness option.
   `certified` is labeled **Stable**; `blocked` is labeled
   **Blocked** and remains disabled.
+- **Claude Agent SDK (ACP)** preserves the existing `claude_code_acp` harness.
+  **Claude Code CLI (ACP)** is a separate `claude_code_cli_acp` harness that starts
+  the pinned CLI executable directly. Each has its own worker profile and saved
+  workspace; existing conversations keep their original runtime.
+- The optional `deploy/harness-engine/compose.claude-cli-acp.yaml` overlay adds the
+  CLI worker. See [Claude ACP architecture](../../docs/docs/architecture/claude-acp.md)
+  for connection settings, native tool policy and persistence boundaries.
 
 ## Connect an existing AgentCore deployment
 
