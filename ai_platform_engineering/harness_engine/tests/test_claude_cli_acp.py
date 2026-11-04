@@ -121,6 +121,7 @@ async def test_native_transcript_survives_lost_start_acknowledgement(tmp_path: P
     replacement = ClaudeCodeCLIAgent([sys.executable, str(FIXTURE)])
     replacement.on_connect(client)
     await replacement.load_session(str(tmp_path), session, servers(), **policy())
+    assert (tmp_path / f".caipe-cli-{session}").read_text().strip() == "claude-code-cli-acp-v2:started"
     assert (await replacement.prompt(session, [TextContentBlock(type="text", text="continue")])).stop_reason == "end_turn"
     assert "--resume" in json.loads((tmp_path / "cli-policy.json").read_text())["arguments"]
 

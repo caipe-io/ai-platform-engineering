@@ -114,7 +114,9 @@ class ClaudeCodeCLIAgent(Agent):
         # Legacy markers may represent real conversations: never silently reset
         # one. New allocations resume only after native persistence or output.
         self.session_id = session_id
-        self.resume = state != "claude-code-cli-acp-v2:allocated" or self.native_conversation_exists(session_id)
+        self.resume = state != "claude-code-cli-acp-v2:allocated"
+        if not self.resume and self.native_conversation_exists(session_id):
+            self.mark_started(session_id)
         return LoadSessionResponse()
 
     def native_conversation_exists(self, session_id: str) -> bool:
@@ -130,6 +132,8 @@ class ClaudeCodeCLIAgent(Agent):
         return False
 
     def mark_started(self, session_id: str) -> None:
+        if self.resume:
+            return
         marker = self.cwd / f".caipe-cli-{session_id}"
         marker.write_text("claude-code-cli-acp-v2:started\n")
         self.resume = True
