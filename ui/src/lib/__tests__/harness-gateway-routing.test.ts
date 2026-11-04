@@ -97,6 +97,24 @@ it("does not choose a new backend if authoritative session lookup is unavailable
   expect(bindings.size).toBe(0);
 });
 
+it.each(["false", "true"])("keeps an unbound chat unpinned during an Engine outage with opt-in=%s", async enabled => {
+  const previous = process.env.HARNESS_ENGINE_DEEP_AGENTS_ENABLED;
+  process.env.HARNESS_ENGINE_DEEP_AGENTS_ENABLED = enabled;
+  try {
+    mockLookupSession.mockResolvedValue(NextResponse.json({ success: false }, { status: 503 }));
+    expect((await resolveHarnessGatewayTarget("agent-example", context) as NextResponse).status).toBe(503);
+    expect(bindings.size).toBe(0);
+    mockLookupSession.mockResolvedValue({ harness_id: null });
+    expect(await resolveHarnessGatewayTarget("agent-example", context)).toEqual({
+      kind: enabled === "true" ? "harness_engine" : "dynamic_agents", harnessId: "dynamic_agents",
+    });
+    expect(bindings.size).toBe(1);
+  } finally {
+    if (previous === undefined) delete process.env.HARNESS_ENGINE_DEEP_AGENTS_ENABLED;
+    else process.env.HARNESS_ENGINE_DEEP_AGENTS_ENABLED = previous;
+  }
+});
+
 it("adopts existing native checkpoints before a mutable SDK default", async () => {
   mockFindAgent.mockResolvedValue({ _id: "agent-example", execution_harness_id: "agentcore" });
   mockFindNativeContext.mockResolvedValue({ _id: "checkpoint-example" });
