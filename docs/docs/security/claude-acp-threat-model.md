@@ -241,14 +241,22 @@ effects still require provider audit/idempotency or operator reconciliation.
 - **Lost confirmation / crash:** retain an uncertain producer reservation.
   Saved events/transcripts permit later inspection or session resume, not
   takeover of an in-flight process on a different worker.
-- **New turn:** issue a fresh local capability and load the saved native UUID.
-  The worker volume must still contain the corresponding native state.
+- **New turn:** issue a fresh local capability. A newly allocated CLI UUID uses
+  its first invocation until native persistence or inference/tool output confirms
+  startup. Started and legacy UUIDs require resume; missing native state never
+  triggers an automatic fresh inference. The outer execution fence still blocks
+  reuse while process/tool drain is unconfirmed.
 - **Sharing:** readers can see persisted content they are authorized to read,
   including tool results obtained under the executor's provider access. They do
   not inherit those credentials or authority to execute as that owner.
 - **Revocation:** deny subsequent protected requests according to live policy,
   credential validity and cache behavior. Do not promise rollback of an upstream
-  write, erasure from another viewer, or termination of an existing SSE stream.
+  write, erasure from another viewer, or instantaneous stream termination.
+  Harness event subscriptions recheck current read access every 15 seconds,
+  including idle streams, and hold due chunks until that check succeeds.
+  Revocation or authorization errors close that subscriber without cancelling
+  the producer. Policy caches can delay observed revocation; app-owned streams
+  retain their own authorization and lifecycle requirements.
 - **Retention:** canonical events have configurable retention; messages, native
   transcripts, workspace files, logs and backups have separate lifecycles.
   Clearing a conversation or rotating its epoch is not proof of physical erasure.

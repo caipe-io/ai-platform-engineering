@@ -134,9 +134,11 @@ service until an operator enables the Engine integration.
 - Service accounts retain their principal classification in platform checks.
   Engine uses internal credentials plus the verified caller subject; app-owned
   streams use the exact authenticated interactive user.
-- Grants are checked per request/subscription. Existing streams are not
-  continuously reauthorized; downstream app/tool resource checks remain
-  authoritative for their own operations.
+- The Engine event subscription rechecks current caller, agent/conversation
+  scope and read permission every 15 seconds, including while idle. Chunks
+  arriving after a check is due wait for its result. Revocation or a failed
+  authorization check closes only that subscriber; the producer continues.
+  Downstream app/tool resource checks remain authoritative for their operations.
 
 ## Session flow
 
