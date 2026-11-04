@@ -43,6 +43,7 @@ PROFILES=""
 [ "$ENABLE_RAG" = "true" ] && PROFILES="$PROFILES,rag"
 [ "$ENABLE_GRAPH_RAG" = "true" ] && PROFILES="$PROFILES,rag"
 [ "$ENABLE_TRACING" = "true" ] && PROFILES="$PROFILES,tracing"
+[ "$ENABLE_DIRECTORY" = "true" ] && PROFILES="$PROFILES,directory"
 
 PROFILES=$(echo "$PROFILES" | sed 's/^,//')
 

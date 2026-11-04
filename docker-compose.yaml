@@ -631,6 +631,17 @@ services:
       - LANGFUSE_HOST=${LANGFUSE_HOST:-http://langfuse-web:3000}
       # Audit log storage is owned by the lightweight Python audit-service.
       - AUDIT_SERVICE_URL=${AUDIT_SERVICE_URL:-http://audit-service:8010}
+      # AGNTCY Directory integration (periodic agent discovery)
+      - DIRECTORY_ENABLED=${DIRECTORY_ENABLED:-false}
+      - DIRECTORY_BASE_URL=${DIRECTORY_BASE_URL:-http://dir-apiserver:8888}
+      - DIRECTORY_LABEL_FILTER=${DIRECTORY_LABEL_FILTER:-}
+      - DIRECTORY_SYNC_INTERVAL=${DIRECTORY_SYNC_INTERVAL:-300}
+      # AGNTCY Directory self-registration (publish built-in servers)
+      - DIRECTORY_SELF_REGISTER=${DIRECTORY_SELF_REGISTER:-false}
+      - DIRECTORY_SERVER_ADDRESS=${DIRECTORY_SERVER_ADDRESS:-dir-apiserver:8888}
+      - DIRECTORY_REGISTER_LABELS=${DIRECTORY_REGISTER_LABELS:-}
+      - DIRECTORY_REGISTER_INTERVAL=${DIRECTORY_REGISTER_INTERVAL:-300}
+      - DIRECTORY_REGISTER_PUBLISH=${DIRECTORY_REGISTER_PUBLISH:-true}
       # Runtime configuration
       - AGENT_RUNTIME_TTL_SECONDS=${AGENT_RUNTIME_TTL_SECONDS:-3600}
       - CORS_ORIGINS=${DYNAMIC_AGENTS_CORS_ORIGINS:-["*"]}
@@ -1676,6 +1687,26 @@ services:
       - /tmp
     healthcheck:
       disable: true
+
+  # =========================================================================
+  # AGNTCY Directory - Agent discovery and registry
+  # =========================================================================
+  dir-apiserver:
+    image: ghcr.io/agntcy/dir/api-server:latest
+    container_name: dir-apiserver
+    ports: ["8888:8888"]
+    environment:
+      - DIR_API_LISTEN_ADDR=0.0.0.0:8888
+      - DIR_API_LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8888/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    profiles:
+      - directory
 
 
 volumes:

@@ -39,6 +39,7 @@ from dynamic_agents.routes import (
     builtin_tools,
     chat,
     conversations,
+    directory,
     files,
     health,
     mcp_servers,
@@ -47,6 +48,7 @@ from dynamic_agents.routes import (
     remote_agents,
 )
 from dynamic_agents.services.autonomous_follow_up_cleanup import run_copy_cleanup
+from dynamic_agents.services.directory_sync import get_directory_sync
 from dynamic_agents.services.mongo import get_mongo_service, reset_mongo_service
 from dynamic_agents.services.runtime_cache import RuntimeCapacityError, RuntimeInitError, get_runtime_cache
 
@@ -113,24 +115,52 @@ async def lifespan(app: FastAPI):
         store.ensure_ttl_index()
         logger.info("GridFS TTL index ensured (per-document expireAt)")
 
+    directory_sync = get_directory_sync()
+    if directory_sync is not None:
+        directory_sync.start()
+
+    # Self-register built-in MCP servers to Directory if enabled.
+    # Uses reconcile loop (if DIRECTORY_REGISTER_INTERVAL > 0) to handle
+    # servers that appear after startup (e.g., from AgentGateway discovery).
+    from dynamic_agents.services.directory_register import get_directory_register
+
+    directory_register = get_directory_register()
+    if directory_register is not None and mongo._db is not None:
+        try:
+            collection = mongo._db[settings.mcp_servers_collection]
+            servers = list(collection.find({"enabled": True, "source": {"$ne": "directory"}}))
+            if servers:
+                await asyncio.to_thread(directory_register.register_servers, servers)
+            directory_register.start()
+        except Exception as exc:  # noqa: BLE001 — registration is an optional startup integration
+            logger.warning("Directory self-registration failed: %s", exc)
+
     copy_cleanup = asyncio.create_task(run_copy_cleanup(mongo))
     try:
         yield
     finally:
         logger.info("Shutting down Dynamic Agents service...")
         try:
-            copy_cleanup.cancel()
-            try:
-                _ = await copy_cleanup
-            except asyncio.CancelledError:
-                pass
-            except Exception:  # noqa: BLE001 — an already-failed worker must not skip shutdown
-                logger.exception("Follow-up recovery worker failed before shutdown")
+            if directory_sync is not None:
+                await directory_sync.stop()
         finally:
             try:
-                await cache.stop()
+                if directory_register is not None:
+                    await directory_register.stop()
             finally:
-                mongo.disconnect()
+                try:
+                    copy_cleanup.cancel()
+                    try:
+                        _ = await copy_cleanup
+                    except asyncio.CancelledError:
+                        pass  # Expected: copy_cleanup.cancel() is called during shutdown above
+                    except Exception:  # noqa: BLE001 — an already-failed worker must not skip shutdown
+                        logger.exception("Follow-up recovery worker failed before shutdown")
+                finally:
+                    try:
+                        await cache.stop()
+                    finally:
+                        mongo.disconnect()
 
 
 def create_app() -> FastAPI:
@@ -183,6 +213,7 @@ def create_app() -> FastAPI:
     app.include_router(files.router, prefix="/api/v1")
     app.include_router(assistant.router, prefix="/api/v1")
     app.include_router(middleware.router, prefix="/api/v1")
+    app.include_router(directory.router, prefix="/api/v1")
     app.include_router(model_capabilities.router, prefix="/api/v1")
     # Agent reachability probe used by the autonomous-agents service
     # to verify ``dynamic_agent_id`` targets exist before scheduling.

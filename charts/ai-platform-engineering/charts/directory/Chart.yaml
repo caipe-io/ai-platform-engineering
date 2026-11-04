@@ -1,0 +1,6 @@
+apiVersion: v2
+name: directory
+description: AGNTCY Directory — agent discovery and registry service
+type: application
+version: 0.5.31 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+appVersion: 0.5.31 # Do NOT modify. It will be updated automatically using the release workflow

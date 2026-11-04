@@ -1,0 +1,54 @@
+# AGNTCY Directory — agent discovery and registry.
+# Deploys the dir-apiserver container which provides a gRPC/HTTP API for
+# agent record storage, search, and routing.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/agntcy/dir/api-server
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 8888
+
+config:
+  # Listen address for the Directory API server
+  DIR_API_LISTEN_ADDR: "0.0.0.0:8888"
+  # Log level: debug, info, warn, error
+  DIR_API_LOG_LEVEL: "info"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
