@@ -13,6 +13,7 @@ OAuthConnectorService,
 ProviderConnectionService,
 type OAuthConnectorDocument,
 type ProviderConnectionDocument,
+type TokenClientOptions,
 type TokenClientResponse,
 } from "./oauth-service";
 
@@ -80,13 +81,20 @@ export async function getProviderConnectionService(): Promise<ProviderConnection
 export async function exchangeOAuthToken(
   tokenUrl: string,
   body: Record<string, string>,
+  options: TokenClientOptions = {},
 ): Promise<TokenClientResponse> {
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "content-type": "application/x-www-form-urlencoded",
+  };
+  if (options.basicAuth) {
+    // RFC 6749 §2.3.1: percent-encode the id and secret before base64 encoding.
+    const credentials = `${encodeURIComponent(options.basicAuth.clientId)}:${encodeURIComponent(options.basicAuth.clientSecret)}`;
+    headers.authorization = `Basic ${Buffer.from(credentials).toString("base64")}`;
+  }
   const response = await fetch(tokenUrl, {
     method: "POST",
-    headers: {
-      accept: "application/json",
-      "content-type": "application/x-www-form-urlencoded",
-    },
+    headers,
     body: new URLSearchParams(body),
   });
   if (!response.ok) {

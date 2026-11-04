@@ -386,7 +386,9 @@ config:
 # environment variable supplied through `existingSecret` or `externalSecrets`.
 # `clientId` is non-sensitive and may be inline; use `clientIdEnv` instead when
 # it is also supplied by the Secret. Set `pkce: true` for public clients that do
-# not have a client secret. When redirectUri is omitted, the UI derives
+# not have a client secret. Set `tokenEndpointAuthMethod: client_secret_basic`
+# for providers that reject credentials in the token request body (default is
+# `client_secret_post`). When redirectUri is omitted, the UI derives
 # `${NEXTAUTH_URL}/api/credentials/oauth/<provider>/callback`.
 oauthConnectors: []
   # - provider: "webex_secondary"
