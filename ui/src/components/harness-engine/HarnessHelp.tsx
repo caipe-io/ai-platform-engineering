@@ -45,7 +45,14 @@ export function HarnessHelp({ harnessId, descriptors }: { harnessId: string; des
   const [open, setOpen] = React.useState(false);
   const contentId = React.useId();
   const titleId = React.useId();
-  const focusContent = React.useCallback((node: HTMLElement | null) => node?.focus(), []);
+  const contentRef = React.useRef<HTMLElement>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    // The shared popover first measures off-screen, then makes content visible.
+    const frame = requestAnimationFrame(() => contentRef.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
 
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger asChild>
@@ -61,7 +68,7 @@ export function HarnessHelp({ harnessId, descriptors }: { harnessId: string; des
       </button>
     </PopoverTrigger>
     <PopoverContent align="end" className="w-[min(34rem,calc(100vw-2rem))] p-4">
-      <section id={contentId} role="dialog" aria-labelledby={titleId} tabIndex={-1} ref={focusContent} className="max-h-[65vh] space-y-3 overflow-y-auto outline-none">
+      <section id={contentId} role="dialog" aria-labelledby={titleId} tabIndex={-1} ref={contentRef} className="max-h-[65vh] space-y-3 overflow-y-auto outline-none">
         <h3 id={titleId} className="text-sm font-semibold">Choose how your agent runs</h3>
         <p className="text-xs leading-relaxed text-muted-foreground">
           Deep Agents is stable and selected by default. Other CAIPE integrations are experimental and enabled by default when configured.
