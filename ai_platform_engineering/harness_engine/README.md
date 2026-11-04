@@ -53,10 +53,14 @@ service until an operator enables the Engine integration.
 ## Agent Builder harness status
 
 - LangChain Deep Agents is **Stable**, including its opt-in Engine integration.
-- Claude SDK (local and remote worker) and AgentCore are **Experimental** CAIPE integrations. Agent Builder
-  shows the catalog's certification status on each harness option.
-  `certified` is labeled **Stable**; `blocked` is labeled
-  **Blocked** and remains disabled.
+- All other CAIPE runtime integrations are **Experimental**. Configured runtimes
+  are selectable by default; experimental status does not require an opt-in.
+  Missing configuration and explicit operator blocks still prevent execution.
+- Agent Builder's **ⓘ** control compares the execution options. **Claude Agent
+  SDK (Local)** calls the SDK inside the Engine service. **Remote worker** moves
+  SDK execution to a worker; **SDK (ACP)** runs an ACP adapter process on that
+  worker. ACP changes the execution boundary, not session ownership: Engine and
+  Gateway retain run persistence, authorization, and replay.
 - **Claude Agent SDK (ACP)** preserves the existing `claude_code_acp` harness.
   **Claude Code CLI (ACP)** is a separate `claude_code_cli_acp` harness that starts
   the pinned CLI executable directly. ACP session allocation is distinct from a
