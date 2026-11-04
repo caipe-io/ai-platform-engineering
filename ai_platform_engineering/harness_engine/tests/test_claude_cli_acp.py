@@ -48,6 +48,7 @@ def servers() -> list[HttpMcpServer]:
 
 async def configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[ClaudeCodeCLIAgent, Updates, str]:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / ".claude"))
     agent = ClaudeCodeCLIAgent([sys.executable, str(FIXTURE)])
     client = Updates()
     agent.on_connect(client)
@@ -80,6 +81,64 @@ async def test_cli_streams_once_and_keeps_capabilities_out_of_argv(tmp_path: Pat
     assert "--resume" in resumed and resumed[resumed.index("--resume") + 1] == session
 
 
+@pytest.mark.parametrize("first_turn", ["not-prompted", "cancel-before-prompt", "wait-before-native", "startup-failure"])
+async def test_allocated_session_survives_early_stop_or_startup_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, first_turn: str,
+) -> None:
+    agent, client, session = await configured(tmp_path, monkeypatch)
+    prompt = [TextContentBlock(type="text", text=first_turn)]
+    if first_turn == "cancel-before-prompt":
+        await agent.cancel(session)
+        assert (await agent.prompt(session, prompt)).stop_reason == "cancelled"
+    elif first_turn == "startup-failure":
+        with pytest.raises(RequestError):
+            await agent.prompt(session, prompt)
+    elif first_turn == "wait-before-native":
+        task = asyncio.create_task(agent.prompt(session, prompt))
+        for _ in range(300):
+            if (tmp_path / "cli-started").exists():
+                break
+            await asyncio.sleep(0.01)
+        assert (tmp_path / "cli-started").exists()
+        await agent.cancel(session)
+        assert (await asyncio.wait_for(task, 3)).stop_reason == "cancelled"
+        assert agent.process is None
+    replacement = ClaudeCodeCLIAgent([sys.executable, str(FIXTURE)])
+    replacement.on_connect(client)
+    await replacement.load_session(str(tmp_path), session, servers(), **policy())
+    assert (await replacement.prompt(session, [TextContentBlock(type="text", text="continue")])).stop_reason == "end_turn"
+    args = json.loads((tmp_path / "cli-policy.json").read_text())["arguments"]
+    assert "--resume" not in args and args[args.index("--session-id") + 1] == session
+    assert (await replacement.prompt(session, [TextContentBlock(type="text", text="next")])).stop_reason == "end_turn"
+    assert "--resume" in json.loads((tmp_path / "cli-policy.json").read_text())["arguments"]
+
+
+async def test_native_transcript_survives_lost_start_acknowledgement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, client, session = await configured(tmp_path, monkeypatch)
+    native = tmp_path / ".claude" / "projects" / "example" / f"{session}.jsonl"
+    native.parent.mkdir(parents=True)
+    native.write_text(json.dumps({"type": "user", "sessionId": session}) + "\n")
+    replacement = ClaudeCodeCLIAgent([sys.executable, str(FIXTURE)])
+    replacement.on_connect(client)
+    await replacement.load_session(str(tmp_path), session, servers(), **policy())
+    assert (await replacement.prompt(session, [TextContentBlock(type="text", text="continue")])).stop_reason == "end_turn"
+    assert "--resume" in json.loads((tmp_path / "cli-policy.json").read_text())["arguments"]
+
+
+@pytest.mark.parametrize("marker", ["claude-code-cli-acp-v1", "claude-code-cli-acp-v2:started"])
+async def test_started_or_legacy_session_never_falls_back_to_fresh_inference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker: str,
+) -> None:
+    _, client, session = await configured(tmp_path, monkeypatch)
+    (tmp_path / f".caipe-cli-{session}").write_text(marker + "\n")
+    replacement = ClaudeCodeCLIAgent([sys.executable, str(FIXTURE)])
+    replacement.on_connect(client)
+    await replacement.load_session(str(tmp_path), session, servers(), **policy())
+    with pytest.raises(RequestError):
+        await replacement.prompt(session, [TextContentBlock(type="text", text="continue")])
+    assert "--resume" in json.loads((tmp_path / "cli-policy.json").read_text())["arguments"]
+
+
 async def test_cli_stop_drains_process_and_rejects_a_concurrent_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     agent, _, session = await configured(tmp_path, monkeypatch)
     prompt = [TextContentBlock(type="text", text="wait")]
@@ -108,6 +167,7 @@ async def test_cli_requires_confirmed_success(tmp_path: Path, monkeypatch: pytes
 
 async def test_cli_rejects_external_mcp_and_missing_native_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / ".claude"))
     agent = ClaudeCodeCLIAgent()
     external = servers()[0].model_copy(update={"url": "https://tools.example.test/mcp"})
     with pytest.raises(ValueError, match="loopback"):

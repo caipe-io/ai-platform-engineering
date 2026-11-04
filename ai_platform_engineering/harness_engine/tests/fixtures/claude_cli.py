@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import signal
 import sys
 import time
@@ -19,8 +20,16 @@ def main() -> None:
     policy = {"arguments": args, "mcp": json.loads(Path(args[args.index("--mcp-config") + 1]).read_text())}
     Path("cli-policy.json").write_text(json.dumps(policy))
     prompt = sys.stdin.read()
+    native = Path(os.environ["CLAUDE_CONFIG_DIR"]) / "projects" / "example" / f"{session}.jsonl"
+    if "--resume" in args and not native.exists():
+        sys.exit("No conversation found")
+    if prompt == "startup-failure":
+        sys.exit(1)
     emit({"type": "system", "subtype": "init", "session_id": session})
-    if prompt == "wait":
+    if prompt != "wait-before-native":
+        native.parent.mkdir(parents=True, exist_ok=True)
+        native.write_text(json.dumps({"type": "user", "sessionId": session, "message": {"content": prompt}}) + "\n")
+    if prompt in {"wait", "wait-before-native"}:
         def stop(signum: int, frame: object) -> None:
             Path("cli-cancelled").touch()
             sys.exit(0)

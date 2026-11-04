@@ -51,7 +51,13 @@ service until an operator enables the Engine integration.
   **Blocked** and remains disabled.
 - **Claude Agent SDK (ACP)** preserves the existing `claude_code_acp` harness.
   **Claude Code CLI (ACP)** is a separate `claude_code_cli_acp` harness that starts
-  the pinned CLI executable directly. Each has its own worker profile and saved
+  the pinned CLI executable directly. ACP session allocation is distinct from a
+  native CLI conversation: an early stop or startup failure before persistence
+  keeps the same allocated ID for the next first invocation. Native transcripts
+  or observed inference/tool output pin subsequent turns to resume; legacy or
+  already-started sessions never fall back to a fresh invocation. Unconfirmed
+  process/tool drain still retains the outer Engine/worker reservation.
+  Each has its own worker profile and saved
   workspace; existing conversations keep their original runtime.
 - The optional `deploy/harness-engine/compose.claude-cli-acp.yaml` overlay adds the
   CLI worker. See [Claude ACP architecture](../../docs/docs/architecture/claude-acp.md)

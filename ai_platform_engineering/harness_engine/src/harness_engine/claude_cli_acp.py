@@ -98,7 +98,7 @@ class ClaudeCodeCLIAgent(Agent):
         self.configure(cwd, mcp_servers, kwargs)
         self.session_id = str(uuid4())
         marker = self.cwd / f".caipe-cli-{self.session_id}"
-        marker.write_text("claude-code-cli-acp-v1\n")
+        marker.write_text("claude-code-cli-acp-v2:allocated\n")
         marker.chmod(0o600)
         return NewSessionResponse(session_id=self.session_id)
 
@@ -108,8 +108,31 @@ class ClaudeCodeCLIAgent(Agent):
         self.configure(cwd, mcp_servers, kwargs)
         if str(UUID(session_id)) != session_id or not (self.cwd / f".caipe-cli-{session_id}").is_file():
             raise ValueError("The CLI session is unavailable in this workspace")
-        self.session_id, self.resume = session_id, True
+        state = (self.cwd / f".caipe-cli-{session_id}").read_text().strip()
+        if state not in {"claude-code-cli-acp-v1", "claude-code-cli-acp-v2:allocated", "claude-code-cli-acp-v2:started"}:
+            raise ValueError("The CLI session state is invalid")
+        # Legacy markers may represent real conversations: never silently reset
+        # one. New allocations resume only after native persistence or output.
+        self.session_id = session_id
+        self.resume = state != "claude-code-cli-acp-v2:allocated" or self.native_conversation_exists(session_id)
         return LoadSessionResponse()
+
+    def native_conversation_exists(self, session_id: str) -> bool:
+        config = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
+        # The worker assigns a private config directory inside this workspace.
+        # A transcript can survive a process loss before we receive its output.
+        for transcript in (config / "projects").glob(f"*/{session_id}.jsonl"):
+            with transcript.open() as records:
+                for line in records:
+                    record = json.loads(line)
+                    if record.get("sessionId") == session_id and record.get("type") in {"user", "assistant"}:
+                        return True
+        return False
+
+    def mark_started(self, session_id: str) -> None:
+        marker = self.cwd / f".caipe-cli-{session_id}"
+        marker.write_text("claude-code-cli-acp-v2:started\n")
+        self.resume = True
 
     async def set_session_mode(self, session_id: str, mode_id: str, **kwargs: Any) -> SetSessionModeResponse:
         if session_id != self.session_id or mode_id != "plan" or self.process:
@@ -176,9 +199,12 @@ class ClaudeCodeCLIAgent(Agent):
                     if event.get("session_id", session_id) != session_id:
                         raise ValueError("CLI returned a different session")
                     kind = event.get("type")
-                    if kind == "system" and event.get("subtype") == "init":
-                        self.resume = True
-                    elif kind == "stream_event" and not event.get("parent_tool_use_id"):
+                    # init acknowledges CLI startup, not a persisted conversation.
+                    # Once any inference/tool output is observed, retain resume
+                    # semantics even if native storage later disappears.
+                    if kind in {"assistant", "user", "stream_event"} or (kind == "result" and event.get("subtype") == "success"):
+                        self.mark_started(session_id)
+                    if kind == "stream_event" and not event.get("parent_tool_use_id"):
                         delta = event.get("event", {}).get("delta", {})
                         if delta.get("type") in {"text_delta", "thinking_delta"}:
                             thought = delta["type"] == "thinking_delta"
@@ -228,6 +254,8 @@ class ClaudeCodeCLIAgent(Agent):
                         process.kill()
                         await process.wait()
                 self.process = None
+                if self.native_conversation_exists(session_id):
+                    self.mark_started(session_id)
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         if session_id != self.session_id:
