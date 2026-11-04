@@ -472,7 +472,7 @@ class SSEClient:
     Args:
         agent_id: Same agent_id as the interrupted stream.
         conversation_id: Same conversation_id as the interrupted stream.
-        form_data: JSON string of form field values, or rejection message.
+        form_data: JSON resume payload with a ``type`` discriminator, sent as ``resume_data``.
         trace_id: Optional Langfuse trace ID.
         client_context: Optional client context dict for system prompt rendering.
 
@@ -485,7 +485,7 @@ class SSEClient:
     payload = {
       "conversation_id": conversation_id,
       "agent_id": agent_id,
-      "form_data": form_data,
+      "resume_data": form_data,
       "protocol": "agui",
       "trace_id": trace_id,
     }

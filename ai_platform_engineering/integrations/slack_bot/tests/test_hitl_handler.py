@@ -316,6 +316,7 @@ class TestHITLCallbackHandler:
     form_data = json.loads(ctx["form_data"])
     assert form_data["type"] == "form_input"
     assert form_data["interrupt_id"] == "int-1"
+    assert form_data["values"] == {}
 
   def test_handle_reject(self):
     handler = HITLCallbackHandler(sse_client=Mock())
@@ -345,8 +346,36 @@ class TestHITLCallbackHandler:
     result = handler.handle_interaction(payload, slack_client)
     assert result is not None
     form_data = json.loads(result["resume_context"]["form_data"])
-    assert form_data["dismissed"] is True
-    assert form_data["interrupt_id"] == "int-1"
+    assert form_data == {"type": "form_input", "interrupt_id": "int-1", "dismissed": True}
+
+  def _tool_approval_payload(self, action_name):
+    return {
+      "actions": [
+        {
+          "action_id": f"hitl_1_{action_name}",
+          "value": json.dumps(
+            {
+              "action": action_name,
+              "form_id": "hitl_1",
+              "conversation_id": "conv-1",
+              "agent_id": "agent-1",
+              "interrupt_id": "int-1",
+              "interrupt_type": "tool_approval",
+            }
+          ),
+        }
+      ],
+      "state": {"values": {}},
+      "channel": {"id": "C123"},
+      "message": {"ts": "msg-ts-1", "thread_ts": "thread-ts-1"},
+    }
+
+  def test_tool_approval_approve_and_reject(self):
+    handler = HITLCallbackHandler(sse_client=Mock())
+    for action_name in ("approve", "reject"):
+      result = handler.handle_interaction(self._tool_approval_payload(action_name), Mock())
+      form_data = json.loads(result["resume_context"]["form_data"])
+      assert form_data == {"type": "tool_approval", "interrupt_id": "int-1", "decision": action_name}
 
   def test_non_hitl_action_returns_none(self):
     handler = HITLCallbackHandler(sse_client=Mock())
