@@ -231,6 +231,9 @@ async function createIndexes(db: Db) {
     safeCreateIndex(db, 'conversations', { deleted_at: 1, client_type: 1, is_archived: 1, is_pinned: -1, updated_at: -1 }),
     safeCreateIndex(db, 'conversations', { deleted_at: 1, source: 1, is_archived: 1, is_pinned: -1, updated_at: -1 }),
     safeCreateIndex(db, 'conversations', { owner_id: 1, client_type: 1, is_archived: 1, deleted_at: 1, updated_at: -1 }),
+    // App startup finds one owned agent chat without paging through unrelated chats.
+    safeCreateIndex(db, 'conversations', { owner_id: 1, 'participants.id': 1, 'metadata.agentic_app_id': 1, is_pinned: -1, updated_at: -1, _id: -1 }),
+    safeCreateIndex(db, 'conversations', { owner_subject: 1, 'participants.id': 1, 'metadata.agentic_app_id': 1, is_pinned: -1, updated_at: -1, _id: -1 }),
 
     // Messages collection
     safeCreateIndex(db, 'messages', { conversation_id: 1, created_at: 1 }),

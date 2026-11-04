@@ -24,6 +24,20 @@ npm run dev
 
 Open http://localhost:3000.
 
+## Shared app assistant startup
+
+- Native and iframe apps use the host's shared popup. Opening it restores one
+  owned app conversation through
+  `GET /api/agentic-apps/{appId}/assistant/conversation`; it does not scan general
+  chat history. Full history loads when the reader selects **History**.
+- The server derives the agent and legacy-history opt-in from the installed
+  manifest and checks app access, agent use, and conversation ownership. Pinned
+  chats keep priority, and empty chats are retained to avoid duplicates.
+- Existing conversation detail, message loading, deep-link authorization, and
+  streaming checks still run before chat activation. The app SDK is unchanged.
+- Mongo-backed acceptance coverage seeds 12,000 unrelated chats. Run it with
+  `APP_ASSISTANT_TEST_MONGODB_URI=mongodb://127.0.0.1:27017 npm test -- --runInBand src/app/api/agentic-apps/`.
+
 ## Runtime Configuration
 
 Settings > Appearance > Interface shadows lets each user turn decorative box

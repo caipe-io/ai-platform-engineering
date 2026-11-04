@@ -25,7 +25,7 @@ export function matchesAssistantConversation(appId: string, agentId: string, age
   return includeLegacy && metadata?.conversation_surface !== "agentic-app" && metadata?.agentic_app_agent_id === undefined;
 }
 
-/** Search explicit web history without changing the user's sidebar filter. */
+/** Discover only the current app's owned chat without loading general history. */
 export async function findLatestAppConversation(
   local: Conversation[], appId: string, agentId: string, includeLegacy = false,
 ): Promise<Conversation | null> {
@@ -35,17 +35,9 @@ export async function findLatestAppConversation(
     return local.filter((conversation) => (!conversation.accessLevel || conversation.accessLevel === "owner") && matches(conversation))
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0] ?? null;
   }
-  // The API returns newest first. Stop at the first owned match; never create
-  // a duplicate if the bounded scan cannot establish that history is exhausted.
-  for (let page = 1; page <= 100; page++) {
-    const response = await apiClient.getConversations({
-      page, page_size: 100, source: "web", client_type: "webui", archived: false,
-    });
-    const found = response.items.find((conversation) =>
-      matches(conversation) && conversation.access_level === "owner",
-    );
-    if (found) return mergeAppConversation([], found)[0];
-    if (!response.has_more) return null;
-  }
-  throw new Error("Assistant history scan limit reached; no new conversation was created.");
+  const { conversation } = await apiClient.getLatestAppConversation(appId);
+  if (!conversation) return null;
+  if (!matches(conversation) || conversation.access_level !== "owner")
+    throw new Error("Conversation is no longer bound to this app assistant");
+  return mergeAppConversation([], conversation)[0];
 }
