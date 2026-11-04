@@ -39,6 +39,14 @@ service until an operator enables the Engine integration.
   configured checkpoint collection and Engine sessions from the internal API.
   Conflicting contexts return `409`. Known native context remains usable when
   optional Engine lookup is unavailable. The BFF does not read Engine's private DB.
+- Rollout availability tradeoff: once Engine is configured, an unbound chat
+  without a native checkpoint requires a successful Engine lookup, even with
+  `HARNESS_ENGINE_DEEP_AGENTS_ENABLED=false`. An outage returns `503`; restoring
+  Engine and retrying preserves the same chat. Absence of a native checkpoint
+  cannot prove that an older Engine session does not exist. Known native context
+  and existing native routing pins remain usable.
+  [Follow-up #3223](https://github.com/caipe-io/ai-platform-engineering/issues/3223)
+  tracks authoritative first-use provenance before broad rollout.
 - Missing Engine configuration returns `503` for saved SDK agents or pinned
   Engine conversations. Legacy/default agents still use Dynamic Agents.
 
