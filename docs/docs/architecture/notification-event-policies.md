@@ -14,6 +14,7 @@
 ## Retiring app events
 
 - Events appear in flat groups by event namespace, with status and permitted channels visible.
+- Use the visible **Disable / Enable** action to change event enablement after confirmation; required approval events show a locked **Required** control.
 - Use **Edit** to open details in a modal; cancelled edits are discarded. **Register event** also opens a modal.
 - Use an app event’s visible **Retire → Confirm retirement** action; no row expansion is required.
 - Retirement is reversible and applies to the registration, not existing notification history or subscriptions.

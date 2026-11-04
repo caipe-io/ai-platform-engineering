@@ -22,7 +22,7 @@ function EventEditor({ event, readOnly, onSaved }: { event: NotificationEventPol
   const [draft, setDraft] = useState(event);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [action, setAction] = useState<"edit" | "retire" | "restore" | null>(null);
+  const [action, setAction] = useState<"edit" | "retire" | "restore" | "enable" | "disable" | null>(null);
   const disabled = readOnly || draft.locked || Boolean(draft.retired) || saving;
   async function changeLifecycle(action: "retire" | "restore"): Promise<void> {
     setSaving(true); setError("");
@@ -31,6 +31,17 @@ function EventEditor({ event, readOnly, onSaved }: { event: NotificationEventPol
       setAction(null);
       await onSaved(action === "retire" ? "Event retired. History is preserved; use Show retired events to restore it." : "Event restored for future notifications. Skipped deliveries are not replayed.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not change event registration"); }
+    finally { setSaving(false); }
+  }
+  async function changeEnabled(enabled: boolean): Promise<void> {
+    setSaving(true); setError("");
+    try {
+      const { locked: _locked, retired: _retired, deliveryGeneration: _generation, ...policy } = event;
+      void _locked; void _retired; void _generation;
+      await request("PATCH", { ...policy, enabled });
+      await onSaved(enabled ? "Event enabled for future notifications." : "Event disabled. History and subscriptions are preserved.");
+      setAction(null);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not change event enablement"); }
     finally { setSaving(false); }
   }
   async function save(change: FormEvent): Promise<void> {
@@ -43,10 +54,11 @@ function EventEditor({ event, readOnly, onSaved }: { event: NotificationEventPol
   }
   return <li className="flex flex-wrap items-center justify-between gap-3 border-b py-4 last:border-0">
     <div className="min-w-0 flex-1"><p className="font-medium break-words">{event.label}</p><p className="break-all text-xs text-muted-foreground">{event.eventType}</p><p className="mt-1 text-xs text-muted-foreground">{event.retired ? "Retired" : event.enabled ? "Enabled" : "Disabled"} · {event.allowedChannels.map((channel) => CHANNEL_LABELS[channel]).join(" · ")}</p></div>
-    <div className="flex gap-2"><Button type="button" variant="outline" aria-label={`Edit ${event.label}`} onClick={() => { setDraft(event); setError(""); setAction("edit"); }}>Edit</Button>
+    <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" aria-label={`Edit ${event.label}`} onClick={() => { setDraft(event); setError(""); setAction("edit"); }}>Edit</Button>
+      {!event.retired && <Button type="button" variant="outline" disabled={readOnly || saving || event.locked} aria-label={event.locked ? `${event.label} is required` : `${event.enabled ? "Disable" : "Enable"} ${event.label}`} onClick={() => { setError(""); setAction(event.enabled ? "disable" : "enable"); }}>{event.locked ? "Required" : event.enabled ? "Disable" : "Enable"}</Button>}
       {event.sourceId.startsWith("app:") && <Button type="button" variant="outline" disabled={readOnly || saving} aria-label={`${event.retired ? "Restore" : "Retire"} ${event.label}`} onClick={() => { setError(""); setAction(event.retired ? "restore" : "retire"); }}>{event.retired ? "Restore" : "Retire"}</Button>}
     </div>
-    <Dialog open={action !== null} onOpenChange={(open) => { if (!open && !saving) setAction(null); }}><DialogContent className="max-h-[85dvh] overflow-y-auto"><DialogHeader><DialogTitle>{action === "edit" ? "Edit event" : action === "restore" ? "Restore event" : "Retire event"}</DialogTitle><DialogDescription>{event.label} · {event.eventType}</DialogDescription></DialogHeader>
+    <Dialog open={action !== null} onOpenChange={(open) => { if (!open && !saving) setAction(null); }}><DialogContent className="max-h-[85dvh] overflow-y-auto"><DialogHeader><DialogTitle>{action === "edit" ? "Edit event" : action === "restore" ? "Restore event" : action === "disable" ? "Disable event" : action === "enable" ? "Enable event" : "Retire event"}</DialogTitle><DialogDescription>{event.label} · {event.eventType}</DialogDescription></DialogHeader>
     {action === "edit" ? <form onSubmit={(change) => void save(change)} className="mt-4 space-y-4">
       {draft.locked && <p className="text-sm text-muted-foreground">Managed by the approval workflow. Only organization admins and configured approvers receive requests. Required inbox delivery cannot be disabled here.</p>}
       <label className="block text-sm">Label<Input value={draft.label} maxLength={100} required disabled={disabled} onChange={(change) => setDraft({ ...draft, label: change.target.value })} /></label>
@@ -65,9 +77,9 @@ function EventEditor({ event, readOnly, onSaved }: { event: NotificationEventPol
         <Button type="button" variant="outline" disabled={saving} onClick={() => setAction(null)}>Cancel</Button>
       </div>
     </form> : <div className="space-y-4">
-      <p className="text-sm">{action === "retire" ? "Future delivery will stop. History is kept and you can restore it. Delivery already in progress may finish." : "Allow future notifications again. Previously skipped deliveries will not replay."}</p>
+      <p className="text-sm">{action === "retire" ? "Future delivery will stop. History is kept and you can restore it. Delivery already in progress may finish." : action === "disable" ? "Stop future notifications for this event across all subscribers. History and subscriptions are preserved. You can enable it again. Delivery already in progress may finish." : "Allow future notifications again. Previously skipped deliveries will not replay."}</p>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      <div className="flex justify-end gap-3"><Button type="button" variant="outline" disabled={saving} onClick={() => setAction(null)}>Cancel</Button><Button type="button" variant={action === "retire" ? "destructive" : "default"} disabled={readOnly || saving} onClick={() => { if (action === "retire" || action === "restore") void changeLifecycle(action); }}>{saving ? "Saving…" : action === "retire" ? "Confirm retirement" : "Restore event"}</Button></div>
+      <div className="flex justify-end gap-3"><Button type="button" variant="outline" disabled={saving} onClick={() => setAction(null)}>Cancel</Button><Button type="button" variant={action === "retire" ? "destructive" : "default"} disabled={readOnly || saving} onClick={() => { if (action === "retire" || action === "restore") void changeLifecycle(action); else if (action === "enable" || action === "disable") void changeEnabled(action === "enable"); }}>{saving ? "Saving…" : action === "retire" ? "Confirm retirement" : action === "disable" ? "Confirm disable" : action === "enable" ? "Enable event" : "Restore event"}</Button></div>
     </div>}
     </DialogContent></Dialog>
   </li>;

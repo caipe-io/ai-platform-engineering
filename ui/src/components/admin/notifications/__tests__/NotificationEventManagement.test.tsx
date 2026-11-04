@@ -87,3 +87,36 @@ it("keeps grouped row actions visible and discards cancelled edits", async () =>
   expect(screen.getByLabelText("Label")).toHaveValue("Service degraded");
   expect(mockFetch.mock.calls.some((call) => call[1]?.method === "PATCH")).toBe(false);
 });
+
+it.each([true, false])("changes enablement from the row with revision guards (enabled=%s)", async (enabled) => {
+  const current = { ...event, enabled, revision: 3 };
+  const updated = { ...current, enabled: !enabled, revision: 4 };
+  mockFetch.mockResolvedValue(reply([{ id: "platform", label: "Platform", events: [current] }]));
+  render(<NotificationEventManagement />);
+  const action = enabled ? "Disable" : "Enable";
+  fireEvent.click(await screen.findByRole("button", { name: `${action} Service degraded` }));
+  expect(mockFetch.mock.calls.some((call) => call[1]?.method === "PATCH")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  fireEvent.click(screen.getByRole("button", { name: `${action} Service degraded` }));
+  mockFetch.mockResolvedValue(reply([{ id: "platform", label: "Platform", events: [updated] }]));
+  fireEvent.click(screen.getByRole("button", { name: enabled ? "Confirm disable" : "Enable event" }));
+  await screen.findByRole("button", { name: `${enabled ? "Enable" : "Disable"} Service degraded` });
+  const body = JSON.parse(mockFetch.mock.calls.find((call) => call[1]?.method === "PATCH")[1].body);
+  expect(body).toMatchObject({ revision: 3, enabled: !enabled, audience: "organization_admins" });
+  expect(body).not.toHaveProperty("locked");
+  expect(body).not.toHaveProperty("deliveryGeneration");
+});
+it("keeps required workflow events locked on the row", async () => {
+  mockFetch.mockResolvedValue(reply([{ id: "platform", label: "Platform", events: [{ ...event, label: "Approval requested", eventType: "approval.requested", locked: true }] }]));
+  render(<NotificationEventManagement />);
+  expect(await screen.findByRole("button", { name: "Approval requested is required" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Disable Approval requested" })).not.toBeInTheDocument();
+});
+it("retains confirmation and reports a rejected quick enablement change", async () => {
+  render(<NotificationEventManagement />);
+  fireEvent.click(await screen.findByRole("button", { name: "Disable Service degraded" }));
+  mockFetch.mockResolvedValue({ ok: false, json: async () => ({ success: false, error: "Reload this event before editing" }) });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm disable" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Reload this event before editing");
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+});
