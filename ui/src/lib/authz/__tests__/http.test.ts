@@ -269,6 +269,32 @@ describe("requireManage (grant meta-authz)", () => {
     expect(mockEmitGrantAudit).not.toHaveBeenCalled();
   });
 
+  it("uses the model's delete capability for a conversation manager", async () => {
+    mockAuthorize.mockImplementation(async ({ action }) => action === "delete"
+      ? { decision: "ALLOW", reason: "OK" }
+      : { decision: "DENY", reason: "AUTHZ_UNAVAILABLE", retriable: true });
+    await expect(requireManage(caller, { type: "conversation", id: "example-chat" }, ctx)).resolves.toBeUndefined();
+    expect(mockAuthorize).toHaveBeenCalledTimes(1);
+    expect(mockAuthorize).toHaveBeenCalledWith(
+      { subject: caller, resource: { type: "conversation", id: "example-chat" }, action: "delete" }, ctx,
+    );
+  });
+
+  it.each(["read", "write", "share"])("does not treat conversation %s access as management", async (capability) => {
+    mockAuthorize.mockImplementation(async ({ action }) => action === capability
+      ? { decision: "ALLOW", reason: "OK" }
+      : { decision: "DENY", reason: "NO_CAPABILITY" });
+    await expect(requireManage(caller, { type: "conversation", id: "example-chat" }, ctx)).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("fails closed when conversation management cannot be checked", async () => {
+    mockAuthorize.mockResolvedValue({ decision: "DENY", reason: "AUTHZ_UNAVAILABLE", retriable: true });
+    await expect(requireManage(caller, { type: "conversation", id: "example-chat" }, ctx)).rejects.toMatchObject({
+      status: 503, code: "AUTHZ_UNAVAILABLE",
+    });
+    expect(mockAuthorize).toHaveBeenCalledTimes(1);
+  });
+
   it("passes when an organization admin lacks direct resource manage", async () => {
     mockAuthorize
       .mockResolvedValueOnce({ decision: "DENY", reason: "NO_CAPABILITY", retriable: false })

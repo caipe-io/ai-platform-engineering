@@ -303,14 +303,17 @@ export interface GrantAuditRequest {
   intent: GrantIntent;
 }
 
-/** Per-resource meta-authz: the caller must hold `manage` on the resource to grant/revoke. */
+/** Require resource management before changing grants; conversations express it as `delete`. */
 export async function requireManage(
   caller: Caller,
   resource: Resource,
   ctx: DecisionContext,
   audit?: GrantAuditRequest,
 ): Promise<void> {
-  const check = await authorize({ subject: caller, resource, action: "manage" }, ctx);
+  // Conversation managers and owners have can_delete, with no can_manage relation.
+  // can_share alone must not permit granting manager/delete capabilities.
+  const action = resource.type === "conversation" ? "delete" : "manage";
+  const check = await authorize({ subject: caller, resource, action }, ctx);
   if (check.decision === "ALLOW") return;
   if (check.reason === "AUTHZ_UNAVAILABLE" || check.retriable) {
     if (audit) {
