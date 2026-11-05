@@ -58,7 +58,7 @@ class AgentCoreRuntimeTarget(BaseModel):
 
 
 class ClaudeSDKProfile(BaseModel):
-    """Operator-owned Claude Agent SDK process profile."""
+    """Operator-owned Claude model and workspace policy."""
 
     model: str = Field(..., min_length=1, max_length=128)
     cwd: str = Field("/workspace", min_length=1, max_length=1024)
@@ -74,7 +74,7 @@ class ClaudeWorkerProfile(BaseModel):
     profile_id: str = Field(..., pattern=r"^[A-Za-z0-9_.-]{1,64}$")
     description: str = Field("", max_length=512)
     tools_enabled: bool = False
-    runtime: Literal["sdk", "claude_code_acp"] = "sdk"
+    runtime: Literal["sdk", "claude_code_acp", "claude_code_cli_acp"] = "sdk"
 
     @model_validator(mode="after")
     def validate_connection(self) -> ClaudeWorkerProfile:
@@ -107,6 +107,7 @@ class Settings(BaseSettings):
     claude_worker_profiles_json: SecretStr = SecretStr("{}")
     claude_tool_broker_url: str | None = None
     claude_acp_command: list[str] = Field(default_factory=list)
+    claude_acp_runtime: Literal["claude_code_acp", "claude_code_cli_acp"] = "claude_code_acp"
     claude_acp_tools: list[str] = Field(default_factory=list)
     deep_agents_enabled: bool = False
 

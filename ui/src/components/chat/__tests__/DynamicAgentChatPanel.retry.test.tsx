@@ -169,6 +169,9 @@ describe("Engine run recovery after refresh", () => {
       expect(mockChatState.setConversationStreaming).toHaveBeenCalledWith("chat-1", expect.objectContaining({ readOnly: true }));
       await waitFor(() => expect(mockConversation.messages[0]).toMatchObject({ isFinal: true, content: "Recovered final answer" }));
       expect(screen.queryByRole("textbox")).toBeNull();
+      expect(screen.getByText("Read-only conversation")).toBeInTheDocument();
+      expect(screen.getByText(/Sharing this chat does not grant access to its agent/)).toBeInTheDocument();
+      expect(screen.getByText(/To reply, ask the owner to share the agent with you/)).toBeInTheDocument();
       expect(mockStreamMessage).not.toHaveBeenCalled();
     } finally { fetchMock.mockRestore(); }
   });
@@ -438,6 +441,8 @@ describe("retry is unavailable when it would be unsafe", () => {
 
   it("hides retry in a read-only shared conversation", () => {
     render(<ChatPanel agentId="example-agent" conversationId="chat-1" readOnly readOnlyReason="shared_readonly" />);
+    expect(screen.getByText("Read-only conversation")).toBeInTheDocument();
+    expect(screen.getByText(/ask the owner for Can edit access to this chat/)).toBeInTheDocument();
     expectNoRetry();
   });
 

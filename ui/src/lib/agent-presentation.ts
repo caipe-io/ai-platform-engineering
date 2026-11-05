@@ -40,7 +40,13 @@ const HARNESS_PRESENTATIONS: Record<string, HarnessPresentation> = {
     dotClassName: "bg-violet-500",
   },
   claude_code_acp: {
-    id: "claude_code_acp", label: "Claude (ACP)", shortLabel: "Claude ACP",
+    id: "claude_code_acp", label: "Claude Agent SDK (ACP)", shortLabel: "Claude SDK ACP",
+    logoSrc: "/provider-logos/claude.svg",
+    badgeClassName: "border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300",
+    dotClassName: "bg-orange-500",
+  },
+  claude_code_cli_acp: {
+    id: "claude_code_cli_acp", label: "Claude Code CLI (ACP)", shortLabel: "Claude Code ACP",
     logoSrc: "/provider-logos/claude.svg",
     badgeClassName: "border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300",
     dotClassName: "bg-orange-500",

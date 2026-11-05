@@ -2373,14 +2373,15 @@ export function ChatPanel({
   };
 
   const showClaudeSession = !agent?.presentation?.app && (observedRuntime?.conversationId === activeConversationId
-    ? observedRuntime.harnessId === "claude_code_acp"
-    : !conversation?.messages.length && agent?.execution_harness_id === "claude_code_acp");
+    ? ["claude_code_acp", "claude_code_cli_acp"].includes(observedRuntime.harnessId ?? "")
+    : !conversation?.messages.length && ["claude_code_acp", "claude_code_cli_acp"].includes(agent?.execution_harness_id ?? ""));
   const headerControls = (
     <div className="flex max-w-full flex-wrap items-center justify-end gap-1">
       {apiConversation && <ApiConversationIndicator readOnly={panelReadOnly} />}
       <ConversationViewers conversationId={conversationId ?? activeConversationId} />
       {showClaudeSession ? (
         <ClaudeSessionPanel activity={isStopping ? "stopping" : externalActivity?.state ?? (isThisConversationStreaming ? "running" : "idle")}
+          cli={(observedRuntime?.conversationId === activeConversationId ? observedRuntime.harnessId : agent?.execution_harness_id) === "claude_code_cli_acp"}
           readOnly={panelReadOnly || Boolean(readOnlySubscription)} />
       ) : showAgentHeader && (agent ? (
         <AgentHarnessBadge harnessId={agent.execution_harness_id} presentation={agent.presentation} />
@@ -2733,9 +2734,10 @@ export function ChatPanel({
       {/* Input Area - Fixed bottom, doesn't scroll */}
       {panelReadOnly ? (
         <div className={`border-t border-border shrink-0 ${panelReadOnlyReason === 'agent_deleted' || panelReadOnlyReason === 'agent_disabled' ? 'bg-red-500/10' : 'bg-amber-500/10'}`}>
-          <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+          <div className="max-w-7xl mx-auto px-6 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className={`flex items-center gap-2 ${panelReadOnlyReason === 'agent_deleted' || panelReadOnlyReason === 'agent_disabled' ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}`}>
-              <ShieldCheck className="h-4 w-4 shrink-0" />
+              <ShieldCheck className="h-4 w-4 shrink-0 self-start mt-0.5" aria-hidden="true" />
+              <div className="min-w-0 space-y-1">
               {panelReadOnlyReason === 'admin_audit' ? (
                 <>
                   <span className="text-sm font-medium">Read-Only Audit Mode</span>
@@ -2748,8 +2750,8 @@ export function ChatPanel({
                 </>
               ) : panelReadOnlyReason === 'agent_unavailable' ? (
                 <>
-                  <span className="text-sm font-medium">Agent unavailable for new messages</span>
-                  <span className="text-xs">— Agent access may be restricted. You can still view this chat and follow its existing response. Ask the owner to check access.</span>
+                  <span className="block text-sm font-medium">Read-only conversation</span>
+                  <span className="block text-xs">Sharing this chat does not grant access to its agent. You can read messages and follow live responses. To reply, ask the owner to share the agent with you.</span>
                 </>
               ) : panelReadOnlyReason === 'agent_disabled' ? (
                 <>
@@ -2758,10 +2760,11 @@ export function ChatPanel({
                 </>
               ) : (
                 <>
-                  <span className="text-sm font-medium">View Only</span>
-                  <span className="text-xs text-amber-600 dark:text-amber-500">— This conversation was shared with you as read-only.</span>
+                  <span className="block text-sm font-medium">Read-only conversation</span>
+                  <span className="block text-xs text-amber-600 dark:text-amber-500">You can read messages and follow live responses. To reply, ask the owner for Can edit access to this chat. You also need access to its agent.</span>
                 </>
               )}
+              </div>
             </div>
             {panelReadOnlyReason === 'admin_audit' ? (
             <NavigationProgressLink

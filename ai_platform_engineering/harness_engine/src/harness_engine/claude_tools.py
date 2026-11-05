@@ -70,13 +70,21 @@ class ClaudeToolBroker:
                             )
                             response.raise_for_status()
                         except httpx.HTTPError as error:
+                            status = error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
                             logger.warning(
                                 "SDK MCP call failed",
                                 extra={
                                     "run_id": context.turn.run_id,
+                                    "tool_id": selected,
+                                    "http_status": status,
                                     "error_type": type(error).__name__,
                                 },
                             )
+                            if status in {401, 403}:
+                                raise RuntimeError(
+                                    f"MCP tool access denied (HTTP {status}); check your sign-in, connected credentials "
+                                    "and tool-call permissions. The request was not retried."
+                                ) from None
                             raise RuntimeError(
                                 "MCP tool result could not be confirmed; do not retry automatically"
                             ) from None

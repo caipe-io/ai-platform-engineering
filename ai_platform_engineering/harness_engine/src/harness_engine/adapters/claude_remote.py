@@ -44,15 +44,16 @@ class RemoteAttempt:
 
 class RemoteClaudeSDKAdapter:
     def __init__(
-        self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None, *, claude_acp: bool = False
+        self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None, *,
+        claude_acp: bool = False, claude_cli_acp: bool = False,
     ) -> None:
+        runtime = "claude_code_cli_acp" if claude_cli_acp else "claude_code_acp" if claude_acp else None
         self._profiles = {
             key: value
             for key, value in settings.claude_worker_profiles().items()
-            if not claude_acp or value.runtime == "claude_code_acp"
+            if (value.runtime == runtime if runtime else value.runtime != "claude_code_cli_acp")
         }
-        self._harness_id = "claude_code_acp" if claude_acp else "claude_agent_sdk_remote"
-        self._claude_acp = claude_acp
+        self._harness_id = runtime or "claude_agent_sdk_remote"
         self._template = ClaudeSDKAdapter(settings.model_copy(update={"storage_backend": "memory"}))
         self._transport = transport
         self._active: dict[str, RemoteAttempt] = {}
@@ -66,7 +67,7 @@ class RemoteClaudeSDKAdapter:
         return self._template.descriptor.model_copy(
             update={
                 "id": self._harness_id,
-                "display_name": "Claude (ACP)" if self._claude_acp else "Claude Agent SDK (Remote worker)",
+                "display_name": {"claude_code_acp": "Claude Agent SDK (ACP)", "claude_code_cli_acp": "Claude Code CLI (ACP)"}.get(self._harness_id, "Claude Agent SDK (Remote worker)"),
                 "execution_mode": ExecutionMode.REMOTE_WORKER,
                 "availability": "available" if self._profiles else "misconfigured",
                 "profiles": [
@@ -83,7 +84,7 @@ class RemoteClaudeSDKAdapter:
                     "thread.persistence": native,
                     "session.cross_replica": CapabilityResult(
                         level=CapabilityLevel.UNAVAILABLE
-                        if any(p.runtime == "claude_code_acp" for p in self._profiles.values())
+                        if any(p.runtime in {"claude_code_acp", "claude_code_cli_acp"} for p in self._profiles.values())
                         else CapabilityLevel.NATIVE,
                         explanation="Claude Code ACP requires a persistent worker volume; SDK workers share MongoDB transcripts",
                     ),

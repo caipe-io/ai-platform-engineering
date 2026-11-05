@@ -524,6 +524,33 @@ async def test_cancelled_sdk_tool_drains_the_dispatched_call_without_retry(
     assert count == 1
 
 
+@pytest.mark.parametrize("status", [401, 403, 502, None])
+async def test_broker_distinguishes_access_denial_without_retrying(settings: Settings, status: int | None) -> None:
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        if json.loads(request.content)["operation"] == "list":
+            return httpx.Response(200, json={"success": True, "data": {"tools": [
+                {"tool_id": "example.lookup", "input_schema": {"type": "object"}},
+            ]}})
+        calls += 1
+        if status is None:
+            raise httpx.ReadTimeout("private-upstream-detail", request=request)
+        return httpx.Response(status, json={"error": "private-upstream-detail"})
+
+    broker = ClaudeToolBroker(
+        settings.model_copy(update={"claude_tool_broker_url": "http://broker.example.test"}),
+        httpx.MockTransport(respond),
+    )
+    async with broker.bind_tools(context()) as (tools, _):
+        message = f"access denied \\(HTTP {status}\\)" if status in {401, 403} else "could not be confirmed"
+        with pytest.raises(RuntimeError, match=message) as caught:
+            await tools[0].handler({})
+        assert "private-upstream-detail" not in str(caught.value)
+    assert calls == 1
+
+
 async def test_broker_exposes_duplicate_bindings_only_once(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
     exposed: list[Any] = []
     ctx = context()

@@ -73,6 +73,7 @@ describe('ShareDialog permissions', () => {
       expect(screen.getByText('Can edit')).toBeInTheDocument()
     })
 
+    expect(screen.getByText(/Chat sharing does not grant agent access/)).toBeInTheDocument()
     expect(screen.getByText('Shared by')).toBeInTheDocument()
     expect(screen.queryByPlaceholderText('Search by email or team name...')).not.toBeInTheDocument()
   })

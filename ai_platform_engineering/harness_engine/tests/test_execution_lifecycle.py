@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from harness_engine.adapters.deep_agents import DeepAgentsSessionManager
 from harness_engine.main import create_app
 from harness_engine.models import CanonicalEventDraft, CapabilityLevel, CapabilityResult, RunContext, TurnOutcome
-from harness_engine.repository import MongoRunRepository
+from harness_engine.repository import InMemoryRunRepository, MongoRunRepository
 from harness_engine.sessions import ProviderSessionContext
 from tests.conftest import FakeHarnessAdapter, auth_headers, blueprint
 
@@ -159,3 +159,34 @@ def test_invalid_blueprint_returns_serializable_validation_details(settings) -> 
         response = client.put("/api/v1/agents/agent-example", headers=auth_headers(), json={"blueprint": invalid})
         assert response.status_code == 422
         assert response.json()["detail"]["issues"][0]["severity"] == "error"
+
+
+def test_stop_after_rewind_commit_preserves_the_committed_checkpoint(settings) -> None:
+    repository = InMemoryRunRepository()
+
+    class CommittedRewindAdapter(PausingAdapter):
+        @property
+        def descriptor(self):
+            descriptor = super().descriptor
+            return descriptor.model_copy(update={"capabilities": {
+                **descriptor.capabilities, "thread.rewind": CapabilityResult(level=CapabilityLevel.NATIVE),
+            }})
+
+        async def execute(self, context: RunContext) -> AsyncIterator[CanonicalEventDraft | TurnOutcome]:
+            await repository.request_cancellation(context.turn.run_id)
+            yield TurnOutcome(status="completed", result={"checkpoint_id": "committed-example"})
+
+    app = create_app(settings=settings, repository=repository, adapters=[CommittedRewindAdapter()])
+    with TestClient(app) as client:
+        client.put("/api/v1/agents/agent-example", headers=auth_headers(), json={"blueprint": blueprint()})
+        response = client.post("/api/v1/runs", headers=auth_headers(), json={
+            "agent_id": "agent-example", "conversation_id": "conversation-example",
+            "command": "rewind", "turn_id": "turn-example",
+            "rewind_data": {"message_content": "example", "content_occurrence": 1},
+        })
+        assert response.status_code == 202, response.text
+        run = wait_for_run(client, response.json()["data"]["run_id"])
+        assert run["status"] == "completed"
+        events = client.get(f"/api/v1/runs/{run['run_id']}/events", headers=auth_headers()).json()["data"]["events"]
+        assert any(event["event_type"] == "result.updated" and event["data"]["checkpoint_id"] == "committed-example" for event in events)
+        assert events[-1]["event_type"] == "run.completed"

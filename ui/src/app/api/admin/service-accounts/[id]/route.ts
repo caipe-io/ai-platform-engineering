@@ -3,11 +3,11 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth-config";
 import {
   checkOpenFgaTuple,
-  deleteExactOpenFgaTuples,
   listOpenFgaObjects,
 } from "@/lib/rbac/openfga";
 import type { OpenFgaTupleKey } from "@/lib/rbac/openfga";
 import { deleteServiceAccountClient } from "@/lib/rbac/keycloak-admin";
+import { reconcileTupleDiff } from "@/lib/authz";
 import { logOpenFgaRebacAuditEvent } from "@/lib/rbac/audit";
 import { getBySub, updateStatus } from "@/lib/service-accounts";
 import { isProtectedServiceAccount } from "@/types/mongodb";
@@ -262,14 +262,19 @@ export async function DELETE(_request: Request, context: RouteContext) {
     // SA's tokens fail validation and any lingering OpenFGA tuples are unusable
     // (no live credential can present them). Each step is idempotent, so a crash
     // mid-sequence is fully repaired by re-running DELETE: deleteServiceAccountClient
-    // tolerates 404, deleteExactOpenFgaTuples is a no-op on absent tuples, and
+    // tolerates 404, CAS reconciliation filters absent direct tuples before writing, and
     // updateStatus is idempotent. We deliberately do NOT reorder to
     // tuples→Mongo→client: that would leave a window where Mongo reports
     // "revoked" while the credential still authenticates if the final step failed.
     // 1. Delete the Keycloak client (tolerates already-gone).
     await deleteServiceAccountClient(doc.client_uuid);
     // 2. Delete all OpenFGA tuples (ownership + coarse-gate baseline + scopes).
-    await deleteExactOpenFgaTuples(tuples);
+    // Optional baselines and computed scopes may not have direct tuples.
+    // Reconcile through CAS to filter absent keys and invalidate cached grants.
+    await reconcileTupleDiff(
+      { writes: [], deletes: tuples },
+      { caller: { type: "user", id: session.sub }, source: "service_account_revoke" },
+    );
     // 3. Mark revoked in Mongo (retain doc; frees the name for reuse).
     await updateStatus(id, "revoked");
 

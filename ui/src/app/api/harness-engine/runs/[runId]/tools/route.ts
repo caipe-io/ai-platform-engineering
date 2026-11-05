@@ -27,7 +27,7 @@ export const POST = withErrorHandler(async (
   if (!body || !["list", "call"].includes(body.operation)) throw new ApiError("Expected list or call", 400);
   const run = (await access.response.json()).data;
   if (run.status !== "running" || run.cancellation_requested ||
-      !["claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp"].includes(run.harness_id)) {
+      !["claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp", "claude_code_cli_acp"].includes(run.harness_id)) {
     throw new ApiError("Tools require an active Claude run", 409);
   }
   const saved = await proxyHarnessEngine(access.config, access.auth,
