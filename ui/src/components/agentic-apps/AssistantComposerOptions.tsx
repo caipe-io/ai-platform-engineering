@@ -51,6 +51,11 @@ export function useAppAssistantPresentation(appId: string | undefined, agentId: 
 /** Runtime configuration can narrow publisher-declared choices, never add request keys. */
 export function useAssistantComposerOptions(options?: AssistantOptions, configuration?: AssistantConfiguration, scope = "") {
   const [selections, setSelections] = useState<Record<string, { signature: string; choice: string }>>({});
+  const [selectionScope, setSelectionScope] = useState(scope);
+  if (selectionScope !== scope) {
+    setSelectionScope(scope);
+    setSelections({});
+  }
   const controls = (options?.requireConfiguration && !configuration ? [] : options?.controls ?? []).map(control => {
     const configured = configuration?.controls?.[control.id];
     const choices = control.choices.filter(choice => !configured || configured.choices.includes(choice.id));
@@ -64,10 +69,15 @@ export function useAssistantComposerOptions(options?: AssistantOptions, configur
     .map(c => [c.requestKey, c.choice.value]));
   const composerHeader = controls.some(c => c.choices.length > 1) ? <div className="flex flex-wrap gap-2">
     {controls.filter(c => c.choices.length > 1).map(control => <label key={control.id} className="flex items-center gap-2 text-xs">
-      {control.label}<Select aria-label={control.label} className="h-8 w-auto text-xs" value={control.choice.id}
+      {control.kind === "checkbox" ? <><input type="checkbox" className="h-4 w-4 rounded border-input accent-primary"
+        checked={control.choice.value === true}
+        onChange={event => {
+          const choice = control.choices.find(choice => choice.value === event.target.checked);
+          if (choice) setSelections(previous => ({ ...previous, [control.id]: { signature: control.signature, choice: choice.id } }));
+        }} />{control.label}</> : <>{control.label}<Select aria-label={control.label} className="h-8 w-auto text-xs" value={control.choice.id}
         onChange={event => setSelections(previous => ({ ...previous, [control.id]: { signature: control.signature, choice: event.target.value } }))}>
         {control.choices.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
-      </Select>
+      </Select></>}
     </label>)}
   </div> : undefined;
   return { requestOptions, composerHeader };
