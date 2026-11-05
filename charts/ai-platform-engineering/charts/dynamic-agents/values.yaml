@@ -7,6 +7,8 @@ fullnameOverride: ""
 
 # Container image configuration
 image:
+  # Optional Docker CMD override; retains the image's PID 1 entrypoint.
+  args: []
   repository: "ghcr.io/caipe-io/caipe-dynamic-agents"
   pullPolicy: "Always"
   # tag defaults to .Chart.AppVersion when not specified

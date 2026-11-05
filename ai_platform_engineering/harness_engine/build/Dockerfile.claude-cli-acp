@@ -24,6 +24,8 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE="1" \
     HARNESS_ENGINE_CLAUDE_ACP_RUNTIME=claude_code_cli_acp \
     HARNESS_ENGINE_CLAUDE_ACP_COMMAND='["python","/app/src/harness_engine/claude_cli_acp.py"]'
+RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/*
 USER 65532:65532
 EXPOSE 8010
+ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
 CMD ["python", "-m", "harness_engine.claude_worker"]
