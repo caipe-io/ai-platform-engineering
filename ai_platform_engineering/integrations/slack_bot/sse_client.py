@@ -17,6 +17,10 @@ from typing import Any, Dict, Iterator, Optional
 import httpx
 from loguru import logger
 
+if __package__:
+  from .utils.harness_gateway import NativeConversation, stream_gateway
+else:
+  from utils.harness_gateway import NativeConversation, stream_gateway
 
 # Spec 104 Story 3 — per-request OBO token. The Slack handler thread sets
 # this BEFORE calling into the SSE client (directly or via utils/ai.py), so
@@ -187,7 +191,8 @@ class SSEClient:
   - resume_stream(): POST /api/v1/chat/stream/resume (SSE stream)
   """
 
-  def __init__(self, base_url: str, timeout: int = 300, auth_client: Optional[Any] = None):
+  def __init__(self, base_url: str, timeout: int = 300, auth_client: Optional[Any] = None,
+               harness_gateway_enabled: bool = False):
     """Initialize SSE client.
 
     Args:
@@ -198,6 +203,7 @@ class SSEClient:
     self.base_url = base_url.rstrip("/")
     self.timeout = timeout
     self.auth_client = auth_client
+    self.harness_gateway_enabled = harness_gateway_enabled
 
   def _get_headers(self, bearer_token: Optional[str] = None) -> Dict[str, str]:
     """Build request headers with auth and client source.
@@ -455,6 +461,18 @@ class SSEClient:
     if reasoning_effort:
       payload["reasoning_effort"] = reasoning_effort
 
+    if self.harness_gateway_enabled:
+      try:
+        with httpx.Client(timeout=self.timeout) as client:
+          for data in stream_gateway(client, self.base_url, payload, lambda: self._get_headers(bearer_token)):
+            event = self._parse_event(data)
+            if event is not None:
+              yield event
+        return
+      except NativeConversation:
+        # Only an explicit pre-admission native/app binding may use this path.
+        pass
+
     url = f"{self.base_url}/api/v1/chat/stream/start"
     yield from self._stream_sse(url, payload, bearer_token=bearer_token)
 
@@ -535,6 +553,20 @@ class SSEClient:
       payload["files"] = files
     if reasoning_effort:
       payload["reasoning_effort"] = reasoning_effort
+
+    if self.harness_gateway_enabled:
+      try:
+        content: list[str] = []
+        with httpx.Client(timeout=self.timeout) as client:
+          for data in stream_gateway(client, self.base_url, payload, lambda: self._get_headers(bearer_token)):
+            event = self._parse_event(data)
+            if event is not None and event.type == SSEEventType.TEXT_MESSAGE_CONTENT and event.delta:
+              content.append(event.delta)
+            elif event is not None and event.type == SSEEventType.RUN_ERROR:
+              return {"success": False, "error": event.message or "Harness run failed"}
+        return {"success": True, "content": "".join(content)}
+      except NativeConversation:
+        pass
 
     headers = self._get_headers(bearer_token=bearer_token)
     headers["Accept"] = "application/json"

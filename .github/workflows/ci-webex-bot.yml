@@ -1,5 +1,5 @@
 name: "[CI] Webex Bot Build and Push"
-description: "Build and push Webex Bot Docker image"
+# Build and push Webex Bot Docker image.
 
 on:
   push:
@@ -11,6 +11,8 @@ on:
     paths:
       - '.github/workflows/ci-webex-bot.yml'
       - 'ai_platform_engineering/integrations/webex_bot/**'
+      - 'ai_platform_engineering/integrations/slack_bot/utils/**'
+      - 'tests/test_bot_harness_gateway.py'
       - 'build/Dockerfile.webex-bot'
   workflow_dispatch:
     inputs:
@@ -61,6 +63,7 @@ jobs:
             webex_bot:
               - '.github/workflows/ci-webex-bot.yml'
               - 'ai_platform_engineering/integrations/webex_bot/**'
+              - 'ai_platform_engineering/integrations/slack_bot/utils/**'
               - 'ai_platform_engineering/integrations/webex_bot/pyproject.toml'
               - 'ai_platform_engineering/integrations/webex_bot/uv.lock'
               - 'build/Dockerfile.webex-bot'
@@ -111,7 +114,7 @@ jobs:
           cd ai_platform_engineering/integrations/webex_bot
           uv sync --group unittest
           cd ../../..
-          uv run --project ai_platform_engineering/integrations/webex_bot pytest ai_platform_engineering/integrations/webex_bot/tests/ -v -m "not integration"
+          uv run --project ai_platform_engineering/integrations/webex_bot pytest ai_platform_engineering/integrations/webex_bot/tests/ tests/test_bot_harness_gateway.py -v -m "not integration"
 
   # Build natively per-platform (no QEMU) and push by digest only;
   # merge-manifests combines the per-arch digests into the final tagged

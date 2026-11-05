@@ -10,6 +10,7 @@ on:
   pull_request:
     paths:
       - 'ai_platform_engineering/integrations/slack_bot/**'
+      - 'tests/test_bot_harness_gateway.py'
       - 'build/Dockerfile.slack-bot'
   workflow_dispatch:
     inputs:
@@ -108,7 +109,7 @@ jobs:
           cd ai_platform_engineering/integrations/slack_bot
           uv sync --group unittest
           cd ../../..
-          uv run --project ai_platform_engineering/integrations/slack_bot pytest ai_platform_engineering/integrations/slack_bot/tests/ -v -m "not integration"
+          uv run --project ai_platform_engineering/integrations/slack_bot pytest ai_platform_engineering/integrations/slack_bot/tests/ tests/test_bot_harness_gateway.py -v -m "not integration"
 
   # Build natively per-platform (no QEMU) and push by digest only;
   # merge-manifests combines the per-arch digests into the final tagged

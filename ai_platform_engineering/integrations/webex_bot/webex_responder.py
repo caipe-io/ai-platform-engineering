@@ -393,7 +393,8 @@ class WebexThreadedStreamDispatcher:
     ) -> None:
         self._webex_api = webex_api or WebexRestApi()
         self._sse_client = sse_client or WebexSSEClient(
-            os.environ.get("CAIPE_API_URL", "http://caipe-ui:3000")
+            os.environ.get("CAIPE_API_URL", "http://caipe-ui:3000"),
+            harness_gateway_enabled=os.environ.get("WEBEX_HARNESS_GATEWAY_ENABLED", "false").lower() == "true",
         )
         self._update_every_chars = max(1, update_every_chars)
         self._max_message_edits = (

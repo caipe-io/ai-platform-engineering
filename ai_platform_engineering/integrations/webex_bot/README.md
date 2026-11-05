@@ -43,3 +43,17 @@ only after that write succeeds. Existing conversation permissions still apply;
 Webex space membership does not grant browser access. Older metadata-only turns
 are not backfilled. Missing/invalid public URLs or failed writes produce an
 explicit link-unavailable notice.
+
+## Optional Harness Gateway transport
+
+- Set `WEBEX_HARNESS_GATEWAY_ENABLED=true` to admit Engine runs and subscribe
+  to replayable AG-UI events through the BFF at `CAIPE_API_URL`.
+- Default: `false`, independent of Slack's setting. Applies to all bot identities
+  in this Webex process; existing room/user policies and OBO identity still apply.
+- Requires BFF Harness Engine configuration and an Engine-enabled agent.
+  Native/app bindings keep the existing signed BFF dispatch; this switch does
+  not migrate threads. Permission failures never fall back to another runtime.
+- Reuses `slack_bot/utils/harness_gateway.py`, already included in the Webex image.
+
+See the [transport contract](../../../docs/docs/integrations/bot-harness-gateway.md)
+for deployment settings and restart limitations.

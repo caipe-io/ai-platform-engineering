@@ -1,5 +1,5 @@
 name: "[Prebuild] Webex Bot Docker Build and Push"
-description: "Build and push Webex Bot Docker image for prebuild branches"
+# Build and push Webex Bot Docker image for prebuild branches.
 
 on:
   pull_request:
@@ -9,6 +9,7 @@ on:
       - '.github/actions/prebuild-status/**'
       - '.github/actions/publish-prebuild-manifest/**'
       - 'ai_platform_engineering/integrations/webex_bot/**'
+      - 'ai_platform_engineering/integrations/slack_bot/utils/**'
       - 'build/Dockerfile.webex-bot'
   workflow_call:
     inputs:
