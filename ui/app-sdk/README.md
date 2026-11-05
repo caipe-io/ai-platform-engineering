@@ -136,6 +136,12 @@ uses the verified OAuth client identity to omit unsupported app assistants.
   path and stored conversation/room bindings before accepting Webex. Then they
   enforce their own project/tool permissions and room-data policy. Client type
   stays `webex`. Service-account credentials cannot stand in for the human.
+- New bot proofs also bind `botId` to the stored conversation. For group calls
+  the host resolves that bot/space's active team mapping and adds `botId`,
+  `workspaceId`, and `teamSlug` to the app-audience proof. Apps requiring team
+  scope reject older group proofs lacking these fields and recheck the mapping
+  when serving data. Caller-supplied team fields are ignored. Each bot gets its
+  own conversation and thread-owner key, including when bots share a room.
 - The proxy strips caller-supplied `X-CAIPE-*` headers before adding its own proof.
   Missing/expired/mismatched proofs and unsupported clients fail closed, without
   falling back to Dynamic Agents. Bot output limits and existing AG-UI rendering
