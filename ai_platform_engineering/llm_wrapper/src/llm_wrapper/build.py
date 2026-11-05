@@ -185,6 +185,11 @@ def build_chat_model(
 
     lc_provider = langchain_provider_for(canonical, resolved_model, enable_cache=enable_cache)
 
+    if os.getenv("LLM_STREAMING", "true").strip().lower() == "false":
+        # LangGraph's messages stream can request streaming even when the
+        # provider's `streaming` option is false. Bypass it at the model boundary.
+        kwargs.setdefault("disable_streaming", True)
+
     if canonical == OPENAI_COMPATIBLE:
         base_url = os.getenv("OPENAI_COMPATIBLE_BASE_URL")
         if not base_url:

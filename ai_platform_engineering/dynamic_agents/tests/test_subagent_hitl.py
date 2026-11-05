@@ -82,6 +82,7 @@ def test_resolved_subagent_includes_its_request_user_input_interrupt(
     runtime = object.__new__(AgentRuntime)
     runtime.config = parent_config
     runtime._session_id = "conversation-1"
+    runtime._subagent_models = {}
     runtime._mongo_service = MagicMock()
     runtime._mongo_service.get_agent.return_value = child_config
 

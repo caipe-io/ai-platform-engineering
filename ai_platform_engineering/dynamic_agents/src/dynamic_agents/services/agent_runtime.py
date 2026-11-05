@@ -50,6 +50,7 @@ from dynamic_agents.models import (
     InputFile,
     InterruptConfig,
     MCPServerConfig,
+    ModelConfig,
     SubAgentRef,
     UserContext,
 )
@@ -730,6 +731,7 @@ class AgentRuntime:
         self._workflow_prompt_addendum: str = ""  # System prompt addendum with workflow info
         # Track config timestamps for cache invalidation
         self._config_updated_at: datetime = config.updated_at
+        self._subagent_models: dict[str, ModelConfig] = {}
         self._mcp_servers_updated_at: datetime = max(
             (s.updated_at for s in mcp_servers), default=datetime.min.replace(tzinfo=timezone.utc)
         )
@@ -1019,6 +1021,7 @@ class AgentRuntime:
             self.config.model.provider,
             self.config.model.id,
             self.config.model.reasoning_effort,
+            streaming=self.config.model.streaming,
         )
         logger.info(f"[llm] LLM instantiated for agent '{self.config.name}': type={type(llm).__name__}")
 
@@ -1166,6 +1169,7 @@ class AgentRuntime:
             model_id=self.config.model.id,
             model_provider=self.config.model.provider,
             attachment_store=self._get_attachment_store(),
+            model_streaming=self.config.model.streaming,
             enable_prompt_cache=self._prompt_cache_enabled(),
         )
         # PII middleware checks graph state before this request-only projection is added.
@@ -1568,10 +1572,12 @@ class AgentRuntime:
             subagent_prompt = subagent_config.system_prompt
 
             # Instantiate subagent LLM (uses its own configured model)
+            self._subagent_models[ref.agent_id] = subagent_config.model.model_copy(deep=True)
             subagent_llm = get_llm(
                 subagent_config.model.provider,
                 subagent_config.model.id,
                 subagent_config.model.reasoning_effort,
+                streaming=subagent_config.model.streaming,
             )
 
             # Create SubAgent dict in deepagents format
@@ -1591,6 +1597,7 @@ class AgentRuntime:
                     model_id=subagent_config.model.id,
                     model_provider=subagent_config.model.provider,
                     attachment_store=self._get_attachment_store(),
+                    model_streaming=subagent_config.model.streaming,
                     enable_prompt_cache=self._prompt_cache_enabled(),
                 ),
             }
@@ -1754,6 +1761,11 @@ class AgentRuntime:
             return True
         if agent_config.model != self.config.model:
             return True
+        if self._mongo_service:
+            for agent_id, model in getattr(self, "_subagent_models", {}).items():
+                subagent = self._mongo_service.get_agent(agent_id)
+                if subagent is None or subagent.model != model:
+                    return True
         current_mcp_max = max((s.updated_at for s in mcp_servers), default=datetime.min.replace(tzinfo=timezone.utc))
         if current_mcp_max != self._mcp_servers_updated_at:
             return True

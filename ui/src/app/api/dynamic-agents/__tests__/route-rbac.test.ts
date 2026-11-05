@@ -1918,6 +1918,42 @@ describe("dynamic agents RBAC routes", () => {
     expect(findOneAndUpdate).toHaveBeenCalled();
   });
 
+  it.each([true, false, null, undefined])("persists the model streaming choice %s", async (streaming) => {
+    const model = { id: "example-model", provider: "openai", streaming };
+    const existing = { _id: "example", name: "Example", visibility: "global", allowed_tools: {}, model };
+    const findOneAndUpdate = jest.fn().mockResolvedValue(existing);
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue(existing),
+      findOneAndUpdate,
+    });
+    const { PUT } = await import("../route");
+    const response = await PUT(request("/api/dynamic-agents?id=example", {
+      method: "PUT",
+      body: JSON.stringify({ model }),
+    }));
+
+    expect(response.status).toBe(200);
+    const saved = findOneAndUpdate.mock.calls[0][1].$set.model;
+    if (streaming === undefined) expect(saved).not.toHaveProperty("streaming");
+    else expect(saved.streaming).toBe(streaming);
+  });
+
+  it.each(["false", 0])("rejects a non-boolean model streaming choice %s", async (streaming) => {
+    const findOneAndUpdate = jest.fn();
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({ _id: "example", allowed_tools: {}, visibility: "global" }),
+      findOneAndUpdate,
+    });
+    const { PUT } = await import("../route");
+    const response = await PUT(request("/api/dynamic-agents?id=example", {
+      method: "PUT",
+      body: JSON.stringify({ model: { id: "example-model", provider: "openai", streaming } }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
   it("denies owner-team members without agent write permission", async () => {
     const authzError = Object.assign(new Error("missing agent write"), {
       statusCode: 403,

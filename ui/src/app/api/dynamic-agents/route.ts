@@ -356,10 +356,14 @@ function normalizeAgentModel(
   if (typeof reasoningEffort !== "string" || !["low", "medium", "high", "max"].includes(reasoningEffort)) {
     throw new ApiError("Invalid model.reasoning_effort", 400);
   }
+  if (model.streaming != null && typeof model.streaming !== "boolean") {
+    throw new ApiError("model.streaming must be a boolean or null", 400);
+  }
   return {
     id: model.id,
     provider: model.provider,
     reasoning_effort: reasoningEffort as ModelConfig["reasoning_effort"],
+    ...(model.streaming !== undefined && { streaming: model.streaming as boolean | null }),
   };
 }
 
