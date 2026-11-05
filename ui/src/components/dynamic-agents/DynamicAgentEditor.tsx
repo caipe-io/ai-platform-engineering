@@ -1,5 +1,7 @@
 "use client";
 
+import { useTheme } from "@/components/theme-provider";
+import { isLightColorTheme } from "@/lib/color-theme";
 import { getErrorMessage } from "@/lib/error-utils";
 import type { Extension } from "@codemirror/state";
 
@@ -767,6 +769,8 @@ export function DynamicAgentEditor({
   );
 
   // CodeMirror extensions for markdown syntax highlighting
+  const { resolvedTheme } = useTheme();
+  const editorIsLight = isLightColorTheme(resolvedTheme);
   const [cmExtensions, setCmExtensions] = React.useState<Extension[]>([]);
   React.useEffect(() => {
     let cancelled = false;
@@ -781,15 +785,17 @@ export function DynamicAgentEditor({
         setCmExtensions([
           mdMod.markdown({ codeLanguages: langDataMod.languages }),
           viewMod.EditorView.lineWrapping,
-          mdHighlightMod.markdownHighlight,
+          editorIsLight
+            ? mdHighlightMod.markdownHighlightLight
+            : mdHighlightMod.markdownHighlight,
           jinja2Mod.jinja2Highlight,
-        ]);
+        ].filter(Boolean));
       }
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [editorIsLight]);
 
   // ID generation and validation
   const generatedId = React.useMemo(() => generateSlug(name), [name]);
@@ -2740,7 +2746,7 @@ export function DynamicAgentEditor({
                     <div className="flex-1 min-w-0">
                       {promptTab === "edit" ? (
                         <div
-                          className="rounded-lg overflow-hidden border border-border/30 bg-[#1e1e2e]"
+                          className={cn("rounded-lg overflow-hidden border", editorIsLight ? "border-border bg-white" : "border-border/30 bg-[#1e1e2e]")}
                           style={{ height: `${editorHeight}px` }}
                         >
                           <React.Suspense
@@ -2757,7 +2763,7 @@ export function DynamicAgentEditor({
                               value={systemPrompt}
                               onChange={(val: string) => setSystemPrompt(val)}
                               extensions={cmExtensions}
-                              theme="dark"
+                              theme={editorIsLight ? "light" : "dark"}
                               height={`${editorHeight}px`}
                               style={{ fontSize: "15px" }}
                               basicSetup={{
