@@ -1,4 +1,4 @@
-# Optional: layer after docker-compose.yaml and compose.deep-agents.yaml.
+# Layer after docker-compose.yaml, compose.deep-agents.yaml and compose.worker-egress.yaml.
 # Add a runtime=claude_code_acp profile to the Engine's private worker map.
 services:
   harness-engine:
@@ -11,11 +11,6 @@ services:
 
   caipe-mongodb:
     networks: [default, harness-workers]
-
-  worker-egress:
-    extends:
-      file: deploy/harness-engine/compose.worker-egress.yaml
-      service: worker-egress
 
   claude-acp-worker:
     profiles: [harness-engine]
@@ -70,8 +65,3 @@ services:
 
 volumes:
   claude-acp-workspace:
-
-networks:
-  harness-workers:
-    internal: true
-  worker-egress:

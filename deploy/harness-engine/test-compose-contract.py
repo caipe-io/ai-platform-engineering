@@ -21,9 +21,12 @@ def main() -> None:
         ))
         envfile = temporary / "env"
         envfile.touch()
+        isolated = temporary / "isolated.yaml"
+        isolated.write_text("services:\n  harness-engine:\n    env_file: !reset []\n")
         domains = temporary / "domains"
         domains.write_text("api.example.com\n")
-        environment = {**os.environ, "COMPOSE_PROFILES": "harness-engine", "HARNESS_IMAGE_TAG": "test",
+        environment = {**{key: os.environ[key] for key in ("PATH", "HOME", "DOCKER_CONFIG") if key in os.environ},
+                       "COMPOSE_PROFILES": "harness-engine", "HARNESS_IMAGE_TAG": "test",
                        "HARNESS_ENGINE_INTERNAL_TOKEN": "test-private-control-token",
                        "CLAUDE_WORKER_ALLOWED_DOMAINS_FILE": str(domains)}
         for key in ("HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON", "HARNESS_ENGINE_CLAUDE_WORKER_PROFILES_JSON",
@@ -35,11 +38,14 @@ def main() -> None:
                         ("claude-sdk", "claude-acp", "claude-cli-acp")]
         for combination in combinations:
             command = ["docker", "compose", "--project-directory", str(ROOT), "--env-file", str(envfile),
-                       "-f", str(base), "-f", str(ROOT / "deploy/harness-engine/compose.deep-agents.yaml")]
+                       "-f", str(base), "-f", str(ROOT / "deploy/harness-engine/compose.deep-agents.yaml"),
+                       "-f", str(ROOT / "deploy/harness-engine/compose.worker-egress.yaml")]
             for worker in combination:
                 command.extend(["-f", str(ROOT / f"deploy/harness-engine/compose.{worker}.yaml")])
-            result = subprocess.run(command + ["config", "--no-env-resolution", "--format", "json"],
-                                    env=environment, capture_output=True, text=True, check=True)
+            result = subprocess.run(command + ["-f", str(isolated), "config", "--format", "json"],
+                                    env=environment, capture_output=True, text=True)
+            if result.returncode:
+                raise RuntimeError(f"Compose fixture failed: {result.stderr}")
             rendered = json.loads(result.stdout)
             assert rendered["networks"]["harness-workers"]["internal"] is True
             for name in ["harness-engine", "dynamic-agents", "caipe-ui", "worker-egress"] + [w + "-worker" for w in combination]:

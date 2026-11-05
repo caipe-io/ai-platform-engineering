@@ -1,4 +1,4 @@
-# Extended by each worker overlay; not a standalone application.
+# Load once before the selected worker overlays; owns their shared network boundary.
 services:
   worker-egress:
     profiles: [harness-engine]
@@ -30,3 +30,8 @@ services:
       timeout: 3s
       retries: 6
       start_period: 10s
+
+networks:
+  harness-workers:
+    internal: true
+  worker-egress:

@@ -1,4 +1,4 @@
-# Optional: layer after docker-compose.yaml and compose.deep-agents.yaml.
+# Layer after docker-compose.yaml, compose.deep-agents.yaml and compose.worker-egress.yaml.
 # Provider credentials belong in the deployment's .env, never agent drafts.
 services:
   harness-engine:
@@ -13,11 +13,6 @@ services:
 
   caipe-mongodb:
     networks: [default, harness-workers]
-
-  worker-egress:
-    extends:
-      file: deploy/harness-engine/compose.worker-egress.yaml
-      service: worker-egress
 
   claude-sdk-worker:
     profiles: [harness-engine]
@@ -70,8 +65,3 @@ services:
 
 volumes:
   claude-sdk-workspace:
-
-networks:
-  harness-workers:
-    internal: true
-  worker-egress:

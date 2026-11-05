@@ -43,11 +43,13 @@ Use Docker Compose 2.24.4 or newer (`!reset` merge support).
    ```bash
    docker compose --env-file .env -f docker-compose.yaml \
      -f deploy/harness-engine/compose.deep-agents.yaml \
+     -f deploy/harness-engine/compose.worker-egress.yaml \
      -f deploy/harness-engine/compose.claude-cli-acp.yaml \
      --profile harness-engine up -d
    ```
 
-   Add `compose.claude-acp.yaml` or `compose.claude-sdk.yaml` for other workers.
+   Load the shared egress overlay once. Add `compose.claude-acp.yaml` or
+   `compose.claude-sdk.yaml` for other workers.
    Published services use `pull_policy: always`; an unavailable image fails closed.
    Set `CAIPE_UI_IMAGE` when the UI prebuild uses a different tag from the workers.
    Release overlays reset inherited `build` definitions to prevent pull failures

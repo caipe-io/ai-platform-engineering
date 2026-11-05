@@ -423,7 +423,7 @@ Repository paths are relative to the repository root:
 | Capability and delegated tool broker | `ai_platform_engineering/harness_engine/src/harness_engine/{claude_acp_tools,claude_tools}.py` |
 | Child environment, process cleanup and CLI invocation | `ai_platform_engineering/harness_engine/src/harness_engine/adapters/claude_acp.py`, `ai_platform_engineering/harness_engine/src/harness_engine/{claude_acp_process,claude_cli_acp}.py` |
 | Gateway policy flags and checks | `deploy/openfga/bridge/main.py` |
-| Worker baseline | `deploy/harness-engine/compose.claude-cli-acp.yaml`, `ai_platform_engineering/harness_engine/build/Dockerfile.claude-cli-acp` |
+| Worker baseline | `deploy/harness-engine/compose.worker-egress.yaml`, `deploy/harness-engine/squid.conf`, `deploy/harness-engine/compose.claude-cli-acp.yaml`, `ai_platform_engineering/harness_engine/build/Dockerfile.claude-cli-acp` |
 
 - [Claude ACP architecture and configuration](../architecture/claude-acp.md)
 - [Browser session storage and refresh](./browser-sessions.md)

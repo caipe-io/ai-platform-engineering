@@ -437,7 +437,8 @@ inside the remote worker; it does not introduce another browser session manager.
   Directories alone do not provide operating-system sandboxing.
 
 The optional [worker overlay](../../deploy/harness-engine/compose.claude-sdk.yaml)
-adds a worker to the Deep Agents overlay. It is also a template for a separate
+adds a worker to the Deep Agents overlay together with the shared
+[egress overlay](../../deploy/harness-engine/compose.worker-egress.yaml), loaded once. It is also a template for a separate
 worker host; replace its URL with that host's private HTTPS endpoint.
 
 The UI BFF requires:
@@ -481,17 +482,20 @@ uv run pytest -q
   the compatibility service. Use a shared volume for a single-host deployment,
   or the existing S3 attachment backend for multiple hosts.
 
-An optional Compose overlay builds both upgraded producers and the UI without
-changing the default install profiles:
+An optional Compose overlay selects published images for both upgraded producers
+and the UI without changing the default install profiles:
 
 ```bash
-# Configure SSO, model access and secrets in .env first.
+# Configure SSO, model access, secrets and HARNESS_IMAGE_TAG in .env first.
 # Add harness-engine to your existing profile list; keep dynamic-agents enabled.
 docker compose --env-file .env \
   -f docker-compose.yaml \
   -f deploy/harness-engine/compose.deep-agents.yaml \
-  --profile harness-engine up -d --build harness-engine dynamic-agents caipe-ui
+  --profile harness-engine up -d harness-engine dynamic-agents caipe-ui
 ```
+
+For explicit source builds and image overrides, see the
+[deployment guide](../../deploy/harness-engine/README.md).
 
 The compatibility service remains required for management and file APIs. Do not
 retire it as part of enabling Engine execution. Upgrade both producers before
