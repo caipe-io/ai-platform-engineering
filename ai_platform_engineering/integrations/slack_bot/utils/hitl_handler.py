@@ -58,6 +58,7 @@ class HITLForm:
   conversation_id: Optional[str] = None
   agent_id: Optional[str] = None
   metadata: Dict[str, Any] = field(default_factory=dict)
+  tool_calls: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def parse_agui_interrupt(event, conversation_id: str = None, agent_id: str = None) -> HITLForm:
@@ -89,6 +90,10 @@ def parse_agui_interrupt(event, conversation_id: str = None, agent_id: str = Non
     agent_id=agent_id,
     metadata={"interrupt_id": interrupt_id, "reason": reason},
   )
+
+  if reason == "tool_approval":
+    pending = payload.get("tool_approvals") or [{"tool_name": payload.get("tool_name"), "tool_args": payload.get("tool_args")}]
+    form.tool_calls = [c for c in pending if isinstance(c, dict) and c.get("tool_name")]
 
   for f in raw_fields:
     field_name = f.get("field_name", f.get("name", ""))
@@ -215,6 +220,9 @@ def format_hitl_form_blocks(form: HITLForm) -> List[Dict[str, Any]]:
       }
     )
 
+  if form.tool_calls:
+    blocks.extend(_format_tool_calls_blocks(form.tool_calls))
+
   blocks.append({"type": "divider"})
 
   for form_field in form.fields:
@@ -263,6 +271,37 @@ def format_hitl_form_blocks(form: HITLForm) -> List[Dict[str, Any]]:
     }
   )
 
+  return blocks
+
+
+_SLACK_SECTION_TEXT_LIMIT = 3000
+_TOOL_ARGS_PREVIEW_LIMIT = 400
+_MAX_TOOL_CALLS_SHOWN = 15
+
+
+def _format_tool_calls_blocks(tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+  """Render pending tool calls as section blocks; Approve/Reject applies to every call.
+
+  Calls beyond the display cap are counted explicitly so none is hidden silently.
+  """
+  lines = ["*Pending tool calls* (Approve or Reject applies to all of them):"]
+  for call in tool_calls[:_MAX_TOOL_CALLS_SHOWN]:
+    args = json.dumps(call.get("tool_args") or {}, default=str).replace("`", "'")
+    if len(args) > _TOOL_ARGS_PREVIEW_LIMIT:
+      args = args[:_TOOL_ARGS_PREVIEW_LIMIT] + "…"
+    lines.append(f"• `{call['tool_name']}` `{args}`")
+  omitted = len(tool_calls) - _MAX_TOOL_CALLS_SHOWN
+  if omitted > 0:
+    lines.append(f"…and {omitted} more tool call(s) not shown")
+
+  blocks: List[Dict[str, Any]] = []
+  chunk = ""
+  for line in lines:
+    if chunk and len(chunk) + len(line) + 1 > _SLACK_SECTION_TEXT_LIMIT:
+      blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": chunk}})
+      chunk = ""
+    chunk = f"{chunk}\n{line}" if chunk else line
+  blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": chunk}})
   return blocks
 
 

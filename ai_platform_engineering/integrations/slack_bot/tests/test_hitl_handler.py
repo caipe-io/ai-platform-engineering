@@ -3,6 +3,7 @@
 """Tests for the AG-UI HITL handler."""
 
 import json
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -439,3 +440,39 @@ def test_unsupported_approval_actions_direct_users_to_web_editor(approvals: list
   assert form.actions == []
   assert "web app" in form.description
   assert "review and continue" in form.description
+
+
+class TestToolApprovalCard:
+  def _event(self, payload):
+    return SimpleNamespace(interrupt={"id": "t1", "reason": "tool_approval", "payload": payload})
+
+  def test_single_tool_call_is_rendered(self):
+    form = parse_agui_interrupt(self._event({"tool_name": "delete_item", "tool_args": {"id": 7}, "agent": "a"}))
+    text = json.dumps(format_hitl_form_blocks(form))
+    assert "delete_item" in text and "applies to all" in text
+
+  def test_multiple_tool_approvals_are_all_rendered(self):
+    payload = {
+      "tool_name": "first_tool",
+      "tool_args": {},
+      "tool_approvals": [
+        {"tool_name": "first_tool", "tool_args": {}},
+        {"tool_name": "second_tool", "tool_args": {"x": 1}},
+      ],
+    }
+    form = parse_agui_interrupt(self._event(payload))
+    text = json.dumps(format_hitl_form_blocks(form))
+    assert "first_tool" in text and "second_tool" in text
+
+  def test_form_input_has_no_tool_block(self):
+    form = parse_agui_interrupt(SimpleNamespace(interrupt={"id": "f1", "reason": "human_input", "payload": {"prompt": "p", "fields": []}}))
+    assert "Pending tool calls" not in json.dumps(format_hitl_form_blocks(form))
+
+  def test_many_tool_calls_report_omitted_count_and_fit_slack_limit(self):
+    approvals = [{"tool_name": f"tool_{i}", "tool_args": {"blob": "x" * 600}} for i in range(20)]
+    form = parse_agui_interrupt(self._event({"tool_name": "tool_0", "tool_approvals": approvals}))
+    blocks = format_hitl_form_blocks(form)
+    assert all(len(b["text"]["text"]) <= 3000 for b in blocks if b["type"] == "section")
+    text = json.dumps(blocks)
+    assert "tool_14" in text and "tool_15" not in text
+    assert "5 more tool call(s) not shown" in text
