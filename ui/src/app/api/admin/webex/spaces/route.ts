@@ -129,7 +129,10 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
               : Promise.resolve({ canRead: false, canManage: false }),
             listWebexSpaceAgentRoutes(workspaceId, row.webex_space_id, botId),
           ]);
-          if (!access.canRead || routes.length === 0) return null;
+          // The team mapping owns onboarding state. Keep partially configured
+          // spaces visible so their existing Add Agent controls can repair a
+          // missing route without starting another publication request.
+          if (!access.canRead) return null;
           return { row, workspaceId, access, routes };
         })
       )
