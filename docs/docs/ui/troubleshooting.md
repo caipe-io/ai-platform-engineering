@@ -38,6 +38,17 @@ echo "$MONGODB_DATABASE"
 
 The UI and Dynamic Agents should point at the same database.
 
+## Index Initialization Conflicts
+
+The UI initializes indexes once per process. Builds on the same collection run
+sequentially; different collections initialize concurrently. Conflicts with index
+builds in other replicas are retried up to six attempts, with at most 17 seconds
+of backoff per index. Other errors are not retried.
+
+Exhausted retries and permanent failures are logged, and initialization continues
+with the remaining indexes. Check UI logs for failed index creation; once the
+cause is resolved, restart the UI process to repeat initialization.
+
 ## Auth Redirects Fail
 
 Verify:
