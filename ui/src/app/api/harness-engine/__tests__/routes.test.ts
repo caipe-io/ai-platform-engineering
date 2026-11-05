@@ -14,7 +14,9 @@ import { POST as clearSession } from "../sessions/clear/route";
 const mockAuthenticateRequest = jest.fn();
 const mockClearHarnessGatewayBinding = jest.fn();
 const mockResolveHarnessGatewayTarget = jest.fn();
+jest.mock("@/lib/mongodb", () => ({ getCollection: async () => ({ findOne: async () => null, updateOne: async () => ({ matchedCount: 1 }) }) }));
 jest.mock("@/lib/harness-gateway", () => ({
+  ...jest.requireActual("@/lib/harness-gateway"),
   clearHarnessGatewayBinding: (...args: unknown[]) => mockClearHarnessGatewayBinding(...args),
   resolveHarnessGatewayTarget: (...args: unknown[]) => mockResolveHarnessGatewayTarget(...args),
 }));
@@ -94,6 +96,129 @@ describe("Harness Engine BFF session routes", () => {
       }),
     );
     expect(JSON.stringify(fetchMock.mock.calls[0][1]?.headers)).not.toContain("must-not-leave-bff");
+  });
+
+  it.each([["detail", getRun], ["events", getEvents], ["stream", streamRun]] as const)(
+    "lets a shared reader follow %s with bounded conversation scope and their own identity", async (name, handler) => {
+      mockAuthenticateRequest.mockResolvedValue({ subject: "viewer", email: "viewer@example.test" });
+      mockAuthorizeConversationReadAccess.mockResolvedValue({ denial: null, conversation: {
+        _id: "conversation-example", participants: [{ type: "agent", id: "agent-example" }],
+      } });
+      const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async input => {
+        if (String(input).endsWith("/runs/run-1")) return NextResponse.json({ success: true, data: ownedRun });
+        return name === "stream" ? new Response("data: {}\n\n") : NextResponse.json({ success: true, data: { events: [] } });
+      });
+      const response = await handler(new NextRequest("https://example.test/api/harness-engine/runs/run-1?conversation_id=conversation-example", {
+        headers: { "X-Harness-Read-Agent": "injected-agent", "X-Harness-Engine-Subject": "injected-user" },
+      }), { params: Promise.resolve({ runId: "run-1" }) });
+      expect(response.status).toBe(200);
+      expect(mockRequireAgentUsePermission).not.toHaveBeenCalled();
+      expect(mockAuthorizeConversationWriteAccess).not.toHaveBeenCalled();
+      for (const [, init] of fetchMock.mock.calls) expect(init?.headers).toMatchObject({
+        "X-Harness-Engine-Subject": "viewer", "X-Harness-Read-Agent": "agent-example",
+        "X-Harness-Read-Conversation": "conversation-example", Authorization: "Bearer internal-test-token",
+      });
+    },
+  );
+
+  it("rejects revoked shared reads before contacting the Engine", async () => {
+    const denial = NextResponse.json({ error: "Denied" }, { status: 403 });
+    mockAuthorizeConversationReadAccess.mockResolvedValue({ denial, conversation: null });
+    const fetchMock = jest.spyOn(global, "fetch");
+    const response = await getRun(new NextRequest("https://example.test/api/harness-engine/runs/run-1?conversation_id=conversation-example"), {
+      params: Promise.resolve({ runId: "run-1" }),
+    });
+    expect(response).toBe(denial);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["canonical", "agui", "custom"])("closes a revoked shared %s subscription without cancelling the producer", async protocol => {
+    jest.useFakeTimers();
+    mockAuthenticateRequest.mockResolvedValue({ subject: "viewer", email: "viewer@example.test" });
+    mockAuthorizeConversationReadAccess.mockResolvedValue({ denial: null, conversation: {
+      participants: [{ type: "agent", id: "agent-example" }],
+    } });
+    let upstream!: ReadableStreamDefaultController<Uint8Array>;
+    let subscriptionSignal: AbortSignal | null | undefined;
+    const cancelled = jest.fn();
+    const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+      if (String(input).endsWith("/runs/run-1")) return NextResponse.json({ success: true, data: ownedRun });
+      subscriptionSignal = init?.signal;
+      return new Response(new ReadableStream<Uint8Array>({ start(controller) { upstream = controller; }, cancel: cancelled }));
+    });
+    try {
+      const response = await streamRun(new NextRequest(`https://example.test/api/harness-engine/runs/run-1/events/stream?conversation_id=conversation-example&protocol=${protocol}`), {
+        params: Promise.resolve({ runId: "run-1" }),
+      });
+      const output = response.text();
+      upstream.enqueue(new TextEncoder().encode('id: 1\nevent: content.delta\ndata: {"sequence":1,"event_type":"content.delta","data":{"text":"before"}}\n\n'));
+      mockAuthorizeConversationReadAccess.mockResolvedValue({ denial: NextResponse.json({ error: "Revoked" }, { status: 403 }) });
+      await jest.advanceTimersByTimeAsync(15_000);
+      expect(mockAuthorizeConversationReadAccess).toHaveBeenCalledTimes(2);
+      expect(subscriptionSignal?.aborted).toBe(true);
+      expect(cancelled).toHaveBeenCalledTimes(1);
+      await output;
+      expect(() => upstream.enqueue(new TextEncoder().encode("after-revocation"))).toThrow();
+      expect(fetchMock.mock.calls.every(([, init]) => init?.method !== "DELETE")).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("rechecks before forwarding a late chunk and fails closed on authorization errors", async () => {
+    let upstream!: ReadableStreamDefaultController<Uint8Array>;
+    const cancelled = jest.fn();
+    jest.spyOn(global, "fetch").mockImplementation(async input => String(input).endsWith("/runs/run-1")
+      ? NextResponse.json({ success: true, data: ownedRun })
+      : new Response(new ReadableStream<Uint8Array>({ start(controller) { upstream = controller; }, cancel: cancelled })));
+    const response = await streamRun(new NextRequest("https://example.test/api/harness-engine/runs/run-1/events/stream"), {
+      params: Promise.resolve({ runId: "run-1" }),
+    });
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const output = response.text();
+    jest.spyOn(Date, "now").mockReturnValue(Date.now() + 15_001);
+    mockAuthorizeConversationReadAccess.mockRejectedValueOnce(new Error("Authorization unavailable"));
+    upstream.enqueue(new TextEncoder().encode("after-revocation"));
+    expect(await output).toBe("");
+    expect(cancelled).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith("[harness-engine] Subscriber reauthorization failed", expect.any(Error));
+  });
+
+  it("drops only the subscription when the browser disconnects", async () => {
+    const cancelled = jest.fn();
+    jest.spyOn(global, "fetch").mockImplementation(async input => String(input).endsWith("/runs/run-1")
+      ? NextResponse.json({ success: true, data: ownedRun })
+      : new Response(new ReadableStream<Uint8Array>({ cancel: cancelled })));
+    const browser = new AbortController();
+    const response = await streamRun(new NextRequest("https://example.test/api/harness-engine/runs/run-1/events/stream", { signal: browser.signal }), {
+      params: Promise.resolve({ runId: "run-1" }),
+    });
+    const output = response.text();
+    browser.abort();
+    expect(await output).toBe("");
+    expect(cancelled).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a run outside the authorized conversation even if the Engine returns it", async () => {
+    mockAuthorizeConversationReadAccess.mockResolvedValue({ denial: null, conversation: {
+      participants: [{ type: "agent", id: "agent-example" }],
+    } });
+    jest.spyOn(global, "fetch").mockResolvedValue(NextResponse.json({ success: true, data: ownedRun }));
+    const response = await getRun(new NextRequest("https://example.test/api/harness-engine/runs/run-1?conversation_id=another-conversation"), {
+      params: Promise.resolve({ runId: "run-1" }),
+    });
+    expect(response.status).toBe(404);
+  });
+
+  it("does not use conversation read scope for cancellation", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(NextResponse.json({ detail: "Run not found" }, { status: 404 }));
+    mockAuthenticateRequest.mockResolvedValue({ subject: "viewer" });
+    const response = await cancelRun(new NextRequest("https://example.test/api/harness-engine/runs/run-1?conversation_id=conversation-example", {
+      method: "DELETE", headers: { "X-Harness-Read-Conversation": "conversation-example" },
+    }), { params: Promise.resolve({ runId: "run-1" }) });
+    expect(response.status).toBe(404);
+    expect(mockAuthorizeConversationReadAccess).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls[0][1]?.headers).not.toHaveProperty("X-Harness-Read-Conversation");
   });
 
   it("resumes an SSE subscription from Last-Event-ID without owning provider execution", async () => {

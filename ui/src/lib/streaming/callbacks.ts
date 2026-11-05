@@ -67,6 +67,9 @@ export interface StreamParams {
 // ═══════════════════════════════════════════════════════════════
 
 export interface StreamCallbacks {
+  /** Server-confirmed runtime for an admitted, pinned Engine conversation. */
+  onRuntime?(harnessId: string): void;
+
   /** Streaming text content arrived */
   onContent?(text: string, namespace: string[]): void;
 
@@ -123,6 +126,9 @@ export interface StreamCallbacks {
 
   /** Stream completed successfully */
   onDone?(): void;
+
+  /** The server confirmed that the response stopped. */
+  onCancelled?(): void;
 
   /** Unrecoverable error */
   onError?(message: string): void;

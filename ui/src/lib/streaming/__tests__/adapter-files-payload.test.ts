@@ -15,16 +15,9 @@ import { CustomStreamAdapter } from "../clients/browser-custom-consumer";
 
 const mockFetch = jest.fn();
 
-/** A 200 response with an immediately-closed body so _stream resolves fast. */
-function emptySSEResponse(): Response {
-  return new Response(
-    new ReadableStream<Uint8Array>({
-      pull(controller) {
-        controller.close();
-      },
-    }),
-    { status: 200 },
-  );
+/** A valid terminal frame for the selected protocol. */
+function terminalSSEResponse(protocol: string): Response {
+  return new Response(protocol === "agui" ? 'event: RUN_FINISHED\ndata: {"outcome":"success"}\n\n' : 'event: done\ndata: {}\n\n', { status: 200 });
 }
 
 function noopCallbacks(): StreamCallbacks {
@@ -40,7 +33,6 @@ beforeAll(() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockFetch.mockResolvedValue(emptySSEResponse());
 });
 
 afterAll(() => {
@@ -56,6 +48,7 @@ describe.each([
   ["AG-UI", () => new AGUIStreamAdapter(), "agui"],
   ["custom", () => new CustomStreamAdapter(), "custom"],
 ])("%s adapter streamMessage files payload", (_label, makeAdapter, protocol) => {
+  beforeEach(() => mockFetch.mockResolvedValue(terminalSSEResponse(protocol)));
   const base: StreamParams = {
     message: "hi",
     conversationId: "conv-1",

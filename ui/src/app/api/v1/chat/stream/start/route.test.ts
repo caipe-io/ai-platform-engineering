@@ -10,6 +10,7 @@ const mockAuthenticate = jest.fn();
 const mockCookieAuth = jest.fn();
 const mockAgentPermission = jest.fn();
 const mockConversationAccess = jest.fn();
+const mockConversationReadAccess = jest.fn();
 const mockLoadApps = jest.fn();
 const mockGetApp = jest.fn();
 const mockDynamicStream = jest.fn();
@@ -21,6 +22,9 @@ jest.mock("@/lib/da-proxy", () => ({
   proxySSEStream: (...args: unknown[]) => mockDynamicStream(...args),
 }));
 jest.mock("@/lib/harness-gateway", () => ({
+  getPinnedHarnessGatewayTarget: async () => null,
+  getHarnessConversationStatus: async () => null,
+  getHarnessGatewayNativeThread: async (_agent: string, _subject: string, thread: string) => thread,
   resolveHarnessGatewayTarget: (...args: unknown[]) => mockResolveHarness(...args),
 }));
 jest.mock("@/lib/api-middleware", () => ({
@@ -32,6 +36,7 @@ jest.mock("@/lib/rbac/openfga-agent-authz", () => ({
 }));
 jest.mock("../../_conversation-authz", () => ({
   authorizeConversationWriteAccess: (...args: unknown[]) => mockConversationAccess(...args),
+  authorizeConversationReadAccess: (...args: unknown[]) => mockConversationReadAccess(...args),
   resolveConversationRuntimeId: async () => "example-conversation",
 }));
 jest.mock("@/lib/agentic-apps/config", () => ({
@@ -67,6 +72,9 @@ beforeEach(() => {
   mockAuthenticate.mockResolvedValue({ subject: "primary-subject", authenticatedUser: resolvedIdentity });
   mockCookieAuth.mockResolvedValue({ user: { role: "admin" }, session: { sub: "secondary-subject" } });
   mockAgentPermission.mockResolvedValue(null);
+  mockConversationReadAccess.mockResolvedValue({ conversation: {
+    client_type: "webui", participants: [{ type: "agent", id: "example-agent" }],
+  } });
   mockConversationAccess.mockResolvedValue({ conversation: {
     client_type: "webui", participants: [{ type: "agent", id: "example-agent" }],
   } });
@@ -211,7 +219,7 @@ describe("app session status", () => {
     const upstream = jest.spyOn(global, "fetch");
     expect((await STATUS(request())).status).toBe(403); expect(upstream).not.toHaveBeenCalled();
   });
-  it("enforces agent use before reading the conversation", async () => {
+  it("enforces agent use before the app-only conversation write check", async () => {
     mockAgentPermission.mockResolvedValue(NextResponse.json({ error: "Denied" }, { status: 403 }));
     expect((await STATUS(request())).status).toBe(403); expect(mockConversationAccess).not.toHaveBeenCalled();
   });

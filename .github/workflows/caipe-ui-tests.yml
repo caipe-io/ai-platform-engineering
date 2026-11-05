@@ -504,8 +504,9 @@ jobs:
 
       - name: Run TypeScript type checking
         working-directory: ui
-        continue-on-error: true
-        run: npx tsc --noEmit
+        run: |
+          npm run generate:native-extensions
+          npx tsc --noEmit
 
       - name: Run ESLint
         working-directory: ui

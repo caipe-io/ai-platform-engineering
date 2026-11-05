@@ -1,7 +1,6 @@
 import { authorizeConversationWriteAccess, resolveConversationRuntimeId } from "@/app/api/v1/chat/_conversation-authz";
 import { authenticateRequest } from "@/lib/da-proxy";
-import { resolveHarnessGatewayTarget } from "@/lib/harness-gateway";
-import { getHarnessEngineConfig, proxyHarnessEngine } from "@/lib/harness-engine-proxy";
+import { resolveHarnessGatewayTarget, startHarnessGatewayRun } from "@/lib/harness-gateway";
 import { createAuthzTraceContext } from "@/lib/rbac/authz-tracing";
 import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
 import { NextRequest, NextResponse } from "next/server";
@@ -56,13 +55,6 @@ export async function POST(request: NextRequest): Promise<Response> {
       { status: 409 },
     );
   }
-  const config = getHarnessEngineConfig();
-  if (config instanceof NextResponse) return config;
-  return proxyHarnessEngine(config, auth, "/api/v1/runs", {
-    method: "POST",
-    body: JSON.stringify({
-      ...body,
-      conversation_id: conversationId,
-    }),
-  });
+  const started = await startHarnessGatewayRun({ ...body, conversation_id: conversationId }, auth, target.harnessId);
+  return started instanceof NextResponse ? started : NextResponse.json({ success: true, data: started.run }, { status: 202 });
 }

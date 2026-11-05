@@ -441,6 +441,7 @@ export interface DynamicAgentConfig {
   readonly presentation?: AgentPresentation;
   /** Runtime selected by Harness Gateway. Missing legacy values mean Dynamic Agents. */
   execution_harness_id?: string;
+  execution_blueprint_version?: number;
   name: string;
   description?: string;
   system_prompt: string;
@@ -516,6 +517,7 @@ export interface DynamicAgentConfigWithPermissions extends DynamicAgentConfig {
 }
 
 export interface DynamicAgentConfigCreate {
+  harness_save?: unknown;
   id: string; // Required: User-friendly slug ID derived from name
   execution_harness_id?: string;
   name: string;
@@ -546,6 +548,7 @@ export interface DynamicAgentConfigCreate {
 }
 
 export interface DynamicAgentConfigUpdate {
+  harness_save?: unknown;
   execution_harness_id?: string;
   name?: string;
   description?: string;

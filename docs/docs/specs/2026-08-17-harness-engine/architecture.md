@@ -1,6 +1,6 @@
 # Harness Engine Architecture
 
-> **Delivery scope:** Follow [Delivery phases](delivery-phases.md). Phase 1 is the independent engine/gateway; `DeepAgentsAdapter` integration is Phase 2, external workers are Phase 3, and cross-harness delegation is Phase 4. Worker/broker diagrams below describe target boundaries unless explicitly identified as implemented.
+> **Delivery scope:** Follow [Delivery phases](delivery-phases.md). The roadmap separates the independent engine/gateway, `DeepAgentsAdapter` integration, external workers and cross-harness delegation. Worker/broker diagrams below describe target boundaries unless explicitly identified as implemented.
 
 ## Goal
 
@@ -65,7 +65,7 @@ fallback.
 
 ## Agent creation control flow
 
-The existing editor remains the builder shell. Harness selection precedes model selection; the Phase 2 target projects server-produced capabilities into its stable sections. Phase 1 must keep current controls truthful about supported functionality. Detailed interaction and component rules are in [agent-creation-ui.md](./agent-creation-ui.md).
+The existing editor remains the builder shell. Harness selection precedes model selection; the Deep Agents integration projects server-produced capabilities into its stable sections. Phase 1 must keep current controls truthful about supported functionality. Detailed interaction and component rules are in [agent-creation-ui.md](./agent-creation-ui.md).
 
 ```mermaid
 flowchart LR

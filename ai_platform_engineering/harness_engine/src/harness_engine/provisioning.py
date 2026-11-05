@@ -45,6 +45,9 @@ def _provider_configuration(
     configuration: dict[str, object] = {
         "executionRoleArn": profile.execution_role_arn or "",
         "systemPrompt": [{"text": blueprint.prompt.system}],
+        # Portable AgentCore tool bindings are unavailable; do not inherit the
+        # provider's built-in shell or filesystem tools for managed agents.
+        "allowedTools": [],
     }
     if profile.model_id:
         configuration["model"] = {
@@ -77,6 +80,28 @@ def _create_token(
         f"{configuration_fingerprint}"
     )
     return f"caipe-{hashlib.sha256(material.encode()).hexdigest()}"
+
+
+async def _create_harness(
+    client: AgentCoreControlClient, request: dict[str, object]
+) -> dict[str, Any]:
+    token = str(request["clientToken"])
+    for _ in range(16):
+        try:
+            return await asyncio.to_thread(client.create_harness, **{**request, "clientToken": token})
+        except ClientError as exc:
+            error = exc.response.get("Error", {})
+            message = str(error.get("Message", ""))
+            if not (
+                error.get("Code") == "ConflictException"
+                and f"previously created with clientToken {token} " in message
+                and "has since been deleted" in message
+            ):
+                raise
+            # Only a confirmed deletion permits a new generation. Replicas
+            # must derive the same replacement, including after a lost receipt.
+            token = f"caipe-{hashlib.sha256(f'replace:{token}'.encode()).hexdigest()}"
+    raise ProviderProvisioningError("Too many retired AgentCore creation attempts")
 
 
 class AgentCoreHarnessProvisioner:
@@ -168,7 +193,7 @@ class AgentCoreHarnessProvisioner:
         }
         resource_id: str | None = None
         try:
-            response = await asyncio.to_thread(client.create_harness, **request)
+            response = await _create_harness(client, request)
             harness = response["harness"]
             resource_id = str(harness["harnessId"])
             ready = await self._wait_until_ready(profile.region, resource_id, harness)
