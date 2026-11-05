@@ -194,6 +194,10 @@ class APIClient {
     return this.request(`/api/chat/conversations?${searchParams}`);
   }
 
+  async getLatestAppConversation(appId: string): Promise<{ conversation: Conversation | null }> {
+    return this.request(`/api/agentic-apps/${encodeURIComponent(appId)}/assistant/conversation`);
+  }
+
   async createConversation(
     data: CreateConversationRequest
   ): Promise<CreateConversationResponse> {

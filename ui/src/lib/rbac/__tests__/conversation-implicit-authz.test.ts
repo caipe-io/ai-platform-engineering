@@ -1,5 +1,6 @@
 import {
   annotateConversationsWithViewerSharing,
+  conversationOwnershipCandidateQuery,
   conversationVisibilityCandidateQuery,
   filterConversationsByImplicitOrExplicitPermission,
   getDirectSharingAccessConversationIds,
@@ -22,6 +23,15 @@ const { filterResourcesByPermission, requireResourcePermission } = jest.requireM
 describe("conversation implicit authorization", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it("bounds personal assistant discovery by subject or normalized legacy ownership without sharing", () => {
+    expect(conversationOwnershipCandidateQuery({ sub: "test-user" }, "Test-User@Example.test")).toEqual({
+      $or: [{ owner_subject: "test-user" }, { owner_id: { $in: ["Test-User@Example.test", "test-user@example.test"] } }],
+    });
+    expect(conversationOwnershipCandidateQuery({}, "test-user@example.test")).toEqual({
+      $or: [{ owner_id: "test-user@example.test" }],
+    });
   });
 
   it("builds a bounded candidate query for owned and explicitly shared conversations", () => {

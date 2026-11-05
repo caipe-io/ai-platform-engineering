@@ -66,6 +66,9 @@ TS_CALL_RE = re.compile(
 # (`agent:<agent_id>`), so validation tracks route coverage rather than realm
 # resource inventory.
 TS_OPENFGA_AGENT_USE_RE = re.compile(r"requireAgentUsePermission\s*\(", re.MULTILINE)
+TS_ROUTE_HANDLER_RE = re.compile(
+    r"\bexport\s+(?:async\s+function\s+|function\s+|const\s+)(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b"
+)
 # require_rbac_permission(token, "resource", "scope")
 PY_CALL_RE = re.compile(
     r"require_rbac_permission\s*\(\s*[^,]+?,\s*[\"']([a-z0-9_]+(?::[A-Za-z0-9_-]+)?)[\"']\s*,\s*[\"']([a-z_]+)[\"']",
@@ -158,9 +161,9 @@ def route_path_from_ui_file(path: Path) -> str:
     return "/" + "/".join(without_route.parts)
 
 
-def find_openfga_agent_use_route_sites() -> dict[str, list[str]]:
-    """Return {route_path: [file:line, ...]} for BFF OpenFGA agent-use gates."""
-    sites: dict[str, list[str]] = {}
+def find_openfga_agent_use_route_sites() -> dict[tuple[str, str], list[str]]:
+    """Return {(method, route_path): [file:line, ...]} for BFF agent-use gates."""
+    sites: dict[tuple[str, str], list[str]] = {}
     for path in REPO_ROOT.glob(UI_ROUTES_GLOB):
         try:
             content = path.read_text()
@@ -169,7 +172,10 @@ def find_openfga_agent_use_route_sites() -> dict[str, list[str]]:
         for match in TS_OPENFGA_AGENT_USE_RE.finditer(content):
             line_no = content[: match.start()].count("\n") + 1
             where = f"{path.relative_to(REPO_ROOT)}:{line_no}"
-            sites.setdefault(route_path_from_ui_file(path), []).append(where)
+            handlers = list(TS_ROUTE_HANDLER_RE.finditer(content, 0, match.start()))
+            # Preserve the existing POST default for module helpers preceding exports.
+            method = handlers[-1].group(1) if handlers else "POST"
+            sites.setdefault((method, route_path_from_ui_file(path)), []).append(where)
     return sites
 
 
@@ -264,8 +270,8 @@ def main() -> int:
     if args.print:
         for (res, scope), wheres in sorted({**ts_sites, **py_sites}.items()):
             print(f"  - ({res}, {scope}): {wheres[0]}{' (+%d more)' % (len(wheres)-1) if len(wheres) > 1 else ''}")
-        for route_path, wheres in sorted(openfga_sites.items()):
-            print(f"  - (openfga, POST {route_path}, agent#use): {wheres[0]}{' (+%d more)' % (len(wheres)-1) if len(wheres) > 1 else ''}")
+        for (method, route_path), wheres in sorted(openfga_sites.items()):
+            print(f"  - (openfga, {method} {route_path}, agent#use): {wheres[0]}{' (+%d more)' % (len(wheres)-1) if len(wheres) > 1 else ''}")
 
     matrix_violations: list[Violation] = []
     for pair, wheres in {**ts_sites, **py_sites}.items():
@@ -277,13 +283,13 @@ def main() -> int:
                     f"call site uses ({pair[0]!r}, {pair[1]!r}) but no entry in tests/rbac/rbac-matrix.yaml",
                 )
             )
-    for route_path, wheres in openfga_sites.items():
-        if ("POST", route_path) not in declared_openfga_routes:
+    for (method, route_path), wheres in openfga_sites.items():
+        if (method, route_path) not in declared_openfga_routes:
             matrix_violations.append(
                 Violation(
                     "missing_in_matrix",
                     wheres[0],
-                    f"OpenFGA agent-use gate on POST {route_path} has no authorization_system=openfga entry",
+                    f"OpenFGA agent-use gate on {method} {route_path} has no authorization_system=openfga entry",
                 )
             )
 

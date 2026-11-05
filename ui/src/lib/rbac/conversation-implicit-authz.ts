@@ -29,6 +29,18 @@ function normalizedString(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
+/** Personal assistant discovery excludes shared and audit-visible conversations. */
+export function conversationOwnershipCandidateQuery(
+  session: ResourceAuthzSession,
+  userEmail: string,
+): { $or: Record<string, unknown>[] } {
+  const subject = stableSubject(session);
+  return { $or: [
+    ...(subject ? [{ owner_subject: subject }] : []),
+    identityMatch("owner_id", identityCandidates(userEmail)),
+  ] };
+}
+
 export function conversationVisibilityCandidateQuery(
   userEmail: string,
   directShareConversationIds: readonly string[] = [],

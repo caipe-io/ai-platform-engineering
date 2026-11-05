@@ -74,6 +74,33 @@ routes:
         status: 403
         reason: DENY_NO_CAPABILITY
 
+  - id: ui-bff-get-api-app-assistant-conversation-openfga-agent-use
+    surface: ui_bff
+    method: GET
+    path: /api/agentic-apps/[appId]/assistant/conversation
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: Assumes an installed app permitting the reader's role. The host derives the assistant binding, checks agent use, and returns only an owned web chat; service accounts are rejected before discovery.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+
   - id: ui-bff-post-api-chat-conversations-openfga-agent-use
     surface: ui_bff
     method: POST
