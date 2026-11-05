@@ -74,15 +74,46 @@ Get RAG Server URL with per-ingestor override support
 {{- end }}
 {{- end }}
 
-{{/* Build the shared RAG Redis URL from global.rag.redis. */}}
-{{- define "rag-ingestors.redisUrl" -}}
+{{/* Shared RAG MongoDB persistence settings. */}}
+
+{{- define "rag-ingestors.mongodbEnv" -}}
 {{- $global := .Values.global | default dict -}}
 {{- $rag := $global.rag | default dict -}}
-{{- $redis := $rag.redis | default dict -}}
-{{- $host := $redis.host | default "rag-redis" -}}
-{{- $port := $redis.port | default 6379 -}}
-{{- $db := $redis.db | default 0 -}}
-{{- printf "redis://%s:%v/%v" $host $port $db -}}
+{{- $mongo := $rag.mongodb | default dict -}}
+- name: RAG_WRITES_PAUSED
+  value: {{ $rag.writesPaused | default false | quote }}
+- name: MONGODB_URI
+  valueFrom:
+    secretKeyRef:
+      name: {{ tpl (required "global.rag.mongodb.existingSecret must identify the application MongoDB URI Secret" $mongo.existingSecret) . | quote }}
+      key: {{ $mongo.uriKey | default "MONGODB_URI" | quote }}
+- name: MONGODB_DATABASE
+  value: {{ $mongo.database | default "caipe" | quote }}
+{{- if $mongo.caConfigMap }}
+- name: MONGODB_TLS_CA_FILE
+  value: /etc/rag-mongodb-ca/ca.pem
+{{- end }}
+{{- end -}}
+
+{{- define "rag-ingestors.mongodbMount" -}}
+{{- $mongo := ((.Values.global | default dict).rag | default dict).mongodb | default dict -}}
+{{- if $mongo.caConfigMap }}
+- name: rag-mongodb-ca
+  mountPath: /etc/rag-mongodb-ca
+  readOnly: true
+{{- end }}
+{{- end -}}
+
+{{- define "rag-ingestors.mongodbVolume" -}}
+{{- $mongo := ((.Values.global | default dict).rag | default dict).mongodb | default dict -}}
+{{- if $mongo.caConfigMap }}
+- name: rag-mongodb-ca
+  configMap:
+    name: {{ tpl $mongo.caConfigMap . | quote }}
+    items:
+      - key: {{ $mongo.caKey | default "global-bundle.pem" | quote }}
+        path: ca.pem
+{{- end }}
 {{- end -}}
 
 {{- define "rag-ingestors.appVersion" -}}

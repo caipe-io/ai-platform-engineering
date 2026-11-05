@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable
 import asyncio
 from io import BytesIO
 import hashlib
@@ -107,7 +108,8 @@ from common.constants import (
   DEFAULT_SCHEMA_LABEL,
 )
 from common.embeddings_factory import EmbeddingsFactory
-import redis.asyncio as redis
+from common.mongo_storage import MongoStorage, CURRENT_CLAIM, LEASE_SECONDS
+from server.storage_fencing import ClaimCheckedMilvus
 from langchain_milvus import BM25BuiltInFunction, Milvus
 from pymilvus import MilvusClient
 import time
@@ -143,7 +145,7 @@ clean_up_interval = int(os.getenv("CLEANUP_INTERVAL", 3 * 60 * 60))  # Default t
 cleanup_enabled = os.getenv("CLEANUP_ENABLED", "true").lower() in ("true", "1", "yes")
 ontology_agent_client = httpx.AsyncClient(base_url=os.getenv("ONTOLOGY_AGENT_RESTAPI_ADDR", "http://localhost:8098"))
 graph_rag_enabled = os.getenv("ENABLE_GRAPH_RAG", "true").lower() in ("true", "1", "yes")
-redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+
 milvus_uri = os.getenv("MILVUS_URI", "http://localhost:19530")
 embeddings_model = os.getenv("EMBEDDINGS_MODEL", "text-embedding-3-small")
 neo4j_addr = os.getenv("NEO4J_ADDR", "bolt://localhost:7687")
@@ -290,6 +292,8 @@ async def periodic_cleanup_task():
   while True:
     try:
       await asyncio.sleep(clean_up_interval)
+      if os.getenv("RAG_WRITES_PAUSED", "false").lower() == "true":
+        continue
       logger.info("Running periodic cleanup...")
 
       await run_safe_bulk_cleanup()
@@ -306,9 +310,20 @@ async def periodic_cleanup_task():
       # Continue running despite errors
 
 
-def create_redis_client(url: str) -> redis.Redis:
-  """Create the Redis client used by ingestion preview and job operations."""
-  return redis.from_url(url, decode_responses=True, socket_timeout=None)
+async def recover_worker_leases() -> None:
+  """Fail interrupted work even when its ingestor has no running replicas."""
+  while True:
+    try:
+      if redis_client and os.getenv("RAG_WRITES_PAUSED", "false").lower() != "true":
+        await redis_client.recover_interrupted()
+    except Exception:
+      logger.exception("Worker lease recovery failed")
+    await asyncio.sleep(15)
+
+
+def create_storage() -> MongoStorage:
+  """Construct shared MongoDB persistence for metadata and commands."""
+  return MongoStorage()
 
 
 # Application lifespan management - initalization and cleanup
@@ -328,7 +343,8 @@ async def app_lifespan(app: FastAPI):
   global vector_db_query_service
   global ingestor
 
-  redis_client = create_redis_client(redis_url)
+  redis_client = create_storage()
+  await redis_client.setup()
   metadata_storage = MetadataStorage(redis_client=redis_client)
   jobmanager = JobManager(redis_client=redis_client)
 
@@ -354,7 +370,8 @@ async def app_lifespan(app: FastAPI):
       raise e
 
   # Setup vector db for document data
-  vector_db = Milvus(
+  vector_db = ClaimCheckedMilvus(
+    storage=redis_client,
     embedding_function=embeddings,
     collection_name=default_collection_name_docs,
     connection_args=milvus_connection_args,
@@ -399,6 +416,7 @@ async def app_lifespan(app: FastAPI):
     logger.info("Periodic cleanup task started")
 
   audit.start_allow_rollup_flusher()
+  recovery_task = asyncio.create_task(recover_worker_leases())
 
   yield
 
@@ -406,6 +424,8 @@ async def app_lifespan(app: FastAPI):
   logging.info("Shutting down the app...")
 
   await audit.stop_allow_rollup_flusher()
+  recovery_task.cancel()
+  await asyncio.gather(recovery_task, return_exceptions=True)
 
   # Cancel the cleanup task
   if cleanup_task:
@@ -450,8 +470,8 @@ async def combined_lifespan(app: FastAPI):
 
       global agent_tools
 
-      # Seed default configs if not already present in Redis
-      if not await metadata_storage.get_mcp_builtin_config():
+      # Seed default configs if not already present in MongoDB
+      if os.getenv("RAG_WRITES_PAUSED", "false").lower() != "true" and not await metadata_storage.get_mcp_builtin_config():
         await metadata_storage.store_mcp_builtin_config(MCPBuiltinToolsConfig())
         logger.info("Seeded default MCPBuiltinToolsConfig")
 
@@ -464,7 +484,7 @@ async def combined_lifespan(app: FastAPI):
         ontology_graph_db=ontology_graph_db,
       )
 
-      # Load configs from Redis and register tools
+      # Load configs from MongoDB and register tools
       builtin_config = await metadata_storage.get_mcp_builtin_config() or MCPBuiltinToolsConfig()
       tool_configs = await metadata_storage.fetch_all_mcp_tool_configs()
       await agent_tools.register_tools(mcp, graph_rag_enabled=graph_rag_enabled, builtin_config=builtin_config, tool_configs=tool_configs)
@@ -527,6 +547,7 @@ if mcp_enabled:
     lifespan=combined_lifespan,
     routes=[*mcp_app.routes],  # Include MCP routes
   )
+
   if mcp_auth_enabled:
     app.add_middleware(MCPAuthMiddleware)
     logger.info("MCP authentication is ENABLED")
@@ -539,6 +560,47 @@ else:
     version="2.0.0",
     lifespan=combined_lifespan,
   )
+
+
+@app.middleware("http")
+async def bind_ingestion_claim(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+  """Carry the worker's fencing token through metadata and job writes."""
+  if os.getenv("RAG_WRITES_PAUSED", "false").lower() == "true" and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+    return JSONResponse(status_code=503, content={"detail": "RAG writes are paused for maintenance"})
+  token = request.headers.get("X-RAG-Claim-Token")
+  source_id = request.headers.get("X-RAG-Datasource-ID")
+  if not token:
+    return await call_next(request)
+  if not source_id or redis_client is None:
+    return JSONResponse(status_code=409, content={"detail": "Ingestion claim is unavailable"})
+  try:
+    await redis_client.assert_claim(source_id, token)
+  except RuntimeError as error:
+    return JSONResponse(status_code=409, content={"detail": str(error)})
+  claim = {"_id": source_id, "token": token}
+  marker = CURRENT_CLAIM.set(claim)
+  owner = asyncio.current_task()
+
+  async def renew_request_claim() -> None:
+    try:
+      while True:
+        await asyncio.sleep(LEASE_SECONDS / 3)
+        if not await redis_client.renew(claim):
+          owner.cancel()
+          return
+    except asyncio.CancelledError:
+      raise
+    except Exception:
+      logger.exception("Request ingestion lease renewal failed")
+      owner.cancel()
+
+  heartbeat = asyncio.create_task(renew_request_claim())
+  try:
+    return await call_next(request)
+  finally:
+    heartbeat.cancel()
+    await asyncio.gather(heartbeat, return_exceptions=True)
+    CURRENT_CLAIM.reset(marker)
 
 
 def generate_ingestor_id(ingestor_name: str, ingestor_type: str) -> str:
@@ -625,7 +687,7 @@ async def enqueue_ingestor_request(
   )
   queue = ingestor_request_queue(ingestor_type, ingestor_id)
   try:
-    await redis_client.rpush(queue, request.model_dump_json())  # type: ignore
+    await redis_client.enqueue(queue, request.model_dump_json())  # type: ignore
   except Exception as error:
     if job_id and jobmanager:
       await jobmanager.add_error_msg(job_id, f"Failed to enqueue command: {error}")
@@ -659,7 +721,7 @@ async def request_ingestor_preview(
   )
   timeout_seconds = max(5, min(int(os.getenv("INGESTOR_PREVIEW_TIMEOUT_SECONDS", "120")), 300))
   try:
-    result = await redis_client.blpop([response_key], timeout=timeout_seconds)
+    result = await redis_client.wait_preview(response_key, timeout_seconds)
   except Exception as error:
     raise HTTPException(
       status_code=503,
@@ -670,7 +732,7 @@ async def request_ingestor_preview(
       status_code=504,
       detail=f"The {ingestor_type} preview did not finish within {timeout_seconds} seconds",
     )
-  _, raw_response = result
+  raw_response = result
   try:
     response = json.loads(raw_response)
   except (TypeError, json.JSONDecodeError) as error:
@@ -880,6 +942,9 @@ async def authorize_ingestor_job_transport(
       status_code=403,
       detail="Only the assigned ingestor service may mutate job progress",
     )
+  claim = CURRENT_CLAIM.get()
+  if not claim or claim["_id"] != datasource_id:
+    raise HTTPException(status_code=409, detail="A current claim for this datasource is required")
   ingestor_type = request.headers.get("X-Ingestor-Type", "").strip()
   ingestor_name = request.headers.get("X-Ingestor-Name", "").strip()
   if not ingestor_type or not ingestor_name:
@@ -896,10 +961,9 @@ async def reject_if_ingestion_job_blocking(datasource_id: str, resource_label: s
   """
   Raises 400 if a datasource already has an active ingestion job.
 
-  A PENDING job stuck past `is_stale_pending_job`'s threshold means the
-  ingestor pod that should have dequeued it never did (crash, downtime, a
-  Redis message it silently dropped) - it is failed here so it stops
-  permanently blocking every future retry for this datasource.
+  Durable queued commands continue blocking duplicate work during outages.
+  Pending jobs without a command can fail after the stale threshold so an
+  interrupted enqueue does not permanently block explicit retries.
   """
   if not jobmanager:
     return
@@ -1061,6 +1125,9 @@ async def upsert_datasource(
     raise HTTPException(status_code=500, detail="Server not initialized")
 
   if is_trusted_ingestor_service(user):
+    claim = CURRENT_CLAIM.get()
+    if not claim or claim["_id"] != datasource_info.datasource_id:
+      raise HTTPException(status_code=409, detail="A current ingestion claim is required")
     await authorize_ingestor_transport(
       user,
       datasource_info.datasource_id,
@@ -3517,6 +3584,10 @@ async def ingest_documents(
     ingest_request.datasource_id,
     ingest_request.ingestor_id,
   )
+  if is_trusted_ingestor_service(user):
+    claim = CURRENT_CLAIM.get()
+    if not claim or claim["_id"] != ingest_request.datasource_id:
+      raise HTTPException(status_code=409, detail="A current ingestion claim is required")
   logger.info(f"Starting data ingestion for datasource: {ingest_request.datasource_id}")
 
   if not ingest_request.job_id:
@@ -3994,15 +4065,15 @@ async def health_check(response: Response):
   }
 
 
-async def init_tests(logger: logging.Logger, redis_client: redis.Redis, embeddings: EmbeddingsFactory, milvus_uri: str):
+async def init_tests(logger: logging.Logger, redis_client: MongoStorage, embeddings: EmbeddingsFactory, milvus_uri: str):
   """
   Run initial tests to ensure connections to check if deps are working.
   Note: This does not check the graph db connection as its done in the init of the class.
   """
   logger.info("====== Running initialization tests ======")
-  logger.info(f"1. Testing connections to Redis: URI [{redis_url}]...")
+  logger.info("1. Testing MongoDB connection...")
   resp = await redis_client.ping()
-  logger.info(f"Redis ping response: {resp}")
+  logger.info(f"MongoDB ping response: {resp}")
 
   # Test embeddings endpoint
   logger.info(f"2. Testing connections to [{embeddings_model}]...")
@@ -4107,7 +4178,7 @@ async def init_tests(logger: logging.Logger, redis_client: redis.Redis, embeddin
 
 
 async def _reload_mcp_tools():
-  """Reload MCP tools from the current Redis config. No-op if MCP is disabled."""
+  """Reload MCP tools from the current MongoDB config. No-op if MCP is disabled."""
   if not mcp_enabled or agent_tools is None:
     return
   builtin_config = await metadata_storage.get_mcp_builtin_config() or MCPBuiltinToolsConfig()

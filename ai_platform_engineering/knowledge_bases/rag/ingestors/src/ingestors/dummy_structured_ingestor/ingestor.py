@@ -4,6 +4,7 @@ import logging
 from typing import List
 from pydantic import BaseModel
 
+from common.ingestor_listener import run_standalone_ingestion
 from common.ingestor import IngestorBuilder, Client
 from common.models.rag import StructuredEntity
 from common.models.rag import DataSourceInfo
@@ -54,34 +55,37 @@ async def sync_entities(client: Client):
     reload_interval=SYNC_INTERVAL,
     metadata={"file_path": file_path},
   )
-  await client.upsert_datasource(datasource_info)
-  logging.info(f"Created/updated datasource: {datasource_id}")
+  async def sync_datasource() -> None:
+    await client.upsert_datasource(datasource_info)
+    logging.info(f"Created/updated datasource: {datasource_id}")
 
-  # 2. Then create a job for this ingestion
-  job_response = await client.create_job(datasource_id=datasource_id, job_status=JobStatus.IN_PROGRESS, message="Starting entity ingestion", total=len(entities))
-  job_id = job_response["job_id"]
-  logging.info(f"Created job {job_id} for datasource={datasource_id} with {len(entities)} entities")
+    # 2. Then create a job for this ingestion
+    job_response = await client.create_job(datasource_id=datasource_id, job_status=JobStatus.IN_PROGRESS, message="Starting entity ingestion", total=len(entities))
+    job_id = job_response["job_id"]
+    logging.info(f"Created job {job_id} for datasource={datasource_id} with {len(entities)} entities")
 
-  # 3. Ingest entities using automatic batching
-  try:
-    logging.info(f"Ingesting {len(entities)} entities with automatic batching")
+    # 3. Ingest entities using automatic batching
+    try:
+      logging.info(f"Ingesting {len(entities)} entities with automatic batching")
 
-    # Use the client's ingest_entities method which handles batching automatically
-    await client.ingest_entities(job_id=job_id, datasource_id=datasource_id, entities=entities, fresh_until=get_fresh_until(SYNC_INTERVAL))
+      # Use the client's ingest_entities method which handles batching automatically
+      await client.ingest_entities(job_id=job_id, datasource_id=datasource_id, entities=entities, fresh_until=get_fresh_until(SYNC_INTERVAL))
 
-    # Update job progress to reflect all entities processed
-    await client.increment_job_progress(job_id, len(entities))
+      # Update job progress to reflect all entities processed
+      await client.increment_job_progress(job_id, len(entities))
 
-    # Mark job as complete
-    await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully ingested {len(entities)} entities")
-    logging.info(f"Successfully completed ingestion of {len(entities)} entities")
+      # Mark job as complete
+      await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully ingested {len(entities)} entities")
+      logging.info(f"Successfully completed ingestion of {len(entities)} entities")
 
-  except Exception as e:
-    # Mark job as failed
-    await client.add_job_error(job_id, [str(e)])
-    await client.update_job(job_id=job_id, job_status=JobStatus.FAILED, message=f"Ingestion failed: {e}")
-    logging.error(f"StructuredEntity ingestion failed: {e}")
-    raise
+    except Exception as e:
+      # Mark job as failed
+      await client.add_job_error(job_id, [str(e)])
+      await client.update_job(job_id=job_id, job_status=JobStatus.FAILED, message=f"Ingestion failed: {e}")
+      logging.error(f"StructuredEntity ingestion failed: {e}")
+      raise
+
+  await run_standalone_ingestion(datasource_info.datasource_id, sync_datasource)
 
 
 if __name__ == "__main__":

@@ -12,7 +12,8 @@ uv sync
 
 # Set environment variables (see Configuration)
 export NEO4J_URI="bolt://localhost:7687"
-export REDIS_URL="redis://localhost:6379"
+export MONGODB_URI="mongodb://localhost:27017"
+export MONGODB_DATABASE="caipe"
 
 # Run the service
 source ./.venv/bin/activate 
@@ -28,7 +29,7 @@ LOG_LEVEL=DEBUG python src/agent_ontology/restapi.py
 | `NEO4J_URI` | - | Neo4j connection URI (bolt://host:port) |
 | `NEO4J_USER` | - | Neo4j username |
 | `NEO4J_PASSWORD` | - | Neo4j password |
-| `REDIS_URL` | `redis://localhost:6379` | Redis connection URL |
+| `MONGODB_URI` | `mongodb://localhost:27017` | MongoDB connection URL |
 
 ### Optional Configuration
 
@@ -72,12 +73,12 @@ If processing or evaluation fails, the run raises an error without publishing th
 
 Default ports: 7687 (bolt), 7474 (http)
 
-### Redis
+### MongoDB
 
 - **Heuristics metrics**: Match counts, quality scores, examples
 - **Ontology version**: Current version tracking
 
-Default port: 6379
+Default port: 27017
 
 ## Background Processing
 
@@ -107,7 +108,7 @@ curl http://localhost:8098/v1/graph/ontology/agent/status
 |-----------|---------|
 | **HeuristicsProcessor** | Discovers candidate relations using BM25 fuzzy search |
 | **BM25SearchEngine** | In-memory search index with Bloom filter optimization |
-| **RelationCandidateManager** | Manages candidates across Redis (metrics) and Neo4j (structure) |
+| **RelationCandidateManager** | Manages candidates across MongoDB (metrics) and Neo4j (structure) |
 | **OntologyAgent** | Orchestrates processing and evaluation |
 | **AgentWorker** | Isolated LLM worker that evaluates relation candidates |
 
@@ -118,7 +119,7 @@ curl http://localhost:8098/v1/graph/ontology/agent/status
    └─> Build BM25 index + Bloom filter
    └─> Fuzzy search for candidate matches
    └─> Deep property matching for validation
-   └─> Store metrics in Redis
+   └─> Store metrics in MongoDB
 
 2. Evaluation
    └─> Group candidates by entity type pairs
@@ -276,19 +277,19 @@ After evaluation, accepted relations are applied to the data graph:
 ### Dual Storage Strategy
 
 **Why two databases?**
-- **Redis**: Fast KV store for frequently updated metrics
+- **MongoDB**: Durable atomic counters and bounded example documents
 - **Neo4j**: Graph structure for relationships and evaluations
 
 ```
 ┌─────────────────────────────────────────┐
 │         Relation Candidate               │
 ├──────────────────┬──────────────────────┤
-│  Redis           │  Neo4j               │
+│  MongoDB         │  Neo4j               │
 │  (Heuristics)    │  (Structure)         │
 └──────────────────┴──────────────────────┘
 ```
 
-### Redis Storage
+### MongoDB Storage
 
 **What's Stored:**
 - Match counts and quality sums
@@ -313,7 +314,7 @@ Each processing run creates a **new version** (UUID):
 - New heuristics computed for new version
 - Evaluations compared against previous version
 - If better, promote new version
-- Clean up old versions (Redis + Neo4j)
+- Clean up old versions (MongoDB + Neo4j)
 
 **Version Lifecycle:**
 ```
