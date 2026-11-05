@@ -138,3 +138,17 @@ def test_workers_have_distinct_storage_and_no_direct_external_rule(chart: Path) 
             assert env["AWS_EC2_METADATA_DISABLED"]["value"] == "true"
     policy = next(d for d in resources if d["kind"] == "NetworkPolicy" and d["metadata"]["name"].endswith("-workers"))
     assert {p["port"] for rule in policy["spec"]["egress"] for p in rule["ports"]} == {53, 3000, 3128, 27017}
+
+
+@pytest.mark.parametrize("target,expected", [(None, "http"), ("dynamic-api", "dynamic-api"), ("8001", 8001)])
+def test_compatibility_service_routes_to_its_own_port(tmp_path: Path, target: str | None, expected: str | int) -> None:
+    source = CHART / "charts/dynamic-agents"
+    (tmp_path / "templates").mkdir()
+    for name in ["Chart.yaml", "values.yaml", "templates/_helpers.tpl", "templates/service.yaml"]:
+        shutil.copyfile(source / name, tmp_path / name)
+    args = ["helm", "template", "example", str(tmp_path),
+            "--show-only", "templates/service.yaml"]
+    if target is not None:
+        args += ["--set", f"service.targetPort={target}"]
+    service = docs(subprocess.run(args, capture_output=True, text=True, check=False))[0]
+    assert service["spec"]["ports"][0]["targetPort"] == expected
