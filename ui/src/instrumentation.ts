@@ -31,6 +31,15 @@ export async function register() {
   );
   startConfigDrivenRagSourceReconciler();
 
+  try {
+    const { startConfiguredAgenticAppCasReconciler } = await import(
+      "./lib/agentic-apps/cas-reconcile"
+    );
+    startConfiguredAgenticAppCasReconciler();
+  } catch (error) {
+    console.error("[instrumentation] External App CAS reconcile failed closed:", error);
+  }
+
   // Start the IdP directory-sync scheduler so the "Enable background sync"
   // schedule (Identity Sync admin tab) actually fires. Idempotent and
   // replica-safe (per-minute fires are claimed atomically in Mongo).

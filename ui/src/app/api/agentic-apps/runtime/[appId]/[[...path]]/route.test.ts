@@ -11,6 +11,7 @@ import exampleManifest from "../../../../../../../examples/agentic-apps/shared/m
 
 const mockGetAuthenticatedUser = jest.fn();
 const mockGetConfiguredAgenticApp = jest.fn();
+const mockEvaluateCas = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => ({
   ApiError: class ApiError extends Error {
@@ -22,6 +23,10 @@ jest.mock("@/lib/api-middleware", () => ({
 jest.mock("@/lib/agentic-apps/config", () => ({
   isAgenticAppsEnabled: () => true,
   getConfiguredAgenticApp: (...args: unknown[]) => mockGetConfiguredAgenticApp(...args),
+}));
+
+jest.mock("@/lib/agentic-apps/cas-compat", () => ({
+  evaluateAgenticAppCasCompatibility: (...args: unknown[]) => mockEvaluateCas(...args),
 }));
 
 import { GET, POST } from "./route";
@@ -42,6 +47,10 @@ const configuredApp: ConfiguredAgenticApp = {
       origin: "http://example-app.example.svc",
       mountPath: "/apps/example-app",
     },
+    authorization: {
+      resourceType: "agentic_app",
+      launchAction: "use",
+    },
     surfaces: { showInHub: true },
     access: {
       requiredRoles: ["user"],
@@ -51,6 +60,7 @@ const configuredApp: ConfiguredAgenticApp = {
           action: "proxy:GET",
           defaultEffect: "allow",
           requiredScopes: ["example-app:read"],
+          casAction: "read",
         },
       ],
     },
@@ -79,6 +89,12 @@ describe("External App runtime route", () => {
       session: { sub: "stable-subject", role: "user" },
     });
     mockGetConfiguredAgenticApp.mockReturnValue(configuredApp);
+    mockEvaluateCas.mockResolvedValue({
+      mode: "enforce",
+      casDecision: "ALLOW",
+      casReason: "OK",
+      effectiveEffect: "allow",
+    });
   });
 
   afterAll(() => {
@@ -307,6 +323,36 @@ describe("External App runtime route", () => {
 
     expect(response.status).toBe(401);
     expect(mockGetConfiguredAgenticApp).toHaveBeenCalledWith("example-app");
+  });
+
+  it("fails closed before proxying when CAS denies the configured action", async () => {
+    mockEvaluateCas.mockResolvedValueOnce({
+      mode: "enforce",
+      casDecision: "DENY",
+      casReason: "NO_CAPABILITY",
+      effectiveEffect: "deny",
+    });
+    const fetchMock = jest.spyOn(global, "fetch");
+
+    const response = await GET(
+      new NextRequest("https://host.example/api/agentic-apps/runtime/example-app"),
+      { params: Promise.resolve({ appId: "example-app", path: [] }) },
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: "app_unauthorized",
+      reasonCode: "NO_CAPABILITY",
+    });
+    expect(mockEvaluateCas).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appId: "example-app",
+        subjectId: "stable-subject",
+        action: "read",
+      }),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
   });
 
   it("rewrites upstream runtime redirects to the canonical public app path", async () => {

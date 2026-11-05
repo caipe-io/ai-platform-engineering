@@ -138,6 +138,15 @@ Key fields for security architects:
 
 ---
 
+## Configured application access
+
+- Applications opt into CAS with `authorization: { resourceType: "agentic_app", launchAction: "use" }`. Apps without this declaration retain their existing local role and route-policy checks. Route `casAction` declarations require application authorization.
+- Catalog discovery checks `read`; launch, direct lookup, native entry, and proxied routes check `use`. Routes may additionally require `write`, `approve`, or `manage`. Local denials remain denials. Navigation entries and host-route claims include only authorized apps.
+- `AGENTIC_APPS_CAS_MODE` defaults to `enforce`. `shadow` records CAS decisions while preserving local results; `off` skips CAS. In enforce mode, unavailable authorization returns a controlled `503` from catalog/API routes and denies native entry.
+- The reconciler retries every 30 seconds and gates requests on successful reconciliation of the current catalog. A UI starting before the updated OpenFGA model remains closed until reconciliation succeeds; no UI restart is required.
+- Visible, enabled, installed apps receive catalog-managed `user:*` use and organization-admin management grants. `catalog_managed` ownership markers allow cleanup after removal, hiding, disablement, or opt-out while preserving explicit user/team and independently managed grants. Inventory reads are bounded and paginated; incomplete scans do not revoke grants. Configuration changes remain eventually consistent across replicas.
+- Install the updated OpenFGA model before enabling app authorization. The example preferences mutation requires `use`; deployments selecting `write` must provision writer relationships explicitly. See [configured app authorization](../../features/agentic-apps.md).
+
 ## Threat Model Considerations
 
 | Threat | Mitigation |
