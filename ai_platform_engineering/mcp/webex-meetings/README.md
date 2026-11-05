@@ -96,8 +96,8 @@ never exposes an instance ID:
 
 1. Derive the site host from public metadata, or use the supplied `site_url`.
 2. Search the site-specific User Hub recording list, following offset pagination.
-3. Match the title and occurrence time, then adopt and verify the recording
-   detail's `meetingInstanceId` across transcript segments.
+3. Match the recording detail's `meetingInstanceId` to an exact supplied ID,
+   or verify the title/time lookup against independently fetched instance timing.
 4. Download the transcript URL returned by the authenticated recording stream.
 
 The caller's existing OAuth token is used throughout; no browser cookies or
@@ -108,10 +108,21 @@ User Hub endpoints are not part of Webex's public REST API. Keep this behavior a
 a guarded fallback and expect Webex may change its response shape or paths.
 
 Recording-list pagination uses pages of 100 and stops at the reported total,
-an empty/short page, or 1,000 rows. Matching first filters by normalized title
-(including removal of User Hub's timestamp suffix), then chooses recordings
-within two days of the requested occurrence start. At most 100 candidate detail
-records are inspected.
+an empty/short page, or 1,000 rows. Title/time discovery filters by normalized
+title (including removal of User Hub's timestamp suffix) and recording creation
+times within two days. An empty neighborhood never falls back to older rows.
+At most 100 candidate recording details and one public meeting detail per
+distinct candidate instance are inspected.
+
+The two-day discovery window does not establish an occurrence match. Public
+metadata must identify an actual `meeting` instance starting within five minutes
+of the requested start. Only when public metadata returns 401, 403, or 404 can
+a recording created within 30 minutes anchor a shared instance. Multiple matching
+instance IDs are ambiguous and return no transcript. Later segments of the same
+matched instance remain eligible. `occurrenceStart` is returned only when actual
+instance timing was independently verified; `startTime` remains recording
+creation time. Exact-ID lookups verify each stream's instance ID and allow late
+or undated recording segments without title/time inference.
 
 For safety, supplied and derived site URLs must be HTTPS Webex hosts, transcript
 download URLs must also be hosted by Webex, and returned meeting objects have

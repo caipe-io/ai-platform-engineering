@@ -107,3 +107,38 @@ async def test_recovery_timeout_is_explicit(monkeypatch: pytest.MonkeyPatch) -> 
     result = await transcript_tool(monkeypatch, handler)(mcp_server.ListTranscripts(from_iso="2026-01-01T00:00:00Z"))
     assert result["items"] == []
     assert result["recordingOccurrenceLookup"] == {"recordingsChecked": 0, "limited": True, "timedOut": True}
+
+
+@pytest.mark.asyncio
+async def test_exact_userhub_lookup_reuses_verified_actual_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    metadata_calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/meetingTranscripts":
+            return httpx.Response(200, json={"items": []})
+        if request.url.path == "/v1/meetings/instance-1":
+            metadata_calls.append(request.url.path)
+            return httpx.Response(200, json={
+                "id": "instance-1", "meetingType": "meeting", "title": "Weekly Sync",
+                "start": "2026-11-05T13:00:30Z", "siteUrl": "primary.webex.com",
+            })
+        if request.url.path == "/webappng/api/v1/recordings":
+            assert request.url.params["keyword"] == "Weekly Sync"
+            return httpx.Response(200, json={"recordings": [{
+                "recordUUID": "late-recording", "recordName": "Weekly Sync",
+                "gmtCreateTime": "2026-11-05 15:00:00",
+            }]})
+        assert request.url.path.endswith("/late-recording/stream")
+        return httpx.Response(200, json={
+            "meetingInstanceId": "instance-1",
+            "downloadRecordingInfo": {"downloadInfo": {
+                "transcriptURL": "https://media.webex.com/transcript.txt",
+            }},
+        })
+
+    result = await transcript_tool(monkeypatch, handler)(mcp_server.ListTranscripts(
+        meeting_id="instance-1", meeting_start="2026-11-05T13:00:00Z",
+    ))
+    assert metadata_calls == ["/v1/meetings/instance-1"]
+    assert result["items"][0]["startTime"] == "2026-11-05T15:00:00+00:00"
+    assert result["items"][0]["occurrenceStart"] == "2026-11-05T13:00:30+00:00"

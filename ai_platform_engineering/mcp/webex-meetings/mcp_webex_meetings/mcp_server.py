@@ -707,9 +707,9 @@ def _select_userhub_recording_candidates(
             and abs(recording_time - meeting_start) <= timedelta(days=2)
         ]
         nearby_with_distance.sort(key=lambda item: item[0])
-        nearby = [recording for _, recording in nearby_with_distance]
-        if nearby:
-            candidates = nearby
+        # This only bounds discovery. A nearby recording is not proof that
+        # its meeting instance belongs to the requested occurrence.
+        candidates = [recording for _, recording in nearby_with_distance]
     return candidates[:USERHUB_RECORDING_DETAIL_LIMIT]
 
 
@@ -773,6 +773,7 @@ async def _userhub_transcripts_for_meeting(
     meeting_start: datetime | None,
     max_results: int,
     download: bool,
+    verified_occurrence_start: datetime | None = None,
 ) -> list[dict[str, Any]]:
     recordings = await _list_userhub_recordings(
         client,
@@ -783,7 +784,7 @@ async def _userhub_transcripts_for_meeting(
     candidates = _select_userhub_recording_candidates(
         recordings,
         meeting_title=meeting_title,
-        meeting_start=meeting_start,
+        meeting_start=meeting_start if meeting_id is None else None,
     )
     if meeting_title and not candidates:
         recordings = await _list_userhub_recordings(
@@ -794,16 +795,19 @@ async def _userhub_transcripts_for_meeting(
         )
         candidates = _select_userhub_recording_candidates(
             recordings,
-            meeting_title=meeting_title,
-            meeting_start=meeting_start,
+            meeting_title=meeting_title if meeting_id is None else None,
+            meeting_start=meeting_start if meeting_id is None else None,
         )
     headers = {
         "Authorization": bearer,
         "Accept": "application/json",
         "clientType": "web",
     }
-    items: list[dict[str, Any]] = []
-    matched_meeting_id = meeting_id
+    resolved: list[tuple[dict[str, Any], dict[str, Any], str]] = []
+    occurrence_starts: dict[str, datetime | None] = {}
+    if meeting_id is not None and verified_occurrence_start is not None:
+        occurrence_starts[meeting_id] = verified_occurrence_start
+    unavailable_instances: set[str] = set()
     for recording in candidates:
         recording_uuid = recording.get("recordUUID")
         if not isinstance(recording_uuid, str) or not recording_uuid:
@@ -827,7 +831,7 @@ async def _userhub_transcripts_for_meeting(
         detail_meeting_id = detail.get("meetingInstanceId")
         if not isinstance(detail_meeting_id, str) or not detail_meeting_id:
             continue
-        if matched_meeting_id is not None and detail_meeting_id != matched_meeting_id:
+        if meeting_id is not None and detail_meeting_id != meeting_id:
             continue
         download_info = (
             detail.get("downloadRecordingInfo", {}).get("downloadInfo", {})
@@ -840,9 +844,70 @@ async def _userhub_transcripts_for_meeting(
             )
         except ValueError:
             continue
-        if matched_meeting_id is None:
-            matched_meeting_id = detail_meeting_id
+        resolved.append((recording, detail, transcript_url))
+        if meeting_id is not None:
+            if len(resolved) >= max_results:
+                break
+            continue
+        if detail_meeting_id in occurrence_starts:
+            continue
 
+        # Verify actual instance timing independently of the requested date
+        # and recording creation time. Shared recordings can remain playable
+        # when the public meeting endpoint denies access.
+        occurrence_starts[detail_meeting_id] = None
+        try:
+            meeting_response = await client.get(
+                f"{WEBEX_API_BASE}/meetings/{detail_meeting_id}",
+                headers={"Authorization": bearer, "Accept": "application/json"},
+            )
+            meeting_response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in {401, 403, 404}:
+                unavailable_instances.add(detail_meeting_id)
+            continue
+        except httpx.RequestError:
+            continue
+        metadata = meeting_response.json()
+        if (
+            isinstance(metadata, dict)
+            and metadata.get("id") == detail_meeting_id
+            and metadata.get("meetingType") == "meeting"
+        ):
+            start = metadata.get("start")
+            occurrence_starts[detail_meeting_id] = _parse_iso_datetime(
+                start if isinstance(start, str) else None
+            )
+
+    matched_meeting_id = meeting_id
+    if matched_meeting_id is None:
+        if meeting_start is None:
+            return []
+        matching_instances: set[str] = set()
+        for recording, detail, _ in resolved:
+            instance_id = detail["meetingInstanceId"]
+            occurrence_start = occurrence_starts.get(instance_id)
+            if occurrence_start is not None:
+                if abs(occurrence_start - meeting_start) <= timedelta(minutes=5):
+                    matching_instances.add(instance_id)
+            elif instance_id in unavailable_instances:
+                recording_start = _userhub_recording_time(recording)
+                if (
+                    recording_start is not None
+                    and abs(recording_start - meeting_start) <= timedelta(minutes=30)
+                ):
+                    matching_instances.add(instance_id)
+        # Multiple nearby instances are ambiguous. Never choose an occurrence
+        # merely because its recording was returned first.
+        if len(matching_instances) != 1:
+            return []
+        matched_meeting_id = matching_instances.pop()
+
+    items: list[dict[str, Any]] = []
+    for recording, detail, transcript_url in resolved:
+        if detail["meetingInstanceId"] != matched_meeting_id:
+            continue
+        recording_uuid = recording["recordUUID"]
         start_time = _userhub_recording_time(recording)
         item: dict[str, Any] = {
             "id": recording_uuid,
@@ -855,6 +920,9 @@ async def _userhub_transcripts_for_meeting(
             "coHost": detail.get("coHost"),
             "shareToMe": detail.get("shareToMe"),
         }
+        occurrence_start = occurrence_starts.get(matched_meeting_id)
+        if occurrence_start is not None:
+            item["occurrenceStart"] = occurrence_start.isoformat()
         if download:
             download_headers = {
                 "Authorization": bearer,
@@ -1270,6 +1338,16 @@ def register_tools(server) -> None:
         meeting_start = requested_meeting_start or _parse_iso_datetime(
             str(meeting.get("start")) if meeting and meeting.get("start") else None
         )
+        verified_occurrence_start = None
+        if (
+            meeting is not None
+            and meeting.get("id") == args.meeting_id
+            and meeting.get("meetingType") == "meeting"
+        ):
+            start = meeting.get("start")
+            verified_occurrence_start = _parse_iso_datetime(
+                start if isinstance(start, str) else None
+            )
         bearer = _bearer_from_request()
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -1282,6 +1360,7 @@ def register_tools(server) -> None:
                     meeting_start=meeting_start,
                     max_results=args.max_results,
                     download=args.download,
+                    verified_occurrence_start=verified_occurrence_start,
                 )
         except (httpx.HTTPStatusError, httpx.RequestError, ValueError) as exc:
             logger.warning("User Hub transcript fallback failed: %s", exc)
