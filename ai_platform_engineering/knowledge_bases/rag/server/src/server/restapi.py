@@ -139,6 +139,21 @@ if logger.level == logging.DEBUG:  # enable langchain verbose logging
   set_langchain_verbose(True)
 
 # Read configuration from environment variables
+
+MILVUS_MAX_QUERY_LIMIT = 16384
+_SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,256}$")
+
+
+def _validate_datasource_id(datasource_id: str) -> str:
+  """Validate and sanitize datasource_id to prevent injection vulnerabilities."""
+  if not _SAFE_ID_RE.fullmatch(datasource_id):
+    raise HTTPException(
+      status_code=400,
+      detail="Invalid datasource_id: must be alphanumeric, dashes, or underscores only",
+    )
+  return datasource_id
+
+
 clean_up_interval = int(os.getenv("CLEANUP_INTERVAL", 3 * 60 * 60))  # Default to 3 hours
 cleanup_enabled = os.getenv("CLEANUP_ENABLED", "true").lower() in ("true", "1", "yes")
 ontology_agent_client = httpx.AsyncClient(base_url=os.getenv("ONTOLOGY_AGENT_RESTAPI_ADDR", "http://localhost:8098"))
@@ -1720,7 +1735,9 @@ async def list_datasource_documents(
   limit: int = Query(default=100, ge=1, le=1000, description="Number of chunks to fetch"),
   user: UserContext = Depends(require_role(Role.READONLY)),
 ):
-  """List documents and chunks for a datasource with pagination (without content)."""
+  """List documents and chunks with ACL-scoped totals independent of pagination."""
+  datasource_id = _validate_datasource_id(datasource_id)
+
   if not vector_db or not vector_db_query_service:
     raise HTTPException(status_code=500, detail="Server not initialized")
 
@@ -1728,22 +1745,52 @@ async def list_datasource_documents(
   await check_datasource_access(user, datasource_id, "read")
 
   # Validate Milvus constraint: offset + limit must be < 16384
-  if offset + limit >= 16384:
+  if offset + limit >= MILVUS_MAX_QUERY_LIMIT:
     raise HTTPException(
       status_code=400,
-      detail="offset + limit must be less than 16,384 (Milvus query limitation)",
+      detail=f"offset + limit must be less than {MILVUS_MAX_QUERY_LIMIT:,} (Milvus query limitation)",
     )
 
   try:
-    # Fetch limit + 1 to determine if more chunks exist
+    # The page and both totals must use the same datasource and document ACLs.
     filters = merge_acl_filter({"datasource_id": datasource_id}, user)
     filter_expression = await vector_db_query_service.build_filter_expression(filters)
-    results = vector_db.client.query(
-      collection_name=default_collection_name_docs,
-      filter=filter_expression,
-      output_fields=["id", "document_id", "title", "chunk_index", "total_chunks", "fresh_until", "document_type", "document_ingested_at", "is_structured_entity", "source"],
-      offset=offset,
-      limit=limit + 1,
+
+    def _fetch_total_chunks() -> int:
+      rows = vector_db.client.query(
+        collection_name=default_collection_name_docs,
+        filter=filter_expression,
+        output_fields=["count(*)"],
+      )
+      return int(rows[0]["count(*)"]) if rows else 0
+
+    def _fetch_total_documents() -> int:
+      # Stream all IDs: an offset-limited query cannot count the full datasource.
+      iterator = vector_db.client.query_iterator(
+        collection_name=default_collection_name_docs,
+        filter=filter_expression,
+        output_fields=["document_id"],
+        batch_size=1000,
+      )
+      try:
+        unique_docs: set[str] = set()
+        while rows := iterator.next():
+          unique_docs.update(row.get("document_id", "unknown") for row in rows)
+        return len(unique_docs)
+      finally:
+        iterator.close()
+
+    results, total_chunks, total_documents = await asyncio.gather(
+      asyncio.to_thread(
+        vector_db.client.query,
+        collection_name=default_collection_name_docs,
+        filter=filter_expression,
+        output_fields=["id", "document_id", "title", "chunk_index", "total_chunks", "fresh_until", "document_type", "document_ingested_at", "is_structured_entity", "source"],
+        offset=offset,
+        limit=limit + 1,
+      ),
+      asyncio.to_thread(_fetch_total_chunks),
+      asyncio.to_thread(_fetch_total_documents),
     )
 
     # Determine if more chunks exist beyond this batch
@@ -1786,12 +1833,11 @@ async def list_datasource_documents(
 
     # Convert to list and sort by document_id
     documents = sorted(documents_map.values(), key=lambda d: d.document_id)
-    total_chunks = sum(len(doc.chunks) for doc in documents)
 
     return DatasourceDocumentsResponse(
       datasource_id=datasource_id,
       documents=documents,
-      total_documents=len(documents),
+      total_documents=total_documents,
       total_chunks=total_chunks,
       offset=offset,
       limit=limit,
