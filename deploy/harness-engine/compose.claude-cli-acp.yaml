@@ -19,10 +19,9 @@ services:
 
   claude-cli-acp-worker:
     profiles: [harness-engine]
-    build:
-      context: .
-      dockerfile: ai_platform_engineering/harness_engine/build/Dockerfile.claude-cli-acp
+    build: !reset null
     image: ${CLAUDE_CLI_ACP_WORKER_IMAGE:-ghcr.io/caipe-io/caipe-claude-cli-acp-worker:${HARNESS_IMAGE_TAG:?set a release, prebuild or source SHA tag}}
+    pull_policy: always
     restart: unless-stopped
     user: "65532:65532"
     read_only: true
@@ -44,6 +43,9 @@ services:
       HTTPS_PROXY: http://worker-egress:3128
       HTTP_PROXY: http://worker-egress:3128
       NO_PROXY: localhost,127.0.0.1,::1,caipe-ui,caipe-mongodb,harness-engine
+      https_proxy: http://worker-egress:3128
+      http_proxy: http://worker-egress:3128
+      no_proxy: localhost,127.0.0.1,::1,caipe-ui,caipe-mongodb,harness-engine
       AWS_EC2_METADATA_DISABLED: "true"
       HARNESS_ENGINE_INTERNAL_TOKEN: ${CLAUDE_CLI_ACP_WORKER_INTERNAL_TOKEN:?set a distinct private worker token}
       HARNESS_ENGINE_STORAGE_BACKEND: mongodb

@@ -20,12 +20,17 @@ SDK Local runs inside Engine. SDK Remote reuses the base Engine image with
   publish the shared `<stable>-<branch>-<count>` prebuild tag.
 - Main publishes `canary`; releases publish the exact version. Only final tag
   pushes update `latest`. Published builds also get `sha-<full-source-SHA>`.
-- Release finalization waits for this workflow; prebuild cleanup includes these
+- Release finalization waits for this workflow; release scanning includes these
   packages. No runtime credentials enter image builds.
+- Source-tagged images are retained after PR closure for pinned deployments. The
+  existing branch-cleanup action deletes whole versions, including their aliases,
+  so these packages are excluded until [source-aware retention](https://github.com/caipe-io/ai-platform-engineering/issues/3236) is implemented.
 - Set `HARNESS_IMAGE_TAG` to an exact release/prebuild/source tag. Override the
   individual `*_IMAGE` variables with digests for immutable deployments.
 
 ## Compose setup
+
+Use Docker Compose 2.24.4 or newer (`!reset` merge support).
 
 1. Configure profiles, MongoDB and distinct service tokens using the
    [Engine README](../../ai_platform_engineering/harness_engine/README.md).
@@ -43,8 +48,13 @@ SDK Local runs inside Engine. SDK Remote reuses the base Engine image with
    ```
 
    Add `compose.claude-acp.yaml` or `compose.claude-sdk.yaml` for other workers.
-   Use `--build` for local source. Review CLI/provider distribution terms for
-   your deployment.
+   Published services use `pull_policy: always`; an unavailable image fails closed.
+   Set `CAIPE_UI_IMAGE` when the UI prebuild uses a different tag from the workers.
+   Release overlays reset inherited `build` definitions to prevent pull failures
+   from executing checkout code. For source validation, build each image explicitly
+   with `docker build -f <Dockerfile> -t <selected-image-ref> .`, then run
+   `docker compose ... up --pull never --no-build` using the same overlays.
+   Review CLI/provider distribution terms for your deployment.
 
 ## Enforced worker baseline
 

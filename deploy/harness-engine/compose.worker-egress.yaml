@@ -3,9 +3,8 @@ services:
   worker-egress:
     profiles: [harness-engine]
     image: ${WORKER_EGRESS_IMAGE:-ghcr.io/caipe-io/caipe-worker-egress:${HARNESS_IMAGE_TAG:?set a release, prebuild or source SHA tag}}
-    build:
-      context: .
-      dockerfile: ai_platform_engineering/harness_engine/build/Dockerfile.worker-egress
+    pull_policy: always
+    build: !reset null
     user: "65532:65532"
     restart: unless-stopped
     init: true

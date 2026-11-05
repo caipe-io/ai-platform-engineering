@@ -2,10 +2,9 @@
 services:
   harness-engine:
     profiles: [harness-engine]
-    build:
-      context: .
-      dockerfile: ai_platform_engineering/harness_engine/build/Dockerfile.deep-agents
+    build: !reset null
     image: ${HARNESS_ENGINE_DEEP_IMAGE:-ghcr.io/caipe-io/caipe-harness-engine-deep:${HARNESS_IMAGE_TAG:?set a release, prebuild or source SHA tag}}
+    pull_policy: always
     restart: unless-stopped
     init: true
     read_only: true
@@ -40,9 +39,8 @@ services:
   # Both producers need the same checkpoint ownership fence during rollout.
   dynamic-agents:
     image: ${HARNESS_ENGINE_DEEP_IMAGE:-ghcr.io/caipe-io/caipe-harness-engine-deep:${HARNESS_IMAGE_TAG:?set a release, prebuild or source SHA tag}}
-    build:
-      context: .
-      dockerfile: ai_platform_engineering/harness_engine/build/Dockerfile.deep-agents
+    pull_policy: always
+    build: !reset null
     command: [python, -m, dynamic_agents.main]
     environment:
       HOST: 0.0.0.0
@@ -52,11 +50,9 @@ services:
       - harness-attachments:/var/lib/caipe-attachments
 
   caipe-ui:
-    image: caipe-ui-harness-deep:local
-    build:
-      context: .
-      dockerfile: build/Dockerfile.caipe-ui
-      target: runner
+    image: ${CAIPE_UI_IMAGE:-ghcr.io/caipe-io/caipe-ui:${HARNESS_IMAGE_TAG:?set a release, prebuild or source SHA tag}}
+    pull_policy: always
+    build: !reset null
     environment:
       HARNESS_ENGINE_URL: http://harness-engine:8010
       HARNESS_ENGINE_INTERNAL_TOKEN: ${HARNESS_ENGINE_INTERNAL_TOKEN:?set HARNESS_ENGINE_INTERNAL_TOKEN}

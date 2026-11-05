@@ -26,7 +26,8 @@ def main() -> None:
             Path("session.json").write_text(json.dumps(params))
             Path("provider-environment.json").write_text(json.dumps({
                 key: os.environ.get(key) for key in (
-                    "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "HARNESS_ENGINE_INTERNAL_TOKEN",
+                    "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy",
+                    "AWS_EC2_METADATA_DISABLED", "HARNESS_ENGINE_INTERNAL_TOKEN",
                 )
             }))
             Path("tool-limits.json").write_text(

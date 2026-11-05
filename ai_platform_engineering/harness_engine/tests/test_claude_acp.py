@@ -69,6 +69,10 @@ async def test_process_preserves_operator_proxy_without_service_credentials(
     monkeypatch.setenv("HTTPS_PROXY", "http://egress.example.test:3128")
     monkeypatch.setenv("HTTP_PROXY", "http://egress.example.test:3128")
     monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1")
+    monkeypatch.setenv("https_proxy", "http://egress.example.test:3128")
+    monkeypatch.setenv("http_proxy", "http://egress.example.test:3128")
+    monkeypatch.setenv("no_proxy", "localhost,127.0.0.1")
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
     monkeypatch.setenv("HARNESS_ENGINE_INTERNAL_TOKEN", "private-service-token")
     ctx = context()
     ctx.blueprint.tools.bindings = []
@@ -81,6 +85,10 @@ async def test_process_preserves_operator_proxy_without_service_credentials(
         "HTTPS_PROXY": "http://egress.example.test:3128",
         "HTTP_PROXY": "http://egress.example.test:3128",
         "NO_PROXY": "localhost,127.0.0.1",
+        "https_proxy": "http://egress.example.test:3128",
+        "http_proxy": "http://egress.example.test:3128",
+        "no_proxy": "localhost,127.0.0.1",
+        "AWS_EC2_METADATA_DISABLED": "true",
         "HARNESS_ENGINE_INTERNAL_TOKEN": None,
     }
 

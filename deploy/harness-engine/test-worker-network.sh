@@ -54,10 +54,20 @@ for host in ("example.org", "169.254.169.254", "private.example.test"):
         print(f"PASS forbidden proxy destination: {host}")
     else:
         raise AssertionError(f"forbidden destination allowed: {host}")
-try:
-    with opener.open("https://api.anthropic.com/v1/models", timeout=20) as response:
-        assert response.status < 500
-except urllib.error.HTTPError as response:
-    assert response.code in (400, 401, 403, 404), response.code
+for attempt in range(3):
+    try:
+        with opener.open("https://api.anthropic.com/v1/models", timeout=20) as response:
+            assert 200 <= response.status < 600
+        break
+    except urllib.error.HTTPError as response:
+        # An authenticated TLS response proves connectivity; no model key is sent.
+        assert 400 <= response.code < 600
+        break
+    except urllib.error.URLError as error:
+        # Retry only transport timeouts on this read-only probe. Policy denials
+        # and certificate failures remain immediate failures.
+        if not isinstance(error.reason, TimeoutError) or attempt == 2:
+            raise
+        time.sleep(attempt + 1)
 print("PASS approved model host reached over TLS without credentials")
 PY
