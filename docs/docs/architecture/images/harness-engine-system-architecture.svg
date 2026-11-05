@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3020 2520" role="img" aria-labelledby="title desc">
+  <title id="title">Harness Engine — portable execution architecture</title>
+  <desc id="desc">Implemented request, session, event, and adapter paths · dashed = planned or optional · Dynamic Agents remains unchanged</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/></marker>
+  </defs>
+  <rect width="3020" height="2520" fill="#ffffff"/>
+  <text x="40" y="65" text-anchor="start" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="42" font-weight="700" fill="#0f172a"><tspan x="40" dy="0">Harness Engine — portable execution architecture</tspan></text>
+  <text x="40" y="110" text-anchor="start" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="400" fill="#475569"><tspan x="40" dy="0">Implemented request, session, event, and adapter paths · dashed = planned or optional · Dynamic Agents remains unchanged</tspan></text>
+
+    <rect x="40" y="160" width="500" height="610" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="60" y="195" text-anchor="start" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" fill="#475569"><tspan x="60" dy="0">CLIENTS &amp; COMPATIBILITY APIs</tspan></text>
+    <rect x="580" y="160" width="570" height="610" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="600" y="195" text-anchor="start" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" fill="#475569"><tspan x="600" dy="0">BFF HARNESS GATEWAY</tspan></text>
+    <rect x="1190" y="160" width="790" height="610" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="1210" y="195" text-anchor="start" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" fill="#475569"><tspan x="1210" dy="0">RUNTIME SELECTION</tspan></text>
+    <rect x="40" y="820" width="1940" height="870" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="60" y="855" text-anchor="start" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" fill="#475569"><tspan x="60" dy="0">DURABLE HARNESS ENGINE CONTROL PLANE</tspan></text>
+    <rect x="2020" y="820" width="960" height="870" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="2040" y="855" text-anchor="start" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" fill="#475569"><tspan x="2040" dy="0">PROVIDER / EXECUTION PLANE</tspan></text>
+    <rect x="40" y="1740" width="2940" height="430" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="60" y="1775" text-anchor="start" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" fill="#475569"><tspan x="60" dy="0">PLATFORM SERVICES &amp; PORTABLE INTERFACES</tspan></text>
+  <polyline points="290,340 290,375 290,375 290,410" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><text x="290" y="366" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="290" dy="0">same clients</tspan></text><polyline points="290,530 290,565 290,565 290,600" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><text x="290" y="556" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="290" dy="0">authorize</tspan></text><polyline points="500,655 560,655 560,285 620,285" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><text x="560" y="461" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="560" dy="0">authorized agent</tspan></text><polyline points="865,340 865,375 865,375 865,410" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><text x="865" y="366" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="865" dy="0">resolve</tspan></text><polyline points="865,550 865,585 865,585 865,620" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><text x="865" y="576" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="865" dy="0">encode / replay</tspan></text><polyline points="1110,480 1170,480 1170,325 1230,325" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><text x="1170" y="393.5" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="1170" dy="0">default / legacy</tspan></text><polyline points="1110,480 1170,480 1170,600 1230,600" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><text x="1170" y="531" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="1170" dy="0">agentcore / claude_sdk</tspan></text><polyline points="1230,600 805,600 805,960 380,960" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><text x="805" y="771" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="805" dy="0">internal API</tspan></text><polyline points="380,960 415,960 415,960 450,960" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="780,960 815,960 815,960 850,960" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1180,960 1215,960 1215,960 1250,960" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="615,1020 615,1070 615,1070 615,1120" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="780,960 815,960 815,1185 850,1185" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1405,1020 1405,1070 1405,1070 1405,1120" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="780,960 1205,960 1205,960 1630,960" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1785,1020 1785,1070 1785,1070 1785,1120" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="380,1185 415,1185 415,960 450,960" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1560,1185 1815,1185 1815,970 2070,970" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1560,1185 1815,1185 1815,1160 2070,1160" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1560,1185 1815,1185 1815,1360 2070,1360" fill="none" stroke="#64748b" stroke-width="2.5" stroke-dasharray="10 8" marker-end="url(#arrow)"/><text x="1815" y="1263.5" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="1815" dy="0">future adapters</tspan></text><polyline points="1180,1185 1625,1185 1625,1555 2070,1555" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="615,1250 615,1540 280,1540 280,1830" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1015,1020 1015,1425 280,1425 280,1830" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1630,960 1055,960 1055,1950 480,1950" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="435,1580 435,1705 750,1705 750,1830" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><text x="592.5" y="1696" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="592.5" dy="0">tools</tspan></text><polyline points="790,1470 905,1470 905,1950 1020,1950" fill="none" stroke="#64748b" stroke-width="2.5" stroke-dasharray="10 8" marker-end="url(#arrow)"/><text x="905" y="1701" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="905" dy="0">memory</tspan></text><polyline points="790,1470 1140,1470 1140,1950 1490,1950" fill="none" stroke="#64748b" stroke-width="2.5" stroke-dasharray="10 8" marker-end="url(#arrow)"/><text x="1140" y="1701" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="1140" dy="0">traces</tspan></text><polyline points="790,1470 1375,1470 1375,1950 1960,1950" fill="none" stroke="#64748b" stroke-width="2.5" stroke-dasharray="10 8" marker-end="url(#arrow)"/><text x="1375" y="1701" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="1375" dy="0">workspace</tspan></text><polyline points="790,1470 1610,1470 1610,1950 2430,1950" fill="none" stroke="#64748b" stroke-width="2.5" stroke-dasharray="10 8" marker-end="url(#arrow)"/><text x="1610" y="1701" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="1610" dy="0">sandbox lease</tspan></text>
+
+      <rect x="80" y="230" width="420" height="110" rx="14" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5" />
+      <text x="290" y="264" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="290" dy="0">Web UI · CLI · Slack · Webex</tspan></text>
+      <text x="290" y="296" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="290" dy="0">Existing clients and request contracts</tspan></text>
+
+
+      <rect x="80" y="410" width="420" height="120" rx="14" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5" />
+      <text x="290" y="444" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="290" dy="0">Existing CAIPE chat APIs</tspan></text>
+      <text x="290" y="476" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="290" dy="0">/api/v1/chat/{start, resume, cancel, invoke}</tspan></text>
+
+
+      <rect x="80" y="600" width="420" height="110" rx="14" fill="#fef3c7" stroke="#b45309" stroke-width="2.5" />
+      <text x="290" y="634" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="290" dy="0">Authentication + authorization</tspan></text>
+      <text x="290" y="666" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="290" dy="0">JWT · agent#use · tenant · conversation</tspan></text>
+
+
+      <rect x="620" y="230" width="490" height="110" rx="14" fill="#f1f5f9" stroke="#64748b" stroke-width="2.5" />
+      <text x="865" y="264" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="865" dy="0">Agent runtime marker</tspan></text>
+      <text x="865" y="296" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="865" dy="0">execution_harness_id on BFF-owned agent config</tspan></text>
+
+
+      <rect x="620" y="410" width="490" height="140" rx="14" fill="#ccfbf1" stroke="#0f766e" stroke-width="2.5" />
+      <text x="865" y="444" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="865" dy="0">Harness Gateway</tspan></text>
+      <text x="865" y="476" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="865" dy="0">Resolve runtime · enforce capabilities · no silent fallback</tspan></text>
+
+
+      <rect x="620" y="620" width="490" height="90" rx="14" fill="#ccfbf1" stroke="#0f766e" stroke-width="2.5" />
+      <text x="865" y="654" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="865" dy="0">Wire compatibility</tspan></text>
+      <text x="865" y="686" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="865" dy="0">AG-UI / SSE · replay cursor · run ID</tspan></text>
+
+
+      <rect x="1230" y="230" width="710" height="190" rx="14" fill="#dcfce7" stroke="#15803d" stroke-width="2.5" />
+      <text x="1585" y="264" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1585" dy="0">LangChain Deep Agents</tspan></text>
+      <text x="1585" y="296" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1585" dy="0">Existing Dynamic Agents runtime</tspan><tspan x="1585" dy="17.92">Missing, dynamic_agents, or default marker</tspan><tspan x="1585" dy="17.92">Existing checkpoints, memory, tools, and streams</tspan></text>
+
+      <rect x="1762" y="242" width="164" height="27" rx="13.5" fill="#ffffff" stroke="#15803d"/>
+      <text x="1844" y="260" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="700" fill="#15803d"><tspan x="1844" dy="0">UNCHANGED DEFAULT</tspan></text>
+
+      <rect x="1230" y="500" width="710" height="200" rx="14" fill="#ede9fe" stroke="#7c3aed" stroke-width="2.5" />
+      <text x="1585" y="534" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1585" dy="0">Harness Engine</tspan></text>
+      <text x="1585" y="566" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1585" dy="0">Independent FastAPI service</tspan><tspan x="1585" dy="17.92">AgentCore + Claude Agent SDK adapters</tspan><tspan x="1585" dy="17.92">Detached runs and durable canonical events</tspan></text>
+
+      <rect x="1850" y="512" width="76" height="27" rx="13.5" fill="#ffffff" stroke="#7c3aed"/>
+      <text x="1888" y="530" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="700" fill="#7c3aed"><tspan x="1888" dy="0">OPT-IN</tspan></text>
+
+      <rect x="80" y="900" width="300" height="120" rx="14" fill="#ede9fe" stroke="#7c3aed" stroke-width="2.5" />
+      <text x="230" y="934" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="230" dy="0">REST API</tspan></text>
+      <text x="230" y="966" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="230" dy="0">catalog · validate · agents</tspan><tspan x="230" dy="17.92">runs · events · sessions</tspan></text>
+
+
+      <rect x="450" y="900" width="330" height="120" rx="14" fill="#ede9fe" stroke="#7c3aed" stroke-width="2.5" />
+      <text x="615" y="934" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="615" dy="0">RunCoordinator</tspan></text>
+      <text x="615" y="966" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="615" dy="0">detached task ownership</tspan><tspan x="615" dy="17.92">lifecycle + cancellation</tspan></text>
+
+
+      <rect x="850" y="900" width="330" height="120" rx="14" fill="#ccfbf1" stroke="#0f766e" stroke-width="2.5" />
+      <text x="1015" y="934" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1015" dy="0">CAIPEAgentSessionManager</tspan></text>
+      <text x="1015" y="966" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1015" dy="0">owner binding · version pin</tspan><tspan x="1015" dy="17.92">epoch · clear</tspan></text>
+
+
+      <rect x="1250" y="900" width="310" height="120" rx="14" fill="#ccfbf1" stroke="#0f766e" stroke-width="2.5" />
+      <text x="1405" y="934" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1405" dy="0">HarnessRegistry</tspan></text>
+      <text x="1405" y="966" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1405" dy="0">descriptors · validation</tspan><tspan x="1405" dy="17.92">capability projection</tspan></text>
+
+
+      <rect x="1630" y="900" width="310" height="120" rx="14" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5" />
+      <text x="1785" y="934" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1785" dy="0">Canonical event log</tspan></text>
+      <text x="1785" y="966" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1785" dy="0">sequenced replay + live SSE</tspan><tspan x="1785" dy="17.92">run lifecycle</tspan></text>
+
+
+      <rect x="80" y="1120" width="300" height="130" rx="14" fill="#f1f5f9" stroke="#64748b" stroke-width="2.5" />
+      <text x="230" y="1154" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="230" dy="0">Portable contracts</tspan></text>
+      <text x="230" y="1186" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="230" dy="0">AgentBlueprint · RunContext</tspan><tspan x="230" dy="17.92">HarnessDescriptor · CanonicalEvent</tspan></text>
+
+
+      <rect x="450" y="1120" width="330" height="130" rx="14" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5" />
+      <text x="615" y="1154" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="615" dy="0">Repository</tspan></text>
+      <text x="615" y="1186" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="615" dy="0">immutable agent versions</tspan><tspan x="615" dy="17.92">sessions · runs · events</tspan></text>
+
+
+      <rect x="850" y="1120" width="330" height="130" rx="14" fill="#ccfbf1" stroke="#0f766e" stroke-width="2.5" />
+      <text x="1015" y="1154" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1015" dy="0">Provider session managers</tspan></text>
+      <text x="1015" y="1186" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1015" dy="0">deterministic AgentCore IDs</tspan><tspan x="1015" dy="17.92">Claude resume session IDs</tspan></text>
+
+
+      <rect x="1250" y="1120" width="310" height="130" rx="14" fill="#ede9fe" stroke="#7c3aed" stroke-width="2.5" />
+      <text x="1405" y="1154" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1405" dy="0">HarnessAdapter boundary</tspan></text>
+      <text x="1405" y="1186" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1405" dy="0">evaluate blueprint</tspan><tspan x="1405" dy="17.92">stream canonical events</tspan></text>
+
+
+      <rect x="1630" y="1120" width="310" height="130" rx="14" fill="#ccfbf1" stroke="#0f766e" stroke-width="2.5" />
+      <text x="1785" y="1154" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1785" dy="0">BFF event encoder</tspan></text>
+      <text x="1785" y="1186" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1785" dy="0">canonical → AG-UI / SSE</tspan><tspan x="1785" dy="17.92">response accumulation</tspan></text>
+
+
+      <rect x="80" y="1360" width="710" height="220" rx="14" fill="#f1f5f9" stroke="#64748b" stroke-width="2.5" />
+      <text x="435" y="1394" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="435" dy="0">Portable broker contracts</tspan></text>
+      <text x="435" y="1426" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="435" dy="0">Prompt · Tool · Thread State · Memory</tspan><tspan x="435" dy="17.92">Sandbox · Delegation · Telemetry · Limits</tspan><tspan x="435" dy="17.92">Provider SDK types stop at the adapter boundary</tspan></text>
+
+
+      <rect x="850" y="1360" width="710" height="220" rx="14" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5" />
+      <text x="1205" y="1394" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1205" dy="0">Disconnect-safe execution</tspan></text>
+      <text x="1205" y="1426" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1205" dy="0">202 transfers execution ownership to Harness Engine</tspan><tspan x="1205" dy="17.92">Subscriber disconnect does not cancel the provider task</tspan><tspan x="1205" dy="17.92">Reconnect replays events after the last cursor</tspan></text>
+
+
+      <rect x="1630" y="1360" width="310" height="220" rx="14" fill="#fef3c7" stroke="#b45309" stroke-width="2.5" />
+      <text x="1785" y="1394" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1785" dy="0">Trust boundary</tspan></text>
+      <text x="1785" y="1426" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1785" dy="0">Internal service token</tspan><tspan x="1785" dy="17.92">Caller identity remains at BFF</tspan><tspan x="1785" dy="17.92">No user bearer token sent to provider</tspan></text>
+
+
+      <rect x="2070" y="900" width="860" height="140" rx="14" fill="#ffedd5" stroke="#c2410c" stroke-width="2.5" />
+      <text x="2500" y="934" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="2500" dy="0">Amazon Bedrock AgentCore</tspan></text>
+      <text x="2500" y="966" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="2500" dy="0">managed harness or custom runtime · deterministic runtimeSessionId</tspan><tspan x="2500" dy="17.92">provider-native memory may be selected</tspan></text>
+
+
+      <rect x="2070" y="1090" width="860" height="140" rx="14" fill="#ffedd5" stroke="#c2410c" stroke-width="2.5" />
+      <text x="2500" y="1124" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="2500" dy="0">Claude Agent SDK</tspan></text>
+      <text x="2500" y="1156" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="2500" dy="0">Bedrock-backed SDK profile · provider resume session ID</tspan><tspan x="2500" dy="17.92">Mongo transcript mirror makes resume replica-independent</tspan></text>
+
+
+      <rect x="2070" y="1280" width="860" height="160" rx="14" fill="#fce7f3" stroke="#be185d" stroke-width="2.5" stroke-dasharray="11 8"/>
+      <text x="2500" y="1314" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="2500" dy="0">Kubernetes Agent Sandbox worker pods</tspan></text>
+      <text x="2500" y="1346" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="2500" dy="0">Planned: exclusive lease per session epoch · static operator profiles</tspan><tspan x="2500" dy="17.92">RuntimeClass + resource limits + default-deny egress + short-lived capabilities</tspan></text>
+
+      <rect x="2832" y="1292" width="84" height="27" rx="13.5" fill="#ffffff" stroke="#be185d"/>
+      <text x="2874" y="1310" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="700" fill="#be185d"><tspan x="2874" dy="0">PLANNED</tspan></text>
+
+      <rect x="2070" y="1490" width="860" height="130" rx="14" fill="#f1f5f9" stroke="#64748b" stroke-width="2.5" />
+      <text x="2500" y="1524" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="2500" dy="0">Provider-specific state stays behind adapters</tspan></text>
+      <text x="2500" y="1556" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="2500" dy="0">Provider SDK types and native state never enter the control-plane contract</tspan><tspan x="2500" dy="17.92">All outward events use the canonical CAIPE lifecycle</tspan></text>
+
+
+      <rect x="80" y="1830" width="400" height="240" rx="14" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5" />
+      <text x="280" y="1864" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="280" dy="0">MongoDB</tspan></text>
+      <text x="280" y="1896" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="280" dy="0">harness_agents + immutable versions</tspan><tspan x="280" dy="17.92">harness_sessions · harness_runs</tspan><tspan x="280" dy="17.92">harness_events · Claude transcripts</tspan></text>
+
+
+      <rect x="550" y="1830" width="400" height="240" rx="14" fill="#dcfce7" stroke="#15803d" stroke-width="2.5" />
+      <text x="750" y="1864" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="750" dy="0">AgentGateway + MCP</tspan></text>
+      <text x="750" y="1896" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="750" dy="0">Existing MCP servers</tspan><tspan x="750" dy="17.92">OpenFGA ext_authz enforcement</tspan><tspan x="750" dy="17.92">ToolBroker target</tspan></text>
+
+
+      <rect x="1020" y="1830" width="400" height="240" rx="14" fill="#ccfbf1" stroke="#0f766e" stroke-width="2.5" stroke-dasharray="11 8"/>
+      <text x="1220" y="1864" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1220" dy="0">Memory providers</tspan></text>
+      <text x="1220" y="1896" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1220" dy="0">Portable MemoryBroker contract</tspan><tspan x="1220" dy="17.92">AgentCore memory may back Claude SDK</tspan><tspan x="1220" dy="17.92">subject / agent / organization scopes</tspan></text>
+
+
+      <rect x="1490" y="1830" width="400" height="240" rx="14" fill="#fef3c7" stroke="#b45309" stroke-width="2.5" stroke-dasharray="11 8"/>
+      <text x="1690" y="1864" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1690" dy="0">Telemetry + audit</tspan></text>
+      <text x="1690" y="1896" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1690" dy="0">W3C trace context · canonical events</tspan><tspan x="1690" dy="17.92">OpenTelemetry sink is planned</tspan><tspan x="1690" dy="17.92">Existing audit boundaries remain</tspan></text>
+
+
+      <rect x="1960" y="1830" width="400" height="240" rx="14" fill="#f1f5f9" stroke="#64748b" stroke-width="2.5" stroke-dasharray="11 8"/>
+      <text x="2160" y="1864" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="2160" dy="0">Workspace + attachments</tspan></text>
+      <text x="2160" y="1896" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="2160" dy="0">Local / S3 abstraction target</tspan><tspan x="2160" dy="17.92">Explicitly unsupported by current adapters</tspan><tspan x="2160" dy="17.92">No silent degradation</tspan></text>
+
+
+      <rect x="2430" y="1830" width="500" height="240" rx="14" fill="#fce7f3" stroke="#be185d" stroke-width="2.5" stroke-dasharray="11 8"/>
+      <text x="2680" y="1864" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="2680" dy="0">Agent Sandbox API</tspan></text>
+      <text x="2680" y="1896" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="2680" dy="0">SandboxClaim · warm pool · stable endpoint</tspan><tspan x="2680" dy="17.92">Worker protocol v1</tspan><tspan x="2680" dy="17.92">Design complete; worker/lease code deferred</tspan></text>
+
+
+      <rect x="40" y="2240" width="900" height="190" rx="14" fill="#dcfce7" stroke="#15803d" stroke-width="2.5" />
+      <text x="490" y="2274" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="490" dy="0">Backward compatibility</tspan></text>
+      <text x="490" y="2306" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="490" dy="0">Existing agent IDs and chat endpoints are preserved.</tspan><tspan x="490" dy="17.92">Agents without execution_harness_id remain on the unchanged</tspan><tspan x="490" dy="17.92">Dynamic Agents implementation of LangChain Deep Agents.</tspan></text>
+
+
+      <rect x="1060" y="2240" width="900" height="190" rx="14" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5" />
+      <text x="1510" y="2274" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1510" dy="0">Session and stream ownership</tspan></text>
+      <text x="1510" y="2306" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1510" dy="0">The BFF stays horizontally stateless. Harness Engine owns</tspan><tspan x="1510" dy="17.92">provider work, durable session bindings, run state, and replayable</tspan><tspan x="1510" dy="17.92">events after returning 202.</tspan></text>
+
+
+      <rect x="2080" y="2240" width="900" height="190" rx="14" fill="#ede9fe" stroke="#7c3aed" stroke-width="2.5" />
+      <text x="2530" y="2274" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="2530" dy="0">Extension contract</tspan></text>
+      <text x="2530" y="2306" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="2530" dy="0">New harnesses implement HarnessAdapter + ProviderSessionManager.</tspan><tspan x="2530" dy="17.92">Portable services can mix providers, for example Claude SDK</tspan><tspan x="2530" dy="17.92">with AgentCore memory.</tspan></text>
+
+
+</svg>

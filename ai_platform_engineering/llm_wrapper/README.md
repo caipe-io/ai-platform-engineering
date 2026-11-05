@@ -97,6 +97,10 @@ and forwards it to that Helm value. A running service must restart to pick up
 the new environment. The runtime image must contain this wrapper support;
 setting the variable alone on an older image has no effect.
 
+On an installer rerun, an explicit environment or `--env-file` value overrides
+the deployed setting. Otherwise the installer retains the existing Helm value;
+a fresh installation or a release without that value defaults to `true`.
+
 An explicit `disable_streaming` argument to `build_chat_model` overrides this
 environment default. Dynamic Agents expose this override as `model.streaming`:
 `false` passes `disable_streaming=True`, `true` passes `False`, and `null` or an

@@ -188,6 +188,10 @@ podDisruptionBudget:
 # Each key-value pair is injected as a flat environment variable via ConfigMap (envFrom).
 # For sensitive values (OIDC secrets, MongoDB URI, etc.) use existingSecret or externalSecrets below.
 config:
+  # Optional comma-separated GitHub repository URLs approved for release-note
+  # commit comparisons. Unset uses the canonical upstream repository only.
+  # Setting a value replaces that default; empty disables commit comparisons.
+  # RELEASE_NOTES_ALLOWED_REPOSITORIES: "https://github.com/example/platform-fork"
   # Feature flags
   ENABLE_SUBAGENT_CARDS: "true"
   SSO_ENABLED: "true"
@@ -198,6 +202,13 @@ config:
   BUILTIN_SKILL_IDS: "none"
   # NextAuth URL (non-sensitive)
   NEXTAUTH_URL: "http://localhost:3000"
+  # Optional host-owned secondary auth; every resource requires an audience binding.
+  CAIPE_SECONDARY_OIDC_JWKS_URI: ""
+  CAIPE_SECONDARY_OIDC_ISSUER: ""
+  CAIPE_SECONDARY_OIDC_AUDIENCES: ""
+  CAIPE_SECONDARY_OIDC_PROVIDER_ID: ""
+  CAIPE_SECONDARY_OIDC_REQUIRE_VERIFIED_EMAIL: ""
+  CAIPE_SECONDARY_AUTH_RESOURCES: ""
   # Node environment
   NODE_ENV: "production"
   # Production-safety gate for the BFF admin-token fallback path.
@@ -273,6 +284,7 @@ config:
   WEBEX_THREAD_CONTEXT_MAX_CHARS: "4000"
   LOGO_URL: "/logo.svg"
   LOGO_STYLE: "default"
+  LOGO_THEMED: ""
   # SPINNER_COLOR: ""
   SHOW_POWERED_BY: "false"
   # Environment badge label shown next to the app name (e.g. "Dev", "Preview", "Staging", "Prod")
@@ -315,6 +327,8 @@ config:
   KEYCLOAK_RESOURCE_SERVER_ID: "caipe-platform"
   # Internal OIDC discovery URL for server-side token validation
   OIDC_DISCOVERY_URL: ""
+  # Optional refresh endpoint override; blank uses Keycloak realm routing or provider discovery.
+  OIDC_TOKEN_ENDPOINT: ""
   OIDC_CLIENT_ID: "caipe-ui"
   # Slack bot admin token URL (in-cluster Keycloak token endpoint)
   SLACK_BOT_ADMIN_TOKEN_URL: ""
@@ -417,6 +431,8 @@ credentialSecretRefs: []
 # Slack bot admin sync/reload uses OIDC_CLIENT_ID/OIDC_CLIENT_SECRET. Webex bot
 # admin sync/reload still requires WEBEX_BOT_ADMIN_CLIENT_SECRET when enabled.
 existingSecret: ""
+# Optional feature credentials may be absent without preventing UI startup.
+existingSecretOptional: false
 
 # ---------- Keycloak Admin REST client wiring ----------
 #

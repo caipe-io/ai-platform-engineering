@@ -96,6 +96,31 @@ describe("useReleaseUpgradePrompt", () => {
     expect(result.current.isAdmin).toBe(true);
   });
 
+  it("uses the configured compare range and a range-specific dismissal", async () => {
+    const fallback = global.fetch;
+    (global.fetch as jest.Mock) = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url) === "/api/admin/platform-config") return jsonResponse({ success: true, data: { release_notes: {
+        enabled: true, repository_url: "https://github.com/example/repository", previous_commit: "1111111", latest_commit: "2222222",
+      } } });
+      if (String(url).includes("compare=platform")) return jsonResponse({
+        matchedVersion: "0.5.1", body: "Configured changes", source: "github-compare",
+        changelogUrl: "https://github.com/example/repository/compare/1111111...2222222",
+      });
+      return fallback(url, init);
+    });
+    const { result } = renderHook(() => useReleaseUpgradePrompt());
+    await waitFor(() => expect(result.current.open).toBe(true));
+    expect(result.current.release).toBeNull();
+    expect(result.current.releaseMarkdown?.body).toBe("Configured changes");
+    expect(global.fetch).toHaveBeenCalledWith("/api/release-notes?version=0.5.1&compare=platform");
+    await act(async () => { await result.current.dismissPermanently(); });
+    expect(global.fetch).toHaveBeenCalledWith("/api/settings/preferences", expect.objectContaining({
+      body: JSON.stringify({ releaseNotesDismissedVersions: [JSON.stringify([
+        "0.5.1", "https://github.com/example/repository", "1111111", "2222222",
+      ])] }),
+    }));
+  });
+
   it("uses exact changelog entries before exact curated release markdown", async () => {
     const { result } = renderHook(() => useReleaseUpgradePrompt());
 
@@ -366,5 +391,49 @@ describe("useReleaseUpgradePrompt", () => {
     const dismissed = renderHook(() => useReleaseUpgradePrompt());
     await waitFor(() => expect(dismissed.result.current.isLoading).toBe(false));
     expect(dismissed.result.current.open).toBe(false);
+  });
+});
+
+describe("curated source identity and failure metadata", () => {
+  it("shows matching manual notes to a non-admin who dismissed the automatic announcement", async () => {
+    window.sessionStorage.clear();
+    mockUseSession.mockReturnValue({ status: "authenticated", data: { user: { email: "test-user@example.test" } } });
+    mockUseVersion.mockReturnValue({ isLoading: false, versionInfo: { version: "1.3.5" } });
+    mockUseAdminRole.mockReturnValue({ isAdmin: false, loading: false });
+    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      if (String(url) === "/api/admin/platform-config") return jsonResponse({ data: { release_notes: {
+        enabled: true, override_revision: "primary", override: { source: "manual", release_version: "1.3.5", markdown: "Saved notes", changelog_url: "" },
+      } } });
+      if (String(url).startsWith("/api/release-notes")) return jsonResponse({ matchedVersion: "1.3.5", body: "Saved notes", source: "manual" });
+      return jsonResponse({ data: { preferences: { releaseNotesDismissedVersions: ["1.3.5"] } }, releases: [] });
+    }) as jest.Mock;
+    const { result } = renderHook(() => useReleaseUpgradePrompt());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.isAdmin).toBe(false);
+    expect(result.current.open).toBe(true);
+    expect(result.current.releaseMarkdown).toMatchObject({ source: "manual", body: "Saved notes" });
+    expect(global.fetch).toHaveBeenCalledWith("/api/release-notes?version=1.3.5&compare=platform");
+  });
+
+  it.each(["mismatch", "http-error", "network-error"])("retains manual metadata on %s without accepting another source", async failure => {
+    window.sessionStorage.clear();
+    mockUseSession.mockReturnValue({ status: "authenticated", data: { user: { email: "test-user@example.test" } } });
+    mockUseVersion.mockReturnValue({ isLoading: false, versionInfo: { version: "1.3.2" } });
+    mockUseAdminRole.mockReturnValue({ isAdmin: true, loading: false });
+    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      if (String(url) === "/api/admin/platform-config") return jsonResponse({ data: { release_notes: { enabled: true, override_revision: "primary", override: { source: "manual", release_version: "1.3.2", markdown: "Saved notes", changelog_url: "" } } } });
+      if (String(url).startsWith("/api/release-notes")) {
+        if (failure === "network-error") throw new Error("Unavailable");
+        return jsonResponse({ matchedVersion: "1.3.2", body: "Wrong identity notes", source: "github-compare" }, failure !== "http-error");
+      }
+      return jsonResponse({ data: { preferences: {} }, releases: [] });
+    }) as jest.Mock;
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { result } = renderHook(() => useReleaseUpgradePrompt());
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.releaseMarkdown).toMatchObject({ source: "manual", changelogUrl: "", body: "" });
+      expect(result.current.open).toBe(true);
+    } finally { warn.mockRestore(); }
   });
 });

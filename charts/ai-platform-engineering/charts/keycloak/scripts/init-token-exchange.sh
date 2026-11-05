@@ -812,6 +812,23 @@ seed_openfga_service_account_grants() {
 
 seed_openfga_service_account_grants
 
+if [ "${MCP_DCR_ENABLED:-false}" = "true" ]; then
+  MCP_DCR_HELPER="${MCP_DCR_HELPER_PATH:-/scripts/mcp-dcr.sh}"
+  if [ -r "${MCP_DCR_HELPER}" ]; then
+    # shellcheck source=./mcp-dcr.sh
+    . "${MCP_DCR_HELPER}"
+    # The helper obtains a fresh admin token; earlier bootstrap work may
+    # outlive the token held in AUTH.
+    if ! _reconcile_mcp_dynamic_client_registration; then
+      echo "${TAG:-[init-token-exchange]} ERROR: MCP DCR reconcile failed." >&2
+      exit 1
+    fi
+  else
+    echo "${TAG:-[init-token-exchange]} ERROR: ${MCP_DCR_HELPER} is missing." >&2
+    exit 1
+  fi
+fi
+
 # -------------------------------------------------------------------
 # Reconcile the public CLI client (caipe-cli / forge-cli).
 #

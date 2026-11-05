@@ -7,9 +7,11 @@ import { ChatHistoryGroupReorder, type GroupDrop } from "@/components/chat/ChatH
 import { reorderChatHistoryGroups } from "@/lib/chat-history-organization";
 import { useChatHistoryOrganization } from "@/hooks/use-chat-history-organization";
 import { NewChatButton } from "@/components/chat/NewChatButton";
+import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
 import { ConversationListSkeleton } from "@/components/chat/ConversationListSkeleton";
 import { RecycleBinDialog } from "@/components/chat/RecycleBinDialog";
 import { ShareButton } from "@/components/chat/ShareButton";
+import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
 import { UseCaseBuilderDialog } from "@/components/gallery/UseCaseBuilder";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -23,10 +25,11 @@ import type { ConversationListFilter } from "@/lib/api-client";
 import { getConfig } from "@/lib/config";
 import { getErrorMessage } from "@/lib/error-utils";
 import { getStorageMode } from "@/lib/storage-config";
-import { cn,formatDate,truncateText } from "@/lib/utils";
+import { cn,formatDate } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import type { Conversation } from "@/types/a2a";
 import { getAgentId } from "@/types/a2a";
+import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { motion } from "framer-motion";
 import {
 Archive,
@@ -73,6 +76,11 @@ interface SidebarProps {
   onUseCaseSaved?: () => void;
 }
 
+type SidebarAgent = Pick<
+  DynamicAgentConfig,
+  "_id" | "name" | "execution_harness_id" | "presentation" | "ui"
+>;
+
 interface ConversationTitleBadge {
   kind: "autonomous" | "scheduled";
   label: string;
@@ -100,6 +108,8 @@ const MIN_SIDEBAR_WIDTH = 320;
 const MAX_SIDEBAR_WIDTH = 500;
 const SIDEBAR_WIDTH_STORAGE_KEY = "caipe-chat-sidebar-width";
 const HISTORY_FILTER_STORAGE_KEY = "caipe-chat-history-filter";
+const CHAT_HISTORY_ACTION_CLASS_NAME =
+  "h-5 w-5 shrink-0 [&_svg]:size-3.5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11";
 
 function clampSidebarWidth(width: number): number {
   return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
@@ -319,7 +329,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
   }, [schedulerEnabled, autonomousEnabled]);
 
   // Agent name lookup for dynamic agent conversations
-  const [agentNameMap, setAgentNameMap] = useState<Record<string, string>>({});
+  const [agentMap, setAgentMap] = useState<Record<string, SidebarAgent>>({});
   const [agentNamesLoading, setAgentNamesLoading] = useState(true);
 
   // Load conversations from server when sidebar mounts (MongoDB mode only)
@@ -416,11 +426,11 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
         const response = await fetch("/api/dynamic-agents/available");
         const data = await response.json();
         if (!cancelled && data.success && Array.isArray(data.data)) {
-          const map: Record<string, string> = {};
-          data.data.forEach((agent: { _id: string; name: string }) => {
-            map[agent._id] = agent.name;
+          const map: Record<string, SidebarAgent> = {};
+          data.data.forEach((agent: SidebarAgent) => {
+            map[agent._id] = agent;
           });
-          setAgentNameMap(map);
+          setAgentMap(map);
         }
       } catch (err) {
         console.error('[Sidebar] Failed to fetch agents for name lookup:', err);
@@ -646,7 +656,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
       const agentId = getAgentId(conversation);
       const folderId = getConversationRunKind(conversation) ? undefined : organization.value.assignments[conversation.id];
       const key = organization.value.view === "folders" ? folderId ? `folder:${folderId}` : "folder:unfiled" : `agent:${agentId ?? "none"}`;
-      if (!groups.has(key)) groups.set(key, { label: agentId ? agentNameMap[agentId] ?? "Unavailable agent" : "No agent", conversations: [] });
+      if (!groups.has(key)) groups.set(key, { label: agentId ? agentMap[agentId]?.name ?? "Unavailable agent" : "No agent", conversations: [] });
       groups.get(key)!.conversations.push(conversation);
     });
     conversationListItems.length = 0;
@@ -711,6 +721,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
           title="Drag to resize sidebar"
         />
       )}
+
       {/* New Chat Button */}
       {activeTab === "chat" && (
         <div className="px-2 pt-2 pb-2 shrink-0">
@@ -767,11 +778,11 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                         disabled={!organization.ready || organization.saving} viewport={conversationScrollViewportRef.current}
                         onMove={moveHistoryGroup} onTarget={setGroupDrop} />
                       <button type="button" aria-expanded={expanded} disabled={organization.saving}
-                        className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-2 text-left text-xs font-medium"
+                        className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-2 text-left text-base font-medium"
                         onClick={() => void organization.update(v => ({ ...v, collapsed: expanded ? [...v.collapsed, item.key] : v.collapsed.filter(k => k !== item.key) }))}>
                         {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
                         {organization.value.view === "folders" && <Folder className="h-3.5 w-3.5 shrink-0" />}
-                        <span className="truncate" title={item.label}>{item.label}</span><span className="ml-auto tabular-nums text-muted-foreground">{item.count}</span>
+                        <span className="truncate" title={item.label}>{item.label}</span><span className="ml-auto text-xs tabular-nums text-muted-foreground">{item.count}</span>
                       </button>
                       {item.folderId && <>
                         <Button size="icon" variant="ghost" className="h-6 w-6 opacity-0 group-hover:opacity-100 focus:opacity-100"
@@ -879,6 +890,25 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                         : MessageSquare;
                   const isEditingTitle = editingConversationId === conv.id;
                   const isSavingTitle = renameSavingId === conv.id;
+                  const conversationAgentId = getAgentId(conv);
+                  const conversationAgent = conversationAgentId
+                    ? agentMap[conversationAgentId]
+                    : undefined;
+                  const conversationStatus = isLive
+                    ? "Live response"
+                    : isInputRequired
+                      ? "Input required"
+                      : isUnviewed
+                        ? "New response"
+                        : formatDate(conv.updatedAt);
+                  const conversationAgentName = conversationAgent?.name
+                    ?? (agentNamesLoading ? "Loading agent…" : "Unknown agent");
+                  const openConversation = () => {
+                    setActiveConversation(conv.id);
+                    startTransition(() => {
+                      router.push(`/chat/${conv.id}`);
+                    });
+                  };
 
                   return (
                   <div
@@ -886,6 +916,9 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                     className={cn("group/conv", draggedChatId === conv.id && "opacity-50")}
                     data-chat-conversation-id={conv.id}
                   >
+                    <TooltipProvider delayDuration={150}>
+                    <Tooltip className="block w-full">
+                    <TooltipTrigger asChild>
                     <div
                       onPointerDown={event => {
                         ignoreChatClick.current = false;
@@ -916,7 +949,10 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                       onLostPointerCapture={clearChatDrag}
                       onDragStart={event => event.preventDefault()}
                       className={cn(
-                        "group relative flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-all min-w-0",
+                        "group relative gap-x-2 rounded-lg cursor-pointer transition-colors min-w-0",
+                        collapsed
+                          ? "flex items-center p-2"
+                          : "grid grid-cols-[2rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.25rem] items-center px-2 py-[7px] [@media(pointer:coarse)]:grid-rows-[1.25rem_1.25rem_auto]",
                         organization.value.view === "folders" && organization.ready && !organization.saving && !isEditingTitle && "cursor-grab active:cursor-grabbing select-none",
                         isLive
                           ? "bg-emerald-500/10 border border-emerald-500/30"
@@ -930,70 +966,93 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                                   ? "hover:bg-muted/50 border border-blue-500/20"
                                   : "hover:bg-muted/50 border border-transparent"
                       )}
+                      aria-label={collapsed
+                        ? `${conv.title}. ${conversationAgentName}. ${conversationStatus}`
+                        : undefined}
+                      role={collapsed ? "button" : undefined}
+                      tabIndex={collapsed ? 0 : undefined}
                       onClick={event => {
                         if (ignoreChatClick.current) { ignoreChatClick.current = false; event.preventDefault(); return; }
-                        setActiveConversation(conv.id);
-                        startTransition(() => {
-                          router.push(`/chat/${conv.id}`);
-                        });
+                        openConversation();
                       }}
+                      onKeyDown={collapsed ? (event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          openConversation();
+                        }
+                      } : undefined}
+
                     >
-                    <div className={cn(
-                      "shrink-0 w-8 h-8 rounded-md flex items-center justify-center relative",
-                      isLive
-                        ? "bg-emerald-500/20"
-                        : isInputRequired
-                          ? "bg-amber-500/20"
-                          : isUnviewed
-                            ? "bg-blue-500/15"
-                            : activeConversationId === conv.id
-                              ? "bg-primary/20"
-                              : "bg-muted"
-                    )}>
-                      {isLive ? (
-                        <>
-                          <Radio className="h-4 w-4 text-emerald-500 animate-pulse" />
-                          <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
-                          </span>
-                        </>
-                      ) : isInputRequired ? (
-                        <>
-                          <MessageCircleQuestion className="h-4 w-4 text-amber-500 animate-pulse" />
-                          <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500" />
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <ConversationIcon className={cn(
-                            "h-4 w-4",
-                            isUnviewed
-                              ? "text-blue-500"
-                              : activeConversationId === conv.id
-                                ? "text-primary"
-                                : conv.source === 'api'
-                                  ? "text-sky-500"
-                                  : runKind === 'autonomous'
-                                    ? "text-violet-500"
-                                    : runKind === 'scheduled'
-                                      ? "text-cyan-500"
-                                      : "text-muted-foreground"
-                          )} />
-                          {isUnviewed && (
-                            <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
-                              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500" />
-                            </span>
+                    <div
+                      className={cn("relative shrink-0", !collapsed && "col-start-1 row-start-1 row-span-2")}
+                      title={titleBadge?.title}
+                    >
+                      {titleBadge && <span className="sr-only">{titleBadge.title}</span>}
+                      {conversationAgentId ? (
+                        <AgentAvatar
+                          agent={conversationAgent ?? { _id: conversationAgentId }}
+                          agentId={conversationAgentId}
+                          rounded="rounded-md"
+                          size="h-8 w-8"
+                          iconSize="h-4 w-4"
+                          icon={isLive ? Radio : isInputRequired ? MessageCircleQuestion : ConversationIcon}
+                          className={cn(
+                            isLive && "ring-2 ring-emerald-500/60",
+                            isInputRequired && "ring-2 ring-amber-500/60",
+                            isUnviewed && "ring-2 ring-blue-500/60",
+                            activeConversationId === conv.id && !isLive && !isInputRequired && !isUnviewed && "ring-2 ring-primary/50",
                           )}
-                        </>
+                        />
+                      ) : (
+                        <div className={cn(
+                          "flex h-8 w-8 items-center justify-center rounded-md",
+                          isLive
+                            ? "bg-emerald-500/20"
+                            : isInputRequired
+                              ? "bg-amber-500/20"
+                              : isUnviewed
+                                ? "bg-blue-500/15"
+                                : "bg-muted",
+                        )}>
+                          {isLive ? (
+                            <Radio className="h-4 w-4 animate-pulse text-emerald-500" />
+                          ) : isInputRequired ? (
+                            <MessageCircleQuestion className="h-4 w-4 animate-pulse text-amber-500" />
+                          ) : (
+                            <ConversationIcon className={cn(
+                              "h-4 w-4",
+                              isUnviewed ? "text-blue-500" : activeConversationId === conv.id ? "text-primary" : conv.source === "api" ? "text-sky-500" : runKind === "autonomous" ? "text-violet-500" : runKind === "scheduled" ? "text-cyan-500" : "text-muted-foreground",
+                            )} />
+                          )}
+                        </div>
+                      )}
+                      {conversationAgent && !collapsed && (
+                        <AgentHarnessBadge
+                          harnessId={conversationAgent.execution_harness_id}
+                          presentation={conversationAgent.presentation}
+                          compact
+                          className="absolute -bottom-2.5 -right-1.5 rounded-sm bg-card ring-2 ring-card"
+                        />
+                      )}
+                      {(isLive || isInputRequired || isUnviewed) && (
+                        <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5">
+                          {(isLive || isInputRequired) && (
+                            <span className={cn(
+                              "absolute inline-flex h-full w-full animate-ping rounded-full opacity-75",
+                              isLive ? "bg-emerald-400" : "bg-amber-400",
+                            )} />
+                          )}
+                          <span className={cn(
+                            "relative inline-flex h-2.5 w-2.5 rounded-full",
+                            isLive ? "bg-emerald-500" : isInputRequired ? "bg-amber-500" : "bg-blue-500",
+                          )} />
+                        </span>
                       )}
                     </div>
 
                     {!collapsed && (
                       <>
-                        <div className="flex-1 min-w-0">
+                        <div className="col-start-2 row-start-1 min-w-0">
                           <div className="flex items-center gap-1 min-w-0">
                             {isEditingTitle ? (
                               <input
@@ -1011,32 +1070,21 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                                     cancelTitleEdit();
                                   }
                                 }}
-                                className="h-6 min-w-0 flex-1 rounded border border-border bg-background px-2 text-sm font-medium outline-none focus:border-primary"
+                                className="h-5 min-w-0 flex-1 rounded border border-border bg-background px-1.5 text-sm font-medium outline-none focus:border-primary"
                                 aria-label="Conversation title"
                               />
                             ) : (
                               <>
-                                <p className="text-sm font-medium truncate flex-1" title={conv.title}>
-                                  {truncateText(conv.title, sidebarWidth > 350 ? 40 : sidebarWidth > 320 ? 25 : 20)}
+                                <p className="text-sm leading-5 font-medium truncate flex-1" title={conv.title}>
+                                  {conv.title}
                                 </p>
-                                {titleBadge && (
-                                  <span
-                                    className={cn(
-                                      "shrink-0 max-w-[132px] truncate rounded border px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal",
-                                      titleBadge.kind === "autonomous"
-                                        ? "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300"
-                                        : "border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
-                                    )}
-                                    title={titleBadge.title}
-                                  >
-                                    {truncateText(titleBadge.label, sidebarWidth > 350 ? 24 : 18)}
-                                  </span>
-                                )}
                               </>
                             )}
                           </div>
-                          <div className={cn(
-                            "flex min-w-0 items-center text-xs",
+                        </div>
+                        <span
+                          className={cn(
+                            "col-start-3 row-start-1 whitespace-nowrap text-right text-[11px] leading-5",
                             isLive
                               ? "text-emerald-600 dark:text-emerald-400 font-medium"
                               : isInputRequired
@@ -1044,37 +1092,43 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                                 : isUnviewed
                                   ? "text-blue-600 dark:text-blue-400 font-medium"
                                   : "text-muted-foreground"
-                          )}>
-                            <span className="shrink-0">
-                              {isLive ? "Live" : isInputRequired ? "Input needed" : isUnviewed ? "New response" : formatDate(conv.updatedAt)}
-                            </span>
+                          )}
+                          title={isLive || isInputRequired || isUnviewed
+                            ? undefined
+                            : `Last updated: ${conv.updatedAt.toLocaleString()}`}
+                        >
+                          {isLive ? "Live" : isInputRequired ? "Input needed" : isUnviewed ? "New response" : formatDate(conv.updatedAt)}
+                        </span>
+                        <div className="col-start-2 row-start-2 flex min-w-0 items-center">
                             {/* Dynamic Agent indicator */}
-                            {(() => {
-                              const agId = getAgentId(conv);
-                              if (!agId) return null;
-                              const agentName = agentNameMap[agId];
-                              if (!agentName && agentNamesLoading) {
-                                return (
-                                  <>
-                                    <span className="ml-1.5 text-[10px] text-purple-500 dark:text-purple-400">•</span>
-                                    <Skeleton
-                                      className="ml-1 h-2.5 w-16 shrink-0 rounded-full"
-                                      data-testid="agent-name-skeleton"
-                                    />
-                                  </>
-                                );
-                              }
-                              return (
-                                <span className="ml-1.5 truncate text-[10px] text-purple-500 dark:text-purple-400" title={agentName || 'Unknown Agent'}>
-                                  • {truncateText(agentName || 'Unknown', 20)}
+                            {conversationAgentId && (
+                              !conversationAgent && agentNamesLoading ? (
+                                <Skeleton
+                                  className="h-3 min-w-0 max-w-28 flex-1 rounded-full"
+                                  data-testid="agent-name-skeleton"
+                                />
+                              ) : (
+                                <span
+                                  className="min-w-0 flex-1 truncate text-xs leading-5 text-foreground/75"
+                                  title={conversationAgentName}
+                                >
+                                  {conversationAgentName}
                                 </span>
-                              );
-                            })()}
-                          </div>
+                              )
+                            )}
                         </div>
-
-                        <div className="flex items-center gap-0.5 shrink-0">
-                          {allowChatFolders && !runKind && !isEditingTitle && <Button size="icon" variant="ghost" className="h-6 w-6 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                        <div className="col-start-3 row-start-2 flex min-w-0 items-center justify-end [@media(pointer:coarse)]:col-start-2 [@media(pointer:coarse)]:col-span-2 [@media(pointer:coarse)]:row-start-3">
+                          <div
+                            role="group"
+                            aria-label={`Actions for ${conv.title}`}
+                            className={cn(
+                              "ml-auto flex shrink-0 items-center gap-0.5 transition-opacity pointer-events-none opacity-0",
+                              "group-hover/conv:pointer-events-auto group-hover/conv:opacity-100 group-focus-within/conv:pointer-events-auto group-focus-within/conv:opacity-100",
+                              "[@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100",
+                              isEditingTitle && "pointer-events-auto opacity-100",
+                            )}
+                          >
+                          {allowChatFolders && !runKind && !isEditingTitle && <Button size="icon" variant="ghost" className={CHAT_HISTORY_ACTION_CLASS_NAME}
                             aria-label="Move conversation to folder" title="Move to folder" disabled={!organization.ready || organization.saving}
                             onClick={event => { event.stopPropagation(); setOrganizationDialog({ kind: "move", id: conv.id, title: conv.title }); }}>
                             <Folder className="h-3 w-3" />
@@ -1087,7 +1141,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                                     <Button
                                       variant="ghost"
                                       size="icon"
-                                      className="h-6 w-6"
+                                      className={CHAT_HISTORY_ACTION_CLASS_NAME}
                                       aria-label="Save title"
                                       disabled={isSavingTitle || !editingTitle.trim()}
                                       onClick={(event) => void commitTitleEdit(event, conv)}
@@ -1106,7 +1160,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                                     <Button
                                       variant="ghost"
                                       size="icon"
-                                      className="h-6 w-6"
+                                      className={CHAT_HISTORY_ACTION_CLASS_NAME}
                                       aria-label="Cancel rename"
                                       disabled={isSavingTitle}
                                       onClick={cancelTitleEdit}
@@ -1129,7 +1183,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                                       <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        className={CHAT_HISTORY_ACTION_CLASS_NAME}
                                         aria-label="Rename conversation"
                                         onClick={(event) => beginTitleEdit(event, conv)}
                                       >
@@ -1142,14 +1196,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                                   </Tooltip>
                                 </TooltipProvider>
                               )}
-                              <div
-                                className={cn(
-                                  "transition-opacity",
-                                  hasSharingConfig || isSharedWithViewer
-                                    ? "opacity-100"
-                                    : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-                                )}
-                              >
+                              <div className="flex shrink-0">
                                 <ShareButton
                                   conversationId={conv.id}
                                   conversationTitle={conv.title}
@@ -1158,6 +1205,7 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                                   sharedBy={sharedByLabel}
                                   sharing={conv.sharing}
                                   accessLevel={conv.accessLevel}
+                                  className={CHAT_HISTORY_ACTION_CLASS_NAME}
                                 />
                               </div>
                             </>
@@ -1169,7 +1217,8 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                            className={CHAT_HISTORY_ACTION_CLASS_NAME}
+                            aria-label="Archive conversation"
                             onClick={async (e) => {
                               console.log('[Sidebar] Archive clicked for:', conv.id);
                               e.stopPropagation();
@@ -1242,10 +1291,58 @@ export function Sidebar({ activeTab, collapsed, onCollapse, onUseCaseSaved }: Si
                           </Tooltip>
                           </TooltipProvider>
                           )}
+                          </div>
                         </div>
                       </>
                     )}
                   </div>
+                  </TooltipTrigger>
+                  {collapsed ? (
+                    <TooltipContent
+                      side="right"
+                      sideOffset={10}
+                      className="w-64 whitespace-normal px-3 py-2.5"
+                    >
+                      <div className="space-y-2">
+                        <div>
+                          <p className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
+                            {conv.title}
+                          </p>
+                          <p className={cn(
+                            "mt-1 text-[11px] font-normal",
+                            isLive
+                              ? "text-emerald-500"
+                              : isInputRequired
+                                ? "text-amber-500"
+                                : isUnviewed
+                                  ? "text-blue-500"
+                                  : "text-muted-foreground",
+                          )}>
+                            {conversationStatus}
+                          </p>
+                        </div>
+                        <div className="flex min-w-0 items-center gap-2 border-t border-border/50 pt-2">
+                          <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground/85">
+                            {conversationAgentName}
+                          </span>
+                          {conversationAgent ? (
+                            <AgentHarnessBadge
+                              harnessId={conversationAgent.execution_harness_id}
+                              presentation={conversationAgent.presentation}
+                              compact
+                            />
+                          ) : null}
+                        </div>
+                        {titleBadge ? (
+                          <p className="truncate text-[10px] font-normal text-cyan-600 dark:text-cyan-300">
+                            {titleBadge.title}
+                          </p>
+                        ) : null}
+                      </div>
+                    </TooltipContent>
+                  ) : null}
+                  </Tooltip>
+                  </TooltipProvider>
                   </div>
                     );
                   })}

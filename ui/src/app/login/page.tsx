@@ -5,11 +5,11 @@
 import { IntegrationOrbit } from "@/components/gallery/IntegrationOrbit";
 import { LoadingScreen } from "@/components/loading-screen";
 import { Button } from "@/components/ui/button";
-import { config,getLogoFilterClass } from "@/lib/config";
+import { BrandLogo } from "@/components/brand/BrandLogo";
+import { config } from "@/lib/config";
 import { motion } from "framer-motion";
 import { AlertCircle,Loader2,LogIn } from "lucide-react";
 import { signIn,useSession } from "next-auth/react";
-import Image from "next/image";
 import { useRouter,useSearchParams } from "next/navigation";
 import { Suspense,useEffect,useState } from "react";
 
@@ -70,7 +70,7 @@ function safeCallbackUrl(value: string | null): string {
 }
 
 function LoginContent() {
-  const { status } = useSession();
+  const { status, data: session } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
@@ -92,12 +92,12 @@ function LoginContent() {
       return;
     }
 
-    if (status === "authenticated") {
+    if (status === "authenticated" && !session?.error) {
       // Clear counter on successful auth redirect (not a loop)
       clearRedirectLoopCounter();
       router.push(callbackUrl);
     }
-  }, [status, router, callbackUrl, sessionReset, loopBroken]);
+  }, [status, session?.error, router, callbackUrl, sessionReset, loopBroken]);
 
   const handleSignIn = async () => {
     setIsLoading(true);
@@ -173,13 +173,14 @@ function LoginContent() {
             {/* Header */}
             <div className="p-8 text-center border-b border-border bg-muted/30">
               <div className="w-16 h-16 mx-auto mb-4 rounded-2xl gradient-primary-br flex items-center justify-center animate-pulse-glow">
-                <Image
-                  src={config.logoUrl}
+                <BrandLogo
                   alt={config.appName}
-                  width={40}
-                  height={40}
-                  unoptimized
-                  className={`h-10 w-10 ${getLogoFilterClass(config.logoStyle)}`}
+                  className="h-10 w-10"
+                  logoStyle={config.logoStyle}
+                  size={40}
+                  themed={config.logoThemed}
+                  src={config.logoUrl}
+                  variant="on-accent"
                 />
               </div>
               <div className="flex items-center justify-center gap-2">
@@ -253,7 +254,8 @@ function LoginContent() {
                       {error === "OAuthCreateAccount" && "We could not create your account."}
                       {error === "Callback" && "We could not finish sign-in."}
                       {error === "AccessDenied" && "This account does not have access."}
-                      {!["OAuthSignin", "OAuthCallback", "OAuthCreateAccount", "Callback", "AccessDenied"].includes(error) &&
+                      {error === "SessionStorageRequired" && "SSO requires MongoDB session storage. Ask an administrator to configure it."}
+                      {!["OAuthSignin", "OAuthCallback", "OAuthCreateAccount", "Callback", "AccessDenied", "SessionStorageRequired"].includes(error) &&
                         "An unexpected error occurred. Please try again."}
                     </p>
                   </div>

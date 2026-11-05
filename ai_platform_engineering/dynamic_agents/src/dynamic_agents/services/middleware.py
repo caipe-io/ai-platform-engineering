@@ -47,6 +47,7 @@ if TYPE_CHECKING:
 from dynamic_agents.metrics import MetricsAgentMiddleware
 from dynamic_agents.models import FeaturesConfig, MiddlewareEntry
 from dynamic_agents.services.context_usage import ContextUsageMiddleware
+from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryError, ToolCallRecoveryMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -330,14 +331,15 @@ class InterruptAwareToolRetryMiddleware(ToolRetryMiddleware):
     failures, relaunches the subagent, and eventually converts the interrupt
     into an error ``ToolMessage``. Raising from the retry predicate preserves
     LangGraph's checkpoint-and-resume behavior while retaining the configured
-    retry policy for real tool exceptions.
+    retry policy for real tool exceptions. Exhausted model-output recovery in a
+    child agent must also propagate, rather than relaunching that child.
     """
 
     def __init__(self, **kwargs: Any) -> None:
         retry_on = kwargs.pop("retry_on", (Exception,))
 
         def retry_non_control_flow(exc: Exception) -> bool:
-            if isinstance(exc, GraphBubbleUp):
+            if isinstance(exc, (GraphBubbleUp, ToolCallRecoveryError)):
                 raise exc
             if callable(retry_on):
                 return retry_on(exc)
@@ -408,6 +410,17 @@ MIDDLEWARE_REGISTRY: dict[str, MiddlewareSpec] = {
         param_schema={
             "run_limit": "number",
             "exit_behavior": "end|error|continue",
+        },
+    ),
+    "structured_response": MiddlewareSpec(
+        cls=object,
+        default_params={"allowed_schema_ids": ""},
+        enabled_by_default=False,
+        allow_multiple=False,
+        label="Structured Response",
+        description="Allows app clients to request validated structured JSON output",
+        param_schema={
+            "allowed_schema_ids": "string",
         },
     ),
     "tool_call_limit": MiddlewareSpec(
@@ -558,8 +571,18 @@ def _build_model_fallback(params: dict[str, Any]) -> ModelFallbackMiddleware | N
     return ModelFallbackMiddleware(fallback_model)
 
 
+def _build_structured_response(_params: dict[str, Any]) -> None:
+    """Structured response is handled by AgentRuntime tool injection.
+
+    The registry entry exists so the UI can configure the capability per
+    agent. It does not add a LangChain middleware object to the stack.
+    """
+    return None
+
+
 # Keys that need special construction instead of simple cls(**params)
 _SPECIAL_BUILDERS: dict[str, Callable[..., Any]] = {
+    "structured_response": _build_structured_response,
     "context_editing": _build_context_editing,
     "pii": _build_pii,
     "llm_tool_selector": _build_llm_tool_selector,
@@ -682,7 +705,7 @@ def build_middleware(
     else:
         entries = features.middleware
 
-    result: list[AgentMiddleware] = []
+    result: list[AgentMiddleware] = [ToolCallRecoveryMiddleware()]
     seen_singletons: set[str] = set()
 
     for entry in entries:

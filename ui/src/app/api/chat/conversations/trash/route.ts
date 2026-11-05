@@ -41,8 +41,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     // Auto-purge: permanently delete conversations that have been in the
     // archive for more than 7 days. This runs on every trash listing
     // request as a lightweight cleanup mechanism.
-    const purgeThreshold = new Date();
-    purgeThreshold.setDate(purgeThreshold.getDate() - ARCHIVE_RETENTION_DAYS);
+    // Match the UI's retention duration regardless of server timezone or DST.
+    const purgeThreshold = new Date(Date.now() - ARCHIVE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
     const expired = await conversations.find({
       owner_id: user.email,

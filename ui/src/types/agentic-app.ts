@@ -56,9 +56,20 @@ export interface AgenticAppInstallation {
   bindings?: {
     runtimeOrigin?: string;
     resources?: Record<string, string>;
+    /** Client id of the service account this app uses to call the host. */
+    serviceAccountClientId?: string;
   };
   runtimeMountPath?: string;
   runtimeOriginOverride?: string;
+  /** Explicit operator approval of declared iframe host routes. */
+  hostRouteClaims?: string[];
+  /** App-owned feedback submission path, relative to its runtime origin. */
+  feedbackPath?: string;
+  /** Optional deployment-owned feature labels for the host report form. */
+  feedbackFeatures?: string[];
+  /** Server-owned GitHub handler; never accepts repository or token selection from a request. */
+  feedbackGitHub?: { repository: string; tokenEnv: string; screenshotsRepository?: string; label?: string; style?: import("@/lib/feedback-issue-style").FeedbackIssueStyle };
+  navigationOverrides?: { visible?: boolean; label?: string; order?: number };
   accessOverrides?: {
     requiredRoles?: string[];
   };
@@ -71,6 +82,7 @@ export interface ConfiguredAgenticApp {
 
 export interface PublicAgenticApp {
   appId: string;
+  icon?: string;
   displayName: string;
   description: string;
   href: string;
@@ -80,6 +92,10 @@ export interface PublicAgenticApp {
   capabilities: string[];
   uiMode?: "native-package" | "iframe";
   hostPaths?: string[];
+  navigation?: { label: string; href: string; icon?: "book-open" | "folder-kanban" | "layout-grid"; order?: number };
+  assistantOptions?: import("../../app-sdk/assistant-options.mjs").AssistantOptions;
+  assistantOverlay?: "host" | "app";
+  feedbackEnabled?: boolean;
   assistantEnabled?: boolean;
   assistantAgentId?: string;
   assistantLabel?: string;

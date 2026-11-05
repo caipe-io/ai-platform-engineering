@@ -1,5 +1,7 @@
 "use client";
 
+import { hasReleaseNotesOverride, type ReleaseNotesOverride } from "@/lib/release-notes-override";
+
 import { useSession } from "next-auth/react";
 import { useCallback,useEffect,useMemo,useState } from "react";
 
@@ -22,13 +24,19 @@ export interface ReleaseMarkdown {
   title: string | null;
   date: string | null;
   body: string;
+  source?: string | null;
+  markdownBaseUrl?: string;
+  changelogUrl?: string | null;
 }
 
 interface ReleaseNotesResponse {
+  markdownBaseUrl?: string;
   matchedVersion?: string | null;
   title?: string | null;
   date?: string | null;
   body?: string | null;
+  changelogUrl?: string | null;
+  source?: string | null;
 }
 
 interface SettingsResponse {
@@ -46,7 +54,12 @@ interface ChangelogResponse {
 }
 
 export interface ReleaseNotesNotificationConfig {
+  override?: ReleaseNotesOverride;
+  override_revision?: string;
   enabled: boolean;
+  repository_url: string | null;
+  previous_commit: string | null;
+  latest_commit: string | null;
 }
 
 interface PlatformConfigResponse {
@@ -78,7 +91,7 @@ function baseVersion(value: string): string {
   return value.trim().replace(/^v/i, "").split(/[-+]/)[0];
 }
 
-function resolvePromptVersion(versionInfo: { version?: string; packageVersion?: string } | null): string | null {
+export function resolvePromptVersion(versionInfo: { version?: string; packageVersion?: string } | null): string | null {
   const candidates = [versionInfo?.version, versionInfo?.packageVersion].map(normalizeVersion);
   return (
     candidates.find(
@@ -89,6 +102,33 @@ function resolvePromptVersion(versionInfo: { version?: string; packageVersion?: 
 
 function sessionSkipKey(version: string): string {
   return `release-notes:${version}:skip`;
+}
+
+export function hasConfiguredReleaseNotesCompare(
+  config?: Partial<ReleaseNotesNotificationConfig> | null,
+): config is Partial<ReleaseNotesNotificationConfig> & {
+  repository_url: string;
+  previous_commit: string;
+  latest_commit: string;
+} {
+  return Boolean(
+    config?.repository_url?.trim() &&
+      config.previous_commit?.trim() &&
+      config.latest_commit?.trim(),
+  );
+}
+
+export function releaseNotesRequestUrl(
+  version: string,
+  config?: Partial<ReleaseNotesNotificationConfig> | null,
+): string {
+  const params = new URLSearchParams({ version });
+  if (hasConfiguredReleaseNotesCompare(config) || hasReleaseNotesOverride(config, version)) {
+    // The API resolves the stored platform config server-side so callers
+    // cannot use the UI server's GitHub token to compare an arbitrary repo.
+    params.set("compare", "platform");
+  }
+  return `/api/release-notes?${params.toString()}`;
 }
 
 function notificationsEnabledFromSettings(settings: SettingsResponse | null): boolean {
@@ -110,6 +150,7 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
   const deployedReleaseVersion = useMemo(() => resolvePromptVersion(versionInfo), [versionInfo]);
 
   const [releaseVersion, setReleaseVersion] = useState<string | null>(null);
+  const [announcementId, setAnnouncementId] = useState<string | null>(null);
   const [release, setRelease] = useState<ReleaseNote | null>(null);
   const [releaseMarkdown, setReleaseMarkdown] = useState<ReleaseMarkdown | null>(null);
   const [open, setOpen] = useState(false);
@@ -158,10 +199,12 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
         // Platform-wide switch (admin) AND the per-user opt-out (Admin →
         // General) must both be on, and we must know which version is deployed.
         const platformEnabled = platformConfigPayload?.data?.release_notes?.enabled !== false;
+        const releaseNotesConfig = platformConfigPayload?.data?.release_notes;
         const userNotificationsEnabled = notificationsEnabledFromSettings(settingsPayload);
 
         if (!platformEnabled || !userNotificationsEnabled || !deployedReleaseVersion) {
           setReleaseVersion(null);
+          setAnnouncementId(null);
           setRelease(null);
           setReleaseMarkdown(null);
           setOpen(false);
@@ -169,12 +212,25 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
         }
 
         const activeReleaseVersion = deployedReleaseVersion;
+        const curatedOverride = hasReleaseNotesOverride(releaseNotesConfig, activeReleaseVersion);
+        const customCompareConfigured = !curatedOverride && hasConfiguredReleaseNotesCompare(releaseNotesConfig);
+        const activeAnnouncementId = curatedOverride
+          ? `${activeReleaseVersion}:curated:${releaseNotesConfig?.override_revision}`
+          : customCompareConfigured
+          ? JSON.stringify([
+              activeReleaseVersion,
+              releaseNotesConfig.repository_url,
+              releaseNotesConfig.previous_commit,
+              releaseNotesConfig.latest_commit,
+            ])
+          : activeReleaseVersion;
         setReleaseVersion(activeReleaseVersion);
+        setAnnouncementId(activeAnnouncementId);
 
         const skippedThisSession =
           typeof window !== "undefined" &&
-          window.sessionStorage.getItem(sessionSkipKey(activeReleaseVersion)) === "true";
-        const permanentlyDismissedVersion = permanentlyDismissed.includes(activeReleaseVersion);
+          window.sessionStorage.getItem(sessionSkipKey(activeAnnouncementId)) === "true";
+        const permanentlyDismissedVersion = permanentlyDismissed.includes(activeAnnouncementId);
 
         if (skippedThisSession || permanentlyDismissedVersion) {
           setRelease(null);
@@ -183,37 +239,51 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
           return;
         }
 
-        const matchingRelease =
-          changelogPayload?.releases?.find((item) => normalizeVersion(item.version) === activeReleaseVersion) ??
-          null;
+        const matchingRelease = customCompareConfigured || curatedOverride
+          ? null
+          : changelogPayload?.releases?.find(
+              (item) => normalizeVersion(item.version) === activeReleaseVersion,
+            ) ?? null;
         setRelease(matchingRelease);
 
+        const unavailableNotes: ReleaseMarkdown | null = curatedOverride ? {
+          matchedVersion: activeReleaseVersion, title: null, date: null, body: "",
+          source: releaseNotesConfig?.override?.source === "manual" ? "manual" : "repository-markdown",
+          changelogUrl: releaseNotesConfig?.override?.source === "manual" ? releaseNotesConfig.override.changelog_url : null,
+        } : null;
         try {
-          const notesResponse = await fetch(
-            `/api/release-notes?version=${encodeURIComponent(activeReleaseVersion)}`,
-          );
+          const notesResponse = await fetch(releaseNotesRequestUrl(activeReleaseVersion, releaseNotesConfig));
           const notesPayload: ReleaseNotesResponse | null = notesResponse.ok
             ? await notesResponse.json()
             : null;
           if (!cancelled) {
             const hasExactChangelog = Boolean(matchingRelease);
+            const expectedSource = curatedOverride ? unavailableNotes?.source : customCompareConfigured ? "github-compare" : null;
+            const sourceMatches = expectedSource ? notesPayload?.source === expectedSource : ["github", "local", "generated"].includes(notesPayload?.source ?? "");
+            const hasConfiguredCompareNotes =
+              (customCompareConfigured && notesPayload?.source === "github-compare") ||
+              (curatedOverride && ["manual", "repository-markdown"].includes(notesPayload?.source ?? ""));
             const hasExactCuratedNotes =
               Boolean(notesPayload?.body) &&
-              normalizeVersion(notesPayload?.matchedVersion) === baseVersion(activeReleaseVersion);
+              (normalizeVersion(notesPayload?.matchedVersion) === activeReleaseVersion ||
+                normalizeVersion(notesPayload?.matchedVersion) === baseVersion(activeReleaseVersion));
             setReleaseMarkdown(
-              !hasExactChangelog && hasExactCuratedNotes
+              sourceMatches && (hasConfiguredCompareNotes || !hasExactChangelog) && hasExactCuratedNotes
                 ? {
                     matchedVersion: notesPayload.matchedVersion ?? null,
                     title: notesPayload.title ?? null,
                     date: notesPayload.date ?? null,
                     body: notesPayload.body,
+                    source: notesPayload.source,
+                    markdownBaseUrl: notesPayload.markdownBaseUrl,
+                    changelogUrl: notesPayload.changelogUrl ?? null,
                   }
-                : null,
+                : unavailableNotes,
             );
           }
         } catch (notesError) {
           console.warn("[release-upgrade-prompt] Failed to load curated release notes:", notesError);
-          if (!cancelled) setReleaseMarkdown(null);
+          if (!cancelled) setReleaseMarkdown(unavailableNotes);
         }
 
         if (cancelled) return;
@@ -238,21 +308,21 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
   }, [adminLoading, deployedReleaseVersion, isAdmin, session, status, versionLoading]);
 
   const skipUntilNextLogin = useCallback(() => {
-    if (releaseVersion && typeof window !== "undefined") {
-      window.sessionStorage.setItem(sessionSkipKey(releaseVersion), "true");
+    if (announcementId && typeof window !== "undefined") {
+      window.sessionStorage.setItem(sessionSkipKey(announcementId), "true");
     }
     setOpen(false);
-  }, [releaseVersion]);
+  }, [announcementId]);
 
   const dismissPermanently = useCallback(async () => {
-    if (!releaseVersion) {
+    if (!announcementId) {
       setOpen(false);
       return;
     }
 
-    const nextDismissed = Array.from(new Set([...dismissedVersions, releaseVersion]));
+    const nextDismissed = Array.from(new Set([...dismissedVersions, announcementId]));
     if (typeof window !== "undefined") {
-      window.sessionStorage.setItem(sessionSkipKey(releaseVersion), "true");
+      window.sessionStorage.setItem(sessionSkipKey(announcementId), "true");
     }
     setOpen(false);
     setIsDismissing(true);
@@ -273,7 +343,7 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
     } finally {
       setIsDismissing(false);
     }
-  }, [dismissedVersions, releaseVersion]);
+  }, [announcementId, dismissedVersions]);
 
   return {
     open,

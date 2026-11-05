@@ -14,3 +14,11 @@ it("dispatches progressive tool output without completing the tool", () => {
     type: "tool_output", toolData: { tool_call_id: "call-stream", result: "partial" }, namespace: ["child"],
   });
 });
+
+
+it("does not report a remotely cancelled run as completed", () => {
+  const onDone = jest.fn(), onError = jest.fn();
+  expect(processAGUIEvent("RUN_FINISHED", { outcome: "cancelled" }, createAGUIProtocolState(), { onDone, onError })).toBe(true);
+  expect(onDone).not.toHaveBeenCalled();
+  expect(onError).toHaveBeenCalledWith(expect.stringContaining("stopped"));
+});

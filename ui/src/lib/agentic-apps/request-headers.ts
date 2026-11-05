@@ -1,3 +1,5 @@
+export const RUNTIME_NEXT_URL_HEADER = "x-caipe-runtime-next-url";
+
 const HOST_CONTROLLED_REQUEST_HEADERS = new Set([
   "authorization",
   "connection",

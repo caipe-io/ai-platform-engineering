@@ -1,6 +1,7 @@
 "use client";
 
-import { getConfig,getLogoFilterClass } from "@/lib/config";
+import { BrandLogo } from "@/components/brand/BrandLogo";
+import { getConfig } from "@/lib/config";
 import { motion } from "framer-motion";
 import Image from "next/image";
 import { useMemo } from "react";
@@ -320,13 +321,14 @@ export function IntegrationOrbit() {
         }}
         transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
       >
-        <Image
-          src={getConfig('logoUrl')}
+        <BrandLogo
           alt={getConfig('appName')}
-          width={56}
-          height={56}
-          unoptimized
-          className={`w-14 h-14 ${getLogoFilterClass()}`}
+          className="w-14 h-14"
+          logoStyle={getConfig('logoStyle')}
+          size={56}
+          themed={getConfig('logoThemed')}
+          src={getConfig('logoUrl')}
+          variant="on-accent"
         />
       </motion.div>
 

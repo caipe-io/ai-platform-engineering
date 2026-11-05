@@ -7,7 +7,7 @@ import type { Participant } from "@/types/mongodb";
 // lives in `StreamEvent`.
 
 // Turn status for Dynamic Agents (shown in timeline)
-export type TurnStatus = "done" | "interrupted" | "waiting_for_input";
+export type TurnStatus = "done" | "interrupted" | "waiting_for_input" | "cancelled";
 export type ConversationAccessLevel = "owner" | "shared" | "shared_readonly" | "admin_audit";
 
 // Chat conversation types
@@ -130,7 +130,7 @@ export interface ChatMessage {
   senderEmail?: string;
   senderName?: string;
   senderImage?: string;
-  /** Turn status for Dynamic Agents: done, interrupted, or waiting_for_input */
+  /** Server-confirmed completion, cancellation, interruption or input wait. */
   turnStatus?: TurnStatus;
   /** Connection/server error — rendered as inline banner, not as bot content */
   error?: string;

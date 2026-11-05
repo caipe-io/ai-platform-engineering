@@ -5,7 +5,11 @@ metadata:
   labels:
     {{- include "keycloak.labels" . | nindent 4 }}
 data:
+  mcp-dcr.sh: |-
+    {{- .Files.Get "scripts/mcp-dcr.sh" | nindent 4 }}
   init-token-exchange.sh: |-
     {{- .Files.Get "scripts/init-token-exchange.sh" | nindent 4 }}
   init-idp.sh: |-
     {{- .Files.Get "scripts/init-idp.sh" | nindent 4 }}
+  reconcile-secondary-auth.sh: |-
+    {{- .Files.Get "scripts/reconcile-secondary-auth.sh" | nindent 4 }}

@@ -2,6 +2,10 @@ import { ApiError } from "@/lib/api-error";
 import { authorize, authorizeMany, listAccessible, type Action, type Subject } from "@/lib/authz";
 import type { UniversalRebacResourceType } from "@/types/rbac-universal";
 
+import {
+  isUnsafeRbacBypassEnabled,
+  warnUnsafeRbacBypassEnabled,
+} from "./bypass";
 import { type OpenFgaCheckResult, type OpenFgaTupleKey } from "./openfga";
 import { openFgaResourceObject } from "./openfga-resource-ids";
 import { caipeOrgKey, organizationObjectId } from "./organization";
@@ -318,6 +322,11 @@ export async function requireResourcePermission(
   target: ResourcePermissionTarget,
   options: ResourcePermissionOptions = {},
 ): Promise<void> {
+  if (isUnsafeRbacBypassEnabled()) {
+    warnUnsafeRbacBypassEnabled("resource-authz requireResourcePermission");
+    return;
+  }
+
   const subject = subjectFromSession(session);
   const casSubject = casSubjectFromSession(session);
   if (!subject || !casSubject) {
@@ -378,6 +387,11 @@ export async function filterResourcesByPermission<T>(
   },
   options: ResourcePermissionOptions = {},
 ): Promise<T[]> {
+  if (isUnsafeRbacBypassEnabled()) {
+    warnUnsafeRbacBypassEnabled("resource-authz filterResourcesByPermission");
+    return [...resources];
+  }
+
   const subject = subjectFromSession(session);
   const casSubject = casSubjectFromSession(session);
   if (!subject || !casSubject) return [];

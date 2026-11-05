@@ -15,6 +15,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { OPEN_APPLICATION_SEARCH_EVENT } from "@/lib/navigation-events";
 import {
   ArrowRight,
   Bot,
@@ -65,7 +66,6 @@ type FetchImplementation = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-const OPEN_APPLICATION_SEARCH_EVENT = "caipe:open-application-search";
 
 function useCommandPaletteShortcut(): string {
   const [shortcut,setShortcut] = React.useState("⌘/Ctrl K");

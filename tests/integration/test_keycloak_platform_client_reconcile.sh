@@ -5,7 +5,7 @@
 # End-to-end test for the caipe-platform client_secret reconciliation
 # added to charts/.../keycloak/scripts/init-idp.sh.
 #
-# Spins up a throwaway Keycloak 26.3 container (the same image the
+# Spins up a throwaway Keycloak 26.8.1 container (the same image the
 # Helm chart pins), imports the realm shipped with the chart, then:
 #
 #   1. Confirms the realm placeholder "caipe-platform-dev-secret" is
@@ -58,7 +58,7 @@ INIT_IMAGE_CANDIDATES=(
   "ghcr.io/cnoe-io/keycloak-init:latest"
 )
 INIT_IMAGE_LOCAL_BUILD="caipe/keycloak-init:local-test"
-KC_IMAGE="quay.io/keycloak/keycloak:26.3"
+KC_IMAGE="quay.io/keycloak/keycloak:26.8.1"
 
 # --- Pretty output -------------------------------------------------
 RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; RESET=$'\033[0m'

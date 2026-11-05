@@ -770,7 +770,7 @@ async function writeStepArtifactsToFs(
   agentOutput: string,
   authHeaders: Record<string, string>,
 ): Promise<void> {
-  const dir = `workflow-state/step-${stepIndex + 1}--${agentId}`;
+  const dir = `/workflow-state/step-${stepIndex + 1}--${agentId}`;
   const files = [
     { path: `${dir}/user_prompt.txt`, content: promptSent },
     { path: `${dir}/tool_calls.txt`, content: toolCalls.join("\n") || "(no tool calls)" },
@@ -778,11 +778,14 @@ async function writeStepArtifactsToFs(
   ];
   for (const f of files) {
     try {
-      await fetch(`${DA_SERVER_BASE_URL}/api/v1/files/content`, {
+      const response = await fetch(`${DA_SERVER_BASE_URL}/api/v1/files/content`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({ fs_namespace: fsNamespace, path: f.path, content: f.content }),
       });
+      if (!response.ok) {
+        throw new Error(`Artifact write returned HTTP ${response.status}`);
+      }
     } catch (err) {
       console.error(`[WorkflowEngine] Failed to write artifact ${f.path}:`, err);
     }

@@ -928,6 +928,7 @@ caipe-ui:
     CAIPE_ORG_DISPLAY_NAME: "CAIPE"
     LOGO_URL: "/logo.svg"
     LOGO_STYLE: "default"
+    LOGO_THEMED: ""
     # SPINNER_COLOR: ""
     SHOW_POWERED_BY: "false"
     # Environment badge (e.g. "Dev", "Preview", "Staging", "Prod"; empty = hidden)
@@ -1104,6 +1105,20 @@ litellmMcp:
     LITELLM_API_URL: ""
     LITELLM_API_TIMEOUT: "120"
     LITELLM_VERIFY_SSL: "true"
+    LITELLM_TOKEN_ALERTS_ENABLED: "false"
+    LITELLM_TOKEN_ALERT_THRESHOLD: "0.8"
+    LITELLM_TOKEN_ALERT_LIMITS_JSON: "{}"
+    LITELLM_TOKEN_ALERT_TARGETS_JSON: "[]"
+    LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL: "none"
+    LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS: ""
+    LITELLM_TOKEN_ALERT_WEBEX_API_URL: "https://webexapis.com/v1"
+  tokenAlertScanner:
+    enabled: false
+    intervalSeconds: 3600
+    dryRun: false
+    dedupeFile: "/tmp/litellm-token-alerts/state.json"
+    dedupeTtlSeconds: 86400
+    resources: {}
   # Existing Secret containing LITELLM_API_KEY. Takes precedence over secret.name.
   existingSecret: ""
   # Simple Secret creation for local/dev installs. Prefer existingSecret or
@@ -1125,6 +1140,102 @@ litellmMcp:
       #   remoteRef:
       #     key: dev/litellm-mcp
       #     property: LITELLM_API_KEY
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext: {}
+  securityContext: {}
+  resources: {}
+    # requests:
+    #   cpu: 100m
+    #   memory: 256Mi
+    # limits:
+    #   cpu: 500m
+    #   memory: 512Mi
+  livenessProbe:
+    tcpSocket:
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    tcpSocket:
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+######### Cloudability MCP configuration #########
+# Standalone MCP server for Cloudability FinOps reporting.
+# Enable this with litellmMcp when the Grid FinOps agent should answer both
+# LLM spend and broader cloud cost questions.
+cloudabilityMcp:
+  enabled: false
+  nameOverride: "cloudability-mcp"
+  fullnameOverride: ""
+  replicaCount: 1
+  revisionHistoryLimit: 3
+  image:
+    repository: "ghcr.io/cnoe-io/mcp-cloudability"
+    # tag defaults to .Chart.AppVersion when not specified
+    tag: ""
+    pullPolicy: "IfNotPresent"
+  imagePullSecrets: []
+  service:
+    type: ClusterIP
+    port: 8000
+  # Non-sensitive environment variables.
+  config:
+    SERVER_NAME: "Cloudability"
+    CLOUDABILITY_API_URL: "https://api.cloudability.com/v3"
+    CLOUDABILITY_REGION: ""
+  # Existing Secret containing either CLOUDABILITY_API_PUBLIC_KEY/
+  # CLOUDABILITY_API_PRIVATE_KEY, CLOUDABILITY_API_KEY, or
+  # APPTIO_OPENTOKEN/APPTIO_ENVIRONMENT_ID. Takes precedence over secret.name.
+  existingSecret: ""
+  # Simple Secret creation for local/dev installs. Prefer existingSecret or
+  # externalSecrets in shared clusters.
+  secret:
+    create: false
+    name: ""
+    data: {}
+      # CLOUDABILITY_API_KEY: ""
+      # CLOUDABILITY_API_PUBLIC_KEY: ""
+      # CLOUDABILITY_API_PRIVATE_KEY: ""
+      # APPTIO_OPENTOKEN: ""
+      # APPTIO_ENVIRONMENT_ID: ""
+  externalSecrets:
+    enabled: false
+    apiVersion: "v1beta1"
+    refreshInterval: "1h"
+    secretStoreRef:
+      name: "vault"
+      kind: "ClusterSecretStore"
+    data: []
+      # - secretKey: CLOUDABILITY_API_KEY
+      #   remoteRef:
+      #     key: dev/cloudability-mcp
+      #     property: CLOUDABILITY_API_KEY
+      # - secretKey: CLOUDABILITY_API_PUBLIC_KEY
+      #   remoteRef:
+      #     key: dev/cloudability-mcp
+      #     property: CLOUDABILITY_API_PUBLIC_KEY
+      # - secretKey: CLOUDABILITY_API_PRIVATE_KEY
+      #   remoteRef:
+      #     key: dev/cloudability-mcp
+      #     property: CLOUDABILITY_API_PRIVATE_KEY
+      # - secretKey: APPTIO_OPENTOKEN
+      #   remoteRef:
+      #     key: dev/cloudability-mcp
+      #     property: APPTIO_OPENTOKEN
+      # - secretKey: APPTIO_ENVIRONMENT_ID
+      #   remoteRef:
+      #     key: dev/cloudability-mcp
+      #     property: APPTIO_ENVIRONMENT_ID
   podAnnotations: {}
   podLabels: {}
   podSecurityContext: {}
@@ -1549,7 +1660,7 @@ webex-bot:
 keycloak:
   image:
     repository: "quay.io/keycloak/keycloak"
-    tag: "26.3"
+    tag: "26.8.1"
     pullPolicy: IfNotPresent
 
   # Admin credentials — auto-generated random password by default.
@@ -1700,11 +1811,6 @@ openfga-authz-bridge:
     fullFidelityAllows: false
     allowRollupFlushSeconds: 60
 
-######### RAG Stack configuration #########
-# RAG Stack - Complete stack including web, server, agent, Redis, and Milvus
-# Below values are only a subset of the values that are available in the rag-stack chart.
-# For more values, please refer to the rag-stack chart values.yaml file.
-rag-stack:
 ######### RAG Stack configuration #########
 # RAG Stack - Complete stack including web, server, agent, Redis, and Milvus
 # Below values are only a subset of the values that are available in the rag-stack chart.

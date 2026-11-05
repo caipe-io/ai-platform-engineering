@@ -179,6 +179,28 @@ describe("GET /api/user/preferences", () => {
     });
   });
 
+  it("returns Web defaults without calling the optional Webex service", async () => {
+    mockGetUserPreference.mockResolvedValue({ web_default_agent_id: "agent-web" });
+    mockGetIntegrationAvailability.mockReturnValue({ slack: true, webex: true });
+    mockListWebexBotPolicies.mockImplementation(() => new Promise(() => {}));
+
+    const response = await GET(new NextRequest(
+      "http://localhost:3000/api/user/preferences?include_webex=false",
+    ));
+
+    expect(response.status).toBe(200);
+    await expect(bodyOf(response)).resolves.toMatchObject({
+      data: {
+        web_default_agent_id: "agent-web",
+        platform_default_agent_id: "platform-agent",
+        webex_bots: [],
+        integrations: { slack: true, webex: true },
+      },
+    });
+    expect(mockListWebexBotPolicies).not.toHaveBeenCalled();
+    expect(mockListWebexDirectUserRoutesForUser).not.toHaveBeenCalled();
+  });
+
   it("rejects requests without a valid session", async () => {
     mockGetAuth.mockResolvedValue({
       user: { email: "x", name: "y", role: "user" },

@@ -114,6 +114,7 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | caipe-ui.config.KEYCLOAK_RESOURCE_SERVER_ID | string | `"caipe-platform"` |  |
 | caipe-ui.config.KEYCLOAK_URL | string | `""` |  |
 | caipe-ui.config.LOGO_STYLE | string | `"default"` |  |
+| caipe-ui.config.LOGO_THEMED | string | `""` |  |
 | caipe-ui.config.LOGO_URL | string | `"/logo.svg"` |  |
 | caipe-ui.config.MONGODB_DATABASE | string | `"caipe"` |  |
 | caipe-ui.config.NEXTAUTH_URL | string | `"http://localhost:3000"` |  |
@@ -331,7 +332,7 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | keycloak.idp.secretRef | string | `""` |  |
 | keycloak.image.pullPolicy | string | `"IfNotPresent"` |  |
 | keycloak.image.repository | string | `"quay.io/keycloak/keycloak"` |  |
-| keycloak.image.tag | string | `"26.3"` |  |
+| keycloak.image.tag | string | `"26.8.1"` |  |
 | keycloak.platformClient.secretRef | string | `"caipe-platform-secret"` |  |
 | keycloak.realm.name | string | `"caipe"` |  |
 | keycloak.realm.sslRequired | string | `"external"` |  |

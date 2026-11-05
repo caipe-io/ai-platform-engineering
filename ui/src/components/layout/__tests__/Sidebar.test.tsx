@@ -103,14 +103,17 @@ jest.mock('@/store/chat-store', () => {
 })
 
 jest.mock('lucide-react', () => ({
+  ...jest.requireActual('lucide-react'),
   ArrowUp: (props: React.ComponentProps<'span'>) => <span data-testid="icon-arrow-up" {...props} />,
   ArrowDown: (props: React.ComponentProps<'span'>) => <span data-testid="icon-arrow-down" {...props} />,
   GripVertical: (props: React.ComponentProps<'span'>) => <span data-testid="icon-grip" {...props} />,
   MessageSquare: (props: unknown) => <span data-testid="icon-message-square" {...props} />,
   MessageCircleQuestion: (props: unknown) => <span data-testid="icon-message-circle-question" {...props} />,
   Radio: (props: unknown) => <span data-testid="icon-radio" {...props} />,
-  History: (props: unknown) => <span data-testid="icon-history" {...props} />,
+  Bot: (props: unknown) => <span data-testid="icon-bot" {...props} />,
   Loader2: (props: unknown) => <span data-testid="icon-loader" {...props} />,
+  Cpu: (props: unknown) => <span data-testid="icon-cpu" {...props} />,
+  History: (props: unknown) => <span data-testid="icon-history" {...props} />,
   Plus: (props: unknown) => <span data-testid="icon-plus" {...props} />,
   Archive: (props: unknown) => <span data-testid="icon-archive" {...props} />,
   ArchiveRestore: (props: unknown) => <span data-testid="icon-archive-restore" {...props} />,
@@ -353,7 +356,7 @@ describe('Sidebar — Live Status Indicator', () => {
         resolveAgents({
           json: async () => ({
             success: true,
-            data: [{ _id: 'agent-1', name: 'Agent One' }],
+            data: [{ _id: 'agent-1', name: 'Agent One', execution_harness_id: 'agentcore' }],
           }),
         } as Response)
       })
@@ -362,6 +365,7 @@ describe('Sidebar — Live Status Indicator', () => {
         expect(screen.queryByTestId('agent-name-skeleton')).not.toBeInTheDocument()
       })
       expect(screen.getByText(/Agent One/)).toBeInTheDocument()
+      expect(screen.getByLabelText('Execution harness: Amazon Bedrock AgentCore')).toBeInTheDocument()
     })
   })
 
@@ -544,14 +548,14 @@ describe('Sidebar — Live Status Indicator', () => {
       expect(screen.getByText('Jan 1, 2026')).toBeInTheDocument()
     })
 
-    it('shows schedule title badge for scheduled conversations', () => {
+    it('keeps the schedule title in the avatar tooltip without a badge row', () => {
       mockLoadConversationsFromServer.mockResolvedValue(undefined)
       mockConversations = [
         makeConv('conv-1', 'Scheduled Chat', {
           metadata: {
             source: 'scheduler',
             schedule_id: 'sched_ec7107dfab744ddd',
-            schedule_title: 'Important Team 2 Meeting Prep',
+            schedule_title: 'Example meeting preparation',
           },
         }),
       ]
@@ -559,7 +563,8 @@ describe('Sidebar — Live Status Indicator', () => {
       render(<Sidebar {...defaultProps} />)
 
       selectConversationFilter('Scheduled')
-      expect(screen.getByText('Important Team 2 Meeting Prep')).toBeInTheDocument()
+      expect(screen.getByTitle('Scheduled run sched_ec7107dfab744ddd: Example meeting preparation')).toBeInTheDocument()
+      expect(screen.queryByText('Example meeting preparation')).not.toBeInTheDocument()
       expect(screen.queryByText('sched_ec7107dfab744ddd')).not.toBeInTheDocument()
     })
 
@@ -574,10 +579,10 @@ describe('Sidebar — Live Status Indicator', () => {
       render(<Sidebar {...defaultProps} />)
 
       selectConversationFilter('Scheduled')
-      expect(screen.getByText('sched_ec7107dfab744ddd')).toBeInTheDocument()
+      expect(screen.getByTitle('Scheduled run sched_ec7107dfab744ddd')).toBeInTheDocument()
     })
 
-    it('shows an autonomous task title badge with distinct violet styling', () => {
+    it('keeps autonomous task details in the avatar tooltip without a badge row', () => {
       mockLoadConversationsFromServer.mockResolvedValue(undefined)
       mockConversations = [
         makeConv('conv-1', '[Autonomous] Review open pull requests', {
@@ -590,16 +595,8 @@ describe('Sidebar — Live Status Indicator', () => {
       render(<Sidebar {...defaultProps} />)
 
       selectConversationFilter('Autonomous')
-      const badge = screen.getByText('Review open pull requests')
-      expect(badge).toHaveClass(
-        'border-violet-500/30',
-        'bg-violet-500/10',
-        'text-violet-700',
-      )
-      expect(badge).toHaveAttribute(
-        'title',
-        'Autonomous task review-open-prs-a1b2: Review open pull requests',
-      )
+      expect(screen.getByTitle('Autonomous task review-open-prs-a1b2: Review open pull requests')).toBeInTheDocument()
+      expect(screen.queryByText('Review open pull requests')).not.toBeInTheDocument()
     })
 
     it('uses the conversation title for existing autonomous conversations', () => {
@@ -614,7 +611,7 @@ describe('Sidebar — Live Status Indicator', () => {
       render(<Sidebar {...defaultProps} />)
 
       selectConversationFilter('Autonomous')
-      expect(screen.getByText('Legacy task title')).toHaveClass('border-violet-500/30')
+      expect(screen.getByTitle('Autonomous task legacy-task-a1b2: Legacy task title')).toBeInTheDocument()
     })
 
     it.each([
@@ -628,9 +625,9 @@ describe('Sidebar — Live Status Indicator', () => {
       render(<Sidebar {...defaultProps} />)
       selectConversationFilter('Chat')
       expect(screen.getByText('Normal Chat')).toBeInTheDocument()
-      expect(screen.queryByText('Legacy task')).not.toBeInTheDocument()
+      expect(screen.queryByText('[Autonomous] Legacy task')).not.toBeInTheDocument()
       selectConversationFilter('Autonomous')
-      expect(screen.getByText('Legacy task')).toBeInTheDocument()
+      expect(screen.getByText('[Autonomous] Legacy task')).toBeInTheDocument()
       expect(screen.queryByText('Normal Chat')).not.toBeInTheDocument()
     })
 
@@ -671,30 +668,30 @@ describe('Sidebar — Live Status Indicator', () => {
       expect(screen.getByRole('radio', { name: 'Webhook runs' })).toBeInTheDocument()
       expect(screen.queryByText('History')).not.toBeInTheDocument()
       expect(screen.getByText('Normal Chat')).toBeInTheDocument()
-      expect(screen.queryByText('Review alerts')).not.toBeInTheDocument()
-      expect(screen.queryByText('Nightly report')).not.toBeInTheDocument()
+      expect(screen.queryByText('[Autonomous] Review alerts')).not.toBeInTheDocument()
+      expect(screen.queryByText('Scheduled Chat')).not.toBeInTheDocument()
 
       // These assertions are synchronous: there must be no outgoing title or
       // conversation retained by an exit animation during filter switches.
       selectConversationFilter('Autonomous')
       expect(screen.getByRole('button', { name: 'Filter chat history' })).toHaveTextContent('Autonomous runs')
       expect(screen.queryByText('History')).not.toBeInTheDocument()
-      expect(screen.getByText('Review alerts')).toBeInTheDocument()
+      expect(screen.getByText('[Autonomous] Review alerts')).toBeInTheDocument()
       expect(screen.queryByText('Normal Chat')).not.toBeInTheDocument()
-      expect(screen.queryByText('Nightly report')).not.toBeInTheDocument()
+      expect(screen.queryByText('Scheduled Chat')).not.toBeInTheDocument()
       expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'autonomous' })
 
       selectConversationFilter('Scheduled')
-      expect(screen.getByText('Nightly report')).toBeInTheDocument()
-      expect(screen.queryByText('Review alerts')).not.toBeInTheDocument()
+      expect(screen.getByText('Scheduled Chat')).toBeInTheDocument()
+      expect(screen.queryByText('[Autonomous] Review alerts')).not.toBeInTheDocument()
       expect(screen.queryByText('History')).not.toBeInTheDocument()
       expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'scheduled' })
 
       selectConversationFilter('Chat')
       expect(screen.getByText('Normal Chat')).toBeInTheDocument()
       expect(screen.queryByText('History')).not.toBeInTheDocument()
-      expect(screen.queryByText('Nightly report')).not.toBeInTheDocument()
-      expect(screen.queryByText('Review alerts')).not.toBeInTheDocument()
+      expect(screen.queryByText('Scheduled Chat')).not.toBeInTheDocument()
+      expect(screen.queryByText('[Autonomous] Review alerts')).not.toBeInTheDocument()
       expect(mockLoadConversationsFromServer).toHaveBeenLastCalledWith({ filter: 'web' })
     })
 
@@ -795,7 +792,7 @@ describe('Sidebar — Live Status Indicator', () => {
       render(<Sidebar {...defaultProps} />)
 
       expect(screen.getByRole('button', { name: 'Filter chat history' })).toHaveTextContent('Autonomous runs')
-      expect(screen.getByText('Review alerts')).toBeInTheDocument()
+      expect(screen.getByText('[Autonomous] Review alerts')).toBeInTheDocument()
       expect(screen.queryByText('Normal Chat')).not.toBeInTheDocument()
       expect(mockLoadConversationsFromServer).toHaveBeenCalledWith({ filter: 'autonomous' })
     })
@@ -1209,12 +1206,13 @@ describe('Sidebar — Live Status Indicator', () => {
   // --------------------------------------------------------------------------
 
   describe('collapsed sidebar', () => {
-    it('does not render conversation titles when collapsed', () => {
+    it('keeps conversation identity available to the collapsed hover target', () => {
       mockConversations = [makeConv('conv-1', 'Hidden Title')]
 
       render(<Sidebar {...defaultProps} collapsed={true} />)
 
-      expect(screen.queryByText('Hidden Title')).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Hidden Title/ })).toBeInTheDocument()
+      expect(screen.getByText('Hidden Title')).toBeInTheDocument()
     })
 
     it('does not render "Live" or "New response" text when collapsed', () => {
@@ -1233,6 +1231,28 @@ describe('Sidebar — Live Status Indicator', () => {
       render(<Sidebar {...defaultProps} collapsed={true} />)
 
       expect(screen.getByTestId('icon-radio')).toBeInTheDocument()
+    })
+
+    it('shows agent and harness identity in the collapsed conversation tooltip', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        json: async () => ({
+          success: true,
+          data: [{ _id: 'agent-1', name: 'Example Agent', execution_harness_id: 'claude_agent_sdk' }],
+        }),
+      } as Response)
+      mockConversations = [
+        makeConv('conv-1', 'Review deployment', {
+          participants: [{ type: 'agent', id: 'agent-1' }],
+        }),
+      ]
+
+      render(<Sidebar {...defaultProps} collapsed={true} />)
+
+      expect(await screen.findByText('Example Agent')).toBeInTheDocument()
+      expect(screen.getByLabelText('Execution harness: Claude Agent SDK')).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: /Review deployment\. Example Agent/ }),
+      ).toBeInTheDocument()
     })
   })
   it('shows collapsible groups by agent and preserves the ungrouped option', async () => {

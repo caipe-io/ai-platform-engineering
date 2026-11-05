@@ -105,6 +105,7 @@ describe('getServerConfig', () => {
       expect(cfg.gradientFrom).toBe('hsl(173,80%,40%)');
       expect(cfg.gradientTo).toBe('hsl(270,75%,60%)');
       expect(cfg.logoStyle).toBe('default');
+      expect(cfg.logoThemed).toBeNull();
       expect(cfg.spinnerColor).toBeNull();
       expect(cfg.showPoweredBy).toBe(true);
       expect(cfg.supportEmail).toBe('support@example.com');
@@ -145,7 +146,7 @@ describe('getServerConfig', () => {
         'ragUrl', 'isDev', 'isProd', 'ssoEnabled',
         'ragEnabled', 'mongodbEnabled', 'credentialsEnabled', 'userConnectionsEnabled',
         'tagline', 'description', 'appName', 'logoUrl', 'envBadge',
-        'gradientFrom', 'gradientTo', 'logoStyle', 'spinnerColor',
+        'gradientFrom', 'gradientTo', 'logoStyle', 'logoThemed', 'spinnerColor',
         'showPoweredBy', 'supportEmail', 'allowDevAdminWhenSsoDisabled', 'unsafeRbacBypassEnabled',
         'storageMode', 'enabledIntegrationIcons', 'faviconUrl',
         'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
@@ -569,6 +570,29 @@ describe('getServerConfig', () => {
     });
   });
 
+  describe('logoThemed', () => {
+    beforeEach(() => clearEnv('LOGO_THEMED'));
+
+    it('should default to null (auto) so existing deployments keep their logo', () => {
+      expect(getServerConfig().logoThemed).toBeNull();
+    });
+
+    it('should force on for the exact value "true"', () => {
+      process.env.LOGO_THEMED = 'true';
+      expect(getServerConfig().logoThemed).toBe(true);
+    });
+
+    it('should force off for the exact value "false"', () => {
+      process.env.LOGO_THEMED = 'false';
+      expect(getServerConfig().logoThemed).toBe(false);
+    });
+
+    it.each(['1', 'yes', ''])('should stay auto for %p', (value) => {
+      process.env.LOGO_THEMED = value;
+      expect(getServerConfig().logoThemed).toBeNull();
+    });
+  });
+
   // ---------- Personalization defaults (env-configurable) ----------
 
   describe('defaultFontSize', () => {
@@ -667,7 +691,7 @@ describe('getServerConfig', () => {
       expect(getServerConfig().defaultGradientTheme).toBe('default');
     });
 
-    it.each(['default', 'minimal', 'professional', 'ocean', 'sunset', 'cyberpunk', 'tron', 'matrix'] as const)(
+    it.each(['default', 'neon', 'minimal', 'professional', 'ocean', 'sunset', 'cyberpunk', 'tron', 'matrix'] as const)(
       'should accept valid value "%s"',
       (gradient) => {
         process.env.DEFAULT_GRADIENT_THEME = gradient;
@@ -911,7 +935,7 @@ describe('getClientConfigScript (XSS safety)', () => {
       'ragUrl', 'isDev', 'isProd', 'ssoEnabled',
       'ragEnabled', 'mongodbEnabled', 'credentialsEnabled', 'userConnectionsEnabled',
       'tagline', 'description', 'appName', 'logoUrl', 'envBadge',
-      'gradientFrom', 'gradientTo', 'logoStyle', 'spinnerColor',
+      'gradientFrom', 'gradientTo', 'logoStyle', 'logoThemed', 'spinnerColor',
       'showPoweredBy', 'supportEmail', 'allowDevAdminWhenSsoDisabled', 'unsafeRbacBypassEnabled',
       'storageMode', 'enabledIntegrationIcons', 'faviconUrl',
       'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
@@ -1393,7 +1417,7 @@ describe('end-to-end: layout injection → client read', () => {
     process.env.DEFAULT_FONT_SIZE = 'tiny';
     process.env.DEFAULT_FONT_FAMILY = 'papyrus';
     process.env.DEFAULT_THEME = 'solarized';
-    process.env.DEFAULT_GRADIENT_THEME = 'neon';
+    process.env.DEFAULT_GRADIENT_THEME = 'rainbow';
 
     const script = getClientConfigScript();
     setWindowConfig(JSON.parse(script));

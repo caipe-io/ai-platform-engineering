@@ -2,8 +2,26 @@ replicaCount: 1
 
 image:
   repository: quay.io/keycloak/keycloak
-  tag: "26.3"
+  tag: "26.8.1"
   pullPolicy: IfNotPresent
+
+# Anonymous MCP OAuth client registration is an operator decision. Enabling it
+# requires Keycloak 26.8+ resource indicators and the public MCP resource URL.
+mcpDcr:
+  enabled: false
+  resourceUrl: ""
+  resourceClientId: "caipe-mcp-dcr"
+  # Include every additional first-party client that needs the platform API
+  # audience before enabling DCR. Missing optional built-in clients are skipped.
+  platformClientIds:
+    - caipe-ui
+    - caipe-cli
+    - caipe-platform
+    - caipe-slack-bot
+    - caipe-webex-bot
+    - caipe-scheduler-runner
+    - caipe-webex-bot-admin
+    - caipe-rag-ingestor
 
 # Init container image used by post-install Jobs (init-idp + init-token-exchange).
 #

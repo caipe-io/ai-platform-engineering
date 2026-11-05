@@ -1,5 +1,4 @@
 name: "[Tests][Helm] Helm Chart"
-description: "Test Helm charts"
 
 on:
   push:
@@ -7,11 +6,13 @@ on:
     paths:
       - 'charts/**'
       - '.github/workflows/helm-chart-test.yml'
+      - 'tests/test_caipe_ui_oidc_endpoint.py'
   pull_request:
     branches: [ main, develop, 'release/**' ]
     paths:
       - 'charts/**'
       - '.github/workflows/helm-chart-test.yml'
+      - 'tests/test_caipe_ui_oidc_endpoint.py'
   schedule:
     # Run tests daily at 2 AM UTC
     - cron: '0 2 * * *'
@@ -42,6 +43,15 @@ jobs:
       with:
         version: ${{ matrix.helm-version }}
 
+    - name: Install uv for chart regression tests
+      uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      with:
+        python-version: "3.14"
+        enable-cache: false
+
+    - name: Test UI OIDC endpoint routing
+      run: uv run --no-project --with pytest==9.1.1 --with PyYAML==6.0.3 pytest -q tests/test_caipe_ui_oidc_endpoint.py
+
     - name: Add required Helm repositories
       run: |
         helm repo add milvus https://zilliztech.github.io/milvus-helm/
@@ -50,7 +60,7 @@ jobs:
         helm repo update
 
     - name: Login to GitHub Container Registry
-      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+      uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
       with:
         registry: ghcr.io
         username: ${{ github.actor }}

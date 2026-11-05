@@ -6,7 +6,7 @@
 # init-idp.sh and init-token-exchange.sh
 # (keycloak.strictClientSecrets=true in the Helm chart).
 #
-# Spins up a throwaway Keycloak 26.3 container (same image the Helm
+# Spins up a throwaway Keycloak 26.8.1 container (same image the Helm
 # chart pins), imports the realm shipped with the chart, then:
 #
 #   1. Sanity-check that all FOUR dev placeholder client_secrets
@@ -83,7 +83,7 @@ INIT_IMAGE_CANDIDATES=(
   "ghcr.io/cnoe-io/keycloak-init:latest"
 )
 INIT_IMAGE_LOCAL_BUILD="caipe/keycloak-init:local-test"
-KC_IMAGE="quay.io/keycloak/keycloak:26.3"
+KC_IMAGE="quay.io/keycloak/keycloak:26.8.1"
 
 # clientId|placeholder pairs we care about
 DEV_PAIRS=(

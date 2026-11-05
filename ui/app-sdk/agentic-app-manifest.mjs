@@ -1,3 +1,4 @@
+import { validateAssistantOptions } from "./assistant-options.mjs";
 import {
   RESERVED_HOST_PATHS,
   RESERVED_API_PATHS,
@@ -20,6 +21,7 @@ const HOST_APIS = new Set([
   "host.theme",
   "host.session",
   "host.chat",
+  "host.notifications",
   "app.gateway",
 ]);
 
@@ -71,6 +73,16 @@ function emptyCapabilities() {
     consumes: { platformApis: [] },
     requestedPermissions: [],
   };
+}
+
+/** Only reviewed, same-origin assets in the owning app's namespace are rendered. */
+export function resolveAgenticAppIcon(appId, icon) {
+  if (typeof appId !== "string" || !ID.test(appId) || typeof icon !== "string" || icon.length > 200) return undefined;
+  const prefix = `/app-icons/${appId}/`;
+  if (!icon.startsWith(prefix)) return undefined;
+  const filename = icon.slice(prefix.length);
+  return /^[a-zA-Z0-9_-][a-zA-Z0-9._-]*\.(?:svg|png|webp|jpe?g)$/.test(filename) && !filename.includes("..")
+    ? icon : undefined;
 }
 
 /** Validate publisher declarations. Permission requests never become grants here. */
@@ -188,7 +200,7 @@ export function validateAgenticAppManifest(value) {
       !routeIds.has(nav.routeRef) ||
       nav.placement !== "after-chat" ||
       (nav.icon !== undefined &&
-        !["book-open", "layout-grid"].includes(nav.icon))
+        !["book-open", "folder-kanban", "layout-grid"].includes(nav.icon))
     )
       throw new Error(
         "navigation must reference an owned route and supported placement/icon",
@@ -204,10 +216,20 @@ export function validateAgenticAppManifest(value) {
   if (ui.assistant !== undefined) {
     const assistant = record(
       ui.assistant,
-      ["agentId", "label", "name", "streamPath", "resumePath", "cancelPath", "statusPath", "overlay"],
+      ["agentId", "label", "name", "streamPath", "resumePath", "cancelPath", "statusPath", "overlay", "supportedClients", "webexGroupChat", "hostOptions"],
       "ui.assistant",
     );
     identifier(assistant.agentId, "ui.assistant.agentId");
+    if (assistant.supportedClients !== undefined) {
+      const clients = strings(assistant.supportedClients, "ui.assistant.supportedClients");
+      if (!assistant.streamPath || !clients.length || new Set(clients).size !== clients.length ||
+          clients.some(client => !["webui", "webex"].includes(client)))
+        throw new Error("assistant supportedClients requires a stream and distinct webui/webex clients");
+    }
+    if (assistant.webexGroupChat !== undefined &&
+        (typeof assistant.webexGroupChat !== "boolean" || !assistant.supportedClients?.includes("webex")))
+      throw new Error("assistant webexGroupChat requires explicit Webex support");
+    if (assistant.hostOptions !== undefined) validateAssistantOptions(assistant.hostOptions);
     if (assistant.overlay !== undefined && !["host", "app"].includes(assistant.overlay))
       throw new Error("assistant overlay must be host or app");
     if (
@@ -231,7 +253,7 @@ export function validateAgenticAppManifest(value) {
     throw new Error(
       "auth.mode must be app-scoped-token or forward-user-access-token",
     );
-  record(app.api, ["mounts"], "api");
+  record(app.api, ["mounts", "mcp"], "api");
   strings(app.api.mounts, "api.mounts").forEach((mount) => {
     if (!pathValue(mount, "api.mount").startsWith("/api/"))
       throw new Error("invalid API mount");
@@ -262,12 +284,25 @@ export function validateAgenticAppManifest(value) {
   }
   if (modes.has("iframe") && !app.runtime)
     throw new Error("iframe profile requires a runtime binding");
+  if (app.api.mcp !== undefined) {
+    const mcp = record(app.api.mcp, ["path", "metadataPath", "apiKeyHeader"], "api.mcp");
+    if (!app.runtime || !pathValue(mcp.path, "api.mcp.path").startsWith("/api/") ||
+        RESERVED_API_PATHS.some(reserved => pathsOverlap(reserved, mcp.path)))
+      throw new Error("external MCP requires a non-reserved runtime API path");
+    if (mcp.metadataPath !== `/.well-known/oauth-protected-resource${mcp.path}`)
+      throw new Error("api.mcp.metadataPath must identify the declared MCP resource");
+    if (mcp.apiKeyHeader !== undefined &&
+        (typeof mcp.apiKeyHeader !== "string" || mcp.apiKeyHeader.length > 64 ||
+         !/^x-(?:[a-z0-9]+-)*(?:token|api-key|apikey)$/.test(mcp.apiKeyHeader)))
+      throw new Error("api.mcp.apiKeyHeader must be an explicit credential header");
+  }
   if (
     modes.has("iframe") &&
     !modes.has("native-package") &&
-    routes.some((route) => route.path !== `/apps/${app.id}`)
+    routes.some(route => route.path !== `/apps/${app.id}` &&
+      RESERVED_HOST_PATHS.some(root => route.path === root || route.path.startsWith(`${root}/`)))
   )
-    throw new Error("iframe-only routes must use the canonical /apps mount");
+    throw new Error("invalid or reserved iframe host path");
   record(app.surfaces, ["showInHub", "navOrder", "homeEligible"], "surfaces");
   boolean(app.surfaces.showInHub, "surfaces.showInHub");
   if (
@@ -334,6 +369,12 @@ export function validateAgenticAppManifest(value) {
   }
   if (app.runtime && !policies.length)
     throw new Error("runtime must declare at least one policy action");
+  if (app.api.mcp) {
+    for (const [method, path] of [["POST", app.api.mcp.path], ["GET", app.api.mcp.metadataPath]]) {
+      if (resolveAgenticAppHttpPolicyAction(app, method, path)?.defaultEffect !== "allow")
+        throw new Error("external MCP requires allowed protocol and discovery policies");
+    }
+  }
   for (const field of ["streamPath", "resumePath", "cancelPath", "statusPath"]) {
     const path = ui.assistant?.[field];
     if (!path) continue;
@@ -354,7 +395,7 @@ export function validateAgenticAppManifest(value) {
       api.required &&
       (!HOST_APIS.has(api.id) ||
         api.version !== "1.0" ||
-        (api.id !== "app.gateway" && !modes.has("native-package")))
+        (api.id !== "app.gateway" && api.id !== "host.notifications" && !modes.has("native-package")))
     )
       throw new Error(
         `unsupported required platform capability: ${api.id}@${api.version}`,
@@ -396,8 +437,12 @@ export function validateAgenticAppManifest(value) {
     for (const field of ["categories", "capabilities"])
       if (app.catalog[field] !== undefined)
         strings(app.catalog[field], `catalog.${field}`);
-    if (app.catalog.icon !== undefined)
-      string(app.catalog.icon, "catalog.icon");
+    if (app.catalog.icon !== undefined) {
+      const icon = string(app.catalog.icon, "catalog.icon");
+      // Legacy symbolic icons remain valid and render the generic app mark.
+      if (!resolveAgenticAppIcon(app.id, icon) && !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(icon))
+        throw new Error("catalog.icon must be an asset under /app-icons/<app-id>/ or a legacy icon name");
+    }
     if (app.catalog.supportUrl !== undefined) {
       const url = new URL(string(app.catalog.supportUrl, "catalog.supportUrl"));
       if (
@@ -538,6 +583,9 @@ export function validateAgenticAppOwnership(manifests) {
       claims.push({ id: app.id, kind: "route", path: route.path });
     for (const mount of app.api.mounts)
       claims.push({ id: app.id, kind: "api", path: mount });
+    if (app.api.mcp && !app.api.mounts.some(root =>
+      app.api.mcp.path === root || app.api.mcp.path.startsWith(`${root}/`)))
+      claims.push({ id: app.id, kind: "api", path: app.api.mcp.path });
     for (const slot of app.ui.slots ?? [])
       claims.push({ id: app.id, kind: "slot", path: slot });
   }

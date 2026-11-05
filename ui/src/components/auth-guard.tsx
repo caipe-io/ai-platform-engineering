@@ -3,9 +3,10 @@
 import { LoadingScreen } from "@/components/loading-screen";
 import { isTokenExpired } from "@/lib/auth-utils";
 import { getConfig } from "@/lib/config";
-import { signOut,useSession } from "next-auth/react";
+import { useSession } from "next-auth/react";
+import { signOutWithFeedback } from "@/lib/sign-out";
 import { usePathname,useRouter } from "next/navigation";
-import { useCallback,useEffect,useState } from "react";
+import { useCallback,useEffect,useRef,useState } from "react";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -19,11 +20,12 @@ interface AuthGuardProps {
  * Also checks for the deployment-configured group-based admission gate.
  */
 export function AuthGuard({ children }: AuthGuardProps) {
-  const { data: session, status } = useSession();
+  const { data: session, status, update } = useSession();
   const router = useRouter();
   const pathname = usePathname();
   const [loadingTimeout, setLoadingTimeout] = useState(false);
   const [autoResetInitiated, setAutoResetInitiated] = useState(false);
+  const signOutStarted = useRef(false);
 
   /**
    * Build a login URL that preserves the current page as callbackUrl so the
@@ -95,6 +97,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
   }, [status, autoResetInitiated, loginUrl]);
 
   useEffect(() => {
+    if (status !== "authenticated" || !session?.error) signOutStarted.current = false;
     if (!getConfig('ssoEnabled')) {
       return;
     }
@@ -110,6 +113,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
     // User is authenticated, check authorization and token expiry
     if (status === "authenticated") {
+      if (session?.error === "SessionUnavailable") return;
       // Check if TokenExpiryGuard is already handling expiry (prevents flickering)
       const isTokenExpiryHandling = typeof window !== 'undefined'
         ? sessionStorage.getItem('token-expiry-handling') === 'true'
@@ -122,11 +126,13 @@ export function AuthGuard({ children }: AuthGuardProps) {
       }
 
       // Check if token refresh failed
-      if (session?.error === "RefreshTokenExpired" || session?.error === "RefreshTokenError") {
+      if (session?.error === "SessionExpired" || session?.error === "RefreshTokenExpired" || session?.error === "RefreshTokenError") {
+        if (signOutStarted.current) return;
+        signOutStarted.current = true;
         console.warn("[AuthGuard] Token refresh failed, signing out and redirecting to login...");
         // Sign out to clear the corrupted session, then redirect
-        signOut({ redirect: false }).then(() => {
-          router.push(loginUrl('session_expired=true'));
+        signOutWithFeedback({ redirect: false }).then((completed) => {
+          if (completed) router.push(loginUrl('session_expired=true'));
         });
         return;
       }
@@ -197,6 +203,13 @@ export function AuthGuard({ children }: AuthGuardProps) {
   }
 
   // If not authorized, show nothing (redirect will happen)
+  if (session?.error === "SessionUnavailable") {
+    return <div role="alert" className="p-6 text-center">
+      <p>Sign-in services are temporarily unavailable. Your session has not been cleared.</p>
+      <button type="button" className="mt-4 underline" onClick={() => void update()}>Retry</button>
+    </div>;
+  }
+
   if (session?.isAuthorized === false) {
     return null;
   }

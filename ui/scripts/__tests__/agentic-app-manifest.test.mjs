@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmSync,
   writeFileSync,
+  symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,9 +19,10 @@ import {
   normalizeNativeExtensionManifest,
   normalizeLegacyAgenticAppManifest,
   nativeUiDescriptor,
+  resolveAgenticAppIcon,
 } from "../../app-sdk/agentic-app-manifest.mjs";
 import { validateManifest } from "../../app-sdk/checker.mjs";
-import { generateNativeExtensions } from "../generate-native-extensions.mjs";
+import { generateNativeExtensions, installAppIcon } from "../generate-native-extensions.mjs";
 
 export function exampleManifest() {
   return {
@@ -56,6 +58,75 @@ export function exampleManifest() {
     ],
   };
 }
+
+test("external MCP authentication is opt-in with fixed runtime and discovery paths", () => {
+  const app = exampleManifest();
+  app.runtime = { kind: "proxied-next-zone", mountPath: "/apps/example-app" };
+  app.access.policyActions = [{ action: "proxy:GET", defaultEffect: "allow" }, { action: "proxy:POST", defaultEffect: "allow" }];
+  app.api.mcp = { path: "/api/example/mcp", metadataPath: "/.well-known/oauth-protected-resource/api/example/mcp", apiKeyHeader: "x-example-token" };
+  assert.equal(validateAgenticAppManifest(app).api.mcp.path, "/api/example/mcp");
+  for (const changes of [
+    { path: "/api/auth/session" }, { metadataPath: "/api/private" },
+    { apiKeyHeader: "cookie" }, { apiKeyHeader: "x-caipe-roles" }, { apiKeyHeader: "Authorization" },
+  ]) {
+    const invalid = structuredClone(app); Object.assign(invalid.api.mcp, changes);
+    assert.throws(() => validateAgenticAppManifest(invalid));
+  }
+  delete app.runtime;
+  assert.throws(() => validateAgenticAppManifest(app), /runtime/);
+});
+
+test("stable root MCP paths cannot collide with another app's MCP or API mount", () => {
+  const primary = exampleManifest();
+  primary.api.mounts = [];
+  primary.api.mcp = { path: "/api/example/mcp", metadataPath: "/.well-known/oauth-protected-resource/api/example/mcp" };
+  const secondary = exampleManifest();
+  secondary.id = "secondary";
+  secondary.ui.routes = [{ id: "home", path: "/secondary" }];
+  secondary.api.mounts = [];
+  secondary.api.mcp = { ...primary.api.mcp };
+  assert.throws(() => validateAgenticAppOwnership([primary, secondary]), /claims overlap/);
+  delete secondary.api.mcp;
+  secondary.api.mounts = ["/api/example"];
+  assert.throws(() => validateAgenticAppOwnership([primary, secondary]), /claims overlap/);
+  primary.api.mounts = ["/api/example"];
+  assert.doesNotThrow(() => validateAgenticAppOwnership([primary]));
+});
+
+test("app icons are owned same-origin assets; legacy symbolic names remain compatible", () => {
+  const app = exampleManifest();
+  const icon = "/app-icons/example-app/logo.svg";
+  assert.equal(validateAgenticAppManifest({ ...app, catalog: { icon } }).catalog.icon, icon);
+  assert.equal(resolveAgenticAppIcon(app.id, icon), icon);
+  assert.equal(resolveAgenticAppIcon(app.id, "book-open"), undefined);
+  assert.doesNotThrow(() => validateAgenticAppManifest({ ...app, catalog: { icon: "book-open" } }));
+  for (const unsafe of ["//example.test/logo.svg", "https://example.test/logo.svg", "data:image/svg+xml,evil", "/app-icons/other/logo.svg", "/app-icons/example-app/../logo.svg", "/app-icons/example-app/%2e.svg", "/app-icons/example-app/logo.svg?x=1", "/api/example/logo.svg"]) {
+    assert.equal(resolveAgenticAppIcon(app.id, unsafe), undefined);
+    assert.throws(() => validateAgenticAppManifest({ ...app, catalog: { icon: unsafe } }), /catalog.icon/);
+  }
+});
+
+test("native logo installation requires a bounded asset inside the pinned package", () => {
+  const root = mkdtempSync(join(tmpdir(), "app-icon-"));
+  try {
+    const pkg = join(root, "package");
+    const host = join(root, "host");
+    const icon = "/app-icons/example-app/logo.png";
+    const app = { ...exampleManifest(), catalog: { icon } };
+    const asset = join(pkg, "public", icon);
+    mkdirSync(join(pkg, "public", "app-icons", "example-app"), { recursive: true });
+    assert.throws(() => installAppIcon(host, pkg, app), /ENOENT/);
+    writeFileSync(asset, "example-image");
+    installAppIcon(host, pkg, app);
+    assert.equal(readFileSync(join(host, "public", icon), "utf8"), "example-image");
+    writeFileSync(asset, Buffer.alloc(256 * 1024 + 1));
+    assert.throws(() => installAppIcon(host, pkg, app), /256 KiB/);
+    rmSync(asset);
+    writeFileSync(join(root, "outside.png"), "outside");
+    symlinkSync(join(root, "outside.png"), asset);
+    assert.throws(() => installAppIcon(host, pkg, app), /packaged image/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test("publisher and host use the exported nested manifest, not a root decoy", () => {
   const root = mkdtempSync(join(tmpdir(), "nested-native-manifest-"));
@@ -103,6 +174,24 @@ test("one manifest projects onto the aligned 2.0 native component contract", () 
     exampleManifest().requestedPermissions,
   );
   assert.equal(common.grants, undefined);
+});
+
+test("navigation icons survive shared and native manifest validation", () => {
+  for (const icon of ["book-open", "layout-grid", "folder-kanban"]) {
+    const app = exampleManifest();
+    app.ui.navigation.icon = icon;
+    app.ui.profiles.push({ id: "hosted", mode: "iframe" });
+    app.runtime = { kind: "proxied-next-zone", mountPath: "/apps/example-app" };
+    app.access.policyActions = [{ action: "proxy:GET", defaultEffect: "allow" }];
+    const common = validateAgenticAppManifest(app);
+    assert.equal(common.ui.navigation.icon, icon);
+    const native = nativeUiDescriptor(common);
+    assert.equal(validateManifest("@example/native-app", native).navigation.icon, icon);
+  }
+  const invalid = exampleManifest();
+  invalid.ui.navigation.icon = "unsupported-icon";
+  assert.throws(() => validateAgenticAppManifest(invalid), /placement\/icon/);
+  assert.throws(() => validateManifest("@example/native-app", nativeUiDescriptor(invalid)), /placement\/icon/);
 });
 
 test("preserves legacy CAIPE App Contract declarations instead of silently relabeling modules", () => {

@@ -39,14 +39,15 @@ describe("home widgets store",() => {
     });
   });
 
-  it("starts with the composer and quick start widgets enabled",() => {
-    expect(useHomeWidgetsStore.getState().widgets).toEqual(["heroComposer", "quickStart"]);
+  it("starts with the composer, quick start, and favorite apps widgets enabled",() => {
+    expect(useHomeWidgetsStore.getState().widgets).toEqual(["heroComposer", "quickStart", "favoriteApps"]);
     expect(useHomeWidgetsStore.getState().isEnabled("heroComposer")).toBe(true);
   });
 
   it("defines primary widgets as full width and dashboard widgets as half width",() => {
     expect(getHomeWidgetDefinition("heroComposer")?.width).toBe("full");
     expect(getHomeWidgetDefinition("quickStart")?.width).toBe("full");
+    expect(getHomeWidgetDefinition("favoriteApps")?.width).toBe("full");
     expect(getHomeWidgetDefinition("recentChats")?.width).toBe("half");
     expect(getHomeWidgetDefinition("insights")?.width).toBe("half");
     expect(getHomeWidgetDefinition("sharedConversations")?.width).toBe("half");
@@ -58,11 +59,13 @@ describe("home widgets store",() => {
     expect(useHomeWidgetsStore.getState().widgets).toEqual([
       "heroComposer",
       "quickStart",
+      "favoriteApps",
       "recentChats",
     ]);
     expect(JSON.parse(localStorage.getItem("caipe-home-widgets") || "[]")).toEqual([
       "heroComposer",
       "quickStart",
+      "favoriteApps",
       "recentChats",
     ]);
     expect(localStorage.getItem("caipe-home-widgets-version")).toBe(
@@ -77,6 +80,7 @@ describe("home widgets store",() => {
     expect(useHomeWidgetsStore.getState().widgets).toEqual([
       "heroComposer",
       "quickStart",
+      "favoriteApps",
       "recentChats",
     ]);
   });
@@ -96,7 +100,7 @@ describe("home widgets store",() => {
     act(() => useHomeWidgetsStore.getState().addWidget("shortcuts"));
 
     expect(updatePreferencesMock).toHaveBeenCalledWith({
-      home_widgets: ["heroComposer", "quickStart", "shortcuts"],
+      home_widgets: ["heroComposer", "quickStart", "favoriteApps", "shortcuts"],
       home_widgets_version: HOME_WIDGETS_SCHEMA_VERSION,
     });
   });
@@ -151,6 +155,7 @@ describe("home widgets store",() => {
     expect(useHomeWidgetsStore.getState().widgets).toEqual([
       "heroComposer",
       "quickStart",
+      "favoriteApps",
       "shortcuts",
     ]);
 
@@ -158,6 +163,7 @@ describe("home widgets store",() => {
       expect(useHomeWidgetsStore.getState().widgets).toEqual([
         "heroComposer",
         "quickStart",
+        "favoriteApps",
         "shortcuts",
         "recentChats",
       ]);
@@ -175,12 +181,14 @@ describe("home widgets store",() => {
     expect(useHomeWidgetsStore.getState().widgets).toEqual([
       "heroComposer",
       "quickStart",
+      "favoriteApps",
       "shortcuts",
     ]);
     await waitFor(() => {
       expect(useHomeWidgetsStore.getState().widgets).toEqual([
         "heroComposer",
         "quickStart",
+        "favoriteApps",
         "recentChats",
       ]);
     });
@@ -200,6 +208,37 @@ describe("home widgets store",() => {
     expect(useHomeWidgetsStore.getState().widgets).toEqual([]);
   });
 
+  it("adds Favorites after Quick Start without resetting a version 2 layout",async () => {
+    getSettingsMock.mockResolvedValue({
+      preferences: {
+        home_widgets: ["recentChats", "quickStart", "shortcuts"],
+        home_widgets_version: 2,
+      },
+    });
+    updatePreferencesMock.mockResolvedValue({});
+
+    act(() => useHomeWidgetsStore.getState().initialize());
+
+    await waitFor(() => expect(useHomeWidgetsStore.getState().widgets).toEqual([
+      "recentChats", "quickStart", "favoriteApps", "shortcuts",
+    ]));
+    expect(updatePreferencesMock).toHaveBeenCalledWith({
+      home_widgets: ["recentChats", "quickStart", "favoriteApps", "shortcuts"],
+      home_widgets_version: HOME_WIDGETS_SCHEMA_VERSION,
+    });
+  });
+
+  it("keeps an explicitly empty version 2 layout empty",async () => {
+    getSettingsMock.mockResolvedValue({
+      preferences: { home_widgets: [], home_widgets_version: 2 },
+    });
+
+    act(() => useHomeWidgetsStore.getState().initialize());
+
+    await waitFor(() => expect(getSettingsMock).toHaveBeenCalledTimes(1));
+    expect(useHomeWidgetsStore.getState().widgets).toEqual([]);
+  });
+
   it("migrates legacy server widget preferences and records the schema version",async () => {
     getSettingsMock.mockResolvedValue({
       preferences: { home_widgets: ["shortcuts"] },
@@ -210,7 +249,7 @@ describe("home widgets store",() => {
 
     await waitFor(() => {
       expect(updatePreferencesMock).toHaveBeenCalledWith({
-        home_widgets: ["heroComposer", "quickStart", "shortcuts"],
+        home_widgets: ["heroComposer", "quickStart", "favoriteApps", "shortcuts"],
         home_widgets_version: HOME_WIDGETS_SCHEMA_VERSION,
       });
     });
@@ -233,6 +272,7 @@ describe("home widgets store",() => {
     expect(useHomeWidgetsStore.getState().widgets).toEqual([
       "heroComposer",
       "quickStart",
+      "favoriteApps",
       "recentChats",
     ]);
   });

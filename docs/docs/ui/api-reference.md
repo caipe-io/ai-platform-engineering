@@ -13,6 +13,7 @@ services.
 | Service | Configuration |
 |---|---|
 | Dynamic Agents | `DYNAMIC_AGENTS_URL` |
+| Harness Engine | `HARNESS_ENGINE_URL`, `HARNESS_ENGINE_INTERNAL_TOKEN` |
 | MongoDB | `MONGODB_URI`, `MONGODB_DATABASE` |
 | RAG server | `RAG_SERVER_URL` |
 | Slack bot admin API | configured bot admin URL/token |
@@ -22,10 +23,21 @@ services.
 
 | Method | Route | Purpose |
 |---|---|---|
-| `POST` | `/api/v1/chat/stream/start` | Start an AG-UI app assistant stream when declared; otherwise use Dynamic Agents |
-| `POST` | `/api/v1/chat/stream/resume` | Resume a declared app stream or Dynamic Agents interrupt; unsupported app resume returns 501 |
-| `POST` | `/api/v1/chat/stream/cancel` | Cancel through the declared app endpoint or Dynamic Agents; unsupported app cancel returns 501 |
-| `POST` | `/api/v1/chat/invoke` | Non-streaming Dynamic Agents invocation |
+| `POST` | `/api/v1/chat/stream/start` | Start a declared AG-UI app stream, or dispatch through the pinned native/provider Harness Gateway |
+| `POST` | `/api/v1/chat/stream/resume` | Resume a declared app stream or native interrupt; unsupported app resume returns 501 and unsupported provider resume returns 409 |
+| `POST` | `/api/v1/chat/stream/cancel` | Cancel through the declared app endpoint or the pinned native/provider runtime; unsupported app cancel returns 501 |
+| `POST` | `/api/v1/chat/stream/status` | Observe a declared app's turn status; unsupported runtimes return 501 |
+| `POST` | `/api/v1/chat/invoke` | Non-streaming native/provider invocation; app-owned assistants require their declared stream endpoints |
+
+All stream operations share one dispatcher after agent-use and conversation-write
+authorization. Installed app declarations select the app proxy with the same
+authenticated caller and original conversation ID. A claimed app operation,
+including its errors and denials, never dispatches to another runtime.
+
+Other start/resume/cancel requests resolve the server-owned runtime conversation
+ID and the Harness Gateway's pinned backend. Dynamic Agents configuration is
+required only for a native request. Provider execution keeps its detached run
+and cursor replay contract; app streams retain their own deadlines and sessions.
 
 Example:
 

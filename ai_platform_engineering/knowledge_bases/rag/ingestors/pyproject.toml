@@ -22,7 +22,7 @@ dependencies = [
     "requests==2.34.2",
     "scrapy==2.18.0",
     "slack-sdk==3.43.0",
-    "twisted==26.4.0",
+    "twisted==26.10.0rc1",
 ]
 
 [project.optional-dependencies]

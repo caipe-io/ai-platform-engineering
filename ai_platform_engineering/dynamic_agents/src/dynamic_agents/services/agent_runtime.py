@@ -10,6 +10,7 @@ This module contains the core ``AgentRuntime`` class.  Sibling modules:
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -23,14 +24,17 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import uuid4
 
 from deepagents import create_deep_agent
+from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.state import StateBackend
 from deepagents.backends.store import StoreBackend
 from deepagents.middleware.skills import SkillsMiddleware
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
 from jinja2 import ChainableUndefined, TemplateSyntaxError
 from jinja2.sandbox import ImmutableSandboxedEnvironment, SecurityError
+from langchain.agents.middleware.pii import PIIMiddleware
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.mongodb.saver import MongoDBSaver
+from langgraph.config import get_stream_writer
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 from llm_wrapper.bedrock_family import resolve_bedrock_client
@@ -50,6 +54,7 @@ from dynamic_agents.models import (
     SubAgentRef,
     UserContext,
 )
+from dynamic_agents.services.app_context_prompt import AppContextPromptMiddleware
 from dynamic_agents.services.attachment_store import (
     AttachmentStore,
     build_attachment_store,
@@ -91,6 +96,15 @@ from dynamic_agents.services.model_capabilities import (
 )
 from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
+from dynamic_agents.services.skills_backend import ReadOnlySkillsBackend
+from dynamic_agents.services.structured_response import (
+    STRUCTURED_OUTPUT_EVENT,
+    StructuredResponseFormat,
+    build_structured_response_instruction,
+    create_submit_structured_response_tool,
+    extract_response_format,
+)
+from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryMiddleware
 from dynamic_agents.services.tracing import TracingManager
 
 if TYPE_CHECKING:
@@ -138,10 +152,10 @@ def _with_general_purpose_tool_result_recovery(
     """
     recovered_general_purpose = {
         **GENERAL_PURPOSE_SUBAGENT,
-        "tools": tools,
+        "tools": [tool for tool in tools if getattr(tool, "name", None) != "submit_structured_response"],
         "model": model,
-        "interrupt_on": interrupt_on,
-        "middleware": [ToolResultInvariantMiddleware()],
+        "interrupt_on": {name: policy for name, policy in interrupt_on.items() if name != "submit_structured_response"},
+        "middleware": [ToolCallRecoveryMiddleware(), ToolResultInvariantMiddleware()],
     }
     configured_subagents = [
         subagent
@@ -601,7 +615,7 @@ class AgentRuntime:
         self._mongo_service = mongo_service
         self._remote_agent_versions: dict[str, str | None] = {}
         self._user = user
-        self._client_context = client_context
+        self._client_context = client_context.model_copy(deep=True) if client_context else None
         # Spec 102 Phase 8 / T107: prefer the per-request bearer from
         # current_user_token (set by JwtAuthMiddleware) so the same token
         # the BFF authenticated us with is forwarded to MCP servers.
@@ -803,6 +817,14 @@ class AgentRuntime:
             return (ns[0], ns[1], ns[2])
         return (self.config.id, self._session_id, "filesystem")
 
+    def _build_skill_store_backend(self, files: dict[str, Any]) -> StoreBackend:
+        """Seed a private immutable skill snapshot without touching shared files."""
+        digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
+        namespace = (self.config.id, self._session_id, f"skills-{digest}")
+        for path, data in files.items():
+            self._store.put(namespace, path.removeprefix("/skills"), data)
+        return ReadOnlySkillsBackend(store=self._store, namespace=lambda runtime: namespace)
+
     def _resolve_fs_ttl(self) -> int:
         """Resolve filesystem TTL from agent config or server default.
 
@@ -960,7 +982,8 @@ class AgentRuntime:
 
         # 2. Add built-in tools
         client_ctx = self._client_context.model_dump() if self._client_context else None
-        builtin_tools = self._build_builtin_tools(self._user, client_context=client_ctx)
+        response_format = self._get_allowed_structured_response_format(client_ctx)
+        builtin_tools = self._build_builtin_tools(self._user, client_context=client_ctx, response_format=response_format)
         builtin_tool_names = {t.name for t in builtin_tools}
         if builtin_tools:
             tools = tools + builtin_tools
@@ -985,6 +1008,9 @@ class AgentRuntime:
         except SystemPromptRenderError as exc:
             logger.error(f"Agent '{self.config.name}' failed to initialize: {exc}")
             raise RuntimeError(f"Agent '{self.config.name}' failed to initialize: {exc}") from exc
+
+        if response_format:
+            system_prompt += build_structured_response_instruction(response_format)
 
         # 5. Instantiate LLM
         logger.info(
@@ -1014,15 +1040,8 @@ class AgentRuntime:
         self._skills_files: dict[str, Any] = {}
         skills_middleware = None
 
-        # Always clear stale skill files from the shared filesystem when using
-        # StoreBackend.  This is critical for workflows where multiple agents
-        # share the same fs_namespace — without this, Agent B would inherit
-        # Agent A's skill files if Agent B has no skills of its own (because
-        # the seeding block below is skipped when self.config.skills is empty).
-        if self._resolve_backend_type() == BACKEND_STORE and self._store:
-            if hasattr(self._store, "delete_by_key_prefix"):
-                fs_ns = self._resolve_fs_namespace()
-                self._store.delete_by_key_prefix(fs_ns, "/skills/")
+        # Skills use an immutable, caller/session-scoped snapshot. Shared normal
+        # files remain in the configured namespace without cross-agent deletion.
 
         if self.config.skills:
             try:
@@ -1041,26 +1060,11 @@ class AgentRuntime:
                         # enabled so skills are read from the same store as read_file;
                         # otherwise fall back to StateBackend (reads from state["files"]).
                         if self._resolve_backend_type() == BACKEND_STORE:
-                            fs_ns = self._resolve_fs_namespace()
-
-                            skills_backend = StoreBackend(
-                                store=self._store,
-                                namespace=lambda runtime: fs_ns,
-                            )
-
-                            # Seed skill files into GridFS so SkillsMiddleware and
-                            # read_file can find them via StoreBackend.
-                            # Note: stale skills were already cleared above.
-                            if self._store:
-                                namespace = fs_ns
-                                for path, file_data in self._skills_files.items():
-                                    self._store.put(namespace, path, file_data)
-                                logger.info(
-                                    f"Agent '{self.config.name}': seeded "
-                                    f"{len(self._skills_files)} skill files in GridFS"
-                                )
+                            skills_backend = self._build_skill_store_backend(self._skills_files)
                         else:
                             skills_backend = StateBackend()
+                        if self._resolve_backend_type() == BACKEND_STORE:
+                            skills_backend = CompositeBackend(default=skills_backend, routes={"/skills/": skills_backend})
                         skills_middleware = SkillsMiddleware(backend=skills_backend, sources=skills_sources)
                         logger.info(
                             f"Agent '{self.config.name}': loaded {len(skills_data)} skills "
@@ -1168,6 +1172,12 @@ class AgentRuntime:
             model_streaming=self.config.model.streaming,
             enable_prompt_cache=self._prompt_cache_enabled(),
         )
+        # PII middleware checks graph state before this request-only projection is added.
+        # Omit the projection when PII handling is configured so it cannot bypass that policy.
+        if self.config.app_context_prompt is not None and not any(
+            isinstance(middleware, PIIMiddleware) for middleware in middleware_stack
+        ):
+            middleware_stack.insert(0, AppContextPromptMiddleware())
         # Prepend skills middleware so it runs before other middleware
         if skills_middleware:
             middleware_stack = [skills_middleware] + middleware_stack
@@ -1218,6 +1228,8 @@ class AgentRuntime:
                 store=self._store,
                 namespace=lambda runtime: fs_ns,
             )
+            skills_store = self._build_skill_store_backend(self._skills_files)
+            backend = CompositeBackend(default=backend, routes={"/skills/": skills_store})
         else:
             backend = None  # defaults to StateBackend
 
@@ -1305,11 +1317,49 @@ class AgentRuntime:
         )
         return tools
 
+    @staticmethod
+    def _emit_structured_response(payload: dict[str, Any], schema_id: str | None) -> None:
+        """Publish on the current graph invocation, without shared runtime state."""
+        get_stream_writer()({"type": STRUCTURED_OUTPUT_EVENT, "payload": payload, "schema_id": schema_id})
+
+    def _get_allowed_structured_response_format(
+        self, client_context: dict | None
+    ) -> StructuredResponseFormat | None:
+        """Return requested structured output only when the agent allows it."""
+        if self.config.features is None:
+            return None
+
+        for entry in self.config.features.middleware:
+            if entry.type != "structured_response" or not entry.enabled:
+                continue
+            response_format = extract_response_format(client_context)
+            if response_format is None:
+                return None
+
+            allowed_schema_ids = str(entry.params.get("allowed_schema_ids", "")).strip()
+            if not allowed_schema_ids:
+                return response_format
+
+            allowed = {item.strip() for item in allowed_schema_ids.split(",") if item.strip()}
+            if response_format.schema_id in allowed:
+                return response_format
+
+            logger.warning(
+                "Agent '%s': structured response schema '%s' not allowed",
+                self.config.name,
+                response_format.schema_id,
+            )
+            return None
+
+        return None
+
     def _build_builtin_tools(
         self,
         user: UserContext | None = None,
         agent_config: DynamicAgentConfig | None = None,
         client_context: dict | None = None,
+        *,
+        response_format: StructuredResponseFormat | None = None,
     ) -> list:
         """Build list of built-in tools based on agent config.
 
@@ -1318,6 +1368,7 @@ class AgentRuntime:
             agent_config: Agent config to use. Defaults to self.config (parent agent).
                           Pass subagent config to build tools for a subagent.
             client_context: Optional client context dict for the user_info tool.
+            response_format: Prevalidated structured response request for the root agent.
 
         Returns:
             List of LangChain tools to add to the agent.
@@ -1325,6 +1376,20 @@ class AgentRuntime:
         config = agent_config or self.config
         tools = []
         config_summary: dict[str, Any] = {}
+
+        if response_format is not None and agent_config is None:
+            tools.append(
+                create_submit_structured_response_tool(
+                    response_format=response_format,
+                    on_submit=lambda payload: self._emit_structured_response(
+                        payload,
+                        response_format.schema_id,
+                    ),
+                )
+            )
+            config_summary["submit_structured_response"] = {
+                "schema_id": response_format.schema_id
+            }
 
         if not config.builtin_tools:
             return tools
@@ -1766,6 +1831,7 @@ class AgentRuntime:
         encoder: "StreamEncoder | None" = None,
         files: list[InputFile] | None = None,
         turn_id: str | None = None,
+        cancellation_event: asyncio.Event | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream agent response for a user message.
 
@@ -1786,6 +1852,7 @@ class AgentRuntime:
             observation,
             files,
             turn_id,
+            cancellation_event,
         )
         async with aclosing(self._observe_turn(implementation, observation)) as observed:
             async for frame in observed:
@@ -1959,13 +2026,16 @@ class AgentRuntime:
         observation: _TurnObservation,
         files: list[InputFile] | None = None,
         turn_id: str | None = None,
+        cancellation_event: asyncio.Event | None = None,
     ) -> AsyncGenerator[str, None]:
         if not self._initialized:
             await self.initialize()
 
         assert encoder is not None, "encoder must be provided"
 
-        self._cancelled = False
+        self._cancelled = cancellation_event.is_set() if cancellation_event else False
+        if self._cancelled:
+            return
 
         config = self._build_stream_config(session_id, user_id, trace_id)
         run_id = f"run-{uuid4().hex[:12]}"
@@ -2123,7 +2193,7 @@ class AgentRuntime:
             agent=self.config.name,
         )
 
-    async def has_pending_interrupt(self, session_id: str) -> dict[str, Any] | None:
+    async def has_pending_interrupt(self, session_id: str, *, strict: bool = False) -> dict[str, Any] | None:
         """Check if there's a pending interrupt for the given session.
 
         Returns a discriminated dict with ``type`` field:
@@ -2162,7 +2232,7 @@ class AgentRuntime:
                 for action in action_requests:
                     tool_name = action.get("name", "")
                     if tool_name == "request_user_input":
-                        tool_call_id = action.get("id", str(id(interrupt)))
+                        tool_call_id = action.get("id") or str(interrupt.id)
                         args = action.get("args", {})
                         logger.info(
                             f"[has_pending_interrupt] Found request_user_input interrupt: tool_call_id={tool_call_id}"
@@ -2177,9 +2247,9 @@ class AgentRuntime:
 
                 # Collect ALL tool approval action_requests
                 tool_approvals: list[dict[str, Any]] = []
-                for action in action_requests:
+                for action_index, action in enumerate(action_requests):
                     tool_name = action.get("name", "")
-                    tool_call_id = action.get("id", str(id(interrupt)))
+                    tool_call_id = action.get("id") or (str(interrupt.id) if action_index == 0 else f"{interrupt.id}:{action_index}")
                     args = action.get("args", {})
                     allowed_decisions = self._get_allowed_decisions_for_tool(tool_name)
                     tool_approvals.append(
@@ -2211,7 +2281,9 @@ class AgentRuntime:
             logger.debug("[has_pending_interrupt] No actionable interrupt found")
             return None
         except Exception as e:
-            logger.warning(f"Error checking for pending interrupt: {e}")
+            logger.warning("Checkpoint inspection failed for agent=%s session=%s (%s); inspect checkpoint storage connectivity and schema", self.config.id, session_id, type(e).__name__, exc_info=True)
+            if strict:
+                raise
             return None
 
     def _get_allowed_decisions_for_tool(self, tool_name: str) -> list[str]:
@@ -2345,6 +2417,7 @@ class AgentRuntime:
         resume_data: str,
         trace_id: str | None = None,
         encoder: "StreamEncoder | None" = None,
+        cancellation_event: asyncio.Event | None = None,
     ) -> AsyncGenerator[str, None]:
         """Resume agent execution after a HITL interrupt.
 
@@ -2363,6 +2436,7 @@ class AgentRuntime:
             trace_id,
             encoder,
             observation,
+            cancellation_event,
         )
         async with aclosing(self._observe_turn(implementation, observation)) as observed:
             async for frame in observed:
@@ -2376,13 +2450,16 @@ class AgentRuntime:
         trace_id: str | None,
         encoder: "StreamEncoder | None",
         observation: _TurnObservation,
+        cancellation_event: asyncio.Event | None = None,
     ) -> AsyncGenerator[str, None]:
         if not self._initialized:
             await self.initialize()
 
         assert encoder is not None, "encoder must be provided"
 
-        self._cancelled = False
+        self._cancelled = cancellation_event.is_set() if cancellation_event else False
+        if self._cancelled:
+            return
 
         config = self._build_stream_config(session_id, user_id, trace_id)
         run_id = f"run-{uuid4().hex[:12]}"

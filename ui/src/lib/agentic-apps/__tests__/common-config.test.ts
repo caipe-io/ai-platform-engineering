@@ -97,6 +97,76 @@ describe("shared application installation", () => {
     ).toThrow(/not compiled/);
   });
 
+  it("reads the service-account client id an installed app calls the host with", () => {
+    const [app] = configured(example, {
+      selected_ui_profile: "hosted",
+      bindings: {
+        runtimeOrigin: "https://runtime.example.test",
+        serviceAccountClientId: "example-client",
+      },
+    });
+    expect(app.installation.bindings?.serviceAccountClientId).toBe("example-client");
+  });
+
+  it("rejects a service-account client id that is not a string", () => {
+    expect(() =>
+      configured(example, {
+        selected_ui_profile: "hosted",
+        bindings: { runtimeOrigin: "https://runtime.example.test", serviceAccountClientId: 7 },
+      }),
+    ).toThrow(/serviceAccountClientId/);
+  });
+
+  it("rejects a client id shared by two application installations", () => {
+    const manifests = ["primary", "secondary"].map((id) =>
+      validateAgenticAppManifest({
+        ...example,
+        id,
+        ui: { profiles: [], routes: [] },
+        api: { mounts: [] },
+        runtime: undefined,
+        surfaces: { showInHub: false },
+      }),
+    );
+    installedAgenticAppManifests.push(...manifests);
+    const dir = mkdtempSync(join(tmpdir(), "app-installation-"));
+    const file = join(dir, "apps.json");
+    try {
+      writeFileSync(file, JSON.stringify({ agentic_apps: {
+        installations: manifests.map(({ id }) => ({
+          app_id: id,
+          bindings: { serviceAccountClientId: "example-client" },
+        })),
+      } }));
+      expect(() => loadConfiguredAgenticApps(file)).toThrow(
+        /serviceAccountClientId "example-client" is bound to both "primary" and "secondary"/,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["hosted", "service-only"])("supports required notifications for a %s app", (profile) => {
+    const manifest = {
+      ...example,
+      ...(profile === "service-only" ? {
+        ui: { profiles: [], routes: [] },
+        api: { mounts: [] },
+        surfaces: { showInHub: false },
+      } : {}),
+      consumes: { platformApis: [{ id: "host.notifications", version: "1.0", required: true }] },
+    };
+    const [app] = configured(manifest, {
+      ...(profile === "hosted" ? { selected_ui_profile: "hosted" } : {}),
+      bindings: { runtimeOrigin: "https://runtime.example.test", serviceAccountClientId: "example-client" },
+    });
+    expect(app.manifest.consumes.platformApis).toEqual(manifest.consumes.platformApis);
+    expect(() => configured({
+      ...manifest,
+      consumes: { platformApis: [{ id: "host.notifications", version: "2.0", required: true }] },
+    }, {})).toThrow(/unsupported required platform capability/);
+  });
+
   it("preserves owned canonical and relative aliases without escaping into host pages", () => {
     const publicApp = {
       appId: "example-app",

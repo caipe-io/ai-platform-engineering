@@ -50,8 +50,20 @@ describe("GET /api/user/accessible-agents", () => {
       sort: jest.fn().mockReturnValue({
         toArray: jest.fn().mockResolvedValue([
           { _id: "agent-x", name: "Agent X", description: "X does X", enabled: true },
-          { _id: "agent-y", name: "Agent Y", description: "Y does Y", enabled: true },
-          { _id: "agent-z", name: "Agent Z", description: "Z does Z", enabled: true },
+          {
+            _id: "agent-y",
+            name: "Agent Y",
+            description: "Y does Y",
+            enabled: true,
+            execution_harness_id: "agentcore",
+          },
+          {
+            _id: "agent-z",
+            name: "Agent Z",
+            description: "Z does Z",
+            enabled: true,
+            execution_harness_id: "claude_agent_sdk",
+          },
         ]),
       }),
     });
@@ -66,9 +78,27 @@ describe("GET /api/user/accessible-agents", () => {
     const json = await bodyOf(response);
     expect(json).toMatchObject({ success: true });
     expect((json.data as { agents: unknown }).agents).toEqual([
-      { id: "agent-x", name: "Agent X", description: "X does X" },
-      { id: "agent-y", name: "Agent Y", description: "Y does Y" },
-      { id: "agent-z", name: "Agent Z", description: "Z does Z" },
+      {
+        id: "agent-x",
+        name: "Agent X",
+        description: "X does X",
+        harness_id: "dynamic_agents",
+        harness_name: "LangChain Deep Agents",
+      },
+      {
+        id: "agent-y",
+        name: "Agent Y",
+        description: "Y does Y",
+        harness_id: "agentcore",
+        harness_name: "Amazon Bedrock AgentCore",
+      },
+      {
+        id: "agent-z",
+        name: "Agent Z",
+        description: "Z does Z",
+        harness_id: "claude_agent_sdk",
+        harness_name: "Claude Agent SDK",
+      },
     ]);
   });
 

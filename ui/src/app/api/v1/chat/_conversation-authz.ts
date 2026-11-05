@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getCollection } from "@/lib/mongodb";
 import { requireConversationResourcePermission } from "@/lib/rbac/conversation-implicit-authz";
+import { getAgentId } from "@/types/a2a";
 import type { Conversation } from "@/types/mongodb";
 
 import type { AuthResult } from "./_helpers";
@@ -12,14 +13,46 @@ interface AutonomousRunContext {
   started_at?: Date | string;
 }
 
-export type ConversationWriteAuthorization =
+export type ConversationAuthorization =
   | { conversation: Conversation; denial: null }
   | { conversation: Conversation | null; denial: NextResponse };
 
 export async function authorizeConversationWriteAccess(
   authResult: AuthResult,
   conversationId: string,
-): Promise<ConversationWriteAuthorization> {
+  agentId?: unknown,
+): Promise<ConversationAuthorization> {
+  return authorizeConversationAccess(authResult, conversationId, "write", agentId);
+}
+
+export async function authorizeConversationReadAccess(
+  authResult: AuthResult,
+  conversationId: string,
+  agentId?: unknown,
+): Promise<ConversationAuthorization> {
+  return authorizeConversationAccess(authResult, conversationId, "read", agentId);
+}
+
+function checkConversationAgent(conversation: Conversation, agentId?: unknown): ConversationAuthorization {
+  const savedAgentId = getAgentId(conversation);
+  if (agentId !== undefined && savedAgentId && agentId !== savedAgentId) {
+    return {
+      conversation,
+      denial: NextResponse.json(
+        { success: false, error: "Agent does not match this conversation", code: "CONVERSATION_AGENT_MISMATCH" },
+        { status: 409 },
+      ),
+    };
+  }
+  return { conversation, denial: null };
+}
+
+async function authorizeConversationAccess(
+  authResult: AuthResult,
+  conversationId: string,
+  permission: "read" | "write",
+  agentId?: unknown,
+): Promise<ConversationAuthorization> {
   const conversations = await getCollection<Conversation>("conversations");
   const conversation = await conversations.findOne({ _id: conversationId });
   if (!conversation) {
@@ -29,7 +62,7 @@ export async function authorizeConversationWriteAccess(
         {
           success: false,
           error: "Conversation not found",
-          code: "conversation#write",
+          code: `conversation#${permission}`,
         },
         { status: 404 },
       ),
@@ -52,8 +85,8 @@ export async function authorizeConversationWriteAccess(
   //     which this does not touch — thread history stays ReBAC-protected.
   //   - Metadata mutation is separately gated (owner-only), so routing keys
   //     cannot be injected via this path.
-  if (conversation.client_type === "slack") {
-    return { conversation, denial: null };
+  if (permission === "write" && conversation.client_type === "slack") {
+    return checkConversationAgent(conversation, agentId);
   }
 
   try {
@@ -65,9 +98,9 @@ export async function authorizeConversationWriteAccess(
       { sub: authResult.subject, user: { email: authResult.email }, isServiceAccount: authResult.isServiceAccount },
       authResult.email ?? "",
       conversation,
-      "write",
+      permission,
     );
-    if (conversation.source === "autonomous") {
+    if (permission === "write" && conversation.source === "autonomous") {
       return {
         conversation,
         denial: NextResponse.json({
@@ -77,7 +110,7 @@ export async function authorizeConversationWriteAccess(
         }, { status: 409 }),
       };
     }
-    return { conversation, denial: null };
+    return checkConversationAgent(conversation, agentId);
   } catch (error) {
     return {
       conversation,

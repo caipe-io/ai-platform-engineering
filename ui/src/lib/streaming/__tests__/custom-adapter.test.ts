@@ -54,6 +54,7 @@ beforeAll(() => {
 beforeEach(() => {
   jest.clearAllMocks();
   jest.spyOn(Date, "now").mockReturnValue(123456);
+  jest.spyOn(crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000001");
 });
 
 afterEach(() => {
@@ -80,7 +81,7 @@ describe("CustomStreamAdapter", () => {
       ]),
     );
     const cb = callbacks();
-    const adapter = new CustomStreamAdapter("token-1");
+    const adapter = new CustomStreamAdapter();
 
     await adapter.streamMessage(
       {
@@ -99,10 +100,10 @@ describe("CustomStreamAdapter", () => {
         headers: {
           "Content-Type": "application/json",
           Accept: "text/event-stream",
-          Authorization: "Bearer token-1",
         },
         body: JSON.stringify({
           message: "hello",
+          client_request_id: "00000000-0000-4000-8000-000000000001",
           conversation_id: "conversation-1",
           agent_id: "agent-1",
           protocol: "custom",
@@ -171,6 +172,7 @@ describe("CustomStreamAdapter", () => {
           conversation_id: "conversation-1",
           agent_id: "agent-1",
           resume_data: '{"repo":"demo"}',
+          client_request_id: "00000000-0000-4000-8000-000000000001",
           protocol: "custom",
         }),
       }),
@@ -229,7 +231,7 @@ describe("CustomStreamAdapter", () => {
   });
 
   it("cancels streams with bearer auth and handles failed cancellation", async () => {
-    const adapter = new CustomStreamAdapter("token-1");
+    const adapter = new CustomStreamAdapter();
 
     mockFetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ cancelled: true }), { status: 200 }),
@@ -241,7 +243,6 @@ describe("CustomStreamAdapter", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: "Bearer token-1",
         },
         body: JSON.stringify({
           conversation_id: "conversation-1",
@@ -269,4 +270,13 @@ describe("CustomStreamAdapter", () => {
       ),
     ).resolves.toBeUndefined();
   });
+
+  it("does not report remote cancellation as successful completion", async () => {
+    mockFetch.mockResolvedValue(sseResponse(['event: done\ndata: {"outcome":"cancelled"}\n\n']));
+    const cb = callbacks();
+    await new CustomStreamAdapter().recoverRun("example", cb);
+    expect(cb.onDone).not.toHaveBeenCalled();
+    expect(cb.onError).toHaveBeenCalledWith(expect.stringContaining("stopped"));
+  });
+
 });

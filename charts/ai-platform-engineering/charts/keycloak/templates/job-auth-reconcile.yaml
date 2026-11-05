@@ -75,6 +75,16 @@ spec:
                   key: password
             - name: KC_REALM
               value: {{ .Values.realm.name | quote }}
+            - name: MCP_DCR_ENABLED
+              value: {{ .Values.mcpDcr.enabled | quote }}
+            {{- if .Values.mcpDcr.enabled }}
+            - name: MCP_DCR_RESOURCE_URL
+              value: {{ .Values.mcpDcr.resourceUrl | quote }}
+            - name: MCP_DCR_RESOURCE_CLIENT_ID
+              value: {{ .Values.mcpDcr.resourceClientId | quote }}
+            - name: MCP_DCR_PLATFORM_CLIENT_IDS
+              value: {{ join "," .Values.mcpDcr.platformClientIds | quote }}
+            {{- end }}
             - name: KEYCLOAK_ACCESS_TOKEN_LIFESPAN
               value: {{ .Values.realm.accessTokenLifespan | quote }}
             - name: KEYCLOAK_SSO_SESSION_IDLE_TIMEOUT

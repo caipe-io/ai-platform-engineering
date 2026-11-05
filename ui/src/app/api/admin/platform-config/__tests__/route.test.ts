@@ -50,9 +50,16 @@ function request(path: string, init?: RequestInit): NextRequest {
   return new NextRequest(new URL(path, "http://localhost:3000"), init);
 }
 
+const originalAllowedRepositories = process.env.RELEASE_NOTES_ALLOWED_REPOSITORIES;
+afterEach(() => {
+  if (originalAllowedRepositories === undefined) delete process.env.RELEASE_NOTES_ALLOWED_REPOSITORIES;
+  else process.env.RELEASE_NOTES_ALLOWED_REPOSITORIES = originalAllowedRepositories;
+});
+
 describe("admin platform-config route", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.RELEASE_NOTES_ALLOWED_REPOSITORIES = "https://github.com/example/repository";
     delete process.env.DEFAULT_AGENT_ID;
     mockWithAuth.mockImplementation((_request, handler) =>
       handler(_request, { email: "admin@example.com" }, { sub: "admin-sub", role: "admin" }),
@@ -118,8 +125,11 @@ describe("admin platform-config route", () => {
     const response = await GET(request("/api/admin/platform-config"));
     const body = await response.json();
 
-    expect(body.data.release_notes).toEqual({
+    expect(body.data.release_notes).toMatchObject({
       enabled: true,
+      repository_url: null,
+      previous_commit: null,
+      latest_commit: null,
     });
   });
 
@@ -316,13 +326,112 @@ describe("admin platform-config route", () => {
       { _id: "platform_settings" },
       expect.objectContaining({
         $set: expect.objectContaining({
-          release_notes: { enabled: false },
+          'release_notes.enabled': false,
         }),
       }),
       { upsert: true },
     );
     expect(collection.updateOne.mock.calls[0][1].$set).not.toHaveProperty("default_agent_id");
-    expect(body.data.release_notes).toEqual({ enabled: false });
+    expect(body.data.release_notes).toMatchObject({ enabled: false });
+    expect(collection.updateOne.mock.calls[0][1].$set).not.toHaveProperty('release_notes');
+    expect(collection.updateOne.mock.calls[0][1].$set).not.toHaveProperty('release_notes.repository_url');
+  });
+
+  it("persists a GitHub commit range for release notes", async () => {
+    const collection = {
+      findOne: jest.fn().mockResolvedValue(null),
+      updateOne: jest.fn().mockResolvedValue({ acknowledged: true }),
+    };
+    mockGetCollection.mockResolvedValue(collection);
+    const { PATCH } = await import("../route");
+
+    const response = await PATCH(
+      request("/api/admin/platform-config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          release_notes: {
+            enabled: true,
+            repository_url: "https://github.com/example/repository",
+            previous_commit: "1111111",
+            latest_commit: "2222222",
+          },
+        }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.release_notes).toMatchObject({
+      enabled: true,
+      repository_url: "https://github.com/example/repository",
+      previous_commit: "1111111",
+      latest_commit: "2222222",
+    });
+  });
+
+  it("rejects an incomplete release notes commit range", async () => {
+    const { PATCH } = await import("../route");
+
+    await expect(
+      PATCH(
+        request("/api/admin/platform-config", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            release_notes: { previous_commit: "1111111" },
+          }),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "INCOMPLETE_RELEASE_NOTES_COMPARE" });
+  });
+
+  it("rejects unapproved repositories before DB access even if the caller supplies an allowlist", async () => {
+    const { PATCH } = await import("../route");
+    await expect(PATCH(request("/api/admin/platform-config", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        release_notes_allowed_repositories: ["https://github.com/example/unapproved"],
+        release_notes: { repository_url: "https://github.com/example/unapproved", previous_commit: "1111111", latest_commit: "2222222" },
+      }),
+    }))).rejects.toMatchObject({ code: "RELEASE_NOTES_REPOSITORY_NOT_ALLOWED" });
+    expect(mockGetCollection).not.toHaveBeenCalled();
+  });
+
+  it("returns deployment-approved choices for the repository selector", async () => {
+    const { GET } = await import("../route");
+    const response = await GET(request("/api/admin/platform-config?repositories=test"));
+    expect((await response.json()).data.release_notes_allowed_repositories).toEqual([
+      "https://github.com/example/repository",
+    ]);
+  });
+
+  it("canonicalizes an approved fork URL and permits clearing a stale range", async () => {
+    const collection = { updateOne: jest.fn().mockResolvedValue({ acknowledged: true }) };
+    mockGetCollection.mockResolvedValue(collection);
+    const { PATCH } = await import("../route");
+    const save = (repository: string | null, ref: string | null) => PATCH(request("/api/admin/platform-config", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ release_notes: { repository_url: repository, previous_commit: ref, latest_commit: ref } }),
+    }));
+    await save("https://github.com/EXAMPLE/repository.git", "primary");
+    expect(collection.updateOne.mock.calls[0][1].$set['release_notes.repository_url']).toBe("https://github.com/example/repository");
+    process.env.RELEASE_NOTES_ALLOWED_REPOSITORIES = "";
+    await save(null, null);
+    expect(collection.updateOne.mock.calls[1][1].$set['release_notes.repository_url']).toBeNull();
+  });
+
+  it("updates only the range without resetting a disabled announcement toggle", async () => {
+    const collection = { findOne: jest.fn(), updateOne: jest.fn().mockResolvedValue({ acknowledged: true }) };
+    mockGetCollection.mockResolvedValue(collection);
+    const { PATCH } = await import("../route");
+    await PATCH(request("/api/admin/platform-config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ release_notes: {
+      repository_url: "https://github.com/example/repository", previous_commit: "release/primary", latest_commit: "v2.0.0",
+    } }) }));
+    const update = collection.updateOne.mock.calls[0][1].$set;
+    expect(update).toMatchObject({ 'release_notes.previous_commit': 'release/primary', 'release_notes.latest_commit': 'v2.0.0' });
+    expect(update).not.toHaveProperty('release_notes.enabled');
+    expect(update).not.toHaveProperty('release_notes');
   });
 
   it("checks coarse admin before system_config manage on updates", async () => {
@@ -611,13 +720,12 @@ describe("admin platform-config route", () => {
   //
   // Controls which built-in provider tiles the Add Server catalog dialog
   // shows. Default (no config document, or a document that has never
-  // touched this field) must be "disable all" — operators opt in per
-  // provider rather than every built-in appearing unconfigured. An
-  // explicit `enabled_providers: null` is a distinct, deliberate "Enable
-  // all" admin action and must keep meaning "show every provider".
+  // touched this field) is "enable all" so the catalog is ready to use.
+  // An explicit `enabled_providers: null` continues to mean "show every
+  // provider"; an array remains an explicit allowlist.
   // ---------------------------------------------------------------------
 
-  it("defaults remote_mcp_catalog.enabled_providers to [] (disable all) when no config document exists", async () => {
+  it("defaults remote_mcp_catalog.enabled_providers to null (enable all) when no config document exists", async () => {
     mockGetCollection.mockResolvedValue({
       findOne: jest.fn().mockResolvedValue(null),
       updateOne: jest.fn(),
@@ -626,10 +734,10 @@ describe("admin platform-config route", () => {
 
     const body = await (await GET(request("/api/admin/platform-config"))).json();
 
-    expect(body.data.remote_mcp_catalog).toEqual({ enabled_providers: [], custom_entries: [] });
+    expect(body.data.remote_mcp_catalog).toEqual({ enabled_providers: null, custom_entries: [] });
   });
 
-  it("defaults remote_mcp_catalog.enabled_providers to [] when the document exists but never set this field", async () => {
+  it("defaults remote_mcp_catalog.enabled_providers to null when the document exists but never set this field", async () => {
     mockGetCollection.mockResolvedValue({
       findOne: jest.fn().mockResolvedValue({ _id: "platform_settings", default_agent_id: "agent-default" }),
       updateOne: jest.fn(),
@@ -638,7 +746,7 @@ describe("admin platform-config route", () => {
 
     const body = await (await GET(request("/api/admin/platform-config"))).json();
 
-    expect(body.data.remote_mcp_catalog).toEqual({ enabled_providers: [], custom_entries: [] });
+    expect(body.data.remote_mcp_catalog).toEqual({ enabled_providers: null, custom_entries: [] });
   });
 
   it("persists an explicit 'Enable all' (enabled_providers: null) and echoes it back on PATCH", async () => {
@@ -871,5 +979,31 @@ describe("admin platform-config route", () => {
 
     expect(clearBody.data.platform_llm).toBeNull();
     expect(updateOne.mock.calls[1][1].$set.platform_llm).toBeNull();
+  });
+});
+
+describe("curated override persistence and dismissal revisions", () => {
+  it("round-trips normalized overrides and hashes only active source fields", async () => {
+    process.env.RELEASE_NOTES_ALLOWED_REPOSITORIES = "https://github.com/example/repository";
+    mockWithAuth.mockImplementation((req, handler) => handler(req, { email: "admin@example.test" }, { sub: "admin", role: "admin" }));
+    mockRequireAdmin.mockResolvedValue(undefined);
+    mockRequireResourcePermission.mockResolvedValue(undefined);
+    let override: unknown;
+    const updateOne = jest.fn(async (_filter, update) => { override = update.$set['release_notes.override']; return { acknowledged: true }; });
+    mockGetCollection.mockResolvedValue({ updateOne, findOne: jest.fn(async () => ({ release_notes: { override } })) });
+    const { GET, PATCH } = await import("../route");
+    const save = async (value: unknown) => (await (await PATCH(request("/api/admin/platform-config", { method: "PATCH", body: JSON.stringify({ release_notes: { override: value } }) }))).json()).data.release_notes.override_revision;
+    const manual = { source: "manual", release_version: "V1.3.2", markdown: "    example command", markdown_repository: "", markdown_path: "", markdown_ref: "", changelog_url: "" };
+    const initial = await save(manual);
+    expect(updateOne.mock.calls.at(-1)![1].$set['release_notes.override']).toMatchObject({ release_version: "1.3.2", markdown: "    example command" });
+    const stored = (await (await GET(request("/api/admin/platform-config"))).json()).data.release_notes;
+    expect(stored.override).toMatchObject({ source: "manual", release_version: "1.3.2", markdown: "    example command" });
+    expect(stored.override_revision).toBe(initial);
+    expect(await save({ ...manual, markdown_path: "docs/inactive.md" })).toBe(initial);
+    expect(await save({ ...manual, markdown: "Changed notes" })).not.toBe(initial);
+    const repository = { ...manual, source: "repository", markdown_repository: "https://github.com/example/repository", markdown_ref: "primary", markdown_path: "docs/notes.md" };
+    const repositoryRevision = await save(repository);
+    expect(await save({ ...repository, markdown: "Inactive notes" })).toBe(repositoryRevision);
+    expect(await save({ ...repository, markdown_ref: "secondary" })).not.toBe(repositoryRevision);
   });
 });

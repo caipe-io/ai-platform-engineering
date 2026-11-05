@@ -2,13 +2,14 @@
 
 import { ReportProblemDialog } from "@/components/ticket/ReportProblemDialog";
 import { Button } from "@/components/ui/button";
-import { Dialog,DialogContent,DialogTitle,DialogTrigger } from "@/components/ui/dialog";
+import { Dialog,DialogContent,DialogTitle } from "@/components/ui/dialog";
+import type { FeedbackContext, TicketRequest } from "@/lib/ticket-client";
 import { getConfig } from "@/lib/config";
 import { submitFeedback } from "@/lib/langfuse";
 import { cn } from "@/lib/utils";
 import { AnimatePresence,motion } from "framer-motion";
-import { AlertTriangle,Loader2,ThumbsDown,ThumbsUp } from "lucide-react";
-import React,{ useState } from "react";
+import { Loader2,ThumbsDown,ThumbsUp } from "lucide-react";
+import React,{ useRef,useState } from "react";
 
 export type FeedbackType = "like" | "dislike" | null;
 
@@ -49,15 +50,25 @@ export function FeedbackButton({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
-  const [isSubmittingCombo, setIsSubmittingCombo] = useState(false);
+  const [reportingNegative, setReportingNegative] = useState(false);
+  const reportedRatingRef = useRef<Promise<void> | null>(null);
+  const [submitError, setSubmitError] = useState("");
+  const submittingRef = useRef(false);
 
   const reportProblemEnabled = getConfig("reportProblemEnabled");
-  const ticketEnabled = getConfig("ticketEnabled");
-  const ticketProvider = getConfig("ticketProvider");
 
   const handleThumbClick = (type: FeedbackType, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (disabled) return;
+    if (disabled || submittingRef.current) return;
+    setSubmitError("");
+    setAdditionalFeedback("");
+
+    if (type === "dislike" && reportProblemEnabled && feedback?.type !== "dislike") {
+      setReportingNegative(true);
+      setDialogOpen(false);
+      setReportDialogOpen(true);
+      return;
+    }
 
     // If same type clicked, deselect (clear feedback)
     if (feedback?.type === type) {
@@ -96,65 +107,63 @@ export function FeedbackButton({
     }
   };
 
-  const handleSubmitFeedback = async () => {
-    if (!feedback?.reason || !feedback?.type) return;
-
-    setIsSubmitting(true);
+  const recordFeedback = async (context: FeedbackContext): Promise<void> => {
+    const result = await submitFeedback({
+      traceId: traceId || messageId,
+      messageId,
+      ...context,
+      conversationId,
+    });
+    if (!result.success) throw new Error(result.message || "Could not submit feedback. Please try again.");
 
     const finalFeedback: Feedback = {
-      ...feedback,
-      additionalFeedback: feedback.reason === "Other" ? additionalFeedback : undefined,
+      type: context.feedbackType,
+      reason: context.reason,
+      additionalFeedback: context.additionalFeedback,
       submitted: true,
       showFeedbackOptions: false,
     };
-
-    // Send feedback to server-side API (which forwards to Langfuse if configured)
-    await submitFeedback({
-      traceId: traceId || messageId,
-      messageId,
-      feedbackType: feedback.type,
-      reason: feedback.reason,
-      additionalFeedback: feedback.reason === "Other" ? additionalFeedback : undefined,
-      conversationId,
-    });
-
     onFeedbackChange?.(finalFeedback);
     await onFeedbackSubmit?.(finalFeedback);
-
-    setIsSubmitting(false);
-    setAdditionalFeedback("");
-    setDialogOpen(false);
   };
 
-  const handleSubmitAndReport = async () => {
-    if (!feedback?.reason || !feedback?.type) return;
+  const handleSubmitFeedback = async () => {
+    if (!feedback?.reason || !feedback?.type || submittingRef.current) return;
+    submittingRef.current = true;
+    setIsSubmitting(true);
+    setSubmitError("");
+    try {
+      if (!feedback.submitted) await recordFeedback({
+        feedbackType: feedback.type,
+        reason: feedback.reason,
+        additionalFeedback: feedback.reason === "Other" ? additionalFeedback : undefined,
+      });
+      setAdditionalFeedback("");
+      setDialogOpen(false);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Could not submit feedback. Please try again.");
+    } finally {
+      submittingRef.current = false;
+      setIsSubmitting(false);
+    }
+  };
 
-    setIsSubmittingCombo(true);
-
-    const finalFeedback: Feedback = {
-      ...feedback,
-      additionalFeedback: feedback.reason === "Other" ? additionalFeedback : undefined,
-      submitted: true,
-      showFeedbackOptions: false,
+  const handleReportFeedback = async (request: TicketRequest): Promise<FeedbackContext> => {
+    const context: FeedbackContext = {
+      feedbackType: "dislike",
+      reason: request.issueType || "Bug",
+      additionalFeedback: request.description,
     };
-
-    await submitFeedback({
-      traceId: traceId || messageId,
-      messageId,
-      feedbackType: feedback.type,
-      reason: feedback.reason,
-      additionalFeedback: feedback.reason === "Other" ? additionalFeedback : undefined,
-      conversationId,
-    });
-
-    onFeedbackChange?.(finalFeedback);
-    await onFeedbackSubmit?.(finalFeedback);
-
-    setIsSubmittingCombo(false);
-    setAdditionalFeedback("");
-    setDialogOpen(false);
-
-    setReportDialogOpen(true);
+    // Keep the first saved rating across closes/retries, including an in-flight
+    // save. The ticket always receives the details from the current attempt.
+    if (!reportedRatingRef.current) {
+      reportedRatingRef.current = recordFeedback(context).catch(error => {
+        reportedRatingRef.current = null;
+        throw error;
+      });
+    }
+    await reportedRatingRef.current;
+    return context;
   };
 
   const isLiked = feedback?.type === "like";
@@ -163,8 +172,8 @@ export function FeedbackButton({
   const showOtherInput = feedback?.reason === "Other";
 
   return (
-    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-      <DialogTrigger asChild>
+    <>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <div className="flex items-center gap-1">
           {/* Thumbs Up Button */}
           <Button
@@ -200,7 +209,7 @@ export function FeedbackButton({
             <ThumbsDown className={cn("h-3.5 w-3.5", isDisliked && "fill-current")} />
           </Button>
         </div>
-      </DialogTrigger>
+
 
       <DialogContent className="p-5 max-w-xs overflow-hidden">
         <DialogTitle className="sr-only">
@@ -252,62 +261,32 @@ export function FeedbackButton({
           Feedback is shared with your platform engineering team to help improve the experience.
         </p>
 
+        {submitError && <p role="alert" className="text-xs text-destructive">{submitError}</p>}
+
         {/* Submit Buttons */}
         <div className="space-y-2">
           <Button
             size="sm"
             onClick={handleSubmitFeedback}
-            disabled={!feedback?.reason || isSubmitting || isSubmittingCombo}
+            disabled={!feedback?.reason || isSubmitting}
             className="w-full gap-2"
           >
             {isSubmitting && <Loader2 className="h-3 w-3 animate-spin" />}
             Submit Feedback
           </Button>
 
-          {ticketEnabled && isDisliked && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleSubmitAndReport}
-              disabled={!feedback?.reason || isSubmitting || isSubmittingCombo}
-              className="w-full gap-2"
-            >
-              {isSubmittingCombo && <Loader2 className="h-3 w-3 animate-spin" />}
-              Submit &amp; Report {ticketProvider === "jira" ? "Jira" : "GitHub"} Issue
-            </Button>
-          )}
         </div>
-
-        {reportProblemEnabled && isDisliked && (
-          <button
-            type="button"
-            onClick={() => {
-              setDialogOpen(false);
-              setReportDialogOpen(true);
-            }}
-            className="w-full mt-1 flex items-center justify-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <AlertTriangle className="h-3 w-3" />
-            Report a Problem
-          </button>
-        )}
       </DialogContent>
+      </Dialog>
 
       {reportProblemEnabled && (
         <ReportProblemDialog
+          conversationId={conversationId}
           open={reportDialogOpen}
           onOpenChange={setReportDialogOpen}
-          feedbackContext={
-            feedback?.type && feedback?.reason
-              ? {
-                  reason: feedback.reason,
-                  additionalFeedback: feedback.reason === "Other" ? additionalFeedback : undefined,
-                  feedbackType: feedback.type,
-                }
-              : undefined
-          }
+          onBeforeSubmit={reportingNegative ? handleReportFeedback : undefined}
         />
       )}
-    </Dialog>
+    </>
   );
 }

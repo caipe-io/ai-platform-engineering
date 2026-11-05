@@ -91,7 +91,7 @@ export async function createInAppNotification(input: {
   sourceLabel?: string;
   correlationKey?: string;
   lifecycleStatus?: InAppNotificationLifecycleStatus;
-}): Promise<void> {
+}): Promise<boolean> {
   const recipientUserSubjects = normalizedStrings(input.recipientUserSubjects ?? []);
   const recipientTeamSlugs = normalizedStrings(input.recipientTeamSlugs ?? []);
   const recipientOrganizationAdmins = input.recipientOrganizationAdmins === true;
@@ -101,7 +101,7 @@ export async function createInAppNotification(input: {
     recipientTeamSlugs.length === 0 &&
     !recipientOrganizationAdmins &&
     !recipientPlatformUsers
-  ) return;
+  ) return false;
 
   const collection = await getCollection<InAppNotificationDocument>(
     NOTIFICATION_COLLECTION,
@@ -148,6 +148,7 @@ export async function createInAppNotification(input: {
       sourceLabel: input.sourceLabel,
     }).catch(() => {});
   }
+  return result.upsertedCount > 0;
 }
 
 export async function resolveInAppNotification(input: {

@@ -73,6 +73,11 @@ interface StreamingState {
   client: { abort: () => void };
   // For Dynamic Agents: adapter reference for backend cancellation
   streamAdapter?: StreamAdapter;
+  /** View-only subscriptions must never send execution controls. */
+  readOnly?: boolean;
+  /** Keep the subscription and execution fence until the server confirms stop. */
+  stopping?: boolean;
+  stopError?: string;
 }
 
 interface MessageHistoryState {
@@ -266,9 +271,11 @@ function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
       autonomousMessageKind: msg.metadata?.kind,
       autonomousExecutionContextId: msg.metadata?.execution_context_id,
       turnStatus: msg.metadata?.turn_status as TurnStatus | undefined,
-      isInterrupted: hasHitlForm
-        ? false
-        : Boolean(msg.metadata?.is_interrupted) || (msg.role === 'assistant' && !isFinal),
+      // A non-final message may still be streaming in another tab. Only a
+      // persisted terminal status can confirm that its response was interrupted.
+      isInterrupted: !hasHitlForm && (
+        Boolean(msg.metadata?.is_interrupted) || msg.metadata?.turn_status === 'interrupted'
+      ),
       feedback: msg.feedback ? {
         type: msg.feedback.rating === 'positive'
           ? 'like' as const
@@ -501,6 +508,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       },
 
       setConversationStreaming: (conversationId: string, state: StreamingState | null) => {
+        const wasReadOnly = get().streamingConversations.get(conversationId)?.readOnly;
         set((prev: ChatState) => {
           const newMap = new Map(prev.streamingConversations);
           if (state) {
@@ -538,6 +546,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
           // Reset periodic save counter for this conversation
           eventCountSinceLastSave.delete(conversationId);
+          if (wasReadOnly) return;
           // Mark save as pending — prevents loadMessagesFromServer from
           // overwriting the correct in-memory state with stale MongoDB data
           // before this save completes.
@@ -565,8 +574,30 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         const state = get();
         const streamingState = state.streamingConversations.get(conversationId);
         if (streamingState) {
+          if (streamingState.readOnly) return;
           // Get conversation to check if it's a Dynamic Agent
           const conv = state.conversations.find((c: Conversation) => c.id === conversationId);
+          const persistentAdapter = streamingState.streamAdapter;
+          if (persistentAdapter?.canRecoverOnRefresh) {
+            if (streamingState.stopping) return;
+            const agentId = conv ? getAgentId(conv) : undefined;
+            if (!agentId) return;
+            const pending = { ...streamingState, stopping: true, stopError: undefined };
+            set({ streamingConversations: new Map(get().streamingConversations).set(conversationId, pending) });
+            void persistentAdapter.cancelStream(conversationId, agentId).catch((error) => {
+              console.error('[ChatStore] Backend cancel failed:', error);
+              return false;
+            }).then((accepted) => {
+              // A completed response or a newer turn must not be changed by a
+              // late cancellation reply. Keep following the current producer.
+              if (!accepted && get().streamingConversations.get(conversationId) === pending) {
+                set({ streamingConversations: new Map(get().streamingConversations).set(conversationId, {
+                  ...pending, stopping: false, stopError: 'Could not confirm Stop. The response is still active; try again.',
+                }) });
+              }
+            });
+            return;
+          }
           
           // For Dynamic Agents, send backend cancel request before aborting client
           if (streamingState.streamAdapter) {
@@ -1101,6 +1132,8 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         const state = get();
         const conv = state.conversations.find((c: Conversation) => c.id === conversationId);
         if (!conv || conv.messages.length === 0) return;
+        if (conv.accessLevel === 'shared_readonly' || conv.accessLevel === 'admin_audit' ||
+            state.streamingConversations.get(conversationId)?.readOnly) return;
 
         // Stream events during streaming are stored at the conversation level
         // (conv.streamEvents) via addStreamEvent(). To persist them to MongoDB,
@@ -1541,12 +1574,10 @@ export const useChatStore = shouldUseLocalStorage()
               updatedAt: new Date(conv.updatedAt),
               streamEvents: [],
               messages: conv.messages.map((msg, idx, allMsgs) => {
-                // CRASH RECOVERY: Mark non-final assistant messages as interrupted.
-                // After a page crash/reload, streamingConversations is empty (not persisted),
-                // so any assistant message without isFinal=true was mid-stream when the tab died.
-                //
-                // HEAL: If a subsequent user message exists, the response actually completed
-                // — the original session just didn't persist isFinal=true before crashing.
+                // A different tab may own a non-final turn. Rehydration cannot
+                // tell whether that tab is still running, so only an explicit
+                // terminal status should show the interruption banner.
+                // A later user turn proves a stale non-final answer completed.
                 let healed = false;
                 if (msg.role === 'assistant' && !msg.isFinal) {
                   const hasFollowUp = allMsgs.slice(idx + 1).some(m => m.role === 'user');
@@ -1557,9 +1588,7 @@ export const useChatStore = shouldUseLocalStorage()
                   timestamp: new Date(msg.timestamp),
                   streamEvents: undefined,
                   isFinal: healed ? true : msg.isFinal,
-                  isInterrupted: healed
-                    ? false
-                    : (msg.role === 'assistant' && !msg.isFinal ? true : msg.isInterrupted),
+                  isInterrupted: !healed && msg.turnStatus === 'interrupted',
                 };
               }),
             }));
@@ -1753,19 +1782,21 @@ if (typeof window !== 'undefined') {
   });
 
   // Fallback: beforeunload for older browsers and explicit tab close.
-  // Also prompts the user to confirm if any conversations are actively streaming,
-  // so they don't accidentally lose an in-flight response.
+  // Engine runs survive a subscriber disconnect. Warn only for streams whose
+  // server has not confirmed refresh recovery, including legacy execution.
   window.addEventListener('beforeunload', (e: BeforeUnloadEvent) => {
     saveInflightConversations();
 
     const state = useChatStore.getState();
-    if (state.streamingConversations.size > 0) {
+    const interruptedCount = [...state.streamingConversations.values()].filter(
+      stream => !stream.streamAdapter?.canRecoverOnRefresh,
+    ).length;
+    if (interruptedCount > 0) {
       e.preventDefault();
-      const count = state.streamingConversations.size;
       const msg =
-        count === 1
+        interruptedCount === 1
           ? 'You have 1 live chat receiving a response. Refreshing will interrupt it.'
-          : `You have ${count} live chats receiving responses. Refreshing will interrupt them.`;
+          : `You have ${interruptedCount} live chats receiving responses. Refreshing will interrupt them.`;
       e.returnValue = msg;
     }
   });

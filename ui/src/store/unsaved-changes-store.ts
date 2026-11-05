@@ -41,6 +41,12 @@ export const useUnsavedChangesStore = create<UnsavedChangesState>()((set, get) =
       pendingNavigationHref: null,
       pendingDeferredAction: null,
     });
+    // Canonical embedded app entries require a document request, including
+    // navigation resumed after an editor's existing discard dialog.
+    if (href?.startsWith("/apps/")) {
+      window.location.assign(href);
+      return null;
+    }
     return href;
   },
 

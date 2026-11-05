@@ -1,6 +1,6 @@
 // assisted-by Codex Codex-sonnet-4-6
 
-import { encode } from "next-auth/jwt";
+import { encodeTestSession } from "./_session-cookie";
 import { type Page, type Route } from "@playwright/test";
 
 export const MOCK_RBAC_EMAIL = "non-manager@caipe.local";
@@ -106,7 +106,7 @@ export async function installMockedRbacApp(page: Page, options: MockedRbacOption
   const secret = process.env.NEXTAUTH_SECRET;
   if (secret) {
     const nowSeconds = Math.floor(Date.now() / 1000);
-    const token = await encode({
+    const token = await encodeTestSession({
       secret,
       maxAge: 60 * 60,
       token: {

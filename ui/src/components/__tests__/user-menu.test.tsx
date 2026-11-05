@@ -292,7 +292,7 @@ describe("UserMenu", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /user menu for John/i }));
     fireEvent.click(screen.getByText("Sign Out"));
-    expect(mockSignOut).toHaveBeenCalledWith({ callbackUrl: "/login" });
+    expect(mockSignOut).toHaveBeenCalledWith({ callbackUrl: "/login", redirect: false });
 
     // Dropdown should also close on outside click
     fireEvent.click(screen.getByRole("button", { name: /user menu for John/i }));

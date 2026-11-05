@@ -21,11 +21,17 @@ import { CustomStreamAdapter } from "./clients/browser-custom-consumer";
 // ═══════════════════════════════════════════════════════════════
 
 export interface StreamAdapter {
+  /** True after the server confirms a run that can survive a page refresh. */
+  readonly canRecoverOnRefresh?: boolean;
+
   /** Stream events for a new user message */
   streamMessage(params: StreamParams, callbacks: StreamCallbacks): Promise<void>;
 
   /** Resume streaming after HITL form submission */
   resumeStream(params: StreamParams, callbacks: StreamCallbacks): Promise<void>;
+
+  /** Recover an existing Engine run without submitting another command. */
+  recoverRun(runId: string, callbacks: StreamCallbacks, conversationId?: string): Promise<void>;
 
   /** Cancel the stream on the backend */
   cancelStream(conversationId: string, agentId: string): Promise<boolean>;
@@ -41,13 +47,12 @@ export interface StreamAdapter {
 export interface StreamAdapterConfig {
   /** Wire protocol: "custom" for legacy SSE, "agui" for AG-UI */
   protocol: "custom" | "agui";
-  /** JWT access token for Bearer authentication */
-  accessToken?: string;
 }
 
 /**
  * Create a protocol-specific stream adapter.
  *
+ * First-party browser requests authenticate with the same-origin session cookie.
  * The adapter owns the HTTP lifecycle (fetch, abort, error handling).
  * Callers just provide StreamCallbacks.
  *
@@ -59,9 +64,9 @@ export interface StreamAdapterConfig {
 export function createStreamAdapter(config: StreamAdapterConfig): StreamAdapter {
   switch (config.protocol) {
     case "agui":
-      return new AGUIStreamAdapter(config.accessToken);
+      return new AGUIStreamAdapter();
     case "custom":
     default:
-      return new CustomStreamAdapter(config.accessToken);
+      return new CustomStreamAdapter();
   }
 }

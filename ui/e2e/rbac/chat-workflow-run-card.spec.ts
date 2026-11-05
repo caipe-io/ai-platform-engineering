@@ -166,7 +166,7 @@ test.describe("mocked RBAC e2e — chat workflow run card", () => {
         return;
       }
 
-      await route.continue();
+      await route.fallback();
     });
 
     await page.route("**/api/dynamic-agents/**", async (route) => {
@@ -198,7 +198,7 @@ test.describe("mocked RBAC e2e — chat workflow run card", () => {
         });
         return;
       }
-      await route.continue();
+      await route.fallback();
     });
 
     await page.route("**/api/workflow-runs**", async (route) => {

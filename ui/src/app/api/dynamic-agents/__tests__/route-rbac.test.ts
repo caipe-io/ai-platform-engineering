@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const mockGetAuthFromBearerOrSession = jest.fn();
 const mockRequireRbacPermission = jest.fn();
@@ -26,6 +26,11 @@ const mockGetPlatformDefaultAgentId = jest.fn();
 const mockFilterAgentsByOwnershipScopeForSession = jest.fn();
 const mockResolveUnlinkedServiceAccountSub = jest.fn();
 const mockResolveUnlinkedServiceAccountGrantState = jest.fn();
+const mockGetHarnessEngineConfig = jest.fn();
+const mockProxyHarnessEngine = jest.fn();
+
+const mockWithAgentMutationLock = jest.fn(async (_id: string, operation: () => Promise<unknown>) => operation());
+jest.mock("@/lib/agent-mutation-lock", () => ({ withAgentMutationLock: (...args: unknown[]) => mockWithAgentMutationLock(...args as [string, () => Promise<unknown>]) }));
 
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
@@ -152,6 +157,12 @@ jest.mock("@/lib/da-proxy", () => ({
   proxyRequest: (...args: unknown[]) => mockProxyRequest(...args),
 }));
 
+jest.mock("@/lib/harness-engine-proxy", () => ({
+  getHarnessEngineConfig: (...args: unknown[]) =>
+    mockGetHarnessEngineConfig(...args),
+  proxyHarnessEngine: (...args: unknown[]) => mockProxyHarnessEngine(...args),
+}));
+
 function request(path: string, init?: RequestInit): NextRequest {
   return new NextRequest(new URL(path, "http://localhost:3000"), init);
 }
@@ -205,6 +216,13 @@ describe("dynamic agents RBAC routes", () => {
       dynamicAgentsUrl: "http://dynamic-agents:8000",
     });
     mockProxyRequest.mockResolvedValue(Response.json({ tools: [] }));
+    mockGetHarnessEngineConfig.mockReturnValue({
+      url: "http://harness-engine:8010",
+      internalToken: "test-internal-token",
+    });
+    mockProxyHarnessEngine.mockResolvedValue(
+      Response.json({ success: true, data: { deleted: true } }),
+    );
   });
 
   it("filters agent listings through can_discover by default", async () => {
@@ -673,6 +691,50 @@ describe("dynamic agents RBAC routes", () => {
         owner_subject: "alice-sub",
       }),
     );
+  });
+
+  it("checks uniqueness and inserts while holding the agent mutation fence", async () => {
+    let locked = false;
+    mockWithAgentMutationLock.mockImplementationOnce(async (_id, operation) => { locked = true; try { return await operation(); } finally { locked = false; } });
+    const insertOne = jest.fn(async () => { expect(locked).toBe(true); });
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "dynamic_agents") return { findOne: async () => { expect(locked).toBe(true); return null; }, insertOne };
+      if (name === "teams") return { findOne: async () => ({ _id: "example", slug: "primary", members: [{ user_id: user.email, role: "admin" }] }) };
+      throw new Error(`unexpected collection ${name}`);
+    });
+    const { POST } = await import("../route");
+    const response = await POST(request("/api/dynamic-agents", { method: "POST", body: JSON.stringify({ name: "Example", system_prompt: "Help", model: { id: "example", provider: "example" }, owner_team_slug: "primary" }) }));
+    expect(response.status).toBe(201);
+    expect(mockWithAgentMutationLock).toHaveBeenCalledWith("agent-example", expect.any(Function));
+    expect(insertOne).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the harness read inside the delete fence for provider cleanup", async () => {
+    const previous = { _id: "example", owner_subject: session.sub, execution_harness_id: "dynamic_agents" };
+    const current = { ...previous, execution_harness_id: "example_sdk" };
+    mockGetCollection.mockResolvedValue({ findOne: jest.fn().mockResolvedValueOnce(previous).mockResolvedValue(current), deleteOne: jest.fn() });
+    const { DELETE } = await import("../route");
+    const response = await DELETE(request("/api/dynamic-agents?id=example", { method: "DELETE" }));
+    expect(response.status).toBe(200);
+    expect(mockProxyHarnessEngine).toHaveBeenCalledWith(expect.anything(), expect.anything(), "/api/v1/agents/example", { method: "DELETE" });
+  });
+
+  it("does not insert an agent when execution publication fails", async () => {
+    const insertOne = jest.fn();
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "dynamic_agents") return { findOne: async () => null, insertOne };
+      if (name === "teams") return { findOne: async () => ({ _id: "example-team", slug: "primary", members: [{ user_id: user.email, role: "admin" }] }) };
+      throw new Error(`unexpected collection ${name}`);
+    });
+    process.env.HARNESS_ENGINE_DEEP_AGENTS_ENABLED = "true";
+    mockGetHarnessEngineConfig.mockReturnValue(NextResponse.json({ error: "unavailable" }, { status: 503 }));
+    try {
+      const { POST } = await import("../route");
+      const response = await POST(request("/api/dynamic-agents", { method: "POST", body: JSON.stringify({ name: "Example", system_prompt: "Help", model: { id: "example", provider: "example" }, owner_team_slug: "primary" }) }));
+      expect(response.status).toBe(503);
+      expect(insertOne).not.toHaveBeenCalled();
+      expect(mockReconcileAgentRelationships).not.toHaveBeenCalled();
+    } finally { delete process.env.HARNESS_ENGINE_DEEP_AGENTS_ENABLED; }
   });
 
   it("validates remote timeouts against the normalized, deduplicated registry selection", async () => {
@@ -1856,6 +1918,42 @@ describe("dynamic agents RBAC routes", () => {
     expect(findOneAndUpdate).toHaveBeenCalled();
   });
 
+  it.each([true, false, null, undefined])("persists the model streaming choice %s", async (streaming) => {
+    const model = { id: "example-model", provider: "openai", streaming };
+    const existing = { _id: "example", name: "Example", visibility: "global", allowed_tools: {}, model };
+    const findOneAndUpdate = jest.fn().mockResolvedValue(existing);
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue(existing),
+      findOneAndUpdate,
+    });
+    const { PUT } = await import("../route");
+    const response = await PUT(request("/api/dynamic-agents?id=example", {
+      method: "PUT",
+      body: JSON.stringify({ model }),
+    }));
+
+    expect(response.status).toBe(200);
+    const saved = findOneAndUpdate.mock.calls[0][1].$set.model;
+    if (streaming === undefined) expect(saved).not.toHaveProperty("streaming");
+    else expect(saved.streaming).toBe(streaming);
+  });
+
+  it.each(["false", 0])("rejects a non-boolean model streaming choice %s", async (streaming) => {
+    const findOneAndUpdate = jest.fn();
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({ _id: "example", allowed_tools: {}, visibility: "global" }),
+      findOneAndUpdate,
+    });
+    const { PUT } = await import("../route");
+    const response = await PUT(request("/api/dynamic-agents?id=example", {
+      method: "PUT",
+      body: JSON.stringify({ model: { id: "example-model", provider: "openai", streaming } }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
   it("denies owner-team members without agent write permission", async () => {
     const authzError = Object.assign(new Error("missing agent write"), {
       statusCode: 403,
@@ -1955,6 +2053,65 @@ describe("dynamic agents RBAC routes", () => {
     });
     expect(mockDeleteAllAgentToolTuples).not.toHaveBeenCalled();
     expect(deleteOne).not.toHaveBeenCalled();
+  });
+
+  it("deletes a non-default harness provider resource before agent metadata", async () => {
+    const deleteOne = jest.fn();
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({
+        _id: "agent-1",
+        owner_subject: "alice-sub",
+        execution_harness_id: "agentcore",
+        is_system: false,
+        config_driven: false,
+      }),
+      deleteOne,
+    });
+    const { DELETE } = await import("../route");
+
+    const response = await DELETE(
+      request("/api/dynamic-agents?id=agent-1", { method: "DELETE" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockProxyHarnessEngine).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "http://harness-engine:8010" }),
+      expect.objectContaining({ subject: "alice-sub" }),
+      "/api/v1/agents/agent-1",
+      { method: "DELETE" },
+    );
+    const providerDeleteOrder = mockProxyHarnessEngine.mock.invocationCallOrder[0];
+    const documentDeleteOrder = deleteOne.mock.invocationCallOrder[0];
+    expect(providerDeleteOrder).toBeLessThan(documentDeleteOrder);
+  });
+
+  it.each([true, false])("accepts SDK availability-only API updates without republishing (%s)", async (enabled) => {
+    const agent = { _id: "example", name: "Example", execution_harness_id: "claude_agent_sdk",
+      execution_blueprint_version: 3, enabled: !enabled, visibility: "global", allowed_tools: {} };
+    const findOneAndUpdate = jest.fn().mockResolvedValue({ ...agent, enabled });
+    mockGetCollection.mockResolvedValue({ findOne: jest.fn().mockResolvedValue(agent), findOneAndUpdate });
+    const { PUT } = await import("../route");
+    const response = await PUT(request("/api/dynamic-agents?id=example", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }),
+    }));
+    expect(response.status).toBe(200);
+    expect(findOneAndUpdate).toHaveBeenCalledWith({ _id: "example" },
+      { $set: { enabled, updated_at: expect.any(String) } }, { returnDocument: "after" });
+    expect(mockProxyHarnessEngine).not.toHaveBeenCalled();
+    expect((await response.json()).data.execution_blueprint_version).toBe(3);
+  });
+
+  it("still requires a blueprint when an SDK availability update also changes its prompt", async () => {
+    const findOneAndUpdate = jest.fn();
+    mockGetCollection.mockResolvedValue({ findOne: jest.fn().mockResolvedValue({ _id: "example", name: "Example",
+      execution_harness_id: "claude_agent_sdk", visibility: "global", allowed_tools: {} }), findOneAndUpdate });
+    const { PUT } = await import("../route");
+    const response = await PUT(request("/api/dynamic-agents?id=example", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: false, system_prompt: "Changed instructions" }),
+    }));
+    expect(response.status).toBe(400);
+    expect(findOneAndUpdate).not.toHaveBeenCalled();
   });
 
   // Platform-default agent invariant: an admin can pick an agent in

@@ -2,6 +2,7 @@ env-config.js
 src/native-extensions/*.generated.css
 src/native-extensions/*.generated.ts
 src/native-extensions/*.generated.tsx
+/public/app-icons/
 
 # Test coverage reports
 coverage/

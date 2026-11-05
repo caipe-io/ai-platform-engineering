@@ -87,6 +87,7 @@ export async function consumeAgentStream(options: ConsumeOptions): Promise<Consu
   let interrupted = false;
   let interrupt: ConsumeResult["interrupt"] | undefined;
   let error: string | undefined;
+  let terminalReceived = false;
   let pendingEvents: StreamEvent[] = [];
 
   // Build callbacks that create StreamEvents and buffer them
@@ -202,7 +203,14 @@ export async function consumeAgentStream(options: ConsumeOptions): Promise<Consu
         await flush();
       }
 
-      if (terminal) break;
+      if (terminal) {
+        terminalReceived = true;
+        break;
+      }
+    }
+
+    if (!terminalReceived) {
+      throw new Error("Agent stream ended without a completion event. The step may be incomplete; review saved progress before retrying.");
     }
 
     // Final flush

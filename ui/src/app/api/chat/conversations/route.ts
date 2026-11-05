@@ -284,16 +284,24 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     }
   }
 
-  // Get total count
-  const total = await conversations.countDocuments(query);
-
-  // Get paginated results
-  const items = await conversations
-    .find(query)
-    .sort({ is_pinned: -1, updated_at: -1 })
-    .skip(skip)
-    .limit(pageSize)
-    .toArray();
+  // Optional content filter for assistant history, inside the existing visibility query.
+  const nonEmpty = url.searchParams.get('non_empty') === 'true';
+  const contentFilter: Document[] = [
+    { $match: query },
+    { $lookup: { from: 'messages', let: { id: '$_id' }, pipeline: [
+      { $match: { $expr: { $eq: ['$conversation_id', '$$id'] } } },
+      { $limit: 1 }, { $project: { _id: 1 } },
+    ], as: '_message_presence' } },
+    { $match: { '_message_presence.0': { $exists: true } } },
+    { $unset: '_message_presence' },
+  ];
+  const total = nonEmpty
+    ? (await conversations.aggregate<{ count: number }>([...contentFilter, { $count: 'count' }]).toArray())[0]?.count ?? 0
+    : await conversations.countDocuments(query);
+  const items = nonEmpty
+    ? await conversations.aggregate<Conversation>([...contentFilter, { $sort: { is_pinned: -1, updated_at: -1 } },
+      { $skip: skip }, { $limit: pageSize }]).toArray()
+    : await conversations.find(query).sort({ is_pinned: -1, updated_at: -1 }).skip(skip).limit(pageSize).toArray();
 
   const visibleItems = await filterConversationsByImplicitOrExplicitPermission(
     session,

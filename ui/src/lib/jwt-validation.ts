@@ -37,6 +37,8 @@ export interface JWTIdentity {
   isServiceAccount?: boolean;
   /** Verified `azp` client identity matching Keycloak's service-account username. */
   serviceAccountClientId?: string;
+  /** Authorized OAuth client from the signature-verified azp claim. */
+  authorizedParty?: string;
   /**
    * Tenant/organization identifier. Sourced from `org`, `tenant_id`, or
    * `organization` claims (in priority order). Surfaces from the bearer
@@ -278,7 +280,8 @@ function extractIdentity(payload: JWTPayload): JWTIdentity {
     ? payload.azp
     : undefined;
 
-  return { email, name, groups, sub, org, isServiceAccount, serviceAccountClientId };
+  return { email, name, groups, sub, org, isServiceAccount, serviceAccountClientId,
+    authorizedParty: typeof payload.azp === "string" ? payload.azp : undefined };
 }
 
 /**

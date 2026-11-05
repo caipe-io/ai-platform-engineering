@@ -12,7 +12,7 @@ dependencies = [
   "httpx==0.28.1",
   "python-dotenv==1.2.2",
   "pydantic==2.13.4",
-  "fastmcp==3.4.7",
+  "fastmcp==3.4.10",
 ]
 
 [tool.uv]

@@ -9,6 +9,7 @@ on:
       - '.github/actions/prebuild-status/**'
       - '.github/actions/publish-prebuild-manifest/**'
       - 'ai_platform_engineering/knowledge_bases/rag/**'
+      - 'ai_platform_engineering/llm_wrapper/**'
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -75,6 +76,7 @@ jobs:
             agent-ontology:
               - 'ai_platform_engineering/knowledge_bases/rag/agent_ontology/**'
               - 'ai_platform_engineering/knowledge_bases/rag/build/Dockerfile.agent-ontology'
+              - 'ai_platform_engineering/llm_wrapper/**'
             server:
               - 'ai_platform_engineering/knowledge_bases/rag/server/**'
               - 'ai_platform_engineering/knowledge_bases/rag/build/Dockerfile.server'
@@ -136,12 +138,12 @@ jobs:
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: ${{ github.repository_owner }}/caipe-rag-${{ matrix.component }}
-      BUILD_CTX: ai_platform_engineering/knowledge_bases/rag
+      BUILD_CTX: ${{ matrix.component == 'agent-ontology' && '.' || 'ai_platform_engineering/knowledge_bases/rag' }}
       DOCKERFILE: ai_platform_engineering/knowledge_bases/rag/build/Dockerfile.${{ matrix.component }}
 
     steps:
       - name: 🔒 harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25  # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
           egress-policy: audit
 
@@ -183,7 +185,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -291,7 +293,7 @@ jobs:
       IMAGE_NAME: ${{ github.repository_owner }}/caipe-rag-${{ matrix.component }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
 

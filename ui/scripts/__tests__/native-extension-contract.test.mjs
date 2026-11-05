@@ -77,7 +77,8 @@ test("rejects API mounts that overlap CAIPE routes and keeps reservations in syn
       if (item.isDirectory()) visit(path);
       else if (item.isFile() && item.name === "route.ts") {
         const firstSegment = relative(apiRoot, path).split(/[\\/]/)[0];
-        routeRoots.add(`/api/${firstSegment}`);
+        // The fallback delegates app-owned MCP routes, not a host namespace.
+        if (firstSegment !== "[...path]") routeRoots.add(`/api/${firstSegment}`);
       }
     }
   };

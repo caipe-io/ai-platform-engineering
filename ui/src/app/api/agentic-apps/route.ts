@@ -9,10 +9,12 @@ import {
   loadConfiguredAgenticApps,
 } from "@/lib/agentic-apps/config";
 import { deriveAgenticAppSubjectId } from "@/lib/agentic-apps/identity";
+import { agenticAppHostPaths } from "@/lib/agentic-apps/host-routes";
 import { buildPublicAgenticApp } from "@/lib/agentic-apps/public-app";
 import { ApiError, getAuthenticatedUser } from "@/lib/api-middleware";
 
 export async function GET(request: NextRequest): Promise<Response> {
+  const navigationOnly = request.nextUrl.searchParams.get("surface") === "navigation";
   if (!isAgenticAppsEnabled()) {
     return Response.json({ items: [] });
   }
@@ -40,16 +42,21 @@ export async function GET(request: NextRequest): Promise<Response> {
     auth.session as Record<string, unknown>,
     auth.user.role,
   );
-  const items = loadConfiguredAgenticApps()
+  const configuredApps = loadConfiguredAgenticApps();
+  const items = configuredApps
     .filter(
       (app) =>
         app.installation.installed
         && app.installation.enabled
         && app.installation.visible
         && app.manifest.ui.profiles.length > 0
-        && app.manifest.surfaces.showInHub,
+        && (navigationOnly ? Boolean(app.manifest.ui.navigation) : app.manifest.surfaces.showInHub),
     )
-    .map((app) => buildPublicAgenticApp(app, canLaunchAgenticApp(app, userContext)));
+    .map((app) => buildPublicAgenticApp(app, canLaunchAgenticApp(app, userContext)))
+    .filter(app => !navigationOnly || (app.canLaunch && Boolean(app.navigation)))
+    .sort((a, b) => (a.navigation?.order ?? Number.MAX_SAFE_INTEGER) - (b.navigation?.order ?? Number.MAX_SAFE_INTEGER));
 
-  return Response.json({ items }, { headers: { "cache-control": "no-store" } });
+  const hostPaths = navigationOnly ? configuredApps.filter(app => canLaunchAgenticApp(app, userContext))
+    .flatMap(agenticAppHostPaths) : undefined;
+  return Response.json({ items, ...(hostPaths ? { hostPaths } : {}) }, { headers: { "cache-control": "no-store" } });
 }

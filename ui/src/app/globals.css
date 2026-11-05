@@ -95,7 +95,7 @@
  * attribute also classified Light and Legacy Light as dark, so dark: utility
  * classes fought the light palette whenever either light theme was selected.
  */
-@variant dark (&:where(.dark, [data-theme="dark"], [data-theme="midnight"], [data-theme="nord"], [data-theme="tokyo"], [data-theme="cyberpunk"], [data-theme="tron"], [data-theme="matrix"]));
+@variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *, [data-theme="midnight"], [data-theme="midnight"] *, [data-theme="nord"], [data-theme="nord"] *, [data-theme="tokyo"], [data-theme="tokyo"] *, [data-theme="cyberpunk"], [data-theme="cyberpunk"] *, [data-theme="tron"], [data-theme="tron"] *, [data-theme="matrix"], [data-theme="matrix"] *));
 
 /*
  * next-themes cannot infer whether custom theme ids are light or dark. Keep
@@ -118,6 +118,30 @@
 
 :root:is([data-theme="light"], [data-theme="legacy-light"]) {
   color-scheme: light;
+}
+
+/*
+ * Brand logo colors follow the selected accent gradient. Dark palettes lift
+ * the colors toward white and add a soft glow; light palettes deepen them so
+ * the mark stays readable on a pale background.
+ */
+.brand-logo {
+  --brand-a: color-mix(in srgb, var(--gradient-from) 82%, white);
+  --brand-c: color-mix(in srgb, var(--gradient-to) 82%, white);
+  --brand-b: color-mix(in srgb, var(--brand-a) 50%, var(--brand-c));
+}
+
+.brand-logo-glow {
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--brand-a) 55%, transparent));
+}
+
+:root:is([data-theme="light"], [data-theme="legacy-light"]) .brand-logo {
+  --brand-a: color-mix(in srgb, var(--gradient-from) 80%, black);
+  --brand-c: color-mix(in srgb, var(--gradient-to) 80%, black);
+}
+
+:root:is([data-theme="light"], [data-theme="legacy-light"]) .brand-logo-glow {
+  filter: none;
 }
 
 /* Preserve Next.js client transitions while giving immediate route feedback. */

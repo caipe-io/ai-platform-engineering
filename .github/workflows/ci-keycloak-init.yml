@@ -99,7 +99,7 @@ jobs:
       DOCKERFILE: build/Dockerfile.keycloak-init
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25  # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
           egress-policy: audit
 
@@ -110,7 +110,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -172,7 +172,7 @@ jobs:
       IMAGE_NAME: ${{ github.repository_owner }}/keycloak-init
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25  # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
           egress-policy: audit
 
@@ -187,7 +187,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -216,7 +216,7 @@ jobs:
           docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
 
   reconcile-test:
-    # End-to-end functional test of init-idp.sh against a real Keycloak 26.3.
+    # End-to-end functional test of init-idp.sh against Keycloak 26.8.1.
     # Catches regressions in the caipe-platform / caipe-ui client_secret
     # reconciliation path that helm template + unit tests cannot see (JSON
     # round-trip of the secret, idempotency, real Admin API response codes,
@@ -230,7 +230,7 @@ jobs:
       contents: read
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25  # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
           egress-policy: audit
 
@@ -281,7 +281,7 @@ jobs:
 
   strict-secrets-test:
     # End-to-end functional test of the production-hardening flag
-    # `keycloak.strictClientSecrets`. Boots a throwaway Keycloak 26.3,
+    # `keycloak.strictClientSecrets`. Boots a throwaway Keycloak 26.8.1,
     # confirms the four dev placeholder client_secrets are initially
     # accepted, then exercises both the strict-mode failure path (no
     # rotation env vars set → init-idp.sh exits non-zero with a loud
@@ -298,7 +298,7 @@ jobs:
       contents: read
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25  # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
           egress-policy: audit
 
@@ -351,7 +351,7 @@ jobs:
     # the OIDC_IDP_HINT (`kc_idp_hint`) forwarding that auth-config.ts
     # injects into the NextAuth authorization params.
     #
-    # Boots a throwaway Keycloak 26.3 + the chart's realm import,
+    # Boots a throwaway Keycloak 26.8.1 + the chart's realm import,
     # runs init-idp.sh against it, then verifies that hitting
     # /realms/caipe/protocol/openid-connect/auth produces a 302/303 to
     # /broker/<alias>/login both with and without an explicit
@@ -366,7 +366,7 @@ jobs:
       contents: read
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25  # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
           egress-policy: audit
 

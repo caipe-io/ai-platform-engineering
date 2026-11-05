@@ -48,6 +48,69 @@ Dynamic Agents provide a flexible way to create purpose-built AI assistants with
 - Exactly one terminal outcome per turn: `success`, `error`, `interrupted`, or `cancelled`
 - Time to first user-visible response and end-to-end turn latency histograms
 
+### Optional structured responses
+
+- Enable the `structured_response` middleware on the agent. It is disabled by
+  default and exposes one option: `allowed_schema_ids`, a comma-separated
+  allowlist. An empty allowlist accepts any schema ID.
+- Chat `config_override` cannot add, remove, or change this middleware or its
+  schema allowlist. Other middleware overrides remain available.
+- A caller may send `client_context.response_format` with `type: json_schema`,
+  an optional `schema_id`, and an object-root `schema`. The root agent receives
+  a `submit_structured_response` tool and instructions to use it. Subagents do
+  not receive this tool.
+- Schemas use their declared supported JSON Schema dialect, or Draft 2020-12
+  when omitted. Nullable types, nested objects/arrays, constraints, and local
+  references within the schema are validated. Root references and external
+  references are rejected; reference resolution never fetches URLs. Invalid active requests return an invocation
+  error; disabled agents retain their existing behavior.
+- Rejected submissions return validation feedback without publishing output.
+  The agent may correct and resubmit. A model that cannot obtain required data
+  can explain the limitation; a valid structured submission is not guaranteed.
+- Each accepted submission is carried by its graph invocation and captured by
+  its request's encoder. Custom SSE emits `structured_output` with
+  `{payload, schema_id}`. AG-UI emits `CUSTOM` / `STRUCTURED_OUTPUT` with the same
+  value. Events are delivered before any later approval interrupt; resume uses
+  a fresh encoder and never reuses another request's result.
+- Send the original `client_context.response_format` again on resume, including
+  after runtime eviction. A changed response format on a later turn rebuilds
+  the cached graph; a conflicting request during an active stream must retry.
+- `/chat/invoke` includes `structured_output` and `structured_output_schema_id`
+  only after an accepted submission. Otherwise its legacy response fields are
+  unchanged. An accepted empty object is still returned.
+
+### Optional app-context prompt adapter
+
+- Structured `client_context` remains separate from the user's message.
+- Off by default. Operators may opt in an agent through its deployment-owned YAML definition:
+
+```yaml
+app_context_prompt:
+  app_ids: [example-app]
+  fields: [title, selection.city, selection.forecast.temperature]
+  max_bytes: 4096
+```
+
+- A chat `config_override` cannot enable or change this policy; the ordinary agent editor does not edit it.
+- Send `source: agentic_app_context`, `trust: untrusted_user_visible_data`, the matching `appId`,
+  and a timezone-qualified `expiresAt` in the next ten minutes. `selection` may be an object or JSON string.
+- Only configured scalar paths are projected: `title`, `summary`, `route`, or dotted `selection.*` paths.
+  Whole objects/arrays, credential-named paths, bearer/JWT-looking values and strings over 2,048 characters are omitted.
+- Invalid/expired context, input over 16 KiB, or formatted output over the configured limit is omitted.
+  Limits include the complete formatted reference block; oversize data is not silently truncated into invalid JSON.
+  Expiration is rechecked when preparing model requests, including after a long-running tool.
+- When PII middleware is enabled, the adapter omits the projection. PII middleware checks graph-state
+  messages before this request-only block is added, so it cannot redact or block the projected data.
+- The root agent receives a labelled, untrusted reference block in a copy of its current model request.
+  The UI question, system instructions, attachments, and checkpoint messages are not rewritten.
+  Subagents are not implicitly opted in. Context is task-local and reset on success, exception or cancellation.
+- Streaming, invoke and resume use only the current request, including when the runtime is cached. Resume requires
+  resending fresh context; no old snapshot is replayed. This adapter does not add snapshots to checkpoint state.
+- App IDs, resource references and trust labels from the browser are not authorization evidence. Existing API/tool
+  permissions remain authoritative. Delimiters and heuristics are not a prompt-injection defense or a secret scanner.
+- Selected data reaches the model and may appear in provider traces/logs. Include only necessary, approved data.
+  Existing raw-context tooling/templates and their telemetry are unchanged; this adapter is not a general DLP layer.
+
 ## Running Locally
 
 ### Prerequisites
@@ -140,6 +203,22 @@ python -m uvicorn dynamic_agents.main:app --reload --port 8001
 The API documentation is available at:
 - Swagger UI: http://localhost:8001/docs
 - ReDoc: http://localhost:8001/redoc
+
+## Tool call recovery
+
+Every agent and subagent checks model output before executing tools:
+
+- Output-limit stops (`length` / `max_tokens`), invalid tool-call JSON, and invalid
+  Pydantic tool arguments trigger recovery. Remote JSON-schema tools are checked
+  for missing required top-level arguments and malformed `required` metadata.
+- The entire defective parallel batch is rejected, including otherwise complete
+  calls. Rejected calls never run and raw tool-use blocks are removed from history.
+- The model gets one repair attempt, with feedback to use smaller file edits.
+  Consecutive failure counts belong to each invocation and reset after success.
+- Exhaustion emits an actionable stream error for start/resume, or HTTP 422 for
+  invoke. A later conversation turn can continue from the sanitized checkpoint.
+
+This guard does not change context compaction thresholds or model output budgets.
 
 ## Configuration Reference
 

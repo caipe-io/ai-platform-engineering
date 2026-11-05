@@ -155,11 +155,21 @@ def _verify_jwt(token: str) -> bool:
         logger.warning("Token verification error: %s", exc)
         return False
 
-    if "cid" in payload:
-        cid = payload["cid"]
-        if OAUTH2_CLIENT_IDS and cid not in OAUTH2_CLIENT_IDS:
+    cid = payload.get("cid")
+    if OAUTH2_CLIENT_IDS:
+        if not isinstance(cid, str) or not cid:
+            logger.warning(
+                "Token missing or invalid cid claim; rejecting because the client ID "
+                "allow-list is configured"
+            )
+            return False
+        if cid not in OAUTH2_CLIENT_IDS:
             logger.warning("Token cid %r not in allowed client IDs", cid)
             return False
+    elif cid is None:
+        logger.debug(
+            "Token missing cid claim; no client ID allow-list configured, accepting"
+        )
 
     return True
 

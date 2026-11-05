@@ -341,6 +341,10 @@ export function PopoverContent({
       onFocusCapture={onFocusCapture}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onAnimationEnd={(event) => {
+        // Transforms change visual bounds without triggering ResizeObserver.
+        if (event.target === event.currentTarget) computeCoords();
+      }}
       style={{
         position: "fixed",
         top: coords?.top ?? -9999,

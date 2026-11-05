@@ -204,7 +204,10 @@ async function createIndexes(db: Db) {
   // doesn't prevent other indexes from being created.
 
   await Promise.all([
-    // Auth token cache — shared across replicas; auto-expires after 24h
+    safeCreateIndex(db, 'harness_attachment_blobs', { expires_at: 1 }, { expireAfterSeconds: 0 }),
+    // Session expiry is enforced on reads; TTL only reclaims expired records.
+    safeCreateIndex(db, 'auth_sessions', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    // Retire old-format records through their existing TTL after the cutover.
     safeCreateIndex(db, 'auth_token_cache', { updatedAt: 1 }, { expireAfterSeconds: 24 * 60 * 60 }),
 
     // Users collection
@@ -218,6 +221,8 @@ async function createIndexes(db: Db) {
     safeCreateIndex(db, 'teams', { slug: 1 }),
 
     // Conversations collection
+    safeCreateIndex(db, 'conversation_viewers', { expires_at: 1 }, { expireAfterSeconds: 0 }),
+    safeCreateIndex(db, 'conversation_viewers', { conversation_id: 1, expires_at: 1 }),
     safeCreateIndex(db, 'conversations', { owner_id: 1 }),
     safeCreateIndex(db, 'conversations', { created_at: -1 }),
     safeCreateIndex(db, 'conversations', { updated_at: -1 }),

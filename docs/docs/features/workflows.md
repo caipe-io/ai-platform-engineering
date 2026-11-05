@@ -137,6 +137,18 @@ to use a protected tool.
 
 Interrupts raised by a subagent are propagated to the parent workflow run.
 
+## Investigating incomplete steps
+
+- A stream that ends without an explicit completion event fails the current
+  step and follows its configured failure policy.
+- Agents can inspect `/workflow-state/step-{N}--{agent-id}/` for the step prompt,
+  tool-call log, and agent output. Treat these diagnostic files as read-only.
+- Write files passed to later steps at absolute paths outside `/workflow-state/`.
+  Each step should read back and validate its required outputs before reporting
+  completion.
+- Before retrying a failed step, inspect saved files and completed external
+  actions to avoid creating duplicate resources or pull requests.
+
 ## Starting a workflow
 
 Supported trigger paths are:

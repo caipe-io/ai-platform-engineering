@@ -70,6 +70,22 @@ User Hub timestamps include an IANA timezone such as
 normalizes those local wall-clock values to UTC. If timezone metadata cannot be
 resolved, the timestamp is omitted rather than returned as an ambiguous value.
 
+## Recording-occurrence transcript recovery
+
+If a successful date-filtered public transcript listing is empty, the tool
+queries the caller's recordings in the same date window and retries the public
+transcript API with distinct occurrence IDs (not series IDs). This does not
+run for explicit `meeting_id` or title/start User Hub lookups, or after a failed
+public API request. The same caller-scoped token is used throughout.
+
+Recovery is best effort: one recording page (at most 100 rows), at most 10
+distinct occurrence lookups, 30 seconds for recovery, and at most `max_results`
+deduplicated transcripts. `recordingOccurrenceLookup` reports the checked count,
+limit hits, and timeout; `source=recording_occurrence_lookup` identifies recovered
+results. An empty result is not an exhaustive absence check. API authorization
+errors remain errors, not empty results. Downloads retain their existing
+per-request timeout and occur after recovery.
+
 ## Shared/cohost transcript fallback
 
 The public `/v1/meetingTranscripts` API can omit a transcript that the signed-in

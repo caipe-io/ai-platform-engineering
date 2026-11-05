@@ -5,25 +5,20 @@
  * Response: JSON { success, cancelled, agent_id, conversation_id }
  */
 
-import { proxyAgenticAppAssistantStream } from "@/lib/agentic-apps/assistant-stream";
+import { NextRequest, NextResponse } from "next/server";
+
+import { authenticateChatStreamRequest } from "../../_stream-auth";
 import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
-import { NextRequest,NextResponse } from "next/server";
-import {
-authorizeConversationWriteAccess,
-resolveConversationRuntimeId,
-} from "../../_conversation-authz";
-import {
-authenticateRequest,
-getDynamicAgentsConfig,
-proxyJSONRequest,
-} from "../../_helpers";
+
+import { authorizeConversationWriteAccess } from "../../_conversation-authz";
+import { dispatchChatStream } from "../../_stream-gateway";
 
 export async function POST(request: NextRequest): Promise<Response> {
   // Authenticate caller (session cookie or Bearer token)
-  const authResult = await authenticateRequest(request);
+  const authResult = await authenticateChatStreamRequest(request);
   if (authResult instanceof NextResponse) return authResult;
 
-  const appRequest = request.clone();
+  const forwardedRequest = request.clone();
   // Parse body
   let body: Record<string, unknown>;
   try {
@@ -55,31 +50,11 @@ export async function POST(request: NextRequest): Promise<Response> {
   const conversationAuthz = await authorizeConversationWriteAccess(
     authResult,
     String(body.conversation_id),
+    body.agent_id,
   );
   if (conversationAuthz.denial) return conversationAuthz.denial;
 
-  const appResponse = await proxyAgenticAppAssistantStream(
-    appRequest, authResult, conversationAuthz.conversation, body, "cancel",
-  );
-  if (appResponse) return appResponse;
-
-  const daConfig = getDynamicAgentsConfig();
-  if (daConfig instanceof NextResponse) return daConfig;
-
-  body = {
-    ...body,
-    conversation_id: await resolveConversationRuntimeId(
-      conversationAuthz.conversation,
-    ),
-  };
-
-  // Forward body as-is to DA backend (same path, same body format)
-  const backendUrl = `${daConfig.dynamicAgentsUrl}/api/v1/chat/stream/cancel`;
-
-  return proxyJSONRequest(
-    backendUrl,
-    JSON.stringify(body),
-    authResult,
-    "[stream/cancel]",
+  return dispatchChatStream(
+    forwardedRequest, authResult, conversationAuthz.conversation, body, "cancel",
   );
 }
