@@ -8,7 +8,7 @@ import logging
 from contextlib import aclosing, suppress
 from uuid import uuid4
 
-from harness_engine.adapters.base import ExecutionUnconfirmedError
+from harness_engine.adapters.base import ExecutionRejectedError, ExecutionUnconfirmedError
 from harness_engine.brokers import PromptCompiler
 from harness_engine.models import (
     TERMINAL_RUN_STATUSES,
@@ -123,7 +123,13 @@ class RunCoordinator:
 
     async def start_context(self, context: RunContext) -> RunRecord:
         """Admit a trusted worker request using the same producer fence and pump."""
-        fingerprint = hashlib.sha256(context.model_dump_json().encode()).hexdigest()
+        # Newly optional binding fields must not change the identity of an
+        # ordinary SDK run admitted by an older worker before a rolling upgrade.
+        absent = {
+            field for field in ("execution_target", "worker_execution_target", "sandbox")
+            if getattr(context.binding, field) is None
+        }
+        fingerprint = hashlib.sha256(context.model_dump_json(exclude={"binding": absent}).encode()).hexdigest()
         prior = await self._repository.get_run(context.turn.run_id)
         if prior is not None:
             if prior.owner_subject != context.binding.owner_subject or prior.request_fingerprint != fingerprint:
@@ -133,7 +139,7 @@ class RunCoordinator:
             "active_run": None, "last_run_id": None, "dispatch_started": False,
             "pending_interrupt": None, "resume_run_id": None,
         }))
-        for field in ("owner_subject", "agent_id", "conversation_id", "agent_version", "harness_id", "profile_id", "provider_session_id", "epoch"):
+        for field in ("owner_subject", "agent_id", "conversation_id", "agent_version", "harness_id", "profile_id", "provider_session_id", "epoch", "execution_target", "worker_execution_target", "sandbox"):
             if getattr(binding, field) != getattr(context.binding, field):
                 raise RunAdmissionError("Worker session does not match the admitted context")
         run = RunRecord(run_id=context.turn.run_id, owner_subject=binding.owner_subject,
@@ -267,6 +273,10 @@ class RunCoordinator:
             else:
                 await self._repository.set_session_interrupt(run.binding_id, run.run_id, None)
                 await self._repository.append_event(run.run_id, "run.completed", {}, RunStatus.COMPLETED)
+        except ExecutionRejectedError as exc:
+            await self._repository.append_event(
+                run.run_id, "run.failed", {"code": exc.code, "message": str(exc)}, RunStatus.FAILED,
+            )
         except ExecutionUnconfirmedError:
             release_reservation = False
             logger.error("Remote execution could not be confirmed", extra={"run_id": run.run_id})

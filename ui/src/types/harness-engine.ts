@@ -57,6 +57,17 @@ export interface HarnessProfile {
   display_name: string;
   description: string;
   available: boolean;
+  sandbox?: HarnessSandboxInfo | null;
+}
+
+/** Public connection details; endpoint and service credentials remain server-owned. */
+export interface HarnessSandboxInfo {
+  instance_id: string;
+  display_name: string;
+  portal_url: string;
+  policy_revision: string;
+  policy_summary: string;
+  status: "configured";
 }
 
 export interface HarnessDescriptor {

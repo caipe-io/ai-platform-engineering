@@ -298,6 +298,13 @@ their IDs exist. Child memory and runtime names can use the parent Harness
 name directly; verify returned ARNs when defining the resource prefixes.
 - `HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON`: alias-to-operator-owned Claude
   policy, for example `{"safe":{"model":"claude-example","cwd":"/workspace","permission_mode":"dontAsk"}}`.
+  For a preprovisioned sandbox relay that requires mutual TLS, set the sandbox
+  connection's `client_cert_file` and `client_key_file` to absolute paths of
+  a certificate and private key mounted only into the worker. Both are
+  required together and work only with `wss://`; the worker verifies the
+  relay's hostname and server certificate using its system trust store. Files
+  are reread for each connection to allow secret rotation. These credentials
+  complement the relay's existing service token and caller authorization.
 - `HARNESS_ENGINE_CLAUDE_TOOL_BROKER_URL`: BFF service URL for selected MCP
   tools; defaults to `AUTHZ_SERVICE_URL`. MCP execution additionally requires
   the BFF's existing AgentGateway and signed agent-context configuration.

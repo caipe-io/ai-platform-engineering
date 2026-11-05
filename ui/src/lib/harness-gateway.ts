@@ -116,6 +116,7 @@ export async function getHarnessGatewayStatus(body: Record<string, unknown>, aut
     cancellation_requested: saved.active_run?.cancellation_requested ?? false,
     turn_id: saved.active_run?.turn_id ?? saved.last_run?.turn_id ?? null,
     pending_interrupt: saved.pending_interrupt,
+    sandbox: saved.sandbox,
   } });
 }
 
@@ -138,6 +139,7 @@ export async function getHarnessConversationStatus(
     run_id: run?.run_id ?? null, run_status: run?.status, turn_id: run?.turn_id ?? null,
     cancellation_requested: saved.active_run?.cancellation_requested ?? false,
     last_sequence: run?.last_sequence ?? 0, is_run_owner: run?.owner_subject === auth.subject,
+    sandbox: saved.sandbox,
   } });
 }
 

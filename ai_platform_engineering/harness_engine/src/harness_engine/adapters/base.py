@@ -22,6 +22,14 @@ class ExecutionUnconfirmedError(RuntimeError):
     """A remote producer may still be running; retain its durable reservation."""
 
 
+class ExecutionRejectedError(RuntimeError):
+    """A confirmed pre-execution rejection with a safe, actionable client message."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class HarnessAdapter(Protocol):
     @property
     def descriptor(self) -> HarnessDescriptor:

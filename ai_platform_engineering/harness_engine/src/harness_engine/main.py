@@ -50,7 +50,7 @@ from harness_engine.repository import (
     RunAdmissionError,
     RunRepository,
 )
-from harness_engine.sessions import CAIPEAgentSessionManager
+from harness_engine.sessions import AgentSessionNotRunnableError, CAIPEAgentSessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -210,23 +210,23 @@ def create_app(
         return {"status": "ok", "service": "harness-engine"}
 
     @app.get("/api/v1/harnesses")
-    async def catalog(_: str = Depends(caller_subject)) -> dict[str, object]:
+    async def catalog(subject: str = Depends(caller_subject)) -> dict[str, object]:
         return {
             "success": True,
             "data": {
                 "contract_version": 2,
                 "catalog_revision": registry.catalog_revision,
-                "harnesses": registry.catalog(),
+                "harnesses": registry.catalog(subject),
             },
         }
 
     @app.post("/api/v1/agent-drafts/validate")
     async def validate_agent_draft(
         body: ValidateAgentDraftRequest,
-        _: str = Depends(caller_subject),
+        subject: str = Depends(caller_subject),
     ) -> dict[str, object]:
         try:
-            validation = registry.validate(body.blueprint, body.catalog_revision)
+            validation = registry.validate(body.blueprint, body.catalog_revision, owner_subject=subject)
         except HarnessNotFoundError as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown harness") from exc
         return {"success": True, "data": validation}
@@ -243,14 +243,14 @@ def create_app(
     async def put_agent(
         agent_id: str,
         body: SaveAgentRequest,
-        _: str = Depends(caller_subject),
+        subject: str = Depends(caller_subject),
     ) -> dict[str, object]:
         if body.blueprint.id != agent_id:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Agent path and blueprint IDs differ"
             )
         try:
-            validation = registry.validate(body.blueprint, body.catalog_revision)
+            validation = registry.validate(body.blueprint, body.catalog_revision, owner_subject=subject)
         except HarnessNotFoundError as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown harness") from exc
         if not validation.valid:
@@ -420,6 +420,7 @@ def create_app(
                 "active_run": latest if latest and latest.status not in TERMINAL_RUN_STATUSES else None,
                 "last_run": latest,
                 "pending_interrupt": binding.pending_interrupt if binding else None,
+                **({"sandbox": binding.sandbox} if binding and binding.owner_subject == subject else {}),
             }}
         run = await resolved_repository.get_active_run(subject, body.agent_id, body.conversation_id)
         binding = await session_manager.current(subject, body.agent_id, body.conversation_id)
@@ -429,6 +430,7 @@ def create_app(
         return {"success": True, "data": {
             "harness_id": harness_id,
             "binding_id": binding.binding_id if binding else None,
+            "sandbox": binding.sandbox if binding and binding.owner_subject == subject else None,
             "native_thread_id": binding.provider_session_id if binding else None,
             "agent_version": binding.agent_version if binding else None,
             "pending_interrupt": binding.pending_interrupt if binding else None,
@@ -442,9 +444,10 @@ def create_app(
         body: ClearAgentSessionRequest,
         subject: str = Depends(caller_subject),
     ) -> dict[str, object]:
-        result = await coordinator.clear_session(
-            subject, body.agent_id, body.conversation_id
-        )
+        try:
+            result = await coordinator.clear_session(subject, body.agent_id, body.conversation_id)
+        except AgentSessionNotRunnableError as exc:
+            raise HTTPException(409, str(exc)) from exc
         return {"success": True, "data": result}
 
     @app.post("/api/v1/sessions/restart-runtime")

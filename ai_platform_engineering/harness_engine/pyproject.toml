@@ -14,6 +14,7 @@ dependencies = [
     "pydantic-settings==2.15.0",
     "pymongo==4.19.0",
     "uvicorn[standard]==0.52.4",
+    "websockets==17.0.1",
 ]
 
 [project.optional-dependencies]
