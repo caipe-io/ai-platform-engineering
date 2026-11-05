@@ -67,6 +67,11 @@ class _QueuedWebhookRun:
 
 _task_queues: dict[str, deque[_QueuedWebhookRun]] = {}
 _task_drainers: set[str] = set()
+# Recovery capacity is reserved before writing a manual claim, so failures
+# never evict an older rollback. Unknown pending claims still fail closed.
+_MANUAL_RECOVERY_CAPACITY = 1024
+_failed_manual_claims: deque[tuple[str, str]] = deque()
+_manual_claims_inflight: set[tuple[str, str]] = set()
 _execution_loop: asyncio.AbstractEventLoop | None = None
 _global_execution_semaphore: asyncio.Semaphore | None = None
 _global_execution_limit = 0
@@ -163,6 +168,8 @@ def _reset_dispatch_limiter_for_tests() -> None:
         _dispatch_pending_by_owner.clear()
         _task_queues.clear()
         _task_drainers.clear()
+        _failed_manual_claims.clear()
+        _manual_claims_inflight.clear()
     _execution_loop = None
     _global_execution_semaphore = None
     _global_execution_limit = 0
@@ -396,6 +403,7 @@ async def _claim_or_log(
     task_id: str,
     dedup_key: DedupKey,
     body: bytes,
+    run_id: str | None = None,
 ) -> TriggerClaim:
     """Wrap :func:`claim_trigger_instance` so a Mongo error becomes a 503.
 
@@ -412,6 +420,7 @@ async def _claim_or_log(
             task_id=task_id,
             dedup_key=dedup_key,
             body=body,
+            run_id=run_id,
         )
     except HTTPException:
         raise
@@ -426,6 +435,83 @@ async def _claim_or_log(
             status_code=503,
             detail="Webhook deduplication store unavailable; retry later.",
         ) from exc
+
+
+def _release_manual_recovery(dedup_key: str, run_id: str) -> None:
+    with _dispatch_lock:
+        _manual_claims_inflight.discard((dedup_key, run_id))
+
+
+async def _reserve_manual_recovery(dedup_key: str, run_id: str) -> None:
+    with _dispatch_lock:
+        full = len(_failed_manual_claims) + len(_manual_claims_inflight) >= _MANUAL_RECOVERY_CAPACITY
+        oldest = _failed_manual_claims[0] if full and _failed_manual_claims else None
+    if oldest:
+        await _rollback_manual_claim(*oldest)
+    with _dispatch_lock:
+        if len(_failed_manual_claims) + len(_manual_claims_inflight) >= _MANUAL_RECOVERY_CAPACITY:
+            raise HTTPException(status_code=503, detail="Manual recovery capacity reached; retry later.",
+                headers={"Retry-After": "1"})
+        _manual_claims_inflight.add((dedup_key, run_id))
+
+
+async def _rollback_manual_claim(dedup_key: str, run_id: str) -> bool:
+    failed = (dedup_key, run_id)
+    with _dispatch_lock:
+        _manual_claims_inflight.discard(failed)
+        if failed not in _failed_manual_claims:
+            _failed_manual_claims.append(failed)
+    try:
+        await get_mongo_service().delete_unqueued_trigger_instance(dedup_key, run_id)
+    except Exception:
+        # Preserve the original dispatch error. A later retry can reconcile
+        # this known-unaccepted attempt once Mongo recovers.
+        logger.exception("Manual claim rollback failed (key=%s, run_id=%s)", dedup_key, run_id)
+        return False
+    with _dispatch_lock:
+        if failed in _failed_manual_claims:
+            _failed_manual_claims.remove(failed)
+    return True
+
+
+async def _recover_manual_run(task_id: str, dedup_key: DedupKey) -> DispatchOutcome | None:
+    pending = HTTPException(
+        status_code=503,
+        detail="Manual run acceptance is not confirmed; retry with the same ID.",
+        headers={"Retry-After": "1"},
+    )
+    try:
+        mongo = get_mongo_service()
+        existing = await mongo.get_trigger_instance(dedup_key.key)
+        if not existing:
+            return None
+        run_id = existing.get("run_id")
+        if not run_id:
+            raise pending
+        with _dispatch_lock:
+            rollback_pending = (dedup_key.key, run_id) in _failed_manual_claims
+        if rollback_pending:
+            if not await _rollback_manual_claim(dedup_key.key, run_id):
+                raise pending
+            return None
+        accepted = existing.get("manual_queue_accepted") is True
+        if not accepted:
+            with _dispatch_lock:
+                accepted = any(
+                    job.run_id == run_id and job.trigger_instance_id == dedup_key.key
+                    for job in _task_queues.get(task_id, ())
+                )
+            accepted = accepted or await mongo.trigger_run_exists(task_id, run_id)
+        if not accepted:
+            raise pending
+        return DispatchOutcome(
+            status_code=200, run_id=run_id, claimed=False,
+            trigger_instance_id=dedup_key.key, dedup_strategy=dedup_key.strategy,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise pending from exc
 
 
 async def dispatch_webhook_run(
@@ -464,8 +550,17 @@ async def dispatch_webhook_run(
         * ``attach_run_to_trigger_instance`` failure after a successful
           claim -> swallowed and logged. The dedup row is observability
           (audit trail "delivery X -> run Y"), not the source of truth
-          for whether the task ran; the task still fires.
+          for whether the task ran; the task still fires. Manual requests
+          instead store the run ID atomically with the claim, and remove
+          their claim if queue insertion fails.
     """
+    # A manual retry recovers an accepted run even while the queue is full.
+    # The atomic claim below still arbitrates simultaneous first submissions.
+    if dedup_key.strategy == "manual" and dedup_key.key:
+        recovered = await _recover_manual_run(task.id, dedup_key)
+        if recovered:
+            return recovered
+
     dispatch_lease, rejected_scope = _try_reserve_queue_slot(
         task,
         payload_bytes=len(body),
@@ -519,10 +614,21 @@ async def dispatch_webhook_run(
             dedup_strategy=dedup_key.strategy,
         )
 
+    # Manual retries depend on this mapping, so write it atomically with the
+    # claim rather than using the best-effort audit attachment below.
+    manual_run_id = str(uuid.uuid4()) if dedup_key.strategy == "manual" else None
+    if manual_run_id is not None:
+        try:
+            await _reserve_manual_recovery(dedup_key.key, manual_run_id)
+        except (Exception, asyncio.CancelledError):
+            _release_queue_slot(dispatch_lease)
+            raise
     try:
-        claim = await _claim_or_log(task_id=task.id, dedup_key=dedup_key, body=body)
-    except Exception:
+        claim = await _claim_or_log(task_id=task.id, dedup_key=dedup_key, body=body, run_id=manual_run_id)
+    except (Exception, asyncio.CancelledError):
         _release_queue_slot(dispatch_lease)
+        if manual_run_id is not None:
+            await _rollback_manual_claim(dedup_key.key, manual_run_id)
         raise
 
     if not claim.claimed:
@@ -531,6 +637,13 @@ async def dispatch_webhook_run(
         # correlate. Status 200 distinguishes "we accepted it
         # already" from a fresh 202.
         _release_queue_slot(dispatch_lease)
+        if manual_run_id is not None:
+            _release_manual_recovery(dedup_key.key, manual_run_id)
+        if dedup_key.strategy == "manual":
+            recovered = await _recover_manual_run(task.id, dedup_key)
+            if recovered:
+                return recovered
+            raise HTTPException(status_code=503, detail="Manual request is being recorded; retry with the same ID.", headers={"Retry-After": "1"})
         return DispatchOutcome(
             status_code=200,
             run_id=claim.existing_run_id or "",
@@ -539,22 +652,22 @@ async def dispatch_webhook_run(
             dedup_strategy=claim.strategy,
         )
 
-    # New delivery: pre-allocate a run id (so we can return it in the
-    # 202 without waiting for the task to start) and back-link it onto
-    # the just-claimed row before appending to the task FIFO.
-    run_id = str(uuid.uuid4())
-    try:
-        await get_mongo_service().attach_run_to_trigger_instance(
-            claim.dedup_key, run_id
-        )
-    except Exception as exc:  # noqa: BLE001 -- audit-only, never block
-        logger.warning(
-            "[%s] Failed to pre-attach run_id=%s to trigger_instance=%s: %s",
-            task.id,
-            run_id,
-            claim.dedup_key,
-            exc,
-        )
+    # Manual claims already contain their run ID. Webhook claims keep the
+    # best-effort audit attachment before appending to the task FIFO.
+    run_id = manual_run_id or str(uuid.uuid4())
+    if manual_run_id is None:
+        try:
+            await get_mongo_service().attach_run_to_trigger_instance(
+                claim.dedup_key, run_id
+            )
+        except Exception as exc:  # noqa: BLE001 -- audit-only, never block
+            logger.warning(
+                "[%s] Failed to pre-attach run_id=%s to trigger_instance=%s: %s",
+                task.id,
+                run_id,
+                claim.dedup_key,
+                exc,
+            )
 
     try:
         _enqueue_webhook_run(
@@ -572,7 +685,18 @@ async def dispatch_webhook_run(
         )
     except Exception:
         _release_queue_slot(dispatch_lease)
+        if manual_run_id is not None:
+            await _rollback_manual_claim(claim.dedup_key, run_id)
         raise
+
+    if manual_run_id is not None:
+        _release_manual_recovery(claim.dedup_key, run_id)
+        try:
+            await get_mongo_service().mark_manual_trigger_queued(claim.dedup_key, run_id)
+        except Exception:
+            # The job is already queued. Retries may confirm it through the
+            # live FIFO or run history without mistaking a claim for acceptance.
+            logger.exception("Manual queue acceptance update failed (run_id=%s)", run_id)
 
     return DispatchOutcome(
         status_code=202,

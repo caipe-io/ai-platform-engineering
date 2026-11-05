@@ -1227,7 +1227,8 @@ services:
       dockerfile: ../../build/Dockerfile.autonomous-agents
     image: ghcr.io/caipe-io/caipe-autonomous-agents:${IMAGE_TAG:-localtag}
     container_name: autonomous-agents
-    ports: ["8002:8002"]
+    # Caller headers are trusted only from the authenticated UI proxy.
+    # Keep the task-management API on the Compose network.
     env_file: [.env]
     environment:
       # Dynamic-agents runtime endpoint -- every autonomous task runs against a
