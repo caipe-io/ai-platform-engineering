@@ -112,7 +112,7 @@ services:
   # competing with the CAIPE UI for the public port exposed by the base file.
   langfuse-web:
     ports: !override
-      - "127.0.0.1:3001:3000"
+      - "127.0.0.1:${LANGFUSE_PORT:-3001}:3000"
 
   # The previous Kubernetes deployment used an in-cluster Ollama endpoint.
   # Preserve that local-provider behavior in Compose instead of depending on
