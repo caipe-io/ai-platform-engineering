@@ -222,3 +222,30 @@ def test_lint_fails_when_matrix_version_wrong(fake_repo: Path) -> None:
     assert result.returncode == 1
     assert "schema" in result.stderr
     assert "version must be 1" in result.stderr
+
+
+@pytest.mark.parametrize("method", ["GET", "POST", "DELETE"])
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_openfga_inventory_requires_the_exported_http_method(fake_repo: Path, method: str, wrapped: bool) -> None:
+    declaration = f"export const {method} = withErrorHandler(async (req) =>" if wrapped else f"export async function {method}(req)"
+    route = fake_repo / "ui/src/app/api/admin/users/route.ts"
+    route.write_text(
+        "export function OPTIONS() { return new Response(); }\n"
+        f"{declaration} {{\n"
+        "  const denied = await requireAgentUsePermission({ subject, agentId });\n"
+        "  return denied ?? new Response();\n"
+        + ("});\n" if wrapped else "}\n")
+    )
+    entry = {
+        "id": "example-agent-use", "surface": "ui_bff", "method": method,
+        "path": "/api/admin/users", "authorization_system": "openfga", "resource": "agent",
+        "scope": "use", "relation": "can_use", "object_type": "agent", "expectations": _OK_EXPECTATIONS,
+    }
+    _write_matrix(fake_repo, {"version": 1, "routes": [entry]})
+    result = _run(fake_repo)
+    assert result.returncode == 0, result.stderr
+    entry["method"] = "POST" if method != "POST" else "GET"
+    _write_matrix(fake_repo, {"version": 1, "routes": [entry]})
+    result = _run(fake_repo)
+    assert result.returncode == 1
+    assert f"OpenFGA agent-use gate on {method} /api/admin/users" in result.stderr
