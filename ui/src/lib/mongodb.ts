@@ -98,6 +98,31 @@ export async function getCollection<T extends Document = Document>(collectionNam
 }
 
 /**
+ * Other replicas may be building an index on this collection. Retry that
+ * transient conflict with bounded backoff; other failures retain their handling.
+ * Six attempts allow at most 17 seconds of backoff during initial warmup.
+ */
+async function createIndexWithBuildRetry(
+  db: Db,
+  collectionName: string,
+  keys: Record<string, 1 | -1>,
+  options: { unique?: boolean; expireAfterSeconds?: number } = {},
+): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await db.collection(collectionName).createIndex(keys, options);
+      return;
+    } catch (error: unknown) {
+      const { code, message } = (error ?? {}) as { code?: number; message?: unknown };
+      const buildInProgress = code === 285 || code === 12586 || code === 14031 ||
+        typeof message === 'string' && /existing index build in progress|collection is limited to a single index build at a time/i.test(message);
+      if (!buildInProgress || attempt >= 5) throw error;
+      await new Promise(resolve => setTimeout(resolve, Math.min(1000 * 2 ** attempt, 5000)));
+    }
+  }
+}
+
+/**
  * Safely create a single index, logging and continuing on failure.
  * Returns true if the index was created (or already existed), false on error.
  */
@@ -108,7 +133,7 @@ async function safeCreateIndex(
   options?: { unique?: boolean; expireAfterSeconds?: number },
 ): Promise<boolean> {
   try {
-    await db.collection(collectionName).createIndex(keys, options ?? {});
+    await createIndexWithBuildRetry(db, collectionName, keys, options);
     return true;
   } catch (error: unknown) {
     const code = (error as { code?: number }).code;
@@ -121,7 +146,7 @@ async function safeCreateIndex(
       );
       await deduplicateCollection(db, collectionName, keyFields);
       try {
-        await db.collection(collectionName).createIndex(keys, options);
+        await createIndexWithBuildRetry(db, collectionName, keys, options);
         console.log(`  ✅ Index on ${collectionName} ${JSON.stringify(keys)} created after dedup`);
         return true;
       } catch (retryError) {
@@ -200,177 +225,188 @@ async function deduplicateCollection(
  * Unique index conflicts trigger automatic deduplication and retry.
  */
 async function createIndexes(db: Db) {
-  // Each index is created independently via Promise.all so a single failure
-  // doesn't prevent other indexes from being created.
+  // DocumentDB allows one index build per collection. Different collections
+  // can initialize concurrently; a handled failure must not stop the next build.
+  const collectionBuilds = new Map<string, Promise<boolean>>();
+  const ensureIndex = (
+    collectionName: string,
+    keys: Record<string, 1 | -1>,
+    options?: { unique?: boolean; expireAfterSeconds?: number },
+  ): Promise<boolean> => {
+    const previous = collectionBuilds.get(collectionName) ?? Promise.resolve(true);
+    const next = previous.then(() => safeCreateIndex(db, collectionName, keys, options));
+    collectionBuilds.set(collectionName, next);
+    return next;
+  };
 
   await Promise.all([
-    safeCreateIndex(db, 'harness_attachment_blobs', { expires_at: 1 }, { expireAfterSeconds: 0 }),
+    ensureIndex('harness_attachment_blobs', { expires_at: 1 }, { expireAfterSeconds: 0 }),
     // Session expiry is enforced on reads; TTL only reclaims expired records.
-    safeCreateIndex(db, 'auth_sessions', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    ensureIndex('auth_sessions', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
     // Retire old-format records through their existing TTL after the cutover.
-    safeCreateIndex(db, 'auth_token_cache', { updatedAt: 1 }, { expireAfterSeconds: 24 * 60 * 60 }),
+    ensureIndex('auth_token_cache', { updatedAt: 1 }, { expireAfterSeconds: 24 * 60 * 60 }),
 
     // Users collection
-    safeCreateIndex(db, 'users', { email: 1 }, { unique: true }),
-    safeCreateIndex(db, 'users', { keycloak_sub: 1 }),
-    safeCreateIndex(db, 'users', { 'metadata.keycloak_sub': 1 }),
-    safeCreateIndex(db, 'users', { 'metadata.sso_id': 1 }),
-    safeCreateIndex(db, 'users', { last_login: -1 }),
+    ensureIndex('users', { email: 1 }, { unique: true }),
+    ensureIndex('users', { keycloak_sub: 1 }),
+    ensureIndex('users', { 'metadata.keycloak_sub': 1 }),
+    ensureIndex('users', { 'metadata.sso_id': 1 }),
+    ensureIndex('users', { last_login: -1 }),
 
     // Teams are resolved by slug throughout RBAC and connector discovery.
-    safeCreateIndex(db, 'teams', { slug: 1 }),
+    ensureIndex('teams', { slug: 1 }),
 
     // Conversations collection
-    safeCreateIndex(db, 'conversation_viewers', { expires_at: 1 }, { expireAfterSeconds: 0 }),
-    safeCreateIndex(db, 'conversation_viewers', { conversation_id: 1, expires_at: 1 }),
-    safeCreateIndex(db, 'conversations', { owner_id: 1 }),
-    safeCreateIndex(db, 'conversations', { created_at: -1 }),
-    safeCreateIndex(db, 'conversations', { updated_at: -1 }),
-    safeCreateIndex(db, 'conversations', { 'sharing.shared_with': 1 }),
-    safeCreateIndex(db, 'conversations', { tags: 1 }),
-    safeCreateIndex(db, 'conversations', { is_archived: 1, owner_id: 1 }),
-    safeCreateIndex(db, 'conversations', { deleted_at: 1, owner_id: 1 }),
-    safeCreateIndex(db, 'conversations', { source: 1 }),
-    safeCreateIndex(db, 'conversations', { deleted_at: 1, client_type: 1, is_archived: 1, is_pinned: -1, updated_at: -1 }),
-    safeCreateIndex(db, 'conversations', { deleted_at: 1, source: 1, is_archived: 1, is_pinned: -1, updated_at: -1 }),
-    safeCreateIndex(db, 'conversations', { owner_id: 1, client_type: 1, is_archived: 1, deleted_at: 1, updated_at: -1 }),
+    ensureIndex('conversation_viewers', { expires_at: 1 }, { expireAfterSeconds: 0 }),
+    ensureIndex('conversation_viewers', { conversation_id: 1, expires_at: 1 }),
+    ensureIndex('conversations', { owner_id: 1 }),
+    ensureIndex('conversations', { created_at: -1 }),
+    ensureIndex('conversations', { updated_at: -1 }),
+    ensureIndex('conversations', { 'sharing.shared_with': 1 }),
+    ensureIndex('conversations', { tags: 1 }),
+    ensureIndex('conversations', { is_archived: 1, owner_id: 1 }),
+    ensureIndex('conversations', { deleted_at: 1, owner_id: 1 }),
+    ensureIndex('conversations', { source: 1 }),
+    ensureIndex('conversations', { deleted_at: 1, client_type: 1, is_archived: 1, is_pinned: -1, updated_at: -1 }),
+    ensureIndex('conversations', { deleted_at: 1, source: 1, is_archived: 1, is_pinned: -1, updated_at: -1 }),
+    ensureIndex('conversations', { owner_id: 1, client_type: 1, is_archived: 1, deleted_at: 1, updated_at: -1 }),
 
     // Messages collection
-    safeCreateIndex(db, 'messages', { conversation_id: 1, created_at: 1 }),
-    safeCreateIndex(db, 'messages', { 'metadata.turn_id': 1 }),
-    safeCreateIndex(db, 'messages', { role: 1 }),
-    safeCreateIndex(db, 'messages', { 'metadata.source': 1, created_at: -1 }),
-    safeCreateIndex(db, 'messages', { owner_id: 1, created_at: -1 }),
-    safeCreateIndex(db, 'messages', { role: 1, created_at: -1 }),
-    safeCreateIndex(db, 'messages', { role: 1, 'metadata.agent_name': 1, created_at: -1 }),
+    ensureIndex('messages', { conversation_id: 1, created_at: 1 }),
+    ensureIndex('messages', { 'metadata.turn_id': 1 }),
+    ensureIndex('messages', { role: 1 }),
+    ensureIndex('messages', { 'metadata.source': 1, created_at: -1 }),
+    ensureIndex('messages', { owner_id: 1, created_at: -1 }),
+    ensureIndex('messages', { role: 1, created_at: -1 }),
+    ensureIndex('messages', { role: 1, 'metadata.agent_name': 1, created_at: -1 }),
 
     // User settings collection
-    safeCreateIndex(db, 'user_settings', { user_id: 1 }, { unique: true }),
+    ensureIndex('user_settings', { user_id: 1 }, { unique: true }),
 
     // Conversation bookmarks collection
-    safeCreateIndex(db, 'conversation_bookmarks', { user_id: 1 }),
-    safeCreateIndex(db, 'conversation_bookmarks', { conversation_id: 1 }),
-    safeCreateIndex(db, 'conversation_bookmarks', { user_id: 1, conversation_id: 1 }),
+    ensureIndex('conversation_bookmarks', { user_id: 1 }),
+    ensureIndex('conversation_bookmarks', { conversation_id: 1 }),
+    ensureIndex('conversation_bookmarks', { user_id: 1, conversation_id: 1 }),
 
     // Sharing access collection
-    safeCreateIndex(db, 'sharing_access', { conversation_id: 1 }),
-    safeCreateIndex(db, 'sharing_access', { granted_to: 1 }),
-    safeCreateIndex(db, 'sharing_access', { conversation_id: 1, granted_to: 1 }),
+    ensureIndex('sharing_access', { conversation_id: 1 }),
+    ensureIndex('sharing_access', { granted_to: 1 }),
+    ensureIndex('sharing_access', { conversation_id: 1, granted_to: 1 }),
 
     // Catalog API keys (Skills Gateway machine auth; BFF-owned)
-    safeCreateIndex(db, 'catalog_api_keys', { key_id: 1 }, { unique: true }),
-    safeCreateIndex(db, 'catalog_api_keys', { owner_user_id: 1, created_at: -1 }),
+    ensureIndex('catalog_api_keys', { key_id: 1 }, { unique: true }),
+    ensureIndex('catalog_api_keys', { owner_user_id: 1, created_at: -1 }),
 
     // Service accounts (user-minted machine identities; BFF-owned display
     // metadata — credential lives in Keycloak, access in OpenFGA). See
     // docs/docs/specs/2026-06-05-service-accounts/data-model.md.
     // Name uniqueness (FR-002a) is enforced at the application layer (T007),
     // not via a partial unique index, to keep "freed on revoke" semantics simple.
-    safeCreateIndex(db, 'service_accounts', { sa_sub: 1 }, { unique: true }),
-    safeCreateIndex(db, 'service_accounts', { client_id: 1 }, { unique: true }),
-    safeCreateIndex(db, 'service_accounts', { owning_team_id: 1, status: 1 }),
-    safeCreateIndex(db, 'service_accounts', { owning_team_id: 1, name: 1, status: 1 }),
-    safeCreateIndex(db, 'service_accounts', { created_by: 1 }),
+    ensureIndex('service_accounts', { sa_sub: 1 }, { unique: true }),
+    ensureIndex('service_accounts', { client_id: 1 }, { unique: true }),
+    ensureIndex('service_accounts', { owning_team_id: 1, status: 1 }),
+    ensureIndex('service_accounts', { owning_team_id: 1, name: 1, status: 1 }),
+    ensureIndex('service_accounts', { created_by: 1 }),
 
     // Agent skills collection (catalog source agent_skills)
-    safeCreateIndex(db, 'agent_skills', { id: 1 }, { unique: true }),
-    safeCreateIndex(db, 'agent_skills', { owner_id: 1 }),
-    safeCreateIndex(db, 'agent_skills', { category: 1 }),
-    safeCreateIndex(db, 'agent_skills', { is_system: 1 }),
-    safeCreateIndex(db, 'agent_skills', { name: 1 }),
-    safeCreateIndex(db, 'agent_skills', { created_at: -1 }),
-    safeCreateIndex(db, 'agent_skills', { 'metadata.tags': 1 }),
+    ensureIndex('agent_skills', { id: 1 }, { unique: true }),
+    ensureIndex('agent_skills', { owner_id: 1 }),
+    ensureIndex('agent_skills', { category: 1 }),
+    ensureIndex('agent_skills', { is_system: 1 }),
+    ensureIndex('agent_skills', { name: 1 }),
+    ensureIndex('agent_skills', { created_at: -1 }),
+    ensureIndex('agent_skills', { 'metadata.tags': 1 }),
 
     // Dynamic agents list endpoint
-    safeCreateIndex(db, 'dynamic_agents', { enabled: 1, name: 1 }),
+    ensureIndex('dynamic_agents', { enabled: 1, name: 1 }),
 
     // Skill revisions collection (per-skill content history; pruned to
     // SKILL_REVISIONS_RETENTION on every write — see lib/skill-revisions.ts)
-    safeCreateIndex(db, 'skill_revisions', { id: 1 }, { unique: true }),
-    safeCreateIndex(db, 'skill_revisions', { skill_id: 1, revision_number: -1 }),
-    safeCreateIndex(db, 'skill_revisions', { skill_id: 1, created_at: -1 }),
+    ensureIndex('skill_revisions', { id: 1 }, { unique: true }),
+    ensureIndex('skill_revisions', { skill_id: 1, revision_number: -1 }),
+    ensureIndex('skill_revisions', { skill_id: 1, created_at: -1 }),
 
     // Skill hubs collection
-    safeCreateIndex(db, 'skill_hubs', { id: 1 }, { unique: true }),
-    safeCreateIndex(db, 'skill_hubs', { enabled: 1 }),
-    safeCreateIndex(db, 'skill_hubs', { location: 1 }),
+    ensureIndex('skill_hubs', { id: 1 }, { unique: true }),
+    ensureIndex('skill_hubs', { enabled: 1 }),
+    ensureIndex('skill_hubs', { location: 1 }),
 
     // Workflow runs collection (v2 — uses _id as primary key)
-    safeCreateIndex(db, 'workflow_runs', { workflow_config_id: 1 }),
-    safeCreateIndex(db, 'workflow_runs', { status: 1 }),
-    safeCreateIndex(db, 'workflow_runs', { started_at: -1 }),
+    ensureIndex('workflow_runs', { workflow_config_id: 1 }),
+    ensureIndex('workflow_runs', { status: 1 }),
+    ensureIndex('workflow_runs', { started_at: -1 }),
 
     // Policies collection (global ASP policy for system workflows)
-    safeCreateIndex(db, 'policies', { name: 1 }, { unique: true }),
-    safeCreateIndex(db, 'policies', { is_system: 1 }),
+    ensureIndex('policies', { name: 1 }, { unique: true }),
+    ensureIndex('policies', { is_system: 1 }),
 
     // Feedback collection (unified feedback from web + Slack)
-    safeCreateIndex(db, 'feedback', { created_at: -1 }),
-    safeCreateIndex(db, 'feedback', { source: 1, created_at: -1 }),
-    safeCreateIndex(db, 'feedback', { rating: 1, created_at: -1 }),
-    safeCreateIndex(db, 'feedback', { channel_name: 1, created_at: -1 }),
-    safeCreateIndex(db, 'feedback', { trace_id: 1 }),
+    ensureIndex('feedback', { created_at: -1 }),
+    ensureIndex('feedback', { source: 1, created_at: -1 }),
+    ensureIndex('feedback', { rating: 1, created_at: -1 }),
+    ensureIndex('feedback', { channel_name: 1, created_at: -1 }),
+    ensureIndex('feedback', { trace_id: 1 }),
 
     // Turns collection (per-turn persistence decoupled from messages)
-    safeCreateIndex(db, 'turns', { conversation_id: 1, client_type: 1, turn_id: 1 }, { unique: true }),
-    safeCreateIndex(db, 'turns', { conversation_id: 1, client_type: 1, created_at: 1 }),
+    ensureIndex('turns', { conversation_id: 1, client_type: 1, turn_id: 1 }, { unique: true }),
+    ensureIndex('turns', { conversation_id: 1, client_type: 1, created_at: 1 }),
 
     // Slack metadata on conversations (for stats queries filtering by source)
-    safeCreateIndex(db, 'conversations', { source: 1, created_at: -1 }),
-    safeCreateIndex(db, 'conversations', { 'slack_meta.channel_name': 1, created_at: -1 }),
-    safeCreateIndex(db, 'conversations', { 'slack_meta.escalated': 1, created_at: -1 }),
+    ensureIndex('conversations', { source: 1, created_at: -1 }),
+    ensureIndex('conversations', { 'slack_meta.channel_name': 1, created_at: -1 }),
+    ensureIndex('conversations', { 'slack_meta.escalated': 1, created_at: -1 }),
 
     // 098 RBAC: Team-scoped RAG tool configurations
-    safeCreateIndex(db, 'team_rag_tools', { tool_id: 1 }, { unique: true }),
-    safeCreateIndex(db, 'team_rag_tools', { team_id: 1, tenant_id: 1 }),
-    safeCreateIndex(db, 'team_rag_tools', { tenant_id: 1 }),
-    safeCreateIndex(db, 'team_rag_tools', { created_by: 1 }),
-    safeCreateIndex(db, 'team_rag_tools', { updated_at: -1 }),
+    ensureIndex('team_rag_tools', { tool_id: 1 }, { unique: true }),
+    ensureIndex('team_rag_tools', { team_id: 1, tenant_id: 1 }),
+    ensureIndex('team_rag_tools', { tenant_id: 1 }),
+    ensureIndex('team_rag_tools', { created_by: 1 }),
+    ensureIndex('team_rag_tools', { updated_at: -1 }),
 
     // 098 US9: Slack channel ↔ team mappings + admin Slack dashboard
-    safeCreateIndex(db, 'channel_team_mappings', { slack_channel_id: 1 }, { unique: true }),
-    safeCreateIndex(db, 'slack_channel_agent_routes', { workspace_id: 1, channel_id: 1, agent_id: 1 }, { unique: true }),
-    safeCreateIndex(db, 'slack_channel_agent_routes', { workspace_id: 1, channel_id: 1, status: 1 }),
-    safeCreateIndex(db, 'slack_channel_agent_routes', { channel_id: 1, status: 1, priority: 1 }),
-    safeCreateIndex(db, 'slack_user_metrics', { slack_user_id: 1 }, { unique: true }),
+    ensureIndex('channel_team_mappings', { slack_channel_id: 1 }, { unique: true }),
+    ensureIndex('slack_channel_agent_routes', { workspace_id: 1, channel_id: 1, agent_id: 1 }, { unique: true }),
+    ensureIndex('slack_channel_agent_routes', { workspace_id: 1, channel_id: 1, status: 1 }),
+    ensureIndex('slack_channel_agent_routes', { channel_id: 1, status: 1, priority: 1 }),
+    ensureIndex('slack_user_metrics', { slack_user_id: 1 }, { unique: true }),
 
     // RAG ingestion source configuration (self-service ingestion, PR1)
-    safeCreateIndex(db, 'rag_ingestion_sources', { source_id: 1 }, { unique: true }),
-    safeCreateIndex(db, 'rag_ingestion_sources', { owner_team_slug: 1, updated_at: -1 }),
-    safeCreateIndex(db, 'rag_ingestion_sources', { shared_with_teams: 1 }),
-    safeCreateIndex(db, 'rag_ingestion_sources', { source_type: 1, status: 1 }),
-    safeCreateIndex(db, 'rag_ingestion_sources', { config_driven: 1 }),
+    ensureIndex('rag_ingestion_sources', { source_id: 1 }, { unique: true }),
+    ensureIndex('rag_ingestion_sources', { owner_team_slug: 1, updated_at: -1 }),
+    ensureIndex('rag_ingestion_sources', { shared_with_teams: 1 }),
+    ensureIndex('rag_ingestion_sources', { source_type: 1, status: 1 }),
+    ensureIndex('rag_ingestion_sources', { config_driven: 1 }),
 
     // RAG collections are saved search-time filters. Datasource content
     // remains in Milvus under datasource_id; this is control-plane
     // membership and delegation only.
-    safeCreateIndex(db, 'rag_collections', { owner_subject: 1, updated_at: -1 }),
-    safeCreateIndex(db, 'rag_collections', { maintainer_team_slugs: 1 }),
-    safeCreateIndex(db, 'rag_collections', { reader_team_slugs: 1 }),
-    safeCreateIndex(db, 'rag_collections', { source_ids: 1 }),
+    ensureIndex('rag_collections', { owner_subject: 1, updated_at: -1 }),
+    ensureIndex('rag_collections', { maintainer_team_slugs: 1 }),
+    ensureIndex('rag_collections', { reader_team_slugs: 1 }),
+    ensureIndex('rag_collections', { source_ids: 1 }),
 
     // Reusable publication approval workflow. Requested state remains
     // separate from effective state until a domain adapter applies approval.
-    safeCreateIndex(db, 'publication_requests', { status: 1, created_at: -1 }),
-    safeCreateIndex(db, 'publication_requests', { 'resource.kind': 1, 'resource.id': 1, status: 1 }),
-    safeCreateIndex(db, 'publication_requests', { 'requested_state.source_ids': 1, status: 1 }),
-    safeCreateIndex(db, 'publication_requests', { approver_team_slugs: 1, status: 1 }),
-    safeCreateIndex(db, 'publication_requests', { approver_user_subjects: 1, status: 1 }),
-    safeCreateIndex(db, 'publication_requests', { 'requester.subject': 1, created_at: -1 }),
-    safeCreateIndex(db, 'publication_requests', { 'resource.kind': 1, 'requested_state.channel_defaults.channel_id': 1, status: 1 }),
-    safeCreateIndex(db, 'publication_requests', { 'resource.kind': 1, 'requested_state.space_id': 1, status: 1 }),
+    ensureIndex('publication_requests', { status: 1, created_at: -1 }),
+    ensureIndex('publication_requests', { 'resource.kind': 1, 'resource.id': 1, status: 1 }),
+    ensureIndex('publication_requests', { 'requested_state.source_ids': 1, status: 1 }),
+    ensureIndex('publication_requests', { approver_team_slugs: 1, status: 1 }),
+    ensureIndex('publication_requests', { approver_user_subjects: 1, status: 1 }),
+    ensureIndex('publication_requests', { 'requester.subject': 1, created_at: -1 }),
+    ensureIndex('publication_requests', { 'resource.kind': 1, 'requested_state.channel_defaults.channel_id': 1, status: 1 }),
+    ensureIndex('publication_requests', { 'resource.kind': 1, 'requested_state.space_id': 1, status: 1 }),
 
     // Durable header notifications. Direct, team, organization-admin, and
     // global platform audiences share the feed while read state remains
     // personal to each viewer.
-    safeCreateIndex(db, 'in_app_notifications', { event_key: 1 }, { unique: true }),
-    safeCreateIndex(db, 'in_app_notifications', { recipient_user_subjects: 1, created_at: -1 }),
-    safeCreateIndex(db, 'in_app_notifications', { recipient_team_slugs: 1, created_at: -1 }),
-    safeCreateIndex(db, 'in_app_notifications', { recipient_organization_admins: 1, created_at: -1 }),
-    safeCreateIndex(db, 'in_app_notifications', { recipient_platform_users: 1, created_at: -1 }),
-    safeCreateIndex(db, 'in_app_notifications', { archived_at: 1, created_at: -1 }),
-    safeCreateIndex(db, 'platform_health_notification_states', { active_incident_id: 1 }),
-    safeCreateIndex(db, 'platform_health_notification_states', { current_status: 1, updated_at: -1 }),
+    ensureIndex('in_app_notifications', { event_key: 1 }, { unique: true }),
+    ensureIndex('in_app_notifications', { recipient_user_subjects: 1, created_at: -1 }),
+    ensureIndex('in_app_notifications', { recipient_team_slugs: 1, created_at: -1 }),
+    ensureIndex('in_app_notifications', { recipient_organization_admins: 1, created_at: -1 }),
+    ensureIndex('in_app_notifications', { recipient_platform_users: 1, created_at: -1 }),
+    ensureIndex('in_app_notifications', { archived_at: 1, created_at: -1 }),
+    ensureIndex('platform_health_notification_states', { active_incident_id: 1 }),
+    ensureIndex('platform_health_notification_states', { current_status: 1, updated_at: -1 }),
   ]);
 
   console.log('✅ MongoDB indexes ensured');
