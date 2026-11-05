@@ -2020,6 +2020,7 @@ services:
     env_file: [.env]
     ports: ["8030:3000"]  # Only used in HTTP mode (SLACK_INTEGRATION_BOT_MODE=http)
     environment:
+      - SLACK_HARNESS_GATEWAY_ENABLED=${SLACK_HARNESS_GATEWAY_ENABLED:-false}
       # Force unbuffered stdio so loguru/print output reaches `docker logs`
       # in real time. Without this, Python block-buffers stderr when the fd
       # is a pipe (docker captures aren't a TTY), which means INFO lines
@@ -2121,6 +2122,7 @@ services:
     env_file: [.env]
     ports: ["8032:3002"]
     environment:
+      - WEBEX_HARNESS_GATEWAY_ENABLED=${WEBEX_HARNESS_GATEWAY_ENABLED:-false}
       - DEV_HOT_RELOAD=${DEV_HOT_RELOAD:-false}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - WEBEX_INTEGRATION_BOT_ACCESS_TOKEN=${WEBEX_INTEGRATION_BOT_ACCESS_TOKEN:-}

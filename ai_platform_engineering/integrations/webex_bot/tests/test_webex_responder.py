@@ -34,6 +34,14 @@ from ai_platform_engineering.integrations.webex_bot.webex_responder import (
 )
 
 
+@pytest.mark.parametrize("gateway_enabled", ["false", "true"])
+def test_gateway_setting_is_independent_of_slack(monkeypatch: pytest.MonkeyPatch, gateway_enabled: str) -> None:
+    monkeypatch.setenv("WEBEX_HARNESS_GATEWAY_ENABLED", gateway_enabled)
+    monkeypatch.setenv("SLACK_HARNESS_GATEWAY_ENABLED", "false" if gateway_enabled == "true" else "true")
+    dispatcher = WebexThreadedStreamDispatcher(webex_api=SimpleNamespace())
+    assert dispatcher._sse_client.harness_gateway_enabled is (gateway_enabled == "true")
+
+
 @dataclass
 class FakeWebexApi:
     created: list[dict[str, Any]] = field(default_factory=list)

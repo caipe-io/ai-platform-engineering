@@ -10,6 +10,9 @@ each bot's routes and direct-message allowlist separate.
 
 ## Component Architecture
 
+Webex independently opts into Harness Gateway run admission and event replay
+through a deployment setting. See [Bot Harness Gateway transport](./bot-harness-gateway.md).
+
 ```mermaid
 flowchart LR
   U[Webex user] --> W[Webex API]

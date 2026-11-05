@@ -69,7 +69,10 @@ def build_runtime(environ: Mapping[str, str] | None = None) -> SlackRuntime:
   bolt_app = App(
     token=env.get("SLACK_INTEGRATION_BOT_TOKEN", env.get("SLACK_BOT_TOKEN", ""))
   )
-  sse_client = SSEClient(api_url, timeout=300, auth_client=auth_client)
+  sse_client = SSEClient(
+    api_url, timeout=300, auth_client=auth_client,
+    harness_gateway_enabled=env.get("SLACK_HARNESS_GATEWAY_ENABLED", "false").lower() == "true",
+  )
   session_manager = SessionManager()
 
   logger.info("SLACK_WORKSPACE_URL={}", workspace_url or "(not set)")
