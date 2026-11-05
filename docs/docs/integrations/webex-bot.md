@@ -194,6 +194,13 @@ in **Configured spaces** replaces that route; it does not create another route
 for the same bot and space. Auto-assignment does not overwrite an existing
 mapping or explicit route.
 
+An onboarded space stays in **Configured spaces** if its agent route is removed
+or missing. Select the correct bot, open the space, and use **Add Agent** to
+restore its route and access grant. The existing team mapping and authorization
+checks still apply. This recovery path avoids submitting another onboarding
+request for an already assigned space. Switching bots clears the previous bot's
+configured and discovered rows while the selected bot's configuration loads.
+
 For a direct message in `allowlist` mode, select a bot, then assign a deployment
 user and agent. The same user can be onboarded independently for multiple bots.
 Messages to a bot without a matching active allowlist entry are ignored.
