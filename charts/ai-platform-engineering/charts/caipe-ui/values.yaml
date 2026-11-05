@@ -284,6 +284,7 @@ config:
   WEBEX_THREAD_CONTEXT_MAX_CHARS: "4000"
   LOGO_URL: "/logo.svg"
   LOGO_STYLE: "default"
+  LOGO_THEMED: ""
   # SPINNER_COLOR: ""
   SHOW_POWERED_BY: "false"
   # Environment badge label shown next to the app name (e.g. "Dev", "Preview", "Staging", "Prod")

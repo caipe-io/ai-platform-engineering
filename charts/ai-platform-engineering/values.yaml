@@ -928,6 +928,7 @@ caipe-ui:
     CAIPE_ORG_DISPLAY_NAME: "CAIPE"
     LOGO_URL: "/logo.svg"
     LOGO_STYLE: "default"
+    LOGO_THEMED: ""
     # SPINNER_COLOR: ""
     SHOW_POWERED_BY: "false"
     # Environment badge (e.g. "Dev", "Preview", "Staging", "Prod"; empty = hidden)
