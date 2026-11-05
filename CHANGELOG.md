@@ -1,3 +1,9 @@
+## 1.3.7-rc.5 (2026-11-05)
+
+### Feat
+
+- **helm**: add optional persistent harness runtimes (#3238)
+
 ## 1.3.7-rc.4 (2026-11-05)
 
 ### Feat
