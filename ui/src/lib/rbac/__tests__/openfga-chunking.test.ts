@@ -252,4 +252,50 @@ describe("writeOpenFgaTuples (chunked + self-compensating)", () => {
       consoleErrSpy.mockRestore();
     }
   });
+
+  it("retains structured validation diagnostics beyond the truncated public message", async () => {
+    const { OpenFgaWriteError, writeOpenFgaTuples } = await import("../openfga");
+    const message = `Invalid tuple 'document:example/${"x".repeat(220)}#parent@document:example/root'. Relation not found`;
+    mockFetch(() => Response.json({ code: "validation_error", message, extra: "not retained" }, { status: 400 }));
+    let thrown: unknown;
+    try { await writeOpenFgaTuples(makeDiff(1, 0)); } catch (error) { thrown = error; }
+    expect(thrown).toBeInstanceOf(OpenFgaWriteError);
+    const error = thrown as InstanceType<typeof OpenFgaWriteError>;
+    expect(error.status).toBe(400);
+    expect(error.details).toEqual({ code: "validation_error", message });
+    expect(Object.isFrozen(error.details)).toBe(true);
+    expect(error.message).not.toContain("Relation not found");
+    expect(error.message.length).toBeLessThanOrEqual("OpenFGA tuple write failed: 400 ".length + 200);
+    expect(JSON.parse(JSON.stringify(error))).not.toHaveProperty("details");
+    expect({ ...error }).not.toHaveProperty("details");
+    const { handleApiError } = await import("@/lib/api-middleware");
+    const log = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const apiResponse = handleApiError(error);
+      expect(apiResponse.status).toBe(500);
+      expect(await apiResponse.json()).toEqual({ success: false, error: error.message });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("bounds retained fields and does not retain arbitrary upstream properties", async () => {
+    const { writeOpenFgaTuples } = await import("../openfga");
+    mockFetch(() => Response.json({ code: "c".repeat(256), message: "m".repeat(5000), debug: { value: "internal" } }, { status: 400 }));
+    await expect(writeOpenFgaTuples(makeDiff(1, 0))).rejects.toMatchObject({
+      details: { code: "c".repeat(128), message: "m".repeat(4096) },
+    });
+  });
+
+  it.each([
+    "<html>upstream unavailable</html>", "null", "[]", '"string"', "42",
+    JSON.stringify({ code: 400, message: { nested: "not a string" } }),
+    JSON.stringify({ debug: "not retained" }),
+    JSON.stringify({ message: "x".repeat(17_000) }),
+  ])("preserves the typed write failure without structured details for invalid response %#", async (body) => {
+    const { OpenFgaWriteError, writeOpenFgaTuples } = await import("../openfga");
+    mockFetch(() => new Response(body, { status: 400 }));
+    await expect(writeOpenFgaTuples(makeDiff(1, 0))).rejects.toBeInstanceOf(OpenFgaWriteError);
+    await expect(writeOpenFgaTuples(makeDiff(1, 0))).rejects.toMatchObject({ status: 400, details: undefined });
+  });
 });
