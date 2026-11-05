@@ -1,3 +1,13 @@
+## 1.3.7-rc.4 (2026-11-05)
+
+### Feat
+
+- **webex**: sign bot-specific team scope for native assistants (#3244)
+
+### Fix
+
+- **webex**: keep incomplete space routes recoverable (#3243)
+
 ## 1.3.7-rc.3 (2026-11-05)
 
 ### Feat
