@@ -1,5 +1,15 @@
 import type { HarnessDescriptor } from "@/types/harness-engine";
 
+/** Integration maturity is separate from runtime configuration and access. */
+export function harnessStatusLabel(id: string, certification?: HarnessDescriptor["certification"]): string {
+  if (certification === "blocked") return "Blocked";
+  return id === "dynamic_agents" ? "Stable" : "Experimental";
+}
+
+export function harnessDisplayName(descriptor: Pick<HarnessDescriptor, "id" | "display_name">): string {
+  return descriptor.id === "claude_agent_sdk" ? "Claude Agent SDK (Local)" : descriptor.display_name;
+}
+
 export const HARNESS_RENDERERS = [
   "agent-delegation", "deep-agents-middleware", "remote-agents", "tool-approvals", "workflow-tools", "schema-form",
 ] as const;
