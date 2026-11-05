@@ -5,6 +5,9 @@ on:
     paths:
       - 'pyproject.toml'
       - 'uv.lock'
+      - '**/pyproject.toml'
+      - '**/uv.lock'
+      - '.github/workflows/uv-lock-check.yml'
       - 'scripts/check_uv_lock_sync.sh'
   push:
     branches: [main]
