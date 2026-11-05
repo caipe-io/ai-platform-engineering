@@ -464,6 +464,15 @@ class TestToolApprovalCard:
     text = json.dumps(format_hitl_form_blocks(form))
     assert "first_tool" in text and "second_tool" in text
 
+  def test_backticks_in_tool_args_are_escaped_not_replaced(self):
+    form = parse_agui_interrupt(self._event({"tool_name": "run_command", "tool_args": {"cmd": "echo `id`"}, "agent": "a"}))
+    blocks = format_hitl_form_blocks(form)
+    section = next(b["text"]["text"] for b in blocks if "Pending tool calls" in b.get("text", {}).get("text", ""))
+    args_span = section.split("`run_command` `", 1)[1]
+    assert "echo \\u0060id\\u0060" in args_span
+    assert "'id'" not in args_span
+    assert args_span.count("`") == 1
+
   def test_form_input_has_no_tool_block(self):
     form = parse_agui_interrupt(SimpleNamespace(interrupt={"id": "f1", "reason": "human_input", "payload": {"prompt": "p", "fields": []}}))
     assert "Pending tool calls" not in json.dumps(format_hitl_form_blocks(form))

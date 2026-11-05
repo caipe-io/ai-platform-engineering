@@ -286,7 +286,8 @@ def _format_tool_calls_blocks(tool_calls: List[Dict[str, Any]]) -> List[Dict[str
   """
   lines = ["*Pending tool calls* (Approve or Reject applies to all of them):"]
   for call in tool_calls[:_MAX_TOOL_CALLS_SHOWN]:
-    args = json.dumps(call.get("tool_args") or {}, default=str).replace("`", "'")
+    # \u0060 is the JSON escape for a backtick: it keeps the inline-code span intact without altering the value shown.
+    args = json.dumps(call.get("tool_args") or {}, default=str).replace("`", "\\u0060")
     if len(args) > _TOOL_ARGS_PREVIEW_LIMIT:
       args = args[:_TOOL_ARGS_PREVIEW_LIMIT] + "…"
     lines.append(f"• `{call['tool_name']}` `{args}`")
