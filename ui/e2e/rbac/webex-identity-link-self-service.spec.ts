@@ -66,27 +66,30 @@ test.describe("mocked routed Webex self-service identity linking", () => {
 
     await expect(main.getByText(/Webex account:/)).toHaveCount(0);
     await expect(main.getByRole("button", { name: /Link Webex account|Relink/ })).toHaveCount(0);
+    await expect(main.getByRole("link", { name: /Link Webex account|Relink/ })).toHaveCount(0);
   });
 
-  test("shows a Link Webex account button when available and unlinked", async ({ page }) => {
+  test("shows a document link when available and unlinked", async ({ page }) => {
     await installAccessSettingsMocks(page, { webex_link_available: true, webex_linked: false });
     const main = await openAccountAndAccess(page);
 
     await expect(main.getByText("Webex account: Not linked")).toBeVisible();
-    await expect(main.getByRole("button", { name: "Link Webex account" })).toBeVisible();
+    await expect(main.getByRole("link", { name: "Link Webex account" })).toHaveAttribute("href", "/api/auth/webex-link/start");
   });
 
-  test("shows a Relink button and Linked status when already linked", async ({ page }) => {
+  test("shows a Relink document link and Linked status when already linked", async ({ page }) => {
     await installAccessSettingsMocks(page, { webex_link_available: true, webex_linked: true });
     const main = await openAccountAndAccess(page);
 
     await expect(main.getByText("Webex account: Linked")).toBeVisible();
-    await expect(main.getByRole("button", { name: "Relink" })).toBeVisible();
+    await expect(main.getByRole("link", { name: "Relink" })).toHaveAttribute("href", "/api/auth/webex-link/start");
   });
 
-  test("clicking the link button navigates to the start OAuth route", async ({ page }) => {
+  test("keyboard activation starts OAuth with one document request, not an RSC fetch", async ({ page }) => {
     await installAccessSettingsMocks(page, { webex_link_available: true, webex_linked: false });
+    const requestTypes: string[] = [];
     await page.route("**/api/auth/webex-link/start", async (route) => {
+      requestTypes.push(route.request().resourceType());
       await route.fulfill({
         status: 302,
         headers: { location: "/settings/account-and-access?webex_link=success" },
@@ -94,8 +97,10 @@ test.describe("mocked routed Webex self-service identity linking", () => {
     });
     const main = await openAccountAndAccess(page);
 
-    await main.getByRole("button", { name: "Link Webex account" }).click();
+    await main.getByRole("link", { name: "Link Webex account" }).focus();
+    await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/\/settings\/account-and-access\?webex_link=success/);
+    expect(requestTypes).toEqual(["document"]);
   });
 
   test("shows a success banner and refreshes posture after a successful grant", async ({ page }) => {

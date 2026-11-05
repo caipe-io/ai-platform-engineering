@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
 import { cn } from "@/lib/utils";
 import { Loader2,RefreshCw,Shield,Users } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useCallback,useEffect,useState } from "react";
 
 interface RbacPosture {
@@ -31,7 +31,6 @@ function webexLinkErrorMessage(reason: string | null): string {
 }
 
 export function AccessSettings(): React.ReactElement {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [posture,setPosture] = useState<RbacPosture | null>(null);
   const [loading,setLoading] = useState(true);
@@ -148,13 +147,18 @@ export function AccessSettings(): React.ReactElement {
                   </p>
                   <div className="flex items-center gap-1.5">
                     <Button
+                      asChild={!unlinkingWebex}
                       className="h-7 px-2 text-xs"
                       disabled={unlinkingWebex}
-                      onClick={() => { router.push("/api/auth/webex-link/start"); }}
                       size="sm"
                       variant="outline"
                     >
-                      {posture.webex_linked ? "Relink" : "Link Webex account"}
+                      {unlinkingWebex ? "Relink" : (
+                        // eslint-disable-next-line @next/next/no-html-link-for-pages -- OAuth redirects require document navigation, not an RSC fetch.
+                        <a href="/api/auth/webex-link/start">
+                          {posture.webex_linked ? "Relink" : "Link Webex account"}
+                        </a>
+                      )}
                     </Button>
                     {posture.webex_linked ? (
                       <Button
