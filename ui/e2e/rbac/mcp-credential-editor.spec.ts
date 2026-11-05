@@ -203,6 +203,83 @@ test.describe("RBAC e2e — MCP credential editor", () => {
     await expect(page.getByText("Preview ghp_...team")).toBeVisible();
   });
 
+  test("loads caller-visible teams and persists MCP server team sharing", async ({ page }) => {
+    const sharingWrites: string[][] = [];
+    let callerTeamsRequests = 0;
+
+    await installMcpBrowserMocks(page, {
+      servers: [JIRA_AGENTGATEWAY_SERVER],
+      providerConnections: [
+        {
+          id: "conn-atlassian",
+          connectorId: "atlassian-connector",
+          provider: "atlassian",
+          status: "connected",
+        },
+      ],
+      oauthConnectors: [
+        {
+          id: "atlassian-connector",
+          name: "Atlassian Cloud",
+          provider: "atlassian",
+        },
+      ],
+    });
+
+    await page.route("**/api/mcp-servers/jira/sharing", async (route) => {
+      if (route.request().method() === "GET") {
+        await route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({ success: true, data: { teamSlugs: ["platform-team"] } }),
+        });
+        return;
+      }
+
+      if (route.request().method() === "PUT") {
+        const body = route.request().postDataJSON() as { teamSlugs?: string[] };
+        sharingWrites.push(body.teamSlugs ?? []);
+        await route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({ success: true, data: { teamSlugs: body.teamSlugs ?? [] } }),
+        });
+        return;
+      }
+
+      await route.fulfill({ status: 405 });
+    });
+
+    await page.route("**/api/dynamic-agents/teams", async (route) => {
+      callerTeamsRequests += 1;
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          success: true,
+          data: [
+            { slug: "platform-team", name: "Platform Team" },
+            { slug: "observability-team", name: "Observability Team" },
+          ],
+        }),
+      });
+    });
+
+    await gotoMcpServersTab(page);
+    await openMcpServerEditor(page, "Jira");
+
+    const teamPicker = page.getByRole("button", { name: "Add a team…" });
+    await expect(teamPicker).toContainText("Platform Team");
+    await expect.poll(() => callerTeamsRequests).toBe(1);
+
+    await teamPicker.click();
+    await page.getByLabel("Search teams...").fill("observability");
+    await page
+      .getByRole("option", { name: /Observability Team.*team:observability-team/i })
+      .click();
+    await expect(teamPicker).toContainText("Observability Team");
+
+    await page.getByRole("button", { name: "Save Changes" }).click();
+    await expect.poll(() => sharingWrites).toEqual([["platform-team", "observability-team"]]);
+  });
+
   test("hides credential removal and save actions in read-only MCP server view", async ({ page }) => {
     await installMcpBrowserMocks(page, {
       servers: [
