@@ -149,21 +149,23 @@ def check_pyproject(path: Path) -> None:
         if not value or value.startswith("#"):
             continue
 
-        pkg_name = re.split(r"[><=~^!(\s\[]", value)[0].strip().lower().replace("_", "-")
+        # Environment markers constrain installation, not the package version.
+        requirement = value.split(";", 1)[0].strip()
+        pkg_name = re.split(r"[><=~^!(\s\[]", requirement)[0].strip().lower().replace("_", "-")
 
         # Skip workspace / path dependencies
         if pkg_name in workspace_deps:
             continue
 
         # Must be pinned with ==
-        if "==" in value and not re.search(r"[><!~^](?!=)", value.replace("==", "")):
+        if "==" in requirement and not re.search(r"[><!~^](?!=)", requirement.replace("==", "")):
             continue  # properly pinned
 
-        if re.search(r">=|>|~=|!=|\^", value):
+        if re.search(r">=|>|~=|!=|\^", requirement):
             errors.append(f"{path}:{lineno}: unpinned specifier: {value!r}")
-        elif re.search(r"[<>]", value):
+        elif re.search(r"[<>]", requirement):
             errors.append(f"{path}:{lineno}: unpinned range specifier: {value!r}")
-        elif "==" not in value:
+        elif "==" not in requirement:
             # Bare name with no specifier
             errors.append(f"{path}:{lineno}: no version specifier: {value!r}")
 

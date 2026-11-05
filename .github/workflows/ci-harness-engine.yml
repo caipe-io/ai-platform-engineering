@@ -86,7 +86,7 @@ jobs:
         run: |
           uv sync --frozen --extra dev
           uv run ruff check src tests ../../tests/test_release_finalization.py
-          uv run pytest -c pyproject.toml -q tests ../../tests/test_release_finalization.py
+          uv run pytest -c pyproject.toml -q tests ../../tests/test_release_finalization.py ../../tests/test_check_pinned_deps.py
 
   images:
     needs: [metadata, tests]
