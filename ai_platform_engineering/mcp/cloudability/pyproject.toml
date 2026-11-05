@@ -10,7 +10,7 @@ license = "Apache-2.0"
 requires-python = ">=3.13,<4.0"
 dependencies = [
   "httpx==0.28.1",
-  "python-dotenv==1.2.1",
+  "python-dotenv==1.2.2",
   "pydantic==2.12.5",
   "mcp==1.21.0",
   "fastmcp==2.13.3",
@@ -19,10 +19,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "black==26.5.1",
+  "black==26.10.1",
   "isort==8.0.1",
   "mypy==2.1.0",
-  "pytest==9.0.3",
+  "pytest==9.2.0",
   "ruff==0.15.17",
 ]
 
