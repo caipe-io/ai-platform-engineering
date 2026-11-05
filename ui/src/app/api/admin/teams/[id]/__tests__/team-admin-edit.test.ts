@@ -43,11 +43,11 @@ jest.mock("@/lib/rbac/openfga", () => ({
   buildTeamResourceTupleDiff: jest.fn(() => ({ writes: [], deletes: [] })),
   isOpenFgaConfigured: jest.fn(() => true),
   listOpenFgaObjects: (...args: unknown[]) => mockListOpenFgaObjects(...(args as [])),
-  TEAM_TOOL_WILDCARD_SENTINEL_OBJECT: "tool:*",
+  TEAM_TOOL_WILDCARD_SENTINEL_OBJECT: "tool:__all_mcp_servers_intent__",
   teamToolWildcardSentinelTuple: (slug: string) => ({
     user: `team:${slug}#member`,
     relation: "caller",
-    object: "tool:*",
+    object: "tool:__all_mcp_servers_intent__",
   }),
 }));
 
