@@ -269,6 +269,7 @@ class ClaudeCodeCLIAgent(Agent):
             try:
                 self.process.send_signal(signal.SIGINT)
             except ProcessLookupError:
+                # The process can exit between the liveness check and signal.
                 pass
 
 

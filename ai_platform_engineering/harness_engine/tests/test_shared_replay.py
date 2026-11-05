@@ -42,12 +42,15 @@ def test_shared_subscriber_replays_completion_without_execution_access(settings:
             pytest.fail("Run did not complete")
 
         # A viewer cannot supply a subject alone to cross the owner boundary.
-        assert client.get(f"/api/v1/runs/{run_id}", headers=auth_headers("viewer")).status_code == 404
+        unscoped = client.get(f"/api/v1/runs/{run_id}", headers=auth_headers("viewer"))
+        assert unscoped.status_code == 404
         for suffix in ["", "/events", "/events/stream"]:
-            assert client.get(f"/api/v1/runs/{run_id}{suffix}", headers=reader_headers()).status_code == 200
-            assert client.get(f"/api/v1/runs/{run_id}{suffix}", headers=reader_headers(**{
+            shared = client.get(f"/api/v1/runs/{run_id}{suffix}", headers=reader_headers())
+            assert shared.status_code == 200
+            wrong_agent = client.get(f"/api/v1/runs/{run_id}{suffix}", headers=reader_headers(**{
                 "X-Harness-Read-Agent": "agent-other",
-            })).status_code == 404
+            }))
+            assert wrong_agent.status_code == 404
         replay = client.get(f"/api/v1/runs/{run_id}/events?after=1", headers=reader_headers()).json()["data"]
         assert replay["run"]["status"] == "completed"
         assert [event["event_type"] for event in replay["events"]] == ["content.delta", "content.delta", "run.completed"]
@@ -63,12 +66,16 @@ def test_shared_subscriber_replays_completion_without_execution_access(settings:
             ("/api/v1/runs", {"agent_id": "agent-example", "conversation_id": "conversation-example", "message": "again"}),
             ("/api/v1/sessions/clear", {"agent_id": "agent-example", "conversation_id": "conversation-example"}),
         ]:
-            assert client.post(path, headers=reader_headers(), json=body).status_code == 403
-        assert client.delete(f"/api/v1/runs/{run_id}", headers=reader_headers()).status_code == 403
-        assert client.post("/api/v1/sessions/lookup", headers=reader_headers(), json={
+            mutation = client.post(path, headers=reader_headers(), json=body)
+            assert mutation.status_code == 403
+        cancellation = client.delete(f"/api/v1/runs/{run_id}", headers=reader_headers())
+        assert cancellation.status_code == 403
+        wrong_lookup = client.post("/api/v1/sessions/lookup", headers=reader_headers(), json={
             "agent_id": "agent-other", "conversation_id": "conversation-example",
-        }).status_code == 404
-        assert client.get(f"/api/v1/runs/{run_id}", headers=reader_headers(Authorization="Bearer invalid")).status_code == 401
+        })
+        assert wrong_lookup.status_code == 404
+        invalid_token = client.get(f"/api/v1/runs/{run_id}", headers=reader_headers(Authorization="Bearer invalid"))
+        assert invalid_token.status_code == 401
         assert len(repository._sessions) == 1
 
 

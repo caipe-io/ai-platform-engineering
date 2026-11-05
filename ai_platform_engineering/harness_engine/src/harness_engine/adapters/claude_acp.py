@@ -222,7 +222,7 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
                     else:
                         pending.cancel()
                         with suppress(asyncio.CancelledError):
-                            await pending
+                            _ = await pending
                     pending = None
                 result = await task
                 if result.stop_reason != "end_turn":
@@ -231,7 +231,7 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
                 if pending is not None:
                     pending.cancel()
                     with suppress(asyncio.CancelledError):
-                        await pending
+                        _ = await pending
                 if not task.done():
                     client.replaying = True
                     while not client.events.empty():
@@ -242,7 +242,7 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
                     except TimeoutError:
                         task.cancel()
                         with suppress(asyncio.CancelledError):
-                            await task
+                            _ = await task
                         raise ExecutionUnconfirmedError(
                             "ACP cancellation did not confirm that the agent drained"
                         ) from None

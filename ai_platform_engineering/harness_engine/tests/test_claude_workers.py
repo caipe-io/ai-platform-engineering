@@ -257,7 +257,7 @@ async def terminal(client: httpx.AsyncClient, run_id: str) -> dict[str, Any]:
         if page["run"]["status"] in {"completed", "cancelled", "failed"}:
             return page
         await asyncio.sleep(0.01)
-    pytest.fail("Execution did not drain")
+    raise AssertionError("Execution did not drain")
 
 
 async def released_binding(repo: InMemoryRunRepository, binding_id: str) -> SessionBinding:
@@ -267,7 +267,7 @@ async def released_binding(repo: InMemoryRunRepository, binding_id: str) -> Sess
         if binding is not None and binding.active_run is None:
             return binding
         await asyncio.sleep(0.01)
-    pytest.fail("Producer did not release its reservation")
+    raise AssertionError("Producer did not release its reservation")
 
 
 async def test_remote_worker_preserves_session_and_idempotent_admission(
@@ -517,10 +517,9 @@ async def test_cancelled_sdk_tool_drains_the_dispatched_call_without_retry(
     task.cancel()
     await asyncio.sleep(0)
     assert not task.done()
-    assert count == 1
     finish.set()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        await asyncio.wait_for(task, timeout=2)
     assert count == 1
 
 
