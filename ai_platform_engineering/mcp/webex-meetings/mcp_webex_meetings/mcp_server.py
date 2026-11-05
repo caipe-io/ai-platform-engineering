@@ -23,6 +23,8 @@ USERHUB_RECORDINGS_PATH = "/webappng/api/v1/recordings"
 USERHUB_RECORDINGS_PAGE_SIZE = 100
 USERHUB_RECORDINGS_MAX_RESULTS = 1000
 USERHUB_RECORDING_DETAIL_LIMIT = 100
+USERHUB_RECORDING_DISCOVERY_WINDOW = timedelta(days=2)
+USERHUB_OCCURRENCE_MATCH_WINDOW = timedelta(hours=12)
 USERHUB_RECORDING_SUFFIX = re.compile(r"-\d{8}\s+\d{4}(?:-\d+)?$")
 SENSITIVE_KEY_SUBSTRINGS = ("password", "hostkey")
 
@@ -704,7 +706,7 @@ def _select_userhub_recording_candidates(
             (abs(recording_time - meeting_start), recording)
             for recording in candidates
             if (recording_time := _userhub_recording_time(recording)) is not None
-            and abs(recording_time - meeting_start) <= timedelta(days=2)
+            and abs(recording_time - meeting_start) <= USERHUB_RECORDING_DISCOVERY_WINDOW
         ]
         nearby_with_distance.sort(key=lambda item: item[0])
         # This only bounds discovery. A nearby recording is not proof that
@@ -888,13 +890,13 @@ async def _userhub_transcripts_for_meeting(
             instance_id = detail["meetingInstanceId"]
             occurrence_start = occurrence_starts.get(instance_id)
             if occurrence_start is not None:
-                if abs(occurrence_start - meeting_start) <= timedelta(minutes=5):
+                if abs(occurrence_start - meeting_start) <= USERHUB_OCCURRENCE_MATCH_WINDOW:
                     matching_instances.add(instance_id)
             elif instance_id in unavailable_instances:
                 recording_start = _userhub_recording_time(recording)
                 if (
                     recording_start is not None
-                    and abs(recording_start - meeting_start) <= timedelta(minutes=30)
+                    and abs(recording_start - meeting_start) <= USERHUB_OCCURRENCE_MATCH_WINDOW
                 ):
                     matching_instances.add(instance_id)
         # Multiple nearby instances are ambiguous. Never choose an occurrence

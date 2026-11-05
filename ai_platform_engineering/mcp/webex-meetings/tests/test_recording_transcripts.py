@@ -142,3 +142,21 @@ async def test_exact_userhub_lookup_reuses_verified_actual_start(monkeypatch: py
     assert metadata_calls == ["/v1/meetings/instance-1"]
     assert result["items"][0]["startTime"] == "2026-11-05T15:00:00+00:00"
     assert result["items"][0]["occurrenceStart"] == "2026-11-05T13:00:30+00:00"
+
+
+@pytest.mark.asyncio
+async def test_exact_public_transcript_is_not_filtered_by_fallback_time_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/meetingTranscripts":
+            assert request.url.params["meetingId"] == "instance-1"
+            return httpx.Response(200, json={"items": [{
+                "id": "transcript-1", "meetingId": "instance-1", "startTime": "2026-09-04T16:58:27Z",
+            }]})
+        assert request.url.path == "/v1/meetingTranscripts/transcript-1/download"
+        return httpx.Response(200, text="Example public transcript")
+
+    result = await transcript_tool(monkeypatch, handler)(mcp_server.ListTranscripts(
+        meeting_id="instance-1", meeting_start="2026-11-05T13:00:00Z", download=True,
+    ))
+    assert result["items"][0]["meetingId"] == "instance-1"
+    assert result["items"][0]["body"] == "Example public transcript"
