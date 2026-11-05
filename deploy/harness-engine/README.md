@@ -92,6 +92,8 @@ executor separation and OpenShell/Kata remain follow-up work; see the
 
 - CI runs `smoke-image.sh` with read-only root, no capabilities, resource limits
   and no network; it exercises ACP initialization and the installed CLI.
+- CI checks proxy policy with a disposable HTTPS fixture and explicit test CA;
+  it does not disable TLS verification or depend on external model availability.
 - Before admitting users, verify an approved model request, forbidden hostname,
   metadata/private address and direct-egress attempt in the deployment.
 - Roll back previous image digests and overlay configuration; preserve volumes.

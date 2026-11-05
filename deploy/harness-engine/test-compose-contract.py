@@ -48,6 +48,8 @@ def main() -> None:
                 raise RuntimeError(f"Compose fixture failed: {result.stderr}")
             rendered = json.loads(result.stdout)
             assert rendered["networks"]["harness-workers"]["internal"] is True
+            assert not rendered["networks"]["worker-egress"].get("internal", False)
+            assert set(rendered["services"]["worker-egress"]["networks"]) == {"harness-workers", "worker-egress"}
             for name in ["harness-engine", "dynamic-agents", "caipe-ui", "worker-egress"] + [w + "-worker" for w in combination]:
                 service = rendered["services"][name]
                 assert not service.get("build"), f"Unexpected source build: {name}"
@@ -55,6 +57,8 @@ def main() -> None:
             for worker in combination:
                 service = rendered["services"][worker + "-worker"]
                 assert service["read_only"] and service["cap_drop"] == ["ALL"]
+                assert service["user"] == "65532:65532"
+                assert float(service["cpus"]) > 0 and int(service["mem_limit"]) > 0
                 assert service["pids_limit"] == 256 and not service.get("ports")
                 assert set(service["networks"]) == {"harness-workers"}
                 assert service["environment"]["AWS_EC2_METADATA_DISABLED"] == "true"
