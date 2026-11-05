@@ -96,7 +96,9 @@ flowchart LR
 ## Deployment
 
 Use the optional `deploy/harness-engine/compose.claude-acp.yaml` overlay with
-the base Compose file and `compose.deep-agents.yaml`. The standard OSS install
+the base Compose file, `compose.deep-agents.yaml`, and the shared
+`compose.worker-egress.yaml` overlay loaded once. Published images and model-host
+configuration are described in the [deployment guide](https://github.com/caipe-io/ai-platform-engineering/blob/main/deploy/harness-engine/README.md). The standard OSS install
 profiles do not enable this worker.
 
 For the CLI, add `deploy/harness-engine/compose.claude-cli-acp.yaml` instead, or

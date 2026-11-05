@@ -4,6 +4,9 @@ Execution control plane for opt-in Deep Agents, AgentCore and Claude Agent SDK
 adapters. The default installation continues to use the existing Dynamic Agents
 service until an operator enables the Engine integration.
 
+See [runtime images and restricted workers](../../deploy/harness-engine/README.md)
+for publishing, Compose controls and network requirements.
+
 ## Boundary
 
 - Deep Agents reuses the Dynamic Agents graph, tool, middleware, skill, file and
@@ -53,10 +56,14 @@ service until an operator enables the Engine integration.
 ## Agent Builder harness status
 
 - LangChain Deep Agents is **Stable**, including its opt-in Engine integration.
-- Claude SDK (local and remote worker) and AgentCore are **Experimental** CAIPE integrations. Agent Builder
-  shows the catalog's certification status on each harness option.
-  `certified` is labeled **Stable**; `blocked` is labeled
-  **Blocked** and remains disabled.
+- All other CAIPE runtime integrations are **Experimental**. Configured runtimes
+  are selectable by default; experimental status does not require an opt-in.
+  Missing configuration and explicit operator blocks still prevent execution.
+- Agent Builder's **ⓘ** control compares the execution options. **Claude Agent
+  SDK (Local)** calls the SDK inside the Engine service. **Remote worker** moves
+  SDK execution to a worker; **SDK (ACP)** runs an ACP adapter process on that
+  worker. ACP changes the execution boundary, not session ownership: Engine and
+  Gateway retain run persistence, authorization, and replay.
 - **Claude Agent SDK (ACP)** preserves the existing `claude_code_acp` harness.
   **Claude Code CLI (ACP)** is a separate `claude_code_cli_acp` harness that starts
   the pinned CLI executable directly. ACP session allocation is distinct from a
@@ -430,7 +437,8 @@ inside the remote worker; it does not introduce another browser session manager.
   Directories alone do not provide operating-system sandboxing.
 
 The optional [worker overlay](../../deploy/harness-engine/compose.claude-sdk.yaml)
-adds a worker to the Deep Agents overlay. It is also a template for a separate
+adds a worker to the Deep Agents overlay together with the shared
+[egress overlay](../../deploy/harness-engine/compose.worker-egress.yaml), loaded once. It is also a template for a separate
 worker host; replace its URL with that host's private HTTPS endpoint.
 
 The UI BFF requires:
@@ -474,17 +482,20 @@ uv run pytest -q
   the compatibility service. Use a shared volume for a single-host deployment,
   or the existing S3 attachment backend for multiple hosts.
 
-An optional Compose overlay builds both upgraded producers and the UI without
-changing the default install profiles:
+An optional Compose overlay selects published images for both upgraded producers
+and the UI without changing the default install profiles:
 
 ```bash
-# Configure SSO, model access and secrets in .env first.
+# Configure SSO, model access, secrets and HARNESS_IMAGE_TAG in .env first.
 # Add harness-engine to your existing profile list; keep dynamic-agents enabled.
 docker compose --env-file .env \
   -f docker-compose.yaml \
   -f deploy/harness-engine/compose.deep-agents.yaml \
-  --profile harness-engine up -d --build harness-engine dynamic-agents caipe-ui
+  --profile harness-engine up -d harness-engine dynamic-agents caipe-ui
 ```
+
+For explicit source builds and image overrides, see the
+[deployment guide](../../deploy/harness-engine/README.md).
 
 The compatibility service remains required for management and file APIs. Do not
 retire it as part of enabling Engine execution. Upgrade both producers before

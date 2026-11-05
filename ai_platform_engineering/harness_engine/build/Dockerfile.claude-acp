@@ -17,6 +17,8 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONPATH="/app/src" \
+    HOME="/workspace" \
+    PYTHONDONTWRITEBYTECODE="1" \
     HARNESS_ENGINE_CLAUDE_ACP_COMMAND='["node","/opt/claude-acp/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"]'
 RUN mkdir -p /workspace && chown 65532:65532 /workspace
 USER 65532:65532

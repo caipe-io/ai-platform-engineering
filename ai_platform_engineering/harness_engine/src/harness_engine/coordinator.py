@@ -243,7 +243,13 @@ class RunCoordinator:
                             run.run_id, event.event_type, event.data
                         )
             current = await self._repository.get_run(run.run_id)
-            if current is None or current.cancellation_requested:
+            # A rewind can commit its fork while Stop is being requested. Its
+            # returned checkpoint must remain visible as a completed operation.
+            committed_rewind = (
+                request.command == "rewind" and outcome is not None and outcome.status == "completed"
+                and bool(outcome.result and outcome.result.get("checkpoint_id"))
+            )
+            if current is None or current.cancellation_requested and not committed_rewind:
                 raise asyncio.CancelledError
             await self._session_manager.ensure_active(context.binding)
             if v2 and outcome is None:

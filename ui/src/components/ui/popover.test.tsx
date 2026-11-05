@@ -98,6 +98,30 @@ it("closes on Escape and returns focus to the trigger", () => {
   expect(trigger).toHaveFocus();
 });
 
+it("clamps the final bounds after a scale animation ends", () => {
+  let contentHeight = 475;
+  const measure = jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const content = this.hasAttribute("data-popover-content");
+    const top = content ? 0 : 360;
+    const height = content ? contentHeight : 36;
+    return { top, bottom: top + height, left: 600, right: 1050, width: 450, height, x: 600, y: top, toJSON: () => ({}) } as DOMRect;
+  });
+  try {
+    render(<Popover>
+      <PopoverTrigger><span>Open animated guide</span></PopoverTrigger>
+      <PopoverContent>Runtime comparison</PopoverContent>
+    </Popover>);
+    fireEvent.click(screen.getByRole("button", { name: "Open animated guide" }));
+    const content = screen.getByText("Runtime comparison");
+    expect(content.style.top).toBe(`${window.innerHeight - 475 - 8}px`);
+    contentHeight = 500;
+    fireEvent.animationEnd(content);
+    expect(content.style.top).toBe(`${window.innerHeight - 500 - 8}px`);
+  } finally {
+    measure.mockRestore();
+  }
+});
+
 it("does not open an aria-disabled custom trigger", () => {
   render(
     <Popover>
