@@ -18,6 +18,10 @@ if TYPE_CHECKING:
     from harness_engine.sessions import ProviderSessionManager
 
 
+class ExecutionUnconfirmedError(RuntimeError):
+    """A remote producer may still be running; retain its durable reservation."""
+
+
 class HarnessAdapter(Protocol):
     @property
     def descriptor(self) -> HarnessDescriptor:

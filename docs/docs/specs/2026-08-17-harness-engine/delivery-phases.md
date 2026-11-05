@@ -98,7 +98,7 @@ flowchart TD
 | Runtime compatibility, event normalization, lifecycle and full builder workstreams | Deep Agents integration, retaining existing state and authorization semantics |
 | Worker protocol, claim/lease lifecycle, external state and sandbox hardening | Phase 3 |
 | Cross-harness delegation, child-run visibility and coordinated approvals/Stop | Phase 4 |
-| Memory, additional harnesses, process-failure takeover and ACP integration | Separately scoped extensions; qualify their capabilities before advertising support |
+| Memory, additional harnesses, process-failure takeover and general ACP interoperability | Separately scoped extensions; private Claude worker ACP transport is documented in the Harness Engine README |
 
 - [Plan](plan.md) owns the delivery summary and implementation approach.
 - [Tasks](tasks.md) retains stable task IDs and technical dependency notes. Old task checkboxes are not revalidated by this documentation update.

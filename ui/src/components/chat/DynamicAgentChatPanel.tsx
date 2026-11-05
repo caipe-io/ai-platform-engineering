@@ -5,7 +5,11 @@ import { useComposerDraft } from "@/hooks/use-composer-draft";
 import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
 import { ContextUsageIndicator } from "@/components/chat/ContextUsageIndicator";
+import { ClaudeSessionPanel } from "@/components/chat/ClaudeSessionPanel";
+import { ApiConversationIndicator } from "@/components/chat/ApiConversationIndicator";
 import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
+import { ConversationRuntimeMigration } from "@/components/chat/ConversationRuntimeMigration";
+import { ConversationViewers } from "@/components/chat/ConversationViewers";
 import type { TaskItem } from "@/components/shared/timeline";
 import { MarkdownRenderer } from "@/components/shared/timeline";
 import { ReportProblemDialog } from "@/components/ticket/ReportProblemDialog";
@@ -32,15 +36,17 @@ import { createStreamEvent,FILE_TOOL_NAMES,TODO_TOOL_NAME,type StreamEvent } fro
 import { cn,deduplicateByKey,generateId } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import { useFeatureFlagStore } from "@/store/feature-flag-store";
-import { buildParticipants,ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
+import { ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
 import type { DynamicAgentConfig,ReasoningEffort } from "@/types/dynamic-agent";
 import { AnimatePresence,motion,useReducedMotion } from "framer-motion";
-import { Activity,AlertTriangle,ArrowDown,ArrowLeft,Check,Copy,Loader2,Paperclip,Pencil,RotateCcw,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
+import { Activity,ArrowDown,ArrowLeft,Check,Copy,Loader2,Paperclip,Pencil,RotateCcw,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
 import { AgentPicker } from "@/components/ui/agent-picker";
 import { signIn,useSession } from "next-auth/react";
 import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { pushWithNavigationProgress } from "@/lib/navigation-progress";
 import React,{ useCallback,useEffect,useMemo,useRef,useState } from "react";
 import TextareaAutosize from "react-textarea-autosize";
 import { AgentTimeline,type SubagentLookupInfo } from "./DynamicAgentTimeline";
@@ -55,7 +61,7 @@ import { useSlashCommands } from "./useSlashCommands";
 import { RunFollowUpButton } from "@/components/autonomous/RunFollowUpButton";
 import { useAutonomousFollowUps } from "@/hooks/use-autonomous-follow-ups";
 
-type ReadOnlyReason = 'admin_audit' | 'shared_readonly' | 'agent_deleted' | 'agent_disabled';
+type ReadOnlyReason = 'admin_audit' | 'shared_readonly' | 'agent_deleted' | 'agent_disabled' | 'agent_unavailable';
 
 /**
  * A message waiting in the composer queue while a turn streams. Carries any
@@ -112,8 +118,6 @@ interface ChatPanelProps {
   agentId: string; // Mandatory for Dynamic Agents
   agent?: DynamicAgentConfig | null; // Full agent config object
   isLoadingMessages?: boolean; // Whether messages are still loading (show skeleton)
-  /** Called after a deprecated conversation is linked to a usable agent. */
-  onAgentRelinked?: (agentId: string) => void;
   /** Bounded, host-validated metadata attached to each app-assistant turn. */
   clientContext?: Record<string, unknown>;
   composerDraft?: AssistantDraft | null;
@@ -139,7 +143,6 @@ export function ChatPanel({
   agentId,
   agent,
   isLoadingMessages,
-  onAgentRelinked,
   clientContext: suppliedClientContext,
   composerDraft,
   onComposerDraftApplied,
@@ -152,6 +155,7 @@ export function ChatPanel({
   const agentSkills = agent?.skills;
   const { data: session } = useSession();
   const { toast } = useToast();
+  const router = useRouter();
   const initializeFeatureFlags = useFeatureFlagStore((s) => s.initialize);
   const autoScrollEnabled = useFeatureFlagStore((s) => s.flags.autoScroll ?? true);
   const showTimestamps = useFeatureFlagStore((s) => s.flags.showTimestamps ?? false);
@@ -211,15 +215,14 @@ export function ChatPanel({
   );
 
   const [input, setInput] = useState("");
+  const [observedRuntime, setObservedRuntime] = useState<{ conversationId: string; harnessId: string } | null>(null);
+
   const [feedbackFormOpen, setFeedbackFormOpen] = useState(false);
   const [feedbackChatContext, setFeedbackChatContext] = useState<string>();
   const showFeedbackPrompt = Boolean(feedbackPrompt && getConfig("reportProblemEnabled"));
-  const [hasRelinkedAgent, setHasRelinkedAgent] = useState(false);
-  const relinkRestoresWriteAccess = hasRelinkedAgent && (
-    readOnlyReason === 'agent_deleted' || readOnlyReason === 'agent_disabled'
-  );
-  const panelReadOnly = readOnly && !relinkRestoresWriteAccess;
-  const panelReadOnlyReason = hasRelinkedAgent ? undefined : readOnlyReason;
+  const panelReadOnly = readOnly;
+  const panelReadOnlyReason = readOnlyReason;
+  const [startingNewChat, setStartingNewChat] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
@@ -320,39 +323,29 @@ export function ChatPanel({
     setFeedbackChatContext(undefined);
   }, [conversationId, activeConversationId]);
 
-  // Re-link this deprecated/deleted-agent conversation to the platform default agent,
-  // then reload the page so ChatContainer picks up the new participants.
-  const handleStartNewConversation = useCallback(async () => {
-    if (!conversationId) return;
-    setHasRelinkedAgent(true);
+  // A different agent starts a separate chat. The original history, sharing,
+  // and runtime binding remain attached to the original conversation.
+  const startNewChat = useCallback(async (chosenId?: string) => {
+    if (startingNewChat) return;
+    setStartingNewChat(true);
     try {
-      const agentId = await resolveUsableChatAgentId();
-      const newParticipants = buildParticipants(agentId);
-      await apiClient.updateConversation(conversationId, {
-        participants: newParticipants,
-      });
-      setHasRelinkedAgent(true);
-      // Patch the Zustand store in-place so ChatContainer sees the new participants
-      // immediately — it skips the API fetch when the conversation is already cached.
-      useChatStore.setState((state) => ({
-        conversations: state.conversations.map((c) =>
-          c.id === conversationId ? { ...c, participants: newParticipants } : c,
-        ),
-      }));
-      onAgentRelinked?.(agentId);
+      const nextAgentId = chosenId ?? await resolveUsableChatAgentId();
+      const id = await createConversation(nextAgentId, { activate: false });
+      pushWithNavigationProgress(router, `/chat/${encodeURIComponent(id)}`);
     } catch (err) {
-      setHasRelinkedAgent(false);
-      toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
+      toast(`Could not start a new chat: ${(err as Error).message}`, "error", 8000);
+    } finally {
+      setStartingNewChat(false);
     }
-  }, [conversationId, onAgentRelinked, toast]);
+  }, [createConversation, router, startingNewChat, toast]);
 
-  // "Choose agent" picker state — loaded lazily when the deprecated-agent banner is shown.
+  // New-chat agent picker, loaded only while agent recovery actions are visible.
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const [availableAgents, setAvailableAgents] = useState<{ value: string; label: string }[]>([]);
   const [chosenAgentId, setChosenAgentId] = useState("");
 
   useEffect(() => {
-    const isDeprecatedBanner = readOnlyReason === 'agent_deleted' || readOnlyReason === 'agent_disabled';
+    const isDeprecatedBanner = ['agent_deleted', 'agent_disabled', 'agent_unavailable'].includes(readOnlyReason ?? '');
     if (!isDeprecatedBanner || availableAgents.length > 0) return;
     fetch("/api/dynamic-agents/available", { cache: "no-store" })
       .then((r) => r.json())
@@ -364,25 +357,6 @@ export function ChatPanel({
       })
       .catch(() => {/* non-critical — picker just stays empty */});
   }, [readOnlyReason, availableAgents.length]);
-
-  const handleResumeWithChosenAgent = useCallback(async () => {
-    if (!conversationId || !chosenAgentId) return;
-    setHasRelinkedAgent(true);
-    try {
-      const newParticipants = buildParticipants(chosenAgentId);
-      await apiClient.updateConversation(conversationId, { participants: newParticipants });
-      setHasRelinkedAgent(true);
-      useChatStore.setState((state) => ({
-        conversations: state.conversations.map((c) =>
-          c.id === conversationId ? { ...c, participants: newParticipants } : c,
-        ),
-      }));
-      onAgentRelinked?.(chosenAgentId);
-    } catch (err) {
-      setHasRelinkedAgent(false);
-      toast(`Could not resume conversation: ${(err as Error).message}`, "error", 8000);
-    }
-  }, [conversationId, chosenAgentId, onAgentRelinked, toast]);
 
   // Slash command registry
   const slashCommands = useSlashCommands(agentSkills, agent?.allowed_tools, agent?.subagents);
@@ -594,7 +568,11 @@ export function ChatPanel({
   const isThisConversationStreaming = activeConversationId
     ? isConversationStreaming(activeConversationId)
     : false;
+  const readOnlySubscription = useChatStore(state => activeConversationId ? state.streamingConversations.get(activeConversationId)?.readOnly : false);
+  const isStopping = useChatStore(state => activeConversationId ? state.streamingConversations.get(activeConversationId)?.stopping === true : false);
+  const stopError = useChatStore(state => activeConversationId ? state.streamingConversations.get(activeConversationId)?.stopError : undefined);
   const externalActivity = useChatStore(state => activeConversationId ? state.externalActivity[activeConversationId] : undefined);
+  const migrationActivity = useChatStore(state => conversationId ? state.externalActivity[conversationId] : undefined);
   const isRemoteResponse = !!externalActivity && !isThisConversationStreaming;
   const stageDraftAttachment = useCallback((id: string, file: File) => {
     setAttachments((current) => current.some((item) => item.id === id) ? current : [...current, { id, file }]);
@@ -752,7 +730,7 @@ export function ChatPanel({
   // ═══════════════════════════════════════════════════════════════
   useEffect(() => {
     // Skip if no conversationId (new conversation) or agentId
-    if (!conversationId || !agentId || isAutonomousHistory) return;
+    if (!conversationId || !agentId || isAutonomousHistory || panelReadOnly) return;
     
     // Wait for messages to be loaded (race condition on page refresh:
     // this effect can fire before ChatContainer finishes loading messages
@@ -853,7 +831,7 @@ export function ChatPanel({
     };
 
     checkInterruptState();
-  }, [conversationId, agentId, isLoadingMessages, isThisConversationStreaming, hasAssistantMessageForInterruptCheck, isAutonomousHistory, isRemoteResponse]);
+  }, [conversationId, agentId, isLoadingMessages, isThisConversationStreaming, hasAssistantMessageForInterruptCheck, isAutonomousHistory, isRemoteResponse, panelReadOnly]);
 
   // ═══════════════════════════════════════════════════════════════
   // FILES & TASKS FETCH (for timeline display in latest message)
@@ -1072,6 +1050,7 @@ export function ChatPanel({
     hasError: boolean;
     errorMessage?: string;
     serverCompleted?: boolean;
+    serverCancelled?: boolean;
     /** Epoch ms when the turn was submitted — used to derive latency_ms. */
     startedAt?: number;
   }
@@ -1109,6 +1088,7 @@ export function ChatPanel({
     };
 
     return {
+    onRuntime(harnessId) { setObservedRuntime({ conversationId: convId, harnessId }); },
     onContent(text, namespace) {
       loopState.accumulatedText += text;
       loopState.rawStreamContent += text;
@@ -1277,6 +1257,11 @@ export function ChatPanel({
       loopState.serverCompleted = true;
     },
 
+    onCancelled() {
+      loopState.serverCompleted = true;
+      loopState.serverCancelled = true;
+    },
+
     onError(message) {
       console.error("[DynamicAgent] Stream error event:", message);
       loopState.hasError = true;
@@ -1311,7 +1296,7 @@ export function ChatPanel({
       state.errorMessage = "The connection ended before the server confirmed completion.";
     }
     const isFinal = !state.hitlFormRequested;
-    const turnStatus: TurnStatus = state.hitlFormRequested
+    const turnStatus: TurnStatus = state.serverCancelled ? "cancelled" : state.hitlFormRequested
       ? "waiting_for_input"
       : state.hasError
         ? "interrupted"
@@ -1320,7 +1305,7 @@ export function ChatPanel({
     // Client-measured end-to-end latency for the turn. Only recorded on a
     // clean completion (a HITL pause or error would skew response-time stats).
     const latencyMs =
-      isFinal && !state.hasError && state.startedAt != null
+      isFinal && !state.hasError && !state.serverCancelled && state.startedAt != null
         ? Date.now() - state.startedAt
         : undefined;
 
@@ -1334,6 +1319,7 @@ export function ChatPanel({
       content: finalContent,
       rawStreamContent: state.rawStreamContent,
       isFinal,
+      isInterrupted: false,
       turnStatus,
       ...(state.errorMessage ? { error: state.errorMessage } : {}),
       streamEvents: turnStreamEvents.length > 0 ? turnStreamEvents : undefined,
@@ -1352,7 +1338,7 @@ export function ChatPanel({
   const recoveryTurnId = conversation?.messages?.at(-1)?.turnId;
   useEffect(() => {
     const checked = recoveryChecked.current;
-    if (!activeConversationId || isLoadingMessages || isThisConversationStreaming || isRemoteResponse || isAutonomousHistory || panelReadOnly) return;
+    if (!activeConversationId || isLoadingMessages || isThisConversationStreaming || isAutonomousHistory) return;
     if (!recoveryMessageId || !["assistant", "user"].includes(recoveryMessageRole ?? "") || checked.has(activeConversationId)) return;
     checked.add(activeConversationId);
     let disposed = false;
@@ -1362,6 +1348,9 @@ export function ChatPanel({
       const response = await fetchChatRunStatus(agentId, activeConversationId, recoveryController.signal);
       if (!response.ok || disposed) return;
       const { data } = await response.json();
+      if (data?.runtime === "harness_engine" && typeof data.harness_id === "string") {
+        setObservedRuntime({ conversationId: activeConversationId, harnessId: data.harness_id });
+      }
       if (data?.runtime !== "harness_engine" || !data.run_id || data.status === "waiting_for_input") return;
       // Maintenance runs (handoff/rewind) have no chat turn identity. They must
       // never replace an unfinished answer or confirm that earlier turn.
@@ -1381,9 +1370,10 @@ export function ChatPanel({
       clearStreamEvents(activeConversationId);
       updateMessage(activeConversationId, assistantId, { isFinal: false });
       setConversationStreaming(activeConversationId, { conversationId: activeConversationId, messageId: assistantId,
-        client: { abort: () => adapter.abort() }, streamAdapter: adapter });
+        client: { abort: () => adapter.abort() }, streamAdapter: adapter, readOnly: panelReadOnly || data.is_run_owner === false,
+        stopping: data.cancellation_requested === true });
       try {
-        await adapter.recoverRun(data.run_id, buildStreamCallbacks(activeConversationId, assistantId, state, new Map()));
+        await adapter.recoverRun(data.run_id, buildStreamCallbacks(activeConversationId, assistantId, state, new Map()), activeConversationId);
       } catch (error) {
         state.hasError = true;
         state.errorMessage = error instanceof Error ? error.message : "Run recovery failed";
@@ -1952,6 +1942,7 @@ export function ChatPanel({
 
   // Wrapper for form submission that uses input state
   const handleSubmit = useCallback(async (forceSend = false) => {
+    if (isStopping) return;
     // Allow a turn with text OR attachments (a file-only send is valid).
     if (!input.trim() && attachments.length === 0) return;
 
@@ -1996,6 +1987,15 @@ export function ChatPanel({
 
     // If streaming and force sending, stop current task first
     if (isThisConversationStreaming && forceSend) {
+      if (activeConversationId && useChatStore.getState().streamingConversations.get(activeConversationId)?.streamAdapter?.canRecoverOnRefresh) {
+        // Keep the replacement prompt queued behind the server's stop/drain
+        // fence. A fixed delay cannot prove that a dispatched tool has ended.
+        setQueuedMessages([{ id: generateId(), text: input.trim(), files: encodedFiles }]);
+        setInput("");
+        setAttachments([]);
+        handleStop();
+        return;
+      }
       handleStop();
       // Clear queued messages when force sending
       setQueuedMessages([]);
@@ -2015,7 +2015,7 @@ export function ChatPanel({
     setAttachments([]);
 
     await submitMessage(message, encodedFiles);
-  }, [input, attachments, submitMessage, isThisConversationStreaming, pendingUserInput, slashCommands, executeSlashCommand, handleEffortCommand, handleStop]);
+  }, [input, attachments, submitMessage, isThisConversationStreaming, isStopping, activeConversationId, pendingUserInput, slashCommands, executeSlashCommand, handleEffortCommand, handleStop]);
 
   // Auto-submit pending message from use case selection
   useEffect(() => {
@@ -2372,10 +2372,29 @@ export function ChatPanel({
     }
   };
 
+  const showClaudeSession = !agent?.presentation?.app && (observedRuntime?.conversationId === activeConversationId
+    ? ["claude_code_acp", "claude_code_cli_acp"].includes(observedRuntime.harnessId ?? "")
+    : !conversation?.messages.length && ["claude_code_acp", "claude_code_cli_acp"].includes(agent?.execution_harness_id ?? ""));
+  const headerControls = (
+    <div className="flex max-w-full flex-wrap items-center justify-end gap-1">
+      {apiConversation && <ApiConversationIndicator readOnly={panelReadOnly} />}
+      <ConversationViewers conversationId={conversationId ?? activeConversationId} />
+      {showClaudeSession ? (
+        <ClaudeSessionPanel activity={isStopping ? "stopping" : externalActivity?.state ?? (isThisConversationStreaming ? "running" : "idle")}
+          cli={(observedRuntime?.conversationId === activeConversationId ? observedRuntime.harnessId : agent?.execution_harness_id) === "claude_code_cli_acp"}
+          readOnly={panelReadOnly || Boolean(readOnlySubscription)} />
+      ) : showAgentHeader && (agent ? (
+        <AgentHarnessBadge harnessId={agent.execution_harness_id} presentation={agent.presentation} />
+      ) : (
+        <Skeleton className="h-6 w-24 rounded-full" />
+      ))}
+    </div>
+  );
+
   return (
     <div className="h-full w-full flex flex-col bg-background relative">
       {showAgentHeader && <div
-        className="flex min-h-14 shrink-0 items-center gap-3 bg-gradient-to-r from-primary/[0.06] via-background/70 to-background px-4 py-2"
+        className="flex min-h-14 shrink-0 flex-wrap items-center gap-3 bg-gradient-to-r from-primary/[0.06] via-background/70 to-background px-4 py-2"
         aria-label={`Chat: ${conversationTitle}`}
       >
         <AgentAvatar
@@ -2394,12 +2413,16 @@ export function ChatPanel({
             {agentName || agentId}
           </p>
         </div>
-        {agent ? (
-          <AgentHarnessBadge harnessId={agent.execution_harness_id} presentation={agent.presentation} />
-        ) : (
-          <Skeleton className="h-6 w-24 rounded-full" />
-        )}
+        {headerControls}
       </div>}
+      {!showAgentHeader && <div className="shrink-0 self-end px-3 py-1">{headerControls}</div>}
+
+      {conversationId && !panelReadOnly && !isAutonomousHistory && !isLoadingMessages &&
+        (!agent?.execution_harness_id || agent.execution_harness_id === "dynamic_agents") &&
+        !agent?.presentation?.app && getStorageMode() === "mongodb" && (
+          <ConversationRuntimeMigration key={`${agentId}:${conversationId}`} agentId={agentId} conversationId={conversationId}
+            busy={isConversationStreaming(conversationId) || Boolean(migrationActivity)} />
+        )}
 
       {/* Messages Area */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
@@ -2588,7 +2611,7 @@ export function ChatPanel({
                           timelineTasks={timelineTasks}
                           onFileDownload={handleTimelineFileDownload}
                           getFileContent={handleGetFileContent}
-                          onFileDelete={handleTimelineFileDelete}
+                          onFileDelete={panelReadOnly ? undefined : handleTimelineFileDelete}
                           isDownloadingFile={isDownloadingFile}
                           downloadingFilePath={downloadingFilePath}
                            isDeletingFile={isDeletingFile}
@@ -2615,7 +2638,7 @@ export function ChatPanel({
             </AnimatePresence>
 
             {/* User Input Form */}
-            {pendingUserInput && pendingUserInput.metadata.input_fields && (
+            {!panelReadOnly && pendingUserInput && pendingUserInput.metadata.input_fields && (
               <MetadataInputForm
                 messageId={pendingUserInput.messageId}
                 title={pendingUserInput.metadata.input_title}
@@ -2653,7 +2676,7 @@ export function ChatPanel({
             )}
 
             {/* Tool Approval Card */}
-            {pendingToolApproval && (() => {
+            {!panelReadOnly && pendingToolApproval && (() => {
               const currentTool = pendingToolApproval.tools[pendingToolApproval.currentIndex];
               const total = pendingToolApproval.tools.length;
               const current = pendingToolApproval.currentIndex + 1;
@@ -2708,27 +2731,13 @@ export function ChatPanel({
         )}
       </AnimatePresence>
 
-      {apiConversation && (
-        <div
-          role="note"
-          className="shrink-0 border-t border-amber-500/30 bg-amber-500/10 px-6 py-2.5 text-amber-800 dark:text-amber-300"
-        >
-          <div className="mx-auto flex max-w-7xl items-start gap-2">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <p className="text-xs">
-              <span className="font-medium">API-linked chat.</span>{" "}
-              Messages sent here update the same conversation used by the API. Continuing here may interfere with that API chat, especially if both clients send at the same time.
-            </p>
-          </div>
-        </div>
-      )}
-
       {/* Input Area - Fixed bottom, doesn't scroll */}
       {panelReadOnly ? (
         <div className={`border-t border-border shrink-0 ${panelReadOnlyReason === 'agent_deleted' || panelReadOnlyReason === 'agent_disabled' ? 'bg-red-500/10' : 'bg-amber-500/10'}`}>
-          <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+          <div className="max-w-7xl mx-auto px-6 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className={`flex items-center gap-2 ${panelReadOnlyReason === 'agent_deleted' || panelReadOnlyReason === 'agent_disabled' ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}`}>
-              <ShieldCheck className="h-4 w-4 shrink-0" />
+              <ShieldCheck className="h-4 w-4 shrink-0 self-start mt-0.5" aria-hidden="true" />
+              <div className="min-w-0 space-y-1">
               {panelReadOnlyReason === 'admin_audit' ? (
                 <>
                   <span className="text-sm font-medium">Read-Only Audit Mode</span>
@@ -2739,6 +2748,11 @@ export function ChatPanel({
                   <span className="text-sm font-medium">Agent No Longer Available</span>
                   <span className="text-xs text-red-600 dark:text-red-500">— This agent has been deprecated or deleted. You can view the history but cannot send new messages.</span>
                 </>
+              ) : panelReadOnlyReason === 'agent_unavailable' ? (
+                <>
+                  <span className="block text-sm font-medium">Read-only conversation</span>
+                  <span className="block text-xs">Sharing this chat does not grant access to its agent. You can read messages and follow live responses. To reply, ask the owner to share the agent with you.</span>
+                </>
               ) : panelReadOnlyReason === 'agent_disabled' ? (
                 <>
                   <span className="text-sm font-medium">Agent Disabled</span>
@@ -2746,10 +2760,11 @@ export function ChatPanel({
                 </>
               ) : (
                 <>
-                  <span className="text-sm font-medium">View Only</span>
-                  <span className="text-xs text-amber-600 dark:text-amber-500">— This conversation was shared with you as read-only.</span>
+                  <span className="block text-sm font-medium">Read-only conversation</span>
+                  <span className="block text-xs text-amber-600 dark:text-amber-500">You can read messages and follow live responses. To reply, ask the owner for Can edit access to this chat. You also need access to its agent.</span>
                 </>
               )}
+              </div>
             </div>
             {panelReadOnlyReason === 'admin_audit' ? (
             <NavigationProgressLink
@@ -2759,7 +2774,7 @@ export function ChatPanel({
               <ArrowLeft className="h-3 w-3" />
               Back to Feedback
             </NavigationProgressLink>
-            ) : (panelReadOnlyReason === 'agent_deleted' || panelReadOnlyReason === 'agent_disabled') ? (
+            ) : ['agent_deleted', 'agent_disabled', 'agent_unavailable'].includes(panelReadOnlyReason ?? '') ? (
             <div className="flex items-center gap-2 flex-wrap">
               {showAgentPicker ? (
                 <>
@@ -2773,11 +2788,11 @@ export function ChatPanel({
                     />
                   </div>
                   <button
-                    onClick={handleResumeWithChosenAgent}
-                    disabled={!chosenAgentId}
+                    onClick={() => void startNewChat(chosenAgentId)}
+                    disabled={!chosenAgentId || startingNewChat}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-red-600/20 text-red-700 dark:text-red-300 hover:bg-red-600/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Resume
+                    Start new chat
                   </button>
                   <button
                     onClick={() => setShowAgentPicker(false)}
@@ -2789,16 +2804,17 @@ export function ChatPanel({
               ) : (
                 <>
                   <button
-                    onClick={handleStartNewConversation}
+                    onClick={() => void startNewChat()}
+                    disabled={startingNewChat}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-red-600/20 text-red-700 dark:text-red-300 hover:bg-red-600/30 transition-colors"
                   >
-                    Resume with default agent
+                    New chat with default agent
                   </button>
                   <button
                     onClick={() => setShowAgentPicker(true)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-muted text-muted-foreground hover:bg-muted/80 transition-colors"
                   >
-                    Choose agent
+                    New chat with another agent
                   </button>
                 </>
               )}
@@ -3048,6 +3064,8 @@ export function ChatPanel({
               {/* Staged attachment previews (above the input row). */}
               {composerHeader}
               <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
+              {isStopping && <p role="status" className="mb-2 text-xs text-muted-foreground">Stopping… Waiting for active work to finish. You can send another message once the server confirms.</p>}
+              {stopError && <p role="alert" className="mb-2 text-xs text-destructive">{stopError}</p>}
 
               <div className="relative z-20 flex items-center">
                 <AnimatePresence initial={false} mode="wait">
@@ -3082,7 +3100,7 @@ export function ChatPanel({
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
                   placeholder={
-                    isRemoteResponse ? "Response is continuing in another view…" : isThisConversationStreaming
+                    isStopping ? "Draft your next message while this response stops…" : isRemoteResponse ? "Response is continuing in another view…" : isThisConversationStreaming
                       ? `Type to queue another message${queuedMessages.length > 0 ? ` (${queuedMessages.length} queued)` : ""}, or Cmd+Enter to send now...`
                       : placeholder ?? `Ask anything, or type / to see commands, skills, and agents...`
                   }
@@ -3136,12 +3154,13 @@ export function ChatPanel({
                     <Button
                       size="icon"
                       onClick={handleStop}
+                      disabled={readOnlySubscription || isStopping}
                       variant="destructive"
                       className="h-8 w-8 rounded-full"
-                      title="Stop generating"
-                      aria-label="Stop generating"
+                      title={isStopping ? "Stopping response" : "Stop generating"}
+                      aria-label={isStopping ? "Stopping response" : "Stop generating"}
                     >
-                      <Square className="h-4 w-4" />
+                      {isStopping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
                     </Button>
                   ) : (
                     <Button
@@ -3565,6 +3584,7 @@ const ChatMessage = React.memo(function ChatMessage({
           // ── Assistant message ──
           <>
             {effectiveTurnStatus === "unknown" && <p role="status" className="mb-3 text-xs text-muted-foreground">Completion has not been confirmed by the server.</p>}
+            {effectiveTurnStatus === "cancelled" && <p role="status" className="mb-3 text-xs text-muted-foreground">Response stopped</p>}
             {/* Recovery / interrupted banner */}
             {(isRecovering || !isStreaming && (message.isInterrupted || effectiveTurnStatus === "interrupted")) && (
               <motion.div

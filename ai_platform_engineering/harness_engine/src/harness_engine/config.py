@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, SecretStr, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -57,12 +58,32 @@ class AgentCoreRuntimeTarget(BaseModel):
 
 
 class ClaudeSDKProfile(BaseModel):
-    """Operator-owned Claude Agent SDK process profile."""
+    """Operator-owned Claude model and workspace policy."""
 
     model: str = Field(..., min_length=1, max_length=128)
     cwd: str = Field("/workspace", min_length=1, max_length=1024)
     permission_mode: str = Field("dontAsk", pattern=r"^(default|acceptEdits|plan|dontAsk)$")
     description: str = Field("", max_length=512)
+
+
+class ClaudeWorkerProfile(BaseModel):
+    """Private connection to an operator-managed SDK worker."""
+
+    url: str = Field(..., min_length=1, max_length=2048)
+    token: SecretStr
+    profile_id: str = Field(..., pattern=r"^[A-Za-z0-9_.-]{1,64}$")
+    description: str = Field("", max_length=512)
+    tools_enabled: bool = False
+    runtime: Literal["sdk", "claude_code_acp", "claude_code_cli_acp"] = "sdk"
+
+    @model_validator(mode="after")
+    def validate_connection(self) -> ClaudeWorkerProfile:
+        parsed = urlsplit(self.url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("Worker URL must be an HTTP(S) service URL without credentials or query parameters")
+        if len(self.token.get_secret_value()) < 16:
+            raise ValueError("Worker service credentials must contain at least 16 characters")
+        return self
 
 
 class Settings(BaseSettings):
@@ -83,6 +104,11 @@ class Settings(BaseSettings):
     agentcore_provision_timeout_seconds: float = Field(180.0, ge=1.0, le=900.0)
     agentcore_provision_poll_seconds: float = Field(2.0, ge=0.1, le=10.0)
     claude_sdk_profiles_json: str = "{}"
+    claude_worker_profiles_json: SecretStr = SecretStr("{}")
+    claude_tool_broker_url: str | None = None
+    claude_acp_command: list[str] = Field(default_factory=list)
+    claude_acp_runtime: Literal["claude_code_acp", "claude_code_cli_acp"] = "claude_code_acp"
+    claude_acp_tools: list[str] = Field(default_factory=list)
     deep_agents_enabled: bool = False
 
     def agentcore_targets(self) -> dict[str, AgentCoreRuntimeTarget]:
@@ -106,3 +132,13 @@ class Settings(BaseSettings):
             return {alias: ClaudeSDKProfile.model_validate(value) for alias, value in raw.items()}
         except (json.JSONDecodeError, ValidationError, ValueError) as exc:
             raise ValueError("HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON is invalid") from exc
+
+    def claude_worker_profiles(self) -> dict[str, ClaudeWorkerProfile]:
+        try:
+            raw = json.loads(self.claude_worker_profiles_json.get_secret_value())
+            if not isinstance(raw, dict):
+                raise ValueError("must be a JSON object")
+            return {alias: ClaudeWorkerProfile.model_validate(value) for alias, value in raw.items()}
+        except (json.JSONDecodeError, ValidationError, ValueError):
+            # Validation inputs contain the private worker credential.
+            raise ValueError("HARNESS_ENGINE_CLAUDE_WORKER_PROFILES_JSON is invalid") from None

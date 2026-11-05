@@ -414,7 +414,7 @@ export class TimelineManager {
     }
 
     // Mark all running tools as completed (unless interrupted)
-    const toolStatus = status === "interrupted" ? "failed" : "completed";
+    const toolStatus = status === "cancelled" ? "cancelled" : status === "interrupted" ? "failed" : "completed";
     for (const tool of this.rootToolMap.values()) {
       if (tool.status === "running") {
         tool.status = toolStatus;

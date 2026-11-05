@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 
+import pytest
+
 from harness_engine.adapters.agentcore import AgentCoreAdapter
 from harness_engine.config import Settings
 from harness_engine.models import (
@@ -40,21 +42,18 @@ class FakeClient:
 
 
 class FakeManagedHarnessClient:
-    def __init__(self) -> None:
+    def __init__(self, events: list[dict[str, object]] | None = None) -> None:
         self.calls: list[dict[str, object]] = []
+        self.events = events if events is not None else [
+            {"messageStart": {"role": "assistant"}},
+            {"contentBlockDelta": {"delta": {"text": "managed"}}},
+            {"contentBlockDelta": {"delta": {"text": " harness"}}},
+            {"metadata": {"usage": {"inputTokens": 3, "outputTokens": 2}}},
+        ]
 
     def invoke_harness(self, **kwargs: object) -> dict[str, object]:
         self.calls.append(kwargs)
-        return {
-            "stream": iter(
-                [
-                    {"messageStart": {"role": "assistant"}},
-                    {"contentBlockDelta": {"delta": {"text": "managed"}}},
-                    {"contentBlockDelta": {"delta": {"text": " harness"}}},
-                    {"metadata": {"usage": {"inputTokens": 3, "outputTokens": 2}}},
-                ]
-            )
-        }
+        return {"stream": iter(self.events)}
 
 
 def context(profile_id: str = "primary") -> RunContext:
@@ -153,7 +152,27 @@ async def test_agentcore_adapter_invokes_managed_harness() -> None:
         "00-11111111111111111111111111111111-2222222222222222-01"
     )
     assert call["runtimeUserId"] != "test-user"
+    assert call["actorId"] == call["runtimeUserId"]
     assert "Authorization" not in call
+
+
+@pytest.mark.parametrize("error_type", ["runtimeClientError", "internalServerException", "validationException"])
+async def test_agentcore_rejects_provider_errors_after_partial_content(error_type: str) -> None:
+    client = FakeManagedHarnessClient([
+        {"contentBlockDelta": {"delta": {"text": "partial"}}},
+        {error_type: {"message": "Private provider failure details"}},
+        {"contentBlockDelta": {"delta": {"text": "must not be published"}}},
+    ])
+    settings = Settings(agentcore_runtimes_json=json.dumps({"primary": {
+        "arn": "arn:aws:bedrock-agentcore:us-east-2:111122223333:harness/example",
+        "region": "us-east-2",
+    }}))
+    adapter = AgentCoreAdapter(settings, clients={"us-east-2": client})
+    stream = adapter.stream(context())
+    assert (await anext(stream)).data["text"] == "partial"
+    with pytest.raises(RuntimeError, match=error_type) as error:
+        await anext(stream)
+    assert "Private provider failure details" not in str(error.value)
 
 
 async def test_agentcore_adapter_resolves_a_server_owned_per_agent_harness() -> None:

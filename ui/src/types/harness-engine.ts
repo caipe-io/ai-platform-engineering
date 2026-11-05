@@ -2,6 +2,7 @@ export type HarnessRunStatus = "queued" | "running" | "paused" | "completed" | "
 
 export interface HarnessRun {
   run_id: string;
+  owner_subject?: string;
   agent_id: string;
   conversation_id: string;
   agent_version: number;
@@ -15,6 +16,7 @@ export interface HarnessRun {
   resumes_run_id?: string | null;
   interrupt_id?: string | null;
   status: HarnessRunStatus;
+  cancellation_requested?: boolean;
   last_sequence: number;
 }
 
@@ -62,7 +64,7 @@ export interface HarnessDescriptor {
   display_name: string;
   adapter_version: string;
   contract_version: number;
-  execution_mode: "provider_managed" | "sandbox_pod" | "in_process";
+  execution_mode: "provider_managed" | "sandbox_pod" | "in_process" | "remote_worker";
   availability: "available" | "misconfigured" | "unavailable";
   certification: "experimental" | "certified" | "blocked";
   profiles: HarnessProfile[];

@@ -3,6 +3,7 @@ import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 interface AgentInfoResult {
   agent: DynamicAgentConfig | null;
   notFound: boolean;
+  unavailable?: boolean;
 }
 
 export function buildAgentChatTitle(agentName: string, appName: string): string {
@@ -18,15 +19,12 @@ export function buildAgentChatTitle(agentName: string, appName: string): string 
  * correct fallback for the chat identity header.
  */
 export async function fetchAgentInfoForChat(agentId: string): Promise<AgentInfoResult> {
-  let detailNotFound = false;
-
   try {
     const response = await fetch(`/api/dynamic-agents/agents/${encodeURIComponent(agentId)}`);
     if (response.ok) {
       const data = await response.json();
       return { agent: data.data as DynamicAgentConfig, notFound: false };
     }
-    detailNotFound = response.status === 404;
   } catch (error) {
     console.error("[ChatContainer] Failed to fetch agent detail:", error);
   }
@@ -45,5 +43,7 @@ export async function fetchAgentInfoForChat(agentId: string): Promise<AgentInfoR
     console.error("[ChatContainer] Failed to fetch available agent metadata:", error);
   }
 
-  return { agent: null, notFound: detailNotFound };
+  // Detail 404s deliberately hide agents the caller cannot read. An empty
+  // use-authorized list cannot prove deletion either, especially for a shared viewer.
+  return { agent: null, notFound: false, unavailable: true };
 }

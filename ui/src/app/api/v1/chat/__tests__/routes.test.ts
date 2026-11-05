@@ -126,6 +126,23 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
     mockMintScheduledOwnerToken.mockResolvedValue("owner-bearer-token");
   });
 
+  it("reads shared Engine status without requiring agent use or conversation write", async () => {
+    mockFindGatewayBinding.mockResolvedValue({ runtime: "harness_engine", agent_id: "agent-1", conversation_id: "conv-1" });
+    mockLookupHarnessSession.mockResolvedValue({ harness_id: "dynamic_agents", last_run: {
+      run_id: "run-owner", owner_subject: "other-owner", status: "completed", turn_id: "turn-owner", last_sequence: 8,
+    } });
+    mockRequireAgentUsePermission.mockResolvedValue(NextResponse.json({ error: "No use permission" }, { status: 403 }));
+    const response = await statusPost(jsonRequest("/api/v1/chat/stream/status", { agent_id: "agent-1", conversation_id: "conv-1" }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ data: { runtime: "harness_engine", run_id: "run-owner", run_status: "completed", is_run_owner: false } });
+    expect(mockRequireAgentUsePermission).not.toHaveBeenCalled();
+    expect(mockRequireConversationResourcePermission).toHaveBeenCalledWith(expect.any(Object), "alice@example.com", expect.any(Object), "read");
+    expect(mockRequireConversationResourcePermission).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), "write");
+    expect(mockLookupHarnessSession).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ subject: "alice-sub" }), "agent-1", "conv-1", {
+      agentId: "agent-1", conversationId: "conv-1",
+    });
+  });
+
   it.each([
     ["start", startPost], ["resume", resumePost], ["cancel", cancelPost],
     ["status", statusPost], ["invoke", invokePost],

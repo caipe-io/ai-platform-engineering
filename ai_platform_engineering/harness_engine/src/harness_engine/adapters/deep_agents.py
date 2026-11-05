@@ -98,7 +98,7 @@ class DeepAgentsAdapter:
             contract_version=2,
             execution_mode=ExecutionMode.IN_PROCESS,
             availability="available",
-            certification="experimental",
+            certification="certified",
             profiles=[
                 HarnessProfile(
                     id="existing", harness_id="dynamic_agents", display_name="Existing runtime configuration"

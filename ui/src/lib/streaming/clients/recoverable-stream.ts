@@ -6,6 +6,8 @@ export async function* recoverableStream(
   initial: Response, protocol: "agui" | "custom", signal: AbortSignal,
 ): AsyncGenerator<RawSSEEvent> {
   const runId = initial.headers.get("X-Harness-Run-ID");
+  const conversationId = initial.headers.get("X-Harness-Conversation-ID");
+  const scope = conversationId ? `&conversation_id=${encodeURIComponent(conversationId)}` : "";
   let response = initial;
   let cursor = "0";
   let attempts = 0;
@@ -27,7 +29,7 @@ export async function* recoverableStream(
       await waitForRetry(Math.min(250 * 2 ** Math.min(attempts++, 7), 30_000), signal);
       if (signal.aborted) return;
       try {
-        response = await fetch(`/api/harness-engine/runs/${encodeURIComponent(runId!)}/events/stream?after=${encodeURIComponent(cursor)}&protocol=${protocol}`, {
+        response = await fetch(`/api/harness-engine/runs/${encodeURIComponent(runId!)}/events/stream?after=${encodeURIComponent(cursor)}&protocol=${protocol}${scope}`, {
           credentials: "same-origin", signal, cache: "no-store",
         });
       } catch {

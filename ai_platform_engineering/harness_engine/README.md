@@ -4,6 +4,9 @@ Execution control plane for opt-in Deep Agents, AgentCore and Claude Agent SDK
 adapters. The default installation continues to use the existing Dynamic Agents
 service until an operator enables the Engine integration.
 
+See [runtime images and restricted workers](../../deploy/harness-engine/README.md)
+for publishing, Compose controls and network requirements.
+
 ## Boundary
 
 - Deep Agents reuses the Dynamic Agents graph, tool, middleware, skill, file and
@@ -23,7 +26,8 @@ service until an operator enables the Engine integration.
 - The BFF authenticates and authorizes callers, then uses an internal service
   credential. Deep Agents additionally receives the current delegated bearer in
   transient execution context for CAS/MCP checks; it is excluded from persisted
-  runs and events. Provider SDK adapters do not receive this delegated bearer.
+  runs and events. Claude SDK tool brokers receive the delegated bearer only
+  for caller-scoped BFF requests, including across a private worker connection.
 - A provider invocation belongs to Harness Engine, not to an SSE subscriber. Closing a browser or BFF connection only removes that subscription.
 - The chat UI subscribes through fetch-based SSE and reattaches with the admitted run ID and event cursor after a refresh or transport failure. It never reposts the prompt to recover a run.
 - Only a server terminal event confirms completion. A closed connection or unfinished saved response must not mark pending tools or the turn as done.
@@ -51,15 +55,36 @@ service until an operator enables the Engine integration.
 
 ## Agent Builder harness status
 
-- The compatibility service remains the **Stable** default. The opt-in Engine
-  integration for LangChain Deep Agents is **Experimental**.
-- Claude SDK and AgentCore are **Experimental** CAIPE integrations. Agent Builder
-  shows the catalog's certification status in the harness dropdown and beside
-  the selected harness. `certified` is labeled **Stable**; `blocked` is labeled
-  **Blocked** and remains disabled.
+- LangChain Deep Agents is **Stable**, including its opt-in Engine integration.
+- All other CAIPE runtime integrations are **Experimental**. Configured runtimes
+  are selectable by default; experimental status does not require an opt-in.
+  Missing configuration and explicit operator blocks still prevent execution.
+- Agent Builder's **ⓘ** control compares the execution options. **Claude Agent
+  SDK (Local)** calls the SDK inside the Engine service. **Remote worker** moves
+  SDK execution to a worker; **SDK (ACP)** runs an ACP adapter process on that
+  worker. ACP changes the execution boundary, not session ownership: Engine and
+  Gateway retain run persistence, authorization, and replay.
+- **Claude Agent SDK (ACP)** preserves the existing `claude_code_acp` harness.
+  **Claude Code CLI (ACP)** is a separate `claude_code_cli_acp` harness that starts
+  the pinned CLI executable directly. ACP session allocation is distinct from a
+  native CLI conversation: an early stop or startup failure before persistence
+  keeps the same allocated ID for the next first invocation. Native transcripts
+  or observed inference/tool output pin subsequent turns to resume; legacy or
+  already-started sessions never fall back to a fresh invocation. Unconfirmed
+  process/tool drain still retains the outer Engine/worker reservation.
+  Each has its own worker profile and saved
+  workspace; existing conversations keep their original runtime.
+- The optional `deploy/harness-engine/compose.claude-cli-acp.yaml` overlay adds the
+  CLI worker. See [Claude ACP architecture](../../docs/docs/architecture/claude-acp.md)
+  for connection settings, native tool policy and persistence boundaries.
+- Read the [Claude ACP threat model](../../docs/docs/security/claude-acp-threat-model.md)
+  before enabling native tools or sharing workers across trust domains. It covers
+  capability lifetime, caller/provider credentials, cancellation and isolation limits.
 
 ## Connect an existing AgentCore deployment
 
+- Agent Builder lists **Amazon Bedrock AgentCore (Remote sessions) — Experimental**.
+  CAIPE keeps the native `runtimeSessionId` pinned to the conversation binding.
 - In **Agent Builder → Execution harness**, a platform administrator chooses
   **Add existing AgentCore agent**, enters a connection ID beginning with `existing-`, a Harness or
   Runtime ARN, its matching AWS Region, and a qualifier.
@@ -110,16 +135,25 @@ service until an operator enables the Engine integration.
   agent; an authorized request cannot substitute another agent's runtime.
 - Direct Engine admission also verifies the pinned gateway target is a
   provider runtime, preserving native session ownership.
-- Run detail, polling and replay subscriptions retain Engine owner checks and
-  recheck current agent use plus conversation read in the BFF. Cancellation by
-  run ID requires conversation write. Keeping a run ID does not retain revoked
-  access.
+- Shared viewers can read Engine status and replay with current conversation
+  read permission. The BFF derives the agent from the saved conversation and
+  supplies a bounded internal read scope; the real viewer identity is retained.
+  The Engine rejects that scope on mutation routes. Browser headers cannot
+  grant this scope, and a run from another conversation cannot be substituted.
+- Execution controls retain agent use, conversation write, and Engine owner
+  checks. Keeping a run ID does not retain revoked access. Read-only viewers never
+  write transcript messages; the run owner retains final-answer persistence.
+- A conversation keeps its original agent. Recovery with another agent creates
+  a separate empty chat; it preserves the original history, sharing, and binding.
+  An agent hidden by permissions is shown as unavailable, never assumed deleted.
 - Service accounts retain their principal classification in platform checks.
   Engine uses internal credentials plus the verified caller subject; app-owned
   streams use the exact authenticated interactive user.
-- Grants are checked per request/subscription. Existing streams are not
-  continuously reauthorized; downstream app/tool resource checks remain
-  authoritative for their own operations.
+- The Engine event subscription rechecks current caller, agent/conversation
+  scope and read permission every 15 seconds, including while idle. Chunks
+  arriving after a check is due wait for its result. Revocation or a failed
+  authorization check closes only that subscriber; the producer continues.
+  Downstream app/tool resource checks remain authoritative for their operations.
 
 ## Session flow
 
@@ -226,6 +260,13 @@ Harness Engine variables use the `HARNESS_ENGINE_` prefix:
   `harness_provider_resources` collection. Provider-relevant edits update the
   same AWS Harness in place. Agent blueprints and browser responses contain
   only the profile ID.
+  Creation retries retain their idempotency token when the outcome is unknown.
+  When AWS explicitly confirms that a token's resource was deleted, replicas
+  derive the same replacement token. A bounded walk handles retained deletion
+  tombstones without dispatching a new creation after an ambiguous failure.
+  CAIPE-managed Harnesses explicitly disable provider built-in tools while
+  portable AgentCore tool bindings remain unavailable. Shared, externally
+  managed connections retain their operator-owned tool configuration.
 - `HARNESS_ENGINE_AGENTCORE_PROVISION_TIMEOUT_SECONDS` and
   `HARNESS_ENGINE_AGENTCORE_PROVISION_POLL_SECONDS`: readiness polling bounds
   for per-agent Harness creation.
@@ -252,8 +293,17 @@ Creation permissions use `Resource: *` with an `aws:RequestedRegion`
 condition because the provider resources do not exist yet. Existing-resource
 actions should be restricted to the deployment account/Region Harness,
 runtime, memory, and default workload-identity directory ARN patterns.
+Tag-on-create authorization also covers the managed child resources before
+their IDs exist. Child memory and runtime names can use the parent Harness
+name directly; verify returned ARNs when defining the resource prefixes.
 - `HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON`: alias-to-operator-owned Claude
   policy, for example `{"safe":{"model":"claude-example","cwd":"/workspace","permission_mode":"dontAsk"}}`.
+- `HARNESS_ENGINE_CLAUDE_TOOL_BROKER_URL`: BFF service URL for selected MCP
+  tools; defaults to `AUTHZ_SERVICE_URL`. MCP execution additionally requires
+  the BFF's existing AgentGateway and signed agent-context configuration.
+- `HARNESS_ENGINE_CLAUDE_WORKER_PROFILES_JSON`: private worker connections,
+  for example `{"primary":{"url":"https://worker.example.test","token":"<worker-service-secret>","profile_id":"safe","tools_enabled":true}}`.
+  Only profile aliases and capability flags appear in the public catalog.
 - `HARNESS_ENGINE_EVENT_RETENTION_SECONDS`: TTL for replay events.
 
 With the MongoDB backend, the Claude adapter mirrors the SDK's provider
@@ -263,6 +313,133 @@ resume contract. Keeping both in shared storage lets another Harness Engine
 replica resume the thread without depending on a container's local
 `~/.claude` directory. The SDK's local working copy lives under `/tmp` and is
 disposable.
+
+### Claude SDK execution and MCP tools
+
+- Choose **Claude Agent SDK** for an Engine-local SDK process or **Claude Agent
+  SDK (Remote worker)** for a separately deployed worker. Operator profiles own
+  model credentials, model ID, workspace root and SDK permission mode.
+- SDK built-in shell/filesystem tools and settings discovery are disabled.
+  Each binding gets its own working directory. These directories provide
+  separation, not an operating-system sandbox.
+- Selected MCP tools use an in-process SDK MCP server. Calls return through
+  the BFF under the original caller and real agent, then through AgentGateway.
+  Every list/call rechecks current agent use, conversation write, enabled
+  servers, pinned tools and current tool grants. MCP credentials stay in CAIPE.
+- SDK MCP tools currently require `approval_policy: "never"`; Agent Builder
+  explains this when tools are selected. Approval-dependent blueprints are
+  rejected. Side-effecting tool calls are sent once and never retried after an
+  ambiguous response.
+- Text, reasoning, tool start/end and native session changes enter the same
+  canonical durable event log used by the web UI, Slack and Webex gateway.
+
+### Remote Claude workers over ACP
+
+```mermaid
+sequenceDiagram
+    participant UI as Web UI / bot
+    participant Engine as Harness Engine
+    participant Worker as Private worker
+    participant Agent as SDK or Claude Code ACP
+    UI->>Engine: Start a durable run
+    Engine->>Worker: ACP initialize, session/new or session/resume
+    Engine->>Worker: session/prompt (same run ID, replay cursor)
+    Worker->>Agent: SDK call or ACP over stdio
+    Agent-->>Worker: Text and tool updates
+    Worker-->>Engine: session/update and final prompt result
+    Engine-->>UI: Persisted canonical events
+    Note over UI,Worker: Subscriber disconnects do not cancel the producer
+```
+
+- Deploy the provider image with `python -m harness_engine.claude_worker`.
+  Configure MongoDB, local SDK profiles, provider credentials, the BFF tool
+  broker URL and a worker-specific `HARNESS_ENGINE_INTERNAL_TOKEN`.
+- The parent uses ACP v1 at `POST /acp`. Match the token and local profile ID
+  in `HARNESS_ENGINE_CLAUDE_WORKER_PROFILES_JSON`. Only operators select
+  endpoints, commands, model credentials and workspace roots.
+- Set `tools_enabled: true` only for a Claude worker with its broker configured.
+  Use private networking or HTTPS for service and delegated caller credentials.
+- SDK transcripts, admission records and event journals use the configured
+  MongoDB database with a `_claude_worker` suffix. Replicas share this database
+  and profile policy. SDK session continuation survives container replacement
+  without a local transcript volume.
+- Parent admission retains the original `run_id`. A transport disconnect
+  reattaches to the same admitted prompt and resumes from its committed cursor;
+  it never dispatches a second producer. Completion requires the full event tail
+  and a confirmed worker drain. Stop/status remain available after event expiry.
+- A lost producer requires operator reconciliation. In-flight process takeover,
+  portable file workspace leasing, subagents and interactive tool approvals are
+  unsupported.
+
+#### ACP network transport contract
+
+[ACP v1](https://agentclientprotocol.com/protocol/v1/transports) standardizes
+stdio and permits custom transports. **This private HTTP/NDJSON transport is
+not the proposed Streamable HTTP transport.** It requires the negotiated
+`caipe.io/harness` extension and is not a generic public ACP endpoint.
+
+- Authenticate each request using the worker service bearer and original
+  `X-Harness-Engine-Subject`; delegate tool credentials only in
+  `X-Harness-Caller-Token`. Credentials never appear in ACP notifications.
+- Call `initialize` with `protocolVersion: 1`, then send
+  `ACP-Protocol-Version: 1` on session requests. HTTP is stateless; every request
+  repeats authenticated identity and negotiated protocol version.
+- `session/new` / `session/resume` carry the admitted `RunContext` in
+  `params._meta["caipe.io/harness"].context`. The session ID is the opaque
+  Engine binding ID. Worker policy overrides client workspace and MCP choices.
+  `session/load` is not advertised: UI history comes from the Engine journal.
+- `session/prompt` returns newline-delimited JSON-RPC `session/update`
+  notifications followed by its final response, after the producer drains.
+  Blank lines are transport heartbeats. No prompt receipt is treated as completion.
+- Each update carries the sequenced canonical event in
+  `params._meta["caipe.io/harness"].event`. Canonical events without an ACP v1
+  representation use `_caipe/event`. Reattach using the original context and
+  `_meta["caipe.io/harness"].after`; the prompt ID remains the run ID.
+- `session/cancel` is a notification with `sessionId` and extension `runId`.
+  `_caipe/run_state` is the extension request for metadata and drain confirmation.
+  Both check subject, run and session scope independently of retained events.
+- The old `/api/v1/worker/runs` endpoints remain for rolling upgrades. Upgrade
+  workers before the Engine; the new Engine requires ACP and does not silently
+  fall back to legacy execution.
+
+#### Claude (ACP) in Agent Builder and chat
+
+Select **Claude (ACP)** and an operator profile to use the native builder,
+conversation UI, tool timeline and refresh recovery. The session panel explains
+shared-viewer access. See [authentication and authorization](../../docs/docs/architecture/claude-acp.md).
+
+#### Experimental Claude Code ACP worker
+
+The [upstream Claude ACP adapter](https://github.com/agentclientprotocol/claude-agent-acp)
+is built on the Claude Agent SDK. This optional backend runs that executable
+inside the remote worker; it does not introduce another browser session manager.
+
+- Build with `ai_platform_engineering/harness_engine/build/Dockerfile.claude-acp`.
+  It pins `@agentclientprotocol/claude-agent-acp` to `0.100.0` and uses the
+  Python ACP SDK for the local stdio connection.
+- Set `HARNESS_ENGINE_CLAUDE_ACP_COMMAND` to a JSON argv array; the image already
+  supplies its installed executable. Set the parent's worker profile
+  `runtime` to `claude_code_acp`. Set `tools_enabled: true` when the worker
+  has its CAIPE tool broker configured.
+- Keep the same MongoDB settings and mount a persistent volume at the profile's
+  workspace root (for example `/workspace`). Each binding has a separate
+  directory and `CLAUDE_CONFIG_DIR`; `session/load` reloads the provider transcript
+  after a process restart. These files are **not** mirrored by the Python SDK's
+  Mongo transcript store. Pin the worker to its volume; automatic cross-worker
+  continuation is not certified for this backend.
+- `HARNESS_ENGINE_CLAUDE_ACP_TOOLS` is an operator-owned JSON allowlist, empty by
+  default. Settings discovery and permission bypass are disabled; interactive
+  permission requests are declined. Selected MCP bindings use a run-scoped
+  loopback MCP bridge to the existing caller-authorized CAIPE broker and
+  AgentGateway. User and service credentials are not passed to the Claude process.
+- No OpenShell or per-session Kubernetes pod allocation is implied. Run a
+  non-root worker with only its own credentials and an isolated workspace.
+  Directories alone do not provide operating-system sandboxing.
+
+The optional [worker overlay](../../deploy/harness-engine/compose.claude-sdk.yaml)
+adds a worker to the Deep Agents overlay together with the shared
+[egress overlay](../../deploy/harness-engine/compose.worker-egress.yaml), loaded once. It is also a template for a separate
+worker host; replace its URL with that host's private HTTPS endpoint.
 
 The UI BFF requires:
 
@@ -305,23 +482,29 @@ uv run pytest -q
   the compatibility service. Use a shared volume for a single-host deployment,
   or the existing S3 attachment backend for multiple hosts.
 
-An optional Compose overlay builds both upgraded producers and the UI without
-changing the default install profiles:
+An optional Compose overlay selects published images for both upgraded producers
+and the UI without changing the default install profiles:
 
 ```bash
-# Configure SSO, model access and secrets in .env first.
+# Configure SSO, model access, secrets and HARNESS_IMAGE_TAG in .env first.
 # Add harness-engine to your existing profile list; keep dynamic-agents enabled.
 docker compose --env-file .env \
   -f docker-compose.yaml \
   -f deploy/harness-engine/compose.deep-agents.yaml \
-  --profile harness-engine up -d --build harness-engine dynamic-agents caipe-ui
+  --profile harness-engine up -d harness-engine dynamic-agents caipe-ui
 ```
+
+For explicit source builds and image overrides, see the
+[deployment guide](../../deploy/harness-engine/README.md).
 
 The compatibility service remains required for management and file APIs. Do not
 retire it as part of enabling Engine execution. Upgrade both producers before
 migration so they enforce the same `execution_thread_leases` ownership fence.
 
 ### Migration and rollback
+
+- Eligible, writable legacy Deep Agents chats expose **Migrate to Harness Engine** in the chat panel. The UI checks eligibility without creating a run, requires confirmation, and preserves the composer draft. **Resume migration** recovers an interrupted handoff using its original transition.
+- Migration checks both Engine reservations and native producer leases. An active execution must finish or stop before the handoff; a concurrent producer is also blocked by the native ownership fence.
 
 - New unbound chats use Engine when the BFF flag is enabled.
 - Existing native checkpoint IDs stay unchanged. Automatic adoption of an

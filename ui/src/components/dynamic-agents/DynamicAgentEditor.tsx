@@ -12,10 +12,11 @@ import {
 } from "@/components/ai-review";
 import { TeamOwnershipFields } from "@/components/rbac/TeamOwnershipFields";
 import { HarnessFeaturePanels } from "@/components/harness-engine/HarnessFeaturePanels";
-import { harnessBuilderSections, supportsHarnessCapability, validateHarnessOptionsSchema } from "@/lib/harness-builder";
+import { ClaudeACPSettings } from "@/components/harness-engine/ClaudeACPSettings";
+import { HarnessHelp } from "@/components/harness-engine/HarnessHelp";
+import { harnessBuilderSections, harnessDisplayName, harnessStatusLabel, supportsHarnessCapability, validateHarnessOptionsSchema } from "@/lib/harness-builder";
 import { HarnessOptionsForm } from "@/components/harness-engine/HarnessOptionsForm";
 import { UnsavedChangesDialog } from "@/components/shared/UnsavedChangesDialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -156,24 +157,6 @@ const VISIBILITY_OPTIONS: {
     description: "Available to all users; owner-team admins manage it.",
   },
 ];
-
-const HARNESS_STATUS_PRESENTATION: Record<
-  HarnessDescriptor["certification"],
-  { label: string; className: string }
-> = {
-  certified: {
-    label: "Stable",
-    className: "border-emerald-500/30 bg-emerald-500/10",
-  },
-  experimental: {
-    label: "Experimental",
-    className: "border-amber-500/30 bg-amber-500/10",
-  },
-  blocked: {
-    label: "Blocked",
-    className: "border-destructive/30 bg-destructive/10",
-  },
-};
 
 interface TeamOption {
   _id: string;
@@ -594,9 +577,6 @@ export function DynamicAgentEditor({
   const isDeepAgents = harnessId === "dynamic_agents";
   const [harnessSwitchConfirmed, setHarnessSwitchConfirmed] = React.useState(false);
   const requiresHarnessConfirmation = isEditing && harnessId !== (agent?.execution_harness_id || "dynamic_agents");
-  const selectedHarnessStatus = selectedHarness
-    ? HARNESS_STATUS_PRESENTATION[selectedHarness.certification]
-    : isDeepAgents ? HARNESS_STATUS_PRESENTATION.certified : undefined;
   const supportsTools = supportsHarnessCapability(selectedHarness, "tools.broker", isDeepAgents);
   const supportsKnowledge = supportsHarnessCapability(selectedHarness, "knowledge", isDeepAgents);
   const supportsSkills = supportsHarnessCapability(selectedHarness, "skills", isDeepAgents);
@@ -1452,7 +1432,7 @@ export function DynamicAgentEditor({
           },
           prompt: { system: systemPrompt, variables: {}, context_sources: [] },
           model: supportsConfiguredModel ? { policy: "configured", id: modelId, provider: modelProvider } : { policy: "harness_default" },
-          tools: { bindings: toolBindings, approval_policy: "sensitive_only" },
+          tools: { bindings: toolBindings, approval_policy: supportsTools && !supportsApprovals ? "never" : "sensitive_only" },
           thread: { persistence: "durable" },
           memory: { enabled: false },
           workspace: { persistence: "none" },
@@ -1780,49 +1760,45 @@ export function DynamicAgentEditor({
             {activeStep === "basic" && (
               <div className="space-y-4 pt-2">
                 <div className="space-y-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Label htmlFor="harnessId">Execution harness</Label>
-                    {selectedHarnessStatus && (
-                      <Badge variant="outline" className={selectedHarnessStatus.className}>
-                        {selectedHarnessStatus.label}
-                      </Badge>
-                    )}
-                  </div>
                   <div className="p-3 rounded-lg border-2 border-primary/20 bg-primary/5 space-y-3">
-                    <Select
-                      id="harnessId"
-                      value={harnessId}
-                      onChange={(event) => {
-                        if (event.target.value === "__add_existing_agentcore__") setConnectionDialogOpen(true);
-                        else selectHarness(event.target.value);
-                      }}
-                      disabled={loading || harnessLoading || !!readOnly}
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-medium shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <option value="dynamic_agents">
-                        LangChain Deep Agents (default) — {HARNESS_STATUS_PRESENTATION[harnessDescriptors.find(item => item.id === "dynamic_agents")?.certification ?? "certified"].label}
-                      </option>
-                      {!isDeepAgents && !selectedHarness && (
-                        <option value={harnessId}>{harnessId} (unavailable)</option>
-                      )}
-                      {harnessDescriptors.filter(descriptor => descriptor.id !== "dynamic_agents").map((descriptor) => (
-                        <option
-                          key={descriptor.id}
-                          value={descriptor.id}
-                          disabled={
-                            descriptor.availability !== "available" ||
-                            descriptor.certification === "blocked"
-                          }
-                        >
-                          {descriptor.display_name} — {HARNESS_STATUS_PRESENTATION[descriptor.certification].label}
+                    <div className="flex min-w-0 items-center gap-1">
+                      <Select
+                        id="harnessId"
+                        aria-label="Execution harness"
+                        value={harnessId}
+                        onChange={(event) => {
+                          if (event.target.value === "__add_existing_agentcore__") setConnectionDialogOpen(true);
+                          else selectHarness(event.target.value);
+                        }}
+                        disabled={loading || harnessLoading || !!readOnly}
+                        className="flex h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <option value="dynamic_agents">
+                          LangChain Deep Agents (default) — {harnessStatusLabel("dynamic_agents", harnessDescriptors.find(item => item.id === "dynamic_agents")?.certification)}
                         </option>
-                      ))}
-                      {connectionConfigured !== null && (
-                        <option value="__add_existing_agentcore__" disabled={!connectionConfigured}>
-                          Add existing AgentCore agent{connectionConfigured ? "…" : " (Harness Engine not configured)"}
-                        </option>
-                      )}
-                    </Select>
+                        {!isDeepAgents && !selectedHarness && (
+                          <option value={harnessId}>{harnessId} (unavailable)</option>
+                        )}
+                        {harnessDescriptors.filter(descriptor => descriptor.id !== "dynamic_agents").map((descriptor) => (
+                          <option
+                            key={descriptor.id}
+                            value={descriptor.id}
+                            disabled={
+                              descriptor.availability !== "available" ||
+                              descriptor.certification === "blocked"
+                            }
+                          >
+                            {harnessDisplayName(descriptor)} — {harnessStatusLabel(descriptor.id, descriptor.certification)}
+                          </option>
+                        ))}
+                        {connectionConfigured !== null && (
+                          <option value="__add_existing_agentcore__" disabled={!connectionConfigured}>
+                            Add existing AgentCore agent{connectionConfigured ? "…" : " (Harness Engine not configured)"}
+                          </option>
+                        )}
+                      </Select>
+                      <HarnessHelp harnessId={harnessId} descriptors={harnessDescriptors} />
+                    </div>
                     {selectedHarness && (
                       <div className="space-y-2">
                         <div className="flex items-center gap-1.5">
@@ -1880,7 +1856,9 @@ export function DynamicAgentEditor({
                         </p>
                       </div>
                     )}
-                    {isDeepAgents ? (
+                    {["claude_code_acp", "claude_code_cli_acp"].includes(harnessId) && selectedHarness ? (
+                      <ClaudeACPSettings descriptor={selectedHarness} profileId={harnessProfileId} />
+                    ) : isDeepAgents ? (
                       <p className="text-xs text-muted-foreground">
                         Configure tools, knowledge, and skills for LangChain Deep
                         Agents. Subagents, approvals, and middleware are under Advanced.
@@ -2810,6 +2788,11 @@ export function DynamicAgentEditor({
             {/* Tools Step */}
             {activeStep === "tools" && (
               <div className="space-y-6 pt-2">
+                {!isDeepAgents && supportsTools && !supportsApprovals && (
+                  <p className="text-sm text-muted-foreground">
+                    Selected MCP tools run without per-call approval. Your agent and account permissions are checked for each call.
+                  </p>
+                )}
                 {/* Built-in Tools */}
                 {supportsBuiltinTools && <BuiltinToolsPicker
                   value={builtinTools}

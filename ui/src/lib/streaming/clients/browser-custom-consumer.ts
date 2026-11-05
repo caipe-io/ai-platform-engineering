@@ -28,6 +28,11 @@ const CANCEL_URL = `${STREAM_BASE}/cancel`;
 
 export class CustomStreamAdapter implements StreamAdapter {
   private abortController: AbortController | null = null;
+  private persistentRun = false;
+
+  get canRecoverOnRefresh(): boolean {
+    return this.persistentRun;
+  }
 
   abort(): void {
     if (this.abortController) {
@@ -37,7 +42,7 @@ export class CustomStreamAdapter implements StreamAdapter {
   }
 
   async cancelStream(conversationId: string, agentId: string): Promise<boolean> {
-    this.abort();
+    if (!this.persistentRun) this.abort();
 
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -58,7 +63,7 @@ export class CustomStreamAdapter implements StreamAdapter {
       }
 
       const result = await response.json();
-      return result.cancelled ?? false;
+      return result.cancelled === true || result.cancellation_requested === true;
     } catch (error) {
       console.error("[CustomAdapter] Cancel error:", error);
       return false;
@@ -101,11 +106,13 @@ export class CustomStreamAdapter implements StreamAdapter {
 
   // ── Private: shared stream loop ────────────────────────────
 
-  async recoverRun(runId: string, callbacks: StreamCallbacks): Promise<void> {
-    await this._stream(`/api/harness-engine/runs/${encodeURIComponent(runId)}/events/stream?after=0&protocol=custom`, undefined, callbacks);
+  async recoverRun(runId: string, callbacks: StreamCallbacks, conversationId?: string): Promise<void> {
+    const scope = conversationId ? `&conversation_id=${encodeURIComponent(conversationId)}` : "";
+    await this._stream(`/api/harness-engine/runs/${encodeURIComponent(runId)}/events/stream?after=0&protocol=custom${scope}`, undefined, callbacks);
   }
 
   private async _stream(url: string, body: string | undefined, callbacks: StreamCallbacks): Promise<void> {
+    this.persistentRun = false;
     if (this.abortController) {
       this.abortController.abort();
     }
@@ -132,6 +139,9 @@ export class CustomStreamAdapter implements StreamAdapter {
         throw await buildStreamErrorFromResponse(response);
       }
 
+      this.persistentRun = Boolean(response.headers.get("X-Harness-Run-ID"));
+      const harnessId = response.headers.get("X-Harness-ID");
+      if (this.persistentRun && harnessId) callbacks.onRuntime?.(harnessId);
       for await (const raw of recoverableStream(response, "custom", this.abortController.signal)) {
         this._emitRawEvent(raw, callbacks);
         const terminal = this._dispatchEvent(raw, callbacks);
@@ -237,8 +247,10 @@ export class CustomStreamAdapter implements StreamAdapter {
 
         case "done": {
           const parsed = JSON.parse(data);
-          if (parsed.outcome === "cancelled") callbacks.onError?.("The run was stopped before completion.");
-          else callbacks.onDone?.();
+          if (parsed.outcome === "cancelled") {
+            if (callbacks.onCancelled) callbacks.onCancelled();
+            else callbacks.onError?.("The run was stopped before completion.");
+          } else callbacks.onDone?.();
           return true;
         }
 

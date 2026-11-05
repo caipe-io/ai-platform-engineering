@@ -72,6 +72,27 @@ Self-contained cookies, including those from the older `mint-test-session.mjs`
 benchmark helper, are deliberately rejected. Benchmarks should use a real OIDC
 login session until that helper is migrated.
 
+### Live chat viewers
+
+- The chat header shows unique viewers and their open browser session count. Select the indicator to see names and session counts.
+- The full chat and in-app panel share one presence connection within a page. Separate tabs, windows, and browser profiles count separately, including background tabs.
+- Presence uses the conversation's existing read permission. Authenticated identities are supplied by the BFF; viewing does not grant permission to execute or stop a run.
+- BFF replicas share short-lived MongoDB `conversation_viewers` leases. Updates arrive over a separate SSE subscription every five seconds; permission and session validity are rechecked every fifteen seconds.
+- Lease renewal runs independently of roster queries. Disconnects remove the lease; crashed connections expire after thirty seconds. Queries exclude expired leases, and active subscriptions reclaim them every minute even if the TTL index is unavailable.
+- Failed presence connections retry with exponential backoff from five seconds to one minute. A valid roster resets the backoff.
+- This is conversation presence, independent of execution-stream subscribers, durable run events, and replay cursors. It requires MongoDB storage.
+
+### Migrate an existing conversation
+
+- Eligible Deep Agents chats show **Migrate to Harness Engine** above the messages. Conversation write access and agent-use permission are required.
+- Migration preserves messages, LangGraph checkpoints, files, and pending approvals. Future responses run independently of browser refreshes; existing LangGraph history was already persistent.
+- Active Engine responses do not trigger the chat's browser refresh warning after the server confirms run admission. Legacy streams and requests awaiting admission keep the warning.
+- Background chats appear in the header's **N running** menu, with each conversation title and a direct return action. The currently open chat uses its own progress indicator instead of a global banner. This is a navigation menu built with the shared `Popover`, not a form selection control.
+- Finish or stop an active execution first. Both Engine reservations and the native checkpoint's producer lease are checked; the native execution fence also protects the handoff from concurrent requests.
+- Confirm the migration in the dialog. The current draft stays in place and no prompt or approval is submitted.
+- If the connection is interrupted, reopen the chat and select **Resume migration**. The server reuses the original handoff rather than creating a second execution.
+- The action is hidden for Engine-managed chats, app-owned assistants, other harnesses, read-only history, and deployments without the Deep Agents integration enabled.
+
 ### Agent Builder harness controls
 
 - Deep Agents retains its model, tools, knowledge, skills, and Advanced controls.
@@ -81,7 +102,7 @@ login session until that helper is migrated.
 - `/api/dynamic-agents` requires `model` for Deep Agents. Engine-backed metadata may omit it; switching back to Deep Agents requires a valid model.
 - Saved Deep Agents settings remain in metadata while another harness is selected and are excluded from its execution blueprint.
 
-See [Agent Creation UI Architecture](../docs/docs/specs/2026-08-17-harness-engine/agent-creation-ui.md) for Phase 1 behavior and the Phase 2 contract.
+See [Agent Creation UI Architecture](../docs/docs/specs/2026-08-17-harness-engine/agent-creation-ui.md) for the authoring flow and runtime profile contract.
 
 ## Development Commands
 

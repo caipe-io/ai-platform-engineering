@@ -1922,6 +1922,7 @@ export async function createServiceAccountClient(name: string): Promise<ServiceA
   const slug = slugifyServiceAccountName(name);
   const suffix = randomBytes(3).toString("hex"); // 6 hex chars
   const clientId = `caipe-sa-${slug}-${suffix}`;
+  const apiAudience = process.env.OIDC_CLIENT_ID?.trim();
 
   const createResponse = await adminFetch("/clients", {
     method: "POST",
@@ -1936,6 +1937,18 @@ export async function createServiceAccountClient(name: string): Promise<ServiceA
       serviceAccountsEnabled: true,
       authorizationServicesEnabled: false,
       protocol: "openid-connect",
+      // Client-credentials tokens must name the receiving API as an audience.
+      // Resource access is still decided by the account's scoped CAS grants.
+      protocolMappers: apiAudience ? [{
+        name: "api-audience",
+        protocol: "openid-connect",
+        protocolMapper: "oidc-audience-mapper",
+        config: {
+          "included.client.audience": apiAudience,
+          "access.token.claim": "true",
+          "id.token.claim": "false",
+        },
+      }] : [],
     }),
   });
   await assertOk(createResponse, `createServiceAccountClient(${clientId})`);

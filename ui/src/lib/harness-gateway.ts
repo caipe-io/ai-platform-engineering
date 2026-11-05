@@ -9,6 +9,7 @@ import {
   isHarnessEngineConfigured,
   lookupHarnessSession,
   type HarnessEngineConfig,
+  type HarnessConversationReadScope,
 } from "@/lib/harness-engine-proxy";
 import { getCollection } from "@/lib/mongodb";
 import { stageHarnessAttachments } from "@/lib/harness-attachments";
@@ -107,12 +108,36 @@ export async function getHarnessGatewayStatus(body: Record<string, unknown>, aut
   if (saved instanceof NextResponse) return saved;
   return NextResponse.json({ success: true, data: {
     runtime: "harness_engine",
+    harness_id: saved.harness_id,
     status: saved.active_run ? "running" : saved.pending_interrupt ? "waiting_for_input" : "idle",
     run_id: saved.active_run?.run_id ?? saved.pending_interrupt?.run_id ?? saved.last_run?.run_id ?? null,
     last_sequence: saved.active_run?.last_sequence ?? saved.last_run?.last_sequence ?? 0,
     run_status: saved.active_run?.status ?? saved.last_run?.status,
+    cancellation_requested: saved.active_run?.cancellation_requested ?? false,
     turn_id: saved.active_run?.turn_id ?? saved.last_run?.turn_id ?? null,
     pending_interrupt: saved.pending_interrupt,
+  } });
+}
+
+/** Read an existing Engine conversation without admitting or rebinding a run. */
+export async function getHarnessConversationStatus(
+  auth: AuthResult, scope: HarnessConversationReadScope,
+): Promise<Response | null> {
+  const binding = await (await getCollection<GatewayBinding>("harness_gateway_bindings")).findOne({
+    agent_id: scope.agentId, conversation_id: scope.conversationId,
+    $or: [{ runtime: "harness_engine" }, { runtime: { $exists: false }, harness_id: { $ne: DEFAULT_HARNESS_ID } }],
+  });
+  if (!binding) return null;
+  const config = getHarnessEngineConfig();
+  if (config instanceof NextResponse) return config;
+  const saved = await lookupHarnessSession(config, auth, scope.agentId, scope.conversationId, scope);
+  if (saved instanceof NextResponse) return saved;
+  const run = saved.active_run ?? saved.last_run;
+  return NextResponse.json({ success: true, data: {
+    runtime: "harness_engine", harness_id: saved.harness_id, status: saved.active_run ? "running" : saved.pending_interrupt ? "waiting_for_input" : "idle",
+    run_id: run?.run_id ?? null, run_status: run?.status, turn_id: run?.turn_id ?? null,
+    cancellation_requested: saved.active_run?.cancellation_requested ?? false,
+    last_sequence: run?.last_sequence ?? 0, is_run_owner: run?.owner_subject === auth.subject,
   } });
 }
 
@@ -277,7 +302,8 @@ export async function startHarnessGatewayRun(
         Object.keys(override.model).some(key => key !== "reasoning_effort"))))) {
     return NextResponse.json({ error: "Unsupported per-turn execution override" }, { status: 400 });
   }
-  const callerHeaders: Record<string, string> = harnessId === DEFAULT_HARNESS_ID && auth.bearerToken ? {
+  const usesCallerIdentity = [DEFAULT_HARNESS_ID, "claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp", "claude_code_cli_acp"].includes(harnessId);
+  const callerHeaders: Record<string, string> = usesCallerIdentity && auth.bearerToken ? {
     "X-Harness-Caller-Token": auth.bearerToken,
     "X-Harness-Caller-Type": auth.isServiceAccount ? "service_account" : "user",
     ...(auth.email && { "X-Harness-Caller-Email": auth.email }),
@@ -678,6 +704,7 @@ export async function streamHarnessGatewayRun(
       ...SSE_HEADERS,
       "X-Harness-Run-ID": started.run.run_id,
       "X-Harness-ID": started.run.harness_id,
+      "X-Harness-Conversation-ID": started.run.conversation_id,
     },
   });
 }
