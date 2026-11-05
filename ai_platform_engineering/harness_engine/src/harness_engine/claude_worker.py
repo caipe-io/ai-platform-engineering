@@ -53,7 +53,7 @@ def create_worker_app(
     tool_bridge = ClaudeACPToolBridge(config.port)
     local = adapter or (
         ClaudeACPAdapter(worker_config, tool_bridge=tool_bridge)
-        if config.claude_acp_command
+        if config.uses_claude_acp
         else ClaudeSDKAdapter(worker_config)
     )
     registry = HarnessRegistry([local])
@@ -130,9 +130,13 @@ def create_worker_app(
             or context.turn.attachments
         ):
             raise HTTPException(400, "Invalid admitted SDK context")
-        validation = registry.validate(context.blueprint)
+        validation = registry.validate(context.blueprint, owner_subject=subject)
         if not validation.valid:
             raise HTTPException(422, "Worker profile does not support this execution configuration")
+        profile = config.claude_sdk_profiles().get(context.binding.profile_id)
+        expected_sandbox = profile.sandbox.public() if profile and profile.sandbox else None
+        if context.binding.sandbox != expected_sandbox:
+            raise HTTPException(409, "Worker sandbox does not match the retained execution placement")
         token = request.headers.get("x-harness-caller-token")
         if context.blueprint.tools.bindings and not token:
             raise HTTPException(401, "MCP tools require delegated caller credentials")
@@ -199,6 +203,10 @@ def create_worker_app(
                             "transport": "http-ndjson-v1",
                             "durableReplay": True,
                             "runtime": config.claude_acp_runtime if config.claude_acp_command else "sdk",
+                            **({"sandboxTransportVersion": 1} if any(
+                                profile.sandbox and profile.sandbox.owner_subject == subject
+                                for profile in config.claude_sdk_profiles().values()
+                            ) else {}),
                         }
                     },
                 }

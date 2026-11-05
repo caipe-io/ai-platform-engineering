@@ -8,7 +8,7 @@ import logging
 from contextlib import aclosing, suppress
 from uuid import uuid4
 
-from harness_engine.adapters.base import ExecutionUnconfirmedError
+from harness_engine.adapters.base import ExecutionRejectedError, ExecutionUnconfirmedError
 from harness_engine.brokers import PromptCompiler
 from harness_engine.models import (
     TERMINAL_RUN_STATUSES,
@@ -133,7 +133,7 @@ class RunCoordinator:
             "active_run": None, "last_run_id": None, "dispatch_started": False,
             "pending_interrupt": None, "resume_run_id": None,
         }))
-        for field in ("owner_subject", "agent_id", "conversation_id", "agent_version", "harness_id", "profile_id", "provider_session_id", "epoch"):
+        for field in ("owner_subject", "agent_id", "conversation_id", "agent_version", "harness_id", "profile_id", "provider_session_id", "epoch", "execution_target", "sandbox"):
             if getattr(binding, field) != getattr(context.binding, field):
                 raise RunAdmissionError("Worker session does not match the admitted context")
         run = RunRecord(run_id=context.turn.run_id, owner_subject=binding.owner_subject,
@@ -267,6 +267,10 @@ class RunCoordinator:
             else:
                 await self._repository.set_session_interrupt(run.binding_id, run.run_id, None)
                 await self._repository.append_event(run.run_id, "run.completed", {}, RunStatus.COMPLETED)
+        except ExecutionRejectedError as exc:
+            await self._repository.append_event(
+                run.run_id, "run.failed", {"code": exc.code, "message": str(exc)}, RunStatus.FAILED,
+            )
         except ExecutionUnconfirmedError:
             release_reservation = False
             logger.error("Remote execution could not be confirmed", extra={"run_id": run.run_id})

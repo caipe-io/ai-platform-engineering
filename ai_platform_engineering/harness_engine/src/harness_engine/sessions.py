@@ -177,6 +177,17 @@ class CAIPEAgentSessionManager:
         if latest is not None and latest.status == "degraded":
             raise AgentSessionNotRunnableError("Session needs native-state reconciliation or an explicit clear")
         if latest is not None and latest.status == "active":
+            try:
+                adapter = self._registry.adapter(latest.harness_id)
+                profile = self._registry.profile(latest.harness_id, latest.profile_id)
+            except KeyError as exc:
+                raise AgentSessionNotRunnableError("The retained execution provider is unavailable") from exc
+            if profile is None:
+                raise AgentSessionNotRunnableError("The retained execution profile is unavailable")
+            target = getattr(adapter, "binding_target", lambda _: None)(latest.profile_id)
+            if (not profile.available or profile.owner_subject not in {None, owner_subject}
+                    or latest.execution_target != target):
+                raise AgentSessionNotRunnableError("The retained execution placement is no longer available")
             version = await self._repository.get_agent_version(
                 agent_id, latest.agent_version
             )
@@ -194,6 +205,9 @@ class CAIPEAgentSessionManager:
             adapter = self._registry.adapter(version.blueprint.harness.id)
         except KeyError as exc:
             raise AgentSessionNotRunnableError(version.blueprint.harness.id) from exc
+        profile = self._registry.profile(version.blueprint.harness.id, version.blueprint.harness.profile_id)
+        if profile is None or not profile.available or profile.owner_subject not in {None, owner_subject}:
+            raise AgentSessionNotRunnableError("The selected execution profile is unavailable")
         context = ProviderSessionContext(
             binding_id=self._binding_id(
                 owner_subject, agent_id, conversation_id, epoch
@@ -206,6 +220,7 @@ class CAIPEAgentSessionManager:
             checkpoint_namespace=((version.blueprint.harness.options.get("runtime", {}).get("backend") or {}).get("config") or {}).get("checkpoint_collection") or getattr(adapter, "checkpoint_namespace", "checkpoints_conversation"),
         )
         provider_state = await adapter.session_manager.open(context)
+        execution_target = getattr(adapter, "binding_target", lambda _: None)(context.profile_id)
         binding = await self._repository.create_session(
             SessionBinding(
                 binding_id=context.binding_id,
@@ -218,9 +233,13 @@ class CAIPEAgentSessionManager:
                 provider_session_id=provider_state.provider_session_id,
                 checkpoint_strategy=provider_state.checkpoint_strategy,
                 native_state_key=provider_state.native_state_key,
+                execution_target=execution_target,
+                sandbox=profile.sandbox,
                 epoch=epoch,
             )
         )
+        if binding.execution_target != execution_target or binding.sandbox != profile.sandbox:
+            raise AgentSessionNotRunnableError("A concurrent admission retained a different execution placement")
         return binding, version
 
     async def observe_provider_event(
@@ -253,6 +272,10 @@ class CAIPEAgentSessionManager:
                 cleared=False,
                 closed_binding_id=binding.binding_id if binding else None,
                 next_epoch=(binding.epoch + 1) if binding else 0,
+            )
+        if binding.sandbox is not None:
+            raise AgentSessionNotRunnableError(
+                "Reset is unavailable for this connected sandbox. Keep its existing chat or create and connect another sandbox."
             )
         adapter = self._registry.adapter(binding.harness_id)
         closed = await self._repository.close_session(binding.binding_id)

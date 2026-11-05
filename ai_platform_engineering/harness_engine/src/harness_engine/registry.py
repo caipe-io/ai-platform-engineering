@@ -51,8 +51,16 @@ class HarnessRegistry:
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(encoded).hexdigest()
 
-    def catalog(self) -> list[object]:
-        return [self._adapters[key].descriptor for key in sorted(self._adapters)]
+    def catalog(self, owner_subject: str | None = None) -> list[object]:
+        result = []
+        for key in sorted(self._adapters):
+            descriptor = self._adapters[key].descriptor
+            profiles = [profile for profile in descriptor.profiles if profile.owner_subject in {None, owner_subject}]
+            result.append(descriptor.model_copy(update={
+                "profiles": profiles,
+                "availability": "misconfigured" if descriptor.profiles and not profiles else descriptor.availability,
+            }))
+        return result
 
     def adapter(self, harness_id: str) -> HarnessAdapter:
         try:
@@ -100,7 +108,7 @@ class HarnessRegistry:
         )
 
     def validate(
-        self, blueprint: AgentBlueprint, requested_catalog_revision: str | None = None
+        self, blueprint: AgentBlueprint, requested_catalog_revision: str | None = None, *, owner_subject: str | None = None
     ) -> HarnessDraftValidation:
         adapter = self.adapter(blueprint.harness.id)
         descriptor = adapter.descriptor
@@ -116,7 +124,7 @@ class HarnessRegistry:
                 )
             )
         profile = self.profile(descriptor.id, blueprint.harness.profile_id)
-        if profile is None or not profile.available:
+        if profile is None or not profile.available or profile.owner_subject not in {None, owner_subject}:
             issues.append(
                 ValidationIssue(
                     path="harness.profile_id",

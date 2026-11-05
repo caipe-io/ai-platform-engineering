@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import PurePosixPath
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -57,6 +58,62 @@ class AgentCoreRuntimeTarget(BaseModel):
         )
 
 
+def validate_web_url(value: str, *, websocket: bool = False) -> str:
+    parsed = urlsplit(value)
+    schemes = {"wss"} if websocket else {"https"}
+    if parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
+        schemes.add("ws" if websocket else "http")
+    if parsed.scheme not in schemes or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("Connection URLs require TLS without credentials, query or fragment")
+    return value
+
+
+class SandboxProfileInfo(BaseModel):
+    """Public connection metadata; a configured profile is not a health attestation."""
+
+    instance_id: str = Field(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    display_name: str = Field(..., min_length=1, max_length=128)
+    portal_url: str = Field(..., min_length=1, max_length=2048)
+    policy_revision: str = Field(..., min_length=1, max_length=128)
+    policy_summary: str = Field("", max_length=1024)
+    status: Literal["configured"] = "configured"
+
+    @model_validator(mode="after")
+    def validate_portal(self) -> SandboxProfileInfo:
+        validate_web_url(self.portal_url)
+        return self
+
+
+class SandboxPolicy(SandboxProfileInfo):
+    """Operator-admitted identity and placement, never supplied by agent drafts."""
+
+    owner_subject: str = Field(..., min_length=1, max_length=512)
+    workspace_root: str = Field("/workspace", min_length=1, max_length=1024)
+
+    @model_validator(mode="after")
+    def validate_workspace(self) -> SandboxPolicy:
+        path = PurePosixPath(self.workspace_root)
+        if not path.is_absolute() or ".." in path.parts or "\x00" in self.workspace_root or str(path) == "/":
+            raise ValueError("Sandbox workspace must be an absolute private directory")
+        self.workspace_root = str(path)
+        return self
+
+    def public(self) -> SandboxProfileInfo:
+        return SandboxProfileInfo.model_validate(self.model_dump(include=set(SandboxProfileInfo.model_fields)))
+
+
+class SandboxConnection(SandboxPolicy):
+    """Private data-plane credential for a preprovisioned sandbox, not management."""
+
+    url: str = Field(..., min_length=1, max_length=2048)
+    token: SecretStr = Field(..., min_length=32)
+
+    @model_validator(mode="after")
+    def validate_transport(self) -> SandboxConnection:
+        validate_web_url(self.url, websocket=True)
+        return self
+
+
 class ClaudeSDKProfile(BaseModel):
     """Operator-owned Claude model and workspace policy."""
 
@@ -64,6 +121,7 @@ class ClaudeSDKProfile(BaseModel):
     cwd: str = Field("/workspace", min_length=1, max_length=1024)
     permission_mode: str = Field("dontAsk", pattern=r"^(default|acceptEdits|plan|dontAsk)$")
     description: str = Field("", max_length=512)
+    sandbox: SandboxConnection | None = None
 
 
 class ClaudeWorkerProfile(BaseModel):
@@ -75,6 +133,7 @@ class ClaudeWorkerProfile(BaseModel):
     description: str = Field("", max_length=512)
     tools_enabled: bool = False
     runtime: Literal["sdk", "claude_code_acp", "claude_code_cli_acp"] = "sdk"
+    sandbox: SandboxPolicy | None = None
 
     @model_validator(mode="after")
     def validate_connection(self) -> ClaudeWorkerProfile:
@@ -83,6 +142,8 @@ class ClaudeWorkerProfile(BaseModel):
             raise ValueError("Worker URL must be an HTTP(S) service URL without credentials or query parameters")
         if len(self.token.get_secret_value()) < 16:
             raise ValueError("Worker service credentials must contain at least 16 characters")
+        if self.sandbox is not None and self.runtime != "claude_code_acp":
+            raise ValueError("Sandbox profiles require the Claude ACP runtime")
         return self
 
 
@@ -110,6 +171,17 @@ class Settings(BaseSettings):
     claude_acp_runtime: Literal["claude_code_acp", "claude_code_cli_acp"] = "claude_code_acp"
     claude_acp_tools: list[str] = Field(default_factory=list)
     deep_agents_enabled: bool = False
+    sandbox_portal_url: str | None = None
+
+    @model_validator(mode="after")
+    def validate_sandbox_portal(self) -> Settings:
+        if self.sandbox_portal_url:
+            validate_web_url(self.sandbox_portal_url)
+        return self
+
+    @property
+    def uses_claude_acp(self) -> bool:
+        return bool(self.claude_acp_command or any(profile.sandbox for profile in self.claude_sdk_profiles().values()))
 
     def agentcore_targets(self) -> dict[str, AgentCoreRuntimeTarget]:
         """Parse the operator allowlist without exposing raw settings to clients."""

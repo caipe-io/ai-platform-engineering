@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
-from harness_engine.config import AgentCoreRuntimeTarget
+from harness_engine.config import AgentCoreRuntimeTarget, SandboxProfileInfo
 
 
 def utc_now() -> datetime:
@@ -71,6 +71,8 @@ class HarnessProfile(StrictModel):
     display_name: str
     description: str = ""
     available: bool = True
+    sandbox: SandboxProfileInfo | None = None
+    owner_subject: str | None = Field(None, exclude=True)
 
 
 class HarnessDescriptor(StrictModel):
@@ -298,6 +300,8 @@ class SessionBinding(StrictModel):
     provider_session_id: str | None = Field(None, max_length=1024)
     checkpoint_strategy: Literal["langgraph", "adapter_store", "remote_managed", "ephemeral"]
     native_state_key: str | None = None
+    execution_target: str | None = None
+    sandbox: SandboxProfileInfo | None = None
     epoch: int = Field(0, ge=0)
     revision: int = Field(1, ge=1)
     status: Literal["active", "degraded", "closed"] = "active"

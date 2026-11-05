@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import secrets
 from collections.abc import AsyncIterator
@@ -33,6 +34,50 @@ class ClaudeACPToolBridge:
     def __init__(self, port: int) -> None:
         self._port = port
         self._sessions: dict[str, ToolSession] = {}
+
+    async def forward(
+        self, run_id: str, headers: dict[str, str], body: bytes, *, max_body: int
+    ) -> tuple[int, dict[str, str], bytes]:
+        """Forward one bounded remote MCP request to this exact run's ASGI bridge."""
+        scope: Scope = {
+            "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+            "scheme": "http", "method": "POST", "path": f"/internal/claude-tools/{quote(run_id, safe='')}",
+            "raw_path": f"/internal/claude-tools/{quote(run_id, safe='')}".encode(),
+            "query_string": b"", "server": ("127.0.0.1", self._port), "client": ("127.0.0.1", 0),
+            "headers": [(key.lower().encode("ascii"), value.encode("latin-1")) for key, value in headers.items()],
+        }
+        sent = False
+        status = 500
+        response_headers: dict[str, str] = {}
+        response_body = bytearray()
+        completed = asyncio.Event()
+
+        async def receive() -> dict[str, Any]:
+            nonlocal sent
+            if not sent:
+                sent = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            await completed.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, Any]) -> None:
+            nonlocal status, response_headers
+            if message["type"] == "http.response.start":
+                status = message["status"]
+                response_headers = {
+                    key.decode("latin-1"): value.decode("latin-1")
+                    for key, value in message.get("headers", [])
+                    if key.lower() in {b"content-type", b"mcp-session-id", b"mcp-protocol-version"}
+                }
+            elif message["type"] == "http.response.body":
+                response_body.extend(message.get("body", b""))
+                if len(response_body) > max_body:
+                    raise ValueError("MCP response exceeds the sandbox transport bound")
+                if not message.get("more_body", False):
+                    completed.set()
+
+        await self(scope, receive, send)
+        return status, response_headers, bytes(response_body)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         headers = dict(scope.get("headers", []))
