@@ -58,3 +58,30 @@ it("validates ready-message origin, source and app and prevents acknowledgement 
   send(window.location.origin, frame.contentWindow);
   expect(post).toHaveBeenCalledTimes(1);
 });
+
+
+it("sends the selected Grid palette and republishes when dark palettes change", () => {
+  const root = document.documentElement;
+  const tokens: Record<string, string> = {
+    "--background": "220 16% 14%", "--foreground": "219 28% 88%",
+    "--card": "220 16% 16%", "--card-foreground": "219 28% 88%",
+    "--primary": "193 43% 67%", "--primary-foreground": "220 16% 14%",
+    "--secondary": "220 16% 20%", "--muted-foreground": "219 14% 60%",
+    "--border": "220 16% 25%", "--destructive": "354 42% 56%",
+  };
+  for (const [name, value] of Object.entries(tokens)) root.style.setProperty(name, value);
+  mockTheme = "nord";
+  const { rerender, unmount } = render(<HostedAgenticAppFrame appId="example" title="Example" />);
+  const frame = screen.getByTitle("Example") as HTMLIFrameElement;
+  const post = jest.spyOn(frame.contentWindow!, "postMessage");
+  fireEvent.load(frame);
+  expect(post.mock.calls.at(-1)?.[0].context).toMatchObject({
+    theme: "dark", themeId: "nord", palette: { background: "220 16% 14%", primary: "193 43% 67%" },
+  });
+  root.style.setProperty("--primary", "267 84% 81%");
+  mockTheme = "tokyo";
+  rerender(<HostedAgenticAppFrame appId="example" title="Example" />);
+  expect(post.mock.calls.at(-1)?.[0].context).toMatchObject({ theme: "dark", themeId: "tokyo", palette: { primary: "267 84% 81%" } });
+  unmount();
+  for (const name of Object.keys(tokens)) root.style.removeProperty(name);
+});
