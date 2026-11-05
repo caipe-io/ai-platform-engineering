@@ -166,7 +166,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: needs.metadata.outputs.publish == 'true'
         with:
-          name: harness-${{ matrix.image }}-${{ matrix.arch }}
+          name: harness-${{ matrix.image }}--${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -194,7 +194,7 @@ jobs:
         run: echo "repository=ghcr.io/${OWNER,,}/caipe-$TARGET" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/publish-prebuild-manifest
         with:
-          artifact_pattern: harness-${{ matrix.image }}-*
+          artifact_pattern: harness-${{ matrix.image }}--*
           image_repository: ${{ steps.image.outputs.repository }}
           image_ref: ${{ steps.image.outputs.repository }}:${{ needs.metadata.outputs.tag }}
           registry_username: ${{ github.actor }}
@@ -215,7 +215,7 @@ jobs:
 
   notify-release:
     needs: [metadata, images, manifests]
-    if: always() && github.ref_type == 'tag' && needs.metadata.outputs.tag != '' && !contains(needs.metadata.outputs.tag, '-')
+    if: always() && github.ref_type == 'tag' && !contains(github.ref_name, '-')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -232,12 +232,13 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPOSITORY: ${{ github.repository }}
-          TAG: ${{ needs.metadata.outputs.tag }}
+          TAG: ${{ github.ref_name }}
           IMAGES_RESULT: ${{ needs.images.result }}
           MANIFESTS_RESULT: ${{ needs.manifests.result }}
           WORKFLOW: ${{ github.workflow }}
         run: |
           set -euo pipefail
+          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then exit 0; fi
           conclusion=failure
           if [[ "$IMAGES_RESULT" == success && "$MANIFESTS_RESULT" == success ]]; then conclusion=success; fi
           jq -n --arg tag "$TAG" --arg workflow "$WORKFLOW" --arg conclusion "$conclusion" \

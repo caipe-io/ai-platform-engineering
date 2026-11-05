@@ -22,6 +22,10 @@ import os
 from pathlib import Path
 from harness_engine.config import Settings
 assert os.geteuid() != 0
+assert os.statvfs("/").f_flag & os.ST_RDONLY
+status = dict(line.split(":", 1) for line in Path("/proc/self/status").read_text().splitlines())
+assert int(status["CapEff"].strip(), 16) == 0
+assert status["NoNewPrivs"].strip() == "1"
 assert Settings().port == 8010
 Path("/workspace/smoke").write_text("writable workspace")
 try:
