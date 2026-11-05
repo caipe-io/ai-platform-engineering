@@ -13,7 +13,8 @@ import {
 import { TeamOwnershipFields } from "@/components/rbac/TeamOwnershipFields";
 import { HarnessFeaturePanels } from "@/components/harness-engine/HarnessFeaturePanels";
 import { ClaudeACPSettings } from "@/components/harness-engine/ClaudeACPSettings";
-import { harnessBuilderSections, supportsHarnessCapability, validateHarnessOptionsSchema } from "@/lib/harness-builder";
+import { HarnessHelp } from "@/components/harness-engine/HarnessHelp";
+import { harnessBuilderSections, harnessDisplayName, harnessStatusLabel, supportsHarnessCapability, validateHarnessOptionsSchema } from "@/lib/harness-builder";
 import { HarnessOptionsForm } from "@/components/harness-engine/HarnessOptionsForm";
 import { UnsavedChangesDialog } from "@/components/shared/UnsavedChangesDialog";
 import { Button } from "@/components/ui/button";
@@ -156,12 +157,6 @@ const VISIBILITY_OPTIONS: {
     description: "Available to all users; owner-team admins manage it.",
   },
 ];
-
-const HARNESS_STATUS_LABELS: Record<HarnessDescriptor["certification"], string> = {
-  certified: "Stable",
-  experimental: "Experimental",
-  blocked: "Blocked",
-};
 
 interface TeamOption {
   _id: string;
@@ -1766,41 +1761,44 @@ export function DynamicAgentEditor({
               <div className="space-y-4 pt-2">
                 <div className="space-y-2">
                   <div className="p-3 rounded-lg border-2 border-primary/20 bg-primary/5 space-y-3">
-                    <Select
-                      id="harnessId"
-                      aria-label="Execution harness"
-                      value={harnessId}
-                      onChange={(event) => {
-                        if (event.target.value === "__add_existing_agentcore__") setConnectionDialogOpen(true);
-                        else selectHarness(event.target.value);
-                      }}
-                      disabled={loading || harnessLoading || !!readOnly}
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-medium shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <option value="dynamic_agents">
-                        LangChain Deep Agents (default) — {HARNESS_STATUS_LABELS[harnessDescriptors.find(item => item.id === "dynamic_agents")?.certification ?? "certified"]}
-                      </option>
-                      {!isDeepAgents && !selectedHarness && (
-                        <option value={harnessId}>{harnessId} (unavailable)</option>
-                      )}
-                      {harnessDescriptors.filter(descriptor => descriptor.id !== "dynamic_agents").map((descriptor) => (
-                        <option
-                          key={descriptor.id}
-                          value={descriptor.id}
-                          disabled={
-                            descriptor.availability !== "available" ||
-                            descriptor.certification === "blocked"
-                          }
-                        >
-                          {descriptor.display_name} — {HARNESS_STATUS_LABELS[descriptor.certification]}
+                    <div className="flex min-w-0 items-center gap-1">
+                      <Select
+                        id="harnessId"
+                        aria-label="Execution harness"
+                        value={harnessId}
+                        onChange={(event) => {
+                          if (event.target.value === "__add_existing_agentcore__") setConnectionDialogOpen(true);
+                          else selectHarness(event.target.value);
+                        }}
+                        disabled={loading || harnessLoading || !!readOnly}
+                        className="flex h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <option value="dynamic_agents">
+                          LangChain Deep Agents (default) — {harnessStatusLabel("dynamic_agents", harnessDescriptors.find(item => item.id === "dynamic_agents")?.certification)}
                         </option>
-                      ))}
-                      {connectionConfigured !== null && (
-                        <option value="__add_existing_agentcore__" disabled={!connectionConfigured}>
-                          Add existing AgentCore agent{connectionConfigured ? "…" : " (Harness Engine not configured)"}
-                        </option>
-                      )}
-                    </Select>
+                        {!isDeepAgents && !selectedHarness && (
+                          <option value={harnessId}>{harnessId} (unavailable)</option>
+                        )}
+                        {harnessDescriptors.filter(descriptor => descriptor.id !== "dynamic_agents").map((descriptor) => (
+                          <option
+                            key={descriptor.id}
+                            value={descriptor.id}
+                            disabled={
+                              descriptor.availability !== "available" ||
+                              descriptor.certification === "blocked"
+                            }
+                          >
+                            {harnessDisplayName(descriptor)} — {harnessStatusLabel(descriptor.id, descriptor.certification)}
+                          </option>
+                        ))}
+                        {connectionConfigured !== null && (
+                          <option value="__add_existing_agentcore__" disabled={!connectionConfigured}>
+                            Add existing AgentCore agent{connectionConfigured ? "…" : " (Harness Engine not configured)"}
+                          </option>
+                        )}
+                      </Select>
+                      <HarnessHelp harnessId={harnessId} descriptors={harnessDescriptors} />
+                    </div>
                     {selectedHarness && (
                       <div className="space-y-2">
                         <div className="flex items-center gap-1.5">

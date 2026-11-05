@@ -244,16 +244,16 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
 
   // ── Scenario B: agent participant exists but agent returns 404 ─────────────
 
-  test("shows 'Agent unavailable for new messages' banner when agent participant returns 404", async ({
+  test("shows 'Read-only conversation' banner when agent participant returns 404", async ({
     page,
   }) => {
     await bootDeletedAgentConversation(page);
     await page.goto(`/chat/${CONV_DELETED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
-    await expect(page.getByText("Agent unavailable for new messages")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Read-only conversation")).toBeVisible({ timeout: 10_000 });
     await expect(
-      page.getByText(/Agent access may be restricted/i),
+      page.getByText(/Sharing this chat does not grant access to its agent/i),
     ).toBeVisible();
   });
 
@@ -274,7 +274,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await page.goto(`/chat/${CONV_DELETED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
-    await expect(page.getByText("Agent unavailable for new messages")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Read-only conversation")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole("textbox", { name: "Message" })).not.toBeVisible({ timeout: 3_000 });
   });
 
@@ -285,7 +285,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await page.goto(`/chat/${CONV_DELETED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
-    await expect(page.getByText("Agent unavailable for new messages")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Read-only conversation")).toBeVisible({ timeout: 10_000 });
 
     const ctaButton = page.getByRole("button", { name: /New chat with default agent/i });
     await expect(ctaButton).toBeVisible();
@@ -317,7 +317,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await page.goto(`/chat/${CONV_HEALTHY_AGENT_ID}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
-    await expect(page.getByText("Agent unavailable for new messages")).not.toBeVisible({ timeout: 4_000 });
+    await expect(page.getByText("Read-only conversation")).not.toBeVisible({ timeout: 4_000 });
     await expect(page.getByText("Agent no longer available")).not.toBeVisible({ timeout: 1_000 });
   });
 
@@ -400,7 +400,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
 
   test("a new default-agent chat preserves the unavailable agent conversation", async ({ page }) => {
     await bootDeletedAgentConversation(page);
-    await verifyNewChatPreservesSource(page, CONV_DELETED_AGENT_ID, "Agent unavailable for new messages");
+    await verifyNewChatPreservesSource(page, CONV_DELETED_AGENT_ID, "Read-only conversation");
   });
 
   test("a new default-agent chat preserves an unlinked conversation", async ({ page }) => {
@@ -416,7 +416,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
 
     await page.goto(`/chat/${CONV_DELETED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
-    await expect(page.getByText("Agent unavailable for new messages")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Read-only conversation")).toBeVisible({ timeout: 10_000 });
 
     await page.getByRole("button", { name: /New chat with another agent/i }).click();
 
@@ -439,7 +439,7 @@ test.describe("mocked RBAC e2e — deprecated / unlinked agent conversations", (
     await page.goto(`/chat/${CONV_DEPRECATED_AGENT_ID}`, { waitUntil: "domcontentloaded" });
     await dismissReleaseUpgradeDialog(page);
 
-    await expect(page.getByText("Agent unavailable for new messages")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Read-only conversation")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole("textbox", { name: "Message" })).not.toBeVisible({ timeout: 3_000 });
   });
 });

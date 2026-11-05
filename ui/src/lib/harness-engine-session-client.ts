@@ -91,7 +91,7 @@ export async function fetchChatRunStatus(agentId: string, conversationId: string
     try {
       const response = await fetch("/api/v1/chat/stream/status", { method: "POST", signal,
         headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agent_id: agentId, conversation_id: conversationId }) });
-      if (response.ok || response.status < 500 && ![408, 409, 429].includes(response.status)) return response;
+      if (response.ok || response.status < 500 && ![408, 429].includes(response.status)) return response;
     } catch (error) {
       if (signal.aborted) throw error;
     }

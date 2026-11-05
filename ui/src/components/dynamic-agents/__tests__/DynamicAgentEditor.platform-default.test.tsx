@@ -3,7 +3,7 @@
  */
 
 import React from "react";
-import { render, screen, act, fireEvent } from "@testing-library/react";
+import { render, screen, act, fireEvent, within } from "@testing-library/react";
 
 jest.mock("@uiw/react-codemirror", () => ({
   __esModule: true,
@@ -322,6 +322,44 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     expect(
       screen.getByText(/Configure tools, knowledge, and skills for LangChain Deep/),
     ).toBeInTheDocument();
+  });
+
+  it("explains local SDK, SDK ACP, and CLI execution through the information control", async () => {
+    mockFetch(null, true);
+    render(<DynamicAgentEditor agent={editAgent} onCancel={jest.fn()} onSave={jest.fn()} />);
+    await flushAsync();
+    fireEvent.click(screen.getByRole("button", { name: "About agent runtimes" }));
+    const guide = screen.getByRole("dialog", { name: "Choose how your agent runs" });
+    expect(within(guide).getByText(/directly inside the Harness Engine service/)).toBeInTheDocument();
+    expect(within(guide).getByText(/Agent Client Protocol \(ACP\) adapter process/)).toBeInTheDocument();
+    expect(within(guide).getByText(/Claude Code command-line application/)).toBeInTheDocument();
+    expect(within(guide).getAllByText("Experimental")).toHaveLength(5);
+    expect(within(guide).getAllByText("Stable")).toHaveLength(1);
+    expect(screen.getByLabelText("Execution harness")).toHaveValue("dynamic_agents");
+  });
+
+  it.each([
+    ["agentcore", "Amazon Bedrock AgentCore (Remote sessions)"],
+    ["claude_agent_sdk", "Claude Agent SDK (Local)"],
+    ["claude_agent_sdk_remote", "Claude Agent SDK (Remote worker)"],
+    ["claude_code_acp", "Claude Agent SDK (ACP)"],
+    ["claude_code_cli_acp", "Claude Code CLI (ACP)"],
+  ])("keeps configured %s selectable by default and labels it experimental", async (id, label) => {
+    const fetchMock = mockFetch(null, true);
+    const implementation = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url, init) => {
+      const result = await implementation(url, init);
+      if (String(url).endsWith("/api/harness-engine/harnesses")) {
+        const body = await result.json();
+        Object.assign(body.data.harnesses[0], { id, display_name: label, certification: "certified" });
+        return jsonResponse(body);
+      }
+      return result;
+    });
+    render(<DynamicAgentEditor agent={null} onCancel={jest.fn()} onSave={jest.fn()} />);
+    await flushAsync();
+    expect(screen.getByLabelText("Execution harness")).toHaveValue("dynamic_agents");
+    expect(screen.getByRole("option", { name: `${label} — Experimental` })).toBeEnabled();
   });
 });
 
