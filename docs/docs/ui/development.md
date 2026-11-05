@@ -23,14 +23,14 @@ Open `http://localhost:3000`.
 ## Start The Backends
 
 ```bash
-COMPOSE_PROFILES=dynamic-agents,caipe-mongodb docker compose -f docker-compose.dev.yaml up
+COMPOSE_PROFILES=dynamic-agents,caipe-documentdb docker compose -f docker-compose.dev.yaml up
 ```
 
 Set local UI env vars:
 
 ```bash
 DYNAMIC_AGENTS_URL=http://localhost:8100
-MONGODB_URI=mongodb://admin:changeme@localhost:27017/caipe?authSource=admin
+MONGODB_URI=mongodb://admin:changeme@localhost:10260/caipe?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true
 MONGODB_DATABASE=caipe
 NEXTAUTH_URL=http://localhost:3000
 NEXTAUTH_SECRET=development-secret-change-me

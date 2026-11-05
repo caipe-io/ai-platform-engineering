@@ -14,7 +14,7 @@ The CAIPE UI is a Next.js application with a BFF layer. It handles browser auth,
 admin settings, chat persistence, and streaming through Dynamic Agents.
 
 ```bash
-COMPOSE_PROFILES=caipe-ui,dynamic-agents,caipe-mongodb docker compose -f docker-compose.dev.yaml up
+COMPOSE_PROFILES=caipe-ui,dynamic-agents,caipe-documentdb docker compose -f docker-compose.dev.yaml up
 ```
 
 Open:

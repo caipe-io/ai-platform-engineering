@@ -1,4 +1,4 @@
-"""Helm rendering coverage for the opt-in DocumentDB provider."""
+"""Helm rendering coverage for the default DocumentDB provider."""
 
 from __future__ import annotations
 
@@ -37,8 +37,8 @@ def _kind(documents: list[dict[str, object]], kind: str) -> dict[str, object]:
     return next(document for document in documents if document["kind"] == kind)
 
 
-def test_documentdb_provider_renders_pinned_gateway_and_data_volume() -> None:
-    documents = _render("provider=documentdb", "fullnameOverride=caipe-documentdb")
+def test_documentdb_is_the_default_provider() -> None:
+    documents = _render("fullnameOverride=caipe-documentdb")
     service = _kind(documents, "Service")
     statefulset = _kind(documents, "StatefulSet")
 
@@ -53,8 +53,8 @@ def test_documentdb_provider_renders_pinned_gateway_and_data_volume() -> None:
     assert pod_spec["securityContext"] == {"fsGroup": 1000, "runAsNonRoot": True}
 
 
-def test_mongodb_remains_the_default_provider() -> None:
-    documents = _render()
+def test_mongodb_remains_available_as_an_explicit_option() -> None:
+    documents = _render("provider=mongodb", "fullnameOverride=caipe-mongodb")
     service = _kind(documents, "Service")
     statefulset = _kind(documents, "StatefulSet")
     container = statefulset["spec"]["template"]["spec"]["containers"][0]
@@ -85,12 +85,12 @@ def test_unknown_provider_fails_helm_render() -> None:
     assert "provider must be mongodb or documentdb" in result.stderr
 
 
-def test_umbrella_values_keep_mongodb_default_and_documentdb_opt_in() -> None:
+def test_umbrella_values_default_to_documentdb_and_keep_mongodb_opt_in() -> None:
     parent = yaml.safe_load(PARENT_VALUES.read_text())
     example = yaml.safe_load(DOCUMENTDB_EXAMPLE.read_text())
 
     assert parent["caipe-ui"]["mongodb"]["enabled"] is False
-    assert parent["mongodb"]["provider"] == "mongodb"
+    assert parent["mongodb"]["provider"] == "documentdb"
     assert parent["mongodb"]["documentdb"]["image"]["tag"] == "pg17-0.113.0"
     assert example["caipe-ui"]["mongodb"]["enabled"] is True
     assert example["mongodb"]["provider"] == "documentdb"

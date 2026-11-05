@@ -41,7 +41,7 @@ saved file:
 
 ```bash
 export DEV_HOT_RELOAD=true
-COMPOSE_PROFILES="slack-bot,caipe-mongodb,rbac" \
+COMPOSE_PROFILES="slack-bot,caipe-documentdb,rbac" \
   docker compose -f docker-compose.dev.yaml up -d slack-bot
 
 # Edit a file — service auto-restarts within ~1s:
