@@ -54,6 +54,8 @@ securityContext:
 service:
   type: ClusterIP
   port: 8001
+  # Override when the compatibility API shares a Pod with Engine.
+  targetPort: http
   # Dedicated port for the /metrics endpoint. 0 (default) serves metrics on
   # `port` above — current behavior, unchanged. Set to a different port to
   # split metrics onto its own container/service port, e.g. so the main API
