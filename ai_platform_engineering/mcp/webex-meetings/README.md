@@ -115,11 +115,12 @@ At most 100 candidate recording details and one public meeting detail per
 distinct candidate instance are inspected.
 
 The two-day discovery window does not establish an occurrence match. Public
-metadata must identify an actual `meeting` instance starting within five minutes
-of the requested start. Only when public metadata returns 401, 403, or 404 can
-a recording created within 30 minutes anchor a shared instance. Multiple matching
-instance IDs are ambiguous and return no transcript. Later segments of the same
-matched instance remain eligible. `occurrenceStart` is returned only when actual
+metadata must identify an actual `meeting` instance starting within 12 hours
+before or after the requested start, including the boundary. Only when public
+metadata returns 401, 403, or 404 can a recording created within that same window
+anchor a shared instance. Multiple matching instance IDs are ambiguous and return
+no transcript. Later segments of the same matched instance remain eligible.
+`occurrenceStart` is returned only when actual
 instance timing was independently verified; `startTime` remains recording
 creation time. Exact-ID lookups verify each stream's instance ID and allow late
 or undated recording segments without title/time inference.

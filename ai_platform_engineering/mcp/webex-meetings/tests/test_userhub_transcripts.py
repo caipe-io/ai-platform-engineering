@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -162,8 +162,8 @@ async def test_userhub_fallback_resolves_instance_and_downloads_transcript() -> 
 
 
 @pytest.mark.parametrize("actual_start,metadata_overrides", [
-    ("2026-09-04T16:58:27Z", {}), ("2026-11-05T12:40:00Z", {}),
-    ("2026-11-05T13:06:00Z", {}), (None, {}),
+    ("2026-09-04T16:58:27Z", {}), ("2026-11-05T00:59:59Z", {}),
+    ("2026-11-06T01:00:01Z", {}), (None, {}),
     ("2026-11-05T13:00:00Z", {"id": "different-instance"}),
     ("2026-11-05T13:00:00Z", {"meetingType": "scheduledMeeting"}),
 ])
@@ -198,6 +198,61 @@ async def test_recording_time_cannot_override_different_or_unknown_actual_occurr
             meeting_start=datetime(2026, 11, 5, 13, 0, tzinfo=timezone.utc),
             max_results=1, download=True,
         ) == []
+
+
+@pytest.mark.parametrize("public_available", [True, False])
+@pytest.mark.parametrize("offset_seconds,expected_match", [
+    (-12 * 3600 - 1, False), (-12 * 3600, True), (10 * 60, True),
+    (12 * 3600, True), (12 * 3600 + 1, False), (-62 * 24 * 3600, False),
+])
+@pytest.mark.asyncio
+async def test_occurrence_window_accepts_twelve_hours_inclusively(
+    public_available: bool,
+    offset_seconds: int,
+    expected_match: bool,
+) -> None:
+    meeting_start = datetime(2026, 11, 5, 13, 0, tzinfo=timezone.utc)
+    source_start = meeting_start + timedelta(seconds=offset_seconds)
+    recording_start = meeting_start if public_available else source_start
+    downloads: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/webappng/api/v1/recordings":
+            return httpx.Response(200, json={"recordings": [{
+                "recordUUID": "recording-1", "recordName": "Weekly Sync",
+                "gmtCreateTime": recording_start.strftime("%Y-%m-%d %H:%M:%S"),
+            }]})
+        if request.url.path.endswith("/stream"):
+            return httpx.Response(200, json={
+                "meetingInstanceId": "instance-1",
+                "downloadRecordingInfo": {"downloadInfo": {
+                    "transcriptURL": "https://media.webex.com/transcript.txt",
+                }},
+            })
+        if request.url.path == "/v1/meetings/instance-1":
+            if not public_available:
+                return httpx.Response(403, json={"message": "Forbidden"})
+            return httpx.Response(200, json={
+                "id": "instance-1", "meetingType": "meeting", "start": source_start.isoformat(),
+            })
+        assert request.url.path == "/transcript.txt"
+        downloads.append(request.url.path)
+        return httpx.Response(200, text="Example transcript")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        items = await _userhub_transcripts_for_meeting(
+            client, bearer="Bearer example-user-token", site_url="https://primary.webex.com",
+            meeting_id=None, meeting_title="Weekly Sync", meeting_start=meeting_start,
+            max_results=1, download=True,
+        )
+    assert bool(items) is expected_match
+    assert len(downloads) == int(expected_match)
+    if items:
+        assert items[0]["body"] == "Example transcript"
+        if public_available:
+            assert items[0]["occurrenceStart"] == source_start.isoformat()
+        else:
+            assert "occurrenceStart" not in items[0]
 
 
 @pytest.mark.parametrize("public_available", [True, False])
@@ -245,12 +300,14 @@ async def test_same_instance_keeps_late_segments_and_shared_attendee_access(
 
 
 @pytest.mark.parametrize("recording_times", [
-    ["2026-11-05 12:00:00"],
+    ["2026-11-05 00:59:59"],
     ["2026-11-05 13:01:00", "2026-11-05 13:02:00"],
 ])
+@pytest.mark.parametrize("public_available", [True, False])
 @pytest.mark.asyncio
 async def test_shared_access_rejects_old_or_ambiguous_instance_anchors(
     recording_times: list[str],
+    public_available: bool,
 ) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/webappng/api/v1/recordings":
@@ -267,6 +324,13 @@ async def test_shared_access_rejects_old_or_ambiguous_instance_anchors(
                 }},
             })
         assert request.url.path.startswith("/v1/meetings/")
+        if public_available:
+            instance_id = request.url.path.split("/")[-1]
+            index = int(instance_id.rsplit("-", 1)[-1])
+            return httpx.Response(200, json={
+                "id": instance_id, "meetingType": "meeting",
+                "start": recording_times[index].replace(" ", "T") + "Z",
+            })
         return httpx.Response(403, json={"message": "Forbidden"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
