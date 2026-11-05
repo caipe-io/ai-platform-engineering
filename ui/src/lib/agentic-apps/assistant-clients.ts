@@ -1,6 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import { ApiError } from "@/lib/api-error";
+import { resolveWebexAssistantTeam } from "@/lib/rbac/webex-assistant-scope";
 import type { AuthResult } from "@/lib/da-proxy";
 import type { Conversation } from "@/types/mongodb";
 import type { AgenticAppManifest } from "@/types/agentic-app";
@@ -16,6 +17,9 @@ export type AssistantClientContext = {
   roomId: string;
   spaceId: string;
   threadId: string;
+  botId?: string;
+  workspaceId?: string;
+  teamSlug?: string;
 };
 
 export function supportsAssistantClient(
@@ -66,6 +70,14 @@ export async function verifyWebexAssistantContext(
       context.kind !== (metadata.webex_is_direct ? "direct" : "group")) {
     throw new ApiError("Webex context does not match this authenticated request and stored thread", 403);
   }
+  if (context.botId !== undefined && (!validId(context.botId) || context.botId !== metadata.webex_bot_id)) {
+    throw new ApiError("Webex bot identity does not match this stored thread", 403);
+  }
+  // Older proofs remain valid for existing clients. Team-scoped apps require
+  // this additional signed bot identity before accepting group requests.
+  const team = context.kind === "group" && typeof context.botId === "string"
+    ? await resolveWebexAssistantTeam(context.botId, context.spaceId as string) : undefined;
   return { client: "webex", kind: context.kind as "direct" | "group", conversationId: conversation._id,
-    agentId: agent!, roomId: context.roomId, spaceId: context.spaceId, threadId: context.threadId };
+    agentId: agent!, roomId: context.roomId, spaceId: context.spaceId, threadId: context.threadId,
+    ...(typeof context.botId === "string" ? { botId: context.botId } : {}), ...team };
 }
