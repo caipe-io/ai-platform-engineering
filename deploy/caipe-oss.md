@@ -92,3 +92,46 @@ From the UI:
 Harness Engine is intentionally not exposed directly through nginx. Browser
 traffic goes through the authenticated Next.js BFF, which adds the internal
 service token and caller subject.
+
+## Readiness-gated replacements
+
+First install can use the Compose command above. For later application container
+replacements, use a planned maintenance gate instead of routing into starting
+containers. This is a brief retryable interruption, not a zero-downtime rollout.
+
+- The proxy needs the updated nginx configuration and a read-only bind mount of
+  the host maintenance directory at `/run/caipe-maintenance`. The overlay supplies
+  this mount. Create the host directory before starting the proxy.
+- For host-managed nginx, point the configuration's flag path at the same absolute
+  host directory supplied to `--gate-file`; omit `--proxy-container` below.
+- Save the current Compose image pins and persistent-database backups first.
+  Prepare configuration, build/pull images before opening the maintenance window.
+- Probe every replaced application directly on its loopback port. Compose health
+  alone is insufficient when a service has no healthcheck. Include an application's
+  backend readiness URL when its UI health endpoint is only a liveness check.
+
+```bash
+mkdir -p .caipe-maintenance
+python3 deploy/compose-safe-upgrade.py \
+  --compose-file docker-compose.yaml \
+  --compose-file docker-compose.caipe-oss.yaml \
+  --env-file .env \
+  --proxy-container caipe-oss-nginx \
+  --gate-file "$PWD/.caipe-maintenance/active" \
+  --public-url https://caipe-oss.outshift.io/ \
+  --ready-url http://127.0.0.1:3000/api/health \
+  --service caipe-ui
+```
+
+- The helper verifies the public proxy returns its maintenance marker before
+  replacing anything. Users receive `503`, `Retry-After: 15`, and a clear message.
+- It waits for Compose health and all direct readiness URLs, validates/reloads
+  nginx to refresh upstream DNS, confirms the exact new configuration generation is serving requests while
+  the gate is still active, then clears maintenance.
+- Authorization errors are never retried as another user or converted to success.
+- A replacement/readiness/reload failure leaves maintenance enabled. Inspect logs,
+  restore the saved image pins, and rerun with `--resume`. Do not clear the flag
+  while services are starting or unhealthy. Database rollback requires a separate
+  coordinated review if a migration has run.
+- Use the helper only for the selected application services; database and proxy
+  upgrades require a coordinated maintenance procedure of their own.
