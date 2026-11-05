@@ -17,6 +17,8 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     HARNESS_ENGINE_HOST="0.0.0.0" \
     HARNESS_ENGINE_PORT="8010"
 RUN mkdir -p /workspace && chown 65532:65532 /workspace
+RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/*
 USER 65532:65532
 EXPOSE 8010
+ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
 CMD ["python", "-m", "harness_engine.main"]

@@ -1,0 +1,120 @@
+{{- if .Values.global.harnessEngine.enabled }}
+{{- $h := .Values.harnessEngine -}}
+{{- $engine := deepCopy $h.engine -}}
+{{- if hasKey $engine "tokenSecret" }}{{ fail "Use global.harnessEngine.tokenSecret, not harnessEngine.engine.tokenSecret" }}{{ end }}
+{{- $_ := set $engine "tokenSecret" .Values.global.harnessEngine.tokenSecret -}}
+{{- $_ := set $engine.env "HARNESS_ENGINE_DEEP_AGENTS_ENABLED" (.Values.global.harnessEngine.deepAgentsEnabled | toString) -}}
+{{- include "ai-platform-engineering.harnessWorkload" (dict "root" . "component" "engine" "settings" $engine) | nindent 0 }}
+{{- $enabledWorkers := false -}}
+{{- range $component, $worker := $h.workers }}
+{{- if $worker.enabled }}
+{{- $enabledWorkers = true -}}
+{{- $settings := deepCopy $worker -}}
+{{- $proxy := printf "http://%s:3128" (include "ai-platform-engineering.harnessName" (dict "root" $ "component" "egress")) -}}
+{{- range $key := list "HTTP_PROXY" "HTTPS_PROXY" "http_proxy" "https_proxy" }}
+{{- $_ := set $settings.env $key $proxy -}}
+{{- end }}
+{{- $ui := dict "Values" (index $.Values "caipe-ui") "Chart" (dict "Name" "caipe-ui") "Release" $.Release -}}
+{{- $uiName := include "caipe-ui.fullname" $ui -}}
+{{- $noProxy := printf "%s,%s,%s.%s,%s.%s.svc,%s.%s.svc.cluster.local" $h.noProxy $uiName $uiName $.Release.Namespace $uiName $.Release.Namespace $uiName $.Release.Namespace -}}
+{{- $_ := set $settings.env "NO_PROXY" $noProxy -}}
+{{- $_ := set $settings.env "no_proxy" $noProxy -}}
+{{- $_ := set $settings.env "AWS_EC2_METADATA_DISABLED" "true" -}}
+{{- include "ai-platform-engineering.harnessWorkload" (dict "root" $ "component" $component "settings" $settings) | nindent 0 }}
+{{- end }}
+{{- end }}
+{{- if $enabledWorkers }}
+{{- if not $h.egress.enabled }}{{ fail "Remote workers require harnessEngine.egress.enabled" }}{{ end }}
+{{- if not $h.networkPolicy.enabled }}{{ fail "Remote workers require enforced harnessEngine.networkPolicy.enabled" }}{{ end }}
+{{- if or (not (kindIs "slice" $h.networkPolicy.databaseEgress)) (not $h.networkPolicy.databaseEgress) }}{{ fail "Remote workers require explicit harnessEngine.networkPolicy.databaseEgress" }}{{ end }}
+{{- range $rule := $h.networkPolicy.databaseEgress }}
+{{- if or (not $rule.to) (not $rule.ports) }}{{ fail "databaseEgress rules require explicit destinations and TCP database ports" }}{{ end }}
+{{- range $port := $rule.ports }}
+{{- if hasKey $port "endPort" }}{{ fail "databaseEgress must not include an endPort range" }}{{ end }}
+{{- if or (ne (int $port.port) (int $h.networkPolicy.databasePort)) (ne ($port.protocol | default "TCP") "TCP") }}{{ fail "databaseEgress may allow only the configured TCP databasePort" }}{{ end }}
+{{- end }}
+{{- end }}
+{{- if not $h.egress.allowedDomains }}{{ fail "Remote workers require exact model hostnames in harnessEngine.egress.allowedDomains" }}{{ end }}
+{{- $name := include "ai-platform-engineering.harnessName" (dict "root" . "component" "egress") }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+data:
+  squid.conf: |
+    {{- .Files.Get "files/harness-squid.conf" | nindent 4 }}
+  allowed-domains.txt: |
+    {{- range $domain := $h.egress.allowedDomains }}
+    {{- if not (regexMatch "^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$" $domain) }}{{ fail "Model allowlist entries must be exact hostnames" }}{{ end }}
+    {{ $domain }}
+    {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: harness-egress}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: harness-egress}
+      annotations:
+        checksum/config: {{ toJson (list $h.egress.allowedDomains (.Files.Get "files/harness-squid.conf")) | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with $h.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      {{- with $h.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $h.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: proxy
+          {{- if $h.egress.image.digest }}
+          image: "{{ $h.egress.image.repository }}@{{ $h.egress.image.digest }}"
+          {{- else }}
+          image: "{{ $h.egress.image.repository }}:{{ $h.egress.image.tag | default (include "ai-platform-engineering.appVersion" .) }}"
+          {{- end }}
+          imagePullPolicy: {{ $h.egress.image.pullPolicy }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          ports: [{name: proxy, containerPort: 3128}]
+          readinessProbe: {tcpSocket: {port: proxy}}
+          livenessProbe: {tcpSocket: {port: proxy}}
+          resources:
+            {{- toYaml $h.egress.resources | nindent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /etc/squid, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: {{ $name }}}
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: harness-egress}
+  ports: [{name: proxy, port: 3128, targetPort: proxy}]
+{{- end }}
+{{- end }}

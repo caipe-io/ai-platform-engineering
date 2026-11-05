@@ -7,6 +7,9 @@ fullnameOverride: ""
 
 # Container image configuration
 image:
+  # Complete Docker CMD override, including the executable (not flags alone).
+  # Retains the image's PID 1 entrypoint; e.g. [python3, src/dynamic_agents/main.py].
+  args: []
   repository: "ghcr.io/caipe-io/caipe-dynamic-agents"
   pullPolicy: "Always"
   # tag defaults to .Chart.AppVersion when not specified
@@ -52,6 +55,8 @@ securityContext:
 service:
   type: ClusterIP
   port: 8001
+  # Override when the compatibility API shares a Pod with Engine.
+  targetPort: http
   # Dedicated port for the /metrics endpoint. 0 (default) serves metrics on
   # `port` above — current behavior, unchanged. Set to a different port to
   # split metrics onto its own container/service port, e.g. so the main API
