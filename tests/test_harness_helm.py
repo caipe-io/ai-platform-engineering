@@ -20,6 +20,7 @@ def chart(tmp_path: Path) -> Path:
     (dest / "templates").mkdir(parents=True)
     for name in ["_helpers.tpl", "_harness.tpl", "harness-engine.yaml", "harness-network.yaml"]:
         shutil.copyfile(CHART / "templates" / name, dest / "templates" / name)
+    shutil.copyfile(CHART / "charts/caipe-ui/templates/_helpers.tpl", dest / "templates/_caipe-ui.tpl")
     shutil.copytree(CHART / "files", dest / "files")
     shutil.copyfile(CHART / "values.yaml", dest / "values.yaml")
     (dest / "Chart.yaml").write_text("apiVersion: v2\nname: example\nversion: 1.0.0\nappVersion: 1.0.0\n")
@@ -38,6 +39,14 @@ def render(chart: Path, *settings: str, name: str = "example") -> subprocess.Com
 def docs(result: subprocess.CompletedProcess[str]) -> list[dict]:
     assert result.returncode == 0, result.stderr
     return [d for d in yaml.safe_load_all(result.stdout) if d]
+
+
+def worker_settings() -> list[str]:
+    return ["harnessEngine.workers.sdk.enabled=true",
+            "harnessEngine.workers.sdk.tokenSecret.name=example-worker-token",
+            "harnessEngine.egress.allowedDomains[0]=model.example.com",
+            "harnessEngine.networkPolicy.databaseEgress[0].to[0].ipBlock.cidr=192.0.2.0/24",
+            "harnessEngine.networkPolicy.databaseEgress[0].ports[0].port=27017"]
 
 
 def test_disabled_defaults_create_no_runtime(chart: Path) -> None:
@@ -66,14 +75,17 @@ def test_missing_persistence_or_secrets_fail_render(chart: Path, setting: str, e
 
 
 def test_long_names_remain_distinct_and_bounded(chart: Path) -> None:
-    resources = docs(render(chart, name="example-" + "a" * 45))
+    resources = docs(render(chart, *worker_settings(), name="example-" + "a" * 45))
     names = {(d["kind"], d["metadata"]["name"]) for d in resources}
     assert len(names) == len(resources)
     assert all(len(n) <= 63 for _, n in names)
-    deployment = next(d for d in resources if d["kind"] == "Deployment")
-    service = next(d for d in resources if d["kind"] == "Service")
-    claim = next(d for d in resources if d["kind"] == "PersistentVolumeClaim")
-    assert deployment["metadata"]["name"] == service["metadata"]["name"] == claim["metadata"]["name"]
+    deployments = [d for d in resources if d["kind"] == "Deployment"]
+    assert len(deployments) == 3
+    for deployment in deployments:
+        name = deployment["metadata"]["name"]
+        assert ("Service", name) in names
+        if deployment["spec"]["template"]["metadata"]["labels"].get("app.kubernetes.io/component") != "harness-egress":
+            assert ("PersistentVolumeClaim", name) in names
 
 
 def test_runtime_hardening_and_existing_workspace(chart: Path) -> None:
@@ -138,6 +150,79 @@ def test_workers_have_distinct_storage_and_no_direct_external_rule(chart: Path) 
             assert env["AWS_EC2_METADATA_DISABLED"]["value"] == "true"
     policy = next(d for d in resources if d["kind"] == "NetworkPolicy" and d["metadata"]["name"].endswith("-workers"))
     assert {p["port"] for rule in policy["spec"]["egress"] for p in rule["ports"]} == {53, 3000, 3128, 27017}
+    assert all(rule.get("to") for rule in policy["spec"]["egress"])
+
+
+@pytest.mark.parametrize("section", ["commonEnv", "engine.env", "engine.secretEnv"])
+@pytest.mark.parametrize("key", ["HARNESS_ENGINE_INTERNAL_TOKEN", "HARNESS_ENGINE_MONGODB_URI",
+                                 "HARNESS_ENGINE_MONGODB_DATABASE", "HARNESS_ENGINE_STORAGE_BACKEND"])
+def test_reserved_environment_cannot_override_dedicated_settings(chart: Path, section: str, key: str) -> None:
+    field = f"{key}.name" if section.endswith("secretEnv") else key
+    result = render(chart, f"harnessEngine.{section}.{field}=example")
+    assert result.returncode != 0
+    assert f"{key} must use its dedicated setting" in result.stderr
+
+
+def test_engine_local_token_setting_is_not_silently_ignored(chart: Path) -> None:
+    result = render(chart, "harnessEngine.engine.tokenSecret.name=example")
+    assert result.returncode != 0
+    assert "Use global.harnessEngine.tokenSecret" in result.stderr
+
+
+def test_worker_database_rules_cannot_allow_a_port_range(chart: Path) -> None:
+    result = render(chart, *worker_settings(),
+                    "harnessEngine.networkPolicy.databaseEgress[0].ports[0].endPort=65535")
+    assert result.returncode != 0
+    assert "must not include an endPort range" in result.stderr
+
+
+def test_custom_dns_and_bff_routes_follow_the_workloads(chart: Path) -> None:
+    resources = docs(render(chart, *worker_settings(), "harnessEngine.networkPolicy.dnsNamespace=example-dns",
+                            "harnessEngine.networkPolicy.dnsPodSelector.k8s-app=example-dns",
+                            "caipe-ui.nameOverride=example-web", "caipe-ui.fullnameOverride=example-bff",
+                            "caipe-ui.service.port=3100"))
+    policies = [d for d in resources if d["kind"] == "NetworkPolicy"]
+    for policy in policies:
+        dns = policy["spec"]["egress"][0]["to"][0]
+        assert dns["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"] == "example-dns"
+        assert dns["podSelector"]["matchLabels"] == {"k8s-app": "example-dns"}
+    worker = next(d for d in resources if d["kind"] == "Deployment" and d["metadata"]["name"].endswith("-sdk"))
+    env = {e["name"]: e.get("value") for e in worker["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert "example-bff" in env["NO_PROXY"].split(",")
+    assert env["NO_PROXY"] == env["no_proxy"]
+    rule = next(rule for rule in policies[0]["spec"]["egress"] if rule["ports"] == [{"protocol": "TCP", "port": 3100}])
+    assert rule["to"][0]["podSelector"]["matchLabels"]["app.kubernetes.io/name"] == "example-web"
+
+
+def test_public_proxy_egress_excludes_the_squid_private_ranges(chart: Path) -> None:
+    resources = docs(render(chart, *worker_settings()))
+    proxy = next(d for d in resources if d["kind"] == "NetworkPolicy" and d["metadata"]["name"].endswith("-egress"))
+    rule = proxy["spec"]["egress"][1]
+    assert rule["ports"] == [{"protocol": "TCP", "port": 443}]
+    assert {p["ipBlock"]["cidr"] for p in rule["to"]} == {"0.0.0.0/0", "::/0"}
+    blocked = {cidr for peer in rule["to"] for cidr in peer["ipBlock"]["except"]}
+    acl = next(line for line in (CHART / "files/harness-squid.conf").read_text().splitlines()
+               if line.startswith("acl private_address dst "))
+    assert blocked == set(acl.split()[3:])
+
+
+@pytest.mark.parametrize("deep", [False, True])
+def test_ui_uses_the_same_engine_url_and_secret(tmp_path: Path, deep: bool) -> None:
+    ui = tmp_path / "ui"
+    shutil.copytree(CHART / "charts/caipe-ui", ui)
+    shutil.copyfile(CHART / "templates/_harness.tpl", ui / "templates/_harness.tpl")
+    command = ["helm", "template", "example", str(ui), "--set", "global.image.tag=test",
+               "--set", "global.agentgateway.enabled=false", "--set", "global.vpa.enabled=false",
+               "--set", "oktaSync.enabled=false", "--set", "global.harnessEngine.enabled=true",
+               "--set", "global.harnessEngine.tokenSecret.name=example-token",
+               "--set", "global.harnessEngine.tokenSecret.key=example-key",
+               "--set", f"global.harnessEngine.deepAgentsEnabled={str(deep).lower()}"]
+    resources = docs(subprocess.run(command, capture_output=True, text=True, check=False))
+    deployment = next(d for d in resources if d["kind"] == "Deployment" and d["metadata"]["name"] == "example-caipe-ui")
+    env = {e["name"]: e for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["HARNESS_ENGINE_URL"]["value"] == "http://example-harness-engine:8010"
+    assert env["HARNESS_ENGINE_INTERNAL_TOKEN"]["valueFrom"]["secretKeyRef"] == {"name": "example-token", "key": "example-key"}
+    assert env["HARNESS_ENGINE_DEEP_AGENTS_ENABLED"]["value"] == str(deep).lower()
 
 
 @pytest.mark.parametrize("target,expected", [(None, "http"), ("dynamic-api", "dynamic-api"), ("8001", 8001)])

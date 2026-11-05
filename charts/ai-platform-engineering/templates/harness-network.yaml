@@ -1,5 +1,8 @@
 {{- if .Values.global.harnessEngine.enabled }}
 {{- $h := .Values.harnessEngine -}}
+{{- $ui := index .Values "caipe-ui" -}}
+{{- $uiName := include "caipe-ui.name" (dict "Values" $ui "Chart" (dict "Name" "caipe-ui")) -}}
+{{- $uiPort := dig "service" "port" 3000 $ui -}}
 {{- $workers := false -}}
 {{- range $w := $h.workers }}{{- if $w.enabled }}{{- $workers = true }}{{- end }}{{- end }}
 {{- if $workers }}
@@ -19,7 +22,7 @@ spec:
       ports: [{protocol: TCP, port: 8010}]
   egress:
     - to:
-        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ $h.networkPolicy.dnsNamespace | quote }}}}
           podSelector:
             matchLabels:
               {{- toYaml $h.networkPolicy.dnsPodSelector | nindent 14 }}
@@ -30,8 +33,8 @@ spec:
       ports: [{protocol: TCP, port: 3128}]
     - to:
         - podSelector:
-            matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/name: caipe-ui}
-      ports: [{protocol: TCP, port: 3000}]
+            matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/name: {{ $uiName | quote }}}
+      ports: [{protocol: TCP, port: {{ $uiPort }}}]
     {{- toYaml $h.networkPolicy.databaseEgress | nindent 4 }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -49,7 +52,7 @@ spec:
       ports: [{protocol: TCP, port: 3128}]
   egress:
     - to:
-        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ $h.networkPolicy.dnsNamespace | quote }}}}
           podSelector:
             matchLabels:
               {{- toYaml $h.networkPolicy.dnsPodSelector | nindent 14 }}
@@ -58,6 +61,9 @@ spec:
         - ipBlock:
             cidr: 0.0.0.0/0
             except: [0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4]
+        - ipBlock:
+            cidr: "::/0"
+            except: ["::/128", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8"]
       ports: [{protocol: TCP, port: 443}]
 {{- end }}
 {{- end }}

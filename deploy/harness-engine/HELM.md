@@ -78,8 +78,11 @@ harnessEngine:
   to selected public model hosts and rejects private/metadata destinations.
 - An enforcing CNI is required. Verify actual direct-egress and metadata denial
   before admitting users; rendering a NetworkPolicy does not prove enforcement.
-- Keep the default Kubernetes DNS selector only when it matches the cluster.
+- Set `networkPolicy.dnsNamespace` and `dnsPodSelector` to the cluster's DNS Pods.
+  Worker proxy bypasses include the rendered BFF Service name; the BFF egress
+  rule follows `caipe-ui.nameOverride` and `service.port`.
   Explicitly configure database subnet rules for external MongoDB/DocumentDB.
+  Database rules allow one TCP port, without `endPort` ranges.
 - Kubernetes Pod resources do not configure a per-Pod PID limit or `noexec`
   emptyDir mounts. Enforce PID limits through kubelet `podPidsLimit` and apply
   required mount restrictions through the workload runtime/storage policy.

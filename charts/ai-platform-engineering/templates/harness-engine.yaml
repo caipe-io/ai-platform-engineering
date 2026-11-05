@@ -1,6 +1,7 @@
 {{- if .Values.global.harnessEngine.enabled }}
 {{- $h := .Values.harnessEngine -}}
 {{- $engine := deepCopy $h.engine -}}
+{{- if hasKey $engine "tokenSecret" }}{{ fail "Use global.harnessEngine.tokenSecret, not harnessEngine.engine.tokenSecret" }}{{ end }}
 {{- $_ := set $engine "tokenSecret" .Values.global.harnessEngine.tokenSecret -}}
 {{- $_ := set $engine.env "HARNESS_ENGINE_DEEP_AGENTS_ENABLED" (.Values.global.harnessEngine.deepAgentsEnabled | toString) -}}
 {{- include "ai-platform-engineering.harnessWorkload" (dict "root" . "component" "engine" "settings" $engine) | nindent 0 }}
@@ -13,8 +14,11 @@
 {{- range $key := list "HTTP_PROXY" "HTTPS_PROXY" "http_proxy" "https_proxy" }}
 {{- $_ := set $settings.env $key $proxy -}}
 {{- end }}
-{{- $_ := set $settings.env "NO_PROXY" $h.noProxy -}}
-{{- $_ := set $settings.env "no_proxy" $h.noProxy -}}
+{{- $ui := dict "Values" (index $.Values "caipe-ui") "Chart" (dict "Name" "caipe-ui") "Release" $.Release -}}
+{{- $uiName := include "caipe-ui.fullname" $ui -}}
+{{- $noProxy := printf "%s,%s,%s.%s,%s.%s.svc,%s.%s.svc.cluster.local" $h.noProxy $uiName $uiName $.Release.Namespace $uiName $.Release.Namespace $uiName $.Release.Namespace -}}
+{{- $_ := set $settings.env "NO_PROXY" $noProxy -}}
+{{- $_ := set $settings.env "no_proxy" $noProxy -}}
 {{- $_ := set $settings.env "AWS_EC2_METADATA_DISABLED" "true" -}}
 {{- include "ai-platform-engineering.harnessWorkload" (dict "root" $ "component" $component "settings" $settings) | nindent 0 }}
 {{- end }}
@@ -26,6 +30,7 @@
 {{- range $rule := $h.networkPolicy.databaseEgress }}
 {{- if or (not $rule.to) (not $rule.ports) }}{{ fail "databaseEgress rules require explicit destinations and TCP database ports" }}{{ end }}
 {{- range $port := $rule.ports }}
+{{- if hasKey $port "endPort" }}{{ fail "databaseEgress must not include an endPort range" }}{{ end }}
 {{- if or (ne (int $port.port) (int $h.networkPolicy.databasePort)) (ne ($port.protocol | default "TCP") "TCP") }}{{ fail "databaseEgress may allow only the configured TCP databasePort" }}{{ end }}
 {{- end }}
 {{- end }}

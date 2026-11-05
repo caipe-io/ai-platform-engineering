@@ -1885,9 +1885,6 @@ harnessEngine:
     - -m
     - harness_engine.main
     database: harness_engine
-    tokenSecret:
-      name: ''
-      key: token
     serviceAccountName: ''
     podLabels: {}
     sidecars: []
@@ -2010,6 +2007,7 @@ harnessEngine:
   networkPolicy:
     enabled: true
     databasePort: 27017
+    dnsNamespace: kube-system
     dnsPodSelector:
       k8s-app: kube-dns
     databaseEgress: []

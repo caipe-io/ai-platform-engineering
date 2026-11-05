@@ -8,6 +8,7 @@ on:
       - '.github/workflows/helm-chart-test.yml'
       - 'tests/test_caipe_ui_oidc_endpoint.py'
       - 'tests/test_harness_helm.py'
+      - 'deploy/harness-engine/squid.conf'
   pull_request:
     branches: [ main, develop, 'release/**' ]
     paths:
@@ -15,6 +16,7 @@ on:
       - '.github/workflows/helm-chart-test.yml'
       - 'tests/test_caipe_ui_oidc_endpoint.py'
       - 'tests/test_harness_helm.py'
+      - 'deploy/harness-engine/squid.conf'
   schedule:
     # Run tests daily at 2 AM UTC
     - cron: '0 2 * * *'

@@ -7,7 +7,8 @@ fullnameOverride: ""
 
 # Container image configuration
 image:
-  # Optional Docker CMD override; retains the image's PID 1 entrypoint.
+  # Complete Docker CMD override, including the executable (not flags alone).
+  # Retains the image's PID 1 entrypoint; e.g. [python, -m, dynamic_agents.main].
   args: []
   repository: "ghcr.io/caipe-io/caipe-dynamic-agents"
   pullPolicy: "Always"
