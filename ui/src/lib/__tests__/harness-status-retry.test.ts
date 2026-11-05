@@ -1,6 +1,15 @@
 /** @jest-environment node */
 import { fetchChatRunStatus } from "../harness-engine-session-client";
 
+it("returns a conflicting session without polling or reposting the prompt", async () => {
+  const conflict = Response.json({ error: "Conflicting runtime contexts" }, { status: 409 });
+  const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(conflict);
+  try {
+    expect(await fetchChatRunStatus("example", "example", new AbortController().signal)).toBe(conflict);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  } finally { fetchMock.mockRestore(); }
+});
+
 it("recovers status across temporary outages without sending a start command", async () => {
   jest.useFakeTimers();
   const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(new Response(null, { status: 503 }))
