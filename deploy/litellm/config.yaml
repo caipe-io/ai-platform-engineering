@@ -1,0 +1,25 @@
+# LiteLLM proxy config for local Docker Compose (opt-in `llm-routing` profile).
+# Mirrors the Helm subchart behaviour. Stateless: config-only, no database.
+#
+# The proxy master_key (the shared credential agents present as OPENAI_API_KEY) comes from
+# LITELLM_MASTER_KEY. Provide the real upstream provider key(s) via env (see .env.example)
+# and map the models agents request to a real upstream in model_list below.
+
+# model_list maps the model an agent requests to a real upstream provider. Add entries and
+# provide the matching provider key via env. Examples (uncomment and set the keys in .env):
+model_list: []
+  # - model_name: gpt-4o
+  #   litellm_params:
+  #     model: openai/gpt-4o
+  #     api_key: os.environ/UPSTREAM_OPENAI_API_KEY
+  # - model_name: claude
+  #   litellm_params:
+  #     model: anthropic/claude-haiku-4-5-20251001
+  #     api_key: os.environ/ANTHROPIC_API_KEY
+
+litellm_settings:
+  # No proxy-level retries or fallbacks: upstream errors pass through to the agent unchanged.
+  num_retries: 0
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
