@@ -248,6 +248,12 @@ jobs:
           done
           npx playwright install --with-deps chromium
 
+      - name: Initialize and validate the CI Compose environment
+        run: |
+          # Services require this file; CI and Makefile environment values supply configuration.
+          install -m 600 /dev/null .env
+          docker compose -f docker-compose.dev.yaml config --quiet
+
       - name: Pull docker images for the stack (warm cache)
         run: |
           docker compose -f docker-compose.dev.yaml \
