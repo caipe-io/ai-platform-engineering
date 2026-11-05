@@ -94,6 +94,65 @@ The command scans all Parquet and NDJSON/gzip-NDJSON objects under the configure
 
 Rollback: preserve MongoDB and the archive, quiesce producers, let the new archive backlog reach zero, then roll back the matching service/UI pair. No down-migration or deletion is required. Rolling back while archival is unavailable leaves Mongo-only records invisible to an old archive reader; wait for archival or retain the new reader.
 
+### CAS migration Job (S3 archive)
+
+[cas-migration-job.yaml](scripts/cas_migration/cas-migration-job.yaml) runs the migration
+already packaged in the **same audit-service image** as the collector. Only the
+command changes: the Deployment starts the HTTP server; the Job runs
+`python -m ai_platform_engineering.audit_service.scripts.cas_migration.migrate_query_store`.
+No separate migration image, shell launcher, Helm hook or startup migration.
+
+This is the reusable CAS release Job; **today it runs only the audit backfill**.
+Additional CAS migrations can share it when their code/dependencies are packaged
+in the image. Add steps explicitly in release order: each must support dry-run,
+be safe to retry and stop the Job on failure. There is no whole-Job transaction.
+
+1. From a CAIPE source checkout, copy the manifest to keep environment settings out of Git:
+
+   ```bash
+   cp ai_platform_engineering/audit_service/scripts/cas_migration/cas-migration-job.yaml /tmp/cas-migration-job.yaml
+   ```
+
+2. Edit the copy: replace **every** `REPLACE_WITH_...` value. Pin the released
+   audit-service image by version/digest, matching the planned collector rollout.
+   The checked-in image is a **future-release placeholder, not a published tag**.
+   Set fixed UTC `--since`/`--until` bounds including `Z`, archive settings, database
+   and query retention. The namespace, MongoDB Secret (key `MONGODB_URI`) and
+   archive-reader ServiceAccount must already exist. Use existing workload identity;
+   add provider-specific Pod labels/annotations or credential Secret mounts if needed.
+   Permit archive/MongoDB network access. Back up MongoDB and protect the archive.
+
+3. Apply the configured copy **before updating application Deployments**. The
+   default Job validates/counts archive records without connecting to MongoDB;
+   its referenced Secret must still exist for the Pod to start. Old services stay up.
+
+   ```bash
+   CAS_CONTEXT='REPLACE_WITH_CONTEXT'
+   CAS_NAMESPACE='REPLACE_WITH_NAMESPACE'
+   CAS_JOB_NAME='cas-migration-job'
+   kubectl --context "$CAS_CONTEXT" --namespace "$CAS_NAMESPACE" apply -f /tmp/cas-migration-job.yaml
+   kubectl --context "$CAS_CONTEXT" --namespace "$CAS_NAMESPACE" logs "job/$CAS_JOB_NAME"
+   kubectl --context "$CAS_CONTEXT" --namespace "$CAS_NAMESPACE" wait \
+     --for=condition=complete "job/$CAS_JOB_NAME" --timeout=125m
+   ```
+
+For subsequent phases, edit the same copy and repeat the apply/log/wait commands,
+setting `CAS_JOB_NAME` to match the manifest's `metadata.name`:
+
+| Phase | `metadata.name` / `CAS_JOB_NAME` | Manifest `args` and prerequisite |
+| --- | --- | --- |
+| Validate | `cas-migration-job` | Leave `--apply` commented out. Review counts and successful completion. |
+| Initial import | `cas-migration-job-initial` | Uncomment `--apply`; keep the reviewed bounds and image. Old services can remain active. |
+| Final import | `cas-migration-job-final` | Keep `--apply`. Quiesce **all** producers; require `queue_size=0` and `accepted_events=flushed_events` on **every** old collector. Keep the original start and extend the end to UTC after the last flush. |
+
+Apply Jobs must complete with `mode=apply` and `matched=inserted+already_present`.
+Stop on failure, timeout, corruption or conflict. Only after the final Job succeeds,
+upgrade the matching BFF/audit pair under quiesced traffic, validate, then resume.
+Completed Jobs do not rerun on apply; use a new name for retries and retain logs as
+evidence. Size the example two-hour deadline/memory limit for the archive.
+Local archives instead require a read-only volume and
+`AUDIT_SERVICE_BACKEND=local` / `AUDIT_SERVICE_LOCAL_PATH` settings.
+
 ## Tests
 
 Run `uv run pytest ai_platform_engineering/audit_service`. Set `AUDIT_TEST_MONGODB_URI` to exercise the same tests against real MongoDB as well as mongomock. Tests create/drop only randomly named `audit_query_test_*` databases. CI supplies an isolated MongoDB 7 service. Browser fixtures exercise filters, Next/Previous and complete multi-page exports separately.
