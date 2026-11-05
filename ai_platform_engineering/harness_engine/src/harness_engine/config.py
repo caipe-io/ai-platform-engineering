@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import PurePosixPath
-from typing import Literal
+from typing import Any, Literal, Self
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, SecretStr, ValidationError, model_validator
@@ -150,7 +151,7 @@ class ClaudeWorkerProfile(BaseModel):
 class Settings(BaseSettings):
     """Environment-only service settings."""
 
-    model_config = SettingsConfigDict(env_prefix="HARNESS_ENGINE_", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="HARNESS_ENGINE_", extra="ignore", hide_input_in_errors=True)
 
     host: str = "0.0.0.0"
     port: int = Field(8010, ge=1, le=65535)
@@ -164,7 +165,7 @@ class Settings(BaseSettings):
     agentcore_endpoint_url: str | None = None
     agentcore_provision_timeout_seconds: float = Field(180.0, ge=1.0, le=900.0)
     agentcore_provision_poll_seconds: float = Field(2.0, ge=0.1, le=10.0)
-    claude_sdk_profiles_json: str = "{}"
+    claude_sdk_profiles_json: SecretStr = SecretStr("{}")
     claude_worker_profiles_json: SecretStr = SecretStr("{}")
     claude_tool_broker_url: str | None = None
     claude_acp_command: list[str] = Field(default_factory=list)
@@ -172,6 +173,20 @@ class Settings(BaseSettings):
     claude_acp_tools: list[str] = Field(default_factory=list)
     deep_agents_enabled: bool = False
     sandbox_portal_url: str | None = None
+
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
+        # Pydantic copies intentionally do not validate updates. Preserve the
+        # established string-update API without reintroducing plaintext config
+        # into representations, dumps or later validation failures.
+        updates = dict(update or {})
+        for field in ("claude_sdk_profiles_json", "claude_worker_profiles_json"):
+            value = updates.get(field, getattr(self, field))
+            if isinstance(value, str):
+                value = SecretStr(value)
+            if not isinstance(value, SecretStr):
+                raise TypeError("Claude profile settings require a secret JSON string")
+            updates[field] = value
+        return super().model_copy(update=updates, deep=deep)
 
     @model_validator(mode="after")
     def validate_sandbox_portal(self) -> Settings:
@@ -198,12 +213,13 @@ class Settings(BaseSettings):
         """Parse safe aliases for Claude SDK model/workspace policy."""
 
         try:
-            raw = json.loads(self.claude_sdk_profiles_json)
+            raw = json.loads(self.claude_sdk_profiles_json.get_secret_value())
             if not isinstance(raw, dict):
                 raise ValueError("must be a JSON object")
             return {alias: ClaudeSDKProfile.model_validate(value) for alias, value in raw.items()}
-        except (json.JSONDecodeError, ValidationError, ValueError) as exc:
-            raise ValueError("HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON is invalid") from exc
+        except (json.JSONDecodeError, ValidationError, ValueError):
+            # Nested validation inputs can contain the sandbox service token.
+            raise ValueError("HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON is invalid") from None
 
     def claude_worker_profiles(self) -> dict[str, ClaudeWorkerProfile]:
         try:
