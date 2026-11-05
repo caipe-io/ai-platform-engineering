@@ -58,6 +58,13 @@ harnessEngine:
 - Use RWX storage for independently scheduled producers. RWO storage requires
   deliberate same-node placement of Engine and Dynamic Agents. Existing chats
   are not automatically migrated.
+- With RWO-only storage, an operator can colocate the compatibility API through
+  `engine.sidecars`, using the Deep Engine image and shared volume mounts. Add
+  `app.kubernetes.io/name: dynamic-agents` through `engine.podLabels` and set the
+  standalone Dynamic Agents Deployment's replica count to zero; its existing
+  Service then selects the compatibility sidecar. Carry forward the current
+  model, authorization and certificate configuration. Sidecars must receive the
+  same non-root, read-only, capability, resource and mount restrictions.
 
 ## Enforced controls and cluster requirements
 

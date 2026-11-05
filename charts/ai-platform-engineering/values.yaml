@@ -1889,6 +1889,8 @@ harnessEngine:
       name: ''
       key: token
     serviceAccountName: ''
+    podLabels: {}
+    sidecars: []
     env: {}
     secretEnv: {}
     envFromSecrets: []
@@ -1922,6 +1924,8 @@ harnessEngine:
         name: ''
         key: token
       serviceAccountName: ''
+      podLabels: {}
+      sidecars: []
       env: {}
       secretEnv: {}
       envFromSecrets: []
@@ -1948,6 +1952,8 @@ harnessEngine:
         name: ''
         key: token
       serviceAccountName: ''
+      podLabels: {}
+      sidecars: []
       env: {}
       secretEnv: {}
       envFromSecrets: []
@@ -1974,6 +1980,8 @@ harnessEngine:
         name: ''
         key: token
       serviceAccountName: ''
+      podLabels: {}
+      sidecars: []
       env: {}
       secretEnv: {}
       envFromSecrets: []

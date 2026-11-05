@@ -40,6 +40,10 @@ spec:
   template:
     metadata:
       labels:
+        {{- range $key, $value := $w.podLabels }}
+        {{- if has $key (list "app.kubernetes.io/instance" "app.kubernetes.io/component" "caipe.io/harness-worker") }}{{ fail "Runtime routing labels cannot be overridden" }}{{ end }}
+        {{ $key }}: {{ $value | quote }}
+        {{- end }}
         app.kubernetes.io/instance: {{ $root.Release.Name }}
         app.kubernetes.io/component: harness-{{ .component }}
         caipe.io/harness-worker: {{ ne .component "engine" | quote }}
@@ -147,6 +151,9 @@ spec:
             {{- with $h.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+        {{- with $w.sidecars }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       volumes:
         - name: workspace
           persistentVolumeClaim: {claimName: {{ $claim }}}
