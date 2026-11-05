@@ -144,7 +144,7 @@ class RemoteClaudeSDKAdapter:
             return None
         target = {
             "url": profile.url, "profile_id": profile.profile_id,
-            "runtime": profile.runtime, "sandbox": profile.sandbox.model_dump(mode="json"),
+            "runtime": profile.runtime, "sandbox": profile.sandbox.execution_identity(),
         }
         # Credential rotation does not change native placement. Endpoint,
         # identity, owner and approved configuration changes do.

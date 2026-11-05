@@ -123,7 +123,13 @@ class RunCoordinator:
 
     async def start_context(self, context: RunContext) -> RunRecord:
         """Admit a trusted worker request using the same producer fence and pump."""
-        fingerprint = hashlib.sha256(context.model_dump_json().encode()).hexdigest()
+        # Newly optional binding fields must not change the identity of an
+        # ordinary SDK run admitted by an older worker before a rolling upgrade.
+        absent = {
+            field for field in ("execution_target", "worker_execution_target", "sandbox")
+            if getattr(context.binding, field) is None
+        }
+        fingerprint = hashlib.sha256(context.model_dump_json(exclude={"binding": absent}).encode()).hexdigest()
         prior = await self._repository.get_run(context.turn.run_id)
         if prior is not None:
             if prior.owner_subject != context.binding.owner_subject or prior.request_fingerprint != fingerprint:
@@ -133,7 +139,7 @@ class RunCoordinator:
             "active_run": None, "last_run_id": None, "dispatch_started": False,
             "pending_interrupt": None, "resume_run_id": None,
         }))
-        for field in ("owner_subject", "agent_id", "conversation_id", "agent_version", "harness_id", "profile_id", "provider_session_id", "epoch", "execution_target", "sandbox"):
+        for field in ("owner_subject", "agent_id", "conversation_id", "agent_version", "harness_id", "profile_id", "provider_session_id", "epoch", "execution_target", "worker_execution_target", "sandbox"):
             if getattr(binding, field) != getattr(context.binding, field):
                 raise RunAdmissionError("Worker session does not match the admitted context")
         run = RunRecord(run_id=context.turn.run_id, owner_subject=binding.owner_subject,

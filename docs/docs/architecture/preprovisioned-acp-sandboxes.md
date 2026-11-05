@@ -13,8 +13,8 @@ The integration extends the [existing Claude ACP worker](./claude-acp.md). Sandb
 
 | Step | What the user does | What CAIPE does |
 | --- | --- | --- |
-| **Create environment** | Open the sandbox application from **Set up a Claude Code sandbox** in Agent Builder. Choose an approved Claude coding profile and resource size; wait until it is running. | Does not provision or silently replace the environment. |
-| **Register connection** | Open the sandbox's **CAIPE connection** panel and give its nonsecret reference to the platform operator. | The operator admits the exact environment, approved configuration revision and verified CAIPE subject. Creating a sandbox alone does not connect it. |
+| **Create environment** | Open the sandbox application from **Set up a Claude Code sandbox** in Agent Builder. Choose an approved Claude coding profile and resource size, then open its **CAIPE connection** panel. | Does not provision or silently replace the environment. |
+| **Register connection** | Give the panel's nonsecret reference to the platform operator. Wait for the environment to run after model setup and registration are complete. | The operator supplies the approved model access and admits the exact environment, configuration revision and verified CAIPE subject. Creating a sandbox alone does not connect it. |
 | **Select profile** | Click **Refresh sandbox connections**, choose **Claude (ACP)** and the registered operator profile. | Lists only connections admitted for that caller. A configured profile is not a health or model-login attestation. |
 | **Define agent** | Write system instructions and select supported MCP tools. Save, then start a conversation. | Compiles the canonical definition and checks capabilities, access and retained placement before dispatch. |
 | **Continue** | Reopen the original conversation and use ordinary chat/Stop. | Replays the existing run and reloads its native session without resending a prompt. |
@@ -22,6 +22,8 @@ The integration extends the [existing Claude ACP worker](./claude-acp.md). Sandb
 **The PoC reserves one sandbox for one owner and conversation.** Shared definitions and shared transcripts do not grant shell access. Another conversation needs another admitted environment. Existing DeepAgents/SRE defaults are unchanged.
 
 Model access is configured by the approved profile, using a model-scoped gateway credential or approved workload identity. The terminal's default Claude login is not automatically imported into the connection's native configuration directory. Users should not paste model, worker or service credentials into chat or connection forms.
+
+Selected GitHub MCP tools use the caller's existing connected account through CAIPE. Native Git/SSH authentication is a separate approved setup; it does not inherit those connector credentials. The PoC does not claim native private-repository or complete SRE Git parity from merely enabling shell tools.
 
 ## Manage the environment
 

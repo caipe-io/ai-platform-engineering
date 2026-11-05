@@ -9,18 +9,21 @@ from typing import Any
 from urllib.parse import urlsplit
 from uuid import uuid4
 
+import httpx2 as httpx
 import pytest
 from pydantic import SecretStr
 from pymongo import MongoClient
 
 from harness_engine.adapters.claude_remote import RemoteClaudeSDKAdapter
+from harness_engine.claude_worker import create_worker_app
 from harness_engine.config import Settings
 from harness_engine.models import AgentBlueprint
 from harness_engine.registry import HarnessRegistry
 from harness_engine.repository import MongoRunRepository
 from harness_engine.sessions import AgentSessionNotRunnableError, CAIPEAgentSessionManager
-from tests.conftest import blueprint
-from tests.test_claude_sandbox import configured_parent
+from tests.conftest import auth_headers, blueprint
+from tests.test_claude_sandbox import configured_parent, connection
+from tests.test_claude_workers import context
 
 
 @pytest.fixture
@@ -107,3 +110,45 @@ async def test_real_mongo_competing_profile_revisions_cannot_dispatch_under_winn
     assert winner.execution_target in targets
     persisted = await mongo_repository.get_session(winner.binding_id)
     assert persisted.execution_target == winner.execution_target
+
+
+async def test_real_mongo_worker_relay_fingerprint_survives_restart_and_rejects_alias_change(
+    mongo_repository: MongoRunRepository, settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_connection(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("A changed relay must be rejected before opening the sandbox connection")
+
+    monkeypatch.setattr("harness_engine.claude_sandbox.connect", unexpected_connection)
+    remote = connection("wss://portal.example.test/api/acp/connections/primary/stdio", tmp_path)
+    profiles = {"safe": {"model": "claude-example", "sandbox": {
+        **remote.model_dump(mode="json", exclude={"token"}), "token": remote.token.get_secret_value(),
+    }}}
+    configured = settings.model_copy(update={"claude_sdk_profiles_json": json.dumps(profiles)})
+    ctx = context()
+    ctx.blueprint.tools.bindings = []
+    ctx.binding.sandbox = remote.public()
+    metadata = {"caipe.io/harness": {"context": ctx.model_dump(mode="json")}}
+    headers = {**auth_headers(), "ACP-Protocol-Version": "1"}
+    setup = {"jsonrpc": "2.0", "id": 1, "method": "session/new", "params": {"cwd": "/workspace", "mcpServers": [], "_meta": metadata}}
+    database_name = mongo_repository._db.name
+    worker = create_worker_app(settings=configured, repository=mongo_repository)
+    async with worker.router.lifespan_context(worker):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=worker), base_url="https://worker.example.test") as client:
+            assert (await client.post("/acp", headers=headers, json=setup)).status_code == 200
+            persisted = await mongo_repository.get_session(ctx.binding.binding_id)
+    assert persisted.worker_execution_target
+    profiles["safe"]["sandbox"]["url"] = "wss://portal.example.test/api/acp/connections/replacement/stdio"
+    changed = configured.model_copy(update={"claude_sdk_profiles_json": json.dumps(profiles)})
+    replacement_repository = MongoRunRepository(os.environ["HARNESS_TEST_MONGODB_URI"], database_name, 3600)
+    replacement = create_worker_app(settings=changed, repository=replacement_repository)
+    setup["method"] = "session/resume"
+    setup["params"]["sessionId"] = ctx.binding.binding_id
+    prompt = {"jsonrpc": "2.0", "id": ctx.turn.run_id, "method": "session/prompt", "params": {
+        "sessionId": ctx.binding.binding_id, "prompt": [{"type": "text", "text": ctx.turn.message}], "_meta": metadata,
+    }}
+    async with replacement.router.lifespan_context(replacement):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=replacement), base_url="https://worker.example.test") as client:
+            assert (await client.post("/acp", headers=headers, json=setup)).status_code == 409
+            assert (await client.post("/acp", headers=headers, json=prompt)).status_code == 409
+            assert (await replacement_repository.get_session(ctx.binding.binding_id)).worker_execution_target == persisted.worker_execution_target
+            assert await replacement_repository.get_run(ctx.turn.run_id) is None

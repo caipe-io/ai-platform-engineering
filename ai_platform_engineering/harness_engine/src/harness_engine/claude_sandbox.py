@@ -7,6 +7,7 @@ import base64
 import binascii
 import hashlib
 import json
+import ssl
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
@@ -30,6 +31,7 @@ MAX_BODY = 512 * 1024
 MCP_HEADERS = {"accept", "content-type", "mcp-session-id", "mcp-protocol-version", "authorization"}
 ADMISSION_MESSAGES = {
     "sandbox_bound": "This sandbox is connected to another conversation. Open its existing chat or create another sandbox.",
+    "sandbox_busy": "Work is still running or needs operator reconciliation. Reopen the original chat or manage the sandbox; do not resend automatically.",
     "sandbox_unavailable": "This sandbox is unavailable. Open its management page, start it, then retry.",
     "identity_mismatch": "Sandbox configuration changed. Reconnect its approved profile before starting a new chat.",
 }
@@ -81,6 +83,7 @@ class SandboxTransport:
         self.bridge = bridge
         self.inbox: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=64)
         self.exited = asyncio.Event()
+        self.closing = asyncio.Event()
         self.drained = False
         self.cancelled = False
         self.error: BaseException | None = None
@@ -110,7 +113,29 @@ class SandboxTransport:
     async def close(self) -> None:
         if not self.cancelled and not self.drained:
             self.cancelled = True
+            # ACP closes its receiver immediately after this callback. Wake a
+            # pump blocked on a full inbox so it can still read the drain receipt.
+            self.closing.set()
             await self.frame({"type": "cancel"})
+
+    async def enqueue(self, message: dict[str, Any]) -> None:
+        """Preserve ordered delivery until the ACP receiver is closed."""
+        if self.cancelled:
+            return
+        try:
+            self.inbox.put_nowait(message)
+            return
+        except asyncio.QueueFull:
+            pass
+        put = asyncio.create_task(self.inbox.put(message))
+        closing = asyncio.create_task(self.closing.wait())
+        try:
+            await asyncio.wait({put, closing}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (put, closing):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(put, closing, return_exceptions=True)
 
     async def tool_request(self, frame: dict[str, Any]) -> None:
         request_id = frame.get("id")
@@ -175,7 +200,11 @@ class SandboxTransport:
                     raise ValueError("Invalid sandbox transport frame")
                 kind = frame.get("type")
                 if kind == "stdout":
-                    self.buffer.extend(decode_bytes(frame.get("data")))
+                    chunk = decode_bytes(frame.get("data"))
+                    if self.cancelled:
+                        self.buffer.clear()
+                        continue
+                    self.buffer.extend(chunk)
                     if len(self.buffer) > MAX_BODY:
                         raise ValueError("Sandbox ACP line exceeds its bound")
                     while b"\n" in self.buffer:
@@ -185,7 +214,10 @@ class SandboxTransport:
                             message = json.loads(line)
                             if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
                                 raise ValueError("Invalid sandbox ACP message")
-                            await self.inbox.put(message)
+                            await self.enqueue(message)
+                            if self.cancelled:
+                                self.buffer.clear()
+                                break
                 elif kind == "stderr":
                     # Provider stderr may contain sensitive tool/model output.
                     decode_bytes(frame.get("data"))
@@ -221,6 +253,18 @@ class SandboxTransport:
             raise ExecutionUnconfirmedError("Sandbox process did not confirm drain; retain the session reservation")
 
 
+def sandbox_tls_context(profile: SandboxConnection) -> ssl.SSLContext | None:
+    if urlsplit(profile.url).scheme != "wss":
+        return None
+    # Keep hostname and server certificate verification enabled. The optional
+    # client identity remains on this trusted worker and is loaded afresh for
+    # every connection, allowing a mounted secret to rotate.
+    tls = ssl.create_default_context()
+    if profile.client_cert_file:
+        tls.load_cert_chain(profile.client_cert_file, profile.client_key_file)
+    return tls
+
+
 @asynccontextmanager
 async def managed_sandbox_process(
     client: object,
@@ -243,7 +287,7 @@ async def managed_sandbox_process(
         profile.url, additional_headers={
             "Authorization": f"Bearer {profile.token.get_secret_value()}",
             "X-Harness-Engine-Subject": profile.owner_subject,
-        }, max_size=MAX_FRAME, max_queue=16, open_timeout=10, close_timeout=2,
+        }, ssl=sandbox_tls_context(profile), max_size=MAX_FRAME, max_queue=16, open_timeout=10, close_timeout=2,
     ) as websocket:
         try:
             await websocket.send(json.dumps({"type": "open", "protocol": 1, **identity}))

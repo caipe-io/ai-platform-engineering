@@ -28,8 +28,8 @@ export function ClaudeSandboxSetup({ portalUrl, onRefresh }: {
   }
   return <div className="space-y-3 text-xs text-muted-foreground">
     <ol className="list-decimal space-y-2 pl-5">
-      <li>{url ? <a href={url} target="_blank" rel="noopener noreferrer" className="text-primary underline">Open the sandbox application</a> : "Open your organization's sandbox application"} and create a sandbox from an approved Claude Code profile. Wait until it is running.</li>
-      <li>Open the sandbox&apos;s <strong>CAIPE connection</strong> details. In this PoC, your platform administrator registers that reference for your CAIPE account. Creating the sandbox alone does not connect it.</li>
+      <li>{url ? <a href={url} target="_blank" rel="noopener noreferrer" className="text-primary underline">Open the sandbox application</a> : "Open your organization's sandbox application"} and create a sandbox from an approved Claude Code profile. Open its <strong>CAIPE connection</strong> details to get the reference.</li>
+      <li>In this PoC, your platform administrator completes the approved model setup and registers that reference for your CAIPE account. Creating the sandbox alone does not connect it. Wait until the sandbox is running before using it.</li>
       <li>Refresh connections here, choose <strong>Claude (ACP)</strong> and your sandbox profile, then add the agent&apos;s instructions and selected MCP tools. Save and start a new conversation.</li>
     </ol>
     <p>One sandbox is reserved for one owner and conversation. Use the sandbox application to view its profile and policies, inspect files, suspend, resume or delete it. Platform administrators manage the approved filesystem/network controls. A policy or placement change needs an approved connection revision; it does not silently move an existing conversation.</p>
@@ -61,7 +61,7 @@ export function ClaudeACPSettings({ descriptor, profileId, onRefresh }: {
         <p className="text-sm font-medium break-words">{sandbox.display_name}</p>
         <Badge variant="outline">Configured</Badge>
       </div>
-      <p className="text-xs text-muted-foreground">Your private sandbox connection is checked when execution starts. Its real files and Claude session stay with this conversation.</p>
+      <p className="text-xs text-muted-foreground">Your private sandbox connection is checked when execution starts. It belongs to your account and one conversation; sharing the agent or chat does not share its shell.</p>
       <p className="text-xs break-words">{sandbox.policy_summary}</p>
       <p className="text-xs text-muted-foreground break-all">Profile revision: {sandbox.policy_revision}</p>
       {manageUrl && <Button asChild variant="outline" size="sm"><a href={manageUrl} target="_blank" rel="noopener noreferrer">Manage sandbox <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" /></a></Button>}

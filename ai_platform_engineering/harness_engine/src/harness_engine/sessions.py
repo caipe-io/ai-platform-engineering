@@ -238,7 +238,7 @@ class CAIPEAgentSessionManager:
                 epoch=epoch,
             )
         )
-        if binding.execution_target != execution_target or binding.sandbox != profile.sandbox:
+        if binding.execution_target != execution_target:
             raise AgentSessionNotRunnableError("A concurrent admission retained a different execution placement")
         return binding, version
 

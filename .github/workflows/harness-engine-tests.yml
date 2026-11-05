@@ -1,0 +1,55 @@
+name: "[Tests] Harness Engine"
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/harness-engine-tests.yml'
+      - 'ai_platform_engineering/harness_engine/**'
+      - 'ai_platform_engineering/dynamic_agents/**'
+      - 'ai_platform_engineering/llm_wrapper/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/harness-engine-tests.yml'
+      - 'ai_platform_engineering/harness_engine/**'
+      - 'ai_platform_engineering/dynamic_agents/**'
+      - 'ai_platform_engineering/llm_wrapper/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-harness-engine:
+    # MongoDB 8 requires a supported host kernel. The default runner's newer
+    # kernel is currently rejected by this image before tests can start.
+    runs-on: ubuntu-22.04
+    services:
+      mongodb:
+        image: mongo:8.0@sha256:b9924c330a8bbc5800fe9c69f04a84e221eca7b28fd049a0354147d9908fa142
+        ports: ['27017:27017']
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1})'"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    defaults:
+      run:
+        working-directory: ai_platform_engineering/harness_engine
+    env:
+      HARNESS_TEST_MONGODB_URI: mongodb://127.0.0.1:27017
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: '3.14'
+          enable-cache: true
+      - name: Install all supported adapters
+        run: uv sync --frozen --all-extras
+      - name: Lint
+        run: uv run --frozen ruff check src tests
+      - name: Test native, provider, WebSocket and MongoDB contracts
+        run: uv run --frozen pytest -q

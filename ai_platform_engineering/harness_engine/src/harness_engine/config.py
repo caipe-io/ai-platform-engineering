@@ -102,16 +102,32 @@ class SandboxPolicy(SandboxProfileInfo):
     def public(self) -> SandboxProfileInfo:
         return SandboxProfileInfo.model_validate(self.model_dump(include=set(SandboxProfileInfo.model_fields)))
 
+    def execution_identity(self) -> dict[str, str]:
+        """Placement and policy identity, independent of cosmetic UI metadata."""
+        return {
+            "instance_id": self.instance_id, "owner_subject": self.owner_subject,
+            "workspace_root": self.workspace_root, "policy_revision": self.policy_revision,
+        }
+
 
 class SandboxConnection(SandboxPolicy):
     """Private data-plane credential for a preprovisioned sandbox, not management."""
 
     url: str = Field(..., min_length=1, max_length=2048)
     token: SecretStr = Field(..., min_length=32)
+    client_cert_file: str | None = Field(default=None, min_length=1, max_length=1024)
+    client_key_file: str | None = Field(default=None, min_length=1, max_length=1024)
 
     @model_validator(mode="after")
     def validate_transport(self) -> SandboxConnection:
         validate_web_url(self.url, websocket=True)
+        if (self.client_cert_file is None) != (self.client_key_file is None):
+            raise ValueError("Sandbox client certificate and key must be configured together")
+        if self.client_cert_file is not None and urlsplit(self.url).scheme != "wss":
+            raise ValueError("Sandbox client certificates require WSS")
+        for path in (self.client_cert_file, self.client_key_file):
+            if path is not None and (not PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts or "\x00" in path):
+                raise ValueError("Sandbox client certificate paths must be absolute")
         return self
 
 

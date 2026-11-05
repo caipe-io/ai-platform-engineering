@@ -301,6 +301,7 @@ class SessionBinding(StrictModel):
     checkpoint_strategy: Literal["langgraph", "adapter_store", "remote_managed", "ephemeral"]
     native_state_key: str | None = None
     execution_target: str | None = None
+    worker_execution_target: str | None = None
     sandbox: SandboxProfileInfo | None = None
     epoch: int = Field(0, ge=0)
     revision: int = Field(1, ge=1)

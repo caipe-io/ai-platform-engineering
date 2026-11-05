@@ -364,8 +364,8 @@ export function ChatPanel({
 
   const conversation = getActiveConversation();
   const showClaudeSession = !agent?.presentation?.app && (observedRuntime?.conversationId === activeConversationId
-    ? observedRuntime.harnessId === "claude_code_acp"
-    : !conversation?.messages.length && agent?.execution_harness_id === "claude_code_acp");
+    ? ["claude_code_acp", "claude_code_cli_acp"].includes(observedRuntime.harnessId ?? "")
+    : !conversation?.messages.length && ["claude_code_acp", "claude_code_cli_acp"].includes(agent?.execution_harness_id ?? ""));
   const conversationTitle = useChatStore((state) => state.conversations
     .find((item) => item.id === (conversationId ?? state.activeConversationId))
     ?.title?.trim()) || "New chat";
@@ -2408,9 +2408,7 @@ export function ChatPanel({
     }
   };
 
-  const showClaudeSession = !agent?.presentation?.app && (observedRuntime?.conversationId === activeConversationId
-    ? ["claude_code_acp", "claude_code_cli_acp"].includes(observedRuntime.harnessId ?? "")
-    : !conversation?.messages.length && ["claude_code_acp", "claude_code_cli_acp"].includes(agent?.execution_harness_id ?? ""));
+
 
   const headerControls = (
     <div className="flex max-w-full flex-wrap items-center justify-end gap-1">
