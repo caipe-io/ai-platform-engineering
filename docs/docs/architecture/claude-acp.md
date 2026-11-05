@@ -25,6 +25,7 @@ For the proposed separation between the trusted worker and a shell-capable
 agent, see [Claude Code in a preprovisioned sandbox](./preprovisioned-acp-sandboxes.md).
 That design reuses this integration and keeps sandbox management separate.
 
+
 ## Agent author workflow
 
 1. Select **Claude Agent SDK (ACP)** or **Claude Code CLI (ACP)** and an available

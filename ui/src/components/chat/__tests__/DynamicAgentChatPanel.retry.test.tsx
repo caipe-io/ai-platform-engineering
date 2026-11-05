@@ -10,6 +10,7 @@ let mockStreaming = false;
 const mockPush = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 const mockToast = jest.fn();
+const mockSlashCommands: Array<{ id: string; action: string; label: string; description: string; category: string }> = [];
 const mockStreamMessage = jest.fn(async (_params: unknown, callbacks: StreamCallbacks) => { callbacks.onDone?.(); });
 const mockRecoverRun = jest.fn(async (_run: string, callbacks: StreamCallbacks) => { callbacks.onContent?.("Recovered final answer", []); callbacks.onDone?.(); });
 const mockChatState = {
@@ -68,7 +69,7 @@ jest.mock("@/components/shared/timeline", () => ({
 jest.mock("@/components/dynamic-agents/AgentAvatar", () => ({ AgentAvatar: () => null }));
 jest.mock("../DynamicAgentTimeline", () => ({ AgentTimeline: () => null }));
 jest.mock("../FeedbackButton", () => ({ FeedbackButton: () => null }));
-jest.mock("../useSlashCommands", () => ({ useSlashCommands: () => [] }));
+jest.mock("../useSlashCommands", () => ({ useSlashCommands: () => mockSlashCommands }));
 jest.mock("../CustomCallButtons", () => ({ DEFAULT_AGENTS: [] }));
 
 const message = (id: string, role: "user" | "assistant", content: string, extra: Partial<ChatMessage> = {}): ChatMessage => ({
@@ -98,6 +99,7 @@ const mockAttachment = { mime_type: "text/plain", name: "example.txt", data: "ZX
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockSlashCommands.length = 0;
   mockStreaming = false;
   mockChatState.streamingConversations.clear();
   mockChatState.externalActivity = {};
@@ -456,5 +458,58 @@ describe("retry is unavailable when it would be unsafe", () => {
     );
     render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
     expectNoRetry();
+  });
+});
+
+describe("Claude ACP capability controls", () => {
+  function mockClaudeStatus(withSandbox = false) {
+    return jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ success: true, data: {
+      runtime: "harness_engine", harness_id: "claude_code_acp", status: "idle",
+      ...(withSandbox && { sandbox: { instance_id: "sandbox-1", display_name: "Private environment", portal_url: "https://sandbox.example.test/environments/1", policy_revision: "v1", policy_summary: "Private", status: "configured" } }),
+    } }) } as Response);
+  }
+
+  it("blocks picker, paste and dropped files before a provider call and hides unsupported rewind", async () => {
+    const fetchMock = mockClaudeStatus();
+    try {
+      render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+      await waitFor(() => expect(screen.getByRole("button", { name: "Attach files" })).toBeDisabled());
+      expect(screen.queryByRole("button", { name: "Edit message" })).not.toBeInTheDocument();
+      const input = screen.getByRole("textbox", { name: "Message" });
+      const file = new File(["example"], "example.txt", { type: "text/plain" });
+      fireEvent.paste(input, { clipboardData: { files: [file] } });
+      fireEvent.drop(input, { dataTransfer: { files: [file] } });
+      expect(mockToast).toHaveBeenCalledWith(expect.stringContaining("does not support chat attachments"), "error", 8000);
+      expect(mockStreamMessage).not.toHaveBeenCalled();
+      expect(screen.queryByText("example.txt")).not.toBeInTheDocument();
+    } finally { fetchMock.mockRestore(); }
+  });
+
+  it("does not regenerate historical attachments into an unsupported Claude turn", async () => {
+    setConversation([message("u1", "user", "read this", { attachments: [mockAttachment] }), message("a1", "assistant", "earlier reply")]);
+    const fetchMock = mockClaudeStatus();
+    try {
+      render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+      await waitFor(() => expect(screen.getByRole("button", { name: "Attach files" })).toBeDisabled());
+      fireEvent.click(screen.getByRole("button", { name: "Regenerate response" }));
+      expect(mockStreamMessage).not.toHaveBeenCalled();
+      expect(mockToast).toHaveBeenCalledWith(expect.stringContaining("does not support chat attachments"), "error", 8000);
+    } finally { fetchMock.mockRestore(); }
+  });
+
+  it("keeps a sandbox-bound chat and explains the fresh-environment requirement for clear", async () => {
+    mockSlashCommands.push({ id: "clear", label: "/clear", description: "Start new conversation", category: "builtin", action: "execute" });
+    const fetchMock = mockClaudeStatus(true);
+    try {
+      render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+      await waitFor(() => expect(screen.getByRole("button", { name: "Attach files" })).toBeDisabled());
+      const input = screen.getByRole("textbox", { name: "Message" });
+      fireEvent.change(input, { target: { value: "/clear" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.stringContaining("reserved for this conversation"), "info", 10000));
+      expect(mockChatState.createConversation).not.toHaveBeenCalled();
+      expect(mockConversation.messages).toHaveLength(4);
+      expect(mockStreamMessage).not.toHaveBeenCalled();
+    } finally { fetchMock.mockRestore(); }
   });
 });
