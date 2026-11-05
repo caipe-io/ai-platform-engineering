@@ -6619,6 +6619,30 @@ _resolve_llm_streaming() {
   printf '%s' "$deployed_streaming"
 }
 
+_restart_dynamic_agents_after_config_change() {
+  local previous_streaming="$1" streaming="$2"
+  local streaming_changed=false
+  if [[ -n "$previous_streaming" && "$previous_streaming" != "$streaming" ]]; then
+    streaming_changed=true
+  fi
+  # ConfigMap changes do not roll pods; retain the existing domain/OIDC restart.
+  if [[ -n "${CAIPE_DOMAIN:-}" ]] || $streaming_changed; then
+    if kubectl rollout restart deploy/caipe-dynamic-agents -n caipe &>/dev/null; then
+      if ! kubectl rollout status deploy/caipe-dynamic-agents -n caipe --timeout=120s &>/dev/null; then
+        if $streaming_changed; then
+          err "Dynamic Agents did not become ready with the new LLM_STREAMING setting"
+          return 1
+        fi
+      fi
+      log "dynamic-agents: restarted to apply runtime config"
+    elif $streaming_changed; then
+      err "Cannot restart Dynamic Agents to apply the new LLM_STREAMING setting"
+      return 1
+    fi
+  fi
+  return 0
+}
+
 deploy_caipe() {
   step "Deploying CAIPE (v${CAIPE_CHART_VERSION})"
 
@@ -6697,6 +6721,10 @@ deploy_caipe() {
   local release_name="caipe"
   local da_svc="${release_name}-dynamic-agents"
   local ns="caipe"
+  local previous_llm_streaming=""
+  if helm status caipe -n caipe &>/dev/null; then
+    previous_llm_streaming=$(LLM_STREAMING= _resolve_llm_streaming) || return 1
+  fi
   local llm_streaming
   llm_streaming=$(_resolve_llm_streaming) || return 1
 
@@ -7168,17 +7196,7 @@ DAEOF
   fi
   log "CAIPE Helm release deployed"
 
-  # Helm only restarts pods when the Deployment spec changes, not on ConfigMap-only
-  # updates. When OIDC_ISSUER / AUTH_ENABLED are freshly set (domain run), the
-  # dynamic-agents pod must be cycled so it picks up the new issuer from the ConfigMap.
-  # Without this it keeps using the internal http://keycloak:8080 issuer URL and rejects
-  # every token with "Invalid issuer", blocking all chat in the Custom Agents UI.
-  if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
-    if kubectl rollout restart deploy/caipe-dynamic-agents -n caipe &>/dev/null 2>&1; then
-      kubectl rollout status deploy/caipe-dynamic-agents -n caipe --timeout=120s &>/dev/null 2>&1 || true
-      log "dynamic-agents: restarted to apply OIDC issuer config"
-    fi
-  fi
+  _restart_dynamic_agents_after_config_change "$previous_llm_streaming" "$llm_streaming" || return 1
 
   # Non-fatal: a timeout here (e.g. credential-less agents that never become
   # ready) must NOT abort the script under `set -e` — post_deploy_patches still

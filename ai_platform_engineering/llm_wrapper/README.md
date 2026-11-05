@@ -100,6 +100,8 @@ setting the variable alone on an older image has no effect.
 On an installer rerun, an explicit environment or `--env-file` value overrides
 the deployed setting. Otherwise the installer retains the existing Helm value;
 a fresh installation or a release without that value defaults to `true`.
+If an upgrade changes that value, the installer restarts Dynamic Agents and
+waits for the rollout, including when no domain is configured.
 
 An explicit `disable_streaming` argument to `build_chat_model` overrides this
 environment default. Dynamic Agents expose this override as `model.streaming`:

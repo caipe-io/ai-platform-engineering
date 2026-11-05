@@ -17,6 +17,7 @@ extract_function() {
   ' "$SOURCE"
 }
 extract_function _resolve_llm_streaming > "$WORK/helpers.sh"
+extract_function _restart_dynamic_agents_after_config_change >> "$WORK/helpers.sh"
 extract_function _env_get >> "$WORK/helpers.sh"
 # Exercise the installer's actual --env-file preload and precedence rules.
 awk '
@@ -89,4 +90,39 @@ for failure in helm malformed-json; do
   )
 done
 
-echo "PASS: setup-caipe streaming defaults, upgrade retention, and explicit overrides"
+check_restart() (
+  local label="$1" previous="$2" current="$3" domain="$4" expected="$5"
+  CAIPE_DOMAIN="$domain"
+  local calls="$WORK/$label.calls"
+  : > "$calls"
+  kubectl() { printf '%s\n' "$*" >> "$calls"; }
+  log() { :; }
+  _restart_dynamic_agents_after_config_change "$previous" "$current"
+  local restarts waits
+  restarts=$(grep -c '^rollout restart ' "$calls" || true)
+  waits=$(grep -c '^rollout status ' "$calls" || true)
+  [[ "$restarts" == "$expected" && "$waits" == "$expected" ]] || fail "$label: incorrect rollout"
+)
+
+check_restart domainless-disable true false '' 1
+check_restart domainless-enable false true '' 1
+check_restart unchanged-false false false '' 0
+check_restart unchanged-true true true '' 0
+check_restart fresh-install '' false '' 0
+check_restart domain-unchanged true true example.test 1
+check_restart domain-and-streaming true false example.test 1
+
+for failure in restart status; do
+  (
+    CAIPE_DOMAIN=''
+    kubectl() { [[ "$2" != "$failure" ]]; }
+    log() { :; }
+    if _restart_dynamic_agents_after_config_change true false 2>/dev/null; then
+      fail "$failure: changing streaming must require a successful rollout"
+    fi
+    CAIPE_DOMAIN=example.test
+    _restart_dynamic_agents_after_config_change true true
+  )
+done
+
+echo "PASS: setup-caipe streaming defaults, upgrade retention, overrides, and config rollouts"
