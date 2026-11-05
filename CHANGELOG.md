@@ -1,3 +1,18 @@
+## 1.3.7-rc.3 (2026-11-05)
+
+### Feat
+
+- **harness**: persist sessions and publish restricted runtime containers
+- add cloudability mcp to FinOps agent and alerting on litellm token usage  (#2019)
+
+### Fix
+
+- **llm**: support non-streaming proxies and agent UI overrides (#3035)
+- **ui**: theme the grid logo and keep the CAIPE logo unchanged (#3231)
+- **ui**: follow the app theme in code blocks and prompt editors (#3182)
+- **compose**: publish langfuse-web on host port 3001 (#3145)
+- **cloudability**: repair dependency pins and local package resolution (#3216)
+
 ## 1.3.6 (2026-11-02)
 
 ### Fix
