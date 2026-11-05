@@ -1,0 +1,33 @@
+# Extended by each worker overlay; not a standalone application.
+services:
+  worker-egress:
+    profiles: [harness-engine]
+    image: ${WORKER_EGRESS_IMAGE:-ghcr.io/caipe-io/caipe-worker-egress:${HARNESS_IMAGE_TAG:?set a release, prebuild or source SHA tag}}
+    build:
+      context: .
+      dockerfile: ai_platform_engineering/harness_engine/build/Dockerfile.worker-egress
+    user: "65532:65532"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 0.5
+    mem_limit: 256m
+    pids_limit: 64
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+    networks: [harness-workers, worker-egress]
+    volumes:
+      - type: bind
+        source: ${CLAUDE_WORKER_ALLOWED_DOMAINS_FILE:?set an absolute path to the approved model hostname list}
+        target: /etc/squid/allowed-domains.txt
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: [CMD, squid, -k, check, -f, /etc/squid/squid.conf]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s

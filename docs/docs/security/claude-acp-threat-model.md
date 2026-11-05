@@ -264,6 +264,15 @@ effects still require provider audit/idempotency or operator reconciliation.
   and gateway reason code. Trace/request IDs are correlation data, not credentials
   or authorization evidence by themselves.
 
+## Standard-container baseline
+
+The [worker overlays](../../../deploy/harness-engine/README.md) enforce non-root
+execution, read-only application files, capability removal, resource limits and an
+internal network with an allowlisted TLS egress proxy. Workspaces remain writable.
+The native executor and broker still share a worker OS boundary; this baseline
+does not establish per-conversation tenant isolation. SDK Local and Deep Agents
+execute in Engine and require operator-owned network and workload policy.
+
 ## Sandbox augmentation: agent-sandbox or OpenShell
 
 The planned layer uses an execution sandbox such as

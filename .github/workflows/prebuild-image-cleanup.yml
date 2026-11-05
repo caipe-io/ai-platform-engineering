@@ -1,5 +1,5 @@
 name: "[Prebuild] Artifact Cleanup"
-description: "Delete temporary Docker images and Helm charts when prebuild testing ends"
+# Delete temporary Docker images and Helm charts when prebuild testing ends.
 
 on:
   pull_request:
@@ -46,6 +46,11 @@ jobs:
                 "caipe-autonomous-agents",
                 "caipe-ui",
                 "caipe-dynamic-agents",
+                "caipe-harness-engine",
+                "caipe-harness-engine-deep",
+                "caipe-claude-acp-worker",
+                "caipe-claude-cli-acp-worker",
+                "caipe-worker-egress",
                 "openfga-authz-bridge",
                 "caipe-rag-agent-ontology",
                 "caipe-rag-ingestors",

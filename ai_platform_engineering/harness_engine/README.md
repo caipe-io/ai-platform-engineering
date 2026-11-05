@@ -4,6 +4,9 @@ Execution control plane for opt-in Deep Agents, AgentCore and Claude Agent SDK
 adapters. The default installation continues to use the existing Dynamic Agents
 service until an operator enables the Engine integration.
 
+See [runtime images and restricted workers](../../deploy/harness-engine/README.md)
+for publishing, Compose controls and network requirements.
+
 ## Boundary
 
 - Deep Agents reuses the Dynamic Agents graph, tool, middleware, skill, file and

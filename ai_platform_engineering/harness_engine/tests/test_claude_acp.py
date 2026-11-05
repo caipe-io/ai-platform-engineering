@@ -63,6 +63,28 @@ async def test_process_session_reload_ignores_history_and_preserves_policy(setti
     }
 
 
+async def test_process_preserves_operator_proxy_without_service_credentials(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HTTPS_PROXY", "http://egress.example.test:3128")
+    monkeypatch.setenv("HTTP_PROXY", "http://egress.example.test:3128")
+    monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1")
+    monkeypatch.setenv("HARNESS_ENGINE_INTERNAL_TOKEN", "private-service-token")
+    ctx = context()
+    ctx.blueprint.tools.bindings = []
+    _ = [event async for event in process_adapter(settings).execute(ctx)]
+    directory = hashlib.sha256(ctx.binding.binding_id.encode()).hexdigest()
+    environment = json.loads(
+        (Path(settings.claude_sdk_profiles()["safe"].cwd) / directory / "provider-environment.json").read_text()
+    )
+    assert environment == {
+        "HTTPS_PROXY": "http://egress.example.test:3128",
+        "HTTP_PROXY": "http://egress.example.test:3128",
+        "NO_PROXY": "localhost,127.0.0.1",
+        "HARNESS_ENGINE_INTERNAL_TOKEN": None,
+    }
+
+
 async def test_process_cancellation_sends_acp_cancel_and_exits(settings: Settings) -> None:
     ctx = context()
     ctx.blueprint.tools.bindings = []

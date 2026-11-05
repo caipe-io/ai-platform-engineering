@@ -2,18 +2,49 @@
 # Add a runtime=claude_code_acp profile to the Engine's private worker map.
 services:
   harness-engine:
+    networks: [default, harness-workers]
     environment:
       HARNESS_ENGINE_CLAUDE_WORKER_PROFILES_JSON: ${HARNESS_ENGINE_CLAUDE_WORKER_PROFILES_JSON:?set private worker connections}
+
+  caipe-ui:
+    networks: [default, harness-workers]
+
+  caipe-mongodb:
+    networks: [default, harness-workers]
+
+  worker-egress:
+    extends:
+      file: deploy/harness-engine/compose.worker-egress.yaml
+      service: worker-egress
 
   claude-acp-worker:
     profiles: [harness-engine]
     build:
       context: .
       dockerfile: ai_platform_engineering/harness_engine/build/Dockerfile.claude-acp
-    image: caipe-claude-acp-worker:local
+    image: ${CLAUDE_ACP_WORKER_IMAGE:-ghcr.io/caipe-io/caipe-claude-acp-worker:${HARNESS_IMAGE_TAG:?set a release, prebuild or source SHA tag}}
     restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: ${CLAUDE_WORKER_CPUS:-2.0}
+    mem_limit: ${CLAUDE_WORKER_MEMORY:-2g}
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777
+    networks: [harness-workers]
+    depends_on:
+      worker-egress:
+        condition: service_healthy
     init: true
     environment:
+      HOME: /workspace
+      PYTHONDONTWRITEBYTECODE: "1"
+      HTTPS_PROXY: http://worker-egress:3128
+      HTTP_PROXY: http://worker-egress:3128
+      NO_PROXY: localhost,127.0.0.1,::1,caipe-ui,caipe-mongodb,harness-engine
+      AWS_EC2_METADATA_DISABLED: "true"
       HARNESS_ENGINE_INTERNAL_TOKEN: ${CLAUDE_ACP_WORKER_INTERNAL_TOKEN:?set a distinct private worker token}
       HARNESS_ENGINE_STORAGE_BACKEND: mongodb
       HARNESS_ENGINE_MONGODB_URI: ${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/harness_engine?authSource=admin}
@@ -37,3 +68,8 @@ services:
 
 volumes:
   claude-acp-workspace:
+
+networks:
+  harness-workers:
+    internal: true
+  worker-egress:

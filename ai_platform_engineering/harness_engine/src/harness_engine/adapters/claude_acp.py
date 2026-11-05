@@ -130,6 +130,9 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
         provider_keys = {
             "PATH",
             "HOME",
+            "HTTPS_PROXY",
+            "HTTP_PROXY",
+            "NO_PROXY",
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN",
             "ANTHROPIC_BASE_URL",
