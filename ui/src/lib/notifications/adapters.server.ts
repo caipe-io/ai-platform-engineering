@@ -1,3 +1,6 @@
+import { browserPushPublicKey, sendBrowserPush, type BrowserPushDevice } from "./web-push.server";
+import { getCollection } from "@/lib/mongodb";
+import { notificationCallbackPath } from "./callback";
 import { ApiError } from "@/lib/api-error";
 import type { NotificationDelivery } from "./delivery-types";
 import { NotificationDeliveryError } from "./delivery-types";
@@ -11,7 +14,20 @@ export interface NotificationChannelAdapter {
   publicKey?(): string | null;
 }
 /** Optional channel integrations extend this registry; core has no provider dependency. */
-export const notificationChannelAdapters: Partial<Record<ExternalChannel, NotificationChannelAdapter>> = {};
+export const notificationChannelAdapters: Partial<Record<ExternalChannel, NotificationChannelAdapter>> = {
+  web_push: {
+    available: async () => Boolean(browserPushPublicKey()),
+    publicKey: browserPushPublicKey,
+    validateEnable: async (subject) => {
+      if (!(await (await getCollection<BrowserPushDevice>("notification_push_devices")).findOne({ subject, expiresAt: { $gt: new Date() } }))) throw new ApiError("Subscribe this browser before enabling web push", 400);
+    },
+    send: async (delivery) => {
+      const device = await (await getCollection<BrowserPushDevice>("notification_push_devices")).findOne({ _id: delivery.targetId, subject: delivery.recipient.subject, expiresAt: { $gt: new Date() } });
+      if (!device) throw new NotificationDeliveryError("Browser subscription has expired or was removed", false);
+      await sendBrowserPush(device, delivery._id, notificationCallbackPath(delivery._id));
+    },
+  },
+};
 
 export async function notificationChannelAvailability(subject: string): Promise<ChannelChoices> {
   const choices: ChannelChoices = { in_app: true, web_push: false, webex: false, slack: false };
