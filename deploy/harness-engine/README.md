@@ -14,7 +14,7 @@ SDK Local runs inside Engine. SDK Remote reuses the base Engine image with
 
 ## Publishing
 
-- `ci-harness-containers.yml` builds and smoke-tests all five images natively on
+- `ci-harness-engine.yml` builds and smoke-tests all five images natively on
   AMD64 and ARM64 before publishing multi-architecture manifests.
 - Fork/ordinary PRs test without publishing. Same-repository `prebuild/*` PRs
   publish the shared `<stable>-<branch>-<count>` prebuild tag.

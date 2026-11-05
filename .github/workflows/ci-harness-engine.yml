@@ -1,4 +1,4 @@
-name: "[CI] Harness Containers Build and Push"
+name: "[CI] Harness Engine Build and Push"
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
       - ai_platform_engineering/dynamic_agents/**
       - ai_platform_engineering/llm_wrapper/**
       - deploy/harness-engine/**
-      - .github/workflows/ci-harness-containers.yml
+      - .github/workflows/ci-harness-engine.yml
       - .github/actions/publish-prebuild-manifest/**
   pull_request:
     paths:
@@ -17,7 +17,7 @@ on:
       - ai_platform_engineering/dynamic_agents/**
       - ai_platform_engineering/llm_wrapper/**
       - deploy/harness-engine/**
-      - .github/workflows/ci-harness-containers.yml
+      - .github/workflows/ci-harness-engine.yml
       - .github/actions/publish-prebuild-manifest/**
   workflow_dispatch:
     inputs:
