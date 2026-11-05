@@ -266,7 +266,7 @@ effects still require provider audit/idempotency or operator reconciliation.
 
 ## Standard-container baseline
 
-The [worker overlays](../../../deploy/harness-engine/README.md) enforce non-root
+The [worker overlays](https://github.com/caipe-io/ai-platform-engineering/blob/main/deploy/harness-engine/README.md) enforce non-root
 execution, read-only application files, capability removal, resource limits and an
 internal network with an allowlisted TLS egress proxy. Workspaces remain writable.
 The native executor and broker still share a worker OS boundary; this baseline
