@@ -22,7 +22,7 @@ export async function stageHarnessAttachments(
     const size = Buffer.byteLength(file.data, "base64");
     total += size;
     if (size > 5 * 1024 * 1024 || total > 20 * 1024 * 1024) throw new TypeError("Attachment size limit exceeded");
-    const normalized = { data: file.data, mime_type: file.mime_type, ...(file.name && { name: file.name }) };
+    const normalized = { data: file.data, mime_type: file.mime_type.trim(), ...(file.name && { name: file.name }) };
     // Identical retries retain the same references and therefore the same
     // admission fingerprint. A reference is useful only to this caller/thread.
     const id = createHash("sha256").update(JSON.stringify([auth.subject, agentId, conversationId, normalized])).digest("hex");

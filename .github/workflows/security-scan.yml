@@ -153,6 +153,9 @@ jobs:
               ):
                   raise ValueError("Invalid release component list")
           images = ["caipe-ui", "caipe-dynamic-agents", "caipe-slack-bot", "caipe-webex-bot"]
+          if Path("ai_platform_engineering/harness_engine/build/Dockerfile.worker-egress").exists():
+              images += ["caipe-harness-engine", "caipe-harness-engine-deep",
+                         "caipe-claude-acp-worker", "caipe-claude-cli-acp-worker", "caipe-worker-egress"]
           images += ["caipe-rag-" + name for name in rag]
           # GitHub uses an externally published server rather than a local image.
           images += ["mcp-" + name for name in agents if name != "github"]

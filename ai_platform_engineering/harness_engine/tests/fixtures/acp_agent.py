@@ -24,6 +24,12 @@ def main() -> None:
             result = {"protocolVersion": 1, "agentCapabilities": {"loadSession": True}, "authMethods": []}
         elif method == "session/new":
             Path("session.json").write_text(json.dumps(params))
+            Path("provider-environment.json").write_text(json.dumps({
+                key: os.environ.get(key) for key in (
+                    "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy",
+                    "AWS_EC2_METADATA_DISABLED", "HARNESS_ENGINE_INTERNAL_TOKEN",
+                )
+            }))
             Path("tool-limits.json").write_text(
                 json.dumps(
                     {

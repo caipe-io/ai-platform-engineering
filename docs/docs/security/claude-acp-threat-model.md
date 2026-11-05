@@ -264,6 +264,15 @@ effects still require provider audit/idempotency or operator reconciliation.
   and gateway reason code. Trace/request IDs are correlation data, not credentials
   or authorization evidence by themselves.
 
+## Standard-container baseline
+
+The [worker overlays](https://github.com/caipe-io/ai-platform-engineering/blob/main/deploy/harness-engine/README.md) enforce non-root
+execution, read-only application files, capability removal, resource limits and an
+internal network with an allowlisted TLS egress proxy. Workspaces remain writable.
+The native executor and broker still share a worker OS boundary; this baseline
+does not establish per-conversation tenant isolation. SDK Local and Deep Agents
+execute in Engine and require operator-owned network and workload policy.
+
 ## Sandbox augmentation: agent-sandbox or OpenShell
 
 The planned layer uses an execution sandbox such as
@@ -414,7 +423,7 @@ Repository paths are relative to the repository root:
 | Capability and delegated tool broker | `ai_platform_engineering/harness_engine/src/harness_engine/{claude_acp_tools,claude_tools}.py` |
 | Child environment, process cleanup and CLI invocation | `ai_platform_engineering/harness_engine/src/harness_engine/adapters/claude_acp.py`, `ai_platform_engineering/harness_engine/src/harness_engine/{claude_acp_process,claude_cli_acp}.py` |
 | Gateway policy flags and checks | `deploy/openfga/bridge/main.py` |
-| Worker baseline | `deploy/harness-engine/compose.claude-cli-acp.yaml`, `ai_platform_engineering/harness_engine/build/Dockerfile.claude-cli-acp` |
+| Worker baseline | `deploy/harness-engine/compose.worker-egress.yaml`, `deploy/harness-engine/squid.conf`, `deploy/harness-engine/compose.claude-cli-acp.yaml`, `ai_platform_engineering/harness_engine/build/Dockerfile.claude-cli-acp` |
 
 - [Claude ACP architecture and configuration](../architecture/claude-acp.md)
 - [Browser session storage and refresh](./browser-sessions.md)
