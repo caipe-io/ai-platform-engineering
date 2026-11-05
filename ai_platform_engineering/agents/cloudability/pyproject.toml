@@ -30,7 +30,7 @@ dependencies = [
     "uvicorn==0.35.0",
     "httpx==0.28.1",
     "httpx-sse==0.4.3",
-    "python-dotenv==1.2.1",
+    "python-dotenv==1.2.2",
     "cnoe-agent-utils==0.3.9",
     "pydantic==2.12.5",
     "fastmcp==2.13.3",
