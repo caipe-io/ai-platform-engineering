@@ -455,7 +455,8 @@ export interface DynamicAgentConfig {
   visibility: VisibilityType;
   shared_with_teams?: string[];
   subagents: SubAgentRef[]; // Other dynamic agents that can be delegated to
-  skills: string[]; // Skill document IDs from agent_skills collection
+  skills: string[]; // Stable default, agent-skill or Hub skill IDs
+  skill_pins?: Record<string, { content_sha256: string; ancillary_sha256: Record<string, string> }>;
   /**
    * RAG datasource ids (== source_id == knowledge_base_id) this agent's
    * search tool is pinned to. Narrows, never widens: the runtime intersects

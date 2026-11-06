@@ -60,8 +60,8 @@ export const POST = withErrorHandler(
         action: "admin",
       });
 
-      const content = doc.content?.trim();
-      if (!content) {
+      const content = doc.content;
+      if (!content?.trim()) {
         throw new ApiError(
           "No SKILL.md content cached for this hub skill.",
           400,
@@ -127,8 +127,8 @@ export const POST = withErrorHandler(
       //     so this update path can no longer accidentally nuke
       //     an override by writing the wrong status string. That
       //     class of bug is structurally impossible now.
-      await hubSkillsCol.updateOne(
-        { hub_id: hubId, skill_id: skillId },
+      const updated = await hubSkillsCol.updateOne(
+        { hub_id: hubId, skill_id: skillId, content: doc.content, ancillary_files: doc.ancillary_files ?? null },
         {
           $set: {
             scan_status: scanResult.scan_status,
@@ -139,6 +139,8 @@ export const POST = withErrorHandler(
           },
         },
       );
+
+      if (!updated.matchedCount) throw new ApiError("Skill package changed during scanning; refresh and scan again", 409);
 
       return successResponse({
         id: `hub-${hubId}-${skillId}`,

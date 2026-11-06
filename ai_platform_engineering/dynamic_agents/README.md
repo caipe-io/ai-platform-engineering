@@ -561,3 +561,14 @@ dynamic_agents/
 - Requests use `Accept-Encoding: identity`; compressed responses are rejected to keep decompression from bypassing the response budget.
 - Exceeding a limit fails the tool call and closes the active response stream and SDK client. Oversized snapshots are not emitted; partial output is not returned as a successful answer. Closing a local stream does not guarantee cancellation of work already running on the remote service.
 - Remote endpoints must be trusted and administrator-approved. Mandatory AgentGateway routing, verified calling-agent identity and CAS delegation authorization are tracked in [#2914](https://github.com/caipe-io/ai-platform-engineering/issues/2914).
+
+### Original GitHub skill packages
+
+Agents can attach stable GitHub Hub IDs and optional `skill_pins` with the
+SHA-256 of the original entry content and every ancillary file. The runtime
+checks the complete scanned package before loading it; missing, changed or
+unscanned packages fail closed. Chat overrides cannot clear pins or detach a
+pinned skill. Authorized agent management can explicitly reselect a new version.
+Original Hub command Markdown is materialized without adding frontmatter or
+rewriting its instructions. Supporting references retain their relative paths.
+Upstream tool declarations do not grant runtime tools or execution permission.

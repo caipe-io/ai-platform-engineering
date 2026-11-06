@@ -1,3 +1,4 @@
+import { withSkillReferenceLock, assertSavedSkillsExist } from "@/lib/skill-reference-lock";
 import {
 ApiError,
 successResponse,
@@ -226,7 +227,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     await assertWorkflowConfigRunnable(config);
 
     const collection = await getCollection<WorkflowConfig>("workflow_configs");
-    await collection.insertOne(config);
+    const selectedSkills = config.steps.flatMap(step => step.type === "step" && Array.isArray(step.config_override?.skills) ? step.config_override.skills as string[] : []);
+    await withSkillReferenceLock(selectedSkills, async () => {
+      await assertSavedSkillsExist(selectedSkills);
+      await collection.insertOne(config);
+    });
 
     await reconcileWorkflowConfigAccess(session, config);
 
@@ -318,7 +323,11 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       updateFields.shared_with_teams = undefined;
     }
 
-    await collection.updateOne({ _id: id }, { $set: updateFields });
+    const selectedSkills = (body.steps ?? existing.steps).flatMap(step => step.type === "step" && Array.isArray(step.config_override?.skills) ? step.config_override.skills as string[] : []);
+    await withSkillReferenceLock(selectedSkills, async () => {
+      await assertSavedSkillsExist(selectedSkills);
+      await collection.updateOne({ _id: id }, { $set: updateFields });
+    });
 
     const merged = {
       ...existing,

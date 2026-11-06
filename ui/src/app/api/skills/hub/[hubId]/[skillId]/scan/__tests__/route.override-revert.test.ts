@@ -209,6 +209,8 @@ describe("POST /api/skills/hub/[hubId]/[skillId]/scan — does not touch scan_ov
     expect(filter).toEqual({
       hub_id: "hub-1",
       skill_id: "gitlab-pipeline-watch",
+      content: OVERRIDDEN_HUB_SKILL.content,
+      ancillary_files: null,
     });
     expect(update.$set).toEqual(
       expect.objectContaining({ scan_status: "passed" }),

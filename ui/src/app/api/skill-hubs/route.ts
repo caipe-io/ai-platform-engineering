@@ -1,3 +1,4 @@
+import { githubHubOptions } from "@/lib/github-hub-options";
 import {
 ApiError,
 getAuthFromBearerOrSession,
@@ -37,6 +38,8 @@ interface SkillHubDoc {
   shared_with_teams?: string[];
   /** Optional path-prefix allow-list for hub crawl (FR-020). */
   include_paths?: string[];
+  revision?: string;
+  entry_paths?: string[];
   /**
    * GitLab only: per-hub override of the recursive-tree page cap.
    * Mirrors the canonical ``SkillHubDoc.max_tree_pages`` in
@@ -210,6 +213,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
     const now = new Date().toISOString();
     const hubDoc: SkillHubDoc = {
+      ...(type === "github" ? githubHubOptions(body) : {}),
       id: new ObjectId().toHexString(),
       type,
       location: normalizedLocation,

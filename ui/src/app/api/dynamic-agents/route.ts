@@ -1,3 +1,5 @@
+import { withSkillReferenceLock, assertSavedSkillsExist } from "@/lib/skill-reference-lock";
+import { normalizeSkillPackagePins } from "@/lib/skill-package-pins";
 /**
  * API routes for Dynamic Agents management.
  *
@@ -267,6 +269,7 @@ const AGENT_MUTABLE_FIELDS = [
   "shared_with_teams",
   "subagents",
   "skills",
+  "skill_pins",
   "datasource_ids",
   "rag_collection_ids",
   "ui",
@@ -903,6 +906,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       owner_team_id: ownerTeam ? teamIdString(ownerTeam) : undefined,
       subagents,
       skills: (body.skills as string[]) ?? [],
+      skill_pins: normalizeSkillPackagePins(body.skill_pins, (body.skills as string[]) ?? []),
       datasource_ids: datasourceIds,
       rag_collection_ids: ragCollectionIds,
       ui: body.ui as DynamicAgentConfig["ui"],
@@ -950,7 +954,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     });
 
     try {
-      await collection.insertOne(doc);
+      await withSkillReferenceLock(doc.skills ?? [], async () => {
+        await assertSavedSkillsExist(doc.skills ?? [], Object.keys(doc.skill_pins ?? {}));
+        await collection.insertOne(doc);
+      });
     } catch (error) {
       await deleteAllAgentToolTuples(agentId).catch((cleanupError) => {
         console.warn(
@@ -1029,6 +1036,12 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       updateData.remote_agent_timeouts ?? agent.remote_agent_timeouts ?? {},
       updateData.allowed_remote_agents ?? agent.allowed_remote_agents ?? [],
     );
+  }
+  if (body.skill_pins !== undefined || body.skills !== undefined) {
+    const skills = (updateData.skills ?? agent.skills ?? []) as string[];
+    // An intentional detach by an authorized manager also removes its pin.
+    const retainedPins = Object.fromEntries(Object.entries(agent.skill_pins ?? {}).filter(([id]) => skills.includes(id)));
+    updateData.skill_pins = normalizeSkillPackagePins(body.skill_pins ?? retainedPins, skills);
   }
   const unsetData: Record<string, "">  = {};
   const datasourceSelectionChanged = Object.prototype.hasOwnProperty.call(
@@ -1278,13 +1291,17 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     await reconcileAgentRelationships(relationships);
 
     try {
-      const updated = await collection.findOneAndUpdate(
+      const nextSkills = (updateData.skills ?? agent.skills ?? []) as string[];
+      const updated = await withSkillReferenceLock(nextSkills, async () => {
+        await assertSavedSkillsExist(nextSkills, Object.keys(updateData.skill_pins ?? agent.skill_pins ?? {}));
+        return collection.findOneAndUpdate(
         { _id: id, ...(execution && { updated_at: agent.updated_at }) },
         Object.keys(unsetData).length > 0
           ? { $set: updateData, $unset: unsetData }
           : { $set: updateData },
         { returnDocument: "after" },
       );
+      });
 
       if (!updated) {
         throw new ApiError("The agent changed during save; reload before retrying", 409);
