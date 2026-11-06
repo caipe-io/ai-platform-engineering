@@ -249,6 +249,16 @@ class TestStreamChatPayload:
     monkeypatch.setattr(SSEClient, "_stream_sse", fake_stream_sse)
     return captured
 
+  def test_resume_sends_resume_data_field(self, monkeypatch):
+    captured = self._capture_payload(monkeypatch)
+    client = SSEClient("http://example.com")
+
+    list(client.resume_stream("agent-1", "conv-1", '{"type": "tool_approval", "decision": "approve"}'))
+
+    assert captured["payload"]["resume_data"] == '{"type": "tool_approval", "decision": "approve"}'
+    assert "form_data" not in captured["payload"]
+    assert captured["url"].endswith("/api/v1/chat/stream/resume")
+
   def test_files_included_when_present(self, monkeypatch):
     captured = self._capture_payload(monkeypatch)
     client = SSEClient("http://example.com")
