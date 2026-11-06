@@ -1049,6 +1049,7 @@ class AgentRuntime:
                     self.config.skills,
                     mongodb_uri=self.settings.mongodb_uri,
                     mongodb_database=self.settings.mongodb_database,
+                    strict=bool(self.config.skill_pins),
                 )
 
                 verify_skill_pins(skills_data, self.config.skill_pins)

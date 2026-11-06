@@ -370,3 +370,11 @@ dynamic-agent runtime together before enabling these pins. Removing a legacy
 skill requires detaching it from all agents first; DELETE returns 409 while it
 is still referenced. Retain orchestration skills and other consumers when
 retiring shortened review-method copies.
+
+Original Hub packages fail closed when a required asset is skipped or a crawl is
+truncated. Pinned imports derive stable identities from their entry paths, so
+equally named skills cannot overwrite each other. Changing Hub revision, entry
+paths or crawl settings rotates the cache generation; old results cannot be
+selected or loaded. A complete empty refresh removes stale cached entries.
+Saved skill attachment and retirement share per-skill mutation locks, and
+attachment validates that selected saved skills still exist.

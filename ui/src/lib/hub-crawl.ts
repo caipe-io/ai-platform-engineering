@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { githubHubOptions, type GitHubHubOptions } from "./github-hub-options";
 /**
  * Hub Crawler — GitHub/GitLab repo crawler + MongoDB cache for skill hubs.
@@ -143,6 +144,7 @@ export interface AncillarySummary {
 }
 
 export interface HubSkillDoc {
+  cache_generation?: string;
   hub_id: string;
   skill_id: string;
   name: string;
@@ -206,6 +208,7 @@ export type HubLastCrawlTruncation =
 
 export interface SkillHubDoc {
   id: string;
+  cache_generation?: string;
   type: "github" | "gitlab";
   location: string;
   enabled: boolean;
@@ -595,6 +598,7 @@ export async function crawlGitHubRepo(
   // a partial set of skills is more useful than no skills at all, and
   // the warning makes it clear the result is incomplete.
   const platformTruncated = treeData.truncated === true;
+  if (platformTruncated && (revision || entryPaths.length)) throw new Error("Original package tree is truncated");
   const entries: GitHubTreeEntry[] = treeData.tree || [];
 
   // GitHub returns the entire recursive tree in a single response.
@@ -731,8 +735,13 @@ export async function crawlGitHubRepo(
       const fm = parseFrontmatter(content);
 
       const skillName = fm.name || id;
+      const original = !!revision || entryPaths.includes(skillPath);
+      if (original && (ancillary.summary.skipped_binary || ancillary.summary.skipped_too_large ||
+        ancillary.summary.truncated_at_count_cap || ancillary.summary.truncated_at_size_cap)) {
+        throw new Error(`Original package is incomplete: ${skillPath}`);
+      }
       skills.push({
-        id: skillName,
+        id: original ? `${skillName}-${createHash("sha256").update(skillPath).digest("hex").slice(0, 12)}` : skillName,
         name: skillName,
         description: fm.description || "",
         content,
@@ -748,6 +757,7 @@ export async function crawlGitHubRepo(
         ancillary_count: Object.keys(ancillary.files).length,
       });
     } catch (err) {
+      if (revision || entryPaths.includes(skillPath)) throw err;
       console.error(`[HubCrawl] Failed to fetch ${skillPath}:`, err);
       emitter.emit({
         type: "warning",
@@ -1176,7 +1186,7 @@ export async function getHubSkills(
 
   // Always check for any cached docs first
   const cached = await hubSkillsCol
-    .find({ hub_id: hub.id })
+    .find({ hub_id: hub.id, ...(hub.cache_generation ? {cache_generation: hub.cache_generation} : {}) })
     .toArray();
 
   if (!forceFresh && cached.length > 0) {
@@ -1292,6 +1302,10 @@ async function _crawlAndCache(
     throw err;
   }
 
+  const currentHub = await (await getCollection("skill_hubs")).findOne({id: hub.id});
+  if (currentHub?.cache_generation !== hub.cache_generation) throw new Error("Hub settings changed during crawl; refresh again");
+  if (new Set(crawled.map(skill => skill.id)).size !== crawled.length) throw new Error("Hub has colliding skill identities");
+
   // Upsert crawled skills into cache. Track which ones are *new* or have
   // *changed content* so we can fire an async scan only for those — saves
   // scanner work on a no-op refresh of a 100-skill hub.
@@ -1327,6 +1341,7 @@ async function _crawlAndCache(
       {
         $set: {
           hub_id: hub.id,
+          cache_generation: hub.cache_generation ?? null,
           skill_id: skill.id,
           name: skill.name,
           description: skill.description,
@@ -1370,7 +1385,7 @@ async function _crawlAndCache(
 
   // Remove stale skills that no longer exist in the repo
   const currentIds = crawled.map((s) => s.id);
-  if (currentIds.length > 0) {
+  if (truncation.kind === "ok") {
     await hubSkillsCol.deleteMany({
       hub_id: hub.id,
       skill_id: { $nin: currentIds },

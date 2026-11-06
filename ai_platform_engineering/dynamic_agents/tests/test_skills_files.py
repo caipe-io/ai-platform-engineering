@@ -105,3 +105,48 @@ def test_chat_overrides_cannot_clear_pins_or_detach_their_skills() -> None:
     assert rejected.value.status_code == 400
     with pytest.raises(ValidationError):
         apply_config_override(agent, {"skills": []})
+
+
+def test_original_hub_pins_hash_entry_bytes_without_frontmatter_flag() -> None:
+    import hashlib
+
+    import pytest
+
+    from dynamic_agents.services.skills import verify_skill_pins
+
+    original = "# Original command\nInstructions unchanged.\n"
+    skill = {"id": "hub-original", "source": "hub", "content": original, "scan_status": "passed"}
+    pin = {"hub-original": {"content_sha256": hashlib.sha256(original.encode()).hexdigest(), "ancillary_sha256": {}}}
+    verify_skill_pins([skill], pin)
+    for key in ("skipped_binary", "skipped_too_large", "truncated_at_count_cap", "truncated_at_size_cap"):
+        skill["ancillary_summary"] = {key: 1}
+        with pytest.raises(ValueError, match="package is incomplete"):
+            verify_skill_pins([skill], pin)
+
+
+def test_pinned_load_preserves_storage_failure() -> None:
+    from unittest.mock import patch
+
+    import pytest
+
+    from dynamic_agents.services.skills import load_skills
+
+    with patch("dynamic_agents.services.skills._load_agent_skills", side_effect=RuntimeError("Storage unavailable")):
+        with pytest.raises(RuntimeError, match="Storage unavailable"):
+            load_skills(["skill-example"], mongodb_uri="mongodb://localhost", mongodb_database="test", strict=True)
+        assert load_skills(["skill-example"], mongodb_uri="mongodb://localhost", mongodb_database="test") == []
+
+
+def test_runtime_rejects_obsolete_hub_cache_generation() -> None:
+    from unittest.mock import MagicMock
+
+    from dynamic_agents.services.skills import _load_hub_skills
+
+    hub = "a" * 24
+    cached = {"hub_id": hub, "skill_id": "review", "name": "Review", "scan_status": "passed", "cache_generation": "old"}
+    db = {"hub_skills": MagicMock(), "skill_hubs": MagicMock()}
+    db["hub_skills"].find.return_value = [cached]
+    db["skill_hubs"].find.return_value = [{"id": hub, "enabled": True, "cache_generation": "new"}]
+    assert _load_hub_skills({f"hub-{hub}-review": (hub, "review")}, db) == []
+    cached["cache_generation"] = "new"
+    assert len(_load_hub_skills({f"hub-{hub}-review": (hub, "review")}, db)) == 1

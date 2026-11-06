@@ -206,6 +206,7 @@ def _load_hub_skills(
         key = (str(doc.get("hub_id", "")), str(doc.get("skill_id", "")))
         doc_index[key] = doc
 
+    hubs = {str(h.get("id")): h for h in db["skill_hubs"].find({"id": {"$in": list({h for h, _ in hub_ids_map.values()})}})}
     skills: list[dict[str, Any]] = []
     for composite_id, (hub_id, skill_id) in hub_ids_map.items():
         doc = doc_index.get((hub_id, skill_id))
@@ -213,6 +214,12 @@ def _load_hub_skills(
             logger.warning("Hub skill not found: hub_id=%s skill_id=%s", hub_id, skill_id)
             continue
 
+        hub = hubs.get(hub_id, {})
+        if hub.get("enabled") is False or (
+            hub.get("cache_generation") and doc.get("cache_generation") != hub["cache_generation"]
+        ):
+            logger.warning("Hub skill cache is disabled or from an obsolete configuration: %s", composite_id)
+            continue
         name = doc.get("name", "")
         if not name:
             logger.warning("Skipping hub skill doc (hub_id=%s, skill_id=%s): missing name", hub_id, skill_id)
@@ -251,6 +258,7 @@ def _load_hub_skills(
                 "team_ids": None,
                 "owner_user_id": "",
                 "ancillary_files": doc.get("ancillary_files") if isinstance(doc.get("ancillary_files"), dict) else {},
+                "ancillary_summary": doc.get("ancillary_summary") or {},
             }
         )
 
@@ -262,6 +270,7 @@ def load_skills(
     *,
     mongodb_uri: str,
     mongodb_database: str,
+    strict: bool = False,
 ) -> list[dict[str, Any]]:
     """Load skill documents from MongoDB ``agent_skills`` and ``hub_skills``.
 
@@ -301,6 +310,8 @@ def load_skills(
         hub_skills = _load_hub_skills(hub_ids_map, db)
     except Exception as e:
         logger.warning("Failed to load skills: %s", e, exc_info=True)
+        if strict:
+            raise
         return []
     finally:
         client.close()
@@ -357,7 +368,7 @@ def _build_skill_md(skill: dict[str, Any]) -> str:
     content = skill.get("content", "")
 
     # Pinned original Hub entries are never rewritten, including command Markdown.
-    if skill.get("source") == "hub" and skill.get("metadata", {}).get("original_content") is True:
+    if skill.get("source") == "hub":
         return content
 
     # If the original content already has valid frontmatter, use it as-is
@@ -488,6 +499,11 @@ def verify_skill_pins(skills: list[dict[str, Any]], pins: dict[str, Any]) -> Non
             raise ValueError(f"Pinned skill is unavailable or blocked: {skill_id}")
         if skill.get("scan_status") != "passed":
             raise ValueError(f"Pinned skill security scan has not passed: {skill_id}")
+        summary = skill.get("ancillary_summary") or {}
+        if any(summary.get(key) for key in (
+            "skipped_binary", "skipped_too_large", "truncated_at_count_cap", "truncated_at_size_cap"
+        )):
+            raise ValueError(f"Pinned original skill package is incomplete: {skill_id}")
         expected = pin.model_dump() if hasattr(pin, "model_dump") else pin
         content_hash = hashlib.sha256(_build_skill_md(skill).encode()).hexdigest()
         ancillary = skill.get("ancillary_files", {})

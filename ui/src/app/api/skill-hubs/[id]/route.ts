@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { githubHubOptions } from "@/lib/github-hub-options";
 import {
 ApiError,
@@ -119,6 +120,10 @@ export const PATCH = withErrorHandler(
         }
       }
 
+      if (["revision", "entry_paths", "include_paths", "location", "credentials_ref", "max_tree_pages"].some(key => body[key] !== undefined)) {
+        update.cache_generation = randomUUID();
+        update.last_success_at = null;
+      }
       const writeOp: Record<string, unknown> = { $set: update };
       if (Object.keys(unset).length > 0) writeOp.$unset = unset;
       await collection.updateOne({ id }, writeOp);

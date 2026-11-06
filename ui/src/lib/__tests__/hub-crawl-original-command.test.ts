@@ -24,3 +24,23 @@ it("fetches an original command and all supporting files at the same immutable r
     expect(calls.slice(1).every(url=>new URL(url).searchParams.get("ref")===revision)).toBe(true);
   } finally { global.fetch = previous; }
 });
+
+it("gives equally named original entries stable distinct path identities and rejects missing assets", async () => {
+  const previous = global.fetch;
+  const files: Record<string,string> = {"a/SKILL.md":"---\nname: review\n---\nA", "b/SKILL.md":"---\nname: review\n---\nB"};
+  global.fetch = jest.fn(async input => {
+    const url = String(input);
+    if (url.includes("/git/trees/")) return {ok:true,json:async()=>({tree:Object.keys(files).map(path=>({type:"blob",path,size:files[path].length}))})} as Response;
+    const path = new URL(url).pathname.split("/contents/")[1];
+    return {ok:true,json:async()=>({content:Buffer.from(files[path]).toString("base64"),encoding:"base64"})} as Response;
+  }) as typeof fetch;
+  try {
+    const options = {revision:"a".repeat(40)};
+    const first = await crawlGitHubRepo("example","skills",undefined,undefined,undefined,options);
+    const second = await crawlGitHubRepo("example","skills",undefined,undefined,undefined,options);
+    expect(new Set(first.skills.map(s=>s.id)).size).toBe(2);
+    expect(first.skills.map(s=>s.id)).toEqual(second.skills.map(s=>s.id));
+    files["a/required.bin"] = "Binary";
+    await expect(crawlGitHubRepo("example","skills",undefined,undefined,undefined,options)).rejects.toThrow("incomplete");
+  } finally { global.fetch = previous; }
+});

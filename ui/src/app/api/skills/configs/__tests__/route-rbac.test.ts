@@ -1,6 +1,7 @@
 /**
  * @jest-environment node
  */
+jest.mock("@/lib/agent-mutation-lock", () => ({ withAgentMutationLock: async (_id: string, operation: () => Promise<unknown>) => operation() }));
 
 import { NextRequest } from "next/server";
 

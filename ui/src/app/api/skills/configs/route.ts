@@ -1,3 +1,4 @@
+import { withSkillReferenceLock } from "@/lib/skill-reference-lock";
 import {
 getAgentSkillVisibleToUser,
 hydrateAgentSkillTeamShares,
@@ -635,7 +636,7 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
 
   return await withAuth(request, async (req, user, session) => {
     await requireSkillPermission(session, id, "delete");
-    await deleteAgentSkillFromMongoDB(id);
+    await withSkillReferenceLock([id], () => deleteAgentSkillFromMongoDB(id));
     // Drop history rows for this skill so we don't leak orphaned
     // revision documents that nobody can render. Best-effort: a
     // failure here doesn't undo the delete (the skill is already

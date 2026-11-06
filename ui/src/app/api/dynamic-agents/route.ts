@@ -1,3 +1,4 @@
+import { withSkillReferenceLock, assertSavedSkillsExist } from "@/lib/skill-reference-lock";
 import { normalizeSkillPackagePins } from "@/lib/skill-package-pins";
 /**
  * API routes for Dynamic Agents management.
@@ -953,7 +954,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     });
 
     try {
-      await collection.insertOne(doc);
+      await withSkillReferenceLock(doc.skills ?? [], async () => {
+        await assertSavedSkillsExist(doc.skills ?? []);
+        await collection.insertOne(doc);
+      });
     } catch (error) {
       await deleteAllAgentToolTuples(agentId).catch((cleanupError) => {
         console.warn(
@@ -1287,13 +1291,17 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     await reconcileAgentRelationships(relationships);
 
     try {
-      const updated = await collection.findOneAndUpdate(
+      const nextSkills = (updateData.skills ?? agent.skills ?? []) as string[];
+      const updated = await withSkillReferenceLock(nextSkills, async () => {
+        await assertSavedSkillsExist(nextSkills);
+        return collection.findOneAndUpdate(
         { _id: id, ...(execution && { updated_at: agent.updated_at }) },
         Object.keys(unsetData).length > 0
           ? { $set: updateData, $unset: unsetData }
           : { $set: updateData },
         { returnDocument: "after" },
       );
+      });
 
       if (!updated) {
         throw new ApiError("The agent changed during save; reload before retrying", 409);
