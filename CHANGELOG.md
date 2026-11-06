@@ -1,3 +1,9 @@
+## 1.3.7-rc.6 (2026-11-06)
+
+### Fix
+
+- **ui**: restore live chat navigation in the header (#3247)
+
 ## 1.3.7-rc.5 (2026-11-05)
 
 ### Feat
