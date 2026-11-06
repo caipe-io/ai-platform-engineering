@@ -293,7 +293,7 @@ export function PopoverContent({
       window.removeEventListener("scroll", onChange, true);
       resizeObserver?.disconnect();
     };
-  }, [open,computeCoords,triggerRef]);
+  }, [open,computeCoords,triggerRef,mounted]);
 
   React.useEffect(() => {
     if (!open) return;

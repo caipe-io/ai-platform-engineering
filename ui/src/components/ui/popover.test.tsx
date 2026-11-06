@@ -2,6 +2,26 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 
 import { Popover, PopoverContent, PopoverTrigger } from "./popover";
 
+it.each([false, true])("focuses initially open content without ResizeObserver (portalled=%s)", portalled => {
+  const originalResizeObserver = global.ResizeObserver;
+  Object.defineProperty(global, "ResizeObserver", { configurable: true, writable: true, value: undefined });
+  const onOpenAutoFocus = jest.fn((content: HTMLDivElement) => content.querySelector("button")?.focus());
+  try {
+    render(
+      <Popover defaultOpen>
+        <PopoverTrigger asChild><button type="button">Destinations</button></PopoverTrigger>
+        <PopoverContent portalled={portalled} onOpenAutoFocus={onOpenAutoFocus}>
+          <button type="button">Initial destination</button>
+        </PopoverContent>
+      </Popover>,
+    );
+    expect(screen.getByRole("button", { name: "Initial destination" })).toHaveFocus();
+    expect(onOpenAutoFocus).toHaveBeenCalledTimes(1);
+  } finally {
+    Object.defineProperty(global, "ResizeObserver", { configurable: true, writable: true, value: originalResizeObserver });
+  }
+});
+
 it("runs opening focus after placement and does not steal it during repositioning", () => {
   const onOpenAutoFocus = jest.fn((content: HTMLDivElement) => content.querySelector("button")?.focus());
   render(
