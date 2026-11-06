@@ -28,15 +28,18 @@ export async function prepareAgentExecution(
       RUNTIME_FIELDS.filter(field => agent[field] !== undefined).map(field => [field, agent[field]]),
     ) } },
     prompt: { system: agent.system_prompt },
-    model: { policy: "configured", ...(agent.model as Record<string, unknown>) },
+    // Provider-specific controls belong to runtime.model, not the portable ModelPolicy.
+    model: {
+      policy: "configured",
+      id: (agent.model as Record<string, unknown>)?.id,
+      provider: (agent.model as Record<string, unknown>)?.provider,
+    },
     delegation: { agents: ((agent.subagents ?? []) as Array<{ agent_id: string }>).map(child => child.agent_id) },
   } : {
     ...input?.blueprint, id, name: agent.name, description: agent.description ?? "",
     prompt: { ...(input?.blueprint?.prompt as object), system: agent.system_prompt },
   };
   if ((blueprint.harness as { id?: string } | undefined)?.id !== harnessId) throw new ApiError("Execution harness does not match the agent", 409);
-  // ModelPolicy carries execution selection, not UI-only reasoning controls.
-  if (native) delete (blueprint.model as Record<string, unknown>).reasoning_effort;
   const current = await proxyHarnessEngine(config, { subject }, `/api/v1/agents/${encodeURIComponent(id)}`);
   if (!current.ok && current.status !== 404) throw new ApiError("Execution configuration is unavailable", 503);
   const currentData = current.ok ? await current.json() : null;

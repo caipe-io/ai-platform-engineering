@@ -25,3 +25,26 @@ it("prepares against the latest Engine revision after an unpublished version", a
   expect(await prepareAgentExecution(agent, "test-user", draft)).toEqual({ revision: 6, version: 6 });
   expect(JSON.parse(proxy.mock.calls[1][3].body).expected_revision).toBe(5);
 });
+
+it.each([undefined, null, true, false])(
+  "preserves streaming=%s in the native runtime without leaking it into ModelPolicy",
+  async (streaming) => {
+    process.env.HARNESS_ENGINE_DEEP_AGENTS_ENABLED = "true";
+    const model = {
+      id: "example-model", provider: "example-provider", reasoning_effort: "medium",
+      ...(streaming !== undefined && { streaming }),
+    };
+    proxy.mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(reply({ record: { revision: 1 }, version: { version: 1 } }));
+
+    await expect(prepareAgentExecution({
+      ...agent, execution_harness_id: "dynamic_agents", model,
+    }, "test-user")).resolves.toEqual({ revision: 1, version: 1 });
+
+    const { blueprint } = JSON.parse(proxy.mock.calls[1][3].body);
+    expect(blueprint.model).toEqual({
+      policy: "configured", id: model.id, provider: model.provider,
+    });
+    expect(blueprint.harness.options.runtime.model).toEqual(model);
+  },
+);
