@@ -419,6 +419,7 @@ class TaskRun(BaseModel):
     status: TaskStatus
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None
+    review_execution: dict[str, Any] | None = None
     response_preview: str | None = None
     error: str | None = None
     # When this run was produced by a follow-up reply (e.g. the Webex

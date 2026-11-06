@@ -489,3 +489,29 @@ Follow the project-wide contribution guidelines in [AGENTS.md](../../../../AGENT
 - Branch naming: `prebuild/feat/autonomous-agents-<description>`
 - Commits: conventional commits + DCO sign-off (`git commit -s`)
 - Lint before committing: `uv run ruff check src/`
+
+### Checkpointed repository review
+
+Tasks opt in through `metadata.review_execution_version=1` and a configured
+`metadata.repository`. `metadata.review_method_bindings` maps reporting aliases
+to scanned original Hub attachment IDs. The event must match that repository,
+PR number and head SHA. Inventory, related-file groups and cross-group
+verification run in isolated contexts with narrowed read-only tools. Groups
+use estimated diff-token budgets and at most five files; a failed multi-file
+group splits. Large files are paged within a group. Coverage is model-reported,
+validated against the inventory, and never inferred from transport success.
+
+Each phase has a three-minute timeout, two attempts per invocation and a bounded
+JSON report. A run has a twenty-minute budget; exhausted or missing evidence
+remains incomplete. The final publication phase retains the configured agent's
+existing publication guards and is never automatically retried after an
+uncertain write. This advisory review is not an approval or merge gate.
+
+Checkpoints bind task, owner, agent configuration, policy and exact head, and
+expire after seven days. `POST /tasks/{task_id}/runs/{run_id}/resume-review`
+requires the authenticated task owner/admin, a failed run and a private
+checkpoint with no publication attempt. It starts a new run, preserves completed
+phases and narrows source context again. Concurrent requests return the same
+resuming run ID. A new manual review request performs fresh inspection.
+The run's `review_execution` field distinguishes completed, incomplete and
+skipped reviews from generic execution status.

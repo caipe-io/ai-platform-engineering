@@ -565,6 +565,7 @@ async def invoke_dynamic_agent_streaming(
     owner_sub: str | None = None,
     conversation_id: str | None = None,
     context: dict[str, Any] | None = None,
+    config_override: dict[str, Any] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Invoke a dynamic agent via SSE streaming and return ``(content, events)``.
 
@@ -612,6 +613,9 @@ async def invoke_dynamic_agent_streaming(
         "protocol": "custom",
         "autonomous": True,
     }
+
+    if config_override is not None:
+        body["config_override"] = config_override
 
     logger.info(
         "dynamic_agents_client.invoke_streaming: task=%s agent=%s url=%s timeout=%.1fs",

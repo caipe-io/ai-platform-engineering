@@ -285,6 +285,22 @@ class MongoService:
             )
         return self._chat_db
 
+    async def review_run_statuses(self, task_id: str) -> list[dict[str, Any]]:
+        """Bounded status projection, without prompts, model output or tool traces."""
+        return await self._runs().find({"task_id": task_id}, {
+            "_id": 0, "run_id": 1, "status": 1, "started_at": 1, "review_execution": 1,
+        }).sort("started_at", -1).limit(100).to_list(100)
+
+    async def review_execution_store(self, run_id: str) -> tuple[Any, dict[str, Any] | None]:
+        """Return the durable per-run review checkpoint and its TTL-bounded collection."""
+        collection = self._require_primary()["autonomous_review_checkpoints"]
+        await collection.create_index("expires_at", expireAfterSeconds=0)
+        return collection, await collection.find_one({"_id": run_id})
+
+    async def review_agent_config(self, agent_id: str) -> dict[str, Any] | None:
+        """Read canonical runtime configuration for narrowing phase tools and cache binding."""
+        return await self._require_primary()["dynamic_agents"].find_one({"_id": agent_id})
+
     def _tasks(self) -> Any:
         return self._require_primary()[self.settings.mongodb_tasks_collection]
 

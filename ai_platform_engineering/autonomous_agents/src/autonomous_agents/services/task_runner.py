@@ -17,7 +17,7 @@ imports.
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from autonomous_agents.models import (
@@ -40,6 +40,7 @@ from autonomous_agents.services.dynamic_agents_client import (
     invoke_dynamic_agent_streaming,
 )
 from autonomous_agents.services.mongo import RunStore
+from autonomous_agents.services.review_execution import run_review_execution
 from autonomous_agents.services.webex_threads import (
     WebexThreadEntry,
     WebexThreadMap,
@@ -281,6 +282,7 @@ async def execute_task(
     *,
     run_id: str | None = None,
     trigger_instance_id: str | None = None,
+    review_resume_run_id: str | None = None,
 ) -> TaskRun:
     """Run a single task, record the result, and return the TaskRun.
 
@@ -415,22 +417,55 @@ async def execute_task(
         # accumulated content). Persisting these on TaskRun.events lets the
         # autonomous-task chat thread replay the Tools / Final-answer
         # breakdown instead of a bare text bubble.
-        response, events = await invoke_dynamic_agent_streaming(
-            prompt=effective_task.prompt,
-            task_id=effective_task.id,
-            agent_id=effective_task.dynamic_agent_id,
-            owner_email=_owner_email,
-            owner_sub=_owner_sub,
-            conversation_id=execution_context_id,
-            context=context,
-        )
+        if effective_task.metadata.get("review_execution_version") == 1:
+            from autonomous_agents.services.mongo import get_mongo_service
+
+            mongo = get_mongo_service()
+            checkpoint_id = review_resume_run_id or run_id
+            collection, saved = await mongo.review_execution_store(checkpoint_id)
+            agent = await mongo.review_agent_config(effective_task.dynamic_agent_id)
+            if not agent or not agent.get("enabled"):
+                raise ValueError("The configured review agent is unavailable")
+
+            async def load_review() -> dict[str, Any] | None:
+                return saved.get("checkpoint") if saved else None
+
+            async def save_review(checkpoint: dict[str, Any]) -> None:
+                await collection.update_one({"_id": checkpoint_id}, {"$set": {
+                    "checkpoint": checkpoint,
+                    "expires_at": datetime.now(timezone.utc) + timedelta(days=7),
+                }}, upsert=True)
+
+            async def review_progress(state: dict[str, Any]) -> None:
+                run.review_execution = {**state, "checkpoint_run_id": checkpoint_id}
+                await _record_safely(store, run)
+
+            response, events, review_state = await run_review_execution(
+                task=effective_task, context=context, run_id=checkpoint_id, agent=agent,
+                load=load_review, save=save_review, invoke=invoke_dynamic_agent_streaming,
+                progress=review_progress,
+            )
+            run.status = (TaskStatus.SKIPPED if review_state["state"] == "skipped" else
+                          TaskStatus.SUCCESS if review_state["state"] == "completed" else TaskStatus.FAILED)
+            if run.status == TaskStatus.FAILED:
+                run.error = review_state.get("reason", "Review inspection is incomplete")
+        else:
+            response, events = await invoke_dynamic_agent_streaming(
+                prompt=effective_task.prompt,
+                task_id=effective_task.id,
+                agent_id=effective_task.dynamic_agent_id,
+                owner_email=_owner_email,
+                owner_sub=_owner_sub,
+                conversation_id=execution_context_id,
+                context=context,
+            )
+            run.status = TaskStatus.SUCCESS
         response_text = response
-        run.status = TaskStatus.SUCCESS
         run.response_preview = response[:500]
         run.response_full = response
         run.events = events
         logger.info(
-            f"[{task.id}] Run {run_id} succeeded "
+            f"[{task.id}] Run {run_id} ended ({run.status}) "
             f"({len(events)} events, {len(response)} chars). "
             f"Preview: {response[:120]}..."
         )

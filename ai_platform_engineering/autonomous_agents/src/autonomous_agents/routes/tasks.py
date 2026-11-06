@@ -10,6 +10,7 @@ import asyncio
 import logging
 import secrets
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, status
 
@@ -219,6 +220,7 @@ async def get_public_settings() -> dict:
             settings.minimum_schedule_interval_seconds
         ),
         "enabled_webhook_providers": settings.enabled_webhook_providers,
+        "review_execution_version": 1,
     }
 
 
@@ -595,6 +597,72 @@ async def get_task_runs(task_id: str, request: Request) -> list[TaskRun]:
     # Task exists and access was asserted above: every run for this task
     # belongs to its owner, so the whole history is the caller's to see.
     return _hide_unpublished_chat_links(history)
+
+
+@router.get("/tasks/{task_id}/review-status")
+async def review_status(task_id: str, request: Request) -> list[dict]:
+    """Private, owner-authorized progress without fetching full run traces."""
+    from autonomous_agents.services.mongo import get_mongo_service
+
+    task = await get_task_store().get(task_id)
+    if task is None:
+        raise HTTPException(404, "Task not found")
+    caller_email, is_admin, _ = _get_caller(request)
+    if not caller_email:
+        raise HTTPException(401, "Authenticated task owner required")
+    _assert_task_access(task, caller_email, is_admin)
+    return await get_mongo_service().review_run_statuses(task_id)
+
+
+@router.post("/tasks/{task_id}/runs/{run_id}/resume-review", status_code=status.HTTP_202_ACCEPTED)
+async def resume_review(
+    task_id: str, run_id: str, request: Request, background_tasks: BackgroundTasks,
+) -> dict:
+    """Resume only unfinished private phases; an uncertain publication requires readback."""
+    from autonomous_agents.services.mongo import get_mongo_service
+
+    task = await get_task_store().get(task_id)
+    if task is None:
+        raise HTTPException(404, "Task not found")
+    caller_email, is_admin, _ = _get_caller(request)
+    if not caller_email:
+        raise HTTPException(401, "Authenticated task owner required")
+    _assert_task_access(task, caller_email, is_admin)
+    if not task.enabled or task.metadata.get("review_execution_version") != 1:
+        raise HTTPException(409, "This task does not support resumable reviews")
+    recent = await get_run_store().list_by_task(task_id, limit=_MAX_TASK_RUNS)
+    parent = next((r for r in recent if r.run_id == run_id), None)
+    if parent is None or parent.status.value != "failed":
+        raise HTTPException(409, "Only a failed review run can be resumed")
+    checkpoint_id = (parent.review_execution or {}).get("checkpoint_run_id", run_id)
+    collection, saved = await get_mongo_service().review_execution_store(checkpoint_id)
+    checkpoint = (saved or {}).get("checkpoint", {})
+    scope = checkpoint.get("scope", {})
+    if scope.get("task") != task_id or checkpoint.get("publication_started"):
+        raise HTTPException(409, "No resumable inspection; inspect GitHub publication before a fresh review")
+    now = datetime.now(timezone.utc)
+    next_run = str(uuid.uuid4())
+    claimed = await collection.update_one({
+        "_id": checkpoint_id,
+        "$or": [{"resume_until": {"$exists": False}}, {"resume_until": {"$lt": now}}],
+    }, {"$set": {"resume_until": now + timedelta(minutes=25), "resume_run_id": next_run}})
+    if not claimed.modified_count:
+        active = await collection.find_one({"_id": checkpoint_id})
+        if active and active.get("resume_run_id"):
+            return {"run_id": active["resume_run_id"], "status": "pending"}
+        raise HTTPException(409, "This review is already resuming")
+
+    async def resume() -> None:
+        try:
+            await execute_task(task, context={
+                "repository": {"full_name": scope["repository"]},
+                "pull_request": {"number": scope["number"], "head": {"sha": scope["head"]}},
+            }, run_id=next_run, review_resume_run_id=checkpoint_id)
+        finally:
+            await collection.update_one({"_id": checkpoint_id}, {"$unset": {"resume_until": ""}})
+
+    background_tasks.add_task(resume)
+    return {"run_id": next_run, "status": "pending"}
 
 
 @router.post(
