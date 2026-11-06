@@ -25,3 +25,8 @@ it("rejects a Hub cache from an obsolete generation before attaching it", async(
   (getCollection as jest.Mock).mockImplementation(async name=>({findOne:async()=>name==="skill_hubs"?{enabled:true,cache_generation:"new"}:{cache_generation:"old"}}));
   await expect(assertSavedSkillsExist([`hub-${"a".repeat(24)}-review`])).rejects.toThrow("configuration changed");
 });
+
+it("rejects pinning a scanned but incomplete cached subset", async()=>{
+  (getCollection as jest.Mock).mockResolvedValue({findOne:async()=>({scan_status:"passed",ancillary_summary:{skipped_binary:1}})});
+  await expect(assertSavedSkillsExist(["skill-example"],["skill-example"])).rejects.toThrow("incomplete");
+});

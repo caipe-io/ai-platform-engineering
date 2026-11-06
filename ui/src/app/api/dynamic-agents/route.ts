@@ -955,7 +955,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
     try {
       await withSkillReferenceLock(doc.skills ?? [], async () => {
-        await assertSavedSkillsExist(doc.skills ?? []);
+        await assertSavedSkillsExist(doc.skills ?? [], Object.keys(doc.skill_pins ?? {}));
         await collection.insertOne(doc);
       });
     } catch (error) {
@@ -1293,7 +1293,7 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     try {
       const nextSkills = (updateData.skills ?? agent.skills ?? []) as string[];
       const updated = await withSkillReferenceLock(nextSkills, async () => {
-        await assertSavedSkillsExist(nextSkills);
+        await assertSavedSkillsExist(nextSkills, Object.keys(updateData.skill_pins ?? agent.skill_pins ?? {}));
         return collection.findOneAndUpdate(
         { _id: id, ...(execution && { updated_at: agent.updated_at }) },
         Object.keys(unsetData).length > 0
