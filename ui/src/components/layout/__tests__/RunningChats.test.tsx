@@ -6,7 +6,6 @@ import type { Conversation } from "@/types/a2a";
 import type { ExternalChatActivity } from "@/store/chat-store";
 
 let mockPathname = "/projects";
-const mockPush = jest.fn();
 const mockRecovery = jest.fn();
 const mockState = {
   streamingConversations: new Map<string, unknown>(),
@@ -14,9 +13,13 @@ const mockState = {
   conversations: [] as Conversation[],
 };
 
-jest.mock("next/navigation", () => ({ usePathname: () => mockPathname, useRouter: () => ({ push: mockPush }) }));
+jest.mock("next/navigation", () => ({ usePathname: () => mockPathname }));
+jest.mock("next/link", () => {
+  const MockLink = ({ children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => <a {...props}>{children}</a>;
+  return { __esModule: true, default: MockLink };
+});
 jest.mock("@/lib/navigation-progress", () => ({
-  pushWithNavigationProgress: (router: { push: (href: string) => void }, href: string) => router.push(href),
+  beginNavigationProgress: jest.fn(),
 }));
 jest.mock("@/lib/agentic-apps/use-chat-session-recovery", () => ({ useChatSessionRecovery: () => mockRecovery() }));
 jest.mock("@/store/chat-store", () => ({ useChatStore: (selector: (state: typeof mockState) => unknown) => selector(mockState) }));
@@ -41,25 +44,32 @@ it("keeps recovery mounted without showing a banner or an idle control", () => {
   expect(mockRecovery).toHaveBeenCalled();
 });
 
-it("uses the visible chat's existing progress instead of a global indicator", () => {
+it("keeps the live indicator visible for the currently open chat", () => {
   addChat("example-primary", "Primary chat");
   mockPathname = "/chat/example-primary";
-  const { container } = render(<RunningChats />);
-  expect(container).toBeEmptyDOMElement();
+  render(<RunningChats />);
+  const link = screen.getByRole("link", { name: "1 live chat: Primary chat. Open chat" });
+  expect(link).toHaveAttribute("href", "/chat/example-primary");
+  expect(link).toHaveAttribute("aria-current", "page");
+  expect(link).toHaveTextContent("Primary chat");
+  expect(link.querySelector(".motion-safe\\:animate-pulse")).toBeInTheDocument();
 });
 
-it("lists every background chat and opens the selected conversation", () => {
+it("lists every live chat with a link to its specific conversation", () => {
   addChat("example-primary", "Primary chat");
   addChat("example-secondary", "Secondary chat");
   render(<RunningChats />);
-  fireEvent.click(screen.getByRole("button", { name: "2 background chats. View running chats" }));
-  expect(screen.getByRole("button", { name: "Open Primary chat" })).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Open Secondary chat" }));
-  expect(mockPush).toHaveBeenCalledWith("/chat/example-secondary");
-  expect(screen.queryByRole("region", { name: "Background chats" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "2 live chats. Choose a chat" }));
+  expect(screen.getByRole("link", { name: "Open Primary chat" })).toHaveAttribute("href", "/chat/example-primary");
+  const secondary = screen.getByRole("link", { name: "Open Secondary chat" });
+  expect(secondary).toHaveAttribute("href", "/chat/example-secondary");
+  // Prevent jsdom document navigation; closing still runs through the real link.
+  secondary.addEventListener("click", event => event.preventDefault());
+  fireEvent.click(secondary);
+  expect(screen.queryByRole("region", { name: "Live chats" })).not.toBeInTheDocument();
 });
 
-it("counts background chats only and deduplicates app and browser observations", () => {
+it("counts the current chat and deduplicates app and browser observations", () => {
   addChat("example-current", "Current chat");
   addChat("example-other", "Other chat");
   mockPathname = "/chat/example-current";
@@ -69,10 +79,11 @@ it("counts background chats only and deduplicates app and browser observations",
     "example-saving": { agentId: "example-agent", state: "saving" },
   };
   render(<RunningChats />);
-  fireEvent.click(screen.getByRole("button", { name: "2 background chats. View running chats" }));
-  expect(screen.queryByRole("button", { name: "Open Current chat" })).not.toBeInTheDocument();
-  expect(screen.getAllByRole("button", { name: "Open Other chat" })).toHaveLength(1);
-  expect(screen.getByRole("button", { name: "Open Running chat" })).toHaveTextContent("Saving response…");
+  fireEvent.click(screen.getByRole("button", { name: "3 live chats. Choose a chat" }));
+  expect(screen.getByRole("link", { name: "Open Current chat" })).toHaveAttribute("aria-current", "page");
+  expect(screen.getByText("Streaming · Current chat")).toBeVisible();
+  expect(screen.getAllByRole("link", { name: "Open Other chat" })).toHaveLength(1);
+  expect(screen.getByRole("link", { name: "Open Untitled chat" })).toHaveTextContent("Saving response…");
 });
 
 it("preserves the existing unsaved-editor navigation guard", () => {
@@ -80,8 +91,54 @@ it("preserves the existing unsaved-editor navigation guard", () => {
   mockPathname = "/dynamic-agents";
   useUnsavedChangesStore.setState({ hasUnsavedChanges: true });
   render(<RunningChats />);
-  fireEvent.click(screen.getByRole("button", { name: "1 background chat. View running chats" }));
-  fireEvent.click(screen.getByRole("button", { name: "Open Primary chat" }));
-  expect(mockPush).not.toHaveBeenCalled();
+  const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+  fireEvent(screen.getByRole("link", { name: "1 live chat: Primary chat. Open chat" }), event);
+  expect(event.defaultPrevented).toBe(true);
   expect(useUnsavedChangesStore.getState().pendingNavigationHref).toBe("/chat/example-primary");
+});
+
+it("preserves the unsaved-editor guard when choosing among several chats", () => {
+  addChat("example-primary", "Primary chat");
+  addChat("example-secondary", "Secondary chat");
+  mockPathname = "/dynamic-agents";
+  useUnsavedChangesStore.setState({ hasUnsavedChanges: true });
+  render(<RunningChats />);
+  fireEvent.click(screen.getByRole("button", { name: "2 live chats. Choose a chat" }));
+  fireEvent.click(screen.getByRole("link", { name: "Open Secondary chat" }));
+  expect(useUnsavedChangesStore.getState().pendingNavigationHref).toBe("/chat/example-secondary");
+  expect(screen.queryByRole("region", { name: "Live chats" })).not.toBeInTheDocument();
+});
+
+it("updates the direct destination when streams finish and hides when none remain", () => {
+  addChat("example-primary", "Primary chat");
+  addChat("example-secondary", "Secondary chat");
+  const { rerender, container } = render(<RunningChats />);
+  fireEvent.click(screen.getByRole("button", { name: "2 live chats. Choose a chat" }));
+  mockState.streamingConversations.delete("example-primary");
+  rerender(<RunningChats />);
+  expect(screen.queryByRole("region", { name: "Live chats" })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "1 live chat: Secondary chat. Open chat" })).toHaveAttribute("href", "/chat/example-secondary");
+  addChat("example-tertiary", "Third chat");
+  rerender(<RunningChats />);
+  expect(screen.getByRole("button", { name: "2 live chats. Choose a chat" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("region", { name: "Live chats" })).not.toBeInTheDocument();
+  mockState.streamingConversations.clear();
+  rerender(<RunningChats />);
+  expect(container).toBeEmptyDOMElement();
+});
+
+it("encodes conversation IDs and keeps long titles available without widening the control", () => {
+  const title = "Example investigation ".repeat(12);
+  addChat("example/id?query", title);
+  render(<RunningChats />);
+  const link = screen.getByRole("link", { name: `1 live chat: ${title}. Open chat` });
+  expect(link).toHaveAttribute("href", "/chat/example%2Fid%3Fquery");
+  expect(link).toHaveAttribute("title", `${title} — Streaming`);
+  expect(link.querySelector(".truncate")?.parentElement).toHaveClass("max-w-36");
+});
+
+it("does not show a live chat for an unconfirmed status check", () => {
+  mockState.externalActivity = { "example-checking": { agentId: "example-agent", state: "checking" } };
+  const { container } = render(<RunningChats />);
+  expect(container).toBeEmptyDOMElement();
 });
