@@ -262,9 +262,19 @@ async def run_review_execution(
                     )
                     if any(not isinstance(result.get(field), list) for field in fields):
                         raise ValueError(f"Review phase {key} omitted required evidence fields")
-                    if key == "verify" and result.get("ready_to_publish") is not True:
+                    if key == "manifest" and result.get("expected_files") != len(result["files"]):
+                        raise ValueError("Changed-file inventory is incomplete")
+                    if key.startswith("chunk-") and (
+                        result["files"] != evidence["paths"] or result["limits"] or len(result["candidates"]) > 5
+                    ):
+                        raise ValueError("Source coverage or evidence could not be validated")
+                    if key == "verify" and (result.get("ready_to_publish") is not True or result["limits"]):
                         raise ValueError("Verification did not explicitly authorize publication")
-                checkpoint["reports"][key] = result
+                # Incomplete reports remain audit evidence, never reusable completed work.
+                if result["state"] != "incomplete":
+                    checkpoint["reports"][key] = result
+                else:
+                    checkpoint["last_incomplete"] = {"phase": key, "report": result}
                 await save(checkpoint)
                 return result
             except DynamicAgentsAuthorizationRevokedError:
@@ -387,6 +397,13 @@ Never publish if any essential verification is incomplete. This is the publicati
                 owner_sub=task.owner_sub,
                 conversation_id=str(uuid.uuid5(uuid.UUID(run_id), "publish")),
                 context={
+                    "repository": {"full_name": scope["repository"]},
+                    "pull_request": {"number": scope["number"], "head": {"sha": scope["head"]}},
+                    "action": (context or {}).get("action"),
+                    "manual_review": (context or {}).get("manual_review") is True,
+                    "_caipe_manual_request": {
+                        "source": ((context or {}).get("_caipe_manual_request") or {}).get("source"),
+                    },
                     "scope": scope,
                     "review": verified,
                     "coverage": {"files": [f["path"] for f in files], **state},

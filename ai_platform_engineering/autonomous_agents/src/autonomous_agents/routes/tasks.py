@@ -18,6 +18,7 @@ from autonomous_agents.config import get_settings
 from autonomous_agents.models import (
     Acknowledgement,
     FollowUpContext,
+    ReviewRunCreate,
     TaskCreate,
     TaskDefinition,
     TaskRun,
@@ -29,6 +30,7 @@ from autonomous_agents.services.mongo import (
     TaskAlreadyExistsError,
     TaskNotFoundError,
 )
+from autonomous_agents.services.review_execution import execution_scope
 from autonomous_agents.services.task_id import generate_task_id
 from autonomous_agents.services.task_lifecycle import (
     ack_relevant_changed,
@@ -599,6 +601,51 @@ async def get_task_runs(task_id: str, request: Request) -> list[TaskRun]:
     return _hide_unpublished_chat_links(history)
 
 
+@router.post("/tasks/{task_id}/reviews/run", status_code=status.HTTP_202_ACCEPTED)
+async def start_review(
+    task_id: str, payload: ReviewRunCreate, request: Request,
+    response: Response, background_tasks: BackgroundTasks,
+) -> dict:
+    """Start a fresh, scoped review using the owner's existing bounded FIFO."""
+    task = await get_task_store().get(task_id)
+    if task is None:
+        raise HTTPException(404, "Task not found")
+    caller_email, is_admin, _ = _get_caller(request)
+    if not caller_email:
+        raise HTTPException(401, "Authenticated task owner required")
+    _assert_task_access(task, caller_email, is_admin)
+    if not task.enabled or task.metadata.get("review_execution_version") != 1:
+        raise HTTPException(409, "This task does not support scoped reviews")
+    if not isinstance(task.trigger, WebhookTrigger) or task.trigger.provider != "github":
+        raise HTTPException(409, "Scoped reviews require a GitHub webhook task")
+    _assert_webhook_provider_enabled(task)
+    context = {
+        "repository": {"full_name": payload.repository},
+        "pull_request": {"number": payload.pull_request_number, "head": {"sha": payload.head_sha}},
+        "manual_review": True,
+        "_caipe_manual_request": {"source": "authenticated_ui", "request_id": str(payload.request_id)},
+    }
+    try:
+        execution_scope(task, context)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(409, "The requested PR does not match this reviewer's configuration") from exc
+    settings = get_settings()
+    outcome = await dispatch_webhook_run(
+        task=task,
+        dedup_key=DedupKey(key=f"manual-review:{task.id}:{payload.request_id}", strategy="header"),
+        body=payload.model_dump_json().encode("utf-8"), context=context, follow_up=None,
+        background_tasks=background_tasks,
+        max_pending_per_task=settings.webhook_max_pending_per_task,
+        max_pending_per_owner=settings.webhook_max_pending_per_owner,
+        max_pending_global=settings.webhook_max_pending_global,
+        max_pending_payload_bytes_global=settings.webhook_max_pending_payload_bytes_global,
+        max_concurrent_per_owner=settings.webhook_max_concurrent_per_owner,
+        max_concurrent_global=settings.webhook_max_concurrent_global,
+    )
+    response.status_code = outcome.status_code
+    return {"task_id": task.id, "run_id": outcome.run_id, "status": "accepted"}
+
+
 @router.get("/tasks/{task_id}/review-status")
 async def review_status(task_id: str, request: Request) -> list[dict]:
     """Private, owner-authorized progress without fetching full run traces."""
@@ -657,6 +704,8 @@ async def resume_review(
             await execute_task(task, context={
                 "repository": {"full_name": scope["repository"]},
                 "pull_request": {"number": scope["number"], "head": {"sha": scope["head"]}},
+                "manual_review": True,
+                "_caipe_manual_request": {"source": "authenticated_ui", "resume_run_id": run_id},
             }, run_id=next_run, review_resume_run_id=checkpoint_id)
         finally:
             await collection.update_one({"_id": checkpoint_id}, {"$unset": {"resume_until": ""}})

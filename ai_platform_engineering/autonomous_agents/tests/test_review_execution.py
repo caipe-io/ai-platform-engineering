@@ -86,7 +86,7 @@ class Harness:
     async def run(self, **overrides):
         return await run_review_execution(
             task=TASK,
-            context=CONTEXT,
+            context=overrides.pop("context", CONTEXT),
             run_id="11111111-1111-4111-8111-111111111111",
             agent=AGENT,
             load=self.load,
@@ -314,3 +314,86 @@ async def test_progress_projection_omits_private_prompts_outputs_and_events():
     assert len(result) == 1
     assert set(result[0]) == {"run_id", "status", "started_at", "review_execution"}
     assert await service.review_run_statuses("other-task") == []
+
+
+async def test_scoped_manual_review_requires_owner_and_uses_bounded_deduplicated_dispatch(monkeypatch):
+    from types import SimpleNamespace
+
+    from fastapi import BackgroundTasks, HTTPException, Request, Response
+    from pydantic import ValidationError
+
+    from autonomous_agents.models import ReviewRunCreate
+    from autonomous_agents.routes import tasks
+
+    store = AsyncMock()
+    store.get.return_value = TASK
+    monkeypatch.setattr(tasks, "get_task_store", lambda: store)
+    dispatch = AsyncMock(return_value=SimpleNamespace(run_id=str(uuid.uuid4()), status_code=202))
+    monkeypatch.setattr(tasks, "dispatch_webhook_run", dispatch)
+    monkeypatch.setattr(tasks, "_assert_webhook_provider_enabled", lambda _: None)
+    payload = ReviewRunCreate(request_id=uuid.uuid4(), repository="example/repo", pull_request_number=1, head_sha=HEAD)
+
+    def request(email):
+        return Request({"type": "http", "headers": [(b"x-authenticated-user-email", email.encode())] if email else []})
+
+    for email, code in [("other@example.test", 403), (None, 401)]:
+        with pytest.raises(HTTPException) as denied:
+            await tasks.start_review(TASK.id, payload, request(email), Response(), BackgroundTasks())
+        assert denied.value.status_code == code
+    dispatch.assert_not_awaited()
+    response = Response()
+    first = await tasks.start_review(TASK.id, payload, request(TASK.owner_id), response, BackgroundTasks())
+    first_call = dispatch.call_args.kwargs
+    second = await tasks.start_review(TASK.id, payload, request(TASK.owner_id), Response(), BackgroundTasks())
+    assert first["run_id"] == second["run_id"] and response.status_code == 202
+    assert first_call["dedup_key"].key == dispatch.call_args.kwargs["dedup_key"].key
+    assert first_call["max_pending_per_task"] > 0
+    context = first_call["context"]
+    assert context["_caipe_manual_request"]["source"] == "authenticated_ui" and context["manual_review"]
+    assert context["pull_request"]["head"]["sha"] == HEAD
+    assert set(context) == {"repository", "pull_request", "manual_review", "_caipe_manual_request"}
+    dispatch.reset_mock()
+    for bad_task, bad_payload in [
+        (TASK, payload.model_copy(update={"repository": "other/repo"})),
+        (TASK.model_copy(update={"enabled": False}), payload),
+        (TASK.model_copy(update={"metadata": {"repository": "example/repo"}}), payload),
+    ]:
+        store.get.return_value = bad_task
+        with pytest.raises(HTTPException) as conflict:
+            await tasks.start_review(TASK.id, bad_payload, request(TASK.owner_id), Response(), BackgroundTasks())
+        assert conflict.value.status_code == 409
+    dispatch.assert_not_awaited()
+    for extra in [{"context": {"owner_sub": "other"}}, {"head_sha": "not-a-sha"}, {"pull_request_number": True}]:
+        with pytest.raises(ValidationError):
+            ReviewRunCreate.model_validate({**payload.model_dump(), **extra})
+
+
+async def test_incomplete_report_is_not_cached_and_resume_reinspects_it():
+    h = Harness()
+    original = h.invoke
+    incomplete = True
+
+    async def invoke(**kwargs):
+        if incomplete and "paths" in kwargs["context"].get("evidence", {}):
+            return json.dumps({"head": HEAD, "state": "incomplete", "limits": ["Source unavailable"]}), []
+        return await original(**kwargs)
+
+    h.invoke = invoke
+    _, _, state = await h.run()
+    assert state["state"] == "incomplete" and state["resumable"]
+    assert not any(key.startswith("chunk-") for key in h.saved["reports"])
+    incomplete = False
+    _, _, state = await h.run()
+    assert state["state"] == "completed"
+    publication = next(call for call in h.calls if "config_override" not in call)
+    assert publication["context"]["repository"]["full_name"] == "example/repo"
+    assert publication["context"]["pull_request"]["head"]["sha"] == HEAD
+
+
+async def test_manual_publication_preserves_server_authenticated_request_identity():
+    h = Harness()
+    await h.run(context={**CONTEXT, "manual_review": True,
+                         "_caipe_manual_request": {"source": "authenticated_ui"}})
+    publication = next(call for call in h.calls if "config_override" not in call)
+    assert publication["context"]["manual_review"] is True
+    assert publication["context"]["_caipe_manual_request"]["source"] == "authenticated_ui"

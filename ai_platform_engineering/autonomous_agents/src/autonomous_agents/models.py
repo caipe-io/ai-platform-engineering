@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal, Optional
+from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -384,6 +385,16 @@ class FollowUpContext(BaseModel):
             "teams, ...) can reuse the field without a model bump."
         ),
     )
+
+
+class ReviewRunCreate(BaseModel):
+    """Only a PR identity may be supplied to the authenticated review endpoint."""
+
+    model_config = {"extra": "forbid"}
+    request_id: UUID
+    repository: str = Field(pattern=r"^[\w.-]+/[\w.-]+$", max_length=300)
+    pull_request_number: int = Field(gt=0, strict=True)
+    head_sha: str = Field(pattern=r"^[a-f0-9]{40}$")
 
 
 class TaskRunFollowUpCreate(BaseModel):

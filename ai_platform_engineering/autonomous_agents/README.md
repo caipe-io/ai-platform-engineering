@@ -515,3 +515,10 @@ phases and narrows source context again. Concurrent requests return the same
 resuming run ID. A new manual review request performs fresh inspection.
 The run's `review_execution` field distinguishes completed, incomplete and
 skipped reviews from generic execution status.
+
+Scoped manual reviews use `POST /tasks/{task_id}/reviews/run` with a request UUID,
+repository, PR number and exact head SHA. The authenticated task owner/admin is
+required; the task must opt into bounded reviews. The server supplies manual
+context and uses the existing capacity-limited FIFO and delivery deduplication.
+The generic task trigger remains unchanged. The agent independently verifies
+the live open/non-draft PR and head before any inspection or publication.
