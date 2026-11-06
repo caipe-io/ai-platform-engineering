@@ -64,7 +64,7 @@ test.describe("live-chat header navigation", () => {
     const menu = page.getByRole("region", { name: "Live chats" });
     await expect(menu.getByRole("link", { name: "Open Secondary investigation" })).toHaveAttribute("aria-current", "page");
     const width = page.viewportSize()!.width;
-    await testInfo.attach("Live chats menu", { body: await page.screenshot({ clip: { x: width - 450, y: 0, width: 450, height: 300 } }), contentType: "image/png" });
+    await testInfo.attach("Live chats menu", { body: await page.screenshot({ animations: "disabled", clip: { x: width - 450, y: 0, width: 450, height: 300 } }), contentType: "image/png" });
     await menu.getByRole("link", { name: "Open Primary investigation" }).click();
     await expect(page).toHaveURL(new RegExp(`/chat/${primaryId}$`));
     await expect(menu).not.toBeVisible();
