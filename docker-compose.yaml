@@ -1133,6 +1133,7 @@ services:
     env_file: [.env]
     ports: ["8030:3000"]
     environment:
+      - SLACK_HARNESS_GATEWAY_ENABLED=${SLACK_HARNESS_GATEWAY_ENABLED:-false}
       - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
       - MONGODB_URI=${MONGODB_URI:-}
       - CAIPE_UI_BASE_URL=${CAIPE_UI_BASE_URL:-http://localhost:3000}
@@ -1170,6 +1171,7 @@ services:
     env_file: [.env]
     ports: ["8032:3002"]
     environment:
+      - WEBEX_HARNESS_GATEWAY_ENABLED=${WEBEX_HARNESS_GATEWAY_ENABLED:-false}
       - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
       - MONGODB_URI=${MONGODB_URI:-}
       - CAIPE_UI_BASE_URL=${CAIPE_UI_BASE_URL:-http://localhost:3000}
