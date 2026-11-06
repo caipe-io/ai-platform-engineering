@@ -14,7 +14,8 @@ import logging
 import threading
 import uuid
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import BackgroundTasks, HTTPException
@@ -63,8 +64,11 @@ class _QueuedWebhookRun:
     dispatch_lease: _DispatchLease
     max_concurrent_per_owner: int
     max_concurrent_global: int
+    review_resume_run_id: str | None = None
+    completed: asyncio.Event = field(default_factory=asyncio.Event, compare=False)
 
 
+_resume_heartbeats: set[asyncio.Task] = set()
 _task_queues: dict[str, deque[_QueuedWebhookRun]] = {}
 _task_drainers: set[str] = set()
 _execution_loop: asyncio.AbstractEventLoop | None = None
@@ -250,6 +254,7 @@ async def _fire_and_log(
     follow_up: FollowUpContext | None,
     run_id: str,
     trigger_instance_id: str | None,
+    review_resume_run_id: str | None = None,
 ) -> None:
     """Background-task wrapper that runs the task and never re-raises.
 
@@ -273,6 +278,7 @@ async def _fire_and_log(
             follow_up=follow_up,
             run_id=run_id,
             trigger_instance_id=trigger_instance_id,
+            **({"review_resume_run_id": review_resume_run_id} if review_resume_run_id else {}),
         )
     except Exception as exc:  # noqa: BLE001 -- background task must not raise
         logger.exception(
@@ -343,6 +349,7 @@ async def _drain_task_queue(task_id: str) -> None:
                             follow_up=job.follow_up,
                             run_id=job.run_id,
                             trigger_instance_id=job.trigger_instance_id,
+                            **({"review_resume_run_id": job.review_resume_run_id} if job.review_resume_run_id else {}),
                         )
             finally:
                 with _dispatch_lock:
@@ -353,6 +360,7 @@ async def _drain_task_queue(task_id: str) -> None:
                         else:  # pragma: no cover - defensive invariant repair
                             queue.remove(job)
                 _release_queue_slot(job.dispatch_lease)
+                job.completed.set()
     finally:
         # Cancellation normally means process shutdown. Clearing the marker
         # ensures a surviving loop can schedule a drainer on the next delivery.
@@ -360,6 +368,38 @@ async def _drain_task_queue(task_id: str) -> None:
             _task_drainers.discard(task_id)
             if not _task_queues.get(task_id):
                 _task_queues.pop(task_id, None)
+
+
+async def _maintain_review_resume_lease(job: _QueuedWebhookRun) -> None:
+    """Keep admission fenced while queued or executing; cleanup only this producer."""
+    collection = None
+    try:
+        while not job.completed.is_set():
+            try:
+                if collection is None:
+                    collection, _ = await asyncio.wait_for(get_mongo_service().review_execution_store(job.review_resume_run_id), 10)
+                await asyncio.wait_for(collection.update_one(
+                    {"_id": job.review_resume_run_id, "resume_run_id": job.run_id},
+                    {"$set": {"resume_until": datetime.now(timezone.utc) + timedelta(minutes=25)}}), 10)
+            except Exception:
+                logger.warning("Resume %s lease heartbeat failed", job.run_id, exc_info=True)
+            try:
+                await asyncio.wait_for(job.completed.wait(), 60)
+            except TimeoutError:
+                continue
+    finally:
+        if collection is None:
+            try:
+                collection, _ = await asyncio.wait_for(get_mongo_service().review_execution_store(job.review_resume_run_id), 10)
+            except Exception:
+                logger.warning("Resume %s lease cleanup lookup failed", job.run_id, exc_info=True)
+        if collection is not None:
+            try:
+                await asyncio.wait_for(collection.update_one(
+                    {"_id": job.review_resume_run_id, "resume_run_id": job.run_id},
+                    {"$unset": {"resume_until": ""}}), 10)
+            except Exception:
+                logger.warning("Resume %s lease cleanup failed", job.run_id, exc_info=True)
 
 
 def _enqueue_webhook_run(
@@ -374,12 +414,17 @@ def _enqueue_webhook_run(
         if schedule_drainer:
             _task_drainers.add(job.task.id)
 
+    if job.review_resume_run_id:
+        heartbeat = asyncio.create_task(_maintain_review_resume_lease(job))
+        _resume_heartbeats.add(heartbeat)
+        heartbeat.add_done_callback(_resume_heartbeats.discard)
     if not schedule_drainer:
         return
 
     try:
         background_tasks.add_task(_drain_task_queue, job.task.id)
     except Exception:
+        job.completed.set()
         with _dispatch_lock:
             queue = _task_queues.get(job.task.id)
             if queue is not None:
@@ -442,6 +487,8 @@ async def dispatch_webhook_run(
     max_pending_payload_bytes_global: int,
     max_concurrent_per_owner: int,
     max_concurrent_global: int,
+    requested_run_id: str | None = None,
+    review_resume_run_id: str | None = None,
 ) -> DispatchOutcome:
     """Run the shared tail of the webhook pipeline.
 
@@ -493,7 +540,7 @@ async def dispatch_webhook_run(
         # signature, or caller opted out). Queue directly without
         # claiming a row; the response shape still matches the
         # dedup'd path so senders see one envelope.
-        run_id = str(uuid.uuid4())
+        run_id = requested_run_id or str(uuid.uuid4())
         try:
             _enqueue_webhook_run(
                 _QueuedWebhookRun(
@@ -505,6 +552,7 @@ async def dispatch_webhook_run(
                     dispatch_lease=dispatch_lease,
                     max_concurrent_per_owner=max_concurrent_per_owner,
                     max_concurrent_global=max_concurrent_global,
+                    review_resume_run_id=review_resume_run_id,
                 ),
                 background_tasks,
             )
@@ -542,7 +590,7 @@ async def dispatch_webhook_run(
     # New delivery: pre-allocate a run id (so we can return it in the
     # 202 without waiting for the task to start) and back-link it onto
     # the just-claimed row before appending to the task FIFO.
-    run_id = str(uuid.uuid4())
+    run_id = requested_run_id or str(uuid.uuid4())
     try:
         await get_mongo_service().attach_run_to_trigger_instance(
             claim.dedup_key, run_id
@@ -567,6 +615,7 @@ async def dispatch_webhook_run(
                 dispatch_lease=dispatch_lease,
                 max_concurrent_per_owner=max_concurrent_per_owner,
                 max_concurrent_global=max_concurrent_global,
+                review_resume_run_id=review_resume_run_id,
             ),
             background_tasks,
         )

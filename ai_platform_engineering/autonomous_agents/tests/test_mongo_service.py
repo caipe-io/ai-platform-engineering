@@ -841,3 +841,18 @@ class TestChatHistoryPublisherOwnership:
         user_participants = [p for p in conv["participants"] if p["type"] == "user"]
         assert len(user_participants) == 1
         assert user_participants[0]["id"] == "bob@example.com"
+
+
+async def test_review_agent_storage_and_checkpoint_deletion_follow_configuration():
+    client = AsyncMongoMockClient()
+    settings = _settings(dynamic_agents_mongodb_database="runtime", dynamic_agents_collection="custom_agents")
+    service = MongoService(settings=settings)
+    service.connect_with_client(client)
+    await client.runtime.custom_agents.insert_one({"_id": "example-agent", "enabled": True})
+    assert (await service.review_agent_config("example-agent"))["enabled"]
+    checkpoints = client[settings.mongodb_database].autonomous_review_checkpoints
+    await checkpoints.insert_one({"_id": "owned", "checkpoint": {"scope": {"task": "example-task"}}})
+    await checkpoints.insert_one({"_id": "other", "checkpoint": {"scope": {"task": "other-task"}}})
+    await service._purge_task_history("example-task")
+    assert await checkpoints.find_one({"_id": "owned"}) is None
+    assert await checkpoints.find_one({"_id": "other"}) is not None

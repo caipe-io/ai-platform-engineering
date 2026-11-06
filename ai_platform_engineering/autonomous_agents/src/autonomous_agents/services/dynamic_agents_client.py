@@ -28,6 +28,7 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -565,6 +566,7 @@ async def invoke_dynamic_agent_streaming(
     owner_sub: str | None = None,
     conversation_id: str | None = None,
     context: dict[str, Any] | None = None,
+    config_override: dict[str, Any] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Invoke a dynamic agent via SSE streaming and return ``(content, events)``.
 
@@ -612,6 +614,9 @@ async def invoke_dynamic_agent_streaming(
         "protocol": "custom",
         "autonomous": True,
     }
+
+    if config_override is not None:
+        body["config_override"] = config_override
 
     logger.info(
         "dynamic_agents_client.invoke_streaming: task=%s agent=%s url=%s timeout=%.1fs",
@@ -719,6 +724,18 @@ async def invoke_dynamic_agent_streaming(
         len(accumulated_text),
     )
     return accumulated_text, captured_events
+
+
+async def require_review_runtime(*, agent_id: str, owner_email: str, owner_sub: str | None) -> None:
+    """Older runtimes must not silently ignore scoped delegation or revision guards."""
+    settings = get_settings()
+    base = _normalize_base_url(settings.dynamic_agents_url)
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.get(f"{base}/api/v1/agents/{quote(agent_id, safe='')}/probe",
+                                    headers=await _task_headers_with_auth(owner_email, 10, owner_sub))
+        response.raise_for_status()
+        if response.json().get("review_execution_version") != 1:
+            raise DynamicAgentsClientError("Dynamic Agents needs the bounded review runtime update")
 
 
 async def preflight_dynamic_agent(
