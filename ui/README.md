@@ -82,12 +82,19 @@ login session until that helper is migrated.
 - Failed presence connections retry with exponential backoff from five seconds to one minute. A valid roster resets the backoff.
 - This is conversation presence, independent of execution-stream subscribers, durable run events, and replay cursors. It requires MongoDB storage.
 
+### Live chat navigation
+
+- The top-right **Live Agent Chat** control counts every streaming chat, including the current chat. Its green dot pulses unless reduced motion is requested.
+- One chat shows its title and links directly to that conversation. Multiple chats open a titled list with individual links and a current-chat marker.
+- App-owned recovery observations are deduplicated against browser streams. Saving responses remain listed until recovery completes.
+- Opening the list focuses the first chat; Tab reaches other destinations and Enter opens them. Escape returns focus to the trigger.
+- Ordinary navigation preserves the shared unsaved-editor guard; modified clicks retain native new-tab/window behavior. The list uses the shared `Popover` for navigation rather than a form selection control.
+
 ### Migrate an existing conversation
 
 - Eligible Deep Agents chats show **Migrate to Harness Engine** above the messages. Conversation write access and agent-use permission are required.
 - Migration preserves messages, LangGraph checkpoints, files, and pending approvals. Future responses run independently of browser refreshes; existing LangGraph history was already persistent.
 - Active Engine responses do not trigger the chat's browser refresh warning after the server confirms run admission. Legacy streams and requests awaiting admission keep the warning.
-- Background chats appear in the header's **N running** menu, with each conversation title and a direct return action. The currently open chat uses its own progress indicator instead of a global banner. This is a navigation menu built with the shared `Popover`, not a form selection control.
 - Finish or stop an active execution first. Both Engine reservations and the native checkpoint's producer lease are checked; the native execution fence also protects the handoff from concurrent requests.
 - Confirm the migration in the dialog. The current draft stays in place and no prompt or approval is submitted.
 - If the connection is interrupted, reopen the chat and select **Resume migration**. The server reuses the original handoff rather than creating a second execution.
