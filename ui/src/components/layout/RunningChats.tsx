@@ -29,7 +29,7 @@ export function RunningChats() {
     .filter(([, value]) => value.state !== "checking").map(([id]) => id)])];
 
   if (!ids.length) return null;
-  const label = `${ids.length} live chat${ids.length === 1 ? "" : "s"}`;
+  const label = `Live Agent Chat (${ids.length})`;
   const destinations = ids.map(id => ({
     id,
     href: `/chat/${encodeURIComponent(id)}`,
@@ -40,7 +40,7 @@ export function RunningChats() {
   const indicator = (
     <>
       <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-emerald-500 motion-safe:animate-pulse" />
-      <span>{ids.length} live</span>
+      <span>{label}</span>
       {single && (
         <span className="hidden max-w-36 md:inline-flex">
           <span className="truncate">{single.title}</span>
@@ -92,10 +92,15 @@ function LiveChatsMenu({ destinations, pathname, label, indicator }: {
           {indicator}
         </Button>
       </PopoverTrigger>
-      <PopoverContent side="bottom" align="end" className="w-80 max-w-[calc(100vw-1rem)] p-2">
-        <section id={panelId} aria-label="Live chats">
+      <PopoverContent
+        side="bottom"
+        align="end"
+        className="w-80 max-w-[calc(100vw-1rem)] p-2"
+        onOpenAutoFocus={content => content.querySelector<HTMLAnchorElement>("a[href]")?.focus({ preventScroll: true })}
+      >
+        <section id={panelId} aria-label="Live Agent Chat">
           <div className="border-b px-2 py-1.5">
-            <h2 className="text-sm font-medium">Live chats</h2>
+            <h2 className="text-sm font-medium">Live Agent Chat</h2>
             <p className="text-xs text-muted-foreground">Open a chat to follow its progress.</p>
           </div>
           <ul className="mt-1 max-h-72 overflow-y-auto">

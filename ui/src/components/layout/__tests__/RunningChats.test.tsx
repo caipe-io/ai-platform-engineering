@@ -48,7 +48,7 @@ it("keeps the live indicator visible for the currently open chat", () => {
   addChat("example-primary", "Primary chat");
   mockPathname = "/chat/example-primary";
   render(<RunningChats />);
-  const link = screen.getByRole("link", { name: "1 live chat: Primary chat. Open chat" });
+  const link = screen.getByRole("link", { name: "Live Agent Chat (1): Primary chat. Open chat" });
   expect(link).toHaveAttribute("href", "/chat/example-primary");
   expect(link).toHaveAttribute("aria-current", "page");
   expect(link).toHaveTextContent("Primary chat");
@@ -59,14 +59,14 @@ it("lists every live chat with a link to its specific conversation", () => {
   addChat("example-primary", "Primary chat");
   addChat("example-secondary", "Secondary chat");
   render(<RunningChats />);
-  fireEvent.click(screen.getByRole("button", { name: "2 live chats. Choose a chat" }));
+  fireEvent.click(screen.getByRole("button", { name: "Live Agent Chat (2). Choose a chat" }));
   expect(screen.getByRole("link", { name: "Open Primary chat" })).toHaveAttribute("href", "/chat/example-primary");
   const secondary = screen.getByRole("link", { name: "Open Secondary chat" });
   expect(secondary).toHaveAttribute("href", "/chat/example-secondary");
   // Prevent jsdom document navigation; closing still runs through the real link.
   secondary.addEventListener("click", event => event.preventDefault());
   fireEvent.click(secondary);
-  expect(screen.queryByRole("region", { name: "Live chats" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Live Agent Chat" })).not.toBeInTheDocument();
 });
 
 it("counts the current chat and deduplicates app and browser observations", () => {
@@ -79,7 +79,7 @@ it("counts the current chat and deduplicates app and browser observations", () =
     "example-saving": { agentId: "example-agent", state: "saving" },
   };
   render(<RunningChats />);
-  fireEvent.click(screen.getByRole("button", { name: "3 live chats. Choose a chat" }));
+  fireEvent.click(screen.getByRole("button", { name: "Live Agent Chat (3). Choose a chat" }));
   expect(screen.getByRole("link", { name: "Open Current chat" })).toHaveAttribute("aria-current", "page");
   expect(screen.getByText("Streaming · Current chat")).toBeVisible();
   expect(screen.getAllByRole("link", { name: "Open Other chat" })).toHaveLength(1);
@@ -92,7 +92,7 @@ it("preserves the existing unsaved-editor navigation guard", () => {
   useUnsavedChangesStore.setState({ hasUnsavedChanges: true });
   render(<RunningChats />);
   const event = new MouseEvent("click", { bubbles: true, cancelable: true });
-  fireEvent(screen.getByRole("link", { name: "1 live chat: Primary chat. Open chat" }), event);
+  fireEvent(screen.getByRole("link", { name: "Live Agent Chat (1): Primary chat. Open chat" }), event);
   expect(event.defaultPrevented).toBe(true);
   expect(useUnsavedChangesStore.getState().pendingNavigationHref).toBe("/chat/example-primary");
 });
@@ -103,25 +103,25 @@ it("preserves the unsaved-editor guard when choosing among several chats", () =>
   mockPathname = "/dynamic-agents";
   useUnsavedChangesStore.setState({ hasUnsavedChanges: true });
   render(<RunningChats />);
-  fireEvent.click(screen.getByRole("button", { name: "2 live chats. Choose a chat" }));
+  fireEvent.click(screen.getByRole("button", { name: "Live Agent Chat (2). Choose a chat" }));
   fireEvent.click(screen.getByRole("link", { name: "Open Secondary chat" }));
   expect(useUnsavedChangesStore.getState().pendingNavigationHref).toBe("/chat/example-secondary");
-  expect(screen.queryByRole("region", { name: "Live chats" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Live Agent Chat" })).not.toBeInTheDocument();
 });
 
 it("updates the direct destination when streams finish and hides when none remain", () => {
   addChat("example-primary", "Primary chat");
   addChat("example-secondary", "Secondary chat");
   const { rerender, container } = render(<RunningChats />);
-  fireEvent.click(screen.getByRole("button", { name: "2 live chats. Choose a chat" }));
+  fireEvent.click(screen.getByRole("button", { name: "Live Agent Chat (2). Choose a chat" }));
   mockState.streamingConversations.delete("example-primary");
   rerender(<RunningChats />);
-  expect(screen.queryByRole("region", { name: "Live chats" })).not.toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "1 live chat: Secondary chat. Open chat" })).toHaveAttribute("href", "/chat/example-secondary");
+  expect(screen.queryByRole("region", { name: "Live Agent Chat" })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Live Agent Chat (1): Secondary chat. Open chat" })).toHaveAttribute("href", "/chat/example-secondary");
   addChat("example-tertiary", "Third chat");
   rerender(<RunningChats />);
-  expect(screen.getByRole("button", { name: "2 live chats. Choose a chat" })).toHaveAttribute("aria-expanded", "false");
-  expect(screen.queryByRole("region", { name: "Live chats" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Live Agent Chat (2). Choose a chat" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("region", { name: "Live Agent Chat" })).not.toBeInTheDocument();
   mockState.streamingConversations.clear();
   rerender(<RunningChats />);
   expect(container).toBeEmptyDOMElement();
@@ -131,7 +131,7 @@ it("encodes conversation IDs and keeps long titles available without widening th
   const title = "Example investigation ".repeat(12);
   addChat("example/id?query", title);
   render(<RunningChats />);
-  const link = screen.getByRole("link", { name: `1 live chat: ${title}. Open chat` });
+  const link = screen.getByRole("link", { name: `Live Agent Chat (1): ${title}. Open chat` });
   expect(link).toHaveAttribute("href", "/chat/example%2Fid%3Fquery");
   expect(link).toHaveAttribute("title", `${title} — Streaming`);
   expect(link.querySelector(".truncate")?.parentElement).toHaveClass("max-w-36");
