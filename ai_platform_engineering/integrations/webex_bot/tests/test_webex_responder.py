@@ -1352,3 +1352,18 @@ def test_full_response_url_rejects_invalid_public_origins(monkeypatch: pytest.Mo
     monkeypatch.delenv("WEBEX_LINKING_BASE_URL", raising=False)
     monkeypatch.setenv("CAIPE_API_URL", "https://internal.example.test")
     assert _public_conversation_url("test-conversation") is None
+
+
+def test_bot_installations_do_not_share_conversation_or_owner_keys() -> None:
+    api = FakeWebexApi()
+    sse = FakeSseClient(events=[SSEEvent(SSEEventType.RUN_FINISHED)])
+    dispatcher = WebexThreadedStreamDispatcher(webex_api=api, sse_client=sse, thread_owner_cache=ThreadOwnerCache())
+    for bot in ("primary", "secondary"):
+        asyncio.run(dispatcher({"bot_id": bot, "space_id": "example-space", "webex_room_id": "example-room",
+            "message_id": "example-thread", "text": "Hello", "agent_id": f"example-{bot}",
+            "obo_token": "example-token", "is_direct": False}))
+    assert [call["idempotency_key"] for call in sse.conversations] == [
+        "webex:primary:example-space:example-thread", "webex:secondary:example-space:example-thread"]
+    assert [call["metadata"]["webex_bot_id"] for call in sse.conversations] == ["primary", "secondary"]
+    assert [call["agent_id"] for call in sse.calls] == ["example-primary", "example-secondary"]
+    assert [call["client_context"]["webex_bot_id"] for call in sse.calls] == ["primary", "secondary"]

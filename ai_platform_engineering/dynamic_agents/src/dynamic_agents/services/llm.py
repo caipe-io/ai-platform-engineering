@@ -14,7 +14,7 @@ def _provider_supports_botocore_config(provider: str) -> bool:
     return normalized in {"aws-bedrock", "bedrock"}
 
 
-def get_configured_llm(model_id: str, model_provider: str) -> Any:
+def get_configured_llm(model_id: str, model_provider: str, *, streaming: bool | None = None) -> Any:
     """Instantiate an LLM with provider-specific runtime options.
 
     Dynamic Agents use extended Botocore timeouts for Bedrock so long-running
@@ -23,6 +23,8 @@ def get_configured_llm(model_id: str, model_provider: str) -> Any:
     Bedrock provider.
     """
     kwargs: dict[str, Any] = {}
+    if streaming is not None:
+        kwargs["disable_streaming"] = not streaming
     if _provider_supports_botocore_config(model_provider):
         kwargs["config"] = BotocoreConfig(read_timeout=300, connect_timeout=60)
 

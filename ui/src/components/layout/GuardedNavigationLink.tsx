@@ -1,7 +1,7 @@
 "use client";
 
 import { useUnsavedChangesStore } from "@/store/unsaved-changes-store";
-import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
+import { isSameTabNavigation, NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
 import { usePathname } from "next/navigation";
 import React from "react";
 
@@ -68,7 +68,7 @@ export function GuardedNavigationLink({
   const onGuardedEditor = isOnGuardedEditor(pathname) && hasUnsavedChanges;
 
   const handleClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
-    if (onGuardedEditor && href !== pathname) {
+    if (isSameTabNavigation(event) && onGuardedEditor && href !== pathname) {
       event.preventDefault();
       requestNavigation(href);
     }

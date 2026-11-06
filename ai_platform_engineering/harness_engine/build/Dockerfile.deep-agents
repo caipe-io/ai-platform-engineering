@@ -15,6 +15,8 @@ ENV PATH="/app/ai_platform_engineering/harness_engine/.venv/bin:${PATH}" \
     HARNESS_ENGINE_DEEP_AGENTS_ENABLED="true" \
     HARNESS_ENGINE_HOST="0.0.0.0" \
     HARNESS_ENGINE_PORT="8010"
+RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/*
 USER 1001:1001
 EXPOSE 8010
+ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
 CMD ["python", "-m", "harness_engine.main"]

@@ -1,6 +1,7 @@
 # Harness images and restricted workers
 
 Engine and workers are built and released in the CAIPE repository.
+For optional Kubernetes workloads, see [Helm configuration](HELM.md).
 SDK Local runs inside Engine. SDK Remote reuses the base Engine image with
 `python -m harness_engine.claude_worker`.
 

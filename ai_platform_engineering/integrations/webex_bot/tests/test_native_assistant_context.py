@@ -15,7 +15,7 @@ def test_native_context_binds_actual_body_token_room_and_thread(monkeypatch: pyt
     monkeypatch.setenv("WEBEX_LINK_HMAC_SECRET", secret)
     payload = {"conversation_id": "example-chat", "agent_id": "example-agent", "message": "Hello 🌍",
                "client_context": {"webex_room_id": "example-room", "webex_space_id": "example-space",
-                                  "webex_thread_parent_id": "example-thread", "webex_is_direct": True}}
+                                  "webex_thread_parent_id": "example-thread", "webex_is_direct": True, "webex_bot_id": "secondary"}}
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
     headers = native_assistant_headers(url="https://example.test/api/v1/chat/stream/start", payload=payload,
                                        body=body, bearer_token="example-token")
@@ -24,6 +24,7 @@ def test_native_context_binds_actual_body_token_room_and_thread(monkeypatch: pyt
     assert proof["bodyHash"] == hashlib.sha256(body).hexdigest()
     assert proof["tokenHash"] == hashlib.sha256(b"example-token").hexdigest()
     assert proof["kind"] == "direct"
+    assert proof["botId"] == "secondary"
     assert proof["roomId"] == "example-room"
     assert proof["threadId"] == "example-thread"
     assert proof["path"] == "/api/v1/chat/stream/start"
