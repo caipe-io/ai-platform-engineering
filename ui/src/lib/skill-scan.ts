@@ -432,7 +432,7 @@ export async function scanHubSkillsAsync(
         // are independent fields by design; see the override
         // route's docstring for the why.
         await hubSkillsCol.updateOne(
-          { hub_id: ref.hub_id, skill_id: ref.skill_id },
+          { hub_id: ref.hub_id, skill_id: ref.skill_id, content: ref.content, ancillary_files: ref.ancillary_files ?? {} },
           {
             $set: {
               scan_status: result.scan_status,

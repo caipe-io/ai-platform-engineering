@@ -577,6 +577,13 @@ class AppContextPromptConfig(BaseModel):
         return list(dict.fromkeys(fields))
 
 
+class SkillPackagePin(BaseModel):
+    """Hashes of the scanned skill surface selected by the agent owner."""
+
+    content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    ancillary_sha256: dict[str, str] = Field(default_factory=dict)
+
+
 class DynamicAgentConfigBase(BaseModel):
     """Base fields for dynamic agent configuration."""
 
@@ -612,6 +619,10 @@ class DynamicAgentConfigBase(BaseModel):
     skills: list[str] = Field(
         default_factory=list,
         description="Skill document IDs from agent_skills collection",
+    )
+    skill_pins: dict[str, SkillPackagePin] = Field(
+        default_factory=dict,
+        description="Optional exact skill package hashes; changed or missing pinned packages fail closed.",
     )
     datasource_ids: list[str] | None = Field(
         None,
@@ -657,6 +668,12 @@ class DynamicAgentConfigBase(BaseModel):
         None,
         description="Backend configuration (storage type, TTL). None = use server defaults.",
     )
+
+    @model_validator(mode="after")
+    def require_attached_skill_pins(self) -> "DynamicAgentConfigBase":
+        if set(self.skill_pins) - set(self.skills):
+            raise ValueError("Pinned skills must remain attached to the agent")
+        return self
 
     @model_validator(mode="before")
     @classmethod

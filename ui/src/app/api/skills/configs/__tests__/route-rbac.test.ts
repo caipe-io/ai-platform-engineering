@@ -322,3 +322,20 @@ describe("GET /api/skills/configs RBAC cutover", () => {
     });
   });
 });
+
+
+describe("unused skill retirement", () => {
+  it.each(["agent", "workflow", null])("deletes only when no agent or workflow still references the skill (referenced=%s)", async referenced => {
+    const skill = { id: "skill-legacy", name: "Legacy method", owner_id: "owner@example.test", is_system: false };
+    const remove = jest.fn().mockResolvedValue({ deletedCount: 1 });
+    mockGetCollection.mockImplementation(async (name: string) => name === "dynamic_agents"
+      ? { findOne: jest.fn().mockResolvedValue(referenced === "agent" ? {_id:"example-agent"} : null) }
+      : name === "workflow_configs" ? { findOne: jest.fn().mockResolvedValue(referenced === "workflow" ? {_id:"example-workflow"} : null) }
+      : { findOne: jest.fn().mockResolvedValue(skill), deleteOne: remove });
+    mockRequireResourcePermission.mockResolvedValue(undefined);
+    const { DELETE } = await import("../route");
+    const response = await DELETE(new NextRequest(new URL("/api/skills/configs?id=skill-legacy", "http://localhost:3000"), {method:"DELETE"}));
+    expect(response.status).toBe(referenced ? 409 : 200);
+    expect(remove).toHaveBeenCalledTimes(referenced ? 0 : 1);
+  });
+});

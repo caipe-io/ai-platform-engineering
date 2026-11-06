@@ -354,3 +354,19 @@ The canonical app loader applies these registrations to installed components, re
 - `titlePrefix: true` creates `[User Feedback][Component][Type]: Short title`. Unmapped features add no label. Impact stays in the body; priority and assignment remain triage decisions.
 - The body includes the authenticated reporter, host version/commit, browser family/major version and OS, entry point, page/related URLs, impact and configured app context. Apps may supply project/page and their own version/commit through the host capability. App-supplied diagnostics are descriptive context, while host build metadata is read server-side.
 - Configure labels that exist in the destination repository. The shared handler does not create or rename repository labels.
+
+### Pinned original GitHub skill imports
+
+GitHub Skill Hubs accept an optional full commit `revision` and `entry_paths`
+for original command Markdown alongside automatically discovered `SKILL.md`
+files. Entry text and supporting text files are fetched at that same commit
+without rewriting. The admin form exposes both fields. The cached entry's ref
+also governs the file browser. Refreshing changed package bytes invalidates the
+scan verdict, including changes only to supporting files; stale scan results
+cannot mark a newer package passed.
+
+Agent `skill_pins` bind the selected original package hashes. Deploy the UI and
+dynamic-agent runtime together before enabling these pins. Removing a legacy
+skill requires detaching it from all agents first; DELETE returns 409 while it
+is still referenced. Retain orchestration skills and other consumers when
+retiring shortened review-method copies.

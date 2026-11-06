@@ -8,6 +8,7 @@ MongoDB collections, normalises them into a unified format with a single
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -152,6 +153,7 @@ def _load_agent_skills(
                 "source": "agent_skills",
                 "source_id": doc.get("owner_id"),
                 "content": content,
+                "scan_status": doc.get("scan_status"),
                 "metadata": doc.get("metadata", {}),
                 "visibility": doc.get("visibility"),
                 "team_ids": doc.get("team_ids"),
@@ -243,11 +245,12 @@ def _load_hub_skills(
                 "source": "hub",
                 "source_id": hub_id,
                 "content": content,
+                "scan_status": doc.get("scan_status"),
                 "metadata": doc.get("metadata", {}),
                 "visibility": "global",
                 "team_ids": None,
                 "owner_user_id": "",
-                "ancillary_files": {},
+                "ancillary_files": doc.get("ancillary_files") if isinstance(doc.get("ancillary_files"), dict) else {},
             }
         )
 
@@ -352,6 +355,10 @@ def _build_skill_md(skill: dict[str, Any]) -> str:
     name = skill.get("name", "")
     description = skill.get("description", "")
     content = skill.get("content", "")
+
+    # Pinned original Hub entries are never rewritten, including command Markdown.
+    if skill.get("source") == "hub" and skill.get("metadata", {}).get("original_content") is True:
+        return content
 
     # If the original content already has valid frontmatter, use it as-is
     if content and content.strip().startswith("---"):
@@ -470,3 +477,26 @@ def detect_missing_skills(
         error = f"Skills not found: {', '.join(missing)}"
 
     return missing, error
+
+
+def verify_skill_pins(skills: list[dict[str, Any]], pins: dict[str, Any]) -> None:
+    """Verify the exact executable package before files reach model context."""
+    by_id = {skill["id"]: skill for skill in skills}
+    for skill_id, pin in pins.items():
+        skill = by_id.get(skill_id)
+        if skill is None:
+            raise ValueError(f"Pinned skill is unavailable or blocked: {skill_id}")
+        if skill.get("scan_status") != "passed":
+            raise ValueError(f"Pinned skill security scan has not passed: {skill_id}")
+        expected = pin.model_dump() if hasattr(pin, "model_dump") else pin
+        content_hash = hashlib.sha256(_build_skill_md(skill).encode()).hexdigest()
+        ancillary = skill.get("ancillary_files", {})
+        hashes = {}
+        for path, content in ancillary.items():
+            if not isinstance(content, str) or path.startswith("/") or "\\" in path or any(
+                part in {"", ".", ".."} for part in path.split("/")
+            ) or path == "SKILL.md":
+                raise ValueError(f"Invalid pinned skill ancillary path: {skill_id}")
+            hashes[path] = hashlib.sha256(content.encode()).hexdigest()
+        if content_hash != expected["content_sha256"] or hashes != expected["ancillary_sha256"]:
+            raise ValueError(f"Pinned skill changed since selection; rescan and explicitly reselect it: {skill_id}")

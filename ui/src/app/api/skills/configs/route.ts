@@ -227,6 +227,12 @@ async function deleteAgentSkillFromMongoDB(
   if (existing.is_system && !canMutateBuiltinSkill(existing)) {
     throw new ApiError(BUILTIN_LOCKED_MESSAGE, 403);
   }
+  const agents = await getCollection("dynamic_agents");
+  const workflows = await getCollection("workflow_configs");
+  if (await agents.findOne({ skills: id }, { projection: { _id: 1 } }) ||
+    await workflows.findOne({ "steps.config_override.skills": id }, { projection: { _id: 1 } })) {
+    throw new ApiError("This skill is still referenced by an agent or workflow. Detach it before retiring it.", 409);
+  }
   await collection.deleteOne({ id });
 
   await syncSkillResource("delete", id, existing.name);

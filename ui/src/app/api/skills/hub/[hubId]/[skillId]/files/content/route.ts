@@ -73,7 +73,7 @@ export const GET = withErrorHandler(
 
       const raw =
         hub.type === "github"
-          ? await fetchGitHubBlob(hub.location, fullPath, resolveHubToken(hub))
+          ? await fetchGitHubBlob(hub.location, fullPath, resolveHubToken(hub), hub.revision)
           : await fetchGitLabBlob(hub.location, fullPath, resolveHubToken(hub));
 
       const isImage = IMAGE_EXTENSIONS.has(ext);
@@ -131,13 +131,14 @@ async function fetchGitHubBlob(
   location: string,
   fullPath: string,
   token: string | undefined,
+  revision?: string,
 ): Promise<RawBlob> {
   const headers: Record<string, string> = {
     Accept: "application/vnd.github.v3.raw",
     "User-Agent": "caipe-hub-files/1.0",
   };
   if (token) headers.Authorization = `token ${token}`;
-  const url = `https://api.github.com/repos/${location}/contents/${encodeURI(fullPath)}`;
+  const url = `https://api.github.com/repos/${location}/contents/${encodeURI(fullPath)}${revision ? `?ref=${revision}` : ""}`;
   const res = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
   if (res.status === 404) {
     throw new ApiError(`File not found: ${fullPath}`, 404);

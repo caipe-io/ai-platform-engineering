@@ -58,6 +58,8 @@ interface SkillHub {
   shared_with_teams?: string[];
   /** Optional path-prefix allow-list for hub crawl (FR-020). */
   include_paths?: string[];
+  revision?: string;
+  entry_paths?: string[];
   /** GitLab-only per-hub override of the recursive-tree page cap. */
   max_tree_pages?: number;
   last_success_at: number | null;
@@ -100,6 +102,8 @@ export function SkillHubsSection({ isAdmin }: SkillHubsSectionProps) {
   const [formTeamRefs, setFormTeamRefs] = useState("");
   // One prefix per line; empty lines are dropped before submit. FR-020.
   const [formIncludePaths, setFormIncludePaths] = useState("");
+  const [formRevision, setFormRevision] = useState("");
+  const [formEntryPaths, setFormEntryPaths] = useState("");
   // Per-hub override of the GitLab tree-listing page cap. Empty string
   // → omit from request → server falls back to GITLAB_MAX_TREE_PAGES.
   // Numeric strings are validated on submit.
@@ -207,6 +211,7 @@ export function SkillHubsSection({ isAdmin }: SkillHubsSectionProps) {
           shared_with_teams: teamRefs.length > 0 ? teamRefs : undefined,
           include_paths: includePaths.length > 0 ? includePaths : undefined,
           max_tree_pages: maxTreePages,
+          ...(formType === "github" ? { revision: formRevision.trim() || undefined, entry_paths: formEntryPaths.split("\n").map(p => p.trim()).filter(Boolean) } : {}),
           enabled: true,
         }),
       });
@@ -220,6 +225,7 @@ export function SkillHubsSection({ isAdmin }: SkillHubsSectionProps) {
       setFormLabels("");
       setFormTeamRefs("");
       setFormIncludePaths("");
+      setFormRevision(""); setFormEntryPaths("");
       setFormMaxTreePages("");
       setShowAdvanced(false);
       setShowAddForm(false);
@@ -480,6 +486,7 @@ export function SkillHubsSection({ isAdmin }: SkillHubsSectionProps) {
           location: formLocation.trim(),
           credentials_ref: formCredRef.trim() || null,
           max_tree_pages: maxTreePages,
+          ...(formType === "github" ? { revision: formRevision.trim() || undefined, entry_paths: formEntryPaths.split("\n").map(p => p.trim()).filter(Boolean) } : {}),
         },
         label: `Preview — ${formLocation.trim()}`,
         kind: "preview",
@@ -492,6 +499,7 @@ export function SkillHubsSection({ isAdmin }: SkillHubsSectionProps) {
           location: formLocation.trim(),
           credentials_ref: formCredRef.trim() || null,
           max_tree_pages: maxTreePages,
+          ...(formType === "github" ? { revision: formRevision.trim() || undefined, entry_paths: formEntryPaths.split("\n").map(p => p.trim()).filter(Boolean) } : {}),
         }),
       });
       const parsed = await readJsonOrError<{
@@ -734,6 +742,13 @@ export function SkillHubsSection({ isAdmin }: SkillHubsSectionProps) {
                 Trailing slashes are added automatically.
               </p>
             </div>
+            {formType === "github" && <div className="space-y-2">
+              <label className="block text-xs font-medium text-muted-foreground" htmlFor="hub-github-revision">Pinned commit (optional, full SHA)</label>
+              <input id="hub-github-revision" value={formRevision} onChange={e => setFormRevision(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
+              <label className="block text-xs font-medium text-muted-foreground" htmlFor="hub-entry-paths">Additional original Markdown entry files (one per line)</label>
+              <textarea id="hub-entry-paths" value={formEntryPaths} onChange={e => setFormEntryPaths(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" placeholder="plugins/review/commands/review.md" />
+              <p className="text-xs text-muted-foreground">Original files stay unchanged. SKILL.md entries are discovered automatically; list command Markdown here. A pinned commit applies to entry files and their supporting files.</p>
+            </div>}
             {/* Advanced disclosure — currently hosts the GitLab tree-page
                 cap, which most admins will never touch. Hidden by default
                 so the form stays simple; revealed on click and persists
@@ -971,6 +986,7 @@ export function SkillHubsSection({ isAdmin }: SkillHubsSectionProps) {
                   </div>
                 )}
               </div>
+              {hub.revision && <p className="text-xs text-muted-foreground">Pinned commit: <code>{hub.revision}</code></p>}
               {hub.include_paths && hub.include_paths.length > 0 ? (
                 <div className="px-2 pl-10 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
                   <span className="opacity-70">Paths:</span>

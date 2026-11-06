@@ -1,3 +1,4 @@
+import { githubHubOptions } from "@/lib/github-hub-options";
 import {
 ApiError,
 getAuthFromBearerOrSession,
@@ -60,6 +61,14 @@ export const PATCH = withErrorHandler(
         updated_at: new Date().toISOString(),
       };
       const unset: Record<string, "" | 1> = {};
+      if (existing.type === "github") {
+        const options = githubHubOptions(body);
+        if (body.revision !== undefined) {
+          if (options.revision) update.revision = options.revision;
+          else unset.revision = "";
+        }
+        if (body.entry_paths !== undefined) update.entry_paths = options.entry_paths || [];
+      }
       if (body.enabled !== undefined) update.enabled = !!body.enabled;
       if (body.location !== undefined) {
         // Use the existing hub's `type` so a GitLab subgroup URL is

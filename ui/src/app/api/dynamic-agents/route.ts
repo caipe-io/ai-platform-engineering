@@ -1,3 +1,4 @@
+import { normalizeSkillPackagePins } from "@/lib/skill-package-pins";
 /**
  * API routes for Dynamic Agents management.
  *
@@ -267,6 +268,7 @@ const AGENT_MUTABLE_FIELDS = [
   "shared_with_teams",
   "subagents",
   "skills",
+  "skill_pins",
   "datasource_ids",
   "rag_collection_ids",
   "ui",
@@ -903,6 +905,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       owner_team_id: ownerTeam ? teamIdString(ownerTeam) : undefined,
       subagents,
       skills: (body.skills as string[]) ?? [],
+      skill_pins: normalizeSkillPackagePins(body.skill_pins, (body.skills as string[]) ?? []),
       datasource_ids: datasourceIds,
       rag_collection_ids: ragCollectionIds,
       ui: body.ui as DynamicAgentConfig["ui"],
@@ -1029,6 +1032,12 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       updateData.remote_agent_timeouts ?? agent.remote_agent_timeouts ?? {},
       updateData.allowed_remote_agents ?? agent.allowed_remote_agents ?? [],
     );
+  }
+  if (body.skill_pins !== undefined || body.skills !== undefined) {
+    const skills = (updateData.skills ?? agent.skills ?? []) as string[];
+    // An intentional detach by an authorized manager also removes its pin.
+    const retainedPins = Object.fromEntries(Object.entries(agent.skill_pins ?? {}).filter(([id]) => skills.includes(id)));
+    updateData.skill_pins = normalizeSkillPackagePins(body.skill_pins ?? retainedPins, skills);
   }
   const unsetData: Record<string, "">  = {};
   const datasourceSelectionChanged = Object.prototype.hasOwnProperty.call(
