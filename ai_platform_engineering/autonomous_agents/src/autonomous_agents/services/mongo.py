@@ -299,7 +299,8 @@ class MongoService:
 
     async def review_agent_config(self, agent_id: str) -> dict[str, Any] | None:
         """Read canonical runtime configuration for narrowing phase tools and cache binding."""
-        return await self._require_primary()["dynamic_agents"].find_one({"_id": agent_id})
+        db = self._client[self.settings.dynamic_agents_mongodb_database] if self.settings.dynamic_agents_mongodb_database else self._require_primary()
+        return await db[self.settings.dynamic_agents_collection].find_one({"_id": agent_id})
 
     def _tasks(self) -> Any:
         return self._require_primary()[self.settings.mongodb_tasks_collection]
@@ -952,6 +953,7 @@ class MongoService:
             if isinstance(conv_id, str) and conv_id:
                 conv_ids.add(conv_id)
 
+        await self._require_primary()["autonomous_review_checkpoints"].delete_many({"checkpoint.scope.task": task_id})
         await self._runs().delete_many({"task_id": task_id})
         await self._messages().delete_many({"conversation_id": {"$in": list(conv_ids)}})
         await self._conversations().delete_many(

@@ -14,6 +14,7 @@ contexts that never wire up MongoDB. Do not promote these to top-level
 imports.
 """
 
+import asyncio
 import logging
 import re
 import uuid
@@ -143,7 +144,10 @@ async def _record_safely(store: RunStore, run: TaskRun) -> None:
     visible to operators, then return so the scheduler keeps marching.
     """
     try:
-        await store.record(run)
+        if (run.review_execution or {}).get("version") == 1:
+            await asyncio.wait_for(store.record(run), 10)
+        else:
+            await store.record(run)
     except Exception as exc:
         logger.error(
             f"[{run.task_id}] Failed to persist run {run.run_id} "
@@ -179,7 +183,7 @@ async def _attach_run_to_trigger_safely(
         mongo = get_mongo_service()
         if not mongo.is_connected:
             return
-        await mongo.attach_run_to_trigger_instance(trigger_instance_id, run_id)
+        await asyncio.wait_for(mongo.attach_run_to_trigger_instance(trigger_instance_id, run_id), 10)
     except Exception as exc:  # noqa: BLE001 -- audit-only path
         logger.warning(
             "[%s] attach_run_to_trigger_instance(%s) swallowed: %s",
@@ -260,7 +264,7 @@ async def _publish_safely(
     """
     try:
         prompt = _prompt_for_publish(task, context)
-        await publisher.publish_run(
+        publish = publisher.publish_run(
             run,
             prompt=prompt,
             response=response,
@@ -268,6 +272,10 @@ async def _publish_safely(
             agent=agent,
             conversation_id=run.conversation_id,
         )
+        if (run.review_execution or {}).get("version") == 1:
+            await asyncio.wait_for(publish, 10)
+        else:
+            await publish
     except Exception as exc:
         logger.error(
             f"[{run.task_id}] Failed to publish run {run.run_id} to chat history "
@@ -387,6 +395,8 @@ async def execute_task(
         owner_id=_owner_email,
     )
 
+    if effective_task.metadata.get("review_execution_version") == 1 and follow_up is None:
+        run.review_execution = {"version": 1, "state": "running", "checkpoint_run_id": review_resume_run_id or run_id}
     store = get_run_store()
     # Persist the RUNNING state so observers (UI, CLI) can see in-flight
     # work, not only completed runs. Failure here MUST NOT abort the
@@ -417,24 +427,32 @@ async def execute_task(
         # accumulated content). Persisting these on TaskRun.events lets the
         # autonomous-task chat thread replay the Tools / Final-answer
         # breakdown instead of a bare text bubble.
-        if effective_task.metadata.get("review_execution_version") == 1:
+        if effective_task.metadata.get("review_execution_version") == 1 and follow_up is None:
             from autonomous_agents.services.mongo import get_mongo_service
 
             mongo = get_mongo_service()
             checkpoint_id = review_resume_run_id or run_id
-            collection, saved = await mongo.review_execution_store(checkpoint_id)
-            agent = await mongo.review_agent_config(effective_task.dynamic_agent_id)
-            if not agent or not agent.get("enabled"):
+            collection, saved = await asyncio.wait_for(mongo.review_execution_store(checkpoint_id), 10)
+            if review_resume_run_id and (saved or {}).get("resume_run_id") != run_id:
+                raise ValueError("Review resume lease changed; start a fresh review")
+            from autonomous_agents.services.dynamic_agents_client import require_review_runtime
+
+            await require_review_runtime(agent_id=effective_task.dynamic_agent_id, owner_email=_owner_email, owner_sub=effective_task.owner_sub)
+            agent = await asyncio.wait_for(mongo.review_agent_config(effective_task.dynamic_agent_id), 10)
+            if not agent or not agent.get("enabled", True):
                 raise ValueError("The configured review agent is unavailable")
 
             async def load_review() -> dict[str, Any] | None:
                 return saved.get("checkpoint") if saved else None
 
             async def save_review(checkpoint: dict[str, Any]) -> None:
-                await collection.update_one({"_id": checkpoint_id}, {"$set": {
+                result = await collection.update_one({"_id": checkpoint_id,
+                    **({"resume_run_id": run_id} if review_resume_run_id else {})}, {"$set": {
                     "checkpoint": checkpoint,
                     "expires_at": datetime.now(timezone.utc) + timedelta(days=7),
-                }}, upsert=True)
+                }}, upsert=not bool(review_resume_run_id))
+                if review_resume_run_id and not result.matched_count:
+                    raise ValueError("Review resume producer lost its lease")
 
             async def review_progress(state: dict[str, Any]) -> None:
                 run.review_execution = {**state, "checkpoint_run_id": checkpoint_id}
@@ -445,6 +463,8 @@ async def execute_task(
                 load=load_review, save=save_review, invoke=invoke_dynamic_agent_streaming,
                 progress=review_progress,
             )
+            run.execution_context_id = (str(uuid.uuid5(uuid.UUID(checkpoint_id), "publish"))
+                                        if review_state["state"] == "completed" else None)
             run.status = (TaskStatus.SKIPPED if review_state["state"] == "skipped" else
                           TaskStatus.SUCCESS if review_state["state"] == "completed" else TaskStatus.FAILED)
             if run.status == TaskStatus.FAILED:
@@ -491,7 +511,11 @@ async def execute_task(
                     "last_ack": Acknowledgement.application_failure(str(exc)),
                 }
             )
-            await get_task_store().update(task.id, paused)
+            pause = get_task_store().update(task.id, paused)
+            if (run.review_execution or {}).get("version") == 1:
+                await asyncio.wait_for(pause, 10)
+            else:
+                await pause
         except Exception:
             logger.exception("[%s] Failed to auto-pause task after schedule revoke", task.id)
     except Exception as e:
@@ -636,6 +660,7 @@ async def fire_webhook_task(
     *,
     run_id: str | None = None,
     trigger_instance_id: str | None = None,
+    review_resume_run_id: str | None = None,
 ) -> TaskRun:
     """Immediately execute a webhook-triggered task and return the completed run.
 
@@ -660,4 +685,5 @@ async def fire_webhook_task(
         follow_up=follow_up,
         run_id=run_id,
         trigger_instance_id=trigger_instance_id,
+        review_resume_run_id=review_resume_run_id,
     )

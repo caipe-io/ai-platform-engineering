@@ -87,6 +87,10 @@ def apply_config_override(agent: DynamicAgentConfig, config_override: dict[str, 
         HTTPException(400): If rejected fields are present in the override.
         HTTPException(400): If allowed_tools override is not a subset of base.
     """
+    config_override = dict(config_override)
+    expected = config_override.pop("_expected_agent_config_hash", None)
+    if expected is not None and expected != agent._source_config_hash:
+        raise HTTPException(status_code=409, detail="Agent configuration changed during review; start a fresh review")
     rejected = _REJECTED_OVERRIDE_FIELDS & set(config_override.keys())
     if rejected:
         raise HTTPException(

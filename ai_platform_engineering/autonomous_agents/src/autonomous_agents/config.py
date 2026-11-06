@@ -196,6 +196,8 @@ class Settings(BaseSettings):
     # MongoDB collections
     mongodb_collection: str = "autonomous_runs"
     mongodb_tasks_collection: str = "autonomous_tasks"
+    dynamic_agents_mongodb_database: str | None = None
+    dynamic_agents_collection: str = "dynamic_agents"
     mongodb_trigger_instances_collection: str = "trigger_instances"
 
     # Connect-retry knobs for MongoDB at startup

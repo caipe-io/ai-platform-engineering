@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import uuid
 from collections.abc import Awaitable, Callable
@@ -16,6 +17,13 @@ from autonomous_agents.services.dynamic_agents_client import (
     DynamicAgentsAuthorizationRevokedError,
     DynamicAgentsClientError,
 )
+
+logger = logging.getLogger("autonomous_agents")
+
+
+class ReviewRemoteWorkUncertain(RuntimeError):
+    """Cancellation did not confirm that remote work has stopped."""
+
 
 READ_TOOLS = frozenset(
     {
@@ -80,14 +88,36 @@ def execution_scope(task: TaskDefinition, context: dict[str, Any] | None) -> dic
             raise ValueError("Original review methods must be imported Hub identities")
         directory = re.sub(r"[^a-z0-9-]", "-", skill_id.lower())
         methods[alias] = {"id": skill_id, "path": f"/skills/hub-{hub[1]}/{directory}/SKILL.md"}
+    configured = task.metadata.get("review_phase_methods") or {}
+    if not isinstance(configured, dict):
+        raise ValueError("Invalid required review methods")
+    phase_methods = {role: configured.get(role, list(methods)) for role in ("inspect", "verify")}
+    for aliases in phase_methods.values():
+        if not isinstance(aliases, list) or (methods and not aliases) or any(not isinstance(alias, str) or alias not in methods for alias in aliases):
+            raise ValueError("Invalid required review methods")
+    if set(phase_methods["inspect"] + phase_methods["verify"]) != set(methods):
+        raise ValueError("Required phases must cover every configured original method")
     return {
         "repository": repository,
         "number": number,
         "head": head,
         "task": task.id,
         "method_bindings": methods,
+        "phase_methods": phase_methods,
         "method_sources": task.metadata.get("review_skill_sources", {}),
     }
+
+
+def review_can_resume(checkpoint: dict[str, Any]) -> bool:
+    """Completed and superseded groups do not consume unfinished work's budget."""
+    if checkpoint.get("publication_started") or checkpoint.get("remote_uncertain"):
+        return False
+    completed = set(checkpoint.get("reports", {}))
+    active = {"manifest", "verify"}
+    active.update("chunk-" + hashlib.sha256(json.dumps(paths).encode()).hexdigest()[:16]
+                  for paths in checkpoint.get("chunks", []))
+    return all(attempts < 6 for key, attempts in checkpoint.get("attempts", {}).items()
+               if key in active and key not in completed)
 
 
 def read_only_override(agent: dict[str, Any], namespace: str) -> dict[str, Any]:
@@ -177,7 +207,32 @@ async def run_review_execution(
     A new manual request has a new run_id and must inspect again. Checkpoint write
     failures abort before publication. Publication is never blindly retried.
     """
+    deadline = monotonic() + 1200
+    raw_load, raw_save, raw_progress = load, save, progress
+
+    async def bounded_io(operation: Awaitable[Any]) -> Any:
+        try:
+            return await asyncio.wait_for(operation, timeout=max(0.01, min(10, deadline - monotonic())))
+        except TimeoutError as exc:
+            raise TimeoutError("Review persistence exceeded its deadline") from exc
+
+    async def load() -> dict[str, Any] | None:
+        return await bounded_io(raw_load())
+
+    async def save(value: dict[str, Any]) -> None:
+        await bounded_io(raw_save(value))
+
+    async def progress(value: dict[str, Any]) -> None:
+        await bounded_io(raw_progress(value))
+
     scope = execution_scope(task, context)
+    trigger_context = {
+        "repository": {"full_name": scope["repository"]},
+        "pull_request": {"number": scope["number"], "head": {"sha": scope["head"]}},
+        "action": (context or {}).get("action"),
+        "manual_review": (context or {}).get("manual_review") is True,
+        "_caipe_manual_request": {"source": ((context or {}).get("_caipe_manual_request") or {}).get("source")},
+    }
     fingerprint = hashlib.sha256(
         json.dumps(
             {
@@ -202,7 +257,9 @@ async def run_review_execution(
         raise ValueError("Review scope or configuration changed; start a new run")
     namespace = hashlib.sha256(f"{task.owner_sub}:{task.dynamic_agent_id}:{fingerprint}".encode()).hexdigest()
     override = read_only_override(agent, namespace)
-    deadline = monotonic() + 1200
+    override["review_scope"] = {key: str(scope[key]) for key in ("repository", "head", "task")}
+    config_hash = hashlib.sha256(json.dumps(agent, sort_keys=True, default=str).encode()).hexdigest()
+    override["_expected_agent_config_hash"] = config_hash
     events: list = []
     if checkpoint.get("result"):
         result = checkpoint["result"]
@@ -221,10 +278,16 @@ async def run_review_execution(
     await progress(state)
 
     async def phase(key: str, instructions: str, evidence: Any) -> dict[str, Any]:
+        if checkpoint.get("remote_uncertain"):
+            raise ReviewRemoteWorkUncertain("Remote work may still be running; inspect its phase conversation before a fresh review")
         if key in checkpoint["reports"]:
             return checkpoint["reports"][key]
         if monotonic() >= deadline:
             raise TimeoutError("Review time budget exhausted")
+        required_ids: list[str] = []
+        if key != "manifest":
+            role = "verify" if key == "verify" else "inspect"
+            required_ids = [scope["method_bindings"][alias]["id"] for alias in scope["phase_methods"][role]]
         for _ in range(2):
             attempt = checkpoint["attempts"].get(key, 0) + 1
             if attempt > 6:
@@ -236,13 +299,15 @@ async def run_review_execution(
             try:
                 text, captured = await asyncio.wait_for(
                     invoke(
-                        prompt=PHASE_POLICY + "\n" + instructions,
+                        prompt=PHASE_POLICY + "\nSaved task instructions (read-only phase restrictions take precedence):\n"
+                        + task.prompt + "\nCurrent phase requirements:\n" + instructions
+                        + "\nComplete requires applying and reporting these original method IDs: " + json.dumps(required_ids),
                         task_id=task.id,
                         agent_id=task.dynamic_agent_id,
                         owner_email=task.owner_id,
                         owner_sub=task.owner_sub,
                         conversation_id=conversation_id,
-                        context={"scope": scope, "evidence": evidence},
+                        context={**trigger_context, "scope": scope, "evidence": evidence},
                         config_override=override,
                     ),
                     timeout=max(0.01, min(180, deadline - monotonic())),
@@ -268,6 +333,9 @@ async def run_review_execution(
                         result["files"] != evidence["paths"] or result["limits"] or len(result["candidates"]) > 5
                     ):
                         raise ValueError("Source coverage or evidence could not be validated")
+                    if key != "manifest":
+                        if any(not isinstance(item, str) for item in result["skills_used"]) or not set(required_ids).issubset(result["skills_used"]):
+                            raise ValueError("Review phase omitted required method evidence")
                     if key == "verify" and (result.get("ready_to_publish") is not True or result["limits"]):
                         raise ValueError("Verification did not explicitly authorize publication")
                 # Incomplete reports remain audit evidence, never reusable completed work.
@@ -279,7 +347,11 @@ async def run_review_execution(
                 return result
             except DynamicAgentsAuthorizationRevokedError:
                 raise
-            except DynamicAgentsClientError, ValueError, TimeoutError:
+            except TimeoutError as exc:
+                checkpoint["remote_uncertain"] = conversation_id
+                await save(checkpoint)
+                raise ReviewRemoteWorkUncertain("Remote phase timed out; its termination is unconfirmed. Automatic retry and resume are disabled") from exc
+            except DynamicAgentsClientError, ValueError:
                 if checkpoint["attempts"][key] >= 6 or _ == 1:
                     raise
         raise ValueError("Review phase did not complete")
@@ -288,11 +360,12 @@ async def run_review_execution(
         state.update(
             state=outcome,
             reason=reason,
-            resumable=outcome == "incomplete"
-            and not checkpoint.get("publication_started", False)
-            and max(checkpoint["attempts"].values(), default=0) < 6,
+            resumable=outcome == "incomplete" and review_can_resume(checkpoint),
         )
-        await progress(state)
+        try:
+            await progress(state)
+        except TimeoutError:
+            logger.warning("Review %s terminal progress persistence exceeded its deadline", run_id)
         return (
             f"Review {outcome}: {reason}\n"
             f"<!-- caipe-pr-verdict:v1;task={task.id};head={scope['head']};result={outcome} -->",
@@ -333,6 +406,7 @@ callers/callees, authorization and tests at the pinned head. Page large files; d
 Return {head,state,files:[exact assigned paths],candidates:[at most 5 concise evidence records],
 limits:[essential gaps],skills_used:[actual method IDs]}. Complete requires every changed hunk in every assigned
 path and its relevant contracts inspected. Dependencies may cross groups; record questions for final verification.
+For context/time budget exhaustion, use state=incomplete and incomplete_reason=budget; distinguish unavailable evidence.
 No publication. Aim for under 2000 output tokens.""",
                     {
                         "paths": paths,
@@ -344,6 +418,14 @@ No publication. Aim for under 2000 output tokens.""",
             except DynamicAgentsClientError, ValueError, TimeoutError:
                 if len(paths) < 2 or monotonic() >= deadline:
                     raise
+                middle = len(paths) // 2
+                chunks[index : index + 1] = [paths[:middle], paths[middle:]]
+                checkpoint["chunks"] = chunks
+                state["total"] = len(chunks)
+                await save(checkpoint)
+                await progress(state)
+                continue
+            if report["state"] == "incomplete" and report.get("incomplete_reason") == "budget" and len(paths) > 1:
                 middle = len(paths) // 2
                 chunks[index : index + 1] = [paths[:middle], paths[middle:]]
                 checkpoint["chunks"] = chunks
@@ -396,6 +478,7 @@ Never publish if any essential verification is incomplete. This is the publicati
                 owner_email=task.owner_id,
                 owner_sub=task.owner_sub,
                 conversation_id=str(uuid.uuid5(uuid.UUID(run_id), "publish")),
+                config_override={"_expected_agent_config_hash": config_hash},
                 context={
                     "repository": {"full_name": scope["repository"]},
                     "pull_request": {"number": scope["number"], "head": {"sha": scope["head"]}},
@@ -426,5 +509,5 @@ Never publish if any essential verification is incomplete. This is the publicati
         return text, events, state
     except DynamicAgentsAuthorizationRevokedError:
         raise
-    except (DynamicAgentsClientError, ValueError, TimeoutError) as exc:
+    except (DynamicAgentsClientError, ValueError, TimeoutError, ReviewRemoteWorkUncertain) as exc:
         return await stop(str(exc)[:300] or "Review phase exceeded its time budget")

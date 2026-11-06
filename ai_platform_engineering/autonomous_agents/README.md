@@ -522,3 +522,29 @@ required; the task must opt into bounded reviews. The server supplies manual
 context and uses the existing capacity-limited FIFO and delivery deduplication.
 The generic task trigger remains unchanged. The agent independently verifies
 the live open/non-draft PR and head before any inspection or publication.
+
+If Dynamic Agents uses a different MongoDB database or collection on the shared
+Mongo connection, set `DYNAMIC_AGENTS_MONGODB_DATABASE` and
+`DYNAMIC_AGENTS_COLLECTION` on Autonomous to match that service. Defaults use the
+autonomous database and `dynamic_agents`. Task deletion purges private review
+checkpoints alongside run history.
+
+Review inspection and publication compare the Dynamic Agents configuration hash
+against the same Mongo snapshot used to construct that agent. The runtime probe
+must advertise review execution v1; older services fail closed. Delegated
+general-purpose reviewers receive the pinned scope and source-trust rules in
+their own system prompt, independent of the parent's task description.
+
+`metadata.review_phase_methods` may assign method aliases to `inspect` and
+`verify`. Both roles require non-empty lists when methods are configured, and
+together must cover every configured original method. Defaults require all
+attached methods. Required IDs must appear in complete phase evidence; this is
+reviewer-reported evidence, not proof of causal attribution. The roles are part
+of the checkpoint fingerprint.
+
+Resume uses the same capacity-limited FIFO as webhook/manual reviews. Its
+producer lease is renewed while queued or executing; checkpoint writes and
+cleanup are fenced to that run. Persistence has a ten-second timeout within the
+twenty-minute review budget. A remote timeout cannot prove the remote read has
+stopped, so automatic retry and resume are disabled for that checkpoint. Inspect
+its private phase conversation before starting a fresh review.

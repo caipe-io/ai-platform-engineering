@@ -60,7 +60,7 @@ class Harness:
     async def invoke(self, **kwargs):
         self.calls.append(kwargs)
         data = kwargs["context"]
-        if "config_override" not in kwargs:
+        if "review_scope" not in kwargs.get("config_override", {}):
             return f"Published\n<!-- caipe-pr-verdict:v1;task=review;head={HEAD};result=no_findings -->", []
         evidence = data["evidence"]
         if "paths" in evidence:
@@ -85,7 +85,7 @@ class Harness:
 
     async def run(self, **overrides):
         return await run_review_execution(
-            task=TASK,
+            task=overrides.pop("task", TASK),
             context=overrides.pop("context", CONTEXT),
             run_id="11111111-1111-4111-8111-111111111111",
             agent=AGENT,
@@ -108,7 +108,7 @@ async def test_fresh_contexts_and_read_only_inspection_before_single_publication
             "other": False,
         }
         assert call["owner_sub"] == "owner"
-    assert "config_override" not in h.calls[-1]
+    assert "review_scope" not in h.calls[-1].get("config_override", {})
     assert h.saved["publication_started"]
 
 
@@ -127,7 +127,7 @@ async def test_failed_phase_retries_in_new_context_and_resumes_completed_invento
     assert all(
         "paths" in c["context"].get("evidence", {})
         or "groups" in c["context"].get("evidence", {})
-        or "config_override" not in c
+        or "review_scope" not in c.get("config_override", {})
         for c in h.calls
     )
 
@@ -137,7 +137,7 @@ async def test_missing_coverage_or_contract_never_reaches_publication():
     h.incomplete = True
     _, _, state = await h.run()
     assert state["state"] == "incomplete"
-    assert all("config_override" in c for c in h.calls)
+    assert all("review_scope" in c.get("config_override", {}) for c in h.calls)
 
 
 async def test_exact_run_replay_returns_saved_result_without_republishing():
@@ -153,7 +153,7 @@ async def test_uncertain_publication_is_not_retried():
     original = h.invoke
 
     async def invoke(**kwargs):
-        if "config_override" not in kwargs:
+        if "review_scope" not in kwargs.get("config_override", {}):
             raise DynamicAgentsClientError("Write timed out")
         return await original(**kwargs)
 
@@ -208,7 +208,7 @@ async def test_resume_endpoint_checks_owner_and_never_retries_uncertain_publicat
 
     from autonomous_agents.models import TaskRun, TaskStatus
     from autonomous_agents.routes import tasks
-    from autonomous_agents.services import mongo
+    from autonomous_agents.services import mongo, webhook_runtime
 
     h = Harness()
     h.fail_key = "chunk"
@@ -223,6 +223,9 @@ async def test_resume_endpoint_checks_owner_and_never_retries_uncertain_publicat
 
     service.review_execution_store = store
     monkeypatch.setattr(mongo, "get_mongo_service", lambda: service)
+    monkeypatch.setattr(webhook_runtime, "get_mongo_service", lambda: service)
+    fired = AsyncMock()
+    monkeypatch.setattr(webhook_runtime, "_fire_and_log", fired)
     task_store = AsyncMock()
     task_store.get.return_value = TASK
     monkeypatch.setattr(tasks, "get_task_store", lambda: task_store)
@@ -256,6 +259,11 @@ async def test_resume_endpoint_checks_owner_and_never_retries_uncertain_publicat
     with pytest.raises(HTTPException) as uncertain:
         await tasks.resume_review(TASK.id, run_id, request(TASK.owner_id), BackgroundTasks())
     assert uncertain.value.status_code == 409
+    await background()
+    assert fired.call_args.kwargs["review_resume_run_id"] == run_id
+    assert fired.call_args.kwargs["run_id"] == result["run_id"]
+    import asyncio
+    await asyncio.gather(*list(webhook_runtime._resume_heartbeats))
 
 
 async def test_output_limit_bisects_a_group_but_authorization_revocation_does_not_retry():
@@ -385,7 +393,7 @@ async def test_incomplete_report_is_not_cached_and_resume_reinspects_it():
     incomplete = False
     _, _, state = await h.run()
     assert state["state"] == "completed"
-    publication = next(call for call in h.calls if "config_override" not in call)
+    publication = next(call for call in h.calls if "review_scope" not in call.get("config_override", {}))
     assert publication["context"]["repository"]["full_name"] == "example/repo"
     assert publication["context"]["pull_request"]["head"]["sha"] == HEAD
 
@@ -394,6 +402,79 @@ async def test_manual_publication_preserves_server_authenticated_request_identit
     h = Harness()
     await h.run(context={**CONTEXT, "manual_review": True,
                          "_caipe_manual_request": {"source": "authenticated_ui"}})
-    publication = next(call for call in h.calls if "config_override" not in call)
+    publication = next(call for call in h.calls if "review_scope" not in call.get("config_override", {}))
     assert publication["context"]["manual_review"] is True
     assert publication["context"]["_caipe_manual_request"]["source"] == "authenticated_ui"
+
+
+async def test_remote_timeout_is_not_retried_or_resumable():
+    h = Harness()
+    h.invoke = AsyncMock(side_effect=TimeoutError("Remote read did not stop"))
+    _, _, state = await h.run()
+    assert state["state"] == "incomplete" and not state["resumable"]
+    assert h.invoke.await_count == 1 and h.saved["remote_uncertain"]
+    await h.run()
+    assert h.invoke.await_count == 1
+
+
+async def test_required_methods_cannot_be_omitted_from_complete_reports():
+    h = Harness()
+    task = TASK.model_copy(update={"metadata": {**TASK.metadata, "review_method_bindings": {"method": f"hub-{'a' * 24}-method"}}})
+    _, _, state = await h.run(task=task)
+    assert state["state"] == "incomplete"
+    assert all("review_scope" in call.get("config_override", {}) for call in h.calls)
+    assert TASK.prompt in h.calls[0]["prompt"]
+
+
+def test_resumability_ignores_exhausted_completed_or_superseded_groups():
+    import hashlib
+
+    from autonomous_agents.services.review_execution import review_can_resume
+
+    key = "chunk-" + hashlib.sha256(json.dumps(["file.py"]).encode()).hexdigest()[:16]
+    checkpoint = {"chunks": [["file.py"]], "reports": {"manifest": {}},
+                  "attempts": {"manifest": 6, "chunk-superseded": 6, key: 2}}
+    assert review_can_resume(checkpoint)
+    checkpoint["attempts"][key] = 6
+    assert not review_can_resume(checkpoint)
+    checkpoint["reports"][key] = {}
+    assert review_can_resume(checkpoint)
+
+
+async def test_budget_limited_incomplete_group_splits_instead_of_repeating():
+    h = Harness()
+    original = h.invoke
+
+    async def invoke(**kwargs):
+        evidence = kwargs["context"].get("evidence", {})
+        if len(evidence.get("paths", [])) > 1:
+            return json.dumps({"head": HEAD, "state": "incomplete", "incomplete_reason": "budget"}), []
+        text, events = await original(**kwargs)
+        if "review_scope" in kwargs.get("config_override", {}) and "files" in json.loads(text) and "expected_files" in json.loads(text):
+            result = json.loads(text)
+            for file in result["files"]:
+                file["diff_tokens"] = 1000
+            return json.dumps(result), events
+        return text, events
+
+    h.invoke = invoke
+    _, _, state = await h.run()
+    assert state["state"] == "completed" and all(len(group) == 1 for group in h.saved["chunks"])
+
+
+async def test_stalled_initial_persistence_obeys_the_review_deadline(monkeypatch):
+    import asyncio
+
+    from autonomous_agents.services import review_execution
+
+    h = Harness()
+    ticks = iter([0, 1201])
+    monkeypatch.setattr(review_execution, "monotonic", lambda: next(ticks, 1201))
+
+    async def blocked_load():
+        await asyncio.Event().wait()
+
+    h.load = blocked_load
+    with pytest.raises(TimeoutError, match="persistence exceeded"):
+        await h.run()
+    assert not h.calls

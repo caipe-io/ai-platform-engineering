@@ -30,7 +30,7 @@ from autonomous_agents.services.mongo import (
     TaskAlreadyExistsError,
     TaskNotFoundError,
 )
-from autonomous_agents.services.review_execution import execution_scope
+from autonomous_agents.services.review_execution import execution_scope, review_can_resume
 from autonomous_agents.services.task_id import generate_task_id
 from autonomous_agents.services.task_lifecycle import (
     ack_relevant_changed,
@@ -677,40 +677,59 @@ async def resume_review(
     _assert_task_access(task, caller_email, is_admin)
     if not task.enabled or task.metadata.get("review_execution_version") != 1:
         raise HTTPException(409, "This task does not support resumable reviews")
+    if not isinstance(task.trigger, WebhookTrigger) or task.trigger.provider != "github":
+        raise HTTPException(409, "Scoped reviews require a GitHub webhook task")
+    _assert_webhook_provider_enabled(task)
     recent = await get_run_store().list_by_task(task_id, limit=_MAX_TASK_RUNS)
     parent = next((r for r in recent if r.run_id == run_id), None)
     if parent is None or parent.status.value != "failed":
         raise HTTPException(409, "Only a failed review run can be resumed")
     checkpoint_id = (parent.review_execution or {}).get("checkpoint_run_id", run_id)
-    collection, saved = await get_mongo_service().review_execution_store(checkpoint_id)
+    related = [r for r in recent if (r.review_execution or {}).get("checkpoint_run_id", r.run_id) == checkpoint_id]
+    latest = max(related, key=lambda r: r.started_at) if related else parent
+    if latest.status.value != "failed" or (latest.review_execution or {}).get("resumable") is False:
+        raise HTTPException(409, "The latest checkpoint producer is active, complete or uncertain; inspect it before a fresh review")
+    collection, saved = await asyncio.wait_for(get_mongo_service().review_execution_store(checkpoint_id), 10)
     checkpoint = (saved or {}).get("checkpoint", {})
     scope = checkpoint.get("scope", {})
-    if scope.get("task") != task_id or checkpoint.get("publication_started"):
-        raise HTTPException(409, "No resumable inspection; inspect GitHub publication before a fresh review")
+    if scope.get("task") != task_id or not review_can_resume(checkpoint):
+        raise HTTPException(409, "Review cannot resume: attempts are exhausted or remote work/publication is uncertain. Inspect the prior run before a fresh review")
     now = datetime.now(timezone.utc)
     next_run = str(uuid.uuid4())
-    claimed = await collection.update_one({
+    claimed = await asyncio.wait_for(collection.update_one({
         "_id": checkpoint_id,
         "$or": [{"resume_until": {"$exists": False}}, {"resume_until": {"$lt": now}}],
-    }, {"$set": {"resume_until": now + timedelta(minutes=25), "resume_run_id": next_run}})
+    }, {"$set": {"resume_until": now + timedelta(minutes=25), "resume_run_id": next_run}}), 10)
     if not claimed.modified_count:
-        active = await collection.find_one({"_id": checkpoint_id})
+        active = await asyncio.wait_for(collection.find_one({"_id": checkpoint_id}), 10)
         if active and active.get("resume_run_id"):
             return {"run_id": active["resume_run_id"], "status": "pending"}
         raise HTTPException(409, "This review is already resuming")
 
-    async def resume() -> None:
-        try:
-            await execute_task(task, context={
+    settings = get_settings()
+    try:
+        await dispatch_webhook_run(
+            task=task, dedup_key=DedupKey(key=None, strategy="none"), body=b"resume-review",
+            context={
                 "repository": {"full_name": scope["repository"]},
                 "pull_request": {"number": scope["number"], "head": {"sha": scope["head"]}},
-                "manual_review": True,
-                "_caipe_manual_request": {"source": "authenticated_ui", "resume_run_id": run_id},
-            }, run_id=next_run, review_resume_run_id=checkpoint_id)
-        finally:
-            await collection.update_one({"_id": checkpoint_id}, {"$unset": {"resume_until": ""}})
-
-    background_tasks.add_task(resume)
+                "manual_review": True, "_caipe_manual_request": {"source": "authenticated_ui", "resume_run_id": run_id},
+            }, follow_up=None, background_tasks=background_tasks, requested_run_id=next_run,
+            review_resume_run_id=checkpoint_id,
+            max_pending_per_task=settings.webhook_max_pending_per_task,
+            max_pending_per_owner=settings.webhook_max_pending_per_owner,
+            max_pending_global=settings.webhook_max_pending_global,
+            max_pending_payload_bytes_global=settings.webhook_max_pending_payload_bytes_global,
+            max_concurrent_per_owner=settings.webhook_max_concurrent_per_owner,
+            max_concurrent_global=settings.webhook_max_concurrent_global,
+        )
+    except Exception:
+        try:
+            await asyncio.wait_for(collection.update_one(
+                {"_id": checkpoint_id, "resume_run_id": next_run}, {"$unset": {"resume_until": ""}}), 10)
+        except Exception:
+            logger.warning("Resume %s admission lease cleanup failed", next_run, exc_info=True)
+        raise
     return {"run_id": next_run, "status": "pending"}
 
 
