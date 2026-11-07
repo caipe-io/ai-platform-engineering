@@ -50,3 +50,11 @@ it("opens a requested workspace section from the collapsed rail", async () => {
   rerender(<DynamicAgentContext conversationId="example-chat" agentId="example-agent" agent={agent} collapsed={false} onCollapse={onCollapse} />);
   await waitFor(() => expect(screen.getByText("report.md")).toBeInTheDocument());
 });
+
+it("does not mark an unfinished delegation complete just because no browser is streaming", () => {
+  const previous = mockConversation.streamEvents;
+  mockConversation.streamEvents = [createStreamEvent("tool_start", { tool_name: "task", tool_call_id: "child-run", namespace: [], args: { subagent_type: "Example helper", description: "Review the change" } })];
+  render(<DynamicAgentContext conversationId="example-chat" agentId="example-agent" agent={agent} />);
+  expect(screen.getByText("Completion unconfirmed")).toBeInTheDocument();
+  mockConversation.streamEvents = previous;
+});

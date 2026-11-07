@@ -81,7 +81,7 @@ export function DynamicAgentContext({
   const tasks = useMemo(() => getWorkspaceTasks(conversation), [conversation]);
   const turnEvents = getWorkspaceTurnEvents(conversation);
   const { data: timeline } = useAgentTimeline(turnEvents, isStreaming,
-    conversation?.messages.findLast((message) => message.role === "assistant")?.turnStatus);
+    conversation?.messages.findLast((message) => message.role === "assistant")?.turnStatus ?? "unknown");
   const subagentRuns = timeline.segments.filter((segment) => segment.type === "subagent");
   const [openSections, setOpenSections] = useState(["agents", "coordination"]);
   const [filesRefreshKey, setFilesRefreshKey] = useState(0);

@@ -12,7 +12,7 @@ export function getWorkspaceTasks(conversation?: Conversation): TodoItem[] {
     const events = batches[batch];
     const names = new Map<string, string>();
     for (const event of events) {
-      if (event.type === "tool_start" && event.toolData && "tool_name" in event.toolData) {
+      if (event.type === "tool_start" && !event.namespace?.length && event.toolData && "tool_name" in event.toolData) {
         names.set(event.toolData.tool_call_id, event.toolData.tool_name);
       }
     }
