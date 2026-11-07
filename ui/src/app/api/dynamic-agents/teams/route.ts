@@ -10,6 +10,7 @@ withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
 import { getRbacCollection } from "@/lib/rbac/mongo-collections";
+import { resolveAgentOwnerTeamAccess } from "@/lib/rbac/agent-owner-team";
 import { caipeOrgKey } from "@/lib/rbac/organization";
 import { requireResourcePermission } from "@/lib/rbac/resource-authz";
 import type { TeamMembershipSource } from "@/types/identity-group-sync";
@@ -52,21 +53,29 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     const normalizedEmail = normalizeEmail(user.email);
 
     if (isAdmin) {
-      // Admins see every team; role is always "admin" so dropdowns let
-      // them pick any team.
+      // Keep all teams visible for sharing and ownership transfers. Creating
+      // a team-owned agent still requires the same team grant as POST.
       const teams = (await teamsCollection
         .find({})
         .project({ _id: 1, name: 1, slug: 1, description: 1 })
         .sort({ name: 1 })
         .toArray()) as Team[];
+      const access = await resolveAgentOwnerTeamAccess(
+        session,
+        teams.flatMap((team) => team.slug ? [team.slug] : []),
+      );
       return successResponse(
         teams.map((team) => ({
           _id: String(team._id),
           name: team.name,
           slug: team.slug,
           description: team.description,
-          user_role: "admin",
-          can_own_agents: true,
+          user_role: team.slug && access.manageable.has(team.slug)
+            ? "admin"
+            : team.slug && access.usable.has(team.slug) ? "member" : null,
+          can_own_agents: Boolean(team.slug && (
+            access.usable.has(team.slug) || access.manageable.has(team.slug)
+          )),
         })),
       );
     }
@@ -101,6 +110,11 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       .sort({ name: 1 })
       .toArray()) as Team[];
 
+    const access = await resolveAgentOwnerTeamAccess(
+      session,
+      teams.flatMap((team) => team.slug ? [team.slug] : []),
+    );
+
     return successResponse(
       teams.map((team) => {
         const role = team.slug ? roleBySlug.get(team.slug) ?? null : null;
@@ -112,7 +126,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
           user_role: role,
           // Any active team member may create an agent owned by that team;
           // POST checks team `use` and writes the creator as `owner`.
-          can_own_agents: role === "admin" || role === "member",
+          can_own_agents: Boolean(team.slug && (
+            access.usable.has(team.slug) || access.manageable.has(team.slug)
+          )),
         };
       }),
     );

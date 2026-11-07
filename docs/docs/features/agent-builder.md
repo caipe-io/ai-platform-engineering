@@ -156,6 +156,13 @@ and skills later without rebuilding the agent.
 
 Every agent has an owner team.
 
+- Choose an owner team you can use or manage. Platform administrators can
+  view other teams, but that visibility does not grant team membership.
+- Ineligible teams are disabled when creating or cloning an agent. If a clone
+  inherits an unavailable owner team, choose an eligible team in **Basic Info**.
+- If team access changes before saving, the builder returns to **Basic Info**
+  and preserves the rest of the draft.
+
 - **Team visibility** grants use according to the selected team relationships.
 - **Global visibility** makes the agent discoverable across the organization
   while retaining team ownership for management.

@@ -693,6 +693,29 @@ describe("dynamic agents RBAC routes", () => {
     );
   });
 
+  it("rejects creation under a foreign team even for an organization administrator", async () => {
+    mockGetAuthFromBearerOrSession.mockResolvedValue({ user, session: { ...session, role: "admin" } });
+    mockRequireResourcePermission.mockImplementation(async (_session, target) => {
+      if (target.type === "organization" && target.action === "manage") return;
+      throw new Error("No team grant");
+    });
+    const insertOne = jest.fn();
+    mockGetCollection.mockImplementation(async (name: string) => {
+      if (name === "teams") return { findOne: async () => ({ _id: "team-1", slug: "secondary" }) };
+      if (name === "dynamic_agents") return { findOne: async () => null, insertOne };
+      throw new Error(`unexpected collection ${name}`);
+    });
+    const { POST } = await import("../route");
+    const response = await POST(request("/api/dynamic-agents", {
+      method: "POST",
+      body: JSON.stringify({ name: "Example", system_prompt: "Help", model: { id: "example", provider: "example" }, owner_team_slug: "secondary" }),
+    }));
+    expect(response.status).toBe(403);
+    expect((await response.json()).code).toBe("OWNER_TEAM_FORBIDDEN");
+    expect(insertOne).not.toHaveBeenCalled();
+    expect(mockReconcileAgentRelationships).not.toHaveBeenCalled();
+  });
+
   it("checks uniqueness and inserts while holding the agent mutation fence", async () => {
     let locked = false;
     mockWithAgentMutationLock.mockImplementationOnce(async (_id, operation) => { locked = true; try { return await operation(); } finally { locked = false; } });

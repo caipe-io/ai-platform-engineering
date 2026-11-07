@@ -59,6 +59,9 @@ jest.mock("@/components/dynamic-agents/MiddlewarePicker", () => ({
 jest.mock("@/components/dynamic-agents/SubagentPicker", () => ({
   SubagentPicker: () => <div data-testid="subagent-picker" />,
 }));
+jest.mock("@/components/dynamic-agents/RemoteAgentsPicker", () => ({
+  RemoteAgentsPicker: () => <div data-testid="remote-agents-picker" />,
+}));
 jest.mock("@/components/dynamic-agents/SkillsSelector", () => ({
   SkillsSelector: () => <div data-testid="skills-selector" />,
 }));
@@ -138,7 +141,13 @@ function jsonResponse(body: unknown) {
  * "missing" to "filled" and edit-mode transfers can switch teams without
  * rerendering).
  */
-function mockApi() {
+function mockApi(teams?: Array<{
+  _id: string;
+  slug: string;
+  name: string;
+  can_own_agents: boolean;
+  user_role: string | null;
+}>) {
   const fetchMock = jest.fn(
     async (url: RequestInfo | URL, init?: RequestInit) => {
       const u = typeof url === "string" ? url : url.toString();
@@ -158,7 +167,7 @@ function mockApi() {
       if (u.includes("/api/dynamic-agents/teams")) {
         return jsonResponse({
           success: true,
-          data: [
+          data: teams ?? [
             {
               _id: "team-1",
               slug: "platform",
@@ -194,6 +203,25 @@ async function flushAsync() {
   await act(async () => {
     await new Promise((r) => setTimeout(r, 50));
   });
+}
+
+function exampleClone(ownerTeamSlug: string) {
+  return {
+    _id: "agent-example",
+    name: "Example",
+    description: "Example draft",
+    system_prompt: "Keep the example draft instructions.",
+    allowed_tools: {},
+    model: { id: "gpt-4o", provider: "openai" as const },
+    visibility: "team" as const,
+    owner_team_slug: ownerTeamSlug,
+    shared_with_teams: [],
+    enabled: true,
+    owner_id: "test-user",
+    is_system: false,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
 }
 
 // ============================================================================
@@ -334,6 +362,69 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
         expect.stringContaining("Owner Team is required") as unknown as string,
       );
     });
+  });
+
+  it("requires a clone's inaccessible owner team to be replaced before creating", async () => {
+    const fetchMock = mockApi([
+      { _id: "team-1", slug: "primary", name: "Primary", can_own_agents: true, user_role: "member" },
+      { _id: "team-2", slug: "secondary", name: "Secondary", can_own_agents: false, user_role: null },
+    ]);
+    render(<DynamicAgentEditor cloneFrom={exampleClone("secondary")} onCancel={jest.fn()} onSave={jest.fn()} />);
+    await flushAsync();
+
+    expect(screen.getByRole("button", { name: /Create Agent/i })).toBeDisabled();
+    expect(screen.getByText(/Viewing a team as a platform administrator does not make you a member/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Next/ }));
+    expect(screen.getByRole("heading", { name: "Step 1: Basic Info" })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url, init]) => url === "/api/dynamic-agents" && init?.method === "POST")).toBe(false);
+
+    await pickTeam(/Owner Team/i, "primary");
+    await waitFor(() => expect(screen.getByRole("button", { name: /Create Agent/i })).toBeEnabled());
+    expect(screen.getByPlaceholderText(/Code Review Agent/i)).toHaveValue("Example (New)");
+  });
+
+  it("returns a draft to Basic Info when the server rejects changed owner-team access", async () => {
+    const fetchMock = mockApi([
+      { _id: "team-1", slug: "primary", name: "Primary", can_own_agents: true, user_role: "member" },
+    ]);
+    const defaultFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url, init) => {
+      if (url === "/api/dynamic-agents" && init?.method === "POST") {
+        return jsonResponse({ success: false, code: "OWNER_TEAM_FORBIDDEN", error: "Owner team no longer available" });
+      }
+      return defaultFetch(url, init);
+    });
+    const onSave = jest.fn();
+    render(<DynamicAgentEditor cloneFrom={exampleClone("primary")} initialStep="advanced" onCancel={jest.fn()} onSave={onSave} />);
+    await flushAsync();
+
+    fireEvent.click(screen.getByRole("button", { name: /Create Agent/i }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Step 1: Basic Info" })).toBeInTheDocument());
+    expect(screen.getByText(/Your other agent settings have been kept/)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/Code Review Agent/i)).toHaveValue("Example (New)");
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("still allows an explicitly confirmed edit-time transfer to a team the caller does not belong to", async () => {
+    const fetchMock = mockApi([
+      { _id: "team-1", slug: "primary", name: "Primary", can_own_agents: true, user_role: "member" },
+      { _id: "team-2", slug: "secondary", name: "Secondary", can_own_agents: false, user_role: null },
+    ]);
+    const confirm = jest.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      render(<DynamicAgentEditor agent={exampleClone("primary")} onCancel={jest.fn()} onSave={jest.fn()} />);
+      await flushAsync();
+      await pickTeam(/Owner Team/i, "secondary");
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining('not a member of "secondary"'));
+      fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+      await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(true));
+      const request = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT");
+      expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+        owner_team_slug: "secondary", confirm_not_member: true,
+      });
+    } finally {
+      confirm.mockRestore();
+    }
   });
 
   it("lets edit-mode owner team changes save as ownership transfers", async () => {

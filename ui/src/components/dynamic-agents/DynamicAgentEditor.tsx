@@ -688,6 +688,14 @@ export function DynamicAgentEditor({
   >([]);
   const [modelsLoading, setModelsLoading] = React.useState(false);
   const [availableTeams, setAvailableTeams] = React.useState<TeamOption[]>([]);
+  const [teamsLoading, setTeamsLoading] = React.useState(true);
+  const [teamsError, setTeamsError] = React.useState<string | null>(null);
+  const ownerTeamCheckRequired = !isEditing &&
+    (visibility === "team" || Boolean(ownerTeamSlug));
+  const ownerTeamUnavailable = ownerTeamCheckRequired && Boolean(ownerTeamSlug) &&
+    !teamsLoading && !teamsError && !availableTeams.some(
+      (team) => team.slug === ownerTeamSlug && team.can_own_agents === true,
+    );
 
   // AI suggestion state
   const [generatingField, setGeneratingField] = React.useState<string | null>(
@@ -968,20 +976,26 @@ export function DynamicAgentEditor({
   }, []); // Run once on mount - agent prop is stable
 
   // Fetch available teams for team visibility sharing
-  React.useEffect(() => {
-    async function fetchTeams() {
-      try {
-        const response = await fetch("/api/dynamic-agents/teams");
-        const data = await response.json();
-        if (data.success && Array.isArray(data.data)) {
-          setAvailableTeams(data.data);
-        }
-      } catch (err) {
-        console.error("Failed to fetch teams:", err);
+  const fetchTeams = React.useCallback(async () => {
+    setTeamsLoading(true);
+    setTeamsError(null);
+    try {
+      const response = await fetch("/api/dynamic-agents/teams");
+      const data = await response.json();
+      if (!response.ok || !data.success || !Array.isArray(data.data)) {
+        throw new Error("Owner-team access could not be checked. Retry loading teams.");
       }
+      setAvailableTeams(data.data);
+    } catch (err) {
+      console.error("Failed to fetch teams:", err);
+      setTeamsError("Owner-team access could not be checked. Retry loading teams.");
+    } finally {
+      setTeamsLoading(false);
     }
-    fetchTeams();
   }, []);
+  React.useEffect(() => {
+    void fetchTeams();
+  }, [fetchTeams]);
 
   // When editing an existing agent, find out if it is the platform default.
   // If it is, lock the visibility selector so the admin can't accidentally
@@ -1118,6 +1132,10 @@ export function DynamicAgentEditor({
   };
 
   const goToNextStep = async () => {
+    if (activeStep === "basic" && ownerTeamCheckRequired &&
+      (teamsLoading || teamsError || ownerTeamUnavailable)) {
+      return;
+    }
     // Gate the instructions → tools transition behind a passing AI Review when
     // the admin has flagged this target as "blocking". `ensurePassedOrRun` is a
     // no-op when the config is disabled or informational.
@@ -1343,6 +1361,14 @@ export function DynamicAgentEditor({
       setLoading(false);
       return;
     }
+    if (ownerTeamCheckRequired && (teamsLoading || teamsError || ownerTeamUnavailable)) {
+      selectStep("basic");
+      setError(teamsError || (teamsLoading
+        ? "Wait for owner-team access to finish loading."
+        : "Choose an owner team you belong to in Basic Info. Your other agent settings have been kept."));
+      setLoading(false);
+      return;
+    }
 
     // Validate ID for new agents
     if (!isEditing) {
@@ -1553,7 +1579,9 @@ export function DynamicAgentEditor({
 
         const data = await response.json();
         if (!data.success) {
-          throw new Error(data.error || "Failed to create agent");
+          throw Object.assign(new Error(data.error || "Failed to create agent"), {
+            code: data.code,
+          });
         }
       }
 
@@ -1577,6 +1605,13 @@ export function DynamicAgentEditor({
         setError(
           'You are not a member of the destination team. Click "Confirm Transfer" to transfer ownership anyway.',
         );
+      } else if (
+        typeof err === "object" && err !== null &&
+        "code" in err && err.code === "OWNER_TEAM_FORBIDDEN"
+      ) {
+        selectStep("basic");
+        setError("Choose an owner team you belong to in Basic Info. Your other agent settings have been kept.");
+        void fetchTeams();
       } else {
         setError(getErrorMessage(err, "") || "An error occurred");
       }
@@ -1626,6 +1661,15 @@ export function DynamicAgentEditor({
       if (ownerTeamMissing) {
         list.push({ field: "ownerTeam", label: "Owner Team", step: "basic" });
       }
+      if (ownerTeamCheckRequired && (teamsLoading || teamsError || ownerTeamUnavailable)) {
+        list.push({
+          field: "ownerTeamAccess",
+          label: teamsError || (teamsLoading
+            ? "Wait for owner-team access to load"
+            : "Choose an owner team you belong to"),
+          step: "basic",
+        });
+      }
       if (!systemPrompt.trim()) {
         list.push({
           field: "systemPrompt",
@@ -1668,6 +1712,10 @@ export function DynamicAgentEditor({
       selectedHarness,
       harnessProfileId,
       ownerTeamMissing,
+      ownerTeamCheckRequired,
+      ownerTeamUnavailable,
+      teamsLoading,
+      teamsError,
       restrictKnowledge,
       hadExplicitKnowledgeScope,
       datasourceIds,
@@ -2396,9 +2444,13 @@ export function DynamicAgentEditor({
                   disabled={loading || !!readOnly}
                   showShare={visibility === "team"}
                   currentUserTeamSlugs={availableTeams
+                    .filter((team) => team.can_own_agents === true)
                     .map((team) => team.slug)
                     .filter((slug): slug is string => Boolean(slug))}
-                  onOwnerTeamChange={setOwnerTeamSlug}
+                  onOwnerTeamChange={(slug) => {
+                    setOwnerTeamSlug(slug);
+                    setError(null);
+                  }}
                   onSharedTeamsChange={setSharedWithTeams}
                   onTransfer={(_newOwnerSlug, confirmedNotMember) => {
                     // The component already applied the new slug via
@@ -2432,7 +2484,7 @@ export function DynamicAgentEditor({
                         ? `${team.name} (${team.user_role})`
                         : team.name,
                       _id: team._id,
-                      disabled: team.can_own_agents === false,
+                      disabled: !isEditing && team.can_own_agents !== true,
                     }))}
                   ownerHelpText={
                     <>
@@ -2450,9 +2502,21 @@ export function DynamicAgentEditor({
                     </>
                   }
                   ownerExtra={
-                    !isEditing &&
-                    visibility === "team" &&
-                    availableTeams.length === 0 ? (
+                    ownerTeamCheckRequired && teamsError ? (
+                      <p className="text-xs text-destructive">
+                        {teamsError}{" "}
+                        <button type="button" className="underline" onClick={() => void fetchTeams()}>
+                          Retry
+                        </button>
+                      </p>
+                    ) : ownerTeamCheckRequired && teamsLoading ? (
+                      <p className="text-xs text-muted-foreground" role="status">Checking owner-team access…</p>
+                    ) : ownerTeamUnavailable ? (
+                      <p className="text-xs text-destructive">
+                        Choose an owner team you belong to. Viewing a team as a platform administrator does not make you a member.
+                      </p>
+                    ) : !isEditing && visibility === "team" &&
+                    !availableTeams.some((team) => team.can_own_agents === true) ? (
                       <p className="text-xs text-destructive">
                         You must belong to at least one team to create a
                         team-owned agent.
