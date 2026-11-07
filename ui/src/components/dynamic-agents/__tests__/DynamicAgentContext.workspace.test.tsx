@@ -28,6 +28,7 @@ it("shows actual configured agents and saved tasks, with no pretend coordination
   expect(screen.queryByRole("combobox", { name: "Chat mode" })).not.toBeInTheDocument();
   fireEvent.mouseDown(screen.getByRole("tab", { name: "Agent info" }), { button: 0, ctrlKey: false });
   expect(screen.queryByRole("button", { name: "Refresh Agent Session" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Download Chat" })).toBeInTheDocument();
 });
 
 it("loads files on demand, distinguishes errors from empty results, and retries", async () => {
@@ -61,4 +62,15 @@ it("does not mark an unfinished delegation complete just because no browser is s
   fireEvent.mouseDown(screen.getByRole("tab", { name: "Agent coordination" }), { button: 0, ctrlKey: false });
   expect(screen.getByText("Completion unconfirmed")).toBeInTheDocument();
   mockConversation.streamEvents = previous;
+});
+
+it("does not infer child completion from a done parent turn", () => {
+  const previous = mockConversation.streamEvents;
+  mockConversation.streamEvents = [createStreamEvent("tool_start", { tool_name: "task", tool_call_id: "unfinished-child", namespace: [], args: { subagent_type: "Example helper", description: "Review the change" } })];
+  mockConversation.messages = [{ id: "parent", role: "assistant", content: "Done", timestamp: new Date(), turnStatus: "done", streamEvents: mockConversation.streamEvents }];
+  render(<DynamicAgentContext conversationId="example-chat" agentId="example-agent" agent={agent} />);
+  fireEvent.mouseDown(screen.getByRole("tab", { name: "Agent coordination" }), { button: 0, ctrlKey: false });
+  expect(screen.getByText("Completion unconfirmed")).toBeInTheDocument();
+  mockConversation.streamEvents = previous;
+  mockConversation.messages = [];
 });
