@@ -251,7 +251,7 @@ flowchart LR
 - "OpenAI" names the wire protocol, not the provider.
 - Keycloak 26.3 standard token exchange emits per-agent scope claims; confirmed by spike S1 up to 10,000 agents with a sized realm cache ([S1 results](./research.md#s1-results)).
 - The gateway can reach the token issuer's JWKS.
-- Dynamic agents authenticate callers from the bearer token alone (#1753) before the gateway token is minted.
+- The gateway token is minted only from the validated bearer token, never from `X-User-Context`. Keycloak re-verifies it during exchange, so phase 1 does not wait for #1753.
 - Autonomous runs reach dynamic agents with an owner token. #2890 may change how the scheduler obtains it, not the gateway exchange.
 - The OpenAI wire format loses some provider-native features, such as prompt caching and thinking parameters. Native providers in `llm_wrapper` remain available while the switch is off.
 - Related work is listed in [research.md](./research.md#related-work).

@@ -13,7 +13,11 @@ Task IDs use `T001` for phase 0 and `T101`, `T201`, etc. for phases 1–5. Separ
 
 ## Phase 1: identity preparation and agent data plane
 
-Depends on #1753 (JWT-only identity in dynamic agents) and S1. Complete identity preparation before enabling routing.
+Depends on S1. Complete identity preparation before enabling routing.
+
+- **JWT first** (LiteLLM Enterprise, AgentGateway): T106, T101, T107, T109, T112, then T110. Operators register agents and set budgets in the gateway until phase 3.
+- **Then**: T108 key mode (LiteLLM OSS) and the remaining tasks.
+- Not gated on #1753: the gateway token is minted only from the bearer that dynamic agents already validate, never from `X-User-Context`.
 
 - [ ] **T101** Create the exchange-only `caipe-dynamic-agents` Keycloak client (no admin roles), add it to user-token audiences, add the shared `llm-gateway` scope (audience mapper), test a chained exchange of a scheduler-minted owner token, size `cache-embedded-realms-max-count`, backfill scopes for existing agents, and sync scopes on agent create and delete ([K2](./research.md#identity-option-legend) only; see [S1 results](./research.md#s1-results)). Implement recoverable ownership transfers for K2, C1 and key auth as applicable: block new calls while unresolved, verify credential bindings against committed ownership before use or caching, and invalidate previous-owner cached credentials on completion.
 - [ ] **T102** Provision `LLM_GATEWAY_DEFAULT_TEAM` in CAIPE at startup and use it for agents without an owning team.

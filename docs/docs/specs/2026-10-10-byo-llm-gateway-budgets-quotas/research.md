@@ -274,7 +274,7 @@ Checked 2026-10-09; no duplicate found.
 
 | Item | Relation |
 |---|---|
-| #1753 JWT-only identity in dynamic agents | Dependency of phase 1: the gateway token needs a verified user |
+| #1753 JWT-only identity in dynamic agents | Not a phase 1 gate (2026-11-07): the LLM path uses only the validated bearer; #1753 still removes the header elsewhere |
 | #934 RFC 8693 token exchange and impersonation | Same mechanism; prior art for [K2](#identity-option-legend) |
 | #974, #973 dynamic LLM keys, LiteLLM keys | Answered by Decisions 6–7 |
 | #2610 tag LiteLLM requests by agent | Becomes the LiteLLM mapping of ③ |
