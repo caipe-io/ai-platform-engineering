@@ -8,6 +8,8 @@ import { Download,Eye,FileText,Folder,Loader2,Trash2 } from "lucide-react";
 import React,{ useCallback,useMemo,useState } from "react";
 
 interface FileTreeProps {
+  /** Stack previews below the tree in narrow workspace panels. */
+  compact?: boolean;
   /** List of file paths from the agent's in-memory filesystem */
   files: string[];
   /** Fetch file text for inline preview (.md, .txt) */
@@ -39,6 +41,7 @@ interface TreeNode {
  * .md and .txt files open an inline preview when getFileContent is provided.
  */
 export function FileTree({
+  compact = false,
   files,
   getFileContent,
   onFileClick,
@@ -118,13 +121,13 @@ export function FileTree({
       <div
         className={cn(
           "flex gap-3 items-stretch min-h-[16rem]",
-          previewPath && getFileContent ? "flex-row" : "flex-col",
+          previewPath && getFileContent && !compact ? "flex-row" : "flex-col",
         )}
       >
         <div
           className={cn(
             "rounded-lg border border-border/50 bg-muted/30 p-2 min-h-0",
-            previewPath && getFileContent ? "w-[38%] max-w-xs shrink-0 overflow-y-auto" : "flex-1",
+            previewPath && getFileContent && !compact ? "w-[38%] max-w-xs shrink-0 overflow-y-auto" : "flex-1",
           )}
         >
           <AnimatePresence mode="popLayout">
