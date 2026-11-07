@@ -42,6 +42,7 @@
 - Paths 1–3 all build models through `build_chat_model` in `ai_platform_engineering/llm_wrapper/src/llm_wrapper/build.py`. The switch, the provider override and the auth hook live there, so no caller can bypass them.
 - Path 3 generates text without executing an agent, including before a new agent is saved. It uses a dedicated, provisioned AI-assist system identity for agent attribution while preserving the authenticated user for user attribution. Its owning team pays; the draft or edited agent does not determine billing or authorization. See [AI-assist system identity](./data-model.md#ai-assist-system-identity).
 - Bots, autonomous agents, the scheduler and the UI have no LLM client of their own. They inherit through dynamic agents.
+- Harness Engine: the Deep Agents runtime reuses paths 1–2. Experimental Harness Engine runtimes call providers directly (for example `ANTHROPIC_BASE_URL` or AWS IAM) and bypass `build_chat_model`; they are out of scope.
 
 ## Decision 3 — Rollout: phased build, one global switch
 
@@ -176,12 +177,12 @@ sequenceDiagram
   Note over DA,KC: call (cache miss)
   DA->>KC: token exchange (subject = user JWT, scope = llm-agent-ID, aud = LLM_GATEWAY_AUDIENCE)
   KC-->>DA: gateway JWT
-  Note over DA,KC: autonomous: owner from a trusted run binding (#2891), exchange mechanism per #2890
+  Note over DA,KC: autonomous: same exchange, subject = owner token the run carries (#2890 decides how the scheduler gets it)
 ```
 
 **Spike S1 (gates phase 1)** — #2938, run 2026-10-14. **Outcome: K2.** C1 stays the fallback.
 - [x] Keycloak 26.3 exchange emits the mappers of the requested optional scope.
-- [ ] Autonomous runs get the scope through the mechanism #2890 selects (actor-preserving exchange, or a service token plus a trusted run binding), without depending on `requested_subject` impersonation. **Blocked on #2890**; re-run when it decides.
+- [ ] Autonomous runs: exchange an owner token that was itself minted by `requested_subject` impersonation (chained exchange). Not run in S1; moved to T101 as a phase 1 gate.
 - [x] Token issuance latency and admin performance with 1k, 5k and 10k client scopes.
 - [ ] If any check fails → [C1](#identity-option-legend) (dynamic agents sign; key optionally in Vault or a cloud KMS).
 
@@ -228,9 +229,9 @@ Scale (60 exchanges, 30 password logins per row; ms p50 / p95):
 
 | Finding | Consequence |
 |---|---|
-| No native `act` | Shared `llm-gateway` scope carries a hardcoded `act` mapper and the gateway audience; only the exchanger client holds it |
+| No native `act` | Not added (2026-11-07). `azp` names the sending client; #2890 did not adopt actor-bearing tokens. The shared `llm-gateway` scope carries only the gateway audience; only the exchange client holds it |
 | Multiple agent scopes accepted | The exchanger requests exactly one agent scope and verifies the returned `agent_id`/`team_id` before use or caching |
-| Exchanger must be in the subject token's `aud` | Dynamic agents has no Keycloak client today and user tokens carry `aud=caipe-platform`. Phase 1 adds an exchanger client and its audience to user tokens (or reuses `caipe-platform`) |
+| Exchanger must be in the subject token's `aud` | Dynamic agents has no Keycloak client today and user tokens carry `aud=caipe-platform`. Phase 1 adds an exchange-only `caipe-dynamic-agents` client and its audience to user tokens. `caipe-platform` is not reused: it is the BFF's Keycloak admin client (`manage-users`). #3010 may reuse the new client |
 | Realm cache limit | Keycloak values size `cache-embedded-realms-max-count` to the agent count with headroom (50,000 held 10,000 agents) |
 | Gateway clock leeway | A token is usable for TTL + gateway leeway (60 s on AgentGateway). Conformance tests expiry past the leeway |
 | LiteLLM 1.92.0 | JWT auth is enterprise-only and its JWT mapping has user, team and org fields but no agent field. LiteLLM OSS uses key auth (Decision 6) |
@@ -251,7 +252,7 @@ Scale (60 exchanges, 30 password logins per row; ms p50 / p95):
 
 ## Decision 9 — Authorization at call time
 
-- **Runtime (always)**: dynamic agents use the CAS access API (#2889) to check OpenFGA relations `agent#can_use` (CAS action `use`, already enforced) and `llm_model#can_read` (runtime check to add) once per turn per (user, agent, model). Every LLM call in that turn reuses the decision.
+- **Runtime (always)**: dynamic agents use CAS (today's decision API in `dynamic_agents/auth/authz.py`; `/api/access` once #2889 resumes) to check OpenFGA relations `agent#can_use` (CAS action `use`, already enforced) and `llm_model#can_read` (runtime check to add) once per turn per (user, agent, model). Every LLM call in that turn reuses the decision.
 - **Gateway (optional)**: where ext_authz exists, the gateway asks the BFF CAS adapter (#2892, #2909), as AgentGateway does for MCP, for the same decision and verified identity headers.
 
 ## Decision 10 — Budget errors without gateway code in agents
@@ -281,11 +282,14 @@ Checked 2026-10-09; no duplicate found.
 | #2300 wire setup-caipe to LiteLLM | Re-scope to the dev/demo example gateway (T801) |
 | #2813, #2841, #2828, #2854 CAS authorization | `llm_model` joins the CAS scope and its audit |
 | #2884 CAS migration inventory | The `llm_model` call-time check is registered as a CAS path |
-| #2885 canonical platform identity | Gateway token claims (`sub`, `act`, `org`) follow it |
-| #2889 Dynamic Agents on the CAS access API | Path for the `llm_model#can_read` check |
-| #2890 OBO impersonation and delegation scope | Decides the autonomous exchange mechanism (spike S1) |
+| #2885 canonical platform identity | Gateway token claims (`sub`, `org`) follow it; the sending service is `azp` |
+| #2889 Dynamic Agents on the CAS access API | Target API for the `llm_model#can_read` check; deferred, so T109 uses today's call first |
+| #2890 OBO impersonation and delegation scope | Decides how the scheduler gets the owner token; the gateway exchange is unchanged |
 | #2891 trusted execution context for delegation | Source of the task owner for autonomous runs |
 | #2892, #2909 AgentGateway ext_authz through BFF CAS | Pattern for optional gateway-side authorization |
+| #3034 CAS delegation approvals | Possible future proof of the task owner for autonomous runs |
+| #3010 audience-restricted MCP token exchange | May reuse the `caipe-dynamic-agents` client |
+| #3112 user, workload and delegated identities | May change how the sending service is represented |
 | #2901 Keycloak-authenticated agent badges | Per-agent Keycloak binding that K2 can reuse |
 | #2883 ACP native runtime (draft) | May move `dynamic_agents` call sites; the hook lives in `llm_wrapper` |
 | #1037, #1048 quota-increase requests | The user journey behind T502 |

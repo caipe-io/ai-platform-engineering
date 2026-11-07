@@ -56,7 +56,7 @@ Direct-provider configuration and credentials must remain available for disabled
 | `iss` | `https://idp.example.com/realms/caipe` | signer |
 | `aud` | `LLM_GATEWAY_AUDIENCE` | setting |
 | `sub` | user or task-owner subject (effective principal) | caller token / trusted run binding (#2891) |
-| `act` | `{"sub": "service-account-dynamic-agents"}` | acting service (#2885); hardcoded mapper on the shared `llm-gateway` scope (K2) |
+| `azp` | `caipe-dynamic-agents` | sending client, set by Keycloak; no custom mapper |
 | `org` | `example-org` | existing `org` claim (budget key namespace) |
 | `agent_id` | `agent-example` | Keycloak scope ([K2](./research.md#identity-option-legend)) or signer ([C1](./research.md#identity-option-legend)) |
 | `team_id` | `team-example` | agent `owner_team_slug`, else `LLM_GATEWAY_DEFAULT_TEAM` |
@@ -71,7 +71,7 @@ Direct-provider configuration and credentials must remain available for disabled
 |---|---|
 | name | `llm-agent-<agent_id>` |
 | mappers | hardcoded claims `agent_id`, `team_id` |
-| assigned to | dynamic-agents exchanger client (optional scope) |
+| assigned to | `caipe-dynamic-agents` exchange client (optional scope) |
 | lifecycle | created with the agent; synchronized through a recoverable ownership-transfer operation; deleted with the agent |
 
 - MongoDB ownership is authoritative. Transfer coordination must prevent calls from using inconsistent ownership and credential bindings, and support recovery after interruption. The recovery mechanism is an implementation decision; updating Keycloak before saving MongoDB is not sufficient on its own.

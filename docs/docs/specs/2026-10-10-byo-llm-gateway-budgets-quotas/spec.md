@@ -47,7 +47,7 @@ flowchart TD
 | # | Contract | Owner |
 |---|---|---|
 | ① | Wire: OpenAI `/v1/chat/completions`, `/v1/models`, `/v1/embeddings` | gateway |
-| ② | Identity: `LLM_GATEWAY_AUTH=jwt` (default) uses a short-lived JWT `{sub, act, agent_id, team_id, org}`; `key` uses a per-agent gateway key with verified agent/team bindings, unverified user attribution and best-effort per-user limits | CAIPE issues JWTs or supplies provisioned gateway keys; gateway verifies credentials |
+| ② | Identity: `LLM_GATEWAY_AUTH=jwt` (default) uses a short-lived JWT `{sub, azp, agent_id, team_id, org}`; `key` uses a per-agent gateway key with verified agent/team bindings, unverified user attribution and best-effort per-user limits | CAIPE issues JWTs or supplies provisioned gateway keys; gateway verifies credentials |
 | ③ | Attribution: OpenAI `user` field, `x-caipe-*` context headers, OTel GenAI | CAIPE sends |
 | ④ | Errors: budget/quota rejections → one CAIPE error type | CAIPE maps |
 | ⑤ | Control plane: capability-flagged adapter (models, limits, usage) | CAIPE UI backend |
@@ -100,6 +100,14 @@ No new service, image or language. Each piece lands in an existing component (de
 - Q: Does the Helm chart need changes to inject the environment variables? → **Templates: no. Values: yes.** Subcharts already pass arbitrary `config`/`env` keys and an LLM secret into pods. Add one `global.llmGateway` block so the setting is declared once (FR-002, FR-020). See [plan.md](./plan.md#helm-and-compose).
 - Q: Which language, and why? → **Python for the data plane, TypeScript for the control plane.** Each lands where its choke point already lives: `llm_wrapper.build_chat_model` (FR-003) and the BFF that owns Keycloak admin, credentials and CAS. See [plan.md](./plan.md#technical-context).
 - Q: Metrics, logs and traces? → **All three, on top of existing telemetry** (FR-009, FR-021, FR-022). Unbounded user IDs go to traces and logs, never metric labels.
+
+### Session 2026-11-07
+
+- Q: How does the gateway token name the sending service? → **`azp`, set by Keycloak.** No custom `act` mapper: #2890 did not adopt actor-bearing tokens, and CAS rejects them.
+- Q: Are autonomous runs in phase 1? → **Yes.** A run reaches dynamic agents with an owner token, which is exchanged like a chat token. How the scheduler obtains that token (impersonation today; #2891 run binding or CAS approval #3034 later) follows #2890 and does not change the exchange. Supersedes the 2026-10-09 answer.
+- Q: Which CAS API does the model check use? → **The decision API dynamic agents already calls**, moving to `/api/access` when #2889 resumes.
+- Q: Which Keycloak client exchanges? → **A new exchange-only `caipe-dynamic-agents` client.** Not `caipe-platform`: it is the BFF's Keycloak admin client (`manage-users`) and would make `azp` meaningless.
+- Q: Harness Engine? → **Deep Agents is in scope** (it reuses paths 1–2). **Experimental Harness Engine runtimes are out of scope**: they call providers without `llm_wrapper`. CAIPE warns operators instead.
 
 ## User Journeys *(mandatory)*
 
@@ -183,13 +191,13 @@ flowchart LR
 - **FR-001**: Agents MUST reach the gateway via the OpenAI chat-completions protocol (`openai-compatible` provider), including streaming and tool calls.
 - **FR-002**: The gateway endpoint MUST be one deployment-wide setting. Swapping gateways MUST NOT require agent changes.
 - **FR-020**: The gateway endpoint MUST use its own setting, `LLM_GATEWAY_BASE_URL`, separate from `OPENAI_COMPATIBLE_BASE_URL`, so a direct `openai-compatible` provider (for example a self-hosted model server) keeps working with the switch off (FR-018).
-- **FR-003**: With the switch on, every in-scope path MUST send `llm_models.model_id` to the gateway regardless of the stored or requested provider. This is enforced inside `llm_wrapper.build_chat_model`, not by each caller.
+- **FR-003**: With the switch on, every in-scope path MUST send `llm_models.model_id` to the gateway regardless of the stored or requested provider. This is enforced inside `llm_wrapper.build_chat_model`, not by each caller. In-scope paths include the Harness Engine Deep Agents runtime; experimental Harness Engine runtimes are not (see [Out of Scope](#out-of-scope)).
 
 ### Identity ②
-- **FR-004**: With `LLM_GATEWAY_AUTH=jwt` (default), every gateway call MUST carry a short-lived JWT (TTL ≤ 5 min) with `sub` (effective principal), `act` (acting service), `agent_id`, `team_id` and `org`, verifiable by the gateway. Identity claims follow CAIPE's canonical identity contract (#2885). Each token carries exactly one agent binding; the runtime verifies the returned `agent_id` and `team_id` before use or caching.
+- **FR-004**: With `LLM_GATEWAY_AUTH=jwt` (default), every gateway call MUST carry a short-lived JWT (TTL ≤ 5 min) with `sub` (effective principal), `azp` (sending client, `caipe-dynamic-agents`), `agent_id`, `team_id` and `org`, verifiable by the gateway. Identity claims follow CAIPE's canonical identity contract (#2885). Each token carries exactly one agent binding; the runtime verifies the returned `agent_id` and `team_id` before use or caching.
 - **FR-005**: With `LLM_GATEWAY_AUTH=key` (gateways that can't validate JWTs), calls MUST carry a per-agent gateway key from CAIPE's credentials store. Agent and team are verified; the user is attributed through the `user` field only, so per-user limits are best-effort.
 - **FR-006**: Agents MUST NOT hold provider keys or a shared admin key.
-- **FR-007**: Autonomous and scheduled runs MUST be attributed to the task owner, proven by a trusted run binding (#2891), not to a shared service account or an unsigned owner header.
+- **FR-007**: Autonomous and scheduled runs MUST be attributed to the task owner, not to a shared service account or an unsigned owner header. Dynamic agents exchange the owner token the run carries; how that token is proven (#2891, #3034) follows #2890.
 
 ### Attribution ③
 - **FR-008**: Calls MUST set the OpenAI `user` field to `sub`, and send `x-caipe-conversation-id` and W3C `traceparent`.
@@ -199,7 +207,8 @@ flowchart LR
 - **FR-022**: Traces MUST add a gateway-call span (OTel GenAI attributes, including `gen_ai.request.model` and token usage, plus `caipe.agent_id`, `caipe.team_id`, `caipe.auth_mode`) and a token-acquisition span (cache hit or miss) under the existing turn trace. The `traceparent` sent in FR-008 MUST be the gateway-call span's context, so gateway traces join CAIPE traces. Tracing stays best-effort and never blocks a call.
 
 ### Authorization
-- **FR-010**: Dynamic agents MUST check the OpenFGA relations `agent#can_use` and `llm_model#can_read` through the CAS access API (#2889; agent action `use`) once per turn per (user, agent, model), before the first LLM call. A gateway with ext_authz MAY also ask the BFF CAS adapter (#2909).
+- **FR-010**: Dynamic agents MUST check the OpenFGA relations `agent#can_use` and `llm_model#can_read` through CAS (agent action `use`) once per turn per (user, agent, model), before the first LLM call. A gateway with ext_authz MAY also ask the BFF CAS adapter (#2909). The check uses the CAS decision API dynamic agents already calls and moves to the `/api/access` contract with #2889.
+- **FR-023**: With the switch on, CAIPE MUST log a startup warning for each configured experimental Harness Engine runtime, stating that its LLM usage bypasses the gateway and is not budgeted.
 
 ### Errors ④
 - **FR-011**: Upstream provider errors MUST pass through with their class preserved.
@@ -243,17 +252,18 @@ flowchart LR
 - Keycloak 26.3 standard token exchange emits per-agent scope claims; confirmed by spike S1 up to 10,000 agents with a sized realm cache ([S1 results](./research.md#s1-results)).
 - The gateway can reach the token issuer's JWKS.
 - Dynamic agents authenticate callers from the bearer token alone (#1753) before the gateway token is minted.
-- The delegation mechanism for autonomous runs is decided by #2890; spike S1 tests the gateway scope against that mechanism.
+- Autonomous runs reach dynamic agents with an owner token. #2890 may change how the scheduler obtains it, not the gateway exchange.
 - The OpenAI wire format loses some provider-native features, such as prompt caching and thinking parameters. Native providers in `llm_wrapper` remain available while the switch is off.
 - Related work is listed in [research.md](./research.md#related-work).
 
 ## Open Decisions
 
-- ~~**OD-1 Signer**~~ Closed 2026-10-14 by spike S1 (#2938): **Keycloak per-agent scope ([K2](./research.md#identity-option-legend))**. [C1](./research.md#identity-option-legend) stays the fallback; claims and budget keys are identical either way. The autonomous-run check is still open on #2890. See [S1 results](./research.md#s1-results).
+- ~~**OD-1 Signer**~~ Closed 2026-10-14 by spike S1 (#2938): **Keycloak per-agent scope ([K2](./research.md#identity-option-legend))**. [C1](./research.md#identity-option-legend) stays the fallback; claims and budget keys are identical either way. Autonomous runs reuse the chat exchange (2026-11-07); a chained-exchange test gates phase 1 (T101). See [S1 results](./research.md#s1-results).
 
 ## Out of Scope
 
 - Shipping, operating or scaling a gateway.
+- Experimental Harness Engine runtimes. They call providers without `llm_wrapper`, so their usage is not budgeted (FR-023). Routing them through the gateway is a follow-up.
 - An in-process routing library (consistent with `2026-09-24-remove-cnoe-agent-utils` FR-024).
 - Gateway-side fallback and retry policy (the gateway's job).
 - Multi-tenant deployments sharing one CAIPE instance.

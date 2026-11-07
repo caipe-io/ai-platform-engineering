@@ -19,7 +19,7 @@ This PR delivers the **spec/ADR only**. Implementation lands as separate PRs und
 
 | Plane | Language | Where | Why |
 |---|---|---|---|
-| Data plane ①–④ | Python 3.14 | `llm_wrapper`, `dynamic_agents`, RAG | `build_chat_model` is the one choke point for paths 1–3 (FR-003); RAG already uses Python |
+| Data plane ①–④ | Python 3.14 | `llm_wrapper`, `dynamic_agents`, RAG | `build_chat_model` is the one choke point for paths 1–3 (FR-003), including Harness Engine Deep Agents; experimental Harness Engine runtimes are out of scope; RAG already uses Python |
 | Control plane ⑤, identity lifecycle | TypeScript (Next.js BFF) | `ui/src/app/api/`, `ui/src/lib/` | The BFF already owns Keycloak admin, the credentials store, CAS and admin routes |
 
 - No new language, framework or service. New dependencies: none expected; a gateway SDK only if an adapter cannot use plain HTTP.
