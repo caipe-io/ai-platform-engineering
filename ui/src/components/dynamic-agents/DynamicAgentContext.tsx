@@ -81,8 +81,9 @@ export function DynamicAgentContext({
   const isStreaming = !!conversationId && (streamingConversations.has(conversationId) || !!externalActivity[conversationId]);
   const tasks = useMemo(() => getWorkspaceTasks(conversation), [conversation]);
   const turnEvents = getWorkspaceTurnEvents(conversation);
-  const { data: timeline } = useAgentTimeline(turnEvents, isStreaming,
-    conversation?.messages.findLast((message) => message.role === "assistant")?.turnStatus ?? "unknown");
+  // A chat's terminal status cannot certify an unfinished child delegation.
+  // Only the child's matching tool_end event confirms its completion.
+  const { data: timeline } = useAgentTimeline(turnEvents, isStreaming, "unknown");
   const subagentRuns = timeline.segments.filter((segment) => segment.type === "subagent");
   const [openSections, setOpenSections] = useState(["agents", "coordination"]);
   const [activeTab, setActiveTab] = useState("info");
@@ -708,7 +709,11 @@ function AgentInfoContent({
               This will refresh the session, checking for any new updates to the agent and refreshing connections to MCP servers. Chat history will not be affected.
             </p>
             
-            {/* Download Chat Button */}
+          </div>
+        </div>
+      )}
+
+            {/* Export is available to readers independently of runtime control. */}
             {onDownloadChat && (
               <Button
                 variant="outline"
@@ -721,10 +726,6 @@ function AgentInfoContent({
                 Download Chat
               </Button>
             )}
-          </div>
-        </div>
-      )}
-
       {/* Files Section */}
       {onToggleFiles && (
         <div className="space-y-2 pt-2 border-t border-border/50">
