@@ -5,7 +5,7 @@ import { useAppAssistantPresentation, useAssistantComposerOptions } from "@/comp
 import { DynamicAgentContext } from "@/components/dynamic-agents/DynamicAgentContext";
 import { ResizableHandle,ResizablePanel,ResizablePanelGroup } from "@/components/ui/resizable";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
-import { useCallback,useState } from "react";
+import { useCallback,useState,useSyncExternalStore } from "react";
 import { usePanelRef } from "react-resizable-panels";
 
 interface ChatViewProps {
@@ -29,6 +29,15 @@ interface ChatViewProps {
   isLoadingMessages?: boolean;
 }
 
+const narrowQuery = "(max-width: 767px)";
+function subscribeToViewport(onChange: () => void): () => void {
+  const query = window.matchMedia(narrowQuery);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+const isNarrowViewport = () => window.matchMedia(narrowQuery).matches;
+const serverViewport = () => false;
+
 /**
  * Chat view for Dynamic Agents.
  * Combines ChatPanel with a resizable DynamicAgentContext panel.
@@ -44,7 +53,8 @@ export function ChatView({
   apiConversation,
   isLoadingMessages,
 }: ChatViewProps) {
-  const [contextPanelCollapsed, setContextPanelCollapsed] = useState(true);
+  const [contextPanelCollapsed, setContextPanelCollapsed] = useState(false);
+  const narrow = useSyncExternalStore(subscribeToViewport, isNarrowViewport, serverViewport);
   const [isAnimating, setIsAnimating] = useState(false);
   const contextPanelRef = usePanelRef();
   const { app, configuration } = useAppAssistantPresentation(agent?.presentation?.available ? agent.presentation.app.id : undefined, selectedAgentId);
@@ -68,10 +78,33 @@ export function ChatView({
 
   return (
     <ResizablePanelGroup
-      direction="horizontal"
+      direction={narrow ? "vertical" : "horizontal"}
       className="flex-1 min-w-0 h-full"
       data-animating={isAnimating || undefined}
     >
+      {/* Workspace stays beside the conversation while its stream continues. */}
+      <ResizablePanel
+        panelRef={contextPanelRef}
+        defaultSize={narrow ? "240px" : "300px"}
+        minSize={narrow ? "160px" : "240px"}
+        maxSize={narrow ? "55%" : "45%"}
+        collapsible
+        collapsedSize="48px"
+        onResize={(size) => setContextPanelCollapsed(size.inPixels <= 60)}
+      >
+        <DynamicAgentContext
+          key={`${selectedAgentId}:${conversationId}`}
+          conversationId={conversationId}
+          agentId={selectedAgentId}
+          agent={agent}
+          agentNotFound={agentNotFound}
+          collapsed={contextPanelCollapsed}
+          onCollapse={handleCollapse}
+          readOnly={readOnly || isDisabled}
+        />
+      </ResizablePanel>
+      <ResizableHandle className="bg-transparent hover:bg-primary/40 focus-visible:bg-primary/40" />
+
       {/* Chat Panel */}
       <ResizablePanel minSize={40}>
         <div className="flex-1 min-w-0 flex flex-col overflow-hidden h-full">
@@ -93,29 +126,6 @@ export function ChatView({
         </div>
       </ResizablePanel>
 
-      <ResizableHandle className="bg-transparent hover:bg-primary/40 focus-visible:bg-primary/40" />
-
-      {/* Context Panel - Dynamic Agent variant */}
-      <ResizablePanel
-        panelRef={contextPanelRef}
-        defaultSize="64px"
-        minSize="340px"
-        maxSize="70%"
-        collapsible
-        collapsedSize="64px"
-        onResize={(size) => {
-          setContextPanelCollapsed(size.inPixels <= 80);
-        }}
-      >
-        <DynamicAgentContext
-          conversationId={conversationId}
-          agentId={selectedAgentId}
-          agent={agent}
-          agentNotFound={agentNotFound}
-          collapsed={contextPanelCollapsed}
-          onCollapse={handleCollapse}
-        />
-      </ResizablePanel>
     </ResizablePanelGroup>
   );
 }
