@@ -53,7 +53,7 @@ export function ChatView({
   apiConversation,
   isLoadingMessages,
 }: ChatViewProps) {
-  const [contextPanelCollapsed, setContextPanelCollapsed] = useState(false);
+  const [contextPanelCollapsed, setContextPanelCollapsed] = useState(true);
   const narrow = useSyncExternalStore(subscribeToViewport, isNarrowViewport, serverViewport);
   const [isAnimating, setIsAnimating] = useState(false);
   const contextPanelRef = usePanelRef();
@@ -82,30 +82,6 @@ export function ChatView({
       className="flex-1 min-w-0 h-full"
       data-animating={isAnimating || undefined}
     >
-      {/* Workspace stays beside the conversation while its stream continues. */}
-      <ResizablePanel
-        panelRef={contextPanelRef}
-        defaultSize={narrow ? "240px" : "300px"}
-        minSize={narrow ? "160px" : "240px"}
-        maxSize={narrow ? "55%" : "45%"}
-        collapsible
-        collapsedSize="48px"
-        groupResizeBehavior="preserve-pixel-size"
-        onResize={(size) => setContextPanelCollapsed(size.inPixels <= 80)}
-      >
-        <DynamicAgentContext
-          key={`${selectedAgentId}:${conversationId}`}
-          conversationId={conversationId}
-          agentId={selectedAgentId}
-          agent={agent}
-          agentNotFound={agentNotFound}
-          collapsed={contextPanelCollapsed}
-          onCollapse={handleCollapse}
-          readOnly={readOnly || isDisabled}
-        />
-      </ResizablePanel>
-      <ResizableHandle className="bg-transparent hover:bg-primary/40 focus-visible:bg-primary/40" />
-
       {/* Chat Panel */}
       <ResizablePanel minSize={40}>
         <div className="flex-1 min-w-0 flex flex-col overflow-hidden h-full">
@@ -126,7 +102,29 @@ export function ChatView({
           />
         </div>
       </ResizablePanel>
-
+      <ResizableHandle className="bg-transparent hover:bg-primary/40 focus-visible:bg-primary/40" />
+      {/* Workspace stays to the right of chat (below it on narrow screens). */}
+      <ResizablePanel
+        panelRef={contextPanelRef}
+        defaultSize="48px"
+        minSize={narrow ? "160px" : "280px"}
+        maxSize={narrow ? "55%" : "45%"}
+        collapsible
+        collapsedSize="48px"
+        groupResizeBehavior="preserve-pixel-size"
+        onResize={(size) => setContextPanelCollapsed(size.inPixels <= 80)}
+      >
+        <DynamicAgentContext
+          key={`${selectedAgentId}:${conversationId}`}
+          conversationId={conversationId}
+          agentId={selectedAgentId}
+          agent={agent}
+          agentNotFound={agentNotFound}
+          collapsed={contextPanelCollapsed}
+          onCollapse={handleCollapse}
+          readOnly={readOnly || isDisabled}
+        />
+      </ResizablePanel>
     </ResizablePanelGroup>
   );
 }

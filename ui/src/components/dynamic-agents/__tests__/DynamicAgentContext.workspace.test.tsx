@@ -19,12 +19,14 @@ beforeEach(() => { global.fetch = jest.fn().mockResolvedValue({ ok: true, json: 
 
 it("shows actual configured agents and saved tasks, with no pretend coordination toggle", () => {
   render(<DynamicAgentContext conversationId="example-chat" agentId="example-agent" agent={agent} readOnly />);
+  expect(screen.getByRole("tab", { name: "Agent info" })).toHaveAttribute("aria-selected", "true");
+  fireEvent.mouseDown(screen.getByRole("tab", { name: "Agent coordination" }), { button: 0, ctrlKey: false });
   const agents = within(screen.getByRole("region", { name: "Agents" }));
   expect(agents.getByText("Example agent")).toBeInTheDocument();
   expect(agents.getByText("Helper")).toBeInTheDocument();
   expect(screen.getByText("Check the result")).toBeInTheDocument();
   expect(screen.queryByRole("combobox", { name: "Chat mode" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Context & agent details" }));
+  fireEvent.mouseDown(screen.getByRole("tab", { name: "Agent info" }), { button: 0, ctrlKey: false });
   expect(screen.queryByRole("button", { name: "Refresh Agent Session" })).not.toBeInTheDocument();
 });
 
@@ -33,6 +35,7 @@ it("loads files on demand, distinguishes errors from empty results, and retries"
   const warning = jest.spyOn(console, "warn").mockImplementation(() => {});
   render(<DynamicAgentContext conversationId="example-chat" agentId="example-agent" agent={agent} />);
   expect(fetch).not.toHaveBeenCalled();
+  fireEvent.mouseDown(screen.getByRole("tab", { name: "Agent coordination" }), { button: 0, ctrlKey: false });
   fireEvent.click(screen.getByRole("button", { name: "Workspace files" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("could not be loaded");
   fireEvent.click(screen.getByRole("button", { name: "Refresh files" }));
@@ -55,6 +58,7 @@ it("does not mark an unfinished delegation complete just because no browser is s
   const previous = mockConversation.streamEvents;
   mockConversation.streamEvents = [createStreamEvent("tool_start", { tool_name: "task", tool_call_id: "child-run", namespace: [], args: { subagent_type: "Example helper", description: "Review the change" } })];
   render(<DynamicAgentContext conversationId="example-chat" agentId="example-agent" agent={agent} />);
+  fireEvent.mouseDown(screen.getByRole("tab", { name: "Agent coordination" }), { button: 0, ctrlKey: false });
   expect(screen.getByText("Completion unconfirmed")).toBeInTheDocument();
   mockConversation.streamEvents = previous;
 });

@@ -11,6 +11,7 @@ import { getWorkspaceTasks, getWorkspaceTurnEvents } from "@/lib/chat-workspace"
 import { FileTree } from "@/components/dynamic-agents/FileTree";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
 import type { ContextUsageEventData } from "@/lib/streaming/types";
@@ -26,8 +27,8 @@ FolderOpen,
 ListTodo,
 Loader2,
 NotebookText,
-PanelLeftClose,
-PanelLeftOpen,
+PanelRightClose,
+PanelRightOpen,
 RefreshCw,
 Server,
 Trash2,
@@ -84,12 +85,14 @@ export function DynamicAgentContext({
     conversation?.messages.findLast((message) => message.role === "assistant")?.turnStatus ?? "unknown");
   const subagentRuns = timeline.segments.filter((segment) => segment.type === "subagent");
   const [openSections, setOpenSections] = useState(["agents", "coordination"]);
+  const [activeTab, setActiveTab] = useState("info");
   const [filesRefreshKey, setFilesRefreshKey] = useState(0);
   const [filesError, setFilesError] = useState<string | null>(null);
   const sectionId = useId();
   const toggleSection = (section: string) => setOpenSections((sections) =>
     sections.includes(section) ? sections.filter((value) => value !== section) : [...sections, section]);
   const openSection = (section: string) => {
+    setActiveTab(section === "context" ? "info" : "coordination");
     setOpenSections((sections) => sections.includes(section) ? sections : [...sections, section]);
     onCollapse?.(false);
   };
@@ -151,7 +154,7 @@ export function DynamicAgentContext({
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const showFiles = openSections.includes("files");
   useEffect(() => {
-    if (!showFiles || collapsed || !agentId || !conversationId) return;
+    if (!showFiles || collapsed || activeTab !== "coordination" || !agentId || !conversationId) return;
     const controller = new AbortController();
     const load = async () => {
       setIsLoadingFiles(true);
@@ -176,7 +179,7 @@ export function DynamicAgentContext({
     };
     void load();
     return () => controller.abort();
-  }, [showFiles, collapsed, agentId, conversationId, filesRefreshKey, isStreaming]);
+  }, [showFiles, collapsed, activeTab, agentId, conversationId, filesRefreshKey, isStreaming]);
 
   const handleFileDownload = useCallback(async (path: string) => {
     if (!agentId || !conversationId) return;
@@ -292,7 +295,7 @@ export function DynamicAgentContext({
         <div className="border-b border-border/50">
           <div className="flex items-center py-2 justify-between px-3">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-              <PanelLeftOpen className="h-4 w-4 text-primary" />
+              <PanelRightOpen className="h-4 w-4 text-primary" />
               Workspace
             </div>
 
@@ -305,7 +308,7 @@ export function DynamicAgentContext({
                 aria-label="Collapse workspace panel"
                 aria-expanded={!collapsed}
               >
-                <PanelLeftClose className="h-4 w-4" />
+                <PanelRightClose className="h-4 w-4" />
               </Button>
             )}
           </div>
@@ -314,6 +317,11 @@ export function DynamicAgentContext({
 
       {/* Content */}
       {!collapsed && (
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
+          <TabsList aria-label="Workspace views" className="mx-2 mt-2 grid h-auto shrink-0 grid-cols-2">
+            <TabsTrigger value="info" className="whitespace-normal px-2 text-xs">Agent info</TabsTrigger>
+            <TabsTrigger value="coordination" className="whitespace-normal px-2 text-xs">Agent coordination</TabsTrigger>
+          </TabsList>
         <ScrollArea className="flex-1">
           <div className="p-3 space-y-4">
             {/* Agent Not Found Warning */}
@@ -362,6 +370,7 @@ export function DynamicAgentContext({
               </motion.div>
             )}
 
+            <TabsContent value="coordination" className="mt-0 space-y-4">
             <WorkspaceSection id={`${sectionId}-agents`} title="Agents" icon={<Users className="h-4 w-4" />} expanded={openSections.includes("agents")} onToggle={() => toggleSection("agents")}>
               <div className="flex min-w-0 items-center gap-2">
                 <AgentAvatar agent={agent} agentId={agentId} rounded="rounded-lg" size="h-8 w-8" iconSize="h-4 w-4" />
@@ -383,7 +392,8 @@ export function DynamicAgentContext({
               <Button variant="ghost" size="sm" disabled={isLoadingFiles} onClick={() => setFilesRefreshKey((key) => key + 1)}><RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" />Refresh files</Button>
               {isLoadingFiles ? <p role="status" className="text-xs text-muted-foreground">Loading files…</p> : filesError ? <p role="alert" className="text-xs text-destructive">{filesError}</p> : files.length ? <FileTree key={`${agentId}:${conversationId}`} compact files={files} getFileContent={handleGetFileContent} onFileClick={handleFileDownload} /> : <p className="text-xs text-muted-foreground">No files published yet.</p>}
             </WorkspaceSection>
-            <WorkspaceSection id={`${sectionId}-context`} title="Context & agent details" icon={<NotebookText className="h-4 w-4" />} expanded={openSections.includes("context")} onToggle={() => toggleSection("context")}>
+            </TabsContent>
+            <TabsContent value="info" className="mt-0">
             <AgentInfoContent
               agent={agent}
               subagentTools={subagentTools}
@@ -398,15 +408,16 @@ export function DynamicAgentContext({
               reasoningEffort={effectiveReasoningEffort}
               hasReasoningEffortOverride={hasConversationEffortOverride}
             />
-            </WorkspaceSection>
+            </TabsContent>
           </div>
         </ScrollArea>
+        </Tabs>
       )}
 
       {/* Collapsed state - clickable area to expand */}
       {collapsed && onCollapse && (
         <div className="flex flex-row items-center gap-2 py-1 md:flex-col md:py-2">
-          <Button variant="ghost" size="icon" aria-label="Expand workspace panel" aria-expanded={false} onClick={() => onCollapse(false)}><PanelLeftOpen className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="icon" aria-label="Expand workspace panel" aria-expanded={false} onClick={() => onCollapse(false)}><PanelRightOpen className="h-4 w-4" /></Button>
           {[{ id: "agents", label: "Open agents", icon: Users }, { id: "coordination", label: "Open coordination", icon: ListTodo }, { id: "files", label: "Open workspace files", icon: FolderOpen }, { id: "context", label: "Open context and agent details", icon: NotebookText }].map(({ id, label, icon: Icon }) => <Button key={id} variant="ghost" size="icon" aria-label={label} title={label} onClick={() => openSection(id)}><Icon className="h-4 w-4" /></Button>)}
         </div>
       )}

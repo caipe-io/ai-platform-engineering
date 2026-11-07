@@ -4,9 +4,12 @@ sidebar_position: 6
 
 # Chat workspace
 
-Dynamic-agent chats have a resizable workspace panel to the left of the
-conversation. Collapse it to an icon rail; select an icon to reopen a section.
-On narrow screens, the workspace stacks above the conversation.
+Dynamic-agent chats have a resizable workspace panel to the right of the
+conversation. It starts collapsed. Expand it to switch between **Agent info**
+and **Agent coordination**, or select an icon to open a specific section.
+On narrow screens, the workspace stacks below the conversation.
+
+The **Agent coordination** tab contains:
 
 - **Agents:** the primary agent, configured subagents, and the latest turn's
   observed delegations. A configured subagent is not an independently attached
@@ -18,8 +21,9 @@ On narrow screens, the workspace stacks above the conversation.
 - **Workspace files:** files published to the conversation's existing filesystem
   API, with refresh, preview, and download. This is not a browser for the remote
   worker's entire filesystem. Access errors are distinguished from empty lists.
-- **Context & agent details:** existing configuration, context usage, chat
-  export, and session refresh. Read-only viewers cannot refresh the session.
+
+The **Agent info** tab preserves configuration, context usage, chat export,
+and session refresh. Read-only viewers cannot refresh the session.
 
 Chat sharing does not grant agent, tool, or sandbox access. Opening or collapsing
 the workspace does not start, stop, or replace a run. Independent sandbox-session
