@@ -8,7 +8,7 @@
 | | LiteLLM | AgentGateway (`agentgateway.dev`) | Kong AI Gateway | AgentRouter (Envoy AI Gateway) |
 |---|---|---|---|---|
 | ① OpenAI wire | native | OpenAI-compatible LLM backends | `ai-proxy` (OpenAI format) | native; also `/v1/embeddings`, `/anthropic/v1/messages` |
-| ② JWT validation | `enable_jwt_auth`, `user_id_jwt_field`, `team_id_jwt_field` (enterprise only in 1.92.0; no agent field, see S1) | listener `jwtAuth` (already used for MCP) | `openid-connect` → consumer groups | Envoy Gateway `SecurityPolicy` JWT (JWKS); claims copied to headers |
+| ② JWT validation | Enterprise license only; OSS uses per-agent virtual keys (see S1) | listener `jwtAuth` (already used for MCP) | `openid-connect` → consumer groups | Envoy Gateway `SecurityPolicy` JWT (JWKS); claims copied to headers |
 | Budgets / quotas | `max_budget`, tpm/rpm per key, user and team | token and $ budget limits keyed on claims | `ai-rate-limiting-advanced` per consumer or group | token limits (not $) keyed on claim headers × model, CEL cost; `QuotaPolicy` per backend |
 | ⑤ Admin API | REST `/key`, `/team`, `/spend` | config / K8s policy | Admin API / decK | none; Kubernetes CRDs only |
 | Usage | `/spend`, Prometheus | OTel | Prometheus / OTel | OTel GenAI metrics, Prometheus |
@@ -234,7 +234,7 @@ Scale (60 exchanges, 30 password logins per row; ms p50 / p95):
 | Exchanger must be in the subject token's `aud` | Dynamic agents has no Keycloak client today and user tokens carry `aud=caipe-platform`. Phase 1 adds an exchange-only `caipe-dynamic-agents` client and its audience to user tokens. `caipe-platform` is not reused: it is the BFF's Keycloak admin client (`manage-users`). #3010 may reuse the new client |
 | Realm cache limit | Keycloak values size `cache-embedded-realms-max-count` to the agent count with headroom (50,000 held 10,000 agents) |
 | Gateway clock leeway | A token is usable for TTL + gateway leeway (60 s on AgentGateway). Conformance tests expiry past the leeway |
-| LiteLLM 1.92.0 | JWT auth is enterprise-only and its JWT mapping has user, team and org fields but no agent field. LiteLLM OSS uses key auth (Decision 6) |
+| LiteLLM | JWT auth needs a LiteLLM Enterprise license, so LiteLLM OSS cannot validate the gateway JWT and falls back to per-agent virtual keys (Decision 6). LiteLLM Enterprise can use JWT mode |
 | #2901 per-agent clients | Not reused: they are opt-in, operator-enrolled and use client credentials, so their tokens name the agent, not the user. K2 keeps its own scope per agent |
 
 ## Decision 8 — Data and state
