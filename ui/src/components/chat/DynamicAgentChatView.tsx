@@ -90,7 +90,8 @@ export function ChatView({
         maxSize={narrow ? "55%" : "45%"}
         collapsible
         collapsedSize="48px"
-        onResize={(size) => setContextPanelCollapsed(size.inPixels <= 60)}
+        groupResizeBehavior="preserve-pixel-size"
+        onResize={(size) => setContextPanelCollapsed(size.inPixels <= 80)}
       >
         <DynamicAgentContext
           key={`${selectedAgentId}:${conversationId}`}
