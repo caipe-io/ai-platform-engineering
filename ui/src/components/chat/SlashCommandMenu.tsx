@@ -163,7 +163,7 @@ export function SlashCommandMenu({
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium font-mono">
+                            <span className={cn("text-sm font-medium font-mono", cmd.category === "participant" && "text-blue-600 dark:text-blue-400")}>
                               {cmd.category === "participant" ? `@${cmd.label}` : cmd.category === "mcp" || cmd.category === "subagent" ? `/@${cmd.label}` : `/${cmd.id}`}
                             </span>
                           </div>
