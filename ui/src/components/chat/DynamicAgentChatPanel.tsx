@@ -221,6 +221,7 @@ export function ChatPanel({
   );
 
   const [input, setInput] = useState("");
+  const mentionHighlightRef = useRef<HTMLDivElement>(null);
   const [mentionMenu, setMentionMenu] = useState(false);
   const [observedRuntime, setObservedRuntime] = useState<{ conversationId: string; harnessId: string } | null>(null);
 
@@ -2278,6 +2279,9 @@ export function ChatPanel({
     })),
   ] : [];
   const menuCommands = mentionMenu ? mentionCommands : slashCommands;
+  const inputMention = leadingAgentMention(input);
+  const highlightedMention = coordination && inputMention && (inputMention === "primary" || coordination.agents.some(member => member.handle === inputMention))
+    ? `@${inputMention}` : null;
 
   // Handle slash command detection in input
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -3031,11 +3035,11 @@ export function ChatPanel({
               }}
             >
               {!!coordination?.agents.length && <div className="flex items-center gap-2 px-1 pb-1 text-xs text-muted-foreground">
-                <span>To</span><AgentPicker ariaLabel="Message recipient" value={agentId} onChange={coordination.selectAgent} required
+                <span>To</span><div className="w-fit min-w-0 max-w-full"><AgentPicker ariaLabel="Message recipient" value={agentId} onChange={coordination.selectAgent} required hideIdSuffix
                   options={[
                     { value: coordination.primaryAgentId, label: "@primary" },
                     ...coordination.agents.map(member => ({ value: member.agent_id, label: `@${member.handle}`, disabled: !coordination.availableAgents.some(candidate => candidate._id === member.agent_id) })),
-                  ]} disabled={isThisConversationStreaming || isRemoteResponse || Boolean(pendingUserInput || pendingToolApproval)} triggerClassName="h-7 border-0 bg-transparent text-xs shadow-none" />
+                  ]} disabled={isThisConversationStreaming || isRemoteResponse || Boolean(pendingUserInput || pendingToolApproval)} triggerClassName="h-7 rounded-full border-0 bg-blue-500/10 text-xs text-blue-600 shadow-none hover:bg-blue-500/15 dark:text-blue-400" /></div>
               </div>}
               {maxEffortAnimationKey > 0 && (
                 <div
@@ -3159,6 +3163,9 @@ export function ChatPanel({
                     </motion.span>
                   )}
                 </AnimatePresence>
+                {highlightedMention && <div ref={mentionHighlightRef} aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-1.5 py-2 text-sm leading-6 text-foreground">
+                  <span className="text-blue-600 dark:text-blue-400">{highlightedMention}</span>{input.slice(highlightedMention.length)}{"\n"}
+                </div>}
                 <TextareaAutosize
                   ref={inputRef}
                   aria-label="Message"
@@ -3167,12 +3174,18 @@ export function ChatPanel({
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
+                  onScroll={event => {
+                    if (mentionHighlightRef.current) {
+                      mentionHighlightRef.current.scrollTop = event.currentTarget.scrollTop;
+                      mentionHighlightRef.current.scrollLeft = event.currentTarget.scrollLeft;
+                    }
+                  }}
                   placeholder={
                     isStopping ? "Draft your next message while this response stops…" : isRemoteResponse ? "Response is continuing in another view…" : isThisConversationStreaming
                       ? `Type to queue another message${queuedMessages.length > 0 ? ` (${queuedMessages.length} queued)` : ""}, or Cmd+Enter to send now...`
                       : placeholder ?? `Ask anything, or type / to see commands, skills, and agents...`
                   }
-                  className="min-h-10 w-full resize-none bg-transparent px-1.5 py-2 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground"
+                  className={cn("relative min-h-10 w-full resize-none bg-transparent px-1.5 py-2 text-sm leading-6 caret-foreground outline-none placeholder:text-muted-foreground", highlightedMention ? "text-transparent selection:text-foreground" : "text-foreground")}
                   minRows={1}
                   maxRows={10}
                 />
