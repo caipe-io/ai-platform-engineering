@@ -65,7 +65,7 @@ No new service, image or language. Each piece lands in an existing component (de
 | Agent identity lifecycle (Keycloak scopes or keys), default team | UI backend (BFF) | TypeScript | 1 |
 | Adapter ⑤, model sync, limits and usage routes, admin UI | UI backend + UI | TypeScript | 3 |
 | Embeddings and ontology agent through `llm_wrapper` | RAG server, ontology agent | Python | 4 |
-| Remaining budget, quota requests, bot messages | UI, Slack and Webex bots | TypeScript, Python | 5 |
+| Remaining budget, quota requests; bots keep existing failure reporting | UI, Slack and Webex bots | TypeScript, Python | 5 |
 | Helm values and `.env.example` entries | `charts/`, Compose | YAML | 1, 3, 4 |
 
 ## Clarifications
@@ -198,7 +198,7 @@ flowchart LR
 ### Identity ②
 - **FR-004**: With `LLM_GATEWAY_AUTH=jwt` (default), every gateway call MUST carry a short-lived JWT (TTL ≤ 5 min) with `sub` (effective principal), `azp` (sending client, `caipe-dynamic-agents`), `agent_id`, `team_id` and `org`, verifiable by the gateway. Identity claims follow CAIPE's canonical identity contract (#2885). Each token carries exactly one agent binding; the runtime verifies the returned `agent_id` and `team_id` before use or caching. Gateway expiry validation MAY allow documented clock leeway of at most 60 seconds; the maximum acceptance window is the issued TTL plus that leeway (at most 6 minutes). The runtime MUST NOT send tokens at or after `exp`, including cached tokens; refresh before expiry where possible.
 - **FR-005**: With `LLM_GATEWAY_AUTH=key` (gateways that can't validate JWTs), calls MUST carry a per-agent gateway key from CAIPE's credentials store. Agent and team are verified; the user is attributed through the `user` field only, so per-user limits are best-effort.
-- **FR-006**: In gateway-enabled mode, migrated inference workloads MUST NOT receive direct-provider credentials through environment variables or mounted secrets. Gateway admin credentials remain BFF-only in every mode. Direct-provider credentials remain in the deployment secret store and are injected only into direct-mode workloads. Shared secrets containing both provider and required service credentials MUST be split or projected by key.
+- **FR-006**: In gateway-enabled mode, migrated inference workloads MUST NOT receive direct-provider credentials through environment variables or mounted secrets, nor an ambient cloud identity (for example IRSA, EKS Pod Identity or Azure workload identity) that can invoke models directly. Migrated workloads per phase: dynamic agents from phase 1; RAG server and ontology agent from phase 4, which keep their provider credentials until then. Gateway admin credentials remain BFF-only in every mode. Direct-provider credentials remain in the deployment secret store and are injected only into direct-mode workloads. Shared secrets containing both provider and required service credentials MUST be split or projected by key.
 - **FR-007**: Autonomous and scheduled runs MUST be attributed to the task owner, not to a shared service account or an unsigned owner header. Dynamic agents exchange the owner token the run carries; how that token is proven (#2891, #3034) follows #2890.
 
 ### Attribution ③
