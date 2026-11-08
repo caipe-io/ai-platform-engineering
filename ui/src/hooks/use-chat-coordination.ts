@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useChatStore } from "@/store/chat-store";
 import type { ChatCoordinationAgent } from "@/lib/chat-coordination";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
@@ -32,7 +32,6 @@ async function readData<T>(response: Response): Promise<T> {
 
 /** Available agents come from the existing Use-filtered domain endpoint. */
 export function useChatCoordination(conversationId: string, primaryAgentId: string): ChatCoordination {
-  const handoffSignature = useRef("");
   const [mode, setModeState] = useState<"mentions" | "team">("mentions");
   const [handoffs, setHandoffs] = useState<ChatHandoff[]>([]);
   const [agents, setAgents] = useState<ChatCoordinationAgent[]>([]);
@@ -73,7 +72,6 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
     setAgents([]);
     setHandoffs([]);
     setModeState("mentions");
-    handoffSignature.current = "";
     setCanManage(false);
     setAvailableAgents([]);
     void load(controller.signal);
@@ -113,11 +111,9 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
         .then(async data => {
           if (controller.signal.aborted) return;
           setHandoffs(data.handoffs); setModeState(data.mode);
-          const signature = JSON.stringify(data.handoffs.map(job => [job._id, job.status, job.runId]));
-          if (signature !== handoffSignature.current) {
-            await useChatStore.getState().loadMessagesFromServer(conversationId);
-            handoffSignature.current = signature;
-          }
+          // Retry automatic sync even when the membership signature is stable:
+          // the store may defer a load while a final browser save is pending.
+          if (data.handoffs.length) await useChatStore.getState().loadMessagesFromServer(conversationId);
         }).catch(() => {
           if (!controller.signal.aborted) setError("Could not refresh agent handoffs. Retrying shortly.");
         }).finally(() => { pending = false; });

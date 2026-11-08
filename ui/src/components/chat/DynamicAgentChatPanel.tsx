@@ -1350,11 +1350,14 @@ export function ChatPanel({
   const recoveryTurnId = conversation?.messages?.at(-1)?.turnId;
   const recoveryAgentId = conversation?.messages?.at(-1)?.agentId ?? agentId;
   const recoveryAgentName = conversation?.messages?.at(-1)?.agentName ?? coordination?.agents.find(member => member.agent_id === recoveryAgentId)?.name ?? (recoveryAgentId === agentId ? agentName : recoveryAgentId);
+  const recoveryKey = `${activeConversationId}:${recoveryTurnId ?? ""}`;
+  const recoveryHandoffRunId = coordination?.handoffs?.find(job => `handoff-${job._id}` === recoveryTurnId)?.runId;
   useEffect(() => {
     const checked = recoveryChecked.current;
     if (!activeConversationId || isLoadingMessages || isThisConversationStreaming || isAutonomousHistory) return;
-    if (!recoveryMessageId || !["assistant", "user"].includes(recoveryMessageRole ?? "") || checked.has(activeConversationId)) return;
-    checked.add(activeConversationId);
+    if (!recoveryMessageId || !["assistant", "user"].includes(recoveryMessageRole ?? "") || checked.has(recoveryKey)) return;
+    if (handoffAssistantMessageId(recoveryTurnId) && !recoveryHandoffRunId) return;
+    checked.add(recoveryKey);
     let disposed = false;
     let subscribed = false;
     const recoveryController = new AbortController();
@@ -1400,10 +1403,10 @@ export function ChatPanel({
     return () => {
       disposed = true;
       recoveryController.abort();
-      if (!subscribed) checked.delete(activeConversationId);
+      if (!subscribed) checked.delete(recoveryKey);
     };
   }, [activeConversationId, agentId, agentProtocol, isLoadingMessages, isThisConversationStreaming, isRemoteResponse,
-    isAutonomousHistory, panelReadOnly, recoveryMessageId, recoveryMessageRole, recoveryMessageFinal, recoveryTurnId, recoveryAgentId, recoveryAgentName, addMessage, clearStreamEvents, updateMessage, setConversationStreaming,
+    isAutonomousHistory, panelReadOnly, recoveryKey, recoveryHandoffRunId, recoveryMessageId, recoveryMessageRole, recoveryMessageFinal, recoveryTurnId, recoveryAgentId, recoveryAgentName, addMessage, clearStreamEvents, updateMessage, setConversationStreaming,
     buildStreamCallbacks, finalizeStreamLoop]);
 
   // A queued batch renders as separate user bubbles but is sent as one prompt,
