@@ -13,7 +13,7 @@ Any gateway CAIPE supports must satisfy this contract. It is what keeps gateways
 4. **Limits by identity**:
    - JWT auth: enforces limits per `sub`, `agent_id` and `team_id`, namespaced by `org`.
    - Key auth: enforces agent and team limits using the gateway's key bindings. User attribution comes from the request's `user` field and is unverified, so per-user limits are best-effort (FR-005).
-5. **Budget signalling**: returns 429 or 402 when a gateway-enforced limit is hit, with a documented header, structured error code or unambiguous pattern distinguishable from forwarded provider throttling and quota errors. Forwarded errors must not carry the gateway-limit signal.
+5. **Limit rejection**: reject requests when an enforced limit is reached. CAIPE preserves the error status and existing classification; a gateway-specific origin marker, budget scope or reset time is not required.
 6. **Fail closed**: if the limit store or rate-limit service is unreachable, requests are rejected, not admitted unmetered.
 7. **Error passthrough**: upstream errors keep their class. No silent retry that changes it.
 8. **Telemetry**: per-request usage (tokens, cost) is exportable (OTel or Prometheus).
@@ -35,12 +35,12 @@ A gateway passes for its configured authentication mode when:
 
 - [ ] Every agent path in scope returns a correct completion, streaming and tool calls included.
 - [ ] Requests with no credential → 401.
-- [ ] JWT auth: tokens expired past the gateway's documented clock leeway, wrong-audience tokens and tokens signed by a foreign key → 401; user, agent and team limits each trigger a budget rejection with the right scope.
-- [ ] Key auth: invalid or revoked keys → 401; agent and team limits each trigger a budget rejection with the right scope. Document whether best-effort per-user limits are supported.
+- [ ] JWT auth: tokens expired past the gateway's documented clock leeway, wrong-audience tokens and tokens signed by a foreign key → 401; user, agent and team limits each reject the request.
+- [ ] Key auth: invalid or revoked keys → 401; agent and team limits each reject the request. Document whether best-effort per-user limits are supported.
 - [ ] Key auth with adapter `none`: an operator-provisioned key stored in CAIPE works without key-issuance capability.
 - [ ] An induced upstream 429 or 5xx reaches the agent with its class unchanged, including provider quota errors containing "budget" or "quota".
 - [ ] Ambiguous 402/429 responses retain their original classification without inferred scope or budget-increase advice.
-- [ ] With adapter `none`, an operator-configured rule identifies a gateway limit and excludes provider errors; a missing rule does not satisfy budget-error conformance.
+- [ ] With adapter `none`, rejections propagate without error-recognition configuration or direct-provider fallback.
 - [ ] With the limit store down, requests are rejected (AgentRouter: `quotaRateLimitFailureModeDeny=true`).
 - [ ] JWT auth: usage is attributable to verified `sub`, `agent_id` and `team_id`.
 - [ ] Key auth: usage is attributable to the key's agent and team; any user attribution is explicitly treated as unverified.

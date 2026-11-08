@@ -52,9 +52,9 @@ Depends on S1. Complete identity preparation before enabling routing.
 - [ ] **T113** Only if K2 fails the remaining validation and [C1](./research.md#identity-option-legend) is selected, configure signing key management and gateway trust; resolve agent and team claims from CAIPE data. Complete this before enabling C1 routing and repeat the applicable validation gates.
 
 ## Phase 2: errors and telemetry
-- [ ] **T201** `LLMQuotaExceeded` mapping (④) with declarative gateway-limit rules and operator configuration for adapter `none` (no default). Test confirmed gateway limits, forwarded provider quota errors containing "budget"/"quota", ambiguous 402/429 responses and missing rules; only confirmed gateway limits receive budget-specific classification and advice.
-- [ ] **T202** Metrics (FR-009): extend `da_llm_*` with team, caller kind and outcome; add budget-rejection, gateway-failure and token-cache counters. No user label.
-- [ ] **T203** Structured logs (FR-021) for gateway calls, budget rejections, fail-closed and token-mint failures; test that no token, key or prompt is logged.
+- [ ] **T201** Preserve error status and existing classification (④) through the runtime. Test gateway limit rejections, forwarded provider 429/5xx responses and ambiguous 402/429 responses, including messages containing "budget" or "quota". Verify no inferred origin, scope, reset time or budget-increase advice, and no direct-provider fallback. Adapter `none` requires no error-recognition configuration.
+- [ ] **T202** Metrics (FR-009): extend `da_llm_*` with team, caller kind and outcome; add failed-request, gateway-connection-failure and token-cache counters. No user label.
+- [ ] **T203** Structured logs (FR-021) for gateway calls, rejected requests, fail-closed and token-mint failures; test that no token, key or prompt is logged.
 - [ ] **T204** Traces (FR-022): gateway-call and token-acquisition spans; `traceparent` carries the gateway-call span. Measure the added hop for SC-006.
 
 ## Phase 3: control plane
@@ -77,7 +77,7 @@ Depends on S1. Complete identity preparation before enabling routing.
 ## Phase 5: end-user UX
 - [ ] **T501** Remaining-budget display (UI) where the adapter supports it.
 - [ ] **T502** Quota-increase requests (`llm_quota_requests`) + admin approval.
-- [ ] **T503** Actionable budget messages in Slack and Webex.
+- [ ] **T503** Preserve runtime failure reporting in Slack and Webex without inferred budget scope, reset time or budget-increase advice.
 
 ## Required validation
 - [ ] **T601** Build and run the [gateway conformance suite](./contracts/routing-backend-contract.md) against at least two different gateways. Record each gateway's version, configured authentication mode and results. Passing all applicable checks for every in-scope path on both gateways is required for implementation completion (SC-007), not for merging this spec/ADR.

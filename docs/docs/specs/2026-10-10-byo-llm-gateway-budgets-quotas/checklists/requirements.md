@@ -15,7 +15,7 @@
 - [x] Journeys include first-use onboarding (J1–J4, research Decision 6)
 - [x] Data: one source of truth each, no drifting copies (research Decision 8, FR-015)
 - [x] Rollout: off by default, phased, reversible (FR-018, FR-019, plan)
-- [x] Reliability: fail closed, streaming and tool calls, clear quota errors (FR-012, FR-013)
+- [x] Reliability: fail closed, streaming and tool calls, error propagation without inferred budget-specific advice (FR-012, FR-013)
 - [x] Observability: metrics by agent, team and model; users in traces and logs (FR-009, FR-021, FR-022)
 - [x] Reuse: `llm_wrapper`, Keycloak, CAS, `llm_models` (no parallel mechanisms)
 

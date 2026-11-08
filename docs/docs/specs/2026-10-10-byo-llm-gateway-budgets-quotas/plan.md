@@ -74,7 +74,6 @@ global:
     audience: llm-gateway   # LLM_GATEWAY_AUDIENCE
     adapter: none           # LLM_GATEWAY_ADAPTER (BFF only)
     defaultTeam: platform   # LLM_GATEWAY_DEFAULT_TEAM
-    budgetSignal: ""        # LLM_GATEWAY_BUDGET_SIGNAL
     adminCredential:        # BFF only; existing secret strategies
       existingSecret: ""
 ```
@@ -101,7 +100,7 @@ flowchart LR
 |---|---|---|---|
 | 0 | Spec/ADR (this PR) + spike S1 | `docs/`, Keycloak spike | approval |
 | 1 | Identity setup and lifecycle for existing/new agents, default team; routing and authorization for agent paths 1–3 | `llm_wrapper/src/llm_wrapper/build.py`, `dynamic_agents/services/{llm_clients,llm}.py`, `dynamic_agents/auth/authz.py`, `ui/src/lib/rbac/keycloak-admin.ts`, agent lifecycle routes | S1 selected [K2](./research.md#identity-option-legend); T102 must validate chained exchange of a scheduler-minted owner token for autonomous runs; identity readiness before routing. Not gated on #1753 (see [tasks](./tasks.md#phase-1-identity-preparation-and-agent-data-plane)) |
-| 2 | Budget-signal rules ④ + attribution ③ + metrics, logs, traces | `llm_wrapper`, `dynamic_agents` | phase 1 |
+| 2 | Error propagation ④ + attribution ③ + metrics, logs, traces | `llm_wrapper`, `dynamic_agents` | phase 1 |
 | 3 | Control plane: adapter, automated gateway principal provisioning, `llm_models` sync, admin limits/usage UI | `ui/src/app/api/`, `ui/src/lib/`, `ui/src/lib/rbac/keycloak-admin.ts` | phase 1 |
 | 4 | RAG paths 4–5 (same embedding model id only) | `knowledge_bases/rag/` | phases 1–2 |
 | 5 | End-user UX: remaining budget, quota requests | `ui/`, bots (message text only) | phase 3 |

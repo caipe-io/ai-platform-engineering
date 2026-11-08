@@ -36,7 +36,7 @@ Keep valid direct-provider configuration and credentials available for the disab
 | Adapter lacks `models.list`, including `none`: configure or add model entries with IDs matching gateway aliases | Sync is hidden; catalogue entries remain selectable subject to permissions |
 | Chat with an agent | Completion succeeds; the gateway logs `sub`, `agent_id`, `team_id` |
 | Call the gateway with no or forged token | 401 |
-| Set a tiny team limit through CAIPE where supported, otherwise in the gateway; chat again | "Budget for team … exhausted" message, with a request-increase action |
+| Set a tiny team limit through CAIPE where supported, otherwise in the gateway; chat again | The request is rejected and CAIPE reports the failure without inferred budget-specific advice or direct-provider fallback |
 | Autonomous task run | Usage attributed to the task owner, agent and team |
 | Keep the gateway configured and reachable; set `LLM_GATEWAY_ENABLED=false` | Every migrated path completes through its direct provider; zero inference requests reach the gateway |
 

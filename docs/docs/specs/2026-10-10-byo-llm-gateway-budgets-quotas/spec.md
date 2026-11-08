@@ -27,9 +27,9 @@ sequenceDiagram
     G->>P: Provider request
     P-->>G: Completion or upstream error
     G-->>A: Completion or upstream error
-  else Confirmed gateway limit
-    G-->>A: 429/402 with distinguishable gateway-limit signal
-    A->>A: ④ Map to LLMQuotaExceeded
+  else Request rejected
+    G-->>A: Error response
+    A->>A: ④ Preserve error classification
   end
 ```
 
@@ -49,7 +49,7 @@ flowchart TD
 | ① | Wire: OpenAI `/v1/chat/completions`, `/v1/models`, `/v1/embeddings` | gateway |
 | ② | Identity: `LLM_GATEWAY_AUTH=jwt` (default) uses a short-lived JWT `{sub, azp, agent_id, team_id, org}`; `key` uses a per-agent gateway key with verified agent/team bindings, unverified user attribution and best-effort per-user limits | CAIPE issues JWTs or supplies provisioned gateway keys; gateway verifies credentials |
 | ③ | Attribution: OpenAI `user` field, `x-caipe-*` context headers, OTel GenAI | CAIPE sends |
-| ④ | Errors: budget/quota rejections → one CAIPE error type | CAIPE maps |
+| ④ | Errors: preserve status and existing classification | CAIPE propagates |
 | ⑤ | Control plane: capability-flagged adapter (models, limits, usage) | CAIPE UI backend |
 
 Details: [data plane](./contracts/openai-endpoint.md), [gateway conformance](./contracts/routing-backend-contract.md), [adapter](./contracts/gateway-adapter.md), [research.md](./research.md), [data-model.md](./data-model.md).
@@ -60,7 +60,7 @@ No new service, image or language. Each piece lands in an existing component (de
 
 | Piece | Component | Language | Phase |
 |---|---|---|---|
-| Switch, provider override, auth hook, budget-signal rules ④ | `llm_wrapper` (library) | Python | 1–2 |
+| Switch, provider override, auth hook, error propagation ④ | `llm_wrapper` (library) | Python | 1–2 |
 | Gateway token acquisition and cache, `llm_model#can_read` check, attribution ③, telemetry | `dynamic_agents` | Python | 1–2 |
 | Agent identity lifecycle (Keycloak scopes or keys), default team | UI backend (BFF) | TypeScript | 1 |
 | Adapter ⑤, model sync, limits and usage routes, admin UI | UI backend + UI | TypeScript | 3 |
@@ -124,7 +124,7 @@ flowchart LR
 4. Views usage and spend, read live from the gateway where the adapter declares `usage.read`.
 5. Approves or rejects quota-increase requests.
 6. Swaps gateways by changing the endpoint and adapter. Agents are untouched.
-7. With adapter `none`, manages gateway identities, credentials and limits externally and maintains CAIPE's model catalogue through configuration or the LLM Models UI. Gateway routing remains enabled by `LLM_GATEWAY_ENABLED`; CAIPE still sends attribution and maps errors. See the [adapter contract](./contracts/gateway-adapter.md).
+7. With adapter `none`, manages gateway identities, credentials and limits externally and maintains CAIPE's model catalogue through configuration or the LLM Models UI. Gateway routing remains enabled by `LLM_GATEWAY_ENABLED`; CAIPE still sends attribution and propagates errors. See the [adapter contract](./contracts/gateway-adapter.md).
 
 **Acceptance**:
 - Given a configured gateway, when the admin turns on `LLM_GATEWAY_ENABLED`, every migrated call path routes through the gateway with no agent edits.
@@ -143,29 +143,31 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  a["Chat"] --> b["Near limit:<br/>remaining shown"] --> c["Confirmed gateway limit"] --> d["Budget for team, agent or you<br/>exhausted, resets at time"] --> e["Request increase"]
+  a["Chat"] --> b["Request rejected"] --> c["Report failure without inferring its source"]
+  a -.-> d["View usage where supported"]
+  d -.-> e["Request a budget increase separately"]
 ```
 
 1. Chats normally in the UI, Slack or Webex. No new step.
 2. Sees remaining budget where the adapter supports it.
-3. When exhausted, gets an actionable message naming the scope and the reset time, never a generic error.
-4. Requests an increase from the message. The request is routed to the admin queue.
+3. When a request is rejected, sees the failure through existing error handling, without inferred origin, budget scope or reset time.
+4. Can separately submit a quota-increase request for a selected principal through the phase 5 UI. The request is routed to the admin queue; it is not inferred from an error response.
 
 **Acceptance**:
-- Given an exhausted agent budget, when the user sends a message, the reply names the exhausted scope within one turn and offers "request increase".
+- Given an exhausted agent budget, when the gateway rejects the request, CAIPE reports the failure without direct-provider fallback or inferred budget-specific advice.
 
 ### J4 — Agent runtime: call the gateway (P1)
 
 ```mermaid
 flowchart LR
-  a["Resolve model"] --> b["OpenFGA check<br/>(once per turn)"] --> c["Gateway token<br/>(cached)"] --> d["Call gateway"] --> e["Map errors"]
+  a["Resolve model"] --> b["OpenFGA check<br/>(once per turn)"] --> c["Gateway token<br/>(cached)"] --> d["Call gateway"] --> e["Propagate errors"]
 ```
 
 1. Resolves the model from `llm_models`.
 2. Checks with OpenFGA that the caller may use this agent and this model, once per turn.
 3. Gets a gateway token for (user, agent). Autonomous runs act as the task owner.
 4. Calls the gateway with ①②③. Holds no provider keys.
-5. Maps budget and quota rejections to ④. Fallback and retries are the gateway's job.
+5. Preserves error status and existing classification (④). Fallback and retries are the gateway's job.
 
 **Acceptance**:
 - Given an autonomous run, when it calls the gateway, usage is attributed to the task owner, the agent and the owning team, not to a shared service account.
@@ -201,9 +203,9 @@ flowchart LR
 
 ### Attribution ③
 - **FR-008**: Calls MUST set the OpenAI `user` field to `sub`, and send `x-caipe-conversation-id` and W3C `traceparent`.
-- **FR-009**: CAIPE MUST emit LLM call metrics (count, latency, tokens, budget rejections, gateway failures, token-cache hits) labelled with agent, team, model, caller kind and outcome. Metric labels MUST NOT include user IDs (unbounded cardinality); per-user usage comes from the gateway (`usage.read`), traces and logs. Metrics extend the existing dynamic-agents Prometheus metrics (`da_llm_*`) and use OTel GenAI semantic-convention names where they exist.
+- **FR-009**: CAIPE MUST emit LLM call metrics (count, latency, tokens, failed requests, gateway connection failures, token-cache hits) labelled with agent, team, model, caller kind and outcome. Metric labels MUST NOT include user IDs (unbounded cardinality); per-user usage comes from the gateway (`usage.read`), traces and logs. Metrics extend the existing dynamic-agents Prometheus metrics (`da_llm_*`) and use OTel GenAI semantic-convention names where they exist.
 
-- **FR-021**: Each gateway call, budget rejection, fail-closed error and token-mint failure MUST produce one structured log line with conversation ID, trace ID, agent, team, model, auth mode, status and latency. Logs MUST NOT contain gateway tokens, keys, prompts or completions; the user is logged only as `sub`.
+- **FR-021**: Each gateway call, rejected request, fail-closed error and token-mint failure MUST produce one structured log line with conversation ID, trace ID, agent, team, model, auth mode, status and latency. Logs MUST NOT contain gateway tokens, keys, prompts or completions; the user is logged only as `sub`.
 - **FR-022**: Traces MUST add a gateway-call span (OTel GenAI attributes, including `gen_ai.request.model` and token usage, plus `caipe.agent_id`, `caipe.team_id`, `caipe.auth_mode`) and a token-acquisition span (cache hit or miss) under the existing turn trace. The `traceparent` sent in FR-008 MUST be the gateway-call span's context, so gateway traces join CAIPE traces. Tracing stays best-effort and never blocks a call.
 
 ### Authorization
@@ -212,7 +214,7 @@ flowchart LR
 
 ### Errors ④
 - **FR-011**: Upstream provider errors MUST pass through with their class preserved.
-- **FR-012**: Confirmed gateway budget and quota rejections MUST become `LLMQuotaExceeded`, naming the scope (user, agent or team) and reset time where known. Recognition MUST use a declarative rule identifying a gateway-enforced limit through a distinguishable signal; status codes or keywords alone are insufficient. Unmatched or ambiguous errors MUST retain their original classification without inferred scope or budget-increase advice.
+- **FR-012**: Rejected requests MUST preserve their response status and existing error classification. CAIPE MUST NOT infer gateway-versus-provider origin, budget scope, reset time or budget-increase advice. Gateway-specific error recognition and a dedicated budget exception are deferred; no runtime error-profile or budget-signal configuration is required.
 - **FR-013**: An unreachable or misconfigured gateway MUST fail closed with a clear error. No silent fallback.
 
 ### Control plane ⑤
@@ -240,7 +242,7 @@ flowchart LR
 
 - **SC-001**: Swapping gateways requires zero agent changes.
 - **SC-002**: With JWT auth, every LLM call path in scope is attributed to user, agent and team (100% of sampled calls).
-- **SC-003**: Exceeding any limit produces the actionable error (④) in 100% of cases. No generic errors.
+- **SC-003**: Gateway limit rejections and forwarded provider failures remain failures with their status and existing error classification preserved, without inferred budget-specific advice or direct-provider fallback.
 - **SC-004**: With a gateway configured and reachable and `LLM_GATEWAY_ENABLED=false`, automated tests MUST verify successful direct-provider calls and zero inference requests to the gateway for every migrated path.
 - **SC-005**: A forged or expired identity is rejected by the gateway (zero accepted forgeries in conformance tests).
 - **SC-006**: The added latency (cached token) is measured and documented.
@@ -262,6 +264,7 @@ flowchart LR
 
 ## Out of Scope
 
+- Gateway-specific error recognition and automatic budget-specific guidance; reconsider in a future iteration or on user request.
 - Shipping, operating or scaling a gateway.
 - Experimental Harness Engine runtimes. They call providers without `llm_wrapper`, so their usage is not budgeted (FR-023). Routing them through the gateway is a follow-up.
 - An in-process routing library (consistent with `2026-09-24-remove-cnoe-agent-utils` FR-024).

@@ -141,7 +141,7 @@ sequenceDiagram
   S-->>DA: JWT, exp ≤ 5 min
   DA->>GW: /v1/chat/completions + Bearer JWT
   GW->>GW: verify JWT, ensure principal (first time), charge user / agent / team
-  GW-->>DA: completion, or 429/402 budget signal
+  GW-->>DA: completion, or error response
 ```
 
 ## Decision 7 — Who signs: **Keycloak per-agent scope ([K2](#identity-option-legend)), fallback [C1](#identity-option-legend)** (confirmed by [S1](#s1-results))
@@ -255,12 +255,14 @@ Scale (60 exchanges, 30 password logins per row; ms p50 / p95):
 - **Runtime (always)**: dynamic agents use CAS (today's decision API in `dynamic_agents/auth/authz.py`; `/api/access` once #2889 resumes) to check OpenFGA relations `agent#can_use` (CAS action `use`, already enforced) and `llm_model#can_read` (runtime check to add) once per turn per (user, agent, model). Every LLM call in that turn reuses the decision.
 - **Gateway (optional)**: where ext_authz exists, the gateway asks the BFF CAS adapter (#2892, #2909), as AgentGateway does for MCP, for the same decision and verified identity headers.
 
-## Decision 10 — Budget errors without gateway code in agents
+## Decision 10 — Preserve errors; defer gateway-specific recognition
 
-- Named adapters ship documented declarative **budget-signal rules**: status codes plus a gateway header, structured error code or unambiguous pattern identifying a gateway-enforced limit, and where to read scope and reset time. Forwarded provider errors must remain distinguishable. Status codes or "budget"/"quota" keywords alone cannot establish the source of a rejection.
-- The rule is data in `llm_wrapper`, overridable with `LLM_GATEWAY_BUDGET_SIGNAL`. Agents contain no per-gateway code.
-- Adapter `none` has no default rule. Operators configure `LLM_GATEWAY_BUDGET_SIGNAL` for their gateway before budget-error conformance can pass.
-- Unmatched or ambiguous errors keep their original status and classification without inferred budget scope or budget-increase advice. Provider quota errors may use the same status codes and words as gateway limits; raising a gateway budget would not resolve them.
+- The gateway owns and enforces budgets and quotas. CAIPE preserves failed responses through its existing error handling without inferring whether the gateway or an upstream provider caused them.
+- `LLM_GATEWAY_ADAPTER` selects BFF management integration only. The runtime does not use it to classify errors.
+- No error-profile or budget-signal configuration is introduced. Adapter `none` requires no error-recognition setup.
+- Gateway-specific recognition, a dedicated budget exception, and inferred budget scope, reset time or increase advice are deferred until a future iteration or concrete user request.
+- Future recognition is an optional UX enhancement for explicitly supported, tested response formats, not a prerequisite for gateway compatibility. Supporting another gateway does not require adding a runtime error parser.
+- Failed requests remain failed. CAIPE never retries them through a direct provider to bypass gateway enforcement.
 
 ## Decision 11 — Availability and latency
 
