@@ -291,3 +291,12 @@ declarations, and integrity pins remain checked.
 - `assistant_chat` and configured legacy conversation aliases remain host-owned. They survive app query navigation and are excluded from state sent to the iframe.
 - Sign-in redirects preserve app paths and query parameters. Client redirects also retain the current section anchor.
 - Each app defines its report persistence. A URL cannot transfer a browser-local snapshot to another browser; an unavailable exact snapshot must be reported rather than silently replaced with fresh data.
+
+### App scrolling stays inside the host viewport
+
+The authenticated viewport and app slot use non-scrollable clipping boundaries.
+Iframe fragment links, `scrollIntoView`, focus changes, and oversized app content
+must not move the host header or navigation. Apps own their internal scroll areas;
+use tab panels for section switching and the supported navigation bridge for URLs.
+The host's browser regression coverage checks deep iframe anchors and offscreen
+keyboard focus at desktop and mobile widths, including continued access to host controls.

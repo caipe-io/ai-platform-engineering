@@ -387,7 +387,7 @@ export function AgenticAppShell({
   const requestedRuntimePath = `${buildAgenticAppPublicPath(appId, path)}${query ? `?${query}` : ""}${hash}`;
   if (hostRoute && !(state.app.hostPaths ?? []).some(root => ownsAppPath(root, publicPath))) return <></>;
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-clip">
       <WorkspaceBreadcrumbs
         breadcrumbs={(frameBreadcrumbs?.route === publicPath && frameBreadcrumbs.items.length ? frameBreadcrumbs.items : [
           { label: "Home", href: "/" },
