@@ -11,7 +11,7 @@ import { motion } from "framer-motion";
 import { AlertCircle,Loader2,LogIn } from "lucide-react";
 import { signIn,useSession } from "next-auth/react";
 import { useRouter,useSearchParams } from "next/navigation";
-import { Suspense,useEffect,useState } from "react";
+import { Suspense,useEffect,useRef,useState } from "react";
 
 // Circuit breaker: detect redirect loops via sessionStorage counter.
 // If we've been redirected to /login more than 3 times within 10 seconds,
@@ -80,7 +80,7 @@ function callbackWithBrowserFragment(callbackUrl: string): string {
     try {
       const pending = JSON.parse(saved);
       const age = Date.now() - pending.at;
-      if (pending.path === callbackUrl && typeof pending.fragment === "string" && pending.fragment.startsWith("#") && pending.fragment.length <= 8192 && age >= 0 && age < 600_000) {
+      if (pending.path === callbackUrl && typeof pending.fragment === "string" && pending.fragment.startsWith("#") && pending.fragment.length <= 8192 && age >= 0 && age < 900_000) {
         fragment ||= pending.fragment;
       }
     } catch {
@@ -113,6 +113,7 @@ function LoginContent() {
   const sessionExpired = searchParams.get("session_expired") === "true";
   const sessionReset = searchParams.get("session_reset");
   const callbackUrl = safeCallbackUrl(searchParams.get("callbackUrl"));
+  const redirectDestination = useRef<{ callbackUrl: string; url: string } | null>(null);
 
   // Redirect if already logged in. A stale session_expired URL can remain after
   // a successful OIDC callback, so only explicit reset/loop recovery should hold
@@ -126,7 +127,10 @@ function LoginContent() {
     if (status === "authenticated" && !session?.error) {
       // Clear counter on successful auth redirect (not a loop)
       clearRedirectLoopCounter();
-      router.push(callbackWithBrowserFragment(callbackUrl));
+      if (redirectDestination.current?.callbackUrl !== callbackUrl) {
+        redirectDestination.current = { callbackUrl, url: callbackWithBrowserFragment(callbackUrl) };
+      }
+      router.push(redirectDestination.current.url);
     }
   }, [status, session?.error, router, callbackUrl, sessionReset, loopBroken]);
 
