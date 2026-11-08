@@ -70,6 +70,9 @@ caipe-ui:
 4. Start a message with `@reviewer`, select it from `@` autocomplete, or use the
    **To** picker above the composer. Use `@primary` to return to the primary agent.
 
+The workspace lists every joined agent with its name, handle, runtime icon and
+participation status. It does not duplicate the composer’s recipient selector.
+
 - A recognized leading `@mention` is deleted as one object with Backspace or
   Delete. Any unselected message text remains. Removing the selected recipient's
   mention resets **To** to the primary agent.
@@ -123,10 +126,10 @@ Opening or collapsing the workspace does not start, stop, or replace a run.
 ## Team coordination and handoffs
 
 - **Mentions** is the default: you choose which agent responds, using the
-  **Next message recipient** list, the composer **To** picker or `@handle`.
+  composer **To** picker or `@handle`.
 - Both response modes remain visible as buttons with short descriptions. The
-  active mode has a blue outline, tinted surface and checkmark. Selecting a
-  recipient uses the same highlight and a **Next** label; it does not start a task.
+  active mode has a blue outline, tinted surface and checkmark. The composer is
+  the single recipient-selection control; the workspace shows the participant roster.
 - Detailed delegation limits and sign-in behavior remain in the info tooltip.
 - The chat owner can enable **Team coordination** in the right workspace panel.
 - Deep Agents and Claude SDK/ACP/CLI workers then receive `handoff_to_agent`.
@@ -134,12 +137,14 @@ Opening or collapsing the workspace does not start, stop, or replace a run.
   tool to originate them.
 - The tool advertises other joined agents' names and handles to each agent,
   including the primary. It does not advertise their tools or share their files.
-  Mentions mode does not expose this handoff tool or its participant roster.
+  Only Team mode advertises the roster through the handoff tool. The workspace
+  roster remains visible in both modes.
 - The tool accepts a joined handle and a self-contained assignment. It queues work
   durably and returns an assignment ID. The receiving run starts after the sender
   completes. No model-output mention parser silently launches work.
 - The panel shows queued, working, completed, stopped or failed assignments.
-  Click a handle to select that participant and follow its Harness session.
+  Assignment results appear in the shared transcript. Use the composer **To**
+  picker or `@handle` to address a follow-up.
 - Each agent retains its separate session. Only the assignment text is transferred;
   transcripts, sandbox files and credentials are not automatically shared.
 - A chain allows at most eight assignments and four hops. Identical assignments
