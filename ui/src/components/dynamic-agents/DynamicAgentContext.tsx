@@ -86,7 +86,7 @@ export function DynamicAgentContext({
   const { data: timeline } = useAgentTimeline(turnEvents, isStreaming, "unknown");
   const subagentRuns = timeline.segments.filter((segment) => segment.type === "subagent");
   const [openSections, setOpenSections] = useState(["agents", "coordination"]);
-  const [activeTab, setActiveTab] = useState("info");
+  const [activeTab, setActiveTab] = useState("coordination");
   const [filesRefreshKey, setFilesRefreshKey] = useState(0);
   const [filesError, setFilesError] = useState<string | null>(null);
   const sectionId = useId();
@@ -320,8 +320,8 @@ export function DynamicAgentContext({
       {!collapsed && (
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
           <TabsList aria-label="Workspace views" className="mx-2 mt-2 grid h-auto shrink-0 grid-cols-2">
-            <TabsTrigger value="info" className="whitespace-normal px-2 text-xs">Agent info</TabsTrigger>
             <TabsTrigger value="coordination" className="whitespace-normal px-2 text-xs">Agent coordination</TabsTrigger>
+            <TabsTrigger value="info" className="whitespace-normal px-2 text-xs">Agent info</TabsTrigger>
           </TabsList>
         <ScrollArea className="flex-1">
           <div className="p-3 space-y-4">

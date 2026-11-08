@@ -19,8 +19,8 @@ beforeEach(() => { global.fetch = jest.fn().mockResolvedValue({ ok: true, json: 
 
 it("shows actual configured agents and saved tasks, with no pretend coordination toggle", () => {
   render(<DynamicAgentContext conversationId="example-chat" agentId="example-agent" agent={agent} readOnly />);
-  expect(screen.getByRole("tab", { name: "Agent info" })).toHaveAttribute("aria-selected", "true");
-  fireEvent.mouseDown(screen.getByRole("tab", { name: "Agent coordination" }), { button: 0, ctrlKey: false });
+  expect(screen.getAllByRole("tab")[0]).toHaveAccessibleName("Agent coordination");
+  expect(screen.getByRole("tab", { name: "Agent coordination" })).toHaveAttribute("aria-selected", "true");
   const agents = within(screen.getByRole("region", { name: "Agents" }));
   expect(agents.getByText("Example agent")).toBeInTheDocument();
   expect(agents.getByText("Helper")).toBeInTheDocument();
