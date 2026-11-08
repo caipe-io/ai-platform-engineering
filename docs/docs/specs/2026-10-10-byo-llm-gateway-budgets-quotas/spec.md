@@ -97,7 +97,7 @@ No new service, image or language. Each piece lands in an existing component (de
 
 - Q: What exactly are we building? → **Integration code in existing CAIPE components, not a gateway or a new service.** See [What CAIPE builds](#what-caipe-builds).
 - Q: How is it deployed? → **Inside the existing images and charts.** The gateway is operator-run and reached by URL; CAIPE ships no gateway chart or Compose service. See [plan.md](./plan.md#deployment).
-- Q: Does the Helm chart need changes to inject the environment variables? → **Templates: no. Values: yes.** Subcharts already pass arbitrary `config`/`env` keys and an LLM secret into pods. Add one `global.llmGateway` block so the setting is declared once (FR-002, FR-020). See [plan.md](./plan.md#helm-and-compose).
+- Q: Does the Helm chart need changes to inject the environment variables? → **Values and template wiring are required for `global.llmGateway`.** Subcharts already support manually supplied `config`/`env` keys, but do not automatically translate the new global block into environment variables. Add a shared helper and invoke it from the consuming chart templates (FR-002, FR-020). See [plan.md](./plan.md#helm-and-compose).
 - Q: Which language, and why? → **Python for the data plane, TypeScript for the control plane.** Each lands where its choke point already lives: `llm_wrapper.build_chat_model` (FR-003) and the BFF that owns Keycloak admin, credentials and CAS. See [plan.md](./plan.md#technical-context).
 - Q: Metrics, logs and traces? → **All three, on top of existing telemetry** (FR-009, FR-021, FR-022). Unbounded user IDs go to traces and logs, never metric labels.
 

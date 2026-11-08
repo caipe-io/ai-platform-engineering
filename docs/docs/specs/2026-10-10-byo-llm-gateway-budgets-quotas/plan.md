@@ -54,7 +54,7 @@ flowchart LR
 
 ### Helm and Compose
 
-Today (main): pods already receive arbitrary env through values, so no template change is needed to inject a variable.
+Existing charts accept manually supplied environment variables through their `config`/`env` values. The proposed `global.llmGateway` block requires new template wiring to translate global settings into those variables; adding values alone does not inject them into pods.
 
 | Chart | Non-secret env | Secret env |
 |---|---|---|
@@ -78,8 +78,9 @@ global:
       existingSecret: ""
 ```
 
-- A shared helper renders these into `dynamic-agents` and `caipe-ui` (phase 1), then RAG charts (phase 4). A key set in a subchart's `config`/`env` still wins.
-- `helm template` tests assert the rendered env per chart and that defaults render nothing new when `enabled: false`.
+- Implement a shared Helm helper and invoke it from the consuming chart templates: `dynamic-agents` and `caipe-ui` in phase 1, then RAG charts in phase 4. Render environment values as strings. A key explicitly set in a subchart's `config`/`env` wins over the global value.
+- Render `LLM_GATEWAY_ADAPTER` and the admin credential secret reference only for the BFF. Inference services receive routing and identity settings, not management credentials.
+- `helm template` tests cover default-disabled output (nothing new), enabled settings per chart, explicit subchart overrides, and BFF-only management settings and secret references.
 - `.env.example` gets the same keys, commented out. The minimal first-install profile is unchanged.
 
 ## Phases
