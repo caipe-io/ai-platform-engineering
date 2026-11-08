@@ -31,3 +31,8 @@ export function suggestedAgentHandle(name: string): string {
 export function leadingAgentMention(input: string): string | null {
   return input.match(/^@([a-z][a-z0-9-]{1,31})(?:\s|$)/)?.[1] ?? null;
 }
+
+/** Every subscriber and the delivery worker write the same handoff answer. */
+export function handoffAssistantMessageId(turnId: string | undefined): string | undefined {
+  return turnId && /^handoff-[a-f0-9]{64}$/.test(turnId) ? `${turnId}-assistant` : undefined;
+}

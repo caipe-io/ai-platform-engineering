@@ -60,6 +60,16 @@ run("durable agent assignments", () => {
     await runHandoffsOnce(); expect(mockStart).not.toHaveBeenCalled();
     expect((await mockDb.collection("chat_agent_handoffs").findOne({}))?.status).toBe("skipped");
   });
+  it("precreates one canonical answer shared with browser recovery", async () => {
+    await enqueueHandoff(parent, mockAuth, args);
+    mockParent.mockImplementation(async (_config, _auth, path: string) => Response.json({ data: path.includes("child-run")
+      ? { ...parent, run_id: "child-run", agent_id: "helper-agent", status: "running" } : { ...parent, status: "completed" } }));
+    await runHandoffsOnce();
+    const id = handoffKey(parent.run_id, "helper-agent", args.message);
+    const answer = await mockDb.collection("messages").findOne({ message_id: `handoff-${id}-assistant` });
+    expect(answer?.metadata.is_final).toBe(false);
+    expect(await mockDb.collection("messages").countDocuments({ role: "assistant" })).toBe(1);
+  });
   it("recovers an ambiguous admission with the identical request key", async () => {
     await enqueueHandoff(parent, mockAuth, args);
     mockStart.mockRejectedValueOnce(new Error("network outcome unknown"));

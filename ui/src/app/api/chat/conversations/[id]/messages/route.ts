@@ -131,6 +131,16 @@ export const POST = withErrorHandler(async (
 
   const messages = await getCollection<Message>('messages');
 
+  // Handoff transcript rows belong to the durable worker. Browser recovery can
+  // read/stream them, but a late periodic save must not replace its final journal.
+  const handoffMessage = /^handoff-([a-f0-9]{64})-(user|assistant)$/.exec(body.message_id ?? "");
+  if (handoffMessage) {
+    const job = await (await getCollection<{ _id: string; conversationId: string }>('chat_agent_handoffs')).findOne({ _id: handoffMessage[1], conversationId });
+    const saved = job && await messages.findOne({ message_id: body.message_id, conversation_id: conversationId });
+    if (!saved || saved.role !== body.role) throw new ApiError('Handoff transcript is not available', 409);
+    return successResponse(saved);
+  }
+
   const now = new Date();
 
   // A turn's recipient must be an authorized chat member; it never changes

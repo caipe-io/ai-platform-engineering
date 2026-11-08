@@ -6,7 +6,7 @@ import { getStoredSession, refreshSession, SessionExpiredError } from "@/lib/aut
 import { exchangeRefreshToken } from "@/lib/auth-token-refresh";
 import { authorizeConversationWriteAccess } from "@/app/api/v1/chat/_conversation-authz";
 import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
-import { conversationHasAgent } from "@/lib/chat-coordination";
+import { conversationHasAgent, handoffAssistantMessageId } from "@/lib/chat-coordination";
 import { getAgentId } from "@/types/a2a";
 import type { Conversation } from "@/types/mongodb";
 import type { HarnessRun, HarnessRunEvent } from "@/types/harness-engine";
@@ -105,6 +105,13 @@ async function saveAssignment(job: Handoff, chat: Conversation) {
     metadata: { agent_id: job.targetAgentId, coordination_handoff_id: job._id, source_agent_id: job.sourceAgentId,
       turn_id: `handoff-${job._id}`, is_final: true, source: "coordination" },
   } }, { upsert: true });
+  await (await getCollection("messages")).updateOne({ conversation_id: job.conversationId, message_id: handoffAssistantMessageId(`handoff-${job._id}`) }, { $setOnInsert: {
+    conversation_id: job.conversationId, message_id: handoffAssistantMessageId(`handoff-${job._id}`), role: "assistant", content: "",
+    owner_id: chat.owner_id, created_at: new Date(now.getTime() + 1), updated_at: now,
+    metadata: { agent_id: job.targetAgentId, agent_name: `@${job.handle}`, coordination_handoff_id: job._id,
+      turn_id: `handoff-${job._id}`, is_final: false, source: "coordination" },
+  } }, { upsert: true });
+
 }
 
 async function saveResult(job: Handoff, auth: AuthResult, run: HarnessRun) {

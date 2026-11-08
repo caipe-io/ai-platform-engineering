@@ -1,5 +1,6 @@
 "use client";
 
+import { handoffAssistantMessageId } from "@/lib/chat-coordination";
 import type { ChatCoordination } from "@/hooks/use-chat-coordination";
 import { leadingAgentMention } from "@/lib/chat-coordination";
 
@@ -1375,8 +1376,11 @@ export function ChatPanel({
       subscribed = true;
       // Periodic persistence omits an unfinished assistant placeholder. Rebuild
       // it from the admitted run rather than submitting the saved prompt again.
-      const assistantId = recoveryMessageRole === "assistant" ? recoveryMessageId : addMessage(
-        activeConversationId, { role: "assistant", content: "", isFinal: false, agentId: recoveryAgentId, agentName: recoveryAgentName }, recoveryTurnId,
+      const canonicalHandoffId = handoffAssistantMessageId(recoveryTurnId);
+      const savedAssistant = canonicalHandoffId && useChatStore.getState().conversations
+        .find(chat => chat.id === activeConversationId)?.messages.find(message => message.id === canonicalHandoffId);
+      const assistantId = savedAssistant ? savedAssistant.id : recoveryMessageRole === "assistant" && !canonicalHandoffId ? recoveryMessageId : addMessage(
+        activeConversationId, { role: "assistant", content: "", isFinal: false, agentId: recoveryAgentId, agentName: recoveryAgentName }, recoveryTurnId, canonicalHandoffId,
       );
       const adapter = createStreamAdapter({ protocol: agentProtocol as "custom" | "agui" });
       const state: StreamLoopState = { accumulatedText: "", rawStreamContent: "", hitlFormRequested: false, hasError: false };

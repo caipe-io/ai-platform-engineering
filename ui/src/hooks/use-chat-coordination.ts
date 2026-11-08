@@ -115,7 +115,7 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
           setHandoffs(data.handoffs); setModeState(data.mode);
           const signature = JSON.stringify(data.handoffs.map(job => [job._id, job.status, job.runId]));
           if (signature !== handoffSignature.current) {
-            await useChatStore.getState().loadMessagesFromServer(conversationId, { force: true });
+            await useChatStore.getState().loadMessagesFromServer(conversationId);
             handoffSignature.current = signature;
           }
         }).catch(() => {
