@@ -83,6 +83,11 @@ Direct-provider credentials remain in the deployment secret store, not in gatewa
 - Prepare its Keycloak scope (K2), signer mapping (C1), or per-agent gateway key according to the configured authentication mode, including any gateway principal required before first use.
 - Use the authenticated caller as `sub`, the system agent as `agent_id`, and its owning team as `team_id` (or `LLM_GATEWAY_DEFAULT_TEAM` when ownerless). The agent being drafted or edited supplies none of these identity bindings.
 
+### RAG identity preparation (phase 4 gate)
+
+- Embedding and ontology calls need explicit effective-principal and agent/team billing bindings, including background work without an interactive bearer. T401 and T402 define and provision those identities before gateway activation.
+- Reusing `build_chat_model` or injecting gateway settings does not establish those identities. Any service-principal alternative must be reconciled with the user/owner JWT and attribution contracts before implementation.
+
 ## 5. `llm_quota_requests` (new Mongo collection)
 
 | Field | Meaning |

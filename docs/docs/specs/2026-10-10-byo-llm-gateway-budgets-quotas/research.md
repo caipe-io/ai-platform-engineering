@@ -41,7 +41,7 @@
 
 - Paths 1–3 all build models through `build_chat_model` in `ai_platform_engineering/llm_wrapper/src/llm_wrapper/build.py`. The switch, the provider override and the auth hook live there, so no caller can bypass them.
 - Path 3 generates text without executing an agent, including before a new agent is saved. It uses a dedicated, provisioned AI-assist system identity for agent attribution while preserving the authenticated user for user attribution. Its owning team pays; the draft or edited agent does not determine billing or authorization. See [AI-assist system identity](./data-model.md#ai-assist-system-identity).
-- Path 5 also builds its model through `build_chat_model` (since #3050), so it gets the switch once its chart receives the settings. Path 4 does not yet.
+- Path 5 already builds its model through `build_chat_model` (since #3050), so it can reuse the routing hook. Chart settings alone are insufficient: phase 4 must define its effective principal, agent/team binding and credential acquisition before activation (T402). Path 4 still needs the embeddings integration and its own identity preparation (T401).
 - Bots, autonomous agents, the scheduler and the UI have no LLM client of their own. They inherit through dynamic agents.
 - Harness Engine: the Deep Agents runtime reuses paths 1–2. Experimental Harness Engine runtimes call providers directly (for example `ANTHROPIC_BASE_URL` or AWS IAM) and bypass `build_chat_model`; they are out of scope.
 

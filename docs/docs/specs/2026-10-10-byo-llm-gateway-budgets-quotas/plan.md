@@ -46,7 +46,7 @@ flowchart LR
   gw --> prov
 ```
 
-- CAIPE changes ship in the existing `dynamic-agents`, `caipe-ui`, `rag-server` and `agent-ontology` images. No new image, chart or Compose service.
+- CAIPE changes ship in the existing `dynamic-agents`, Harness Engine Deep Agents, `caipe-ui`, `rag-server` and `agent-ontology` images. No new image, chart or Compose service.
 - The gateway is deployed and run by the operator (any namespace, cluster or SaaS) and reached by `LLM_GATEWAY_BASE_URL`.
 - Network: CAIPE pods need egress to the gateway; the gateway needs egress to Keycloak's JWKS (JWT mode) and to providers.
 - Dev/demo only: `setup-caipe.sh --litellm` stays an example gateway (T801). The default Compose path is unchanged.
@@ -79,6 +79,7 @@ global:
 ```
 
 - Implement a shared Helm helper and invoke it from the consuming chart templates: `dynamic-agents` and `caipe-ui` in phase 1, then RAG charts in phase 4. Render environment values as strings. A key explicitly set in a subchart's `config`/`env` wins over the global value.
+- Phase 1 also configures the separate Harness Engine process hosting Deep Agents, including its existing image build and deployment manifests. Propagate the same routing settings and exchange credentials, enforce provider-credential isolation, and roll that workload on mode changes. Reusing the Dynamic Agents library does not inherit the Dynamic Agents service's environment. Do not assume a dedicated Harness Engine Helm subchart exists; cover its supported deployment path explicitly.
 - Render `LLM_GATEWAY_ADAPTER` and the admin credential secret reference only for the BFF. Inference services receive routing and identity settings, not management credentials.
 - `helm template` tests cover default-disabled output (nothing new), enabled settings per chart, explicit subchart overrides, and BFF-only management settings and secret references.
 - `.env.example` gets the same keys, commented out. The minimal first-install profile is unchanged.
@@ -112,7 +113,7 @@ flowchart LR
 | 1 | Identity setup and lifecycle for existing/new agents, default team; routing and authorization for agent paths 1–3 | `llm_wrapper/src/llm_wrapper/build.py`, `dynamic_agents/services/{llm_clients,llm}.py`, `dynamic_agents/auth/authz.py`, `ui/src/lib/rbac/keycloak-admin.ts`, agent lifecycle routes | S1 selected [K2](./research.md#identity-option-legend); T102 must validate chained exchange of a scheduler-minted owner token for autonomous runs; identity readiness before routing. Not gated on #1753 (see [tasks](./tasks.md#phase-1-identity-preparation-and-agent-data-plane)) |
 | 2 | Error propagation ④ + attribution ③ + metrics, logs, traces | `llm_wrapper`, `dynamic_agents` | phase 1 |
 | 3 | Control plane: adapter, automated gateway principal provisioning, `llm_models` sync, admin limits/usage UI | `ui/src/app/api/`, `ui/src/lib/`, `ui/src/lib/rbac/keycloak-admin.ts` | phase 1 |
-| 4 | RAG paths 4–5 (same embedding model id only) | `knowledge_bases/rag/` | phases 1–2 |
+| 4 | RAG paths 4–5 (same embedding model id only), with explicit runtime identity and credential preparation | `knowledge_bases/rag/` | phases 1–2; T401/T402 identity design and provisioning before gateway activation |
 | 5 | End-user UX: remaining budget, quota requests | `ui/`; bots keep existing failure reporting (T503) | phase 3 |
 | opt | Gateways with ext_authz ask the BFF CAS adapter for the decision and verified identity headers | `ui/src/lib/authz/` (#2909) | phase 1 |
 
