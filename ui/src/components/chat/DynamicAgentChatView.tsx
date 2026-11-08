@@ -53,7 +53,7 @@ export function ChatView({
   apiConversation,
   isLoadingMessages,
 }: ChatViewProps) {
-  const [contextPanelCollapsed, setContextPanelCollapsed] = useState(true);
+  const [contextPanelCollapsed, setContextPanelCollapsed] = useState(false);
   const narrow = useSyncExternalStore(subscribeToViewport, isNarrowViewport, serverViewport);
   const [isAnimating, setIsAnimating] = useState(false);
   const contextPanelRef = usePanelRef();
@@ -106,7 +106,7 @@ export function ChatView({
       {/* Workspace stays to the right of chat (below it on narrow screens). */}
       <ResizablePanel
         panelRef={contextPanelRef}
-        defaultSize="48px"
+        defaultSize={narrow ? "240px" : "340px"}
         minSize={narrow ? "160px" : "280px"}
         maxSize={narrow ? "55%" : "45%"}
         collapsible

@@ -5,8 +5,9 @@ sidebar_position: 6
 # Chat workspace
 
 Dynamic-agent chats have a resizable workspace panel to the right of the
-conversation. It starts collapsed. Expand it to switch between **Agent info**
-and **Agent coordination**, or select an icon to open a specific section.
+conversation. It opens by default with **Agent coordination** selected as the
+first tab, followed by **Agent info**. Collapse it to an icon rail or select an
+icon to reopen a specific section.
 On narrow screens, the workspace stacks below the conversation.
 
 The **Agent coordination** tab contains:
