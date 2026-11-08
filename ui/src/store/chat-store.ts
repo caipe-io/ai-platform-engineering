@@ -67,6 +67,7 @@ function isConversationMissingError(error: unknown): boolean {
 
 // Track streaming state per conversation
 interface StreamingState {
+  agentId?: string;
   conversationId: string;
   messageId: string;
   /** Abortable handle for the active stream (wraps the stream adapter's abort). */
@@ -266,6 +267,8 @@ function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
       streamEvents: streamEvents.length > 0 ? streamEvents : undefined,
       isFinal,
       turnId: msg.metadata?.turn_id,
+      agentId: msg.metadata?.agent_id,
+      agentName: msg.metadata?.agent_name,
       taskId: msg.metadata?.task_id,
       autonomousRunId: msg.metadata?.run_id,
       autonomousMessageKind: msg.metadata?.kind,
@@ -580,7 +583,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           const persistentAdapter = streamingState.streamAdapter;
           if (persistentAdapter?.canRecoverOnRefresh) {
             if (streamingState.stopping) return;
-            const agentId = conv ? getAgentId(conv) : undefined;
+            const agentId = streamingState.agentId ?? (conv ? getAgentId(conv) : undefined);
             if (!agentId) return;
             const pending = { ...streamingState, stopping: true, stopError: undefined };
             set({ streamingConversations: new Map(get().streamingConversations).set(conversationId, pending) });
@@ -601,7 +604,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           
           // For Dynamic Agents, send backend cancel request before aborting client
           if (streamingState.streamAdapter) {
-            const agentId = conv ? getAgentId(conv) : undefined;
+            const agentId = streamingState.agentId ?? (conv ? getAgentId(conv) : undefined);
             if (agentId) {
               console.log(`[ChatStore] Cancelling Dynamic Agent stream: conv=${conversationId.substring(0, 8)}, agent=${agentId}`);
               // Fire-and-forget backend cancel - the abort below will close the client connection
@@ -1240,6 +1243,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
                 // and response-time analytics. Set on the finalized assistant
                 // message by DynamicAgentChatPanel.finalizeStreamLoop.
                 ...(msg.agentName && { agent_name: msg.agentName }),
+                ...(msg.agentId && { agent_id: msg.agentId }),
                 ...(msg.latencyMs != null && { latency_ms: msg.latencyMs }),
               },
               stream_events: serializedStreamEvents,

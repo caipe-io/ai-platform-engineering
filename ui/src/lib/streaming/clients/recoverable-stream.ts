@@ -7,7 +7,9 @@ export async function* recoverableStream(
 ): AsyncGenerator<RawSSEEvent> {
   const runId = initial.headers.get("X-Harness-Run-ID");
   const conversationId = initial.headers.get("X-Harness-Conversation-ID");
-  const scope = conversationId ? `&conversation_id=${encodeURIComponent(conversationId)}` : "";
+  const agentId = initial.headers.get("X-Harness-Agent-ID");
+  const scope = (conversationId ? `&conversation_id=${encodeURIComponent(conversationId)}` : "") +
+    (agentId ? `&agent_id=${encodeURIComponent(agentId)}` : "");
   let response = initial;
   let cursor = "0";
   let attempts = 0;

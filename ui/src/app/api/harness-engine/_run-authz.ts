@@ -15,6 +15,7 @@ import {
 import { getAgentId } from "@/types/a2a";
 import { createAuthzTraceContext } from "@/lib/rbac/authz-tracing";
 import { requireAgentUsePermission } from "@/lib/rbac/openfga-agent-authz";
+import { conversationHasAgent } from "@/lib/chat-coordination";
 
 /** Authorize shared reads against the saved chat; execution controls remain owner-scoped. */
 export async function authorizeHarnessRunAccess(
@@ -32,8 +33,9 @@ export async function authorizeHarnessRunAccess(
   if (permission === "read" && conversationId) {
     const access = await authorizeConversationReadAccess(auth, conversationId);
     if (access.denial) return access.denial;
-    const agentId = getAgentId(access.conversation);
+    const agentId = request.nextUrl.searchParams.get("agent_id") || getAgentId(access.conversation);
     if (!agentId) return NextResponse.json({ error: "Conversation has no agent" }, { status: 409 });
+    if (!conversationHasAgent(access.conversation, agentId)) return NextResponse.json({ error: "Agent is not a participant in this chat" }, { status: 409 });
     readScope = { conversationId, agentId };
   }
   const response = await proxyHarnessEngine(config, auth, `/api/v1/runs/${encodeURIComponent(runId)}`, {

@@ -70,6 +70,10 @@ export async function POST(
   );
   if (conversationAuthz.denial) return conversationAuthz.denial;
 
+  if (conversationAuthz.conversation.coordination_agents?.length) {
+    return NextResponse.json({ error: "Editing earlier turns is unavailable after agents join a chat. Send a follow-up message instead." }, { status: 409 });
+  }
+
   const conversations = await getCollection<Conversation>("conversations");
   const conversation = await conversations.findOne({ _id: conversationId });
   if (!conversation) {

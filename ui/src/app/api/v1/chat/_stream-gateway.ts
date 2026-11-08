@@ -48,6 +48,7 @@ export async function dispatchChatStream(
     subject: auth.subject,
     conversationId: runtimeBody.conversation_id,
     traceparent: auth.traceparent,
+    requireEngine: Boolean(conversation.coordination_agents?.length),
   });
   if (target instanceof NextResponse) return target;
   if (target.kind === "harness_engine") {

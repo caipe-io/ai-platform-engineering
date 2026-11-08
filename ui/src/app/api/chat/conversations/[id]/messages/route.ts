@@ -1,3 +1,4 @@
+import { conversationHasAgent } from "@/lib/chat-coordination";
 // GET /api/chat/conversations/[id]/messages - Get all messages in conversation
 //   Reads persisted message rows for conversation history and audit views.
 // POST /api/chat/conversations/[id]/messages - Add message to conversation
@@ -132,28 +133,17 @@ export const POST = withErrorHandler(async (
 
   const now = new Date();
 
-  // Store the agent display name on assistant messages, resolved from the
-  // conversation's agent participant — the authoritative record of the agent
-  // a conversation targets. The client's agent_name is unreliable (dropped
-  // when the agent config isn't loaded at stream-finalize), so it is only a
-  // last resort. `dynamic_agents._id → name` yields one label per agent, so
-  // admin stats and RBAC agent-owner scoping (both keyed on display name)
-  // agree across web and Slack.
+  // A turn's recipient must be an authorized chat member; it never changes
+  // the primary agent or grants execution permission.
+  const targetAgentId = body.metadata?.agent_id ?? conversation.participants.find(p => p.type === 'agent')?.id;
+  if (targetAgentId && !conversationHasAgent(conversation, targetAgentId)) {
+    throw new ApiError('Agent is not a participant in this chat', 409);
+  }
   let agentName: string | undefined;
-  if (body.role === 'assistant') {
-    const agentId =
-      conversation?.participants?.find((p) => p.type === 'agent')?.id ??
-      body.metadata?.agent_id;
-    if (agentId) {
-      const agents = await getCollection<{ _id: string; name?: string }>('dynamic_agents');
-      const agentDoc = await agents.findOne(
-        { _id: agentId },
-        { projection: { _id: 1, name: 1 } },
-      );
-      agentName = agentDoc?.name ?? body.metadata?.agent_name ?? agentId;
-    } else {
-      agentName = body.metadata?.agent_name;
-    }
+  if (body.role === 'assistant' && targetAgentId) {
+    const agents = await getCollection<{ _id: string; name?: string }>('dynamic_agents');
+    const agentDoc = await agents.findOne({ _id: targetAgentId }, { projection: { _id: 1, name: 1 } });
+    agentName = agentDoc?.name ?? targetAgentId;
   }
 
   // Resolve sender identity for user messages.
@@ -180,6 +170,7 @@ export const POST = withErrorHandler(async (
           model: body.metadata?.model,
           latency_ms: body.metadata?.latency_ms,
           agent_name: agentName,
+          ...(targetAgentId && { agent_id: targetAgentId }),
           is_final: body.metadata?.is_final,
           ...(body.metadata?.turn_status && { turn_status: body.metadata.turn_status }),
           ...(body.metadata?.is_interrupted && { is_interrupted: body.metadata.is_interrupted }),
