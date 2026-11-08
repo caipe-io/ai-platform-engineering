@@ -309,7 +309,6 @@ export function DynamicAgentContext({
         <div className="border-b border-border/50">
           <div className="flex items-center py-2 justify-between px-3">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-              <PanelRightOpen className="h-4 w-4 text-primary" />
               Workspace
             </div>
 
