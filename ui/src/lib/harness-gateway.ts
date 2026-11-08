@@ -1,3 +1,4 @@
+import { a2aRegistryId, chatA2AAgent, prepareChatA2AExecution } from "@/lib/chat-a2a.server";
 import { primaryCoordinationMessage } from "@/lib/coordination/context.server";
 import { getCoordinationFeatures } from "@/lib/coordination/features.server";
 import { coordinationPolicy } from "@/lib/coordination/policy.server";
@@ -169,17 +170,17 @@ export async function resolveHarnessGatewayTarget(
     let binding = await bindings.findOne(key);
     if (!binding) {
       const agents = await getCollection<AgentRuntimeRecord>("dynamic_agents");
-      const agent = await agents.findOne({ _id: agentId }, { projection: { _id: 1, execution_harness_id: 1, backend: 1 } });
+      const agent = a2aRegistryId(agentId) ? await chatA2AAgent(agentId) : await agents.findOne({ _id: agentId }, { projection: { _id: 1, execution_harness_id: 1, backend: 1 } });
       if (!agent) return NextResponse.json({ success: false, error: "Agent not found" }, { status: 404 });
       let harnessId = normalizedHarnessId(agent.execution_harness_id);
       let runtime: "dynamic_agents" | "harness_engine" = requiresEngine || harnessId !== DEFAULT_HARNESS_ID ||
         process.env.HARNESS_ENGINE_DEEP_AGENTS_ENABLED === "true" ? "harness_engine" : "dynamic_agents";
       // Dynamic Agents and the BFF share the application database. Match the
       // native runtime's checkpointer collection, including per-agent overrides.
-      const checkpointCollection = agent.backend?.config?.checkpoint_collection ||
+      const checkpointCollection = (agent as AgentRuntimeRecord).backend?.config?.checkpoint_collection ||
         process.env.CHECKPOINT_COLLECTION || "checkpoints_conversation";
       const checkpoints = await getCollection(checkpointCollection);
-      const nativeContext = requiresEngine ? null : await checkpoints.findOne(
+      const nativeContext = requiresEngine || harnessId === "a2a_remote" ? null : await checkpoints.findOne(
         { thread_id: context.conversationId }, { projection: { _id: 1 } },
       );
       if (nativeContext) {
@@ -308,6 +309,9 @@ export async function startHarnessGatewayRun(
     if (saved instanceof NextResponse) return saved;
     selectedVersion = saved.harness_id ? saved.agent_version ?? selectedVersion : selectedVersion;
   }
+  if (harnessId === "a2a_remote" && body.config_override !== undefined) {
+    return NextResponse.json({ error: "A2A tools and model settings are controlled by the remote service" }, { status: 400 });
+  }
   const override = body.config_override;
   if (override !== undefined && (!override || typeof override !== "object" || Array.isArray(override) ||
       Object.keys(override).some(key => !["model", "allowed_tools"].includes(key)) ||
@@ -315,7 +319,8 @@ export async function startHarnessGatewayRun(
         Object.keys(override.model).some(key => key !== "reasoning_effort"))))) {
     return NextResponse.json({ error: "Unsupported per-turn execution override" }, { status: 400 });
   }
-  const usesCallerIdentity = [DEFAULT_HARNESS_ID, "claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp", "claude_code_cli_acp"].includes(harnessId);
+  if (harnessId === "a2a_remote") await prepareChatA2AExecution(String(body.agent_id), auth);
+  const usesCallerIdentity = ["a2a_remote", DEFAULT_HARNESS_ID, "claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp", "claude_code_cli_acp"].includes(harnessId);
   const callerHeaders: Record<string, string> = usesCallerIdentity && auth.bearerToken ? {
     "X-Harness-Caller-Token": auth.bearerToken,
     "X-Harness-Caller-Type": auth.isServiceAccount ? "service_account" : "user",
@@ -355,7 +360,7 @@ export async function startHarnessGatewayRun(
       attachments,
       ...(body.client_context && { client_context: body.client_context }),
       ...(body.turn_id && { turn_id: body.turn_id }),
-      ...((body.config_override || body.reasoning_effort) && { config_override: {
+      ...((body.config_override || (harnessId !== "a2a_remote" && body.reasoning_effort)) && { config_override: {
         ...(body.config_override as Record<string, unknown> ?? {}),
         ...(body.reasoning_effort ? { model: { ...((body.config_override as { model?: object })?.model ?? {}), reasoning_effort: body.reasoning_effort } } : {}),
       } }),

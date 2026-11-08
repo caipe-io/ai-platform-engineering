@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Plus, Loader2 } from "lucide-react";
+import { Select } from "@/components/ui/select";
 import { AgentPicker } from "@/components/ui/agent-picker";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -12,11 +13,12 @@ import type { ChatCoordination } from "@/hooks/use-chat-coordination";
 
 export function AddChatAgentDialog({ coordination, disabled }: { coordination: ChatCoordination; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
+  const [source, setSource] = useState("registered");
   const [agentId, setAgentId] = useState("");
   const [handle, setHandle] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const choices = coordination.availableAgents.filter(agent => agent._id !== coordination.primaryAgentId &&
+  const choices = coordination.availableAgents.filter(agent => (source === "a2a" ? agent.execution_harness_id === "a2a_remote" : agent.execution_harness_id !== "a2a_remote") && agent._id !== coordination.primaryAgentId &&
     !coordination.agents.some(member => member.agent_id === agent._id));
   const duplicateHandle = handle === "primary" || coordination.agents.some(agent => agent.handle === handle);
   const submit = async (event: React.FormEvent) => {
@@ -36,8 +38,9 @@ export function AddChatAgentDialog({ coordination, disabled }: { coordination: C
       <Plus className="mr-2 h-3.5 w-3.5" aria-hidden="true" />Add agent
     </Button></DialogTrigger>
     <DialogContent className="sm:max-w-md">
-      <DialogHeader><DialogTitle>Add an agent to this chat</DialogTitle><DialogDescription>Primary can assign work to joined agents using your current access. Use @mentions to address an agent directly.</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>Add an agent to this chat</DialogTitle><DialogDescription>Choose an agent you can use. Primary can assign it work using your current access, or you can address it directly with @mentions.</DialogDescription></DialogHeader>
       <form onSubmit={submit} className="space-y-4">
+        <div className="space-y-2"><Label htmlFor="chat-agent-source">Agent source</Label><Select id="chat-agent-source" aria-label="Agent source" value={source} disabled={saving} onChange={event => { setSource(event.target.value); setAgentId(""); setHandle(""); }}><option value="registered">CAIPE agent</option><option value="a2a">Remote A2A agent — Experimental</option></Select></div>
         <div className="space-y-2"><Label>Agent</Label><AgentPicker ariaLabel="Coordination agent" value={agentId}
           onChange={id => { setAgentId(id); setHandle(suggestedAgentHandle(choices.find(agent => agent._id === id)?.name ?? id)); }}
           options={choices.map(agent => ({ value: agent._id, label: agent.name }))} loading={coordination.loading}
@@ -47,6 +50,7 @@ export function AddChatAgentDialog({ coordination, disabled }: { coordination: C
           <p id="coordination-handle-help" className="text-xs text-muted-foreground">Use @{handle || "reviewer"} at the start of a message. 2–32 letters, numbers or hyphens.</p>
           {duplicateHandle && <p role="alert" className="text-xs text-destructive">This handle is already in use.</p>}
         </div>
+        {source === "a2a" && <p className="text-xs text-muted-foreground">Uses the approved A2A registry and your connected credentials. The remote service runs its own tools and receives assignments; it cannot initiate chat handoffs without a compatible bridge.</p>}
         <div className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground space-y-2"><p>This agent receives messages addressed to it and its own session history. Earlier chat messages and other agents’ workspaces are not copied.</p><p>Each participant needs their own agent and tool access. Connected credentials are not shared.</p></div>
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         <div className="flex justify-end gap-2"><Button type="button" variant="ghost" disabled={saving} onClick={() => setOpen(false)}>Cancel</Button><Button type="submit" disabled={saving || !agentId || !AGENT_HANDLE_PATTERN.test(handle) || duplicateHandle}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Join chat</Button></div>

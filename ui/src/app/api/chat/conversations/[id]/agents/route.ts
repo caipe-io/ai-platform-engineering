@@ -1,3 +1,4 @@
+import { a2aRegistryId, availableChatA2AAgents, chatA2AAgent, prepareChatA2AExecution, requireChatA2AUse } from "@/lib/chat-a2a.server";
 import { getCoordinationFeatures } from "@/lib/coordination/features.server";
 import { coordinationPolicy, setCoordinationPolicy } from "@/lib/coordination/policy.server";
 import { listHandoffs, stopHandoffs } from "@/lib/coordination/handoffs.server";
@@ -45,6 +46,7 @@ export const GET = withErrorHandler(async (request: NextRequest, context: Contex
     can_manage: features.enabled && access.canManage,
     available: features.enabled && isHarnessEngineConfigured(),
     mode: features.team ? (await coordinationPolicy(access.conversation._id))?.mode ?? "mentions" : "mentions",
+    remote_agents: features.enabled ? await availableChatA2AAgents(access.auth) : [],
     handoffs: await listHandoffs(access.conversation._id),
   } }, { headers: { "Cache-Control": "no-store" } });
 });
@@ -63,9 +65,12 @@ export const POST = withErrorHandler(async (request: NextRequest, context: Conte
     throw new ApiError("Choose an agent and a unique handle of 2–32 lowercase letters, numbers or hyphens, starting with a letter. The handle primary is reserved.", 400);
   }
   const { auth, conversation } = access;
-  const denied = await requireAgentUsePermission({ ...auth, agentId });
+  const remote = a2aRegistryId(agentId) !== null;
+  const remoteAgent = remote ? await chatA2AAgent(agentId) : null;
+  if (remote && !remoteAgent) throw new ApiError("Remote A2A agent is unavailable", 409);
+  const denied = remote ? await requireChatA2AUse(auth, agentId) : await requireAgentUsePermission({ ...auth, agentId });
   if (denied) return denied;
-  const agent = await (await getCollection<DynamicAgentConfig>("dynamic_agents")).findOne({ _id: agentId });
+  const agent = remoteAgent ?? await (await getCollection<DynamicAgentConfig>("dynamic_agents")).findOne({ _id: agentId });
   if (!agent || !agent.enabled) throw new ApiError("This agent is unavailable.", 409);
   if (findAgenticAppAssistantStream(agentId)) throw new ApiError("App assistants cannot join as coordination agents yet.", 409);
   if (getAgentId(conversation) === agentId) throw new ApiError("This agent is already the primary agent.", 409);
@@ -80,6 +85,8 @@ export const POST = withErrorHandler(async (request: NextRequest, context: Conte
     const status = (await statusResponse.json()).data?.status;
     if (status && status !== "idle") throw new ApiError("Finish or stop the current response before adding an agent.", 409);
   }
+
+  if (remote) await prepareChatA2AExecution(agentId, auth);
 
   const membership: ChatCoordinationAgent = {
     agent_id: agentId, handle, name: agent.name, added_at: new Date().toISOString(), added_by: auth.subject,

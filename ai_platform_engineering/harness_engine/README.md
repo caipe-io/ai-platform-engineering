@@ -602,6 +602,26 @@ migration so they enforce the same `execution_thread_leases` ownership fence.
 - These tests do not certify model quality or live Slack/Webex delivery. App-owned
   assistants retain their own declared stream and lifecycle.
 
+### Registered A2A chat participants
+
+- The `a2a_remote` adapter is registered with the standard Deep Agents-enabled
+  Engine image (`HARNESS_ENGINE_DEEP_AGENTS_ENABLED=true` on Engine and BFF).
+  It reuses that package's A2A SDK, registry reader, credential exchange,
+  origin policy and output limits; it does not invoke a Deep Agents model.
+- Profile `registry` accepts only `registry_id`. Participant ID must be exactly
+  `a2a-<registry_id>`; endpoints and credential values are read from the live
+  administrator-managed registry at execution time, never from blueprints.
+- Caller credentials are transient, and CAS agent Use is rechecked before
+  discovery. A disabled/deleted registry entry prevents future execution.
+- The Engine persists remote context IDs, task metadata, artifact snapshots and
+  terminal outcomes. The external service controls task/context retention and
+  runtime lifecycle. Browser disconnects only detach subscribers.
+- Streaming artifact replacements update tool output; the answer is emitted once.
+  Stop drains or cancels the remote task. Unconfirmed completion preserves the
+  dispatch fence; operators must reconcile the remote task before reusing it.
+- This adapter receives chat assignments; it does not inject handoff tools, MCP
+  credentials, system prompts, model configuration or files into remote agents.
+
 ### Concurrent chat participants
 
 - New Deep Agents sessions for saved additional chat participants use a native

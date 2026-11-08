@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pymongo.errors import PyMongoError
 
 from harness_engine.adapters import AgentCoreAdapter, ClaudeSDKAdapter
+from harness_engine.adapters.a2a import RemoteA2AAdapter
 from harness_engine.adapters.base import HarnessAdapter
 from harness_engine.adapters.claude_remote import RemoteClaudeSDKAdapter
 from harness_engine.adapters.deep_agents import DeepAgentsAdapter
@@ -82,7 +83,8 @@ def create_app(
         RemoteClaudeSDKAdapter(resolved_settings, claude_cli_acp=True),
     ]
     if adapters is None and resolved_settings.deep_agents_enabled:
-        resolved_adapters.append(DeepAgentsAdapter())
+        deep_adapter = DeepAgentsAdapter()
+        resolved_adapters.extend([deep_adapter, RemoteA2AAdapter(deep_adapter.runtime)])
     resolved_agentcore_provisioner = (
         agentcore_provisioner or AgentCoreHarnessProvisioner(resolved_settings)
     )
@@ -386,7 +388,7 @@ def create_app(
                     support = descriptor.capabilities.get(capability)
                     if required and (support is None or support.level not in {"native", "emulated"}):
                         raise HTTPException(409, f"Harness does not support {capability}")
-                if descriptor.id == "dynamic_agents" and identity is None:
+                if descriptor.id in {"dynamic_agents", "a2a_remote"} and identity is None:
                     raise HTTPException(401, "Deep Agents requires delegated caller credentials")
                 if descriptor.id in {"claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp", "claude_code_cli_acp"} and version.blueprint.tools.bindings and identity is None:
                     raise HTTPException(401, "Claude MCP tools require delegated caller credentials")

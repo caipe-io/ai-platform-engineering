@@ -217,3 +217,49 @@ sequenceDiagram
 - Active avatars spin in the transcript and roster. Team progress and Stop team stay above the composer.
 - Settings → Chat Behavior → **Agent Team activity (Experimental)** restores Classic reply cards per user. View preferences sync to the account. These switches change presentation only.
 - Chats without joined agents keep their existing layout, including configured subagents; no migration is required.
+
+## Remote A2A participants
+
+1. Open **Add agent → Agent source → Remote A2A agent**.
+2. Choose an enabled, approved registry entry and a unique `@handle`.
+3. Join the chat. No Agent Builder definition or CAIPE worker container is created.
+4. Address it directly, or let a Team-mode agent hand it an assignment.
+
+```mermaid
+sequenceDiagram
+  participant UI as Chat
+  participant BFF as Harness Gateway
+  participant Engine as Harness Engine
+  participant Remote as Registered A2A service
+  UI->>BFF: Address @handle
+  BFF->>BFF: Conversation write + agent Use
+  BFF->>Engine: Admit isolated participant run
+  Engine->>Engine: Recheck Use, live registry and credential source
+  Engine->>Remote: A2A message with saved remote context
+  Remote-->>Engine: Task, artifact snapshots and terminal state
+  Engine-->>UI: Durable replay and final answer
+```
+
+- Registry administrators can connect approved entries. Existing entries acquire
+  only organization-admin inheritance on first attachment. Other users need an
+  explicit `agent:a2a-<registry-id>` Use grant; chat sharing grants none.
+- Browser catalogs contain names and descriptions, never endpoints or credential
+  references. Caller, saved-secret and connected-provider authentication reuse the
+  existing credential resolver and same-origin destination protections.
+- Sessions are isolated by caller, chat and participant. Remote `context_id` is
+  persisted; remote `task_id` is recorded in events and input interrupts.
+- Artifact snapshots stream in the tool timeline. The final answer is published
+  once, so replacement artifacts cannot duplicate earlier prose.
+- Accepted tasks are polled after the initial stream ends. An uncertain request
+  is never resent automatically. Missing terminal proof retains the Engine
+  reservation for operator reconciliation.
+- **Stop** requests remote cancellation. The session becomes reusable only after
+  remote cancellation or another terminal task state is confirmed.
+- Input-required tasks pause with a reply form and resume the saved remote task.
+  Authentication-required tasks use the same reply path after credentials are
+  repaired in Connections. Never paste passwords or tokens into chat.
+- This release receives assignments. A2A services need a separate, explicitly
+  authorized bridge to initiate handoffs. Remote files, tools and model policy
+  remain owned by the remote service; attachments and local execution overrides
+  are unsupported.
+
