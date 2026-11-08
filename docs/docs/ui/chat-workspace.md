@@ -75,16 +75,18 @@ participation status. It does not duplicate the composer’s recipient selector.
 
 - Address several joined agents with consecutive leading mentions, for example
   `@author @reviewer Check this plan`. **To** shows every recipient. Each unique
-  recipient receives the same prompt and attachments as a separate turn, in order.
+  recipient receives the same prompt and attachments as an independent turn.
+  Stacked live cards show each reply, tool activity and input state separately.
   Body mentions are references; only the leading block routes the message.
 - Autocomplete inserts at the caret, including a second mention. Backspace or
   Delete removes each recognized mention as one object and preserves other text.
-- Multi-recipient messages use the composer queue in both coordination modes.
-  Keep the chat open until they send: unsent queue entries do not survive refresh.
-  Stop cancels remaining recipients; errors or an unconfirmed completion also
-  prevent later recipients in that message from starting. Input/approval pauses
-  must be resolved before queued work continues. Retry addresses only the saved
-  turn's recipient. No agent-to-agent delegation is required.
+- Multiple recipients start concurrently in both coordination modes. A card's
+  **Stop** cancels only its agent; **Stop all** requests every writable active
+  agent to drain. Completion, errors, input requests and reconnects stay scoped
+  to their own card. Expand a card to read a long reply.
+- The prompt is saved before each participant's admission. Refresh discovers
+  and replays each admitted run without reposting it. Retry addresses only the
+  saved turn's recipient. No agent-to-agent delegation is required.
 - Primary mentions use blue. Joined agents receive distinct colors in saved
   membership order, consistent across autocomplete, the composer, messages and
   workspace controls. Handles remain visible; color never grants access or
@@ -108,10 +110,11 @@ participation status. It does not duplicate the composer’s recipient selector.
   pending input, Stop and retry use that identity, not the current composer
   selection. Shared replay checks saved chat membership before issuing an Engine
   read scope.
-- Coordinated chats admit one turn at a time across agents, callers and BFF
-  replicas. A Mongo admission fence retains ownership through browser disconnects;
-  the previous Engine run must be terminal before another agent starts. Paused
-  runs must be resumed or stopped. A lost acknowledgement can be repaired by
+- Each participant admits one turn at a time across callers and BFF replicas.
+  Peers can run concurrently. A Mongo admission fence retains ownership through
+  browser disconnects; a participant's previous run must be terminal before its
+  next turn starts. Paused runs must be resumed or stopped. Provider-native
+  producer fences remain enforced if adapters share a native thread. A lost acknowledgement can be repaired by
   status replay; an admission with no confirmable Engine run fails closed and
   requires operator reconciliation, never automatic prompt replay.
 - Earlier-turn editing is disabled after another agent joins: rewinding just one

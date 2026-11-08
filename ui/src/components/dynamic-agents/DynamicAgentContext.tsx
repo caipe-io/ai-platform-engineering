@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
 import type { ContextUsageEventData } from "@/lib/streaming/types";
+import { chatStreams } from "@/store/chat-stream-state";
 import { useChatStore } from "@/store/chat-store";
 import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
@@ -89,7 +90,8 @@ export function DynamicAgentContext({
   // Get current conversation for download
   const conversation = conversations.find((c) => c.id === conversationId);
   const isStreaming = !!conversationId && (streamingConversations.has(conversationId) || !!externalActivity[conversationId]);
-  const activeAgentId = (conversationId ? streamingConversations.get(conversationId)?.agentId ?? externalActivity[conversationId]?.agentId : undefined) ?? agentId;
+  const activeAgentIds = new Set(conversationId ? chatStreams(streamingConversations.get(conversationId)).map(stream => stream.agentId) : []);
+  if (conversationId && externalActivity[conversationId]) activeAgentIds.add(externalActivity[conversationId].agentId);
   const tasks = useMemo(() => getWorkspaceTasks(conversation), [conversation]);
   const turnEvents = getWorkspaceTurnEvents(conversation);
   // A chat's terminal status cannot certify an unfinished child delegation.
@@ -438,13 +440,13 @@ export function DynamicAgentContext({
                     <p className="min-w-0 truncate text-sm font-medium">{agent?.name || "Chat agent"}</p>
                     {agent && <AgentHarnessBadge compact harnessId={agent.execution_harness_id} presentation={agent.presentation} />}
                   </div>
-                  <p className="text-xs text-muted-foreground">{!!coordination?.agents.length && <><span className={agentMentionColor("primary", [])}>@primary</span><span aria-hidden="true"> · </span></>}{isStreaming && activeAgentId === agentId ? "Responding" : "Primary agent"}</p>
+                  <p className="text-xs text-muted-foreground">{!!coordination?.agents.length && <><span className={agentMentionColor("primary", [])}>@primary</span><span aria-hidden="true"> · </span></>}{isStreaming && activeAgentIds.has(agentId) ? "Responding" : "Primary agent"}</p>
                 </div>
               </div>
               {!!coordination?.agents.length && <div className="space-y-3 pt-1">
                 {coordination.agents.map(member => {
                   const participant = coordination.availableAgents.find(candidate => candidate._id === member.agent_id);
-                  const responding = isStreaming && activeAgentId === member.agent_id;
+                  const responding = isStreaming && activeAgentIds.has(member.agent_id);
                   return <div key={member.agent_id} className="flex min-w-0 items-center gap-2">
                     <AgentAvatar agent={participant} agentId={member.agent_id} rounded="rounded-lg" size="h-8 w-8" iconSize="h-4 w-4" />
                     <div className="min-w-0 flex-1">

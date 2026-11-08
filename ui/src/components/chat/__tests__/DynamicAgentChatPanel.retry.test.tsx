@@ -1,9 +1,11 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { StreamCallbacks } from "@/lib/streaming/callbacks";
 import { apiClient } from "@/lib/api-client";
 import type { ExternalChatActivity } from "@/store/chat-store";
 import type { ChatMessage, Conversation } from "@/types/a2a";
 import { ChatPanel } from "../DynamicAgentChatPanel";
+import { updateChatStream } from "@/store/chat-stream-state";
+import type { StreamingState } from "@/store/chat-stream-state";
 
 let mockConversation: Conversation;
 let mockStreaming = false;
@@ -11,6 +13,7 @@ const mockPush = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 const mockToast = jest.fn();
 const mockStreamMessage = jest.fn(async (_params: unknown, callbacks: StreamCallbacks) => { callbacks.onDone?.(); });
+const mockResumeStream = jest.fn(async (_params: unknown, callbacks: StreamCallbacks) => { callbacks.onDone?.(); });
 const mockRecoverRun = jest.fn(async (_run: string, callbacks: StreamCallbacks) => { callbacks.onContent?.("Recovered final answer", []); callbacks.onDone?.(); });
 const mockChatState = {
   activeConversationId: "chat-1",
@@ -34,6 +37,7 @@ const mockChatState = {
   setConversationStreaming: jest.fn(),
   cancelConversationRequest: jest.fn(),
   loadMessagesFromServer: jest.fn(),
+  saveMessagesToServer: jest.fn().mockResolvedValue(undefined),
   externalActivity: {} as Record<string, ExternalChatActivity>,
   contextUsageByConversation: {},
   messageHistory: {},
@@ -60,14 +64,15 @@ jest.mock("@/components/autonomous/api", () => ({
   autonomousApi: { openFollowUpChat: jest.fn(), listFollowUpChats: async () => ({}) },
 }));
 jest.mock("@/lib/streaming", () => ({
-  createStreamAdapter: () => ({ streamMessage: mockStreamMessage, recoverRun: mockRecoverRun, abort: jest.fn() }),
+  StreamError: class extends Error { isAuthError() { return false; } },
+  createStreamAdapter: () => ({ streamMessage: mockStreamMessage, recoverRun: mockRecoverRun, resumeStream: mockResumeStream, abort: jest.fn() }),
 }));
-jest.mock("@/hooks/useDynamicAgentTimeline", () => ({ useAgentTimeline: () => ({ data: {} }) }));
+jest.mock("@/hooks/useDynamicAgentTimeline", () => ({ useAgentTimeline: (events: Array<{ content?: string }>) => ({ data: { content: events.map(event => event.content ?? "").join("") } }) }));
 jest.mock("@/components/shared/timeline", () => ({
   MarkdownRenderer: ({ content }: { content: string }) => <div>{content}</div>,
 }));
 jest.mock("@/components/dynamic-agents/AgentAvatar", () => ({ AgentAvatar: () => null }));
-jest.mock("../DynamicAgentTimeline", () => ({ AgentTimeline: () => null }));
+jest.mock("../DynamicAgentTimeline", () => ({ AgentTimeline: ({ data }: { data: { content: string } }) => <div>{data.content}</div> }));
 jest.mock("../FeedbackButton", () => ({ FeedbackButton: () => null }));
 jest.mock("../useSlashCommands", () => ({ useSlashCommands: () => [] }));
 jest.mock("../CustomCallButtons", () => ({ DEFAULT_AGENTS: [] }));
@@ -557,7 +562,7 @@ describe("multiple addressed agents", () => {
     expect(mockStreamMessage).not.toHaveBeenCalled();
   });
 
-  it("sends the shared prompt once to each unique recipient in order", async () => {
+  it("starts both unique recipients before either reply finishes", async () => {
     let finishFirst!: () => void;
     mockStreamMessage.mockImplementationOnce(async (_params, callbacks) => {
       await new Promise<void>(resolve => { finishFirst = resolve; });
@@ -568,11 +573,10 @@ describe("multiple addressed agents", () => {
     const field = screen.getByRole("textbox", { name: "Message" });
     fireEvent.change(field, { target: { value: "@primary @reviewer @primary Check this example" } });
     fireEvent.keyDown(field, { key: "Enter" });
-    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
-    expect(mockStreamMessage.mock.calls[0][0]).toMatchObject({ agentId: "example-agent", message: "Check this example", conversationId: "chat-1" });
-    expect(screen.getByText("@reviewer Check this example")).toBeInTheDocument();
-    await act(async () => finishFirst());
     await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
+    expect(mockStreamMessage.mock.calls[0][0]).toMatchObject({ agentId: "example-agent", message: "Check this example", conversationId: "chat-1" });
+    expect(screen.queryByText("Queued message:")).not.toBeInTheDocument();
+    await act(async () => finishFirst());
     expect(mockStreamMessage.mock.calls[1][0]).toMatchObject({ agentId: "helper-agent", message: "Check this example", conversationId: "chat-1" });
     expect(mockConversation.messages.filter(message => message.role === "assistant").map(message => message.agentId)).toEqual(["example-agent", "helper-agent"]);
     expect(new Set(mockConversation.messages.filter(message => message.role === "assistant").map(message => message.turnId)).size).toBe(2);
@@ -593,7 +597,7 @@ describe("multiple addressed agents", () => {
     expect(mockToast).toHaveBeenCalledWith(expect.stringContaining(handle), "error", 6000);
   });
 
-  it.each(["error", "disconnect", "cancelled"])("does not send later recipients after %s", async outcome => {
+  it.each(["error", "disconnect", "cancelled"])("keeps a peer's independent reply when the first reports %s", async outcome => {
     setConversation([]);
     mockStreamMessage.mockImplementationOnce(async (_params, callbacks) => {
       if (outcome === "error") callbacks.onError?.("Provider unavailable");
@@ -603,12 +607,12 @@ describe("multiple addressed agents", () => {
     const field = screen.getByRole("textbox", { name: "Message" });
     fireEvent.change(field, { target: { value: "@primary @reviewer Check this example" } });
     fireEvent.keyDown(field, { key: "Enter" });
-    await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.stringContaining("Remaining recipients were not sent"), "error", 6000));
-    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
+    expect(mockConversation.messages.filter(message => message.role === "assistant").find(message => message.agentId === "helper-agent")?.turnStatus).toBe("done");
     expect(screen.queryByText("Queued message:")).not.toBeInTheDocument();
   });
 
-  it("holds later recipients while the first agent requests input", async () => {
+  it("continues the peer while the first agent requests input", async () => {
     setConversation([]);
     mockStreamMessage.mockImplementationOnce(async (_params, callbacks) => {
       callbacks.onInputRequired?.("example-interrupt", "Choose a value before continuing", [], "example-agent");
@@ -617,32 +621,9 @@ describe("multiple addressed agents", () => {
     const field = screen.getByRole("textbox", { name: "Message" });
     fireEvent.change(field, { target: { value: "@primary @reviewer Check this example" } });
     fireEvent.keyDown(field, { key: "Enter" });
-    await waitFor(() => expect(mockConversation.messages.at(-1)?.turnStatus).toBe("waiting_for_input"));
-    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("@reviewer Check this example")).toBeInTheDocument();
-  });
-
-  it("Stop removes unsent recipients even if the current run completes meanwhile", async () => {
-    let finishFirst!: () => void;
-    setConversation([]);
-    mockStreamMessage.mockImplementationOnce(async (_params, callbacks) => {
-      await new Promise<void>(resolve => { finishFirst = resolve; });
-      callbacks.onDone?.();
-    });
-    const { rerender } = render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
-    const field = screen.getByRole("textbox", { name: "Message" });
-    fireEvent.change(field, { target: { value: "@primary @reviewer Check this example" } });
-    fireEvent.keyDown(field, { key: "Enter" });
-    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
-    mockStreaming = true;
-    rerender(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
-    fireEvent.click(screen.getByRole("button", { name: "Stop generating" }));
-    await act(async () => finishFirst());
-    mockStreaming = false;
-    rerender(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
-    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
-    expect(mockChatState.cancelConversationRequest).toHaveBeenCalledWith("chat-1");
-    expect(screen.queryByText("Queued message:")).not.toBeInTheDocument();
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
+    expect(mockConversation.messages.find(message => message.role === "assistant" && message.agentId === "example-agent")?.turnStatus).toBe("waiting_for_input");
+    expect(mockConversation.messages.find(message => message.role === "assistant" && message.agentId === "helper-agent")?.turnStatus).toBe("done");
   });
 
   it("deletes only the second mention as an object and preserves the first and body", () => {
@@ -665,5 +646,117 @@ describe("multiple addressed agents", () => {
     fireEvent.keyDown(field, { key: "Enter" });
     await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
     expect(mockStreamMessage.mock.calls[0][0]).toMatchObject({ agentId: "example-agent", message: "Summarize @reviewer notes" });
+  });
+});
+
+
+describe("concurrent reply cards", () => {
+  beforeEach(() => {
+    mockChatState.addStreamEvent.mockImplementation((event, _conversationId, messageId) => {
+      mockConversation.streamEvents = [...(mockConversation.streamEvents ?? []), event];
+      const message = mockConversation.messages.find(message => message.id === messageId);
+      if (message) message.streamEvents = [...(message.streamEvents ?? []), event];
+    });
+    mockChatState.setConversationStreaming.mockImplementation((id: string, stream: StreamingState | null, agentId?: string) => {
+      const next = updateChatStream(mockChatState.streamingConversations.get(id), stream, agentId);
+      if (next) mockChatState.streamingConversations.set(id, next);
+      else mockChatState.streamingConversations.delete(id);
+    });
+  });
+  afterEach(() => {
+    mockChatState.setConversationStreaming.mockImplementation(() => undefined);
+    mockChatState.addStreamEvent.mockImplementation(() => undefined);
+  });
+
+  it("renders both active cards with isolated text/events and routes Stop to one agent", async () => {
+    setConversation([]);
+    const finishes: Array<() => void> = [];
+    mockStreamMessage.mockImplementation(async (params, callbacks) => {
+      const id = (params as { agentId: string }).agentId;
+      callbacks.onContent?.(id === "example-agent" ? "First live reply" : "Second live reply", []);
+      callbacks.onToolStart?.(`${id}-call`, `${id}-tool`, {}, []);
+      await new Promise<void>(resolve => finishes.push(resolve));
+      callbacks.onDone?.();
+    });
+    const { rerender } = render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+    const field = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.change(field, { target: { value: "@primary @reviewer Check this example" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(finishes).toHaveLength(2));
+    mockStreaming = true;
+    rerender(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+    const primary = screen.getByRole("region", { name: "Reply from @primary" });
+    const reviewer = screen.getByRole("region", { name: "Reply from @reviewer" });
+    expect(within(primary).getByText("First live reply")).toBeInTheDocument();
+    expect(within(primary).queryByText("Second live reply")).not.toBeInTheDocument();
+    expect(within(reviewer).getByText("Second live reply")).toBeInTheDocument();
+    expect(within(primary).getByRole("status")).toHaveTextContent("Responding");
+    expect(within(reviewer).getByRole("status")).toHaveTextContent("Responding");
+    const assistants = mockConversation.messages.filter(message => message.role === "assistant");
+    expect(mockChatState.addStreamEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "tool_start", toolData: expect.objectContaining({ tool_name: "example-agent-tool" }) }), "chat-1", assistants[0].id);
+    expect(mockChatState.addStreamEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "tool_start", toolData: expect.objectContaining({ tool_name: "helper-agent-tool" }) }), "chat-1", assistants[1].id);
+    fireEvent.click(within(reviewer).getByRole("button", { name: "Stop @reviewer" }));
+    expect(mockChatState.cancelConversationRequest).toHaveBeenCalledWith("chat-1", "helper-agent");
+    expect(mockChatState.cancelConversationRequest).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Queued message:")).not.toBeInTheDocument();
+    await act(async () => finishes.forEach(finish => finish()));
+    expect(mockChatState.streamingConversations.has("chat-1")).toBe(false);
+  });
+
+  it("resumes one participant's input without blocking or replacing its streaming peer", async () => {
+    setConversation([]);
+    let finishPeer!: () => void;
+    mockStreamMessage.mockImplementation(async (params, callbacks) => {
+      if ((params as { agentId: string }).agentId === "example-agent") {
+        callbacks.onInputRequired?.("example-interrupt", "Confirm the scope", [], "example-agent");
+        return;
+      }
+      callbacks.onContent?.("Peer is still working", []);
+      await new Promise<void>(resolve => { finishPeer = resolve; });
+      callbacks.onDone?.();
+    });
+    const { rerender } = render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+    const field = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.change(field, { target: { value: "@primary @reviewer Check this example" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
+    mockStreaming = true;
+    rerender(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+    expect(within(screen.getByRole("region", { name: "Reply from @primary" })).getByRole("status")).toHaveTextContent("Needs your input");
+    expect(screen.getByRole("button", { name: "Submit" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() => expect(mockResumeStream).toHaveBeenCalledWith(expect.objectContaining({ agentId: "example-agent", turnId: expect.any(String) }), expect.anything()));
+    expect(mockChatState.streamingConversations.get("chat-1")?.agentId).toBe("helper-agent");
+    await act(async () => finishPeer());
+  });
+
+  it("recovers both agent runs after refresh without submitting either prompt again", async () => {
+    setConversation([
+      message("first-user", "user", "Shared prompt", { agentId: "example-agent", parallelGroupId: "example-group", turnId: "first-turn" }),
+      message("first-answer", "assistant", "partial first", { agentId: "example-agent", parallelGroupId: "example-group", turnId: "first-turn", isFinal: false }),
+      message("second-user", "user", "Shared prompt", { agentId: "helper-agent", parallelGroupId: "example-group", turnId: "second-turn" }),
+      message("second-answer", "assistant", "partial second", { agentId: "helper-agent", parallelGroupId: "example-group", turnId: "second-turn", isFinal: false }),
+    ]);
+    const finishes: Array<() => void> = [];
+    const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (_url, options) => {
+      const id = JSON.parse(String(options?.body)).agent_id;
+      return { ok: true, json: async () => ({ data: { runtime: "harness_engine", status: "running", run_id: `${id}-run`, turn_id: id === "example-agent" ? "first-turn" : "second-turn" } }) } as Response;
+    });
+    mockRecoverRun.mockImplementation(async (id, callbacks) => {
+      callbacks.onContent?.(`${id} recovered`, []);
+      await new Promise<void>(resolve => finishes.push(resolve));
+      callbacks.onDone?.();
+    });
+    try {
+      const { rerender } = render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+      await waitFor(() => expect(finishes).toHaveLength(2));
+      mockStreaming = true;
+      rerender(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+      expect(within(screen.getByRole("region", { name: "Reply from @primary" })).getByText("example-agent-run recovered")).toBeInTheDocument();
+      expect(within(screen.getByRole("region", { name: "Reply from @reviewer" })).getByText("helper-agent-run recovered")).toBeInTheDocument();
+      expect(mockStreamMessage).not.toHaveBeenCalled();
+      expect(mockConversation.messages.filter(message => message.role === "assistant")).toHaveLength(2);
+      await act(async () => finishes.forEach(finish => finish()));
+    } finally { fetchMock.mockRestore(); }
   });
 });
