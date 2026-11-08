@@ -363,6 +363,23 @@ services:
   #   MongoDB: For persistent chat history and user settings
   #   - Configure via MONGODB_* environment variables
   #   - See mongodb service configuration above
+  # Optional notification broker; excluded from minimal profiles.
+  nats:
+    image: nats:2.10-alpine
+    container_name: caipe-nats
+    command: ["-js", "-sd", "/data", "-m", "8222", "--auth", "${NATS_TOKEN:-caipe-notifications-local-only}"]
+    ports:
+      - "127.0.0.1:4222:4222"
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - nats
+
   caipe-ui:
     image: ghcr.io/cnoe-io/caipe-ui:${IMAGE_TAG:-0.5.66}
     container_name: caipe-ui
@@ -370,6 +387,11 @@ services:
     env_file:
       - .env
     environment:
+      - NOTIFICATION_WEBEX_ENABLED=${NOTIFICATION_WEBEX_ENABLED:-false}
+      - NOTIFICATION_SLACK_ENABLED=${NOTIFICATION_SLACK_ENABLED:-false}
+      - NOTIFICATIONS_TRANSPORT=${NOTIFICATIONS_TRANSPORT:-direct}
+      - NATS_URL=${NATS_URL:-nats://nats:4222}
+      - NATS_TOKEN=${NATS_TOKEN:-caipe-notifications-local-only}
       - NODE_ENV=production
       # Safe release metadata shown by System Health. A specific
       # PLATFORM_COMPONENT_VERSION_* value may override this shared tag.
@@ -559,6 +581,9 @@ services:
       - ${HOME}/.aws:/home/app/.aws:ro
     ports: ["9446:9446"]
     environment:
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - AWS_CONFIG_FILE=/home/app/.aws/config
       - AWS_SHARED_CREDENTIALS_FILE=/home/app/.aws/credentials
       - LOG_LEVEL=DEBUG
@@ -604,6 +629,10 @@ services:
       - ${HOME}/.aws:/home/app/.aws:ro
     env_file: [.env]
     environment:
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
+      - NOTIFICATION_CHAT_MIN_SECONDS=${NOTIFICATION_CHAT_MIN_SECONDS:-30}
       - REMOTE_A2A_ALLOWED_HTTP_ORIGINS=${REMOTE_A2A_ALLOWED_HTTP_ORIGINS:-[]}
       - AWS_CONFIG_FILE=/home/app/.aws/config
       - AWS_SHARED_CREDENTIALS_FILE=/home/app/.aws/credentials
@@ -676,6 +705,9 @@ services:
     ports: ["127.0.0.1:8002:8002"]
     env_file: [.env]
     environment:
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       # Dynamic-agents runtime endpoint -- every autonomous task runs against a
       # dynamic agent (its tools / system prompt / middleware) selected by the
       # task's dynamic_agent_id. Tasks surface a clear ack failure if this URL
@@ -747,6 +779,9 @@ services:
     image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: web-ingestor
     environment:
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - INGESTOR_TYPE=webloader
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - REDIS_URL=redis://rag-redis:6379/0
@@ -765,6 +800,9 @@ services:
     image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: jira-ingestor
     environment:
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - INGESTOR_TYPE=jira
       - JIRA_URL=${JIRA_URL}
       - JIRA_EMAIL=${JIRA_EMAIL}
@@ -784,6 +822,9 @@ services:
     image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: confluence-ingestor
     environment:
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - INGESTOR_TYPE=confluence
       - CONFLUENCE_URL=${CONFLUENCE_URL}
       - CONFLUENCE_USERNAME=${CONFLUENCE_USERNAME}
@@ -805,6 +846,9 @@ services:
     image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: slack-ingestor
     environment:
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - INGESTOR_TYPE=slack
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
       - SLACK_BOT_NAME=${SLACK_BOT_NAME}
@@ -827,6 +871,9 @@ services:
     image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
     container_name: webex-ingestor
     environment:
+      - NOTIFICATIONS_INTERNAL_URL=${NOTIFICATIONS_INTERNAL_URL:-http://caipe-ui:3000}
+      - NOTIFICATIONS_INTERNAL_TOKEN=${NOTIFICATIONS_INTERNAL_TOKEN:-}
+      - NOTIFICATION_EVENTS_ENABLED=${NOTIFICATION_EVENTS_ENABLED:-true}
       - INGESTOR_TYPE=webex
       - WEBEX_ACCESS_TOKEN=${WEBEX_ACCESS_TOKEN}
       - WEBEX_BOT_NAME=${WEBEX_BOT_NAME}
@@ -1679,6 +1726,7 @@ services:
 
 
 volumes:
+  nats_data:
   mongodb_data:
     driver: local
   mongodb_config:

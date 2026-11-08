@@ -18,10 +18,15 @@ export interface InAppNotificationDocument {
   title: string;
   message: string;
   href?: string;
+  /** Recipient-bound launch marker; the destination remains in href. */
+  callback_marker?: string;
   severity: InAppNotificationSeverity;
   category?: InAppNotificationCategory;
   source_label?: string;
+  source_id?: string;
   correlation_key?: string;
+  /** Catalog event type, such as "service.degraded". Lets per-event preferences filter shared entries. */
+  event_type?: string;
   lifecycle_status?: InAppNotificationLifecycleStatus;
   resolved_at?: string;
   resolved_by_subject?: string;
@@ -31,6 +36,8 @@ export interface InAppNotificationDocument {
   updated_at: string;
   read_by_subjects: string[];
   archived_at?: string;
+  /** When MongoDB may delete this entry. Only event notifications set it. */
+  expires_at?: Date;
 }
 
 export interface InAppNotificationView {
@@ -41,6 +48,8 @@ export interface InAppNotificationView {
   severity: InAppNotificationSeverity;
   category: InAppNotificationCategory;
   source_label?: string;
+  source_id?: string;
+  event_type?: string;
   lifecycle_status?: InAppNotificationLifecycleStatus;
   resolved_at?: string;
   created_at: string;

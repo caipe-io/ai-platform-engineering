@@ -361,3 +361,36 @@ The canonical app loader applies these registrations to installed components, re
 - `titlePrefix: true` creates `[User Feedback][Component][Type]: Short title`. Unmapped features add no label. Impact stays in the body; priority and assignment remain triage decisions.
 - The body includes the authenticated reporter, host version/commit, browser family/major version and OS, entry point, page/related URLs, impact and configured app context. Apps may supply project/page and their own version/commit through the host capability. App-supplied diagnostics are descriptive context, while host build metadata is read server-side.
 - Configure labels that exist in the destination repository. The shared handler does not create or rename repository labels.
+### Notification channels
+
+- Notification settings include app subscriptions, per-event and per-channel
+  choices, pause/resume, external quiet hours, tests, and delivery status.
+- Native and hosted apps register through `POST /api/notifications/registrations`
+  and publish through `POST /api/notifications`, using an installed app's bound
+  service account and declared `host.notifications` capability.
+- Set `NOTIFICATION_WEBEX_ENABLED=true` or `NOTIFICATION_SLACK_ENABLED=true` to
+  offer bot delivery. Users must link the matching provider account and opt in.
+  No bot is required for the inbox or browser push.
+- Configure `NOTIFICATION_WEB_PUSH_PUBLIC_KEY`,
+  `NOTIFICATION_WEB_PUSH_PRIVATE_KEY`, and `NOTIFICATION_WEB_PUSH_SUBJECT` for
+  browser web push. Generate a deployment-specific VAPID pair with
+  `npx web-push generate-vapid-keys`; keep the private key in a secret store.
+  The subject is an operator contact such as `mailto:admin@example.com`.
+- Push endpoints are limited to exact trusted service hosts. The defaults cover
+  Google, Mozilla, and Apple. Configure `NOTIFICATION_WEB_PUSH_ALLOWED_HOSTS`
+  only when another trusted provider is needed. Device keys and endpoints are
+  never returned by the notification status API.
+- The UI chart accepts `notifications.webPush.secretName`, containing keys
+  `publicKey`, `privateKey`, and `subject`. Channel enablement is configured
+  through the UI chart's `config` values. External channels are off by default.
+
+- Operators can enable metadata-only Splunk HEC or OTLP/HTTP logs exports with
+  `NOTIFICATION_SPLUNK_ENABLED` and `NOTIFICATION_OTEL_ENABLED`. Both default off;
+  endpoints and secrets are deployment-owned, separate from personal channels.
+
+- Publish a host-relative `callbackUri` (legacy `href` also works) to return to
+  an exact page, query, and section anchor. Recipient-bound launch markers survive
+  sign-in and recheck app access before navigating.
+
+See [notification architecture](../docs/docs/architecture/notifications.md) for
+acceptance, retry, idempotency, and authorization behavior.

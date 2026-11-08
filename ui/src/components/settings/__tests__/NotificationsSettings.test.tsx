@@ -33,6 +33,7 @@ it("hides platform health notification controls from non-admin users",async () =
   } as Response);
 
   render(<NotificationsSettings />);
+  await userEvent.click(await screen.findByRole("tab", { name: "Platform" }));
 
   await screen.findByRole("switch",{ name: "Notify me about new releases" });
   expect(screen.queryByText("Platform health")).not.toBeInTheDocument();
@@ -59,6 +60,7 @@ it("loads and saves the personal platform health notification preference",async 
     } as Response);
 
   render(<NotificationsSettings />);
+  await userEvent.click(await screen.findByRole("tab", { name: "Platform" }));
 
   const toggle = await screen.findByRole("switch",{
     name: "Notify me about platform health",
@@ -91,6 +93,7 @@ it("expands and collapses notification sections individually or together",async 
   } as Response);
 
   render(<NotificationsSettings />);
+  await userEvent.click(await screen.findByRole("tab", { name: "Platform" }));
   await screen.findByRole("switch",{ name: "Notify me about platform health" });
 
   await userEvent.click(screen.getByRole("button",{ name: "Collapse Release notes" }));

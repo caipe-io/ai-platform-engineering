@@ -65,6 +65,7 @@ it("opens one global Platform incident only after consecutive failures",async ()
     category: "platform_health",
     lifecycleStatus: "active",
     severity: "warning",
+    eventType: "service.degraded",
   }));
 });
 
@@ -83,7 +84,22 @@ it("automatically resolves an incident after consecutive healthy audits",async (
     lifecycleStatus: "resolved",
     severity: "success",
     title: "Chat Runtime recovered",
+    eventType: "service.recovered",
   }));
+});
+
+it("does not tag a human resolution as a service recovery",async () => {
+  await reconcilePlatformHealthNotifications({ checkedAt: "2026-08-20T10:00:00.000Z",capabilities: [degraded] });
+  await reconcilePlatformHealthNotifications({ checkedAt: "2026-08-20T10:00:30.000Z",capabilities: [degraded] });
+
+  await resolvePlatformHealthNotification({
+    componentId: "chat-runtime",
+    actorSubject: "admin-subject",
+    note: "Reviewed during incident response.",
+  });
+
+  const last = mockCreateNotification.mock.calls.at(-1)?.[0] as { eventType?: string };
+  expect(last.eventType).toBeUndefined();
 });
 
 it("supports a global human resolution without altering viewer read state",async () => {

@@ -53,6 +53,7 @@ REDIS_MCP_BUILTIN_CONFIG_KEY = "rag/mcp/builtin_config"  # singleton for fetch/g
 REDIS_JOB_PREFIX = "job:"
 REDIS_JOB_DATASOURCE_INDEX_PREFIX = "jobs:by_datasource:"
 REDIS_JOB_ERRORS_SUFFIX = ":errors"
+REDIS_JOB_DATASOURCE_TOUCHED_PREFIX = "jobs:touched_by_datasource:"  # set of JSON {subject,email} per datasource
 
 # Redis key prefixes for graph relation heuristics
 REDIS_GRAPH_RELATION_HEURISTICS_PREFIX = "graph_relation_heuristics:"

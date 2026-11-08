@@ -28,6 +28,7 @@ import {
 } from "@/components/admin/workspace/admin-routes";
 import { CrawlConsoleDialog } from "@/components/admin/platform/CrawlConsoleDialog";
 import { CrawlConsoleHeaderPill } from "@/components/admin/platform/CrawlConsoleHeaderPill";
+import { NotificationEventManagement } from "@/components/admin/notifications/NotificationEventManagement";
 import { HealthTab } from "@/components/admin/platform/HealthTab";
 import { MetricsTab } from "@/components/admin/platform/MetricsTab";
 import { ApiStatsSection } from "@/components/admin/platform/ApiStatsSection";
@@ -1687,6 +1688,12 @@ function AdminPage() {
                 <TabsContent value="defaults" className="space-y-4">
                   <PlatformDefaultsSettings readOnly={isSimulationActive} />
                   <ConnectionGuidanceSettings readOnly={isSimulationActive} />
+                </TabsContent>
+              )}
+
+              {tabGateValues.platform_settings && (
+                <TabsContent value="notification-events" className="space-y-4">
+                  <NotificationEventManagement readOnly={isSimulationActive} />
                 </TabsContent>
               )}
 

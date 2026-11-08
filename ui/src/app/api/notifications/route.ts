@@ -1,3 +1,10 @@
+import { notificationEventPolicy } from "@/lib/notifications/event-policy.server";
+import { notificationCallbackUri } from "@/lib/notifications/callback";
+import { enqueueNotificationExports } from "@/lib/notifications/exports.server";
+import { consumeNotificationQuota } from "@/lib/notifications/limits.server";
+import { canLaunchAgenticApp, agenticAppUserContextFromSession } from "@/lib/agentic-apps/access";
+import { loadConfiguredAgenticApps } from "@/lib/agentic-apps/config";
+import { readNotificationJson } from "@/lib/notifications/http.server";
 import { NextRequest, after } from "next/server";
 
 import {
@@ -7,9 +14,12 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { getRequestOrigin } from "@/app/api/skills/_lib/request-origin";
+import { enqueueNotification } from "@/lib/notifications/delivery.server";
+import { getNotificationSource } from "@/lib/notifications/subscriptions.server";
+import { resolveRecipients } from "@/lib/notifications/audience.server";
 import { findNotificationProducer } from "@/lib/agentic-apps/notification-producer";
 import { createInAppNotification, listInAppNotifications } from "@/lib/in-app-notifications.server";
-import { platformHealthNotificationsEnabled } from "@/lib/notification-preferences.server";
+import { inboxViewOptions } from "@/lib/notification-preferences.server";
 import { runPlatformHealthNotificationAudit } from "@/lib/platform-health-notifications.server";
 
 function positiveInteger(value: string | null, fallback: number): number {
@@ -22,11 +32,12 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const subject = typeof session.sub === "string" ? session.sub.trim() : "";
   if (!subject) throw new ApiError("Your session has expired. Please sign in again.", 401);
   const params = request.nextUrl.searchParams;
-  const includePlatformNotifications = await platformHealthNotificationsEnabled(user.email);
+  const viewOptions = await inboxViewOptions(user.email, subject);
   const page = await listInAppNotifications(subject, {
     page: positiveInteger(params.get("page"), 1),
     pageSize: positiveInteger(params.get("page_size"), 10),
-    includePlatformNotifications,
+    ...viewOptions,
+    allowedAppSourceIds: loadConfiguredAgenticApps().filter((app) => canLaunchAgenticApp(app, agenticAppUserContextFromSession(session, user.role))).map((app) => `app:${app.manifest.id}`),
   });
   after(() => runPlatformHealthNotificationAudit(getRequestOrigin(request)));
   return successResponse(page);
@@ -57,7 +68,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const app = caller.isServiceAccount === true ? findNotificationProducer(caller.serviceAccountClientId) : null;
   if (!app) throw new ApiError("This credential may not create notifications", 403, "FORBIDDEN");
 
-  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  const body = await readNotificationJson(request);
   if (!body || typeof body !== "object") throw new ApiError("Request body must be JSON", 400, "BAD_REQUEST");
 
   const recipients = body.recipientUserSubjects;
@@ -69,28 +80,38 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   ) {
     throw new ApiError(`recipientUserSubjects needs 1 to ${MAX_RECIPIENTS} subjects`, 400, "BAD_REQUEST");
   }
-  const href = body.href === undefined ? undefined : text(body.href, "href");
-  if (href !== undefined) {
-    const origin = "https://example.invalid";
-    if (
-      !href.startsWith("/") ||
-      href.startsWith("//") ||
-      /[\\\u0000-\u001f\u007f]/.test(href) ||
-      new URL(href, origin).origin !== origin
-    ) {
-      throw new ApiError("href must be a relative path", 400, "BAD_REQUEST");
-    }
-  }
+  let href: string | undefined;
+  try { href = notificationCallbackUri(body.callbackUri, body.href); }
+  catch { throw new ApiError("callbackUri/href must be matching relative application paths", 400, "BAD_REQUEST"); }
   const severity = body.severity ?? "info";
   if (!SEVERITIES.includes(severity as Severity)) {
     throw new ApiError("severity is not recognised", 400, "BAD_REQUEST");
   }
 
+  const eventKey = text(body.eventKey, "eventKey");
+  const title = text(body.title, "title"), message = text(body.message, "message");
+  const sourceId = `app:${app.manifest.id}`;
+  const source = await getNotificationSource(`app:${app.manifest.id}`);
+  if (source) {
+    if (typeof body.eventType !== "string" || !source.events.some((event) => event.id === body.eventType)) throw new ApiError("Select a registered notification eventType", 400);
+    if ((await notificationEventPolicy(sourceId, body.eventType)).retired) return successResponse({ queued: 0, skipped: recipients.length, retired: true }, 202);
+    const audience = await resolveRecipients((recipients as string[]).map((subject) => ({ subject })), { includeOrgAdmins: false });
+    await consumeNotificationQuota(sourceId, 200, Math.max(1, audience.recipients.length));
+    for (const recipient of audience.recipients) await consumeNotificationQuota(`recipient:${recipient.subject}`, 20);
+    await enqueueNotificationExports({ key: [eventKey], sourceId, eventType: body.eventType, occurredAt: new Date().toISOString(), severity: severity as Severity });
+    for (const recipient of audience.recipients) await enqueueNotification({
+      id: eventKey, sourceId: `app:${app.manifest.id}`, sourceLabel: app.manifest.displayName,
+      eventType: body.eventType, recipient, title, message, href, severity: severity as Severity, retentionDays: 90,
+    });
+    return successResponse({ queued: audience.recipients.length, skipped: audience.skipped + audience.rejected }, 202);
+  }
+  await consumeNotificationQuota(sourceId, 200, recipients.length);
+  await enqueueNotificationExports({ key: [eventKey], sourceId, eventType: "app.notification", occurredAt: new Date().toISOString(), severity: severity as Severity });
   const created = await createInAppNotification({
-    eventKey: `app:${app.installation.appId}:${text(body.eventKey, "eventKey")}`,
+    eventKey: `app:${app.installation.appId}:${eventKey}`,
     recipientUserSubjects: recipients as string[],
-    title: text(body.title, "title"),
-    message: text(body.message, "message"),
+    title,
+    message,
     href,
     severity: severity as Severity,
     sourceLabel: app.manifest.displayName,

@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 import os
+import uuid
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -184,7 +185,7 @@ class SlackBotAdminService:
             "last_sync": self._last_sync,
         }
 
-    def send_notification(self, *, channel_id: str, text: str) -> dict[str, str]:
+    def send_notification(self, *, channel_id: str, text: str, notification_id: str = "", plain_text: bool = False) -> dict[str, str]:
         """Send an operator-configured admin notification (approvals, platform alerts, etc.) to a Slack channel."""
 
         normalized_channel_id = channel_id.strip()
@@ -212,6 +213,8 @@ class SlackBotAdminService:
                 "channel": normalized_channel_id,
                 "text": normalized_text,
                 "unfurl_links": False,
+                **({"mrkdwn": False, "parse": "none"} if plain_text else {}),
+                **({"client_msg_id": str(uuid.UUID(hex=notification_id[:32]))} if notification_id else {}),
             },
             timeout=10,
         )
@@ -223,6 +226,27 @@ class SlackBotAdminService:
             "channel_id": normalized_channel_id,
             "message_ts": str(payload.get("ts") or ""),
         }
+
+    def send_user_notification(self, *, user_id: str, text: str, notification_id: str) -> dict[str, str]:
+        """Send a personal notification to an already linked Slack identity."""
+        if not user_id.startswith(("U", "W")) or not user_id.isalnum():
+            raise ValueError("A linked Slack user_id is required")
+        if len(notification_id) != 64 or any(char not in "0123456789abcdef" for char in notification_id):
+            raise ValueError("A stable notification_id is required")
+        token = os.environ.get("SLACK_INTEGRATION_BOT_TOKEN", os.environ.get("SLACK_BOT_TOKEN", "")).strip()
+        if not token:
+            raise RuntimeError("No Slack bot token is configured for notifications")
+        response = requests.post(
+            "https://slack.com/api/conversations.open",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"users": user_id}, timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        channel = payload.get("channel", {}).get("id")
+        if not payload.get("ok") or not channel:
+            raise RuntimeError("Slack direct conversation is unavailable")
+        return self.send_notification(channel_id=channel, text=text, notification_id=notification_id, plain_text=True)
 
     def inspect_channel(self, *, channel_id: str) -> dict[str, Any]:
         """Return provider-owned metadata used by publication risk policy.
@@ -579,6 +603,22 @@ class _SlackAdminRequestHandler(BaseHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001 - returned as JSON to admin client
                 logger.warning("Slack admin config sync failed: %s", exc)
                 self._write_json({"error": str(exc)}, status=500)
+            return
+        if path == "/admin/slack/user-notifications":
+            if not self._authorize(scope_env="SLACK_ADMIN_NOTIFICATION_SCOPE"):
+                return
+            try:
+                self._write_json(self.service.send_user_notification(
+                    user_id=_required_string(body.get("user_id"), "user_id"),
+                    text=_required_string(body.get("text"), "text"),
+                    notification_id=_required_string(body.get("notification_id"), "notification_id"),
+                ))
+            except ValueError as exc:
+                self._write_json({"error": str(exc)}, status=400)
+            except RuntimeError as exc:
+                self._write_json({"error": str(exc)}, status=503)
+            except requests.RequestException:
+                self._write_json({"error": "slack_api_unavailable"}, status=502)
             return
         if path == "/admin/slack/notifications":
             if not self._authorize(scope_env="SLACK_ADMIN_NOTIFICATION_SCOPE"):

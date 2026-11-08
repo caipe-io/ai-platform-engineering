@@ -60,6 +60,16 @@ spec:
             {{- end }}
           env:
             {{- $global := .Values.global | default dict }}
+            {{- $notifications := $global.notifications | default dict }}
+            {{- if $notifications.enabled }}
+            - name: NOTIFICATIONS_INTERNAL_URL
+              value: {{ required "global.notifications.internalUrl is required for RAG notification producers" $notifications.internalUrl | quote }}
+            - name: NOTIFICATIONS_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "global.notifications.tokenSecret.name is required when enabled" $notifications.tokenSecret.name | quote }}
+                  key: {{ $notifications.tokenSecret.key | default "token" | quote }}
+            {{- end }}
             {{- $rag := $global.rag | default dict }}
             {{- $ingestorOidc := $rag.ingestorOidc | default dict }}
             # Computed connection settings (from global values)

@@ -242,6 +242,7 @@ const sidebars: SidebarsConfig = {
         { type: 'doc', id: 'architecture/claude-acp', label: 'Claude ACP' },
         { type: 'doc', id: 'architecture/scheduler', label: 'Scheduler' },
         { type: 'doc', id: 'architecture/autonomous-agents', label: 'Autonomous Agents' },
+        { type: 'doc', id: 'architecture/notifications', label: 'Event Notifications' },
         {
           type: 'doc',
           id: 'architecture/enterprise-identity-federation',
