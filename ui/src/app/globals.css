@@ -235,7 +235,7 @@ html[data-navigation-pending="true"] * {
   --card-foreground: 210 40% 98%;
   --popover: 230 25% 8%;
   --popover-foreground: 210 40% 98%;
-  --primary: 215 48% 48%;
+  --primary: 173 80% 40%;
   --primary-foreground: 0 0% 100%;
   --secondary: 230 20% 12%;
   --secondary-foreground: 210 40% 98%;
@@ -247,7 +247,7 @@ html[data-navigation-pending="true"] * {
   --destructive-foreground: 210 40% 98%;
   --border: 230 20% 18%;
   --input: 230 20% 15%;
-  --ring: 215 48% 48%;
+  --ring: 173 80% 40%;
 }
 
 /* ========================================
@@ -262,7 +262,7 @@ html[data-navigation-pending="true"] * {
   --card-foreground: 224 71% 4%;
   --popover: 0 0% 100%;
   --popover-foreground: 224 71% 4%;
-  --primary: 215 48% 45%;
+  --primary: 173 80% 35%;
   --primary-foreground: 0 0% 100%;
   --secondary: 220 14% 96%;
   --secondary-foreground: 224 71% 4%;
@@ -274,7 +274,7 @@ html[data-navigation-pending="true"] * {
   --destructive-foreground: 0 0% 100%;
   --border: 220 13% 91%;
   --input: 220 13% 91%;
-  --ring: 215 48% 45%;
+  --ring: 173 80% 35%;
 }
 
 /* ========================================
@@ -314,7 +314,7 @@ html[data-navigation-pending="true"] * {
   --card-foreground: 0 0% 95%;
   --popover: 0 0% 5%;
   --popover-foreground: 0 0% 95%;
-  --primary: 215 48% 48%;
+  --primary: 173 80% 45%;
   --primary-foreground: 0 0% 100%;
   --secondary: 0 0% 8%;
   --secondary-foreground: 0 0% 95%;
@@ -326,7 +326,7 @@ html[data-navigation-pending="true"] * {
   --destructive-foreground: 0 0% 95%;
   --border: 0 0% 15%;
   --input: 0 0% 10%;
-  --ring: 215 48% 48%;
+  --ring: 173 80% 45%;
 }
 
 /* ========================================
@@ -835,12 +835,11 @@ pre code.hljs {
   font-size: 0.875rem;
 }
 
-/* Selection must contrast with both branded bubbles and ordinary prose.
-   Literal colors keep descendant highlights independent of theme accents. */
+/* Selection styling — solid primary background so the highlight block is
+   unmistakable regardless of text color or theme brightness. */
 ::selection {
-  background: #bfdbfe;
-  color: #0f172a;
-  text-shadow: none;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
 }
 
 /* Focus-within for form groups */
@@ -1233,18 +1232,4 @@ pre code.hljs {
    ======================================== */
 [data-animating] > [data-panel] {
   transition: flex-grow 300ms ease-in-out;
-}
-
-/* Chat surfaces are restrained; semantic status colors remain independent. */
-.chat-user-message {
-  background: #233f65;
-  color: #f1f5f9;
-  user-select: text;
-  -webkit-user-select: text;
-}
-.light .chat-user-message,
-[data-theme="light"] .chat-user-message,
-[data-theme="legacy-light"] .chat-user-message {
-  background: #e5edf8;
-  color: #172b49;
 }
