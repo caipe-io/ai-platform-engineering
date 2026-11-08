@@ -182,7 +182,7 @@ sequenceDiagram
 
 **Spike S1 (gates phase 1)** — #2938, run 2026-10-14. **Outcome: K2.** C1 stays the fallback.
 - [x] Keycloak 26.3 exchange emits the mappers of the requested optional scope.
-- [ ] Autonomous runs: exchange an owner token that was itself minted by `requested_subject` impersonation (chained exchange). Not run in S1; moved to T101 as a phase 1 gate.
+- [ ] Autonomous runs: exchange an owner token that was itself minted by `requested_subject` impersonation (chained exchange). Not run in S1; moved to T102 as a phase 1 gate.
 - [x] Token issuance latency and admin performance with 1k, 5k and 10k client scopes.
 - [ ] If any check fails → [C1](#identity-option-legend) (dynamic agents sign; key optionally in Vault or a cloud KMS).
 
@@ -283,7 +283,7 @@ Checked 2026-10-09; no duplicate found.
 | #2813, #2841, #2828, #2854 CAS authorization | `llm_model` joins the CAS scope and its audit |
 | #2884 CAS migration inventory | The `llm_model` call-time check is registered as a CAS path |
 | #2885 canonical platform identity | Gateway token claims (`sub`, `org`) follow it; the sending service is `azp` |
-| #2889 Dynamic Agents on the CAS access API | Target API for the `llm_model#can_read` check; deferred, so T109 uses today's call first |
+| #2889 Dynamic Agents on the CAS access API | Target API for the `llm_model#can_read` check; deferred, so T107 uses today's call first |
 | #2890 OBO impersonation and delegation scope | Decides how the scheduler gets the owner token; the gateway exchange is unchanged |
 | #2891 trusted execution context for delegation | Source of the task owner for autonomous runs |
 | #2892, #2909 AgentGateway ext_authz through BFF CAS | Pattern for optional gateway-side authorization |

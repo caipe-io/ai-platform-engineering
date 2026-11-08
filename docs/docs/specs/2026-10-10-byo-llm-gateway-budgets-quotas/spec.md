@@ -258,7 +258,7 @@ flowchart LR
 
 ## Open Decisions
 
-- ~~**OD-1 Signer**~~ Closed 2026-10-14 by spike S1 (#2938): **Keycloak per-agent scope ([K2](./research.md#identity-option-legend))**. [C1](./research.md#identity-option-legend) stays the fallback; claims and budget keys are identical either way. Autonomous runs reuse the chat exchange (2026-11-07); a chained-exchange test gates phase 1 (T101). See [S1 results](./research.md#s1-results).
+- ~~**OD-1 Signer**~~ Closed 2026-10-14 by spike S1 (#2938): **Keycloak per-agent scope ([K2](./research.md#identity-option-legend))**. [C1](./research.md#identity-option-legend) stays the fallback; claims and budget keys are identical either way. Autonomous runs reuse the chat exchange (2026-11-07); a chained-exchange test gates phase 1 (T102). See [S1 results](./research.md#s1-results).
 
 ## Out of Scope
 
