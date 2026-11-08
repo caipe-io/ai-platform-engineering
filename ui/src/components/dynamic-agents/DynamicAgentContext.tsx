@@ -434,9 +434,14 @@ export function DynamicAgentContext({
             <WorkspaceSection id={`${sectionId}-agents`} title="Agents" icon={<Users className="h-4 w-4" />} expanded={openSections.includes("agents")} onToggle={() => toggleSection("agents")}>
               <div className="flex min-w-0 items-center gap-2">
                 <AgentAvatar agent={agent} agentId={agentId} rounded="rounded-lg" size="h-8 w-8" iconSize="h-4 w-4" />
-                <div className="min-w-0 flex-1"><p className="break-words text-sm font-medium">{agent?.name || "Chat agent"}</p><p className="text-xs text-muted-foreground">{isStreaming && activeAgentId === agentId ? "Responding" : "Primary agent"}</p></div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="min-w-0 truncate text-sm font-medium">{agent?.name || "Chat agent"}</p>
+                    {agent && <AgentHarnessBadge compact harnessId={agent.execution_harness_id} presentation={agent.presentation} />}
+                  </div>
+                  <p className="text-xs text-muted-foreground">{isStreaming && activeAgentId === agentId ? "Responding" : "Primary agent"}</p>
+                </div>
               </div>
-              {agent && <AgentHarnessBadge harnessId={agent.execution_harness_id} presentation={agent.presentation} />}
               {!!coordination?.agents.length && <div className="space-y-2 border-t pt-2">
                 <p className="text-xs font-medium">Next message recipient</p>
                 <Button size="sm" variant="outline" aria-label="Send next message to @primary" aria-pressed={coordination.selectedAgentId === coordination.primaryAgentId} disabled={readOnly || isStreaming} onClick={() => coordination.selectAgent(coordination.primaryAgentId)} className={cn("w-full justify-start border-transparent bg-transparent", coordination.selectedAgentId === coordination.primaryAgentId && "border-blue-500 bg-blue-50 hover:bg-blue-100 dark:border-blue-400 dark:bg-blue-500/15 dark:hover:bg-blue-500/25")}>
