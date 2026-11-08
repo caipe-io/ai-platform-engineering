@@ -25,6 +25,8 @@ import { motion } from "framer-motion";
 import {
 Bot,
 ChevronDown,
+CheckCircle2,
+Circle,
 Download,
 FolderOpen,
 Info,
@@ -391,7 +393,7 @@ export function DynamicAgentContext({
             </div>}
             {coordination?.agents.length ? <div className="space-y-2">
               <div className="flex items-center gap-1">
-                <p className="text-xs font-medium">Coordination mode</p>
+                <p className="text-xs font-medium">How agents respond</p>
                 <TooltipProvider delayDuration={0}><Tooltip open={coordinationInfoOpen} onOpenChange={setCoordinationInfoOpen}>
                   <TooltipTrigger asChild>
                     <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" aria-label="About coordination modes" aria-describedby={`${sectionId}-mode-info`} onClick={() => setCoordinationInfoOpen(true)} onKeyDown={event => { if (event.key === "Escape") setCoordinationInfoOpen(false); }}>
@@ -403,12 +405,32 @@ export function DynamicAgentContext({
                   </TooltipContent>
                 </Tooltip></TooltipProvider>
               </div>
-              <div className="flex flex-wrap gap-1" role="group" aria-label="Coordination mode">
-                <Button size="sm" variant={coordination.mode !== "team" ? "secondary" : "ghost"} disabled={!coordination.canManage || isStreaming} onClick={() => void coordination.setMode?.("mentions")}>Mentions &amp; assignments</Button>
-                <Button size="sm" variant={coordination.mode === "team" ? "secondary" : "ghost"} disabled={!coordination.canManage || isStreaming || coordination.teamAvailable === false} title={coordination.teamAvailable === false ? "Team handoffs are disabled by the administrator" : undefined} onClick={() => void coordination.setMode?.("team")}>Team coordination</Button>
+              <div className="grid gap-2" role="group" aria-label="How agents respond">
+                {([
+                  { mode: "mentions", label: "Mentions", description: "You choose which agent responds." },
+                  { mode: "team", label: "Team coordination", description: "Agents can also hand tasks to each other." },
+                ] as const).map(option => {
+                  const selected = (coordination.mode ?? "mentions") === option.mode;
+                  const unavailable = option.mode === "team" && coordination.teamAvailable === false;
+                  const Icon = selected ? CheckCircle2 : Circle;
+                  return <Button key={option.mode} type="button" variant="outline" aria-pressed={selected}
+                    aria-label={option.label} aria-describedby={`${sectionId}-mode-${option.mode}`}
+                    disabled={!coordination.canManage || isStreaming || coordination.loading || unavailable}
+                    onClick={() => void coordination.setMode?.(option.mode)}
+                    className={cn("h-auto min-h-16 w-full justify-start gap-3 whitespace-normal rounded-lg px-3 py-2.5 text-left", selected
+                      ? "border-blue-500 bg-blue-50 text-blue-950 hover:bg-blue-100 hover:text-blue-950 dark:border-blue-400 dark:bg-blue-500/20 dark:text-blue-100 dark:hover:bg-blue-500/25 dark:hover:text-blue-100"
+                      : "border-border bg-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground")}>
+                    <Icon className={cn("h-4 w-4", selected && "text-blue-600 dark:text-blue-300")} aria-hidden="true" />
+                    <span className="min-w-0"><span className="block text-xs font-semibold">{option.label}</span>
+                      <span id={`${sectionId}-mode-${option.mode}`} className={cn("mt-0.5 block text-[11px] font-normal leading-relaxed", selected ? "text-blue-800 dark:text-blue-200" : "text-muted-foreground")}>
+                        {unavailable ? "Disabled by your administrator." : option.description}
+                      </span>
+                    </span>
+                  </Button>;
+                })}
               </div>
             </div> : null}
-            {!!coordination?.handoffs?.length && <div className="space-y-2 border-b pb-3"><p className="text-xs font-medium">Agent handoffs</p>{coordination.handoffs.map(job => <div key={job._id} className="text-xs"><Button variant="link" size="sm" className={cn("h-auto p-0", agentMentionColor(job.handle, coordination.agents.map(member => member.handle)))} onClick={() => coordination.selectAgent(job.targetAgentId)}>@{job.handle}</Button><span className="ml-2">{job.status === "delivered" ? "Completed" : job.status === "pending" || job.status === "processing" ? job.runId ? "Working" : "Queued" : job.status}</span>{job.lastError && job.lastError !== "retrying" && <p className="text-muted-foreground">{job.lastError.replaceAll("_", " ")}</p>}</div>)}</div>}
+            {!!coordination?.handoffs?.length && <div className="space-y-2 border-b pb-3"><p className="text-xs font-medium">Recent handoffs</p>{coordination.handoffs.map(job => <div key={job._id} className="text-xs"><Button variant="link" size="sm" className={cn("h-auto p-0", agentMentionColor(job.handle, coordination.agents.map(member => member.handle)))} onClick={() => coordination.selectAgent(job.targetAgentId)}>@{job.handle}</Button><span className="ml-2">{job.status === "delivered" ? "Completed" : job.status === "pending" || job.status === "processing" ? job.runId ? "Working" : "Queued" : job.status}</span>{job.lastError && job.lastError !== "retrying" && <p className="text-muted-foreground">{job.lastError.replaceAll("_", " ")}</p>}</div>)}</div>}
             <WorkspaceSection id={`${sectionId}-agents`} title="Agents" icon={<Users className="h-4 w-4" />} expanded={openSections.includes("agents")} onToggle={() => toggleSection("agents")}>
               <div className="flex min-w-0 items-center gap-2">
                 <AgentAvatar agent={agent} agentId={agentId} rounded="rounded-lg" size="h-8 w-8" iconSize="h-4 w-4" />
@@ -416,12 +438,16 @@ export function DynamicAgentContext({
               </div>
               {agent && <AgentHarnessBadge harnessId={agent.execution_harness_id} presentation={agent.presentation} />}
               {!!coordination?.agents.length && <div className="space-y-2 border-t pt-2">
-                <Button size="sm" variant={coordination.selectedAgentId === agentId ? "secondary" : "ghost"} disabled={readOnly || isStreaming} onClick={() => coordination.selectAgent(coordination.primaryAgentId)} className={cn("w-full justify-start", agentMentionColor("primary", []))}>@primary</Button>
+                <p className="text-xs font-medium">Next message recipient</p>
+                <Button size="sm" variant="outline" aria-label="Send next message to @primary" aria-pressed={coordination.selectedAgentId === coordination.primaryAgentId} disabled={readOnly || isStreaming} onClick={() => coordination.selectAgent(coordination.primaryAgentId)} className={cn("w-full justify-start border-transparent bg-transparent", coordination.selectedAgentId === coordination.primaryAgentId && "border-blue-500 bg-blue-50 hover:bg-blue-100 dark:border-blue-400 dark:bg-blue-500/15 dark:hover:bg-blue-500/25")}>
+                  <span className={agentMentionColor("primary", [])}>@primary</span>
+                  {coordination.selectedAgentId === coordination.primaryAgentId && <span className="ml-auto flex items-center gap-1 text-[10px] text-blue-700 dark:text-blue-200"><CheckCircle2 aria-hidden="true" />Next</span>}
+                </Button>
                 {coordination.agents.map(member => {
                   const usable = coordination.availableAgents.some(candidate => candidate._id === member.agent_id);
-                  return <div key={member.agent_id} className="space-y-1"><Button size="sm" variant={coordination.selectedAgentId === member.agent_id ? "secondary" : "ghost"} disabled={readOnly || isStreaming || !usable} onClick={() => coordination.selectAgent(member.agent_id)} className="h-auto w-full min-w-0 justify-start whitespace-normal text-left"><Bot className="mr-2 h-4 w-4 shrink-0" /><span className="min-w-0 break-words"><span className={agentMentionColor(member.handle, coordination.agents.map(agent => agent.handle))}>@{member.handle}</span><span className="block text-xs font-normal text-muted-foreground">{member.name}{isStreaming && activeAgentId === member.agent_id ? " · Responding" : ""}</span></span></Button>{!usable && <p className="text-xs text-muted-foreground">Agent access required</p>}</div>;
+                  return <div key={member.agent_id} className="space-y-1"><Button size="sm" variant="outline" aria-label={`Send next message to @${member.handle}`} aria-pressed={coordination.selectedAgentId === member.agent_id} disabled={readOnly || isStreaming || !usable} onClick={() => coordination.selectAgent(member.agent_id)} className={cn("h-auto w-full min-w-0 justify-start whitespace-normal border-transparent bg-transparent py-2 text-left", coordination.selectedAgentId === member.agent_id && "border-blue-500 bg-blue-50 hover:bg-blue-100 dark:border-blue-400 dark:bg-blue-500/15 dark:hover:bg-blue-500/25")}><Bot className="mr-2 h-4 w-4 shrink-0" /><span className="min-w-0 break-words"><span className={agentMentionColor(member.handle, coordination.agents.map(agent => agent.handle))}>@{member.handle}</span><span className="block text-xs font-normal text-muted-foreground">{member.name}{isStreaming && activeAgentId === member.agent_id ? " · Responding" : ""}</span></span>{coordination.selectedAgentId === member.agent_id && <span className="ml-auto flex shrink-0 items-center gap-1 text-[10px] text-blue-700 dark:text-blue-200"><CheckCircle2 aria-hidden="true" />Next</span>}</Button>{!usable && <p className="text-xs text-muted-foreground">Agent access required</p>}</div>;
                 })}
-                <p className="text-xs text-muted-foreground">Select a recipient or start a message with @. Agents respond to messages addressed to them.</p>
+                <p className="text-xs text-muted-foreground">Choose who receives your next message, or use @mention. Selecting an agent does not start a task.</p>
               </div>}
               {agent?.subagents?.map((subagent) => <div key={subagent.agent_id} className="flex min-w-0 gap-2">
                 <Bot className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" /><div className="min-w-0"><p className="break-words text-xs font-medium">{subagent.name}</p><p className="text-xs text-muted-foreground">Configured subagent</p></div>
@@ -429,8 +455,7 @@ export function DynamicAgentContext({
               {subagentRuns.length > 0 && <div className="space-y-2 border-t pt-2"><p className="text-xs text-muted-foreground">Latest turn delegations</p>{subagentRuns.map((run) => <div key={run.id} className="text-xs"><p className="break-words font-medium">{run.info.name}</p><p className="text-muted-foreground">{run.info.status === "running" && !isStreaming ? "Completion unconfirmed" : run.info.status}</p></div>)}</div>}
               <p className="text-xs text-muted-foreground">Chat sharing does not grant agent or tool access.</p>
             </WorkspaceSection>
-            <WorkspaceSection id={`${sectionId}-coordination`} title="Coordination" icon={<ListTodo className="h-4 w-4" />} expanded={openSections.includes("coordination")} onToggle={() => toggleSection("coordination")}>
-              <p className="text-xs text-muted-foreground">Latest published task list. Each agent delegates according to its own instructions and subagents.</p>
+            <WorkspaceSection id={`${sectionId}-coordination`} title="Tasks" icon={<ListTodo className="h-4 w-4" />} expanded={openSections.includes("coordination")} onToggle={() => toggleSection("coordination")}>
               {tasks.length ? <TaskList tasks={tasks} readonly /> : <p className="text-xs text-muted-foreground">No task list published yet.</p>}
             </WorkspaceSection>
             <WorkspaceSection id={`${sectionId}-files`} title="Workspace files" icon={<FolderOpen className="h-4 w-4" />} expanded={showFiles} onToggle={() => toggleSection("files")}>

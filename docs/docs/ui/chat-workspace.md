@@ -15,7 +15,7 @@ The **Agent coordination** tab contains:
 - **Agents:** the primary agent, configured subagents, and the latest turn's
   observed delegations, and agents attached to the chat. Unconfirmed
   delegations are not shown as completed.
-- **Coordination:** the latest task list published by the primary agent,
+- **Tasks:** the latest task list published by the primary agent,
   restored from saved stream events after refresh. Delegation still follows the
   agent's configured instructions. Attached agents respond to explicitly
   addressed messages; owners can enable agent-to-agent handoffs in Team mode.
@@ -122,7 +122,12 @@ Opening or collapsing the workspace does not start, stop, or replace a run.
 
 ## Team coordination and handoffs
 
-- **Mentions & assignments** is the default. Address a joined agent with `@handle`.
+- **Mentions** is the default: you choose which agent responds, using the
+  **Next message recipient** list, the composer **To** picker or `@handle`.
+- Both response modes remain visible as buttons with short descriptions. The
+  active mode has a blue outline, tinted surface and checkmark. Selecting a
+  recipient uses the same highlight and a **Next** label; it does not start a task.
+- Detailed delegation limits and sign-in behavior remain in the info tooltip.
 - The chat owner can enable **Team coordination** in the right workspace panel.
 - Deep Agents and Claude SDK/ACP/CLI workers then receive `handoff_to_agent`.
   AgentCore can receive assignments; its remote runtime must implement a compatible
