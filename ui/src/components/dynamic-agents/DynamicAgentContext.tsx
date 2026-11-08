@@ -396,7 +396,7 @@ export function DynamicAgentContext({
                       <Info className="h-3.5 w-3.5" aria-hidden="true" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="left" className="max-w-xs text-left text-xs font-normal leading-relaxed">
+                  <TooltipContent side="left" className="max-w-xs whitespace-normal text-left text-xs font-normal leading-relaxed">
                     <p id={`${sectionId}-mode-info`}>{coordination.mode === "team" ? "Agents can hand tasks to joined agents using the chat owner’s access while that sign-in remains valid. Only the assignment is shared. Up to 8 tasks and 4 hops per chain. Turn this off to stop queued handoffs; use Stop for an active response." : "Agents respond when addressed. Team coordination enables agent-to-agent handoffs."}</p>
                   </TooltipContent>
                 </Tooltip></TooltipProvider>
