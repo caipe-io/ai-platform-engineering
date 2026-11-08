@@ -2379,6 +2379,32 @@ export function ChatPanel({
   }, [input, executeSlashCommand, submitMessage, activeConversationId, updateConversationTitle, coordination]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    const field = inputRef.current;
+    if (highlightedMention && coordination && field && !e.nativeEvent.isComposing &&
+        (e.key === "Backspace" || e.key === "Delete")) {
+      const start = field.selectionStart;
+      const end = field.selectionEnd;
+      const mentionEnd = highlightedMention.length;
+      const tokenEnd = input[mentionEnd] === " " ? mentionEnd + 1 : mentionEnd;
+      const touchesMention = start !== end
+        ? start < mentionEnd && end > 0
+        : e.key === "Backspace" ? start > 0 && start <= tokenEnd : start < mentionEnd;
+      if (touchesMention) {
+        e.preventDefault();
+        // A recognized recipient is one editable object, including its separator.
+        // Expanding a partial selection preserves any unselected message text.
+        setInput(input.slice(Math.max(end, tokenEnd)));
+        setCommandPanel(null);
+        setShowSlashMenu(false);
+        setMentionMenu(false);
+        const removedAgentId = highlightedMention === "@primary" ? coordination.primaryAgentId
+          : coordination.agents.find(member => `@${member.handle}` === highlightedMention)?.agent_id;
+        if (removedAgentId === coordination.selectedAgentId) coordination.selectAgent(coordination.primaryAgentId);
+        setTimeout(() => inputRef.current?.setSelectionRange(0, 0), 0);
+        return;
+      }
+    }
+
     if (commandPanel) {
       if (e.key === "Escape") {
         e.preventDefault();

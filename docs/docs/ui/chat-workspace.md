@@ -18,7 +18,7 @@ The **Agent coordination** tab contains:
 - **Coordination:** the latest task list published by the primary agent,
   restored from saved stream events after refresh. Delegation still follows the
   agent's configured instructions. Attached agents respond to explicitly
-  addressed messages; automatic team coordination is not enabled.
+  addressed messages; owners can enable agent-to-agent handoffs in Team mode.
 - **Workspace files:** files published to the conversation's existing filesystem
   API, with refresh, preview, and download. This is not a browser for the remote
   worker's entire filesystem. Access errors are distinguished from empty lists.
@@ -33,6 +33,10 @@ and session refresh. Read-only viewers cannot refresh the session.
 3. Select **Join chat**. The primary agent and conversation URL stay unchanged.
 4. Start a message with `@reviewer`, select it from `@` autocomplete, or use the
    **To** picker above the composer. Use `@primary` to return to the primary agent.
+
+- A recognized leading `@mention` is deleted as one object with Backspace or
+  Delete. Any unselected message text remains. Removing the selected recipient's
+  mention resets **To** to the primary agent.
 
 - Membership is saved on the conversation and survives refresh. Up to eight
   additional agents can join. A configured subagent remains a different concept:
@@ -58,8 +62,8 @@ and session refresh. Read-only viewers cannot refresh the session.
   requires operator reconciliation, never automatic prompt replay.
 - Earlier-turn editing is disabled after another agent joins: rewinding just one
   provider would strand the other participants' state. Send a follow-up instead.
-- Arbitrary sandbox/BYO-session attachment, participant removal, shared workspace
-  mounting and automatic team coordination remain separate work.
+- Arbitrary sandbox/BYO-session attachment, participant removal and shared
+  workspace mounting remain separate work.
 
 ## API and storage
 
@@ -81,6 +85,9 @@ Opening or collapsing the workspace does not start, stop, or replace a run.
 - Deep Agents and Claude SDK/ACP/CLI workers then receive `handoff_to_agent`.
   AgentCore can receive assignments; its remote runtime must implement a compatible
   tool to originate them.
+- The tool advertises other joined agents' names and handles to each agent,
+  including the primary. It does not advertise their tools or share their files.
+  Mentions mode does not expose this handoff tool or its participant roster.
 - The tool accepts a joined handle and a self-contained assignment. It queues work
   durably and returns an assignment ID. The receiving run starts after the sender
   completes. No model-output mention parser silently launches work.
