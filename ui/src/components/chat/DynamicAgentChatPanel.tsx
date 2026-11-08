@@ -3,7 +3,7 @@
 import { agentMentionColor } from "@/lib/agent-mention-colors";
 import { handoffAssistantMessageId } from "@/lib/chat-coordination";
 import type { ChatCoordination } from "@/hooks/use-chat-coordination";
-import { leadingAgentMention } from "@/lib/chat-coordination";
+import { agentMentionQuery, agentMentionTokens, leadingAgentMentions } from "@/lib/chat-coordination";
 
 import { fetchChatRunStatus } from "@/lib/harness-engine-session-client";
 import { useComposerDraft } from "@/hooks/use-composer-draft";
@@ -74,6 +74,7 @@ type ReadOnlyReason = 'admin_audit' | 'shared_readonly' | 'agent_deleted' | 'age
  * too, not just the words.
  */
 interface QueuedMessage {
+  recipientBatchId?: string;
   agentId?: string;
   id: string;
   text: string;
@@ -302,7 +303,8 @@ export function ChatPanel({
   const [showScrollButton, setShowScrollButton] = useState(false);
   const isAutoScrollingRef = useRef(false);
   const loadingOlderRef = useRef(false);
-  const queueFlushInProgressRef = useRef(false);
+  const [queueFlushing, setQueueFlushing] = useState(false);
+  const lastRecipientBatchRef = useRef<string | undefined>(undefined);
 
   const {
     activeConversationId,
@@ -331,6 +333,7 @@ export function ChatPanel({
   useEffect(() => {
     setFeedbackFormOpen(false);
     setFeedbackChatContext(undefined);
+    setQueuedMessages([]);
   }, [conversationId, activeConversationId]);
 
   // A different agent starts a separate chat. The original history, sharing,
@@ -1418,11 +1421,30 @@ export function ChatPanel({
       (message) => message.text.trim() || message.files.length > 0,
     );
     if (validMessages.length === 0 || isThisConversationStreaming || isRemoteResponse) return;
-    const mentioned = leadingAgentMention(validMessages[0].text);
+    const recipients = leadingAgentMentions(validMessages[0].text);
+    const mentioned = recipients.handles[0];
     const mentionTarget = mentioned === "primary" ? coordination?.primaryAgentId : coordination?.agents.find(member => member.handle === mentioned)?.agent_id;
     if (coordination && coordination.enabled !== false && mentioned && !mentionTarget && !explicitAgentId) {
       toast(`@${mentioned} has not joined this chat. Add the agent in Agent coordination first.`, "error", 6000);
       return;
+    }
+    if (coordination && !explicitAgentId && recipients.handles.length > 1 && !validMessages[0].recipientBatchId) {
+      for (const handle of recipients.handles) {
+        const id = handle === "primary" ? coordination.primaryAgentId : coordination.agents.find(member => member.handle === handle)?.agent_id;
+        if (!id || (coordination.enabled === false && id !== coordination.primaryAgentId) ||
+            (id !== coordination.primaryAgentId && !coordination.availableAgents.some(candidate => candidate._id === id))) {
+          toast(`@${handle} is unavailable. Check Agent coordination before sending.`, "error", 6000);
+          return false;
+        }
+      }
+      const recipientBatchId = generateId();
+      const prompt = buildQueuedBatchPrompt(validMessages.map((message, index) => index === 0
+        ? { ...message, text: message.text.slice(recipients.end) } : message));
+      const files = validMessages.flatMap(message => message.files);
+      setQueuedMessages(current => [...current, ...recipients.handles.map(handle => ({
+        id: generateId(), recipientBatchId, text: `@${handle} ${prompt}`, files,
+      }))]);
+      return true;
     }
     const targetAgentId = explicitAgentId ?? mentionTarget ?? validMessages[0].agentId ?? agentId;
     if (coordination?.enabled === false && targetAgentId !== coordination.primaryAgentId) {
@@ -1433,7 +1455,7 @@ export function ChatPanel({
     const targetName = targetConfig?.name ?? coordination?.agents.find(member => member.agent_id === targetAgentId)?.name ?? targetAgentId;
     // A recipient prefix is routing syntax, not instructions to delegate again.
     const runtimeMessages = validMessages.map((message, index) => index === 0 && mentionTarget
-      ? { ...message, text: message.text.replace(/^@[a-z][a-z0-9-]*(?:\s+|$)/, "") } : message);
+      ? { ...message, text: message.text.slice(recipients.end) } : message);
     const messageToSend = buildQueuedBatchPrompt(runtimeMessages);
     const filesToSend = validMessages.flatMap((message) => message.files);
 
@@ -1545,6 +1567,7 @@ export function ChatPanel({
 
       // Finalize the stream
       finalizeStreamLoop(convId, assistantMsgId, loopState);
+      return !loopState.hasError && !loopState.serverCancelled;
 
     } catch (error) {
       console.error("[DynamicAgent] Stream error:", error);
@@ -1575,6 +1598,7 @@ export function ChatPanel({
         ...(authInterruptedReason ? { error: authInterruptedReason } : {}),
       });
       setConversationStreaming(convId, null);
+      return false;
     }
   }, [isAutonomousHistory, isThisConversationStreaming, activeConversationId, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, requestReasoningEffort, session?.user, showAuthErrorToast, suppliedClientContext, toast, requestOptions, isRemoteResponse, coordination, agent]);
 
@@ -1745,30 +1769,45 @@ export function ChatPanel({
     }
   }, [conversationId, panelReadOnly, submitMessage]);
 
-  // Flush the entire queue atomically so it creates one assistant turn.
+  // Joined-agent prompts run in order through the normal authenticated stream path.
   useEffect(() => {
     if (
       isThisConversationStreaming ||
       isRemoteResponse ||
       queuedMessages.length === 0 ||
-      queueFlushInProgressRef.current ||
+      queueFlushing ||
       pendingUserInput ||
       pendingToolApproval
     ) return;
 
+    const nextBatchId = queuedMessages[0].recipientBatchId;
+    const previousStatus = getActiveConversation()?.messages.at(-1)?.turnStatus;
+    if (nextBatchId && lastRecipientBatchRef.current === nextBatchId &&
+        (previousStatus === "interrupted" || previousStatus === "cancelled")) {
+      setQueuedMessages(current => current.filter(message => message.recipientBatchId !== nextBatchId));
+      toast("Remaining recipients were not sent because this response did not complete. Send them a new message when ready.", "error", 6000);
+      return;
+    }
     // Different recipients must never receive a combined queued prompt.
-    const batch = coordination?.agents.length ? queuedMessages.slice(0, 1) : queuedMessages;
-    queueFlushInProgressRef.current = true;
+    const batch = coordination?.agents.length || queuedMessages[0].recipientBatchId ? queuedMessages.slice(0, 1) : queuedMessages;
+    lastRecipientBatchRef.current = nextBatchId;
+    setQueueFlushing(true);
     setQueuedMessages(current => current.slice(batch.length));
-    void submitMessageBatch(batch).finally(() => {
-      queueFlushInProgressRef.current = false;
-    });
+    void submitMessageBatch(batch).then(completed => {
+      if (completed !== true && batch[0].recipientBatchId) {
+        setQueuedMessages(current => current.filter(message => message.recipientBatchId !== batch[0].recipientBatchId));
+        toast("Remaining recipients were not sent because this response did not complete. Send them a new message when ready.", "error", 6000);
+      }
+    }).finally(() => setQueueFlushing(false));
   }, [
     isThisConversationStreaming,
     isRemoteResponse,
     pendingToolApproval,
     pendingUserInput,
     queuedMessages,
+    queueFlushing,
+    getActiveConversation,
+    toast,
     coordination?.agents.length,
     submitMessageBatch,
   ]);
@@ -1895,6 +1934,7 @@ export function ChatPanel({
   }, [createConversation, agentId]);
 
   const handleStop = useCallback(() => {
+    setQueuedMessages(current => current.filter(message => !message.recipientBatchId));
     if (activeConversationId) {
       cancelConversationRequest(activeConversationId);
     }
@@ -1989,10 +2029,19 @@ export function ChatPanel({
 
     // Check for slash commands via the registry
     const trimmed = input.trim();
-    const mentioned = leadingAgentMention(trimmed);
-    if (coordination && coordination.enabled !== false && mentioned && mentioned !== "primary" && !coordination.agents.some(member => member.handle === mentioned)) {
-      toast(`@${mentioned} has not joined this chat. Add the agent in Agent coordination first.`, "error", 6000);
-      return;
+    const recipients = leadingAgentMentions(trimmed);
+    if (coordination) {
+      for (const handle of recipients.handles) {
+        const member = coordination.agents.find(candidate => candidate.handle === handle);
+        if (handle !== "primary" && (!member || coordination.enabled === false || !coordination.availableAgents.some(candidate => candidate._id === member.agent_id))) {
+          toast(`@${handle} is unavailable. Add the agent in Agent coordination and check your Use access.`, "error", 6000);
+          return;
+        }
+      }
+      if (recipients.handles.length > 1 && !trimmed.slice(recipients.end).trim() && !attachments.length) {
+        toast("Add a message after the recipients.", "error", 6000);
+        return;
+      }
     }
     const effortMatch = trimmed.match(/^\/effort(?:\s+(.*))?$/i);
     if (effortMatch) {
@@ -2293,9 +2342,9 @@ export function ChatPanel({
     })),
   ] : [];
   const menuCommands = mentionMenu ? mentionCommands : slashCommands;
-  const inputMention = leadingAgentMention(input);
-  const highlightedMention = coordination && coordination.enabled !== false && inputMention && (inputMention === "primary" || coordination.agents.some(member => member.handle === inputMention))
-    ? `@${inputMention}` : null;
+  const inputRecipients = leadingAgentMentions(input);
+  const highlightedMentions = coordination && coordination.enabled !== false
+    ? agentMentionTokens(input).filter(token => token.handle === "primary" || mentionHandles.includes(token.handle)) : [];
 
   // Handle slash command detection in input
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -2306,9 +2355,10 @@ export function ChatPanel({
     const cursorPos = e.target.selectionStart;
     const textBeforeCursor = newValue.slice(0, cursorPos);
 
-    if (coordination && coordination.enabled !== false && /^@[a-z0-9-]*$/i.test(textBeforeCursor)) {
+    const mentionQuery = agentMentionQuery(newValue, cursorPos);
+    if (coordination && coordination.enabled !== false && mentionQuery) {
       setMentionMenu(true);
-      setSlashFilter(textBeforeCursor.slice(1));
+      setSlashFilter(mentionQuery.filter);
       setShowSlashMenu(true);
       setSlashSelectedIndex(0);
       return;
@@ -2338,9 +2388,17 @@ export function ChatPanel({
   const handleSlashSelect = useCallback((cmd: SlashCommand) => {
     setShowSlashMenu(false);
     if (cmd.category === "participant") {
-      coordination?.selectAgent(cmd.id);
-      setInput(input.replace(/^@[a-z0-9-]*\s*/i, `${cmd.value} `));
-      setTimeout(() => inputRef.current?.focus(), 0);
+      const caret = inputRef.current?.selectionStart ?? input.length;
+      const query = agentMentionQuery(input, caret);
+      if (!query) return;
+      if (query.start === 0) coordination?.selectAgent(cmd.id);
+      const next = input.slice(0, query.start) + cmd.value + " " + input.slice(caret);
+      setInput(next);
+      setTimeout(() => {
+        inputRef.current?.focus();
+        const position = query.start + cmd.value.length + 1;
+        inputRef.current?.setSelectionRange(position, position);
+      }, 0);
       return;
     }
 
@@ -2387,27 +2445,29 @@ export function ChatPanel({
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     const field = inputRef.current;
-    if (highlightedMention && coordination && field && !e.nativeEvent.isComposing &&
+    if (highlightedMentions.length && coordination && field && !e.nativeEvent.isComposing &&
         (e.key === "Backspace" || e.key === "Delete")) {
-      const start = field.selectionStart;
-      const end = field.selectionEnd;
-      const mentionEnd = highlightedMention.length;
-      const tokenEnd = input[mentionEnd] === " " ? mentionEnd + 1 : mentionEnd;
-      const touchesMention = start !== end
-        ? start < mentionEnd && end > 0
-        : e.key === "Backspace" ? start > 0 && start <= tokenEnd : start < mentionEnd;
-      if (touchesMention) {
+      let start = field.selectionStart;
+      let end = field.selectionEnd;
+      const tokens = highlightedMentions.filter(token => start !== end
+        ? start < token.end && end > token.start
+        : e.key === "Backspace" ? start > token.start && start <= token.end + (input[token.end] === " " ? 1 : 0)
+          : start >= token.start && start < token.end);
+      if (tokens.length) {
         e.preventDefault();
-        // A recognized recipient is one editable object, including its separator.
-        // Expanding a partial selection preserves any unselected message text.
-        setInput(input.slice(Math.max(end, tokenEnd)));
+        start = Math.min(start, tokens[0].start);
+        const last = tokens[tokens.length - 1];
+        end = Math.max(end, last.end + (input[last.end] === " " ? 1 : 0));
+        const next = input.slice(0, start) + input.slice(end);
+        setInput(next);
         setCommandPanel(null);
         setShowSlashMenu(false);
         setMentionMenu(false);
-        const removedAgentId = highlightedMention === "@primary" ? coordination.primaryAgentId
-          : coordination.agents.find(member => `@${member.handle}` === highlightedMention)?.agent_id;
-        if (removedAgentId === coordination.selectedAgentId) coordination.selectAgent(coordination.primaryAgentId);
-        setTimeout(() => inputRef.current?.setSelectionRange(0, 0), 0);
+        if (tokens[0].start < inputRecipients.end) {
+          const nextHandle = leadingAgentMentions(next).handles[0];
+          coordination.selectAgent(coordination.agents.find(member => member.handle === nextHandle)?.agent_id ?? coordination.primaryAgentId);
+        }
+        setTimeout(() => inputRef.current?.setSelectionRange(start, start), 0);
         return;
       }
     }
@@ -3076,12 +3136,15 @@ export function ChatPanel({
               }}
             >
               {coordination?.enabled !== false && !!coordination?.agents.length && <div className="flex items-center gap-2 px-1 pb-1 text-xs text-muted-foreground">
-                <span>To</span><div className="w-fit min-w-0 max-w-full"><AgentPicker ariaLabel="Message recipient" value={agentId} onChange={coordination.selectAgent} required hideIdSuffix
+                <span>To</span>{inputRecipients.handles.length > 0 ? <div aria-label="Message recipients" className="flex flex-wrap gap-1">
+                  {inputRecipients.handles.map(handle => <span key={handle} className={cn("rounded-full bg-muted px-2 py-1", agentMentionColor(handle, mentionHandles))}>@{handle}</span>)}
+                </div> : <div className="w-fit min-w-0 max-w-full"><AgentPicker ariaLabel="Message recipient" value={agentId} onChange={coordination.selectAgent} required hideIdSuffix
                   options={[
                     { value: coordination.primaryAgentId, label: "@primary" },
                     ...coordination.agents.map(member => ({ value: member.agent_id, label: `@${member.handle}`, disabled: !coordination.availableAgents.some(candidate => candidate._id === member.agent_id) })),
-                  ]} disabled={isThisConversationStreaming || isRemoteResponse || Boolean(pendingUserInput || pendingToolApproval)} triggerClassName={cn("h-7 rounded-full border-0 bg-muted text-xs shadow-none hover:bg-muted/80", agentMentionColor(selectedHandle, mentionHandles))} /></div>
+                  ]} disabled={isThisConversationStreaming || isRemoteResponse || Boolean(pendingUserInput || pendingToolApproval)} triggerClassName={cn("h-7 rounded-full border-0 bg-muted text-xs shadow-none hover:bg-muted/80", agentMentionColor(selectedHandle, mentionHandles))} /></div>}
               </div>}
+              {coordination?.enabled !== false && coordination && inputRecipients.handles.length > 1 && <p className="px-1 text-xs text-muted-foreground">Each recipient receives this message in order. Keep this chat open until queued messages send.</p>}
               {maxEffortAnimationKey > 0 && (
                 <div
                   key={`max-effort-armor-${maxEffortAnimationKey}`}
@@ -3204,8 +3267,10 @@ export function ChatPanel({
                     </motion.span>
                   )}
                 </AnimatePresence>
-                {highlightedMention && <div ref={mentionHighlightRef} aria-hidden="true" className="pointer-events-none select-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-1.5 py-2 text-sm leading-6 text-foreground">
-                  <span className={agentMentionColor(inputMention ?? "primary", mentionHandles)}>{highlightedMention}</span>{input.slice(highlightedMention.length)}{"\n"}
+                {highlightedMentions.length > 0 && <div ref={mentionHighlightRef} aria-hidden="true" className="pointer-events-none select-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-1.5 py-2 text-sm leading-6 text-foreground">
+                  {highlightedMentions.map((token, index) => <React.Fragment key={token.start}>
+                    {input.slice(index ? highlightedMentions[index - 1].end : 0, token.start)}<span className={agentMentionColor(token.handle, mentionHandles)}>{input.slice(token.start, token.end)}</span>
+                  </React.Fragment>)}{input.slice(highlightedMentions.at(-1)!.end)}{"\n"}
                 </div>}
                 <TextareaAutosize
                   ref={inputRef}
@@ -3226,7 +3291,7 @@ export function ChatPanel({
                       ? `Type to queue another message${queuedMessages.length > 0 ? ` (${queuedMessages.length} queued)` : ""}, or Cmd+Enter to send now...`
                       : placeholder ?? `Ask anything, or type / to see commands, skills, and agents...`
                   }
-                  className={cn("relative min-h-10 w-full resize-none bg-transparent px-1.5 py-2 text-sm leading-6 caret-foreground outline-none placeholder:text-muted-foreground", highlightedMention ? "text-transparent" : "text-foreground")}
+                  className={cn("relative min-h-10 w-full resize-none bg-transparent px-1.5 py-2 text-sm leading-6 caret-foreground outline-none placeholder:text-muted-foreground", highlightedMentions.length ? "text-transparent" : "text-foreground")}
                   minRows={1}
                   maxRows={10}
                 />

@@ -544,3 +544,126 @@ describe("atomic recipient mentions", () => {
     expect(coordination.selectAgent).not.toHaveBeenCalled();
   });
 });
+
+describe("multiple addressed agents", () => {
+  it("completes a second mention at the caret without replacing the first or suffix", () => {
+    setConversation([]);
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+    const field = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: "@primary @rev Check this", selectionStart: 13 } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(field).toHaveValue("@primary @reviewer  Check this");
+    expect(screen.getByLabelText("Message recipients")).toHaveTextContent("@primary@reviewer");
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends the shared prompt once to each unique recipient in order", async () => {
+    let finishFirst!: () => void;
+    mockStreamMessage.mockImplementationOnce(async (_params, callbacks) => {
+      await new Promise<void>(resolve => { finishFirst = resolve; });
+      callbacks.onDone?.();
+    });
+    setConversation([]);
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+    const field = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.change(field, { target: { value: "@primary @reviewer @primary Check this example" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
+    expect(mockStreamMessage.mock.calls[0][0]).toMatchObject({ agentId: "example-agent", message: "Check this example", conversationId: "chat-1" });
+    expect(screen.getByText("@reviewer Check this example")).toBeInTheDocument();
+    await act(async () => finishFirst());
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
+    expect(mockStreamMessage.mock.calls[1][0]).toMatchObject({ agentId: "helper-agent", message: "Check this example", conversationId: "chat-1" });
+    expect(mockConversation.messages.filter(message => message.role === "assistant").map(message => message.agentId)).toEqual(["example-agent", "helper-agent"]);
+    expect(new Set(mockConversation.messages.filter(message => message.role === "assistant").map(message => message.turnId)).size).toBe(2);
+  });
+
+  it.each(["@outsider", "@unavailable"])("retains the draft and sends nobody if %s cannot receive it", async handle => {
+    setConversation([]);
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={{ ...coordination,
+      agents: [...coordination.agents, { agent_id: "unavailable-agent", handle: "unavailable", name: "Unavailable", added_at: "2026-01-01", added_by: "owner" }],
+    }} />);
+    const field = screen.getByRole("textbox", { name: "Message" });
+    const draft = `@primary ${handle} Check this example`;
+    fireEvent.change(field, { target: { value: draft } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await act(async () => {});
+    expect(field).toHaveValue(draft);
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+    expect(mockToast).toHaveBeenCalledWith(expect.stringContaining(handle), "error", 6000);
+  });
+
+  it.each(["error", "disconnect", "cancelled"])("does not send later recipients after %s", async outcome => {
+    setConversation([]);
+    mockStreamMessage.mockImplementationOnce(async (_params, callbacks) => {
+      if (outcome === "error") callbacks.onError?.("Provider unavailable");
+      if (outcome === "cancelled") callbacks.onCancelled?.();
+    });
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+    const field = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.change(field, { target: { value: "@primary @reviewer Check this example" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.stringContaining("Remaining recipients were not sent"), "error", 6000));
+    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Queued message:")).not.toBeInTheDocument();
+  });
+
+  it("holds later recipients while the first agent requests input", async () => {
+    setConversation([]);
+    mockStreamMessage.mockImplementationOnce(async (_params, callbacks) => {
+      callbacks.onInputRequired?.("example-interrupt", "Choose a value before continuing", [], "example-agent");
+    });
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+    const field = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.change(field, { target: { value: "@primary @reviewer Check this example" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(mockConversation.messages.at(-1)?.turnStatus).toBe("waiting_for_input"));
+    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("@reviewer Check this example")).toBeInTheDocument();
+  });
+
+  it("Stop removes unsent recipients even if the current run completes meanwhile", async () => {
+    let finishFirst!: () => void;
+    setConversation([]);
+    mockStreamMessage.mockImplementationOnce(async (_params, callbacks) => {
+      await new Promise<void>(resolve => { finishFirst = resolve; });
+      callbacks.onDone?.();
+    });
+    const { rerender } = render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+    const field = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.change(field, { target: { value: "@primary @reviewer Check this example" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
+    mockStreaming = true;
+    rerender(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+    fireEvent.click(screen.getByRole("button", { name: "Stop generating" }));
+    await act(async () => finishFirst());
+    mockStreaming = false;
+    rerender(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+    expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+    expect(mockChatState.cancelConversationRequest).toHaveBeenCalledWith("chat-1");
+    expect(screen.queryByText("Queued message:")).not.toBeInTheDocument();
+  });
+
+  it("deletes only the second mention as an object and preserves the first and body", () => {
+    setConversation([]);
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+    const field = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    const value = "@primary @reviewer Keep this message";
+    fireEvent.change(field, { target: { value, selectionStart: value.length } });
+    field.setSelectionRange(14, 14);
+    fireEvent.keyDown(field, { key: "Backspace" });
+    expect(field).toHaveValue("@primary Keep this message");
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps body mentions as references rather than additional recipients", async () => {
+    setConversation([]);
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+    const field = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.change(field, { target: { value: "@primary Summarize @reviewer notes" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
+    expect(mockStreamMessage.mock.calls[0][0]).toMatchObject({ agentId: "example-agent", message: "Summarize @reviewer notes" });
+  });
+});

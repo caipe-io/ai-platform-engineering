@@ -73,9 +73,18 @@ caipe-ui:
 The workspace lists every joined agent with its name, handle, runtime icon and
 participation status. It does not duplicate the composer’s recipient selector.
 
-- A recognized leading `@mention` is deleted as one object with Backspace or
-  Delete. Any unselected message text remains. Removing the selected recipient's
-  mention resets **To** to the primary agent.
+- Address several joined agents with consecutive leading mentions, for example
+  `@author @reviewer Check this plan`. **To** shows every recipient. Each unique
+  recipient receives the same prompt and attachments as a separate turn, in order.
+  Body mentions are references; only the leading block routes the message.
+- Autocomplete inserts at the caret, including a second mention. Backspace or
+  Delete removes each recognized mention as one object and preserves other text.
+- Multi-recipient messages use the composer queue in both coordination modes.
+  Keep the chat open until they send: unsent queue entries do not survive refresh.
+  Stop cancels remaining recipients; errors or an unconfirmed completion also
+  prevent later recipients in that message from starting. Input/approval pauses
+  must be resolved before queued work continues. Retry addresses only the saved
+  turn's recipient. No agent-to-agent delegation is required.
 - Primary mentions use blue. Joined agents receive distinct colors in saved
   membership order, consistent across autocomplete, the composer, messages and
   workspace controls. Handles remain visible; color never grants access or

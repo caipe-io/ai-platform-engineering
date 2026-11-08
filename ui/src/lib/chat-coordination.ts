@@ -27,9 +27,36 @@ export function suggestedAgentHandle(name: string): string {
   return AGENT_HANDLE_PATTERN.test(handle) && handle !== "primary" ? handle : "helper";
 }
 
-/** A leading mention selects one chat participant; ordinary text/emails do not. */
+export interface AgentMentionToken { handle: string; start: number; end: number; }
+
+/** Whitespace-delimited mentions exclude email addresses and partial handles. */
+export function agentMentionTokens(input: string): AgentMentionToken[] {
+  return Array.from(input.matchAll(/(?:^|\s)@([a-z][a-z0-9-]{1,31})(?=\s|$)/g), match => ({
+    handle: match[1], start: match.index! + match[0].indexOf("@"), end: match.index! + match[0].length,
+  }));
+}
+
+/** Only the consecutive leading mentions address recipients; body references do not. */
+export function leadingAgentMentions(input: string): { handles: string[]; end: number } {
+  const handles: string[] = [];
+  let end = 0;
+  for (const token of agentMentionTokens(input)) {
+    if (input.slice(end, token.start).trim()) break;
+    if (!handles.includes(token.handle)) handles.push(token.handle);
+    end = token.end;
+  }
+  while (/\s/.test(input[end] ?? "") && end < input.length) end++;
+  return { handles, end };
+}
+
 export function leadingAgentMention(input: string): string | null {
-  return input.match(/^@([a-z][a-z0-9-]{1,31})(?:\s|$)/)?.[1] ?? null;
+  return leadingAgentMentions(input).handles[0] ?? null;
+}
+
+/** Locate the token at the caret so a second mention never replaces the first. */
+export function agentMentionQuery(input: string, caret: number): { start: number; filter: string } | null {
+  const match = input.slice(0, caret).match(/(?:^|\s)@([a-z0-9-]*)$/i);
+  return match ? { start: caret - match[1].length - 1, filter: match[1] } : null;
 }
 
 /** Every subscriber and the delivery worker write the same handoff answer. */
