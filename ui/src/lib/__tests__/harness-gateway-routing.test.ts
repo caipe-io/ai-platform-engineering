@@ -155,3 +155,9 @@ it("fences pinned-only callers while a session handoff is in progress", async ()
   bindings.set(key, { ...bindings.get(key), transition_id: "example-transition" });
   expect((await getPinnedHarnessGatewayTarget("agent-example", context.subject, context.conversationId) as NextResponse).status).toBe(409);
 });
+
+it("isolates an attached Deep Agent in Engine instead of adopting the primary native checkpoint", async () => {
+  mockFindNativeContext.mockResolvedValue({ _id: "primary-checkpoint" });
+  expect(await resolveHarnessGatewayTarget("agent-helper", { ...context, requireEngine: true })).toEqual({ kind: "harness_engine", harnessId: "dynamic_agents" });
+  expect(mockFindNativeContext).not.toHaveBeenCalled();
+});

@@ -37,6 +37,8 @@ Users,
 import { useSession } from "next-auth/react";
 import { useCallback,useEffect,useId,useMemo,useState, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
+import { AddChatAgentDialog } from "@/components/chat/AddChatAgentDialog";
+import type { ChatCoordination } from "@/hooks/use-chat-coordination";
 
 interface DynamicAgentContextProps {
   /** Conversation ID from route params - used for API calls */
@@ -49,6 +51,7 @@ interface DynamicAgentContextProps {
   collapsed?: boolean;
   onCollapse?: (collapsed: boolean) => void;
   readOnly?: boolean;
+  coordination?: ChatCoordination;
 }
 
 /**
@@ -63,6 +66,7 @@ export function DynamicAgentContext({
   collapsed = false,
   onCollapse,
   readOnly = false,
+  coordination,
 }: DynamicAgentContextProps) {
   const { data: session } = useSession();
   const { clearStreamEvents, contextUsageByConversation, conversations, streamingConversations, externalActivity } = useChatStore(
@@ -79,6 +83,7 @@ export function DynamicAgentContext({
   // Get current conversation for download
   const conversation = conversations.find((c) => c.id === conversationId);
   const isStreaming = !!conversationId && (streamingConversations.has(conversationId) || !!externalActivity[conversationId]);
+  const activeAgentId = (conversationId ? streamingConversations.get(conversationId)?.agentId ?? externalActivity[conversationId]?.agentId : undefined) ?? agentId;
   const tasks = useMemo(() => getWorkspaceTasks(conversation), [conversation]);
   const turnEvents = getWorkspaceTurnEvents(conversation);
   // A chat's terminal status cannot certify an unfinished child delegation.
@@ -372,12 +377,26 @@ export function DynamicAgentContext({
             )}
 
             <TabsContent value="coordination" className="mt-0 space-y-4">
+            {coordination && <div className="space-y-2">
+              <AddChatAgentDialog coordination={coordination} disabled={readOnly || isStreaming || coordination.loading} />
+              {coordination.error ? <div role="alert" className="text-xs text-destructive">{coordination.error}<Button size="sm" variant="ghost" onClick={() => void coordination.refresh()}>Retry</Button></div>
+                : !coordination.loading && !coordination.canManage ? <p className="text-xs text-muted-foreground">Ask the chat owner to add agents. Each person still needs agent Use access.</p>
+                : !coordination.loading && !coordination.available ? <p className="text-xs text-muted-foreground">Configure Harness Engine to add chat agents.</p> : null}
+            </div>}
             <WorkspaceSection id={`${sectionId}-agents`} title="Agents" icon={<Users className="h-4 w-4" />} expanded={openSections.includes("agents")} onToggle={() => toggleSection("agents")}>
               <div className="flex min-w-0 items-center gap-2">
                 <AgentAvatar agent={agent} agentId={agentId} rounded="rounded-lg" size="h-8 w-8" iconSize="h-4 w-4" />
-                <div className="min-w-0 flex-1"><p className="break-words text-sm font-medium">{agent?.name || "Chat agent"}</p><p className="text-xs text-muted-foreground">{isStreaming ? "Responding" : "Primary agent"}</p></div>
+                <div className="min-w-0 flex-1"><p className="break-words text-sm font-medium">{agent?.name || "Chat agent"}</p><p className="text-xs text-muted-foreground">{isStreaming && activeAgentId === agentId ? "Responding" : "Primary agent"}</p></div>
               </div>
               {agent && <AgentHarnessBadge harnessId={agent.execution_harness_id} presentation={agent.presentation} />}
+              {!!coordination?.agents.length && <div className="space-y-2 border-t pt-2">
+                <Button size="sm" variant={coordination.selectedAgentId === agentId ? "secondary" : "ghost"} disabled={readOnly || isStreaming} onClick={() => coordination.selectAgent(coordination.primaryAgentId)} className="w-full justify-start">@primary</Button>
+                {coordination.agents.map(member => {
+                  const usable = coordination.availableAgents.some(candidate => candidate._id === member.agent_id);
+                  return <div key={member.agent_id} className="space-y-1"><Button size="sm" variant={coordination.selectedAgentId === member.agent_id ? "secondary" : "ghost"} disabled={readOnly || isStreaming || !usable} onClick={() => coordination.selectAgent(member.agent_id)} className="h-auto w-full min-w-0 justify-start whitespace-normal text-left"><Bot className="mr-2 h-4 w-4 shrink-0" /><span className="min-w-0 break-words">@{member.handle}<span className="block text-xs font-normal text-muted-foreground">{member.name}{isStreaming && activeAgentId === member.agent_id ? " · Responding" : ""}</span></span></Button>{!usable && <p className="text-xs text-muted-foreground">Agent access required</p>}</div>;
+                })}
+                <p className="text-xs text-muted-foreground">Select a recipient or start a message with @. Agents respond to messages addressed to them.</p>
+              </div>}
               {agent?.subagents?.map((subagent) => <div key={subagent.agent_id} className="flex min-w-0 gap-2">
                 <Bot className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" /><div className="min-w-0"><p className="break-words text-xs font-medium">{subagent.name}</p><p className="text-xs text-muted-foreground">Configured subagent</p></div>
               </div>)}
@@ -385,7 +404,7 @@ export function DynamicAgentContext({
               <p className="text-xs text-muted-foreground">Chat sharing does not grant agent or tool access.</p>
             </WorkspaceSection>
             <WorkspaceSection id={`${sectionId}-coordination`} title="Coordination" icon={<ListTodo className="h-4 w-4" />} expanded={openSections.includes("coordination")} onToggle={() => toggleSection("coordination")}>
-              <p className="text-xs text-muted-foreground">Tasks published by this agent. Delegation follows its configured instructions and subagents.</p>
+              <p className="text-xs text-muted-foreground">Latest published task list. Each agent delegates according to its own instructions and subagents.</p>
               {tasks.length ? <TaskList tasks={tasks} readonly /> : <p className="text-xs text-muted-foreground">No task list published yet.</p>}
             </WorkspaceSection>
             <WorkspaceSection id={`${sectionId}-files`} title="Workspace files" icon={<FolderOpen className="h-4 w-4" />} expanded={showFiles} onToggle={() => toggleSection("files")}>

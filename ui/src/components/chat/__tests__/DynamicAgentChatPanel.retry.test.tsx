@@ -30,6 +30,7 @@ const mockChatState = {
   }),
   appendToMessage: jest.fn(),
   clearStreamEvents: jest.fn(),
+  addStreamEvent: jest.fn(),
   setConversationStreaming: jest.fn(),
   cancelConversationRequest: jest.fn(),
   loadMessagesFromServer: jest.fn(),
@@ -165,7 +166,7 @@ describe("Engine run recovery after refresh", () => {
     const fetchMock = status({ runtime: "harness_engine", status: "idle", run_id: "run-example", turn_id: "turn-example" });
     try {
       render(<ChatPanel agentId="example-agent" conversationId="chat-1" readOnly readOnlyReason="agent_unavailable" />);
-      await waitFor(() => expect(mockRecoverRun).toHaveBeenCalledWith("run-example", expect.any(Object), "chat-1"));
+      await waitFor(() => expect(mockRecoverRun).toHaveBeenCalledWith("run-example", expect.any(Object), "chat-1", "example-agent"));
       expect(mockChatState.setConversationStreaming).toHaveBeenCalledWith("chat-1", expect.objectContaining({ readOnly: true }));
       await waitFor(() => expect(mockConversation.messages[0]).toMatchObject({ isFinal: true, content: "Recovered final answer" }));
       expect(screen.queryByRole("textbox")).toBeNull();
@@ -181,7 +182,7 @@ describe("Engine run recovery after refresh", () => {
     const fetchMock = status({ runtime: "harness_engine", status: runStatus, run_id: "run-example", turn_id: "turn-example" });
     try {
       render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
-      await waitFor(() => expect(mockRecoverRun).toHaveBeenCalledWith("run-example", expect.any(Object), "chat-1"));
+      await waitFor(() => expect(mockRecoverRun).toHaveBeenCalledWith("run-example", expect.any(Object), "chat-1", "example-agent"));
       await waitFor(() => expect(mockConversation.messages.at(-1)).toMatchObject({ role: "assistant", turnId: "turn-example", content: "Recovered final answer", isFinal: true }));
       expect(mockStreamMessage).not.toHaveBeenCalled();
     } finally { fetchMock.mockRestore(); }
@@ -457,4 +458,50 @@ describe("retry is unavailable when it would be unsafe", () => {
     render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
     expectNoRetry();
   });
+});
+
+const coordination = {
+  agents: [{ agent_id: "helper-agent", name: "Helper agent", handle: "reviewer", added_at: "2026-01-01", added_by: "owner" }],
+  primaryAgentId: "example-agent", selectedAgentId: "example-agent", availableAgents: [{ _id: "helper-agent", name: "Helper agent", enabled: true }],
+  canManage: true, available: true, loading: false, error: null, selectAgent: jest.fn(), refresh: jest.fn(), addAgent: jest.fn(),
+} as unknown as import("@/hooks/use-chat-coordination").ChatCoordination;
+
+it("shows joined agents for @ and routes a pasted mention to that agent in the same chat", async () => {
+  setConversation([]);
+  render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+  const input = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.change(input, { target: { value: "@rev", selectionStart: 4 } });
+  expect(screen.getByText("@reviewer")).toBeInTheDocument();
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(coordination.selectAgent).toHaveBeenCalledWith("helper-agent");
+  fireEvent.change(input, { target: { value: "@reviewer Check this example", selectionStart: 28 } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledWith(expect.objectContaining({ agentId: "helper-agent", conversationId: "chat-1", message: "Check this example" }), expect.anything()));
+  expect(mockConversation.messages.at(-1)).toMatchObject({ agentId: "helper-agent", agentName: "Helper agent" });
+  expect(mockChatState.createConversation).not.toHaveBeenCalled();
+});
+
+it("recovers the saved participant's run after refresh even when the composer selects primary", async () => {
+  mockRecoverRun.mockImplementationOnce(async (_id, callbacks) => { callbacks.onContent?.("Recovered helper", []); callbacks.onDone?.(); });
+  setConversation([message("pending-helper", "assistant", "partial", { agentId: "helper-agent", agentName: "Helper agent", isFinal: false, turnId: "helper-turn" })]);
+  const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ data: { runtime: "harness_engine", status: "running", run_id: "helper-run", turn_id: "helper-turn" } }) } as Response);
+  try {
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+    await waitFor(() => expect(mockRecoverRun).toHaveBeenCalledWith("helper-run", expect.anything(), "chat-1", "helper-agent"));
+    expect(JSON.parse(fetchMock.mock.calls.find(call => String(call[0]).includes("/stream/status"))?.[1]?.body as string)).toMatchObject({ agent_id: "helper-agent" });
+    expect(mockConversation.messages[0]).toMatchObject({ agentId: "helper-agent", agentName: "Helper agent", turnStatus: "done" });
+  } finally { fetchMock.mockRestore(); }
+});
+
+it("keeps a queued prompt's recipient when the composer switches to another participant", async () => {
+  setConversation([]);
+  mockStreaming = true;
+  const { rerender } = render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+  const input = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.change(input, { target: { value: "Queued for primary" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  rerender(<ChatPanel agentId="helper-agent" conversationId="chat-1" coordination={{ ...coordination, selectedAgentId: "helper-agent" }} />);
+  mockStreaming = false;
+  rerender(<ChatPanel agentId="helper-agent" conversationId="chat-1" coordination={{ ...coordination, selectedAgentId: "helper-agent" }} />);
+  await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledWith(expect.objectContaining({ agentId: "example-agent", message: "Queued for primary" }), expect.anything()));
 });

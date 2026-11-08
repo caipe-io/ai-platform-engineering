@@ -13,7 +13,9 @@ import {
 } from "@/lib/harness-engine-proxy";
 import { getCollection } from "@/lib/mongodb";
 import { stageHarnessAttachments } from "@/lib/harness-attachments";
+import type { Conversation } from "@/types/mongodb";
 import type { HarnessRun, HarnessRunEvent } from "@/types/harness-engine";
+import { recordCoordinationRun, reconcileCoordinationRun, rejectCoordinationTurn, reserveCoordinationTurn } from "@/lib/chat-coordination-admission";
 
 export const DEFAULT_HARNESS_ID = "dynamic_agents";
 
@@ -133,6 +135,7 @@ export async function getHarnessConversationStatus(
   const saved = await lookupHarnessSession(config, auth, scope.agentId, scope.conversationId, scope);
   if (saved instanceof NextResponse) return saved;
   const run = saved.active_run ?? saved.last_run;
+  await reconcileCoordinationRun(run);
   return NextResponse.json({ success: true, data: {
     runtime: "harness_engine", harness_id: saved.harness_id, status: saved.active_run ? "running" : saved.pending_interrupt ? "waiting_for_input" : "idle",
     run_id: run?.run_id ?? null, run_status: run?.status, turn_id: run?.turn_id ?? null,
@@ -144,9 +147,12 @@ export async function getHarnessConversationStatus(
 /** Resolve the owner/conversation's pinned backend before an agent default. */
 export async function resolveHarnessGatewayTarget(
   agentId: string,
-  context: { subject: string; conversationId: string; traceparent?: string },
+  context: { subject: string; conversationId: string; traceparent?: string; requireEngine?: boolean },
 ): Promise<HarnessGatewayTarget | NextResponse> {
   try {
+    const requiresEngine = context.requireEngine ?? Boolean((await (await getCollection<Conversation>("conversations")).findOne(
+      { _id: context.conversationId }, { projection: { coordination_agents: 1 } },
+    ))?.coordination_agents?.length);
     // App-owned assistants execute through their declared stream endpoints.
     // Reject entry points without an app operation before creating a provider binding.
     if (findAgenticAppAssistantStream(agentId) && !await getPinnedHarnessGatewayTarget(agentId, context.subject, context.conversationId)) {
@@ -163,14 +169,14 @@ export async function resolveHarnessGatewayTarget(
       const agent = await agents.findOne({ _id: agentId }, { projection: { _id: 1, execution_harness_id: 1, backend: 1 } });
       if (!agent) return NextResponse.json({ success: false, error: "Agent not found" }, { status: 404 });
       let harnessId = normalizedHarnessId(agent.execution_harness_id);
-      let runtime: "dynamic_agents" | "harness_engine" = harnessId !== DEFAULT_HARNESS_ID ||
+      let runtime: "dynamic_agents" | "harness_engine" = requiresEngine || harnessId !== DEFAULT_HARNESS_ID ||
         process.env.HARNESS_ENGINE_DEEP_AGENTS_ENABLED === "true" ? "harness_engine" : "dynamic_agents";
       // Dynamic Agents and the BFF share the application database. Match the
       // native runtime's checkpointer collection, including per-agent overrides.
       const checkpointCollection = agent.backend?.config?.checkpoint_collection ||
         process.env.CHECKPOINT_COLLECTION || "checkpoints_conversation";
       const checkpoints = await getCollection(checkpointCollection);
-      const nativeContext = await checkpoints.findOne(
+      const nativeContext = requiresEngine ? null : await checkpoints.findOne(
         { thread_id: context.conversationId }, { projection: { _id: 1 } },
       );
       if (nativeContext) {
@@ -201,6 +207,9 @@ export async function resolveHarnessGatewayTarget(
     if (binding.transition_id) return NextResponse.json({ success: false, error: "Session handoff is in progress" }, { status: 409 });
     const harnessId = normalizedHarnessId(binding.harness_id);
     const kind = binding.runtime ?? (harnessId === DEFAULT_HARNESS_ID ? "dynamic_agents" : "harness_engine");
+    if (requiresEngine && kind !== "harness_engine") {
+      return NextResponse.json({ error: "Coordination agents require an isolated Harness Engine session" }, { status: 409 });
+    }
     if (kind === "harness_engine") {
       const config = getHarnessEngineConfig();
       if (config instanceof NextResponse) return config;
@@ -309,6 +318,8 @@ export async function startHarnessGatewayRun(
     ...(auth.email && { "X-Harness-Caller-Email": auth.email }),
     ...(auth.userContextHeader && { "X-Harness-Caller-Context": auth.userContextHeader }),
   } : {};
+  const admission = await reserveCoordinationTurn(body, auth);
+  if (admission instanceof NextResponse) return admission;
   const response = await engineRequest(config, auth, "/api/v1/runs", {
     method: "POST", headers: callerHeaders,
     body: JSON.stringify({
@@ -337,6 +348,7 @@ export async function startHarnessGatewayRun(
   if (response instanceof NextResponse) return response;
   const envelope = await readEnvelope<HarnessRun>(response);
   if (!response.ok || !envelope.success || !envelope.data?.run_id) {
+    if (response.status >= 400 && response.status < 500 && response.status !== 408) await rejectCoordinationTurn(admission);
     return NextResponse.json(
       {
         success: false,
@@ -345,6 +357,7 @@ export async function startHarnessGatewayRun(
       { status: response.status || 502 },
     );
   }
+  await recordCoordinationRun(admission, envelope.data);
   if (["queued", "running"].includes(envelope.data.status)) {
     await (await getCollection<GatewayBinding>("harness_gateway_bindings")).updateOne(
       { _id: gatewayBindingId(String(body.agent_id), auth.subject, String(body.conversation_id)), transition_id: { $exists: false } },
@@ -705,6 +718,7 @@ export async function streamHarnessGatewayRun(
       "X-Harness-Run-ID": started.run.run_id,
       "X-Harness-ID": started.run.harness_id,
       "X-Harness-Conversation-ID": started.run.conversation_id,
+      "X-Harness-Agent-ID": started.run.agent_id,
     },
   });
 }

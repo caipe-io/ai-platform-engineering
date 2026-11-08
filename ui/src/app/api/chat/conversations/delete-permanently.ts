@@ -15,6 +15,9 @@ export async function deleteConversationsPermanently(
   const conversations = await getCollection<Conversation>('conversations');
   await conversations.deleteMany({ _id: { $in: ids } });
 
+  const admissions = await getCollection<{ _id: string }>('chat_coordination_admissions');
+  await admissions.deleteMany({ _id: { $in: ids } });
+
   const messages = await getCollection('messages');
   await messages.deleteMany({ conversation_id: { $in: ids } });
 

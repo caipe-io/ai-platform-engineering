@@ -1,5 +1,8 @@
 "use client";
 
+import type { ChatCoordination } from "@/hooks/use-chat-coordination";
+import { leadingAgentMention } from "@/lib/chat-coordination";
+
 import { fetchChatRunStatus } from "@/lib/harness-engine-session-client";
 import { useComposerDraft } from "@/hooks/use-composer-draft";
 import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
@@ -69,6 +72,7 @@ type ReadOnlyReason = 'admin_audit' | 'shared_readonly' | 'agent_deleted' | 'age
  * too, not just the words.
  */
 interface QueuedMessage {
+  agentId?: string;
   id: string;
   text: string;
   files: InputFile[];
@@ -110,6 +114,7 @@ function buildQueuedBatchPrompt(messages: QueuedMessage[]): string {
 }
 
 interface ChatPanelProps {
+  coordination?: ChatCoordination;
   conversationId?: string; // MongoDB conversation UUID
   readOnly?: boolean;
   readOnlyReason?: ReadOnlyReason;
@@ -137,6 +142,7 @@ interface ChatPanelProps {
 
 export function ChatPanel({
   conversationId,
+  coordination,
   readOnly,
   readOnlyReason,
   apiConversation,
@@ -215,6 +221,7 @@ export function ChatPanel({
   );
 
   const [input, setInput] = useState("");
+  const [mentionMenu, setMentionMenu] = useState(false);
   const [observedRuntime, setObservedRuntime] = useState<{ conversationId: string; harnessId: string } | null>(null);
 
   const [feedbackFormOpen, setFeedbackFormOpen] = useState(false);
@@ -588,6 +595,7 @@ export function ChatPanel({
   useEffect(() => {
     if (isRemoteResponse) setIsRewindConfirmationOpen(false);
   }, [isRemoteResponse]);
+  const lastMessageAgentId = conversation?.messages.at(-1)?.agentId;
   const hasAssistantMessageForInterruptCheck = conversation?.messages?.some((message) => message.role === "assistant") ?? false;
 
   // Check if user is near the bottom of the scroll area
@@ -730,7 +738,8 @@ export function ChatPanel({
   // ═══════════════════════════════════════════════════════════════
   useEffect(() => {
     // Skip if no conversationId (new conversation) or agentId
-    if (!conversationId || !agentId || isAutonomousHistory || panelReadOnly) return;
+    const interruptAgentId = lastMessageAgentId ?? agentId;
+    if (!conversationId || !interruptAgentId || isAutonomousHistory || panelReadOnly) return;
     
     // Wait for messages to be loaded (race condition on page refresh:
     // this effect can fire before ChatContainer finishes loading messages
@@ -754,7 +763,7 @@ export function ChatPanel({
         // Check for pending HITL interrupt state (lightweight call to checkpointer)
         // Messages are already loaded by ChatContainer - we only check interrupt state here
         const interruptResponse = await fetch(
-          `/api/dynamic-agents/conversations/${conversationId}/interrupt-state?agent_id=${encodeURIComponent(agentId)}`,
+          `/api/dynamic-agents/conversations/${conversationId}/interrupt-state?agent_id=${encodeURIComponent(interruptAgentId)}`,
           { signal: controller.signal },
         );
         
@@ -786,7 +795,7 @@ export function ChatPanel({
                 setPendingToolApproval({
                   messageId: lastMsg.id,
                   interruptId: idata.interrupt_id,
-                  agentId,
+                  agentId: interruptAgentId,
                   tools,
                   currentIndex: 0,
                   decisions: [],
@@ -815,7 +824,7 @@ export function ChatPanel({
                   contextId: conversationId,
                   interruptId: idata.interrupt_id,
                   isSSE: true,
-                  agentId: agentId,
+                  agentId: interruptAgentId,
                 });
               }
             }
@@ -831,7 +840,7 @@ export function ChatPanel({
     };
 
     checkInterruptState();
-  }, [conversationId, agentId, isLoadingMessages, isThisConversationStreaming, hasAssistantMessageForInterruptCheck, isAutonomousHistory, isRemoteResponse, panelReadOnly]);
+  }, [conversationId, agentId, lastMessageAgentId, isLoadingMessages, isThisConversationStreaming, hasAssistantMessageForInterruptCheck, isAutonomousHistory, isRemoteResponse, panelReadOnly]);
 
   // ═══════════════════════════════════════════════════════════════
   // FILES & TASKS FETCH (for timeline display in latest message)
@@ -1027,7 +1036,7 @@ export function ChatPanel({
           contextId: activeConversationId,
           interruptId: savedInterruptId,
           isSSE: true,
-          agentId: agentId,
+          agentId: lastMsg.agentId ?? agentId,
        });
     }
 
@@ -1067,6 +1076,7 @@ export function ChatPanel({
     assistantMsgId: string,
     loopState: StreamLoopState,
     toolCallIdToName: Map<string, string>,
+    runtimeAgentId: string = agentId,
   ): StreamCallbacks => {
     /** Parse todos from write_todos args (handles both object and JSON string). */
     const parseTodosFromArgs = (args: unknown) => {
@@ -1192,7 +1202,7 @@ export function ChatPanel({
         contextId: convId,
         isSSE: true,
         interruptId,
-        agentId,
+        agentId: runtimeAgentId,
       });
 
       if (prompt) {
@@ -1227,7 +1237,7 @@ export function ChatPanel({
       setPendingToolApproval({
         messageId: assistantMsgId,
         interruptId,
-        agentId,
+        agentId: runtimeAgentId,
         tools,
         currentIndex: 0,
         decisions: [],
@@ -1324,7 +1334,7 @@ export function ChatPanel({
       ...(state.errorMessage ? { error: state.errorMessage } : {}),
       streamEvents: turnStreamEvents.length > 0 ? turnStreamEvents : undefined,
       // Persisted to metadata.agent_name / metadata.latency_ms for Insights.
-      ...(agentName && { agentName }),
+      ...((currentMsg?.agentName || agentName) && { agentName: currentMsg?.agentName || agentName }),
       ...(latencyMs != null && { latencyMs }),
     });
     setConversationStreaming(conversationId, null);
@@ -1336,6 +1346,8 @@ export function ChatPanel({
   const recoveryMessageRole = conversation?.messages?.at(-1)?.role;
   const recoveryMessageFinal = conversation?.messages?.at(-1)?.isFinal;
   const recoveryTurnId = conversation?.messages?.at(-1)?.turnId;
+  const recoveryAgentId = conversation?.messages?.at(-1)?.agentId ?? agentId;
+  const recoveryAgentName = conversation?.messages?.at(-1)?.agentName ?? coordination?.agents.find(member => member.agent_id === recoveryAgentId)?.name ?? (recoveryAgentId === agentId ? agentName : recoveryAgentId);
   useEffect(() => {
     const checked = recoveryChecked.current;
     if (!activeConversationId || isLoadingMessages || isThisConversationStreaming || isAutonomousHistory) return;
@@ -1345,7 +1357,7 @@ export function ChatPanel({
     let subscribed = false;
     const recoveryController = new AbortController();
     void (async () => {
-      const response = await fetchChatRunStatus(agentId, activeConversationId, recoveryController.signal);
+      const response = await fetchChatRunStatus(recoveryAgentId, activeConversationId, recoveryController.signal);
       if (!response.ok || disposed) return;
       const { data } = await response.json();
       if (data?.runtime === "harness_engine" && typeof data.harness_id === "string") {
@@ -1363,17 +1375,17 @@ export function ChatPanel({
       // Periodic persistence omits an unfinished assistant placeholder. Rebuild
       // it from the admitted run rather than submitting the saved prompt again.
       const assistantId = recoveryMessageRole === "assistant" ? recoveryMessageId : addMessage(
-        activeConversationId, { role: "assistant", content: "", isFinal: false }, recoveryTurnId,
+        activeConversationId, { role: "assistant", content: "", isFinal: false, agentId: recoveryAgentId, agentName: recoveryAgentName }, recoveryTurnId,
       );
       const adapter = createStreamAdapter({ protocol: agentProtocol as "custom" | "agui" });
       const state: StreamLoopState = { accumulatedText: "", rawStreamContent: "", hitlFormRequested: false, hasError: false };
       clearStreamEvents(activeConversationId);
       updateMessage(activeConversationId, assistantId, { isFinal: false });
-      setConversationStreaming(activeConversationId, { conversationId: activeConversationId, messageId: assistantId,
+      setConversationStreaming(activeConversationId, { conversationId: activeConversationId, agentId: recoveryAgentId, messageId: assistantId,
         client: { abort: () => adapter.abort() }, streamAdapter: adapter, readOnly: panelReadOnly || data.is_run_owner === false,
         stopping: data.cancellation_requested === true });
       try {
-        await adapter.recoverRun(data.run_id, buildStreamCallbacks(activeConversationId, assistantId, state, new Map()), activeConversationId);
+        await adapter.recoverRun(data.run_id, buildStreamCallbacks(activeConversationId, assistantId, state, new Map(), recoveryAgentId), activeConversationId, recoveryAgentId);
       } catch (error) {
         state.hasError = true;
         state.errorMessage = error instanceof Error ? error.message : "Run recovery failed";
@@ -1386,18 +1398,30 @@ export function ChatPanel({
       if (!subscribed) checked.delete(activeConversationId);
     };
   }, [activeConversationId, agentId, agentProtocol, isLoadingMessages, isThisConversationStreaming, isRemoteResponse,
-    isAutonomousHistory, panelReadOnly, recoveryMessageId, recoveryMessageRole, recoveryMessageFinal, recoveryTurnId, addMessage, clearStreamEvents, updateMessage, setConversationStreaming,
+    isAutonomousHistory, panelReadOnly, recoveryMessageId, recoveryMessageRole, recoveryMessageFinal, recoveryTurnId, recoveryAgentId, recoveryAgentName, addMessage, clearStreamEvents, updateMessage, setConversationStreaming,
     buildStreamCallbacks, finalizeStreamLoop]);
 
   // A queued batch renders as separate user bubbles but is sent as one prompt,
   // producing one coherent assistant response for the whole batch.
-  const submitMessageBatch = useCallback(async (messagesToSend: QueuedMessage[]) => {
+  const submitMessageBatch = useCallback(async (messagesToSend: QueuedMessage[], explicitAgentId?: string) => {
     if (isAutonomousHistory) return;
     const validMessages = messagesToSend.filter(
       (message) => message.text.trim() || message.files.length > 0,
     );
     if (validMessages.length === 0 || isThisConversationStreaming || isRemoteResponse) return;
-    const messageToSend = buildQueuedBatchPrompt(validMessages);
+    const mentioned = leadingAgentMention(validMessages[0].text);
+    const mentionTarget = mentioned === "primary" ? coordination?.primaryAgentId : coordination?.agents.find(member => member.handle === mentioned)?.agent_id;
+    if (coordination && mentioned && !mentionTarget && !explicitAgentId) {
+      toast(`@${mentioned} has not joined this chat. Add the agent in Agent coordination first.`, "error", 6000);
+      return;
+    }
+    const targetAgentId = explicitAgentId ?? mentionTarget ?? validMessages[0].agentId ?? agentId;
+    const targetConfig = targetAgentId === agentId ? agent : coordination?.availableAgents.find(candidate => candidate._id === targetAgentId);
+    const targetName = targetConfig?.name ?? coordination?.agents.find(member => member.agent_id === targetAgentId)?.name ?? targetAgentId;
+    // A recipient prefix is routing syntax, not instructions to delegate again.
+    const runtimeMessages = validMessages.map((message, index) => index === 0 && mentionTarget
+      ? { ...message, text: message.text.replace(/^@[a-z][a-z0-9-]*(?:\s+|$)/, "") } : message);
+    const messageToSend = buildQueuedBatchPrompt(runtimeMessages);
     const filesToSend = validMessages.flatMap((message) => message.files);
 
     // Create conversation if needed. This hits POST /api/chat/conversations
@@ -1454,6 +1478,7 @@ export function ChatPanel({
       }));
       addMessage(convId, {
         role: "user",
+        agentId: targetAgentId,
         content: queuedMessage.text,
         senderEmail: session?.user?.email ?? undefined,
         senderName: session?.user?.name ?? undefined,
@@ -1463,7 +1488,7 @@ export function ChatPanel({
     });
 
     // Add assistant message placeholder with same turnId
-    const assistantMsgId = addMessage(convId, { role: "assistant", content: "" }, turnId);
+    const assistantMsgId = addMessage(convId, { role: "assistant", content: "", agentId: targetAgentId, agentName: targetName }, turnId);
 
     // Create protocol-agnostic adapter
     const adapter = createStreamAdapter({
@@ -1482,23 +1507,24 @@ export function ChatPanel({
     // Mark this conversation as streaming
     setConversationStreaming(convId, {
       conversationId: convId,
+      agentId: targetAgentId,
       messageId: assistantMsgId,
       client: { abort: () => adapter.abort() },
       streamAdapter: adapter,
     });
 
     try {
-      const callbacks = buildStreamCallbacks(convId, assistantMsgId, loopState, toolCallIdToName);
+      const callbacks = buildStreamCallbacks(convId, assistantMsgId, loopState, toolCallIdToName, targetAgentId);
 
       await adapter.streamMessage(
         {
           message: messageToSend,
           conversationId: convId,
-          agentId,
+          agentId: targetAgentId,
           turnId,
-          reasoningEffort: requestReasoningEffort,
+          reasoningEffort: targetAgentId === agentId ? requestReasoningEffort : targetConfig?.model?.reasoning_effort,
           clientContext,
-          forwardedProps: requestOptions,
+          forwardedProps: targetAgentId === coordination?.primaryAgentId || !coordination ? requestOptions : undefined,
           ...(filesToSend.length > 0 && { files: filesToSend }),
         },
         callbacks,
@@ -1537,7 +1563,7 @@ export function ChatPanel({
       });
       setConversationStreaming(convId, null);
     }
-  }, [isAutonomousHistory, isThisConversationStreaming, activeConversationId, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, requestReasoningEffort, session?.user, showAuthErrorToast, suppliedClientContext, toast, requestOptions, isRemoteResponse]);
+  }, [isAutonomousHistory, isThisConversationStreaming, activeConversationId, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, requestReasoningEffort, session?.user, showAuthErrorToast, suppliedClientContext, toast, requestOptions, isRemoteResponse, coordination, agent]);
 
   const submitMessage = useCallback(
     (messageToSend: string, filesToSend: InputFile[] = []) => submitMessageBatch([{
@@ -1568,7 +1594,7 @@ export function ChatPanel({
         name: attachment.name,
         data: attachment.data!,
       })),
-    })));
+    })), messages[0]?.agentId);
   }, [isThisConversationStreaming, submitMessageBatch, toast]);
 
   const startEditingMessage = useCallback((message: ChatMessageType) => {
@@ -1717,9 +1743,10 @@ export function ChatPanel({
       pendingToolApproval
     ) return;
 
-    const batch = queuedMessages;
+    // Different recipients must never receive a combined queued prompt.
+    const batch = coordination?.agents.length ? queuedMessages.slice(0, 1) : queuedMessages;
     queueFlushInProgressRef.current = true;
-    setQueuedMessages([]);
+    setQueuedMessages(current => current.slice(batch.length));
     void submitMessageBatch(batch).finally(() => {
       queueFlushInProgressRef.current = false;
     });
@@ -1729,6 +1756,7 @@ export function ChatPanel({
     pendingToolApproval,
     pendingUserInput,
     queuedMessages,
+    coordination?.agents.length,
     submitMessageBatch,
   ]);
 
@@ -1948,6 +1976,11 @@ export function ChatPanel({
 
     // Check for slash commands via the registry
     const trimmed = input.trim();
+    const mentioned = leadingAgentMention(trimmed);
+    if (coordination && mentioned && mentioned !== "primary" && !coordination.agents.some(member => member.handle === mentioned)) {
+      toast(`@${mentioned} has not joined this chat. Add the agent in Agent coordination first.`, "error", 6000);
+      return;
+    }
     const effortMatch = trimmed.match(/^\/effort(?:\s+(.*))?$/i);
     if (effortMatch) {
       setInput("");
@@ -1977,6 +2010,7 @@ export function ChatPanel({
       const message = input.trim();
       setQueuedMessages(prev => [...prev, {
         id: generateId(),
+        agentId,
         text: message,
         files: encodedFiles,
       }]);
@@ -1990,7 +2024,7 @@ export function ChatPanel({
       if (activeConversationId && useChatStore.getState().streamingConversations.get(activeConversationId)?.streamAdapter?.canRecoverOnRefresh) {
         // Keep the replacement prompt queued behind the server's stop/drain
         // fence. A fixed delay cannot prove that a dispatched tool has ended.
-        setQueuedMessages([{ id: generateId(), text: input.trim(), files: encodedFiles }]);
+        setQueuedMessages([{ id: generateId(), agentId, text: input.trim(), files: encodedFiles }]);
         setInput("");
         setAttachments([]);
         handleStop();
@@ -2015,7 +2049,7 @@ export function ChatPanel({
     setAttachments([]);
 
     await submitMessage(message, encodedFiles);
-  }, [input, attachments, submitMessage, isThisConversationStreaming, isStopping, activeConversationId, pendingUserInput, slashCommands, executeSlashCommand, handleEffortCommand, handleStop]);
+  }, [coordination, toast, agentId, input, attachments, submitMessage, isThisConversationStreaming, isStopping, activeConversationId, pendingUserInput, slashCommands, executeSlashCommand, handleEffortCommand, handleStop]);
 
   // Auto-submit pending message from use case selection
   useEffect(() => {
@@ -2036,15 +2070,15 @@ export function ChatPanel({
   const handleUserInputSubmitSSE = useCallback(async (formData: Record<string, string>) => {
     if (!pendingUserInput || !activeConversationId || !pendingUserInput.agentId) return;
 
+    const resumeAgentId = pendingUserInput.agentId;
     const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const selectionSummary = Object.entries(formData)
       .map(([key, value]) => `${key}: ${value}`)
       .join("\n");
-    addMessage(activeConversationId, { role: "user", content: selectionSummary || "Form submitted." }, turnId);
-    const assistantMsgId = addMessage(activeConversationId, { role: "assistant", content: "" }, turnId);
+    addMessage(activeConversationId, { role: "user", agentId: resumeAgentId, content: selectionSummary || "Form submitted." }, turnId);
+    const assistantMsgId = addMessage(activeConversationId, { role: "assistant", content: "", agentId: resumeAgentId, agentName: coordination?.agents.find(member => member.agent_id === resumeAgentId)?.name ?? (resumeAgentId === agentId ? agentName : resumeAgentId) }, turnId);
 
     dismissedInputForMessageRef.current.add(pendingUserInput.messageId);
-    const resumeAgentId = pendingUserInput.agentId;
     setPendingUserInput(null);
 
     // Resume continues the existing LangGraph task namespace, but the server
@@ -2076,6 +2110,7 @@ export function ChatPanel({
 
     setConversationStreaming(activeConversationId, {
       conversationId: activeConversationId,
+      agentId: resumeAgentId,
       messageId: assistantMsgId,
       client: { abort: () => adapter.abort() },
       streamAdapter: adapter,
@@ -2091,10 +2126,10 @@ export function ChatPanel({
     const toolCallIdToName = new Map<string, string>();
 
     try {
-      const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName);
+      const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName, resumeAgentId);
 
       await adapter.resumeStream(
-        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData: formDataJson, reasoningEffort: requestReasoningEffort, clientContext, forwardedProps: requestOptions },
+        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData: formDataJson, reasoningEffort: resumeAgentId === agentId ? requestReasoningEffort : undefined, clientContext, forwardedProps: resumeAgentId === agentId ? requestOptions : undefined },
         callbacks,
       );
 
@@ -2108,7 +2143,7 @@ export function ChatPanel({
       updateMessage(activeConversationId, assistantMsgId, { turnStatus: "interrupted" as TurnStatus });
       setConversationStreaming(activeConversationId, null);
     }
-  }, [pendingUserInput, activeConversationId, agentProtocol, addMessage, updateMessage,
+  }, [pendingUserInput, activeConversationId, agentId, agentName, coordination?.agents, agentProtocol, addMessage, updateMessage,
       appendToMessage, addStreamEvent, setConversationStreaming,
       clearStreamEvents, getActiveConversation, buildStreamCallbacks, finalizeStreamLoop,
       suppliedClientContext, requestReasoningEffort, requestOptions]);
@@ -2141,6 +2176,7 @@ export function ChatPanel({
     }
 
     // All tools decided — send the resume with all decisions
+    const resumeAgentId = pendingToolApproval.agentId;
     const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const summaryParts = newDecisions.map(d => {
       const label = d.decision === "approve" ? "Approved" : d.decision === "reject" ? "Rejected" : "Edited & approved";
@@ -2148,11 +2184,12 @@ export function ChatPanel({
     });
     addMessage(activeConversationId, {
       role: "user",
+      agentId: resumeAgentId,
       content: summaryParts.join("\n"),
     }, turnId);
-    const assistantMsgId = addMessage(activeConversationId, { role: "assistant", content: "" }, turnId);
+    const assistantMsgId = addMessage(activeConversationId, { role: "assistant", content: "", agentId: resumeAgentId, agentName: coordination?.agents.find(member => member.agent_id === resumeAgentId)?.name ?? (resumeAgentId === agentId ? agentName : resumeAgentId) }, turnId);
 
-    const resumeAgentId = pendingToolApproval.agentId;
+
     setPendingToolApproval(null);
 
     const resumeSeedEvents = createSubagentResumeSeedEvents(
@@ -2199,6 +2236,7 @@ export function ChatPanel({
 
     setConversationStreaming(activeConversationId, {
       conversationId: activeConversationId,
+      agentId: resumeAgentId,
       messageId: assistantMsgId,
       client: { abort: () => adapter.abort() },
       streamAdapter: adapter,
@@ -2214,9 +2252,9 @@ export function ChatPanel({
     const toolCallIdToName = new Map<string, string>();
 
     try {
-      const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName);
+      const callbacks = buildStreamCallbacks(activeConversationId, assistantMsgId, loopState, toolCallIdToName, resumeAgentId);
       await adapter.resumeStream(
-        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData, reasoningEffort: requestReasoningEffort, clientContext, forwardedProps: requestOptions },
+        { conversationId: activeConversationId, agentId: resumeAgentId, resumeData, reasoningEffort: resumeAgentId === agentId ? requestReasoningEffort : undefined, clientContext, forwardedProps: resumeAgentId === agentId ? requestOptions : undefined },
         callbacks,
       );
       finalizeStreamLoop(activeConversationId, assistantMsgId, loopState);
@@ -2228,9 +2266,18 @@ export function ChatPanel({
       });
       setConversationStreaming(activeConversationId, null);
     }
-  }, [pendingToolApproval, activeConversationId, agentProtocol, addMessage, updateMessage,
+  }, [pendingToolApproval, activeConversationId, agentId, agentName, coordination?.agents, agentProtocol, addMessage, updateMessage,
       addStreamEvent, setConversationStreaming, clearStreamEvents, getActiveConversation,
       buildStreamCallbacks, finalizeStreamLoop, suppliedClientContext, requestReasoningEffort, requestOptions]);
+
+  const mentionCommands: SlashCommand[] = coordination ? [
+    { id: coordination.primaryAgentId, label: "primary", description: "Primary chat agent", category: "participant", action: "insert", value: "@primary" },
+    ...coordination.agents.filter(member => coordination.availableAgents.some(candidate => candidate._id === member.agent_id)).map(member => ({
+      id: member.agent_id, label: member.handle, description: member.name,
+      category: "participant" as const, action: "insert" as const, value: `@${member.handle}`,
+    })),
+  ] : [];
+  const menuCommands = mentionMenu ? mentionCommands : slashCommands;
 
   // Handle slash command detection in input
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -2241,6 +2288,14 @@ export function ChatPanel({
     const cursorPos = e.target.selectionStart;
     const textBeforeCursor = newValue.slice(0, cursorPos);
 
+    if (coordination && /^@[a-z0-9-]*$/i.test(textBeforeCursor)) {
+      setMentionMenu(true);
+      setSlashFilter(textBeforeCursor.slice(1));
+      setShowSlashMenu(true);
+      setSlashSelectedIndex(0);
+      return;
+    }
+    setMentionMenu(false);
     // Detect / at start of input or after a newline
     const lastSlash = textBeforeCursor.lastIndexOf("/");
     if (lastSlash !== -1) {
@@ -2259,11 +2314,17 @@ export function ChatPanel({
     }
 
     setShowSlashMenu(false);
-  }, []);
+  }, [coordination]);
 
   // Handle slash command selection (Tab/Enter/click)
   const handleSlashSelect = useCallback((cmd: SlashCommand) => {
     setShowSlashMenu(false);
+    if (cmd.category === "participant") {
+      coordination?.selectAgent(cmd.id);
+      setInput(input.replace(/^@[a-z0-9-]*\s*/i, `${cmd.value} `));
+      setTimeout(() => inputRef.current?.focus(), 0);
+      return;
+    }
 
     if (cmd.action === "execute") {
       setInput("");
@@ -2304,7 +2365,7 @@ export function ChatPanel({
       setInput(cmd.value);
       setTimeout(() => inputRef.current?.focus(), 0);
     }
-  }, [input, executeSlashCommand, submitMessage, activeConversationId, updateConversationTitle]);
+  }, [input, executeSlashCommand, submitMessage, activeConversationId, updateConversationTitle, coordination]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (commandPanel) {
@@ -2334,7 +2395,7 @@ export function ChatPanel({
 
     // Slash menu keyboard navigation
     if (showSlashMenu) {
-      const filtered = getFilteredCommands(slashCommands, slashFilter);
+      const filtered = getFilteredCommands(menuCommands, slashFilter);
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setSlashSelectedIndex((i) => Math.min(i + 1, filtered.length - 1));
@@ -2512,7 +2573,7 @@ export function ChatPanel({
                         conversation.owner_id === session.user.email;
                       const isLocalCommand = msg.content.trim() === "/skills" ||
                         msg.content.trim() === "/help";
-                      const canEditMessage = msg.role === "user" &&
+                      const canEditMessage = !coordination?.agents.length && msg.role === "user" &&
                         isOwnMessage &&
                         isConversationOwner &&
                         !isLocalCommand &&
@@ -2603,8 +2664,8 @@ export function ChatPanel({
                           showTimestamp={showTimestamps}
                           agentGradient={agentGradient}
                           agentCustomTheme={agentCustomTheme}
-                          agentId={agentId}
-                          agentName={agentName}
+                          agentId={msg.agentId ?? agentId}
+                          agentName={msg.agentName ?? (msg.agentId && msg.agentId !== agentId ? msg.agentId : agentName)}
                           turnEvents={turnEvents}
                           // Timeline props (only passed to latest message)
                           timelineFiles={timelineFiles}
@@ -2946,7 +3007,7 @@ export function ChatPanel({
             {/* Slash command autocomplete menu */}
             <SlashCommandMenu
               filter={slashFilter}
-              commands={slashCommands}
+              commands={menuCommands}
               selectedIndex={slashSelectedIndex}
               onSelect={handleSlashSelect}
               visible={showSlashMenu}
@@ -2969,6 +3030,13 @@ export function ChatPanel({
                 }
               }}
             >
+              {!!coordination?.agents.length && <div className="flex items-center gap-2 px-1 pb-1 text-xs text-muted-foreground">
+                <span>To</span><AgentPicker ariaLabel="Message recipient" value={agentId} onChange={coordination.selectAgent}
+                  options={[
+                    { value: coordination.primaryAgentId, label: "@primary" },
+                    ...coordination.agents.map(member => ({ value: member.agent_id, label: `@${member.handle}`, disabled: !coordination.availableAgents.some(candidate => candidate._id === member.agent_id) })),
+                  ]} disabled={isThisConversationStreaming || isRemoteResponse || Boolean(pendingUserInput || pendingToolApproval)} triggerClassName="h-7 border-0 bg-transparent text-xs shadow-none" />
+              </div>}
               {maxEffortAnimationKey > 0 && (
                 <div
                   key={`max-effort-armor-${maxEffortAnimationKey}`}

@@ -4,6 +4,7 @@ import { getCollection } from "@/lib/mongodb";
 import { requireConversationResourcePermission } from "@/lib/rbac/conversation-implicit-authz";
 import { getAgentId } from "@/types/a2a";
 import type { Conversation } from "@/types/mongodb";
+import { conversationHasAgent } from "@/lib/chat-coordination";
 
 import type { AuthResult } from "./_helpers";
 
@@ -35,7 +36,7 @@ export async function authorizeConversationReadAccess(
 
 function checkConversationAgent(conversation: Conversation, agentId?: unknown): ConversationAuthorization {
   const savedAgentId = getAgentId(conversation);
-  if (agentId !== undefined && savedAgentId && agentId !== savedAgentId) {
+  if (agentId !== undefined && savedAgentId && !conversationHasAgent(conversation, agentId)) {
     return {
       conversation,
       denial: NextResponse.json(

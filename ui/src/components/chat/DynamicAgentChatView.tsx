@@ -7,6 +7,7 @@ import { ResizableHandle,ResizablePanel,ResizablePanelGroup } from "@/components
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { useCallback,useState,useSyncExternalStore } from "react";
 import { usePanelRef } from "react-resizable-panels";
+import { useChatCoordination } from "@/hooks/use-chat-coordination";
 
 interface ChatViewProps {
   /** MongoDB conversation UUID */
@@ -57,6 +58,9 @@ export function ChatView({
   const narrow = useSyncExternalStore(subscribeToViewport, isNarrowViewport, serverViewport);
   const [isAnimating, setIsAnimating] = useState(false);
   const contextPanelRef = usePanelRef();
+  const coordination = useChatCoordination(conversationId, selectedAgentId);
+  const recipientId = coordination.selectedAgentId;
+  const recipient = recipientId === selectedAgentId ? agent : coordination.availableAgents.find(candidate => candidate._id === recipientId);
   const { app, configuration } = useAppAssistantPresentation(agent?.presentation?.available ? agent.presentation.app.id : undefined, selectedAgentId);
   const options = app?.assistantOptions;
   const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration, app?.appId);
@@ -74,7 +78,9 @@ export function ChatView({
     setTimeout(() => setIsAnimating(false), 300);
   }, [contextPanelRef]);
 
-  const isDisabled = agentNotFound || agentUnavailable || agent?.enabled === false;
+  const isDisabled = recipientId === selectedAgentId
+    ? agentNotFound || agentUnavailable || agent?.enabled === false
+    : !recipient?.enabled;
 
   return (
     <ResizablePanelGroup
@@ -90,8 +96,9 @@ export function ChatView({
             readOnly={readOnly || isDisabled}
             readOnlyReason={readOnlyReason ?? (agentUnavailable ? 'agent_unavailable' : agentNotFound ? 'agent_deleted' : agent?.enabled === false ? 'agent_disabled' : undefined)}
             apiConversation={apiConversation}
-            agentId={selectedAgentId}
-            agent={agent}
+            agentId={recipientId}
+            agent={recipient}
+            coordination={coordination}
             isLoadingMessages={isLoadingMessages}
             requestOptions={app ? requestOptions : undefined}
             composerHeader={composerHeader}
@@ -125,6 +132,7 @@ export function ChatView({
           collapsed={contextPanelCollapsed}
           onCollapse={handleCollapse}
           readOnly={readOnly || isDisabled}
+          coordination={coordination}
         />
       </ResizablePanel>
     </ResizablePanelGroup>

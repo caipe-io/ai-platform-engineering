@@ -81,6 +81,7 @@ export interface Conversation {
   owner_identity_version?: number; // 2 when owner_subject has been normalized
   idempotency_key?: string; // Maps integration-specific identity (e.g. Slack thread_ts) to conversation_id used by UI/checkpoints
   participants: Participant[]; // Agents and users involved in this conversation
+  coordination_agents?: import("@/lib/chat-coordination").ChatCoordinationAgent[];
   created_at: Date;
   updated_at: Date;
   metadata: Record<string, unknown> & {
