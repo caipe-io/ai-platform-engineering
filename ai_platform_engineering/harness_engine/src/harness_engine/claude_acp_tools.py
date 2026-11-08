@@ -57,10 +57,10 @@ class ClaudeACPToolBridge:
         context: RunContext,
         broker: ClaudeToolBroker,
     ) -> AsyncIterator[tuple[list[HttpMcpServer], dict[str, str]]]:
-        if not context.blueprint.tools.bindings:
-            yield [], {}
-            return
         async with broker.bind_tools(context) as (tools, names):
+            if not tools:
+                yield [], {}
+                return
             server = Server("caipe")
             by_name = {tool.name: tool for tool in tools}
 

@@ -1,3 +1,4 @@
+import { coordinationPolicy } from "@/lib/coordination/policy.server";
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 
@@ -320,9 +321,11 @@ export async function startHarnessGatewayRun(
   } : {};
   const admission = await reserveCoordinationTurn(body, auth);
   if (admission instanceof NextResponse) return admission;
+  const coordination = await coordinationPolicy(String(body.conversation_id));
   const response = await engineRequest(config, auth, "/api/v1/runs", {
     method: "POST", headers: callerHeaders,
     body: JSON.stringify({
+      ...(coordination?.mode === "team" && coordination.owner === auth.subject && coordination.expiresAt > new Date() && { coordination_enabled: true }),
       agent_id: body.agent_id,
       conversation_id: body.conversation_id,
       message: body.message ?? "",

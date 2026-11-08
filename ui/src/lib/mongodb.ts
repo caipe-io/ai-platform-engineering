@@ -352,6 +352,12 @@ async function createIndexes(db: Db) {
     // Reusable publication approval workflow. Requested state remains
     // separate from effective state until a domain adapter applies approval.
     safeCreateIndex(db, 'publication_requests', { status: 1, created_at: -1 }),
+    // Durable chat assignments use a separate queue from execution runs.
+    safeCreateIndex(db, 'chat_agent_handoffs', { status: 1, availableAt: 1 }),
+    safeCreateIndex(db, 'chat_agent_handoffs', { conversationId: 1, createdAt: -1 }),
+    safeCreateIndex(db, 'chat_agent_handoffs', { runId: 1 }, { sparse: true }),
+    safeCreateIndex(db, 'chat_agent_handoffs', { createdAt: 1 }, { expireAfterSeconds: 30 * 86400 }),
+    safeCreateIndex(db, 'chat_handoff_budgets', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
     safeCreateIndex(db, 'publication_requests', { 'resource.kind': 1, 'resource.id': 1, status: 1 }),
     safeCreateIndex(db, 'publication_requests', { 'requested_state.source_ids': 1, status: 1 }),
     safeCreateIndex(db, 'publication_requests', { approver_team_slugs: 1, status: 1 }),

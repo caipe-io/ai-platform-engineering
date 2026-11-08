@@ -1,10 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useChatStore } from "@/store/chat-store";
 import type { ChatCoordinationAgent } from "@/lib/chat-coordination";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 
+export interface ChatHandoff { _id: string; handle: string; status: string; lastError?: string; runId?: string; targetAgentId: string; }
+
 export interface ChatCoordination {
+  mode?: "mentions" | "team";
+  handoffs?: ChatHandoff[];
+  setMode?: (mode: "mentions" | "team") => Promise<void>;
   agents: ChatCoordinationAgent[];
   availableAgents: DynamicAgentConfig[];
   canManage: boolean;
@@ -26,6 +32,9 @@ async function readData<T>(response: Response): Promise<T> {
 
 /** Available agents come from the existing Use-filtered domain endpoint. */
 export function useChatCoordination(conversationId: string, primaryAgentId: string): ChatCoordination {
+  const handoffSignature = useRef("");
+  const [mode, setModeState] = useState<"mentions" | "team">("mentions");
+  const [handoffs, setHandoffs] = useState<ChatHandoff[]>([]);
   const [agents, setAgents] = useState<ChatCoordinationAgent[]>([]);
   const [availableAgents, setAvailableAgents] = useState<DynamicAgentConfig[]>([]);
   const [canManage, setCanManage] = useState(false);
@@ -43,10 +52,12 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
         fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/agents`, { signal, cache: "no-store" }),
         fetch("/api/dynamic-agents/available", { signal, cache: "no-store" }),
       ]);
-      const membership = await readData<{ agents: ChatCoordinationAgent[]; can_manage: boolean; available: boolean }>(membershipResponse);
+      const membership = await readData<{ agents: ChatCoordinationAgent[]; can_manage: boolean; available: boolean; mode?: "mentions" | "team"; handoffs?: ChatHandoff[] }>(membershipResponse);
       const catalog = await readData<DynamicAgentConfig[]>(catalogResponse);
       if (signal?.aborted) return;
       setAgents(membership.agents);
+      setModeState(membership.mode ?? "mentions");
+      setHandoffs(membership.handoffs ?? []);
       setCanManage(membership.can_manage);
       setAvailable(membership.available);
       setAvailableAgents(catalog.filter(agent => agent.enabled && !agent.presentation?.app));
@@ -60,6 +71,9 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
   useEffect(() => {
     const controller = new AbortController();
     setAgents([]);
+    setHandoffs([]);
+    setModeState("mentions");
+    handoffSignature.current = "";
     setCanManage(false);
     setAvailableAgents([]);
     void load(controller.signal);
@@ -78,6 +92,39 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
     setSelection({ conversationId, agentId });
   }, [conversationId, load]);
 
-  return { agents, availableAgents, canManage, available, loading, error,
+  const setMode = useCallback(async (next: "mentions" | "team") => {
+    try {
+      await readData(await fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/agents`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: next }),
+      }));
+      await load();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not update coordination mode."); }
+  }, [conversationId, load]);
+
+  useEffect(() => {
+    if (mode !== "team") return;
+    const controller = new AbortController();
+    let pending = false;
+    const timer = setInterval(() => {
+      if (pending) return;
+      pending = true;
+      void fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/agents`, { cache: "no-store", signal: controller.signal })
+        .then(readData<{ handoffs: ChatHandoff[]; mode: "mentions" | "team" }>)
+        .then(async data => {
+          if (controller.signal.aborted) return;
+          setHandoffs(data.handoffs); setModeState(data.mode);
+          const signature = JSON.stringify(data.handoffs.map(job => [job._id, job.status, job.runId]));
+          if (signature !== handoffSignature.current) {
+            await useChatStore.getState().loadMessagesFromServer(conversationId, { force: true });
+            handoffSignature.current = signature;
+          }
+        }).catch(() => {
+          if (!controller.signal.aborted) setError("Could not refresh agent handoffs. Retrying shortly.");
+        }).finally(() => { pending = false; });
+    }, 3000);
+    return () => { controller.abort(); clearInterval(timer); };
+  }, [mode, conversationId]);
+
+  return { mode, handoffs, setMode, agents, availableAgents, canManage, available, loading, error,
     primaryAgentId, selectedAgentId, selectAgent, refresh, addAgent };
 }
