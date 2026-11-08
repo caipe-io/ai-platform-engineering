@@ -134,7 +134,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     expect((await header.boundingBox())!.y).toBe(original!.y);
     expect(await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))).toEqual({ x: 0, y: 0 });
     await page.getByRole("button", { name: /^User menu/ }).click();
-    await expect(page.getByRole("menu")).toBeVisible();
+    await expect(header.getByRole("button", { name: "Sign Out", exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(header).toBeVisible();
   });

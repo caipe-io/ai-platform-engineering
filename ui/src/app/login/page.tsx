@@ -69,9 +69,35 @@ function safeCallbackUrl(value: string | null): string {
   return value.startsWith("/login") ? "/" : value;
 }
 
-// Redirect responses inherit the browser fragment, which is never sent to the server.
+const CALLBACK_FRAGMENT_KEY = "login-callback-fragment";
+
+/** Fragments stay in this tab, outside NextAuth requests and callback cookies. */
 function callbackWithBrowserFragment(callbackUrl: string): string {
-  return callbackUrl.includes("#") ? callbackUrl : callbackUrl + window.location.hash;
+  const saved = sessionStorage.getItem(CALLBACK_FRAGMENT_KEY);
+  sessionStorage.removeItem(CALLBACK_FRAGMENT_KEY);
+  let fragment = window.location.hash;
+  if (saved) {
+    try {
+      const pending = JSON.parse(saved);
+      const age = Date.now() - pending.at;
+      if (pending.path === callbackUrl && typeof pending.fragment === "string" && pending.fragment.startsWith("#") && pending.fragment.length <= 8192 && age >= 0 && age < 600_000) {
+        fragment ||= pending.fragment;
+      }
+    } catch {
+      console.warn("[Login] Discarded invalid pending fragment state.");
+    }
+  }
+  return callbackUrl.includes("#") ? callbackUrl : callbackUrl + fragment;
+}
+
+function signInCallback(callbackUrl: string): string {
+  const destination = callbackWithBrowserFragment(callbackUrl);
+  const index = destination.indexOf("#");
+  if (index < 0) return destination;
+  const path = destination.slice(0, index);
+  sessionStorage.setItem(CALLBACK_FRAGMENT_KEY, JSON.stringify({ path, fragment: destination.slice(index), at: Date.now() }));
+  // Return through the public login page to restore the fragment entirely on the client.
+  return `/login?callbackUrl=${encodeURIComponent(path)}`;
 }
 
 function LoginContent() {
@@ -112,7 +138,7 @@ function LoginContent() {
       sessionStorage.removeItem("token-expiry-handling");
     }
     try {
-      await signIn("oidc", { callbackUrl: callbackWithBrowserFragment(callbackUrl) });
+      await signIn("oidc", { callbackUrl: signInCallback(callbackUrl) });
     } catch (err) {
       console.error("Sign in error:", err);
       setIsLoading(false);
