@@ -164,7 +164,7 @@ sequenceDiagram
 - Ownership synchronization can partially fail: a Keycloak scope update may succeed while the MongoDB ownership write fails. Reversing the write order only reverses the possible mismatch.
 - MongoDB ownership remains authoritative. Transfers must be recoverable; CAIPE blocks new calls, including cached-credential calls, while a transfer is unresolved and checks credential bindings before use. Completion invalidates cached credentials for the previous owner; already-admitted calls may finish under that owner.
 - JWT expiry bounds the lifetime of an issued token, not a persistent synchronization failure: an unrepaired scope can keep issuing tokens for the wrong team. Gateway JWT validation remains local. The same ownership consistency policy applies to C1 signing and per-agent gateway key bindings as applicable.
-- #2901 adds operator-owned per-agent Keycloak clients for agent badges. If it lands first, K2 reuses its per-agent binding instead of adding a second per-agent Keycloak object.
+- #2901 adds optional, operator-enrolled per-agent Keycloak clients for agent badges. K2 does not reuse these clients: it maintains a dedicated gateway scope per agent on the shared `caipe-dynamic-agents` exchange client, independently of badge enrollment. The exchanged token preserves the user's subject and adds the agent and owning-team claims.
 
 **[K2](#identity-option-legend) flow**
 
@@ -293,7 +293,7 @@ Checked 2026-10-09; no duplicate found.
 | #3034 CAS delegation approvals | Possible future proof of the task owner for autonomous runs |
 | #3010 audience-restricted MCP token exchange | May reuse the `caipe-dynamic-agents` client |
 | #3112 user, workload and delegated identities | May change how the sending service is represented |
-| #2901 Keycloak-authenticated agent badges | Per-agent Keycloak binding that K2 can reuse |
+| #2901 Keycloak-authenticated agent badges | Separate optional badge clients; K2 maintains dedicated per-agent gateway scopes and does not depend on badge enrollment |
 | #2883 ACP native runtime (draft) | May move `dynamic_agents` call sites; the hook lives in `llm_wrapper` |
 | #1037, #1048 quota-increase requests | The user journey behind T502 |
 | #549 LLM fallback on throttling | The gateway's job |
