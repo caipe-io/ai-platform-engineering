@@ -24,7 +24,7 @@ export async function setCoordinationPolicy(request: NextRequest, conversationId
   let sessionId: string | undefined;
   let expiresAt = new Date();
   if (mode === "team") {
-    const token = await getToken({ req: request, decode: authOptions.jwt!.decode });
+    const token = await getToken({ req: request, cookieName: authOptions.cookies!.sessionToken!.name, decode: authOptions.jwt!.decode });
     if (token?.sub !== owner || typeof token.sessionId !== "string" || token.error) {
       throw new ApiError("Sign in to enable team coordination for this chat.", 401);
     }
