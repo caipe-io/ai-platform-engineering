@@ -168,6 +168,13 @@ describe('chat-store', () => {
       expect(saved[1].stream_events).toEqual([expect.objectContaining({ toolData: expect.objectContaining({ tool_name: 'first_tool' }) })]);
       expect(useChatStore.getState().conversations[0].messages.at(-1)?.streamEvents).toEqual([expect.objectContaining({ toolData: expect.objectContaining({ tool_name: 'second_tool' }) })]);
     });
+    it('keeps the input-required indicator while another participant starts', () => {
+      const { conv } = prepare();
+      useChatStore.getState().updateMessage(conv.id, 'first-answer', { isFinal: false, turnStatus: 'waiting_for_input' });
+      useChatStore.getState().setConversationStreaming(conv.id, { agentId: 'second', conversationId: conv.id,
+        messageId: 'second-answer', client: { abort: jest.fn() } });
+      expect(useChatStore.getState().inputRequiredConversations.has(conv.id)).toBe(true);
+    });
     it('fails admission preparation if its required prompt save is rejected', async () => {
       const { conv } = prepare();
       mockApiClient.addMessage.mockRejectedValueOnce(new Error('write rejected'));

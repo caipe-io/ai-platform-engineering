@@ -151,6 +151,33 @@ async def test_deep_agents_adopts_native_thread_and_rotates_only_after_clear() -
     assert first.checkpoint_strategy == second.checkpoint_strategy == "langgraph"
 
 
+@pytest.mark.asyncio
+async def test_joined_deep_agents_have_independent_native_threads() -> None:
+    async def participant_lookup(conversation_id: str, agent_id: str) -> bool:
+        assert conversation_id == "shared-chat"
+        return agent_id in {"first-agent", "second-agent"}
+
+    manager = DeepAgentsSessionManager(participant_lookup)
+    primary = await manager.open(ProviderSessionContext("primary-binding", "primary-agent", 1, "shared-chat", "existing", 0))
+    first = await manager.open(ProviderSessionContext("first-binding", "first-agent", 1, "shared-chat", "existing", 0))
+    second = await manager.open(ProviderSessionContext("second-binding", "second-agent", 1, "shared-chat", "existing", 0))
+    again = await manager.open(ProviderSessionContext("first-binding", "first-agent", 1, "shared-chat", "existing", 0))
+    assert primary.provider_session_id == "shared-chat"
+    assert len({primary.native_state_key, first.native_state_key, second.native_state_key}) == 3
+    assert again == first
+
+
+@pytest.mark.asyncio
+async def test_participant_lookup_failure_does_not_adopt_a_shared_thread() -> None:
+    async def unavailable(conversation_id: str, agent_id: str) -> bool:
+        raise RuntimeError("database unavailable")
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await DeepAgentsSessionManager(unavailable).open(
+            ProviderSessionContext("first-binding", "first-agent", 1, "shared-chat", "existing", 0)
+        )
+
+
 def test_invalid_blueprint_returns_serializable_validation_details(settings) -> None:
     app = create_app(settings=settings, adapters=[FakeHarnessAdapter()])
     with TestClient(app) as client:

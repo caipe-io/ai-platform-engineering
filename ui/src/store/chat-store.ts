@@ -507,7 +507,12 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           if (state) {
             // Clear input-required when streaming resumes (user submitted input)
             const newInputRequired = new Set(prev.inputRequiredConversations);
-            newInputRequired.delete(conversationId);
+            const chat = prev.conversations.find(conversation => conversation.id === conversationId);
+            const latestByAgent = new Map<string, ChatMessage>();
+            for (const message of chat?.messages ?? []) if (message.role === "assistant") latestByAgent.set(message.agentId ?? "primary", message);
+            const waitingPeer = Array.from(latestByAgent.values()).some(message => message.agentId !== state.agentId && message.turnStatus === "waiting_for_input" && !message.isFinal);
+            if (waitingPeer) newInputRequired.add(conversationId);
+            else newInputRequired.delete(conversationId);
             console.log(`[Store] Started streaming for conversation: ${conversationId}`);
             return {
               streamingConversations: newMap,

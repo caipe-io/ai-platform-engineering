@@ -601,3 +601,17 @@ migration so they enforce the same `execution_thread_leases` ownership fence.
   tools, checkpoint persistence and event replay remain real.
 - These tests do not certify model quality or live Slack/Webex delivery. App-owned
   assistants retain their own declared stream and lifecycle.
+
+### Concurrent chat participants
+
+- New Deep Agents sessions for saved additional chat participants use a native
+  checkpoint ID derived from their owner/agent/session binding. The primary
+  agent retains its existing conversation checkpoint ID.
+- Membership comes from the application database, never prompt text. A failed
+  membership lookup does not open a shared fallback thread.
+- Existing session bindings and native producer fences remain unchanged. A
+  legacy participant bound to a shared native thread must finish or explicitly
+  migrate that session before it can run alongside another producer on that
+  thread.
+- The BFF fences each participant's admission and the UI persists separate
+  response journals. These boundaries do not grant agent or tool access.

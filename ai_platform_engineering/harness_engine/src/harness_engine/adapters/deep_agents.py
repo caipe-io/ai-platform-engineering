@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from importlib import import_module
 from typing import Any
@@ -28,12 +28,22 @@ from harness_engine.sessions import ProviderSessionContext, ProviderSessionState
 class DeepAgentsSessionManager:
     harness_id = "dynamic_agents"
 
+    def __init__(self, participant_lookup: Callable[[str, str], Awaitable[bool]] | None = None) -> None:
+        self.participant_lookup = participant_lookup
+
     async def open(self, context: ProviderSessionContext) -> ProviderSessionState:
+        # Joined participants need an independent native checkpoint namespace.
+        # Primary/legacy threads retain their existing history and producer fence.
+        participant = self.participant_lookup is not None and await self.participant_lookup(
+            context.conversation_id, context.agent_id
+        )
         # Adopt legacy threads unchanged. Clear rotates the native context and
         # retains old checkpoints for explicit history/rewind operations.
         native_id = (
             context.conversation_id if context.epoch == 0 else f"{context.conversation_id}:epoch:{context.epoch}"
         )
+        if participant:
+            native_id = "participant-" + hashlib.sha256(context.binding_id.encode()).hexdigest()
         state_key = hashlib.sha256(f"{context.checkpoint_namespace}\0{native_id}".encode()).hexdigest()
         return ProviderSessionState(native_id, "langgraph", state_key)
 
@@ -49,7 +59,7 @@ class DeepAgentsAdapter:
         # Optional package isolation keeps the provider-only Engine install
         # usable without importing the Dynamic Agents HTTP application.
         self.runtime = runtime or import_module("harness_engine.deep_agents_runtime").DeepAgentsRuntime()
-        self.session_manager = DeepAgentsSessionManager()
+        self.session_manager = DeepAgentsSessionManager(getattr(self.runtime, "is_coordination_participant", None))
 
     @property
     def checkpoint_namespace(self) -> str:

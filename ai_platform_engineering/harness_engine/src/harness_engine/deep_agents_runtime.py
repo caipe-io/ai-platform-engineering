@@ -49,6 +49,18 @@ class DeepAgentsRuntime:
         await self.cache.stop()
         self.mongo.disconnect()
 
+    async def is_coordination_participant(self, conversation_id: str, agent_id: str) -> bool:
+        """Read membership from the application database, never from prompt text."""
+        await self.initialize()
+        conversation = await asyncio.to_thread(
+            self.mongo._db.conversations.find_one,
+            {"_id": conversation_id, "deleted_at": None},
+            {"coordination_agents.agent_id": 1},
+        )
+        return bool(conversation and any(
+            member.get("agent_id") == agent_id for member in conversation.get("coordination_agents", [])
+        ))
+
     @staticmethod
     def normalize_options(options: dict[str, Any]) -> dict[str, Any]:
         if set(options) != {"runtime"} or not isinstance(options["runtime"], dict):
