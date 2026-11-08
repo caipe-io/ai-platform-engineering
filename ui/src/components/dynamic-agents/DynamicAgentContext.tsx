@@ -11,6 +11,7 @@ import { useAgentTimeline } from "@/hooks/useDynamicAgentTimeline";
 import { getWorkspaceTasks, getWorkspaceTurnEvents } from "@/lib/chat-workspace";
 import { FileTree } from "@/components/dynamic-agents/FileTree";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -25,6 +26,7 @@ Bot,
 ChevronDown,
 Download,
 FolderOpen,
+Info,
 ListTodo,
 Loader2,
 NotebookText,
@@ -96,6 +98,7 @@ export function DynamicAgentContext({
   const [filesRefreshKey, setFilesRefreshKey] = useState(0);
   const [filesError, setFilesError] = useState<string | null>(null);
   const sectionId = useId();
+  const [coordinationInfoOpen, setCoordinationInfoOpen] = useState(false);
   const toggleSection = (section: string) => setOpenSections((sections) =>
     sections.includes(section) ? sections.filter((value) => value !== section) : [...sections, section]);
   const openSection = (section: string) => {
@@ -385,12 +388,23 @@ export function DynamicAgentContext({
                 : !coordination.loading && !coordination.available ? <p className="text-xs text-muted-foreground">Configure Harness Engine to add chat agents.</p> : null}
             </div>}
             {coordination?.agents.length ? <div className="space-y-2">
-              <p className="text-xs font-medium">Coordination mode</p>
+              <div className="flex items-center gap-1">
+                <p className="text-xs font-medium">Coordination mode</p>
+                <TooltipProvider delayDuration={0}><Tooltip open={coordinationInfoOpen} onOpenChange={setCoordinationInfoOpen}>
+                  <TooltipTrigger asChild>
+                    <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" aria-label="About coordination modes" aria-describedby={`${sectionId}-mode-info`} onClick={() => setCoordinationInfoOpen(true)} onKeyDown={event => { if (event.key === "Escape") setCoordinationInfoOpen(false); }}>
+                      <Info className="h-3.5 w-3.5" aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="left" className="max-w-xs text-left text-xs font-normal leading-relaxed">
+                    <p id={`${sectionId}-mode-info`}>{coordination.mode === "team" ? "Agents can hand tasks to joined agents using the chat owner’s access while that sign-in remains valid. Only the assignment is shared. Up to 8 tasks and 4 hops per chain. Turn this off to stop queued handoffs; use Stop for an active response." : "Agents respond when addressed. Team coordination enables agent-to-agent handoffs."}</p>
+                  </TooltipContent>
+                </Tooltip></TooltipProvider>
+              </div>
               <div className="flex flex-wrap gap-1" role="group" aria-label="Coordination mode">
                 <Button size="sm" variant={coordination.mode !== "team" ? "secondary" : "ghost"} disabled={!coordination.canManage || isStreaming} onClick={() => void coordination.setMode?.("mentions")}>Mentions &amp; assignments</Button>
                 <Button size="sm" variant={coordination.mode === "team" ? "secondary" : "ghost"} disabled={!coordination.canManage || isStreaming} onClick={() => void coordination.setMode?.("team")}>Team coordination</Button>
               </div>
-              <p className="text-xs text-muted-foreground">{coordination.mode === "team" ? "Agents can hand tasks to joined agents using the chat owner’s access while that sign-in remains valid. Only the assignment is shared. Up to 8 tasks and 4 hops per chain. Turn this off to stop queued handoffs; use Stop for an active response." : "Agents respond when addressed. Team coordination enables agent-to-agent handoffs."}</p>
             </div> : null}
             {!!coordination?.handoffs?.length && <div className="space-y-2 border-b pb-3"><p className="text-xs font-medium">Agent handoffs</p>{coordination.handoffs.map(job => <div key={job._id} className="text-xs"><Button variant="link" size="sm" className={cn("h-auto p-0", agentMentionColor(job.handle, coordination.agents.map(member => member.handle)))} onClick={() => coordination.selectAgent(job.targetAgentId)}>@{job.handle}</Button><span className="ml-2">{job.status === "delivered" ? "Completed" : job.status === "pending" || job.status === "processing" ? job.runId ? "Working" : "Queued" : job.status}</span>{job.lastError && job.lastError !== "retrying" && <p className="text-muted-foreground">{job.lastError.replaceAll("_", " ")}</p>}</div>)}</div>}
             <WorkspaceSection id={`${sectionId}-agents`} title="Agents" icon={<Users className="h-4 w-4" />} expanded={openSections.includes("agents")} onToggle={() => toggleSection("agents")}>
