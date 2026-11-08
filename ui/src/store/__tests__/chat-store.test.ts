@@ -47,6 +47,7 @@ jest.mock('@/lib/utils', () => ({
 
 import { getLastActiveConversationId, resolveChatNavigationPath, useChatStore } from '../chat-store';
 import { apiClient } from '@/lib/api-client';
+import { chatStreams } from '../chat-stream-state';
 import { createStreamEvent } from '@/lib/streaming/types';
 import type { Conversation, ChatMessage } from '@/types/a2a';
 import type { StreamAdapter } from '@/lib/streaming/adapter';
@@ -109,6 +110,69 @@ describe('chat-store', () => {
     window.localStorage.clear();
     (global as unknown).__mockStorageMode = 'mongodb';
     resetStore();
+  });
+
+  describe('independent participant streams', () => {
+    function prepare() {
+      const conv = makeConversation({ id: 'parallel-chat', messages: [
+        makeMessage({ id: 'first-user', role: 'user', turnId: 'first-turn', agentId: 'first' }),
+        makeMessage({ id: 'first-answer', role: 'assistant', turnId: 'first-turn', agentId: 'first', isFinal: false }),
+        makeMessage({ id: 'second-user', role: 'user', turnId: 'second-turn', agentId: 'second' }),
+        makeMessage({ id: 'second-answer', role: 'assistant', turnId: 'second-turn', agentId: 'second', isFinal: false }),
+      ] });
+      useChatStore.setState({ conversations: [conv], activeConversationId: conv.id });
+      const cancelFirst = jest.fn().mockResolvedValue(true), cancelSecond = jest.fn().mockResolvedValue(true);
+      for (const [agentId, cancel] of [['first', cancelFirst], ['second', cancelSecond]] as const) {
+        useChatStore.getState().setConversationStreaming(conv.id, { conversationId: conv.id, agentId, messageId: `${agentId}-answer`,
+          client: { abort: jest.fn() }, streamAdapter: { canRecoverOnRefresh: true, cancelStream: cancel } as unknown as StreamAdapter });
+      }
+      return { conv, cancelFirst, cancelSecond };
+    }
+    it('retains the other subscription when a participant finishes', () => {
+      const { conv } = prepare();
+      expect(chatStreams(useChatStore.getState().streamingConversations.get(conv.id))).toHaveLength(2);
+      useChatStore.getState().setConversationStreaming(conv.id, null, 'first');
+      expect(useChatStore.getState().isConversationStreaming(conv.id)).toBe(true);
+      expect(chatStreams(useChatStore.getState().streamingConversations.get(conv.id)).map(stream => stream.agentId)).toEqual(['second']);
+    });
+    it('cancels only the chosen participant and keeps both subscriptions until confirmation', async () => {
+      const { conv, cancelFirst, cancelSecond } = prepare();
+      useChatStore.getState().cancelConversationRequest(conv.id, 'first');
+      await Promise.resolve();
+      expect(cancelFirst).toHaveBeenCalledWith(conv.id, 'first');
+      expect(cancelSecond).not.toHaveBeenCalled();
+      const streams = chatStreams(useChatStore.getState().streamingConversations.get(conv.id));
+      expect(streams.find(stream => stream.agentId === 'first')?.stopping).toBe(true);
+      expect(streams.find(stream => stream.agentId === 'second')?.stopping).not.toBe(true);
+      expect(useChatStore.getState().streamingConversations.get(conv.id)?.stopping).toBe(false);
+    });
+    it('Stop all sends an independent cancellation to every writable participant', async () => {
+      const { conv, cancelFirst, cancelSecond } = prepare();
+      useChatStore.getState().cancelConversationRequest(conv.id);
+      await Promise.resolve();
+      expect(cancelFirst).toHaveBeenCalledTimes(1);
+      expect(cancelSecond).toHaveBeenCalledTimes(1);
+      expect(useChatStore.getState().streamingConversations.get(conv.id)?.stopping).toBe(true);
+    });
+    it('persists an earlier completed turn and its own tool events while its peer streams', async () => {
+      const { conv } = prepare();
+      const first = createStreamEvent('tool_start', { tool_name: 'first_tool', tool_call_id: 'first-call', namespace: [] });
+      const second = createStreamEvent('tool_start', { tool_name: 'second_tool', tool_call_id: 'second-call', namespace: [] });
+      useChatStore.getState().addStreamEvent(first, conv.id, 'first-answer');
+      useChatStore.getState().addStreamEvent(second, conv.id, 'second-answer');
+      useChatStore.getState().updateMessage(conv.id, 'first-answer', { isFinal: true, content: 'First answer' });
+      useChatStore.getState().setConversationStreaming(conv.id, null, 'first');
+      await jest.advanceTimersByTimeAsync(501);
+      const saved = mockApiClient.addMessage.mock.calls.map(call => call[1]);
+      expect(saved.map(message => message.message_id)).toEqual(['first-user', 'first-answer']);
+      expect(saved[1].stream_events).toEqual([expect.objectContaining({ toolData: expect.objectContaining({ tool_name: 'first_tool' }) })]);
+      expect(useChatStore.getState().conversations[0].messages.at(-1)?.streamEvents).toEqual([expect.objectContaining({ toolData: expect.objectContaining({ tool_name: 'second_tool' }) })]);
+    });
+    it('fails admission preparation if its required prompt save is rejected', async () => {
+      const { conv } = prepare();
+      mockApiClient.addMessage.mockRejectedValueOnce(new Error('write rejected'));
+      await expect(useChatStore.getState().saveMessagesToServer(conv.id, { turnId: 'first-turn', skipNonFinal: true, requireSuccess: true })).rejects.toThrow('write rejected');
+    });
   });
 
   it('keeps replay subscriptions read-only through periodic save, cancellation, and completion', async () => {

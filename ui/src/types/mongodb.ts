@@ -166,6 +166,7 @@ export interface Message {
   sender_image?: string;
   metadata: {
     turn_id: string;
+    parallel_group_id?: string;
     source?: string;
     model?: string;
     latency_ms?: number;
