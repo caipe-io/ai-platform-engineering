@@ -58,7 +58,7 @@
 | **Global switch (chosen)** | uniform enforcement | needs gateway aliases = existing `model_id` |
 | Per-model, then enforce | gradual, then strict | two mechanisms |
 
-The phases are delivery stages, with no phase-specific switches. `LLM_GATEWAY_ENABLED=false` bypasses the gateway for every migrated path even when its endpoint is configured and reachable; direct-provider configuration and credentials must remain available. With routing enabled, gateway failures fail closed. Individual phase rollback requires reverting deployment or code changes while respecting dependencies.
+The phases are delivery stages, with no phase-specific switches. `LLM_GATEWAY_ENABLED=false` bypasses the gateway for every migrated path even when its endpoint is configured and reachable; direct-provider configuration and credentials remain in deployment configuration and secret storage, outside gateway-enabled inference pods. Mode changes reconcile credential references and replace the pods; direct-mode pods load provider credentials on startup. With routing enabled, gateway failures fail closed. Individual phase rollback requires reverting deployment or code changes while respecting dependencies.
 
 ## Decision 4 — Identity facts today
 

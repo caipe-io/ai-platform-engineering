@@ -50,7 +50,7 @@ flowchart LR
 - The gateway is deployed and run by the operator (any namespace, cluster or SaaS) and reached by `LLM_GATEWAY_BASE_URL`.
 - Network: CAIPE pods need egress to the gateway; the gateway needs egress to Keycloak's JWKS (JWT mode) and to providers.
 - Dev/demo only: `setup-caipe.sh --litellm` stays an example gateway (T801). The default Compose path is unchanged.
-- Rollout per environment: deploy the gateway → prepare identities (phase 1) → set values → flip `LLM_GATEWAY_ENABLED`. Rollback: flip it off.
+- Rollout per environment: deploy the gateway → prepare identities (phase 1) → set values → flip `LLM_GATEWAY_ENABLED`. Rollback: set it off through the deployment configuration, restore direct-provider secret references and wait for the resulting pod rollout.
 
 ### Helm and Compose
 
@@ -83,9 +83,18 @@ global:
 - `helm template` tests cover default-disabled output (nothing new), enabled settings per chart, explicit subchart overrides, and BFF-only management settings and secret references.
 - `.env.example` gets the same keys, commented out. The minimal first-install profile is unchanged.
 
+### Credential isolation and mode transitions
+
+- Keep direct-provider credentials in the existing secret store. In gateway-enabled workloads, omit their `env`, `envFrom`, secret-volume and other credential injection paths. Split mixed secrets or project only the required non-provider keys. Explicit subchart overrides must not bypass credential isolation.
+- Change mode through Helm/GitOps: reconcile the routing setting and credential references in the same pod-template update. The pod-template change triggers replacement; new pods load the selected secrets at startup. Do not treat an in-place ConfigMap edit as a complete mode change.
+- Enabling routing removes provider credential references. Disabling routing restores them from the configured secret source. Ensure required Secrets are synchronized before rollout; missing credentials must prevent successful direct-mode activation.
+- Wait for replacement pods to become ready and old pods to terminate before reporting success. Rolling updates can temporarily contain both modes; switching is not instantaneous and does not revoke credentials already loaded by old pods.
+- Changes to Secrets consumed by a workload require a rolling restart so replacement pods load the new credentials. Use pod-template checksums for chart-managed configuration and Secrets. For externally managed Secrets, the operator or deployment pipeline must wait for synchronization, trigger a rolling restart and verify rollout completion; changing a Secret alone does not restart pods.
+- Compose must likewise select mode-specific credential injection and recreate affected containers. A shared `.env` containing provider keys must not be passed wholesale to gateway-enabled inference containers. Preserve the default-disabled first-install path.
+
 ## Phases
 
-Phases describe delivery order. One global switch controls gateway routing across all migrated paths: `LLM_GATEWAY_ENABLED=false` uses direct-provider configuration and bypasses the gateway even when configured and reachable. Valid direct-provider configuration and credentials must remain available. With the switch on, gateway failures fail closed without automatic direct-provider fallback. Rolling back an individual phase requires reverting the relevant deployment or code changes while respecting phase dependencies.
+Phases describe delivery order. One global switch controls gateway routing across all migrated paths: `LLM_GATEWAY_ENABLED=false` uses direct-provider configuration and bypasses the gateway even when configured and reachable. Direct-provider configuration and credentials remain in deployment configuration and secret storage, not in gateway-enabled inference pods. Mode changes reconcile credential references and replace affected pods before the transition is considered complete. With the switch on, gateway failures fail closed without automatic direct-provider fallback. Rolling back an individual phase requires reverting the relevant deployment or code changes while respecting phase dependencies.
 
 ```mermaid
 flowchart LR
@@ -115,7 +124,7 @@ flowchart LR
 |---|---|
 | Worse is Better / YAGNI | No bundled gateway, no in-process router, no CAIPE copy of limits. |
 | Composition over Inheritance | Gateways sit behind fixed contracts plus an adapter. |
-| Security by Default | Per-call verifiable identity, no provider or admin keys in agents, fail closed. |
+| Security by Default | Per-call verifiable identity, no provider keys in gateway-enabled inference pods, admin keys BFF-only, fail closed. |
 | Single source of truth | Gateway for limits and usage; OpenFGA for access; Mongo for catalogue and requests. |
 | Docker Compose first install | Default profile unchanged; the switch is off by default. |
 

@@ -28,7 +28,7 @@ Set these once under `global.llmGateway` in Helm ([plan.md](./plan.md#helm-and-c
 
 ## 3. Validate
 
-Keep valid direct-provider configuration and credentials available for the disabled-mode check.
+Keep valid direct-provider configuration and credentials in the deployment secret store, outside gateway-enabled inference pods. For the disabled-mode check, apply the mode change through Helm/GitOps so it restores provider secret references and replaces pods; wait for rollout completion. Compose must recreate containers with mode-specific credential injection. Missing secrets must not be treated as a successful transition.
 
 | Check | Expected |
 |---|---|
@@ -38,7 +38,9 @@ Keep valid direct-provider configuration and credentials available for the disab
 | Call the gateway with no or forged token | 401 |
 | Set a tiny team limit through CAIPE where supported, otherwise in the gateway; chat again | The request is rejected and CAIPE reports the failure without inferred budget-specific advice or direct-provider fallback |
 | Autonomous task run | Usage attributed to the task owner, agent and team |
-| Keep the gateway configured and reachable; set `LLM_GATEWAY_ENABLED=false` | Every migrated path completes through its direct provider; zero inference requests reach the gateway |
+| Keep the gateway configured and reachable; deploy `LLM_GATEWAY_ENABLED=false` with restored provider secret references and wait for pod replacement | Every migrated path completes through its direct provider; zero inference requests reach the gateway |
+
+When rotating a Secret consumed by an inference workload, wait for the Secret update to complete, then perform and verify a rolling restart so new pods load the new credentials. Chart-managed Secret checksums trigger the rollout during deployment; externally managed Secrets require the operator or deployment pipeline to trigger it explicitly.
 
 ## 4. Swap gateways
 

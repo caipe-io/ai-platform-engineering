@@ -184,7 +184,7 @@ flowchart LR
   - Successful transfers MUST invalidate CAIPE's cached credentials for the previous owner. Calls already admitted may complete against the previous team's budget.
   - These requirements apply to Keycloak scopes, CAIPE-issued JWTs and per-agent gateway keys as applicable. Gateway JWT validation remains local; no gateway lookup of MongoDB is required.
 - **User loses access to the agent**: the next turn's OpenFGA check denies, even if a token is cached.
-- **Switch off**: every migrated path uses its direct-provider configuration and bypasses the gateway, even when the gateway endpoint is configured and reachable. Valid direct-provider configuration and credentials must be available.
+- **Switch off**: every migrated path uses its direct-provider configuration and bypasses the gateway, even when the gateway endpoint is configured and reachable. The deployment update restores direct-provider secret references and replaces affected pods; new pods load the credentials at startup. The transition is complete only after the rollout succeeds. Missing credentials prevent successful activation of direct mode.
 - **Embeddings**: they move only if the gateway serves the *same* embedding model, so vector indexes stay valid.
 
 ## Requirements *(mandatory)*
@@ -198,7 +198,7 @@ flowchart LR
 ### Identity ②
 - **FR-004**: With `LLM_GATEWAY_AUTH=jwt` (default), every gateway call MUST carry a short-lived JWT (TTL ≤ 5 min) with `sub` (effective principal), `azp` (sending client, `caipe-dynamic-agents`), `agent_id`, `team_id` and `org`, verifiable by the gateway. Identity claims follow CAIPE's canonical identity contract (#2885). Each token carries exactly one agent binding; the runtime verifies the returned `agent_id` and `team_id` before use or caching.
 - **FR-005**: With `LLM_GATEWAY_AUTH=key` (gateways that can't validate JWTs), calls MUST carry a per-agent gateway key from CAIPE's credentials store. Agent and team are verified; the user is attributed through the `user` field only, so per-user limits are best-effort.
-- **FR-006**: Agents MUST NOT hold provider keys or a shared admin key.
+- **FR-006**: In gateway-enabled mode, migrated inference workloads MUST NOT receive direct-provider credentials through environment variables or mounted secrets. Gateway admin credentials remain BFF-only in every mode. Direct-provider credentials remain in the deployment secret store and are injected only into direct-mode workloads. Shared secrets containing both provider and required service credentials MUST be split or projected by key.
 - **FR-007**: Autonomous and scheduled runs MUST be attributed to the task owner, not to a shared service account or an unsigned owner header. Dynamic agents exchange the owner token the run carries; how that token is proven (#2891, #3034) follows #2890.
 
 ### Attribution ③
@@ -226,7 +226,7 @@ flowchart LR
 ### Rollout
 - **FR-017**: Adopting the gateway MUST NOT require agent source changes.
 - **FR-018**: Gateway routing MUST be off by default. With `LLM_GATEWAY_ENABLED=false`, every migrated path MUST use its direct-provider configuration and bypass the gateway even when its endpoint is configured and reachable. With the switch on, gateway failures MUST fail closed without automatic direct-provider fallback.
-- **FR-019**: Delivery MUST be phased. The global switch disables gateway routing across all migrated paths. Rolling back an individual phase requires reverting the relevant deployment or code changes while respecting phase dependencies (see [plan.md](./plan.md)).
+- **FR-019**: A routing-mode change MUST update the workload configuration and selected credential references together and trigger pod replacement. A ConfigMap-only edit is not a supported mode transition. Gateway-enabled replacement pods MUST exclude provider credentials; direct-mode replacement pods MUST load them before serving inference. Delivery MUST be phased. The global switch disables gateway routing across all migrated paths. Rolling back an individual phase requires reverting the relevant deployment or code changes while respecting phase dependencies (see [plan.md](./plan.md)).
 
 ## Key Entities
 

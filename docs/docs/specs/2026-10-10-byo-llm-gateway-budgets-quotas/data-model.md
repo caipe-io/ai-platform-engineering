@@ -34,7 +34,7 @@ flowchart LR
 | `LLM_GATEWAY_DEFAULT_TEAM` | `platform` | Team charged for agents without `owner_team_slug`. Provisioned at startup. |
 | Adapter admin credential | — | Through the existing secret strategies. Only needed by the UI backend for management integration; not required for `none`. |
 
-Direct-provider configuration and credentials must remain available for disabled mode; configuring a gateway endpoint alone does not enable routing.
+Direct-provider credentials remain in the deployment secret store, not in gateway-enabled inference pods. Changing mode updates configuration and credential references together and replaces the affected pods; direct-mode pods load provider credentials at startup. Configuring a gateway endpoint alone does not enable routing.
 
 ## 2. `llm_models` (existing collection, additive fields)
 
