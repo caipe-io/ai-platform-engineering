@@ -22,6 +22,7 @@ export function AgenticAppsHub(): React.ReactElement {
   const urlQuery = (searchParams.get("q") ?? "").slice(0, 256);
   const [query, setQuery] = useState(urlQuery);
   const editingSearch = useRef(false);
+  const lastEditedHref = useRef<string | null>(null);
 
   useEffect(() => { setQuery(urlQuery); }, [urlQuery]);
   useEffect(() => {
@@ -33,6 +34,8 @@ export function AgenticAppsHub(): React.ReactElement {
   function updateQuery(value: string, newEntry = false): void {
     const next = value.slice(0, 256);
     setQuery(next);
+    const currentHref = window.location.pathname + window.location.search + window.location.hash;
+    if (lastEditedHref.current !== currentHref) editingSearch.current = false;
     const url = new URL(window.location.href);
     if (next) url.searchParams.set("q", next);
     else url.searchParams.delete("q");
@@ -42,6 +45,7 @@ export function AgenticAppsHub(): React.ReactElement {
     if (newEntry || !editingSearch.current) window.history.pushState(null, "", href);
     else window.history.replaceState(null, "", href);
     editingSearch.current = true;
+    lastEditedHref.current = href;
   }
   const [favoriteAppIds, setFavoriteAppIds] = useState<string[]>([]);
   const [favoritesReady, setFavoritesReady] = useState(false);
@@ -54,7 +58,7 @@ export function AgenticAppsHub(): React.ReactElement {
       .then(async (response) => {
         if (response.status === 401) {
           router.push(
-            `/login?callbackUrl=${encodeURIComponent(window.location.pathname + window.location.search)}`,
+            `/login?callbackUrl=${encodeURIComponent(window.location.pathname + window.location.search + window.location.hash)}`,
           );
           return null;
         }

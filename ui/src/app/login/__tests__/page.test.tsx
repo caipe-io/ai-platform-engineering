@@ -99,6 +99,7 @@ describe('Login Page', () => {
   })
 
   beforeEach(() => {
+    window.history.replaceState(null, "", "/login")
     jest.clearAllMocks()
     sessionStorageData = {}
     Object.defineProperty(window, 'sessionStorage', { value: mockSessionStorage, writable: true })
@@ -530,4 +531,21 @@ describe('Login Page', () => {
       })
     })
   })
+  it.each([['/apps?q=example', '/apps?q=example#catalog'], ['/apps?q=example#explicit', '/apps?q=example#explicit']])('preserves the bookmark fragment in OAuth: %s', async (callbackUrl, expected) => {
+    window.history.replaceState(null, '', '/login#catalog')
+    mockSearchParamsGet.mockImplementation(key => key === 'callbackUrl' ? callbackUrl : null)
+    mockUseSession.mockReturnValue({ data: null, status: 'unauthenticated' } as unknown)
+    render(<LoginPage />)
+    fireEvent.click(screen.getByText(/sign in with sso/i))
+    await waitFor(() => expect(mockSignIn).toHaveBeenCalledWith('oidc', { callbackUrl: expected }))
+  })
+
+  it('preserves an inherited bookmark fragment when the session is already authenticated', async () => {
+    window.history.replaceState(null, '', '/login#catalog')
+    mockSearchParamsGet.mockImplementation(key => key === 'callbackUrl' ? '/apps?q=example' : null)
+    mockUseSession.mockReturnValue({ data: { user: { name: 'Example' } }, status: 'authenticated' } as unknown)
+    render(<LoginPage />)
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/apps?q=example#catalog'))
+  })
+
 })

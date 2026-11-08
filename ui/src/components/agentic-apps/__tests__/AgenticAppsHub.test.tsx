@@ -194,3 +194,27 @@ it("restores catalog results when URL state changes through Back/Forward", async
   rerender(<AgenticAppsHub />);
   expect(await screen.findByRole("link", { name: "Example workspace" })).toBeInTheDocument();
 });
+
+
+it("starts a new search entry after another navigation while the input remains focused", async () => {
+  const view = render(<AgenticAppsHub />);
+  const input = await screen.findByRole("searchbox");
+  fireEvent.focus(input);
+  fireEvent.change(input, { target: { value: "engineering" } });
+  act(() => window.history.pushState(null, "", "/apps?q=research"));
+  view.rerender(<AgenticAppsHub />);
+  expect(input).toHaveValue("research");
+  const push = jest.spyOn(window.history, "pushState");
+  const replace = jest.spyOn(window.history, "replaceState");
+  fireEvent.change(input, { target: { value: "secondary" } });
+  expect(push).toHaveBeenCalledTimes(1);
+  expect(replace).not.toHaveBeenCalled();
+  push.mockRestore(); replace.mockRestore();
+});
+
+it("preserves the catalog fragment when its API session expires", async () => {
+  window.history.replaceState(null, "", "/apps?q=example#catalog");
+  jest.mocked(global.fetch).mockResolvedValueOnce({ ok: false, status: 401 } as Response);
+  render(<AgenticAppsHub />);
+  await waitFor(() => expect(mockRouter.push).toHaveBeenCalledWith("/login?callbackUrl=%2Fapps%3Fq%3Dexample%23catalog"));
+});

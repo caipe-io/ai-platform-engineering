@@ -69,6 +69,11 @@ function safeCallbackUrl(value: string | null): string {
   return value.startsWith("/login") ? "/" : value;
 }
 
+// Redirect responses inherit the browser fragment, which is never sent to the server.
+function callbackWithBrowserFragment(callbackUrl: string): string {
+  return callbackUrl.includes("#") ? callbackUrl : callbackUrl + window.location.hash;
+}
+
 function LoginContent() {
   const { status, data: session } = useSession();
   const router = useRouter();
@@ -95,7 +100,7 @@ function LoginContent() {
     if (status === "authenticated" && !session?.error) {
       // Clear counter on successful auth redirect (not a loop)
       clearRedirectLoopCounter();
-      router.push(callbackUrl);
+      router.push(callbackWithBrowserFragment(callbackUrl));
     }
   }, [status, session?.error, router, callbackUrl, sessionReset, loopBroken]);
 
@@ -107,7 +112,7 @@ function LoginContent() {
       sessionStorage.removeItem("token-expiry-handling");
     }
     try {
-      await signIn("oidc", { callbackUrl });
+      await signIn("oidc", { callbackUrl: callbackWithBrowserFragment(callbackUrl) });
     } catch (err) {
       console.error("Sign in error:", err);
       setIsLoading(false);

@@ -69,6 +69,15 @@ describe("iframe query navigation", () => {
     expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ href: publicPath + "?tab=report" }), window.location.origin);
   });
 
+  it.each(["assistant_chat=chat-1&tab=overview", "tab=overview&assistant_chat=chat-1"])("does not push an unchanged view with reordered host keys: %s", search => {
+    window.history.replaceState(null, "", publicPath + "?" + search);
+    connect();
+    const push = jest.spyOn(window.history, "pushState");
+    navigate(publicPath + "?tab=overview&assistant_chat=other");
+    expect(push).not.toHaveBeenCalled();
+    expect(new URLSearchParams(window.location.search).get("assistant_chat")).toBe("chat-1");
+  });
+
   it("does not change the parent route or expose listeners after disposal", () => {
     connect(); navigate(publicPath + "?tab=instances", "invalid");
     window.history.replaceState(null, "", "/apps/other");
