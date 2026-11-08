@@ -3031,7 +3031,7 @@ export function ChatPanel({
               }}
             >
               {!!coordination?.agents.length && <div className="flex items-center gap-2 px-1 pb-1 text-xs text-muted-foreground">
-                <span>To</span><AgentPicker ariaLabel="Message recipient" value={agentId} onChange={coordination.selectAgent}
+                <span>To</span><AgentPicker ariaLabel="Message recipient" value={agentId} onChange={coordination.selectAgent} required
                   options={[
                     { value: coordination.primaryAgentId, label: "@primary" },
                     ...coordination.agents.map(member => ({ value: member.agent_id, label: `@${member.handle}`, disabled: !coordination.availableAgents.some(candidate => candidate._id === member.agent_id) })),
