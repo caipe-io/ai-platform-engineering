@@ -17,6 +17,20 @@ jest.mock("shiki", () => ({
 }));
 
 describe("MarkdownRenderer links", () => {
+  it("colors joined agent mentions without changing code, links, emails or unknown handles", async () => {
+    const { container } = render(<MarkdownRenderer
+      content="Ask @reviewer and @coder. Keep `@reviewer`, [@coder](https://example.test/@coder), user@reviewer.test and @unknown unchanged."
+      mentionHandles={["coder", "reviewer"]}
+    />);
+    await waitFor(() => expect(container.querySelectorAll("span")).toHaveLength(2));
+    const mentions = Array.from(container.querySelectorAll("span"));
+    expect(mentions.map(span => span.textContent)).toEqual(["@reviewer", "@coder"]);
+    expect(mentions[0].className).not.toEqual(mentions[1].className);
+    expect(container.querySelector("code")?.textContent).toBe("@reviewer");
+    expect(screen.getByRole("link", { name: "@coder" }).querySelector("span")).toBeNull();
+    expect(container.textContent).toContain("user@reviewer.test and @unknown unchanged");
+  });
+
   it("opens external and relative links in a new tab", async () => {
     render(
       <MarkdownRenderer

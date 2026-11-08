@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { agentMentionColor } from "@/lib/agent-mention-colors";
 import DOMPurify from "dompurify";
 import { Marked } from "marked";
 import markedShiki from "marked-shiki";
@@ -115,6 +116,37 @@ function decorateLinks(root: HTMLDivElement) {
   }
 }
 
+function decorateMentions(root: HTMLDivElement, handles: readonly string[]) {
+  if (!handles.length) return;
+  const joined = new Set(["primary", ...handles]);
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes: Text[] = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    // Code, links and literal handles such as email addresses keep their meaning.
+    if (!node.parentElement?.closest("a, code, pre")) nodes.push(node);
+  }
+  for (const node of nodes) {
+    const text = node.data;
+    const fragment = document.createDocumentFragment();
+    let offset = 0;
+    for (const match of text.matchAll(/(^|[^\w@/])@([a-z][a-z0-9-]{1,31})(?![\w-])/g)) {
+      if (!joined.has(match[2])) continue;
+      const start = match.index! + match[1].length;
+      fragment.append(text.slice(offset, start));
+      const span = document.createElement("span");
+      span.className = agentMentionColor(match[2], handles);
+      span.textContent = `@${match[2]}`;
+      fragment.append(span);
+      offset = start + span.textContent.length;
+    }
+    if (offset) {
+      fragment.append(text.slice(offset));
+      node.replaceWith(fragment);
+    }
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Copy button decoration — vanilla DOM, event delegation
 // ═══════════════════════════════════════════════════════════════
@@ -211,6 +243,7 @@ interface MarkdownRendererProps {
    */
   variant?: "thinking" | "final" | "user";
   className?: string;
+  mentionHandles?: readonly string[];
 }
 
 /**
@@ -229,7 +262,9 @@ export function MarkdownRenderer({
   isStreaming,
   variant = "final",
   className,
+  mentionHandles,
 }: MarkdownRendererProps) {
+  const mentionKey = JSON.stringify(mentionHandles ?? []);
   const containerRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   // Monotonic counter to ensure only the latest parse result is applied.
@@ -263,6 +298,7 @@ export function MarkdownRenderer({
     const temp = document.createElement("div");
     temp.innerHTML = html;
     decorateLinks(temp);
+    decorateMentions(temp, JSON.parse(mentionKey) as string[]);
     decorateCopyButtons(temp);
 
     morphdom(container, temp, {
@@ -312,7 +348,7 @@ export function MarkdownRenderer({
       container.addEventListener("click", handleCopyClick);
       cleanupRef.current = () => container.removeEventListener("click", handleCopyClick);
     }
-  }, []);
+  }, [mentionKey]);
 
   // Parse + morph on content changes
   useEffect(() => {
