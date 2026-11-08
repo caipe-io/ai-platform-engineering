@@ -194,6 +194,9 @@ config:
   # RELEASE_NOTES_ALLOWED_REPOSITORIES: "https://github.com/example/platform-fork"
   # Feature flags
   ENABLE_SUBAGENT_CARDS: "true"
+  # Experimental chat participants and automatic team handoffs. Deployment ceilings.
+  AGENT_COORDINATION_ENABLED: "true"
+  AGENT_TEAM_HANDOFFS_ENABLED: "true"
   SSO_ENABLED: "true"
   # Built-in skill IDs to seed (comma-separated whitelist).
   # "none" (default) disables auto-seeding entirely — use "Import template skills"

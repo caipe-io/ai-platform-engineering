@@ -1,3 +1,4 @@
+import { coordinationDeploymentLimits, getCoordinationFeatures, resolveCoordinationFeatures } from "@/lib/coordination/features.server";
 import { createHash } from "crypto";
 import { normalizeReleaseNotesOverride, validateReleaseNotesOverride, type ReleaseNotesOverride } from "@/lib/release-notes-override";
 // GET /api/admin/platform-config — read platform-wide config (any authenticated user)
@@ -47,6 +48,7 @@ interface PlatformConfigDoc extends PlatformDefaultAgentDocument {
   rag_default_search_team_slug?: unknown;
   rag_ingestor_limits?: unknown;
   platform_llm?: unknown;
+  agent_coordination?: { enabled?: boolean; team?: boolean };
 }
 
 interface TeamConfigDoc {
@@ -333,6 +335,8 @@ async function getPlatformConfig(request: NextRequest) {
         schedule_editor_agent_source: scheduleEditorAgentId
           ? 'db'
           : (scheduleEditorEnvFallback ? 'env' : 'fallback'),
+        agent_coordination: resolveCoordinationFeatures(doc?.agent_coordination),
+        agent_coordination_deployment: coordinationDeploymentLimits(),
         platform_llm: platformLlm,
         platform_llm_source: platformLlm ? 'db' : 'fallback',
         slack_victorops_escalation_agent_id: victoropsAgentId ?? victoropsEnvFallback,
@@ -369,6 +373,18 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       updated_at: new Date(),
       updated_by: user.email,
     };
+    if (Object.prototype.hasOwnProperty.call(body, 'agent_coordination')) {
+      const features = body.agent_coordination;
+      if (!isRecord(features) || !Object.keys(features).length ||
+          Object.keys(features).some(key => !['enabled', 'team'].includes(key) || typeof features[key] !== 'boolean')) {
+        throw new ApiError('agent_coordination accepts enabled and team booleans only', 400);
+      }
+      const limits = coordinationDeploymentLimits();
+      if ((features.enabled === true && !limits.enabled) || (features.team === true && !limits.team)) {
+        throw new ApiError('This feature is disabled by deployment configuration', 409);
+      }
+      for (const [key, value] of Object.entries(features)) update[`agent_coordination.${key}`] = value;
+    }
     let releaseNotesUpdate: Partial<ReleaseNotesNotificationConfig> | undefined;
 
     const hasDefaultAgentUpdate = Object.prototype.hasOwnProperty.call(body, 'default_agent_id');
@@ -567,12 +583,21 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       },
       { upsert: true },
     );
+    if (body.agent_coordination && isRecord(body.agent_coordination) &&
+        (body.agent_coordination.enabled === false || body.agent_coordination.team === false)) {
+      // Never resurrect queued assignments when the administrator enables the feature again.
+      await (await getCollection('chat_agent_handoffs')).updateMany(
+        { status: { $in: ['pending', 'processing'] }, runId: { $exists: false } },
+        { $set: { status: 'skipped', lastError: 'coordination_disabled', updatedAt: new Date() } },
+      );
+    }
     platformConfigCache.responses.clear();
     platformConfigCache.inflight.clear();
 
     return NextResponse.json({
       success: true,
       data: {
+        ...(body.agent_coordination ? { agent_coordination: await getCoordinationFeatures(), agent_coordination_deployment: coordinationDeploymentLimits() } : {}),
         ...(Object.prototype.hasOwnProperty.call(update, 'default_agent_id')
           ? { default_agent_id: update.default_agent_id }
           : {}),

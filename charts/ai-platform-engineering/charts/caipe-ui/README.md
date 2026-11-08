@@ -80,6 +80,8 @@ helm show values oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.1.0
 | config.DESCRIPTION | string | `"Where Humans and AI agents collaborate to deliver high quality outcomes."` |  |
 | config.DYNAMIC_AGENTS_URL | string | `""` |  |
 | config.ENABLE_AUTONOMOUS_AGENTS | string | `"false"` |  |
+| config.AGENT_COORDINATION_ENABLED | string | `"true"` | Experimental chat participants; deployment ceiling for runtime Admin controls |
+| config.AGENT_TEAM_HANDOFFS_ENABLED | string | `"true"` | Experimental automatic handoffs; deployment ceiling for runtime Admin controls |
 | config.ENABLE_SUBAGENT_CARDS | string | `"true"` |  |
 | config.ENABLE_USER_INFO_TOOL | string | `"false"` |  |
 | config.ENV_BADGE | string | `""` |  |

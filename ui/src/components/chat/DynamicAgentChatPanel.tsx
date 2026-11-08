@@ -1420,11 +1420,15 @@ export function ChatPanel({
     if (validMessages.length === 0 || isThisConversationStreaming || isRemoteResponse) return;
     const mentioned = leadingAgentMention(validMessages[0].text);
     const mentionTarget = mentioned === "primary" ? coordination?.primaryAgentId : coordination?.agents.find(member => member.handle === mentioned)?.agent_id;
-    if (coordination && mentioned && !mentionTarget && !explicitAgentId) {
+    if (coordination && coordination.enabled !== false && mentioned && !mentionTarget && !explicitAgentId) {
       toast(`@${mentioned} has not joined this chat. Add the agent in Agent coordination first.`, "error", 6000);
       return;
     }
     const targetAgentId = explicitAgentId ?? mentionTarget ?? validMessages[0].agentId ?? agentId;
+    if (coordination?.enabled === false && targetAgentId !== coordination.primaryAgentId) {
+      toast("Agent Coordination is disabled by the administrator. Send to the primary agent instead.", "error", 6000);
+      return;
+    }
     const targetConfig = targetAgentId === agentId ? agent : coordination?.availableAgents.find(candidate => candidate._id === targetAgentId);
     const targetName = targetConfig?.name ?? coordination?.agents.find(member => member.agent_id === targetAgentId)?.name ?? targetAgentId;
     // A recipient prefix is routing syntax, not instructions to delegate again.
@@ -1986,7 +1990,7 @@ export function ChatPanel({
     // Check for slash commands via the registry
     const trimmed = input.trim();
     const mentioned = leadingAgentMention(trimmed);
-    if (coordination && mentioned && mentioned !== "primary" && !coordination.agents.some(member => member.handle === mentioned)) {
+    if (coordination && coordination.enabled !== false && mentioned && mentioned !== "primary" && !coordination.agents.some(member => member.handle === mentioned)) {
       toast(`@${mentioned} has not joined this chat. Add the agent in Agent coordination first.`, "error", 6000);
       return;
     }
@@ -2281,7 +2285,7 @@ export function ChatPanel({
 
   const mentionHandles = coordination?.agents.map(member => member.handle) ?? [];
   const selectedHandle = coordination?.agents.find(member => member.agent_id === agentId)?.handle ?? "primary";
-  const mentionCommands: SlashCommand[] = coordination ? [
+  const mentionCommands: SlashCommand[] = coordination && coordination.enabled !== false ? [
     { id: coordination.primaryAgentId, label: "primary", description: "Primary chat agent", category: "participant", action: "insert", value: "@primary", labelClassName: agentMentionColor("primary", mentionHandles) },
     ...coordination.agents.filter(member => coordination.availableAgents.some(candidate => candidate._id === member.agent_id)).map(member => ({
       id: member.agent_id, label: member.handle, description: member.name,
@@ -2290,7 +2294,7 @@ export function ChatPanel({
   ] : [];
   const menuCommands = mentionMenu ? mentionCommands : slashCommands;
   const inputMention = leadingAgentMention(input);
-  const highlightedMention = coordination && inputMention && (inputMention === "primary" || coordination.agents.some(member => member.handle === inputMention))
+  const highlightedMention = coordination && coordination.enabled !== false && inputMention && (inputMention === "primary" || coordination.agents.some(member => member.handle === inputMention))
     ? `@${inputMention}` : null;
 
   // Handle slash command detection in input
@@ -2302,7 +2306,7 @@ export function ChatPanel({
     const cursorPos = e.target.selectionStart;
     const textBeforeCursor = newValue.slice(0, cursorPos);
 
-    if (coordination && /^@[a-z0-9-]*$/i.test(textBeforeCursor)) {
+    if (coordination && coordination.enabled !== false && /^@[a-z0-9-]*$/i.test(textBeforeCursor)) {
       setMentionMenu(true);
       setSlashFilter(textBeforeCursor.slice(1));
       setShowSlashMenu(true);
@@ -3071,7 +3075,7 @@ export function ChatPanel({
                 }
               }}
             >
-              {!!coordination?.agents.length && <div className="flex items-center gap-2 px-1 pb-1 text-xs text-muted-foreground">
+              {coordination?.enabled !== false && !!coordination?.agents.length && <div className="flex items-center gap-2 px-1 pb-1 text-xs text-muted-foreground">
                 <span>To</span><div className="w-fit min-w-0 max-w-full"><AgentPicker ariaLabel="Message recipient" value={agentId} onChange={coordination.selectAgent} required hideIdSuffix
                   options={[
                     { value: coordination.primaryAgentId, label: "@primary" },

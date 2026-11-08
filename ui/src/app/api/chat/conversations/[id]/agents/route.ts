@@ -1,3 +1,4 @@
+import { getCoordinationFeatures } from "@/lib/coordination/features.server";
 import { coordinationPolicy, setCoordinationPolicy } from "@/lib/coordination/policy.server";
 import { listHandoffs } from "@/lib/coordination/handoffs.server";
 import { NextRequest, NextResponse } from "next/server";
@@ -35,11 +36,14 @@ async function authorize(request: NextRequest, context: Context) {
 export const GET = withErrorHandler(async (request: NextRequest, context: Context) => {
   const access = await authorize(request, context);
   if (access instanceof NextResponse) return access;
+  const features = await getCoordinationFeatures();
   return NextResponse.json({ success: true, data: {
     agents: access.conversation.coordination_agents ?? [],
-    can_manage: access.canManage,
-    available: isHarnessEngineConfigured(),
-    mode: (await coordinationPolicy(access.conversation._id))?.mode ?? "mentions",
+    enabled: features.enabled,
+    team_available: features.team,
+    can_manage: features.enabled && access.canManage,
+    available: features.enabled && isHarnessEngineConfigured(),
+    mode: features.team ? (await coordinationPolicy(access.conversation._id))?.mode ?? "mentions" : "mentions",
     handoffs: await listHandoffs(access.conversation._id),
   } }, { headers: { "Cache-Control": "no-store" } });
 });
@@ -47,6 +51,7 @@ export const GET = withErrorHandler(async (request: NextRequest, context: Contex
 export const POST = withErrorHandler(async (request: NextRequest, context: Context) => {
   const access = await authorize(request, context);
   if (access instanceof NextResponse) return access;
+  if (!(await getCoordinationFeatures()).enabled) throw new ApiError("Agent Coordination is disabled by the administrator", 403);
   if (!access.canManage) throw new ApiError("Only this chat's owner can add coordination agents to an interactive web chat.", 403);
   if (!isHarnessEngineConfigured()) throw new ApiError("Harness Engine must be configured to attach chat agents.", 503);
   let body: unknown;
@@ -96,6 +101,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Cont
   if (!access.canManage) throw new ApiError("Only the chat owner can change coordination mode", 403);
   const body = await request.json();
   if (!["mentions", "team"].includes(body.mode)) throw new ApiError("Choose a coordination mode", 400);
+  if (body.mode === "team" && !(await getCoordinationFeatures()).team) throw new ApiError("Team handoffs are disabled by the administrator", 403);
   if (body.mode === "team" && (!isHarnessEngineConfigured() || !access.conversation.coordination_agents?.length)) {
     throw new ApiError("Add a joined agent before enabling team coordination", 409);
   }

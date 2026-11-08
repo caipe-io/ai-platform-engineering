@@ -2,6 +2,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GET, POST, PATCH } from "./route";
 
+const mockFeatures = jest.fn();
+jest.mock("@/lib/coordination/features.server", () => ({ getCoordinationFeatures: () => mockFeatures() }));
 const mockSetPolicy = jest.fn();
 jest.mock("@/lib/coordination/policy.server", () => ({ coordinationPolicy: async () => null, setCoordinationPolicy: (...args: unknown[]) => mockSetPolicy(...args) }));
 jest.mock("@/lib/coordination/handoffs.server", () => ({ listHandoffs: async () => [] }));
@@ -33,6 +35,7 @@ const context = { params: Promise.resolve({ id: conversation._id }) };
 const request = (body: unknown = { agent_id: "agent-helper", handle: "reviewer" }) => new NextRequest("https://example.test/api/chat/conversations/chat-example/agents", { method: "POST", body: JSON.stringify(body) });
 beforeEach(() => {
   jest.resetAllMocks();
+  mockFeatures.mockResolvedValue({ enabled: true, team: true });
   mockRead.mockResolvedValue({ conversation, denial: null });
   mockOwner.mockReturnValue(true);
   mockUse.mockResolvedValue(null);
@@ -101,4 +104,19 @@ it("binds team authorization to the authenticated owner instead of request ident
   const change = request({ mode: "team", owner: "other-user" });
   expect((await PATCH(change, context)).status).toBe(200);
   expect(mockSetPolicy).toHaveBeenCalledWith(change, "chat-example", "owner", "team");
+});
+
+it("keeps history readable but blocks attachment when coordination is disabled", async () => {
+  mockFeatures.mockResolvedValue({ enabled: false, team: false });
+  const response = await GET(request(), context);
+  expect((await response.json()).data).toMatchObject({ enabled: false, team_available: false, can_manage: false, available: false });
+  expect((await POST(request(), context)).status).toBe(403);
+  expect(mockUpdate).not.toHaveBeenCalled();
+});
+it("rejects enabling team handoffs independently of manual agent attachment", async () => {
+  mockFeatures.mockResolvedValue({ enabled: true, team: false });
+  expect((await POST(request(), context)).status).toBe(201);
+  expect((await PATCH(request({ mode: "team" }), context)).status).toBe(403);
+  expect(mockSetPolicy).not.toHaveBeenCalled();
+  expect((await PATCH(request({ mode: "mentions" }), context)).status).toBe(200);
 });

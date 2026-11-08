@@ -26,6 +26,42 @@ The **Agent coordination** tab contains:
 The **Agent info** tab preserves configuration, context usage, chat export,
 and session refresh. Read-only viewers cannot refresh the session.
 
+## Optional experimental features
+
+**Agent Coordination** and **Team handoffs** are experimental and enabled by
+default. They grant no agent or tool permissions and still require Harness Engine.
+
+| Control | Effect |
+| --- | --- |
+| Admin → Platform defaults → Agent Coordination | Enable/disable joining agents, recipient selection and new participant turns at runtime |
+| Admin → Platform defaults → Team handoffs | Independently enable/disable automatic assignments; manual mentions remain available |
+| `AGENT_COORDINATION_ENABLED=false` | Deployment ceiling: disable coordination, including team handoffs |
+| `AGENT_TEAM_HANDOFFS_ENABLED=false` | Deployment ceiling: disable automatic handoffs, keep manual participants |
+
+Set environment variables on the UI/BFF container, or use Helm:
+
+```yaml
+caipe-ui:
+  config:
+    AGENT_COORDINATION_ENABLED: "true"
+    AGENT_TEAM_HANDOFFS_ENABLED: "false"
+```
+
+- Deployment changes take effect after a container restart/Helm rollout. Admin
+  switches are persisted in `platform_config.agent_coordination` without a restart.
+- Deployment `false` cannot be overridden by Admin. Otherwise the runtime switch
+  applies; missing values default to enabled.
+- Open chats refresh capability controls within 10 seconds or on window focus.
+  With coordination off, the panel shows Agent info and the composer uses the
+  primary agent. Existing membership, history and separate sessions remain saved.
+- Disabling either switch cancels queued handoffs. Active responses can finish,
+  replay, resume a pending input or be stopped; disabling does not terminate them.
+- Re-enabling restores the UI and saved membership. It does not revive cancelled
+  queue items. Per-chat Team mode remains an independent owner opt-in and retains
+  its original sign-in expiration; the platform switch never creates delegation.
+- Server admission and delivery checks apply to API callers too. UI hiding is not
+  the enforcement boundary. Failed configuration reads do not enable coordination.
+
 ## Add an agent from chat
 
 1. Open **Agent coordination → Add agent** as the chat owner.

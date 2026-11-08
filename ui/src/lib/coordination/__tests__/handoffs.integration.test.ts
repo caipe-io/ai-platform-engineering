@@ -5,6 +5,8 @@ import { handoffKey } from "../contracts";
 import type { HarnessRun } from "@/types/harness-engine";
 
 let mockDb: Db;
+const mockFeatures = jest.fn();
+jest.mock("@/lib/coordination/features.server", () => ({ getCoordinationFeatures: () => mockFeatures() }));
 const mockAuth = { subject: "test-owner", email: "owner@example.test", bearerToken: "test-user-token" };
 const mockPermission = jest.fn().mockResolvedValue(null);
 const mockParent = jest.fn();
@@ -32,6 +34,7 @@ run("durable agent assignments", () => {
   afterAll(async () => { await mockDb.dropDatabase(); await client.close(); });
   beforeEach(async () => {
     await mockDb.dropDatabase(); jest.clearAllMocks();
+    mockFeatures.mockResolvedValue({ enabled: true, team: true });
     mockPermission.mockResolvedValue(null);
     await mockDb.collection("conversations").insertOne({ _id: "example-chat" as never, owner_id: "owner@example.test", participants: [{ type: "agent", id: "primary-agent" }], coordination_agents: [{ agent_id: "helper-agent", handle: "helper", name: "Helper" }] });
     await mockDb.collection("chat_coordination_policies").insertOne({ _id: "example-chat" as never, generation: "generation-1", owner: "test-owner", sessionId: "test-login", mode: "team", expiresAt: new Date(Date.now() + 3600_000) });
@@ -40,6 +43,18 @@ run("durable agent assignments", () => {
       return Response.json({ data: path.includes("child-run") ? { ...parent, run_id: "child-run", agent_id: "helper-agent", status: "completed", last_sequence: 1 } : { ...parent, status: "completed" } });
     });
     mockStart.mockResolvedValue({ config: {}, run: { run_id: "child-run" } });
+  });
+  it("disables tools and queued delivery while still saving an already admitted response", async () => {
+    await enqueueHandoff(parent, mockAuth, args);
+    mockFeatures.mockResolvedValue({ enabled: true, team: false });
+    await expect(enqueueHandoff(parent, mockAuth, { ...args, message: "Another task" })).rejects.toThrow("active owner run");
+    await runHandoffsOnce();
+    expect(mockStart).not.toHaveBeenCalled();
+    expect((await mockDb.collection("chat_agent_handoffs").findOne({}))?.lastError).toBe("coordination_disabled");
+    await mockDb.collection("chat_agent_handoffs").updateOne({}, { $set: { status: "pending", runId: "child-run", availableAt: new Date(0) } });
+    await runHandoffsOnce();
+    expect((await mockDb.collection("chat_agent_handoffs").findOne({}))?.status).toBe("delivered");
+    expect(mockStart).not.toHaveBeenCalled();
   });
   it("deduplicates concurrent acceptance and executes without notification services", async () => {
     await Promise.all([enqueueHandoff(parent, mockAuth, args), enqueueHandoff(parent, mockAuth, args)]);

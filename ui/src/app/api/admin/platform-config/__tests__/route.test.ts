@@ -1007,3 +1007,40 @@ describe("curated override persistence and dismissal revisions", () => {
     expect(await save({ ...repository, markdown_ref: "secondary" })).not.toBe(repositoryRevision);
   });
 });
+
+describe("coordination runtime switches", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    delete process.env.AGENT_COORDINATION_ENABLED;
+    delete process.env.AGENT_TEAM_HANDOFFS_ENABLED;
+    mockWithAuth.mockImplementation((_request, handler) => handler(_request, { email: "admin@example.test" }, { sub: "admin", role: "admin" }));
+    mockRequireAdmin.mockResolvedValue(undefined);
+    mockRequireResourcePermission.mockResolvedValue(undefined);
+  });
+  afterEach(() => { delete process.env.AGENT_COORDINATION_ENABLED; delete process.env.AGENT_TEAM_HANDOFFS_ENABLED; });
+  it("requires admin access and cancels queued work without touching active runs", async () => {
+    const updateOne = jest.fn().mockResolvedValue({});
+    const updateMany = jest.fn().mockResolvedValue({});
+    mockGetCollection.mockImplementation(async (name: string) => name === "platform_config" ? { updateOne, findOne: async () => ({ agent_coordination: { team: false } }) } : { updateMany });
+    const { PATCH } = await import("../route");
+    await PATCH(request("/api/admin/platform-config", { method: "PATCH", body: JSON.stringify({ agent_coordination: { team: false } }) }));
+    expect(mockRequireAdmin).toHaveBeenCalled();
+    expect(mockRequireResourcePermission).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: "admin" }));
+    expect(updateOne).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ $set: expect.objectContaining({ "agent_coordination.team": false }) }), expect.anything());
+    expect(updateMany).toHaveBeenCalledWith({ status: { $in: ["pending", "processing"] }, runId: { $exists: false } }, expect.anything());
+  });
+  it("cannot bypass a deployment disable or accept non-boolean and unknown switches", async () => {
+    const { PATCH } = await import("../route");
+    process.env.AGENT_COORDINATION_ENABLED = "false";
+    for (const features of [{ enabled: true }, { team: true }, { enabled: "false" }, { other: true }]) {
+      await expect(PATCH(request("/api/admin/platform-config", { method: "PATCH", body: JSON.stringify({ agent_coordination: features }) }))).rejects.toThrow();
+    }
+    expect(mockGetCollection).not.toHaveBeenCalled();
+  });
+  it("rejects non-admin changes before reading or writing feature settings", async () => {
+    mockRequireAdmin.mockRejectedValue(new Error("Denied"));
+    const { PATCH } = await import("../route");
+    await expect(PATCH(request("/api/admin/platform-config", { method: "PATCH", body: JSON.stringify({ agent_coordination: { enabled: false } }) }))).rejects.toThrow("Denied");
+    expect(mockGetCollection).not.toHaveBeenCalled();
+  });
+});

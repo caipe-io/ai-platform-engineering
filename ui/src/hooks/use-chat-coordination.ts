@@ -8,6 +8,8 @@ import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 export interface ChatHandoff { _id: string; handle: string; status: string; lastError?: string; runId?: string; targetAgentId: string; }
 
 export interface ChatCoordination {
+  enabled?: boolean;
+  teamAvailable?: boolean;
   mode?: "mentions" | "team";
   handoffs?: ChatHandoff[];
   setMode?: (mode: "mentions" | "team") => Promise<void>;
@@ -32,6 +34,8 @@ async function readData<T>(response: Response): Promise<T> {
 
 /** Available agents come from the existing Use-filtered domain endpoint. */
 export function useChatCoordination(conversationId: string, primaryAgentId: string): ChatCoordination {
+  const [enabled, setEnabled] = useState(true);
+  const [teamAvailable, setTeamAvailable] = useState(true);
   const [mode, setModeState] = useState<"mentions" | "team">("mentions");
   const [handoffs, setHandoffs] = useState<ChatHandoff[]>([]);
   const [agents, setAgents] = useState<ChatCoordinationAgent[]>([]);
@@ -41,19 +45,22 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selection, setSelection] = useState({ conversationId, agentId: primaryAgentId });
-  const selectedAgentId = selection.conversationId === conversationId ? selection.agentId : primaryAgentId;
+  const selectedAgentId = enabled && selection.conversationId === conversationId ? selection.agentId : primaryAgentId;
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
+  const load = useCallback(async (signal?: AbortSignal, background = false) => {
+    if (!background) setLoading(true);
     setError(null);
     try {
       const [membershipResponse, catalogResponse] = await Promise.all([
         fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/agents`, { signal, cache: "no-store" }),
         fetch("/api/dynamic-agents/available", { signal, cache: "no-store" }),
       ]);
-      const membership = await readData<{ agents: ChatCoordinationAgent[]; can_manage: boolean; available: boolean; mode?: "mentions" | "team"; handoffs?: ChatHandoff[] }>(membershipResponse);
+      const membership = await readData<{ enabled?: boolean; team_available?: boolean; agents: ChatCoordinationAgent[]; can_manage: boolean; available: boolean; mode?: "mentions" | "team"; handoffs?: ChatHandoff[] }>(membershipResponse);
       const catalog = await readData<DynamicAgentConfig[]>(catalogResponse);
       if (signal?.aborted) return;
+      setEnabled(membership.enabled !== false);
+      setTeamAvailable(membership.team_available !== false);
+      if (membership.enabled === false) setSelection({ conversationId, agentId: primaryAgentId });
       setAgents(membership.agents);
       setModeState(membership.mode ?? "mentions");
       setHandoffs(membership.handoffs ?? []);
@@ -65,7 +72,7 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [conversationId]);
+  }, [conversationId, primaryAgentId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -75,9 +82,10 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
     setCanManage(false);
     setAvailableAgents([]);
     void load(controller.signal);
-    const onFocus = () => { void load(controller.signal); };
+    const onFocus = () => { void load(controller.signal, true); };
+    const timer = setInterval(onFocus, 10_000);
     window.addEventListener("focus", onFocus);
-    return () => { controller.abort(); window.removeEventListener("focus", onFocus); };
+    return () => { controller.abort(); clearInterval(timer); window.removeEventListener("focus", onFocus); };
   }, [load]);
 
   const refresh = useCallback(() => load(), [load]);
@@ -99,8 +107,9 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not update coordination mode."); }
   }, [conversationId, load]);
 
+  const hasActiveHandoff = handoffs.some(job => job.runId && ["pending", "processing"].includes(job.status));
   useEffect(() => {
-    if (mode !== "team") return;
+    if (mode !== "team" && !hasActiveHandoff) return;
     const controller = new AbortController();
     let pending = false;
     const timer = setInterval(() => {
@@ -119,8 +128,8 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
         }).finally(() => { pending = false; });
     }, 3000);
     return () => { controller.abort(); clearInterval(timer); };
-  }, [mode, conversationId]);
+  }, [mode, conversationId, hasActiveHandoff]);
 
-  return { mode, handoffs, setMode, agents, availableAgents, canManage, available, loading, error,
+  return { enabled, teamAvailable, mode, handoffs, setMode, agents, availableAgents, canManage, available, loading, error,
     primaryAgentId, selectedAgentId, selectAgent, refresh, addAgent };
 }
