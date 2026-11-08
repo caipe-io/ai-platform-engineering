@@ -233,7 +233,7 @@ Scale (60 exchanges, 30 password logins per row; ms p50 / p95):
 | Multiple agent scopes accepted | The exchanger requests exactly one agent scope and verifies the returned `agent_id`/`team_id` before use or caching |
 | Exchanger must be in the subject token's `aud` | Dynamic agents has no Keycloak client today and user tokens carry `aud=caipe-platform`. Phase 1 adds an exchange-only `caipe-dynamic-agents` client and its audience to user tokens. `caipe-platform` is not reused: it is the BFF's Keycloak admin client (`manage-users`). #3010 may reuse the new client |
 | Realm cache limit | Keycloak values size `cache-embedded-realms-max-count` to the agent count with headroom (50,000 held 10,000 agents) |
-| Gateway clock leeway | A token is usable for TTL + gateway leeway (60 s on AgentGateway). Conformance tests expiry past the leeway |
+| Gateway clock leeway | Gateway acceptance is bounded by TTL + documented expiry leeway, capped at 60 s (at most 6 min total). The runtime stops using tokens at `exp`. Conformance tests the gateway expiry boundary; S1 observed 60 s on AgentGateway |
 | LiteLLM | JWT auth needs a LiteLLM Enterprise license, so LiteLLM OSS cannot validate the gateway JWT and falls back to per-agent virtual keys (Decision 6). LiteLLM Enterprise can use JWT mode |
 | #2901 per-agent clients | Not reused: they are opt-in, operator-enrolled and use client credentials, so their tokens name the agent, not the user. K2 keeps its own scope per agent |
 

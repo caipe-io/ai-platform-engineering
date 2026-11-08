@@ -59,9 +59,10 @@ Direct-provider credentials remain in the deployment secret store, not in gatewa
 | `org` | `example-org` | existing `org` claim (budget key namespace) |
 | `agent_id` | `agent-example` | Keycloak scope ([K2](./research.md#identity-option-legend)) or signer ([C1](./research.md#identity-option-legend)) |
 | `team_id` | `team-example` | agent `owner_team_slug`, else `LLM_GATEWAY_DEFAULT_TEAM` |
-| `exp` | ≤ 5 min | signer |
+| `exp` | expiry timestamp, issued TTL ≤ 5 min | signer |
 
 - Cache key: (`sub`, `agent_id`, `owner_team_slug`). The key alone does not ensure ownership consistency: CAIPE must check credential bindings against committed ownership before use or caching, block new calls during unresolved transfers, and invalidate cached credentials for the previous owner on completion.
+- Expiry: gateway validation may allow 0–60 seconds of documented leeway. Runtime cache use ends at `exp`, not `exp + leeway`; refresh beforehand where possible and fail closed if no valid token is available.
 - Caller kind (user, service account, autonomous) is an OTel label set by the runtime, not a claim.
 
 ## 4. Agent scope (Keycloak, [K2](./research.md#identity-option-legend) only)
