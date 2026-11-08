@@ -69,7 +69,7 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
   }, [load]);
 
   const refresh = useCallback(() => load(), [load]);
-  const selectAgent = useCallback((id: string) => setSelection({ conversationId, agentId: id }), [conversationId]);
+  const selectAgent = useCallback((id: string) => setSelection({ conversationId, agentId: id || primaryAgentId }), [conversationId, primaryAgentId]);
   const addAgent = useCallback(async (agentId: string, handle: string) => {
     await readData(await fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/agents`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agent_id: agentId, handle }),

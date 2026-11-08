@@ -469,6 +469,7 @@ const coordination = {
 it("shows joined agents for @ and routes a pasted mention to that agent in the same chat", async () => {
   setConversation([]);
   render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+  expect(screen.queryByRole("button", { name: "Clear agent selection" })).not.toBeInTheDocument();
   const input = screen.getByRole("textbox", { name: "Message" });
   fireEvent.change(input, { target: { value: "@rev", selectionStart: 4 } });
   expect(screen.getByText("@reviewer")).toBeInTheDocument();
