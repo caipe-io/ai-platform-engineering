@@ -68,7 +68,7 @@ async function requireApplicationSession(): Promise<"authenticated" | "anonymous
   if (session?.error === 'SessionUnavailable') return "unavailable";
   if (!session || session.error || !session.user?.email) {
     const path = (await headers()).get(APP_PAGE_PATH_HEADER);
-    const callback = path && path.length <= 8192 && /^\/apps(?:[/?]|$)/.test(path) && !/[\\\u0000-\u0020]/.test(path) ? path : null;
+    const callback = path && path.length <= 8192 && path.startsWith("/") && !path.startsWith("//") && !/[\\\u0000-\u0020]/.test(path) ? path : null;
     redirect(callback ? `/login?callbackUrl=${encodeURIComponent(callback)}` : "/login");
   }
   if (session.isAuthorized === false) {

@@ -51,7 +51,9 @@ export function proxy(request: NextRequest): NextResponse {
         url.pathname = profile?.mode === "iframe"
           ? `/agentic-app-routes/${owner.installation.appId}${pathname}`
           : `/native-extensions/${owner.installation.appId}${pathname}`;
-        return NextResponse.rewrite(url);
+        const headers = new Headers(request.headers);
+        headers.set(APP_PAGE_PATH_HEADER, pathname + request.nextUrl.search);
+        return NextResponse.rewrite(url, { request: { headers } });
       }
     } catch {
       return NextResponse.json({ error: "Application route configuration unavailable" }, { status: 503 });
