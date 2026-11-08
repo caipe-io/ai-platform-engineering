@@ -112,7 +112,9 @@ export function ChatView({
         collapsible
         collapsedSize="48px"
         groupResizeBehavior="preserve-pixel-size"
-        onResize={() => setContextPanelCollapsed(contextPanelRef.current?.isCollapsed() ?? true)}
+        // The imperative handle can still describe the previous layout here.
+        // Match the configured 48px rail using the newly reported size.
+        onResize={(size) => setContextPanelCollapsed(Math.abs(size.inPixels - 48) < 0.5)}
       >
         <DynamicAgentContext
           key={`${selectedAgentId}:${conversationId}`}
