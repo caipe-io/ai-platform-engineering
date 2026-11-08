@@ -57,6 +57,18 @@ describe("iframe query navigation", () => {
     connect(); navigate(href); expect(window.location.pathname + window.location.search).toBe(publicPath);
   });
 
+  it("retains host-owned conversations without exposing or accepting them from the iframe", () => {
+    dispose();
+    window.history.replaceState(null, "", publicPath + "?tab=overview&assistant_chat=chat-1&legacy_chat=chat-1");
+    ({ dispose } = connectFrameQueryNavigation({ host: window, appId: "example-app", publicPath, frame: () => iframe, onConnect: jest.fn(), hostQueryKeys: () => ["assistant_chat", "legacy_chat"] }));
+    connect();
+    expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ href: publicPath + "?tab=overview" }), window.location.origin);
+    navigate(publicPath + "?tab=report&assistant_chat=other&legacy_chat=other");
+    const query = new URLSearchParams(window.location.search);
+    expect(query.get("tab")).toBe("report"); expect(query.get("assistant_chat")).toBe("chat-1"); expect(query.get("legacy_chat")).toBe("chat-1");
+    expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ href: publicPath + "?tab=report" }), window.location.origin);
+  });
+
   it("does not change the parent route or expose listeners after disposal", () => {
     connect(); navigate(publicPath + "?tab=instances", "invalid");
     window.history.replaceState(null, "", "/apps/other");

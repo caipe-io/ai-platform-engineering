@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import AppLayout from "../layout";
 
 const mockGetCookie = jest.fn();
+const mockGetHeader = jest.fn();
 const mockGetConfig = jest.fn();
 const mockAfter = jest.fn();
 const mockRecordAppVisit = jest.fn();
@@ -13,6 +14,7 @@ jest.mock("@/lib/app-usage", () => ({ recordAppVisit: (...args: unknown[]) => mo
 
 jest.mock("next/headers", () => ({
   cookies: jest.fn(async () => ({ get: mockGetCookie })),
+  headers: jest.fn(async () => ({ get: mockGetHeader })),
 }));
 
 jest.mock("next-auth", () => ({
@@ -73,6 +75,7 @@ describe("AppLayout", () => {
   });
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetHeader.mockReset();
     process.env.APP_USAGE_ENABLED = "true";
     mockGetConfig.mockReturnValue(true);
     (getServerSession as jest.Mock).mockResolvedValue({
@@ -172,4 +175,18 @@ describe("AppLayout", () => {
 
     expect(redirect).toHaveBeenCalledWith("/login");
   });
+});
+
+it("returns an anonymous app bookmark to the same query after sign-in", async () => {
+  mockGetConfig.mockReturnValue(true);
+  (getServerSession as jest.Mock).mockResolvedValue(null);
+  mockGetHeader.mockReturnValue("/apps/example?report=snapshot-1&repo=example%2Fproject");
+  await expect(AppLayout({children:<span>Protected</span>})).rejects.toThrow("redirect");
+  expect(redirect).toHaveBeenLastCalledWith("/login?callbackUrl=%2Fapps%2Fexample%3Freport%3Dsnapshot-1%26repo%3Dexample%252Fproject");
+});
+
+it.each(["//other.example.test", "/apps/../login\n", "/chat?forged=1"])("rejects an invalid app callback %s", async (path) => {
+  mockGetConfig.mockReturnValue(true); (getServerSession as jest.Mock).mockResolvedValue(null); mockGetHeader.mockReturnValue(path);
+  await expect(AppLayout({children:<span>Protected</span>})).rejects.toThrow("redirect");
+  expect(redirect).toHaveBeenLastCalledWith("/login");
 });

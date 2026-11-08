@@ -5,7 +5,8 @@ import {
 import { authOptions } from "@/lib/auth-config";
 import { getConfig } from "@/lib/config";
 import { recordAppVisit } from "@/lib/app-usage";
-import { cookies } from "next/headers";
+import { APP_PAGE_PATH_HEADER } from "@/lib/agentic-apps/request-headers";
+import { cookies, headers } from "next/headers";
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
@@ -66,7 +67,9 @@ async function requireApplicationSession(): Promise<"authenticated" | "anonymous
   const session = await getServerSession(authOptions);
   if (session?.error === 'SessionUnavailable') return "unavailable";
   if (!session || session.error || !session.user?.email) {
-    redirect("/login");
+    const path = (await headers()).get(APP_PAGE_PATH_HEADER);
+    const callback = path && path.length <= 8192 && /^\/apps(?:[/?]|$)/.test(path) && !/[\\\u0000-\u0020]/.test(path) ? path : null;
+    redirect(callback ? `/login?callbackUrl=${encodeURIComponent(callback)}` : "/login");
   }
   if (session.isAuthorized === false) {
     redirect("/unauthorized");

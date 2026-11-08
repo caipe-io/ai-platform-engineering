@@ -282,3 +282,12 @@ declarations, and integrity pins remain checked.
   uninstalled apps are excluded from new-chat choices, while authorized details
   retain app identity with `available: false`. Duplicate assistant claims fail
   closed. Presentation never selects a runtime or grants access.
+
+## URL state and bookmarks
+
+- The Apps catalog uses `q` for its search filter, for example `https://portal.example.test/apps?q=finance`.
+- Apps own their view/filter parameters. A link such as `https://portal.example.test/apps/example-app?tab=reports&report=snapshot-1#summary` can identify a view or saved report without granting data access.
+- The same-origin query bridge keeps committed selections in the host address bar and restores them on Back/Forward without reloading the iframe. Equivalent URL encoding does not trigger another restore.
+- `assistant_chat` and configured legacy conversation aliases remain host-owned. They survive app query navigation and are excluded from state sent to the iframe.
+- Sign-in redirects preserve app paths and query parameters. Client redirects also retain the current section anchor.
+- Each app defines its report persistence. A URL cannot transfer a browser-local snapshot to another browser; an unavailable exact snapshot must be reported rather than silently replaced with fresh data.

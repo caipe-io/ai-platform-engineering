@@ -118,3 +118,10 @@ describe("External Apps configuration failures", () => {
     expect(loadConfiguredAgenticApps).toHaveBeenCalledTimes(1);
   });
 });
+
+it("owns the app sign-in callback path and replaces caller-supplied values", () => {
+  const response = proxy(new NextRequest("https://host.example.test/apps?q=finance", {headers:{"x-caipe-app-page-path":"//other.example.test"}}));
+  expect(response.headers.get("x-middleware-request-x-caipe-app-page-path")).toBe("/apps?q=finance");
+  const other = proxy(new NextRequest("https://host.example.test/chat", {headers:{"x-caipe-app-page-path":"/apps?forged=1"}}));
+  expect(other.headers.get("x-middleware-request-x-caipe-app-page-path")).toBeNull();
+});

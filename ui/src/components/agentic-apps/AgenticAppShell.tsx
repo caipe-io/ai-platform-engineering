@@ -12,7 +12,7 @@ import { getConfig } from "@/lib/config";
 import { useVersion } from "@/hooks/use-version";
 import { OPEN_APPLICATION_SEARCH_EVENT } from "@/lib/navigation-events";
 import { ASSISTANT_EXTENSIONS, validateAssistantConfiguration, type AssistantConfiguration } from "../../../app-sdk/assistant-options.mjs";
-import { readAssistantDeepLink } from "@/lib/agentic-apps/assistant-links";
+import { assistantConversationQueryKeys, readAssistantDeepLink } from "@/lib/agentic-apps/assistant-links";
 import { rememberAssistantPresentation } from "@/lib/agentic-apps/assistant-presentation";
 import { parseFrameBreadcrumbs, type FrameBreadcrumb } from "@/lib/agentic-apps/frame-breadcrumbs";
 import { ownsAppPath } from "@/lib/agentic-apps/host-routes";
@@ -89,6 +89,8 @@ export function AgenticAppShell({
   const roots = [...(state.status === "ready" ? state.app.hostPaths ?? [] : []), `/apps/${appId}`];
   const publicPath = pathname && roots.some(root => ownsAppPath(root, pathname)) ? pathname : initialPublicPath;
   const [managedFrame, setManagedFrame] = useState<{ identity: string; appId: string; src: string } | null>(null);
+  const latestHostQueryKeys = useRef<string[]>([]);
+  useLayoutEffect(() => { latestHostQueryKeys.current = assistantConversationQueryKeys(state.status === "ready" ? state.app.assistantOptions : undefined); }, [state]);
   const latestPublicPath = useRef(publicPath);
   useLayoutEffect(() => { latestPublicPath.current = publicPath; }, [publicPath]);
   const [frameBreadcrumbs, setFrameBreadcrumbs] = useState<{ route: string; items: FrameBreadcrumb[] } | null>(null);
@@ -126,6 +128,7 @@ export function AgenticAppShell({
       // The shell publishes the complete assistant capabilities. This helper
       // owns only history/state synchronization, so it cannot overwrite them.
       publishCapabilities: false,
+      hostQueryKeys: () => latestHostQueryKeys.current,
       onConnect: () => {
         const src = iframeRef.current?.getAttribute("src");
         if (src) setManagedFrame((previous) => previous?.identity === identity && previous.appId === appId && previous.src === src ? previous : { identity, appId, src });
@@ -378,7 +381,7 @@ export function AgenticAppShell({
   }
 
   const runtimeSearch = new URLSearchParams(search);
-  for (const key of ["assistant_chat", ...(state.app.assistantOptions?.legacyConversationQueryParams ?? [])]) runtimeSearch.delete(key);
+  for (const key of assistantConversationQueryKeys(state.app.assistantOptions)) runtimeSearch.delete(key);
   const query = runtimeSearch.toString();
   const requestedRuntimePath = `${buildAgenticAppPublicPath(appId, path)}${query ? `?${query}` : ""}${hash}`;
   if (hostRoute && !(state.app.hostPaths ?? []).some(root => ownsAppPath(root, publicPath))) return <></>;

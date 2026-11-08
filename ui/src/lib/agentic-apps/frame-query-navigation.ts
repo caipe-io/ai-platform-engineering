@@ -6,6 +6,7 @@ type FrameQueryBridgeOptions = {
   frame: () => HTMLIFrameElement | null;
   capabilities?: () => Record<string, unknown>;
   publishCapabilities?: boolean;
+  hostQueryKeys?: () => readonly string[];
   onConnect: () => void;
 };
 
@@ -29,9 +30,9 @@ export function connectFrameQueryNavigation(options: FrameQueryBridgeOptions): {
         capabilities: { ...options.capabilities?.(), queryNavigation: true },
       });
     }
-    send("caipe.agenticApp.navigation.v1", {
-      href: host.location.pathname + host.location.search + host.location.hash,
-    });
+    const url = new URL(host.location.href);
+    for (const key of options.hostQueryKeys?.() ?? ["assistant_chat"]) url.searchParams.delete(key);
+    send("caipe.agenticApp.navigation.v1", { href: url.pathname + url.search + url.hash });
   };
   const onMessage = (event: MessageEvent) => {
     if (!target() || event.source !== target() || event.origin !== host.location.origin) return;
@@ -50,6 +51,12 @@ export function connectFrameQueryNavigation(options: FrameQueryBridgeOptions): {
     try { url = new URL(href, host.location.origin); } catch { return; }
     if (url.origin !== host.location.origin || url.pathname !== publicPath() || host.location.pathname !== publicPath()) return;
     if (message.history !== undefined && !["push", "replace"].includes(message.history)) return;
+    // Conversation selection belongs to the host, including aliases never sent to the app.
+    const hostSearch = new URLSearchParams(host.location.search);
+    for (const key of options.hostQueryKeys?.() ?? ["assistant_chat"]) {
+      url.searchParams.delete(key);
+      for (const value of hostSearch.getAll(key)) url.searchParams.append(key, value);
+    }
     const next = url.pathname + url.search + url.hash;
     const current = host.location.pathname + host.location.search + host.location.hash;
     if (next !== current) {
