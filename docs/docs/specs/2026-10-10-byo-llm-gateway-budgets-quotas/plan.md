@@ -86,10 +86,11 @@ global:
       existingSecret: ""
 ```
 
-- Implement a shared Helm helper and invoke it from the consuming chart templates: `dynamic-agents` and `caipe-ui` in phase 1, then RAG charts in phase 4. Render environment values as strings. A key explicitly set in a subchart's `config`/`env` wins over the global value.
-- Phase 1 also configures the separate Harness Engine process hosting Deep Agents, including its existing image build and deployment manifests. Propagate the same routing settings and exchange credentials, enforce provider-credential isolation, and roll that workload on mode changes. Reusing the Dynamic Agents library does not inherit the Dynamic Agents service's environment. Do not assume a dedicated Harness Engine Helm subchart exists; cover its supported deployment path explicitly.
+- Implement a shared Helm helper and invoke it from the consuming chart templates: `dynamic-agents` and `caipe-ui` in phase 1, then RAG charts in phase 4. Render environment values as strings.
+- `global.llmGateway.enabled` is authoritative across migrated workloads. Omitted component-level `LLM_GATEWAY_ENABLED` values inherit it; explicit values must match. Reject conflicts in either direction during Helm rendering, before deployment. Render the switch once per workload, without duplicate environment entries, and use the same resolved value for routing and credential injection. Other explicit subchart `config`/`env` keys retain precedence over global values.
+- Phase 1 also configures the separate Harness Engine process hosting Deep Agents, including its existing image build and deployment manifests. Derive its switch from the same deployment-wide setting and reject conflicting local values before rollout. Propagate the same routing settings and exchange credentials, enforce provider-credential isolation, and roll that workload on mode changes. Reusing the Dynamic Agents library does not inherit the Dynamic Agents service's environment. Do not assume a dedicated Harness Engine Helm subchart exists; cover its supported deployment path explicitly.
 - Render `LLM_GATEWAY_ADAPTER` and the admin credential secret reference only for the BFF. Inference services receive routing and identity settings, not management credentials.
-- `helm template` tests cover default-disabled output (nothing new), enabled settings per chart, explicit subchart overrides, and BFF-only management settings and secret references.
+- `helm template` tests cover default-disabled output (nothing new), enabled settings per chart, inherited and matching explicit switches, rejection of conflicting switches in both directions, no duplicate switch entries, other subchart overrides, and BFF-only management settings and secret references.
 - `.env.example` gets the same keys, commented out. The minimal first-install profile is unchanged.
 
 ### Credential isolation and mode transitions
@@ -99,7 +100,7 @@ global:
 - Enabling routing removes provider credential references. Disabling routing restores them from the configured secret source. Ensure required Secrets are synchronized before rollout; missing credentials must prevent successful direct-mode activation.
 - Wait for replacement pods to become ready and old pods to terminate before reporting success. Rolling updates can temporarily contain both modes; switching is not instantaneous and does not revoke credentials already loaded by old pods.
 - Changes to Secrets consumed by a workload require a rolling restart so replacement pods load the new credentials. Use pod-template checksums for chart-managed configuration and Secrets. For externally managed Secrets, the operator or deployment pipeline must wait for synchronization, trigger a rolling restart and verify rollout completion; changing a Secret alone does not restart pods.
-- Compose must likewise select mode-specific credential injection and recreate affected containers. A shared `.env` containing provider keys must not be passed wholesale to gateway-enabled inference containers. Preserve the default-disabled first-install path.
+- Compose must propagate one shared `LLM_GATEWAY_ENABLED` value to each migrated service, reject conflicting service-level values before recreation, and use that same value to select mode-specific credential injection. Recreate affected containers on mode changes. A shared `.env` containing provider keys must not be passed wholesale to gateway-enabled inference containers. Preserve the default-disabled first-install path.
 
 ## Phases
 
