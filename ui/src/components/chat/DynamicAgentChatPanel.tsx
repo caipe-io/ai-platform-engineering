@@ -2779,10 +2779,12 @@ export function ChatPanel({
                         );
                       }
 
+                      const primaryFinal = msg.agentId === coordination?.primaryAgentId && msg.isFinal && msg.turnStatus === "done";
+                      const participantCard = Boolean(msg.parallelGroupId && msg.role === "assistant" && !primaryFinal);
                       const messageView = (
                         <ChatMessage
                           key={msg.id}
-                          framed={Boolean(msg.parallelGroupId && msg.role === "assistant")}
+                          framed={participantCard}
                           mentionHandles={mentionHandles}
                           message={remoteMessage ? { ...msg, isInterrupted: false } : msg}
                           onCopy={handleCopy}
@@ -2834,7 +2836,7 @@ export function ChatPanel({
                           }
                         />
                       );
-                      if (!msg.parallelGroupId || msg.role !== "assistant") return messageView;
+                      if (!participantCard) return messageView;
                       const handle = coordination?.agents.find(member => member.agent_id === msg.agentId)?.handle ?? "primary";
                       const config = coordination?.availableAgents.find(candidate => candidate._id === msg.agentId) ?? (msg.agentId === agentId ? agent : undefined);
                       const firstReply = !arr.slice(0, index).some(previous => previous.role === "assistant" && previous.parallelGroupId === msg.parallelGroupId);

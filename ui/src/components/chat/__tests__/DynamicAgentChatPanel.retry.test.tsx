@@ -760,3 +760,14 @@ describe("concurrent reply cards", () => {
     } finally { fetchMock.mockRestore(); }
   });
 });
+
+it("renders the primary's completed summary outside participant cards while retaining collaborator cards", () => {
+  setConversation([
+    message("helper-result", "assistant", "The helper result", { agentId: "helper-agent", parallelGroupId: "helper-group", isFinal: true, turnStatus: "done" }),
+    message("primary-summary", "assistant", "The combined summary", { agentId: "example-agent", parallelGroupId: "primary-group", isFinal: true, turnStatus: "done" }),
+  ]);
+  render(<ChatPanel agentId="helper-agent" conversationId="chat-1" coordination={coordination} />);
+  expect(screen.queryByRole("region", { name: "Reply from @primary" })).not.toBeInTheDocument();
+  expect(screen.getByText("The combined summary")).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Reply from @reviewer" })).getByText("The helper result")).toBeInTheDocument();
+});
