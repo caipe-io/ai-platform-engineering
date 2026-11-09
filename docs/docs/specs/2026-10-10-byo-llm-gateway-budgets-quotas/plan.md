@@ -31,6 +31,7 @@ This PR delivers the **spec/ADR only**. Implementation lands as separate PRs und
 flowchart LR
   subgraph CAIPE["CAIPE release (existing charts and images)"]
     da["dynamic-agents"]
+    harness["Harness Engine Deep Agents host"]
     bff["caipe-ui (BFF)"]
     rag["rag-server / agent-ontology"]
     kc["Keycloak"]
@@ -40,8 +41,12 @@ flowchart LR
   end
   prov["Model providers"]
   da -- "① inference + JWT" --> gw
-  rag -- "① embeddings (phase 4)" --> gw
-  bff -- "⑤ admin API" --> gw
+  harness -- "① inference + JWT" --> gw
+  da -- "Token exchange (JWT mode)" --> kc
+  harness -- "Token exchange (JWT mode)" --> kc
+  rag -- "① embeddings / inference (phase 4)" --> gw
+  rag -. "JWT acquisition (phase 4; identity flow TBD)" .-> kc
+  bff -- "⑤ admin API + management credential" --> gw
   gw -- "JWKS" --> kc
   gw --> prov
 ```
@@ -49,6 +54,9 @@ flowchart LR
 - CAIPE changes ship in the existing `dynamic-agents`, Harness Engine Deep Agents, `caipe-ui`, `rag-server` and `agent-ontology` images. No new image, chart or Compose service.
 - The gateway is deployed and run by the operator (any namespace, cluster or SaaS) and reached by `LLM_GATEWAY_BASE_URL`.
 - Network: CAIPE pods need egress to the gateway; the gateway needs egress to Keycloak's JWKS (JWT mode) and to providers.
+- In K2 JWT mode, Dynamic Agents and the separate Harness Engine Deep Agents host also need egress to Keycloak's token endpoint to acquire and renew gateway tokens. Allow this connection in restrictive network policies; blocked exchange fails closed on a cache miss or when a cached token expires. Key mode does not require this token-exchange connection.
+- Phase 4 must provide RAG/ontology access to Keycloak for JWT acquisition and refresh before enabling JWT routing. T401/T402 must first define the query and background identities and acquisition flow; an interactive user token cannot be assumed. Validate the required network access with that flow.
+- The BFF authenticates gateway management calls with the adapter's management credential, not an inference JWT. These calls do not require the runtime token-exchange flow.
 - Dev/demo only: `setup-caipe.sh --litellm` stays an example gateway (T801). The default Compose path is unchanged.
 - Rollout per environment: deploy the gateway → prepare identities (phase 1) → set values → flip `LLM_GATEWAY_ENABLED`. Rollback: set it off through the deployment configuration, restore direct-provider secret references and wait for the resulting pod rollout.
 
