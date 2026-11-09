@@ -7,6 +7,7 @@ import { LoadingScreen } from "@/components/loading-screen";
 import { Button } from "@/components/ui/button";
 import { BrandLogo } from "@/components/brand/BrandLogo";
 import { config } from "@/lib/config";
+import { getLoginCallbackUrl, rememberLoginReturnTo } from "@/lib/auth/callback-url";
 import { motion } from "framer-motion";
 import { AlertCircle,Loader2,LogIn } from "lucide-react";
 import { signIn,useSession } from "next-auth/react";
@@ -62,13 +63,6 @@ function clearRedirectLoopCounter() {
   sessionStorage.removeItem(LOOP_TS_KEY);
 }
 
-function safeCallbackUrl(value: string | null): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) {
-    return "/";
-  }
-  return value.startsWith("/login") ? "/" : value;
-}
-
 function LoginContent() {
   const { status, data: session } = useSession();
   const router = useRouter();
@@ -81,7 +75,9 @@ function LoginContent() {
   const error = searchParams.get("error");
   const sessionExpired = searchParams.get("session_expired") === "true";
   const sessionReset = searchParams.get("session_reset");
-  const callbackUrl = safeCallbackUrl(searchParams.get("callbackUrl"));
+  const callbackUrl = getLoginCallbackUrl(
+    searchParams.get("callbackUrl"), Boolean(error || sessionExpired || sessionReset || loopBroken),
+  );
 
   // Redirect if already logged in. A stale session_expired URL can remain after
   // a successful OIDC callback, so only explicit reset/loop recovery should hold
@@ -107,6 +103,7 @@ function LoginContent() {
       sessionStorage.removeItem("token-expiry-handling");
     }
     try {
+      rememberLoginReturnTo(callbackUrl);
       await signIn("oidc", { callbackUrl });
     } catch (err) {
       console.error("Sign in error:", err);

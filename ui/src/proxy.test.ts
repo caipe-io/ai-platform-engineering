@@ -16,11 +16,20 @@ beforeEach(() => {
 });
 
 describe("External Apps request routing", () => {
+  it('overwrites an untrusted return-target header with the original page and query', () => {
+    const response = proxy(new NextRequest('https://host.example/chat/example?tab=activity&_rsc=transport', {
+      headers: { 'x-caipe-auth-return-to': 'https://outside.example/forged' },
+    }));
+    expect(response.headers.get('x-middleware-request-x-caipe-auth-return-to')).toBe('/chat/example?tab=activity');
+    expect(response.headers.get('x-caipe-auth-return-to')).toBeNull();
+  });
+
   it("preserves the child's Next-Url through the host route without trusting a caller transport header", () => {
     const response = proxy(new NextRequest("https://host.example/apps/example-app/report?_rsc=example", {
       headers: { rsc: "1", "next-url": "/apps/example-app/items", "x-caipe-runtime-next-url": "/forged" },
     }));
     expect(response.headers.get("x-middleware-request-x-caipe-runtime-next-url")).toBe("/apps/example-app/items");
+    expect(response.headers.get("x-middleware-request-x-caipe-auth-return-to")).toBe("/apps/example-app/report");
     expect(response.headers.get("x-middleware-rewrite")).toContain("?_rsc=example");
   });
 

@@ -362,6 +362,36 @@ describe('Login Page', () => {
   // ─────────────────────────────────────────────────────────────────────
 
   describe('callbackUrl redirect flow', () => {
+    it.each(['unauthenticated', 'authenticated'])('normalizes the absolute OAuth retry destination when %s', async status => {
+      mockSearchParamsGet.mockImplementation((key: string) => {
+        if (key === 'callbackUrl') return `${window.location.origin}/chat/example?tab=activity`;
+        if (key === 'error') return 'OAuthCallback';
+        return null;
+      });
+      mockUseSession.mockReturnValue({ data: status === 'authenticated' ? { user: { name: 'Example' } } : null, status } as unknown);
+      render(<LoginPage />);
+      if (status === 'unauthenticated') {
+        fireEvent.click(screen.getByText(/sign in with sso/i));
+        await waitFor(() => expect(mockSignIn).toHaveBeenCalledWith('oidc', { callbackUrl: '/chat/example?tab=activity' }));
+      } else {
+        await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/chat/example?tab=activity'));
+      }
+    });
+
+    it('restores the attempted destination when an error page drops callbackUrl', async () => {
+      mockSearchParamsGet.mockImplementation((key: string) => key === 'callbackUrl' ? '/apps/example?tab=activity' : null);
+      mockUseSession.mockReturnValue({ data: null, status: 'unauthenticated' } as unknown);
+      const first = render(<LoginPage />);
+      fireEvent.click(screen.getByText(/sign in with sso/i));
+      await waitFor(() => expect(mockSignIn).toHaveBeenCalledWith('oidc', { callbackUrl: '/apps/example?tab=activity' }));
+      first.unmount();
+      mockSignIn.mockClear();
+      mockSearchParamsGet.mockImplementation((key: string) => key === 'error' ? 'Configuration' : null);
+      render(<LoginPage />);
+      fireEvent.click(screen.getByText(/sign in with sso/i));
+      await waitFor(() => expect(mockSignIn).toHaveBeenCalledWith('oidc', { callbackUrl: '/apps/example?tab=activity' }));
+    });
+
     it('should redirect authenticated user to callbackUrl from search params', async () => {
       mockSearchParamsGet.mockImplementation((key: string) => {
         if (key === 'callbackUrl') return '/chat/b76e290b-d90d-4dd6-8db7-fbda49f3fa6d'
