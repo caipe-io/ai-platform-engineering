@@ -1,6 +1,11 @@
 apiVersion: apps/v1
 kind: StatefulSet
 {{- $provider := include "mongodb.provider" . }}
+{{- if .Values.replicaSet.enabled }}
+{{- if ne $provider "mongodb" }}{{ fail "replicaSet is only supported with provider=mongodb" }}{{ end }}
+{{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaSet currently supports exactly one MongoDB member" }}{{ end }}
+{{- if not .Values.replicaSet.keyFileSecretName }}{{ fail "replicaSet.keyFileSecretName is required when replicaSet.enabled=true" }}{{ end }}
+{{- end }}
 metadata:
   name: {{ include "mongodb.fullname" . }}
   labels:
@@ -30,7 +35,43 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.replicaSet.enabled }}
+      initContainers:
+        - name: prepare-replica-set-keyfile
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (include "mongodb.appVersion" .) }}"
+          command: ["/bin/sh", "-ec"]
+          args: ["cp /keyfile-secret/keyfile /keyfile/keyfile && chmod 0400 /keyfile/keyfile"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: replica-set-keyfile-secret
+              mountPath: /keyfile-secret
+              readOnly: true
+            - name: replica-set-keyfile
+              mountPath: /keyfile
+      {{- end }}
       serviceAccountName: {{ include "mongodb.serviceAccountName" . }}
+      {{- if or (not .Values.persistence.enabled) .Values.replicaSet.enabled }}
+      volumes:
+        {{- if not .Values.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+        {{- if .Values.replicaSet.enabled }}
+        - name: replica-set-keyfile-secret
+          secret:
+            secretName: {{ .Values.replicaSet.keyFileSecretName | quote }}
+            defaultMode: 0440
+        - name: replica-set-keyfile
+          emptyDir: {}
+        {{- end }}
+      {{- end }}
       {{- if eq $provider "documentdb" }}
       securityContext:
         fsGroup: 1000
@@ -72,6 +113,14 @@ spec:
           {{- else }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (include "mongodb.appVersion" .) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.replicaSet.enabled }}
+          args:
+            - --replSet
+            - {{ .Values.replicaSet.name | quote }}
+            - --keyFile
+            - /keyfile/keyfile
+            - --bind_ip_all
+          {{- end }}
           {{- end }}
           ports:
             - name: mongodb
@@ -128,6 +177,11 @@ spec:
           volumeMounts:
             - name: data
               mountPath: {{ ternary .Values.documentdb.dataPath "/data/db" (eq $provider "documentdb") }}
+            {{- if .Values.replicaSet.enabled }}
+            - name: replica-set-keyfile
+              mountPath: /keyfile
+              readOnly: true
+            {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -161,9 +215,4 @@ spec:
         storageClassName: {{ .Values.persistence.storageClass | quote }}
         {{- end }}
         {{- end }}
-  {{- else }}
-  # If persistence is not enabled, use emptyDir
-  volumes:
-    - name: data
-      emptyDir: {}
   {{- end }}

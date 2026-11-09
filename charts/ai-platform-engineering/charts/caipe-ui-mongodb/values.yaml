@@ -11,6 +11,13 @@ provider: mongodb
 # This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
 replicaCount: 1
 
+# -- Enable a one-member MongoDB replica set for oplog-based change capture.
+# The keyfile Secret must contain a `keyfile` key and is only used by MongoDB.
+replicaSet:
+  enabled: false
+  name: rs0
+  keyFileSecretName: ""
+
 # This sets the number of old ReplicaSets to retain for rollback
 # Kubernetes will automatically clean up ReplicaSets beyond this limit
 revisionHistoryLimit: 3
