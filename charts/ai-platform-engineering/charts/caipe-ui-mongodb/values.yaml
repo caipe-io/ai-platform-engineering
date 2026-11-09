@@ -12,12 +12,19 @@ provider: mongodb
 replicaCount: 1
 
 # -- Enable a MongoDB replica set for oplog-based change capture.
-# Each replica has its own data PVC. The keyfile Secret must contain a `keyfile`
-# key shared by every member. Initialize the set and add members after rollout.
+# With persistence enabled, each member has its own data PVC. Without it, pod
+# replacement loses that member's data and replica-set configuration.
+# The keyfile Secret must contain a `keyfile` key shared by every member.
+# Initialize the set and add members after rollout; see REPLICA_SET.md.
 replicaSet:
   enabled: false
   name: rs0
   keyFileSecretName: ""
+  initImage:
+    repository: busybox
+    tag: "1.37.0"
+    pullPolicy: IfNotPresent
+  initContainerResources: {}
 
 # This sets the number of old ReplicaSets to retain for rollback
 # Kubernetes will automatically clean up ReplicaSets beyond this limit

@@ -1,10 +1,13 @@
 apiVersion: apps/v1
 kind: StatefulSet
 {{- $provider := include "mongodb.provider" . }}
+{{- $mongoSecurityContext := .Values.securityContext | default dict }}
 {{- if .Values.replicaSet.enabled }}
 {{- if ne $provider "mongodb" }}{{ fail "replicaSet is only supported with provider=mongodb" }}{{ end }}
-{{- if lt (int .Values.replicaCount) 1 }}{{ fail "replicaSet requires at least one MongoDB member" }}{{ end }}
-{{- if not .Values.replicaSet.keyFileSecretName }}{{ fail "replicaSet.keyFileSecretName is required when replicaSet.enabled=true" }}{{ end }}
+{{- if not (regexMatch "^[1-9][0-9]*$" (toString .Values.replicaCount)) }}{{ fail "replicaSet requires a positive integer replicaCount" }}{{ end }}
+{{- if gt (int .Values.replicaCount) 50 }}{{ fail "replicaSet supports at most 50 MongoDB members" }}{{ end }}
+{{- if not (trim .Values.replicaSet.name) }}{{ fail "replicaSet.name is required when replicaSet.enabled=true" }}{{ end }}
+{{- if not (trim .Values.replicaSet.keyFileSecretName) }}{{ fail "replicaSet.keyFileSecretName is required when replicaSet.enabled=true" }}{{ end }}
 {{- end }}
 metadata:
   name: {{ include "mongodb.fullname" . }}
@@ -38,17 +41,25 @@ spec:
       {{- if .Values.replicaSet.enabled }}
       initContainers:
         - name: prepare-replica-set-keyfile
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (include "mongodb.appVersion" .) }}"
+          image: "{{ .Values.replicaSet.initImage.repository }}:{{ .Values.replicaSet.initImage.tag }}"
+          imagePullPolicy: {{ .Values.replicaSet.initImage.pullPolicy }}
           command: ["/bin/sh", "-ec"]
           args: ["cp /keyfile-secret/keyfile /keyfile/keyfile && chmod 0400 /keyfile/keyfile"]
           securityContext:
-            runAsNonRoot: true
-            runAsUser: 999
+            runAsNonRoot: {{ dig "runAsNonRoot" true $mongoSecurityContext }}
+            runAsUser: {{ dig "runAsUser" 999 $mongoSecurityContext }}
+            {{- with $mongoSecurityContext.runAsGroup }}
+            runAsGroup: {{ . }}
+            {{- end }}
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
             seccompProfile:
               type: RuntimeDefault
+          {{- with .Values.replicaSet.initContainerResources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           volumeMounts:
             - name: replica-set-keyfile-secret
               mountPath: /keyfile-secret
@@ -67,9 +78,12 @@ spec:
         - name: replica-set-keyfile-secret
           secret:
             secretName: {{ .Values.replicaSet.keyFileSecretName | quote }}
-            defaultMode: 0440
+            # Only the init container mounts this Secret; the copy is owner-only.
+            defaultMode: 0444
         - name: replica-set-keyfile
-          emptyDir: {}
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
         {{- end }}
       {{- end }}
       {{- if eq $provider "documentdb" }}
