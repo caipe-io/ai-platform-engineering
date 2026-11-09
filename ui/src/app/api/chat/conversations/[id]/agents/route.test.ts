@@ -6,7 +6,8 @@ const mockFeatures = jest.fn();
 jest.mock("@/lib/coordination/features.server", () => ({ getCoordinationFeatures: () => mockFeatures() }));
 const mockSetPolicy = jest.fn();
 jest.mock("@/lib/coordination/policy.server", () => ({ coordinationPolicy: async () => null, setCoordinationPolicy: (...args: unknown[]) => mockSetPolicy(...args) }));
-jest.mock("@/lib/coordination/handoffs.server", () => ({ listHandoffs: async () => [] }));
+const mockStop = jest.fn();
+jest.mock("@/lib/coordination/handoffs.server", () => ({ listHandoffs: async () => [], stopHandoffs: (...args: unknown[]) => mockStop(...args) }));
 const mockRead = jest.fn();
 const mockUse = jest.fn();
 const mockOwner = jest.fn();
@@ -119,4 +120,24 @@ it("rejects enabling team handoffs independently of manual agent attachment", as
   expect((await PATCH(request({ mode: "team" }), context)).status).toBe(403);
   expect(mockSetPolicy).not.toHaveBeenCalled();
   expect((await PATCH(request({ mode: "mentions" }), context)).status).toBe(200);
+});
+
+it("automatically prepares the owner's existing sign-in policy for a normal team request", async () => {
+  mockRead.mockResolvedValue({ conversation: { ...conversation, coordination_agents: [{ agent_id: "agent-helper", handle: "helper" }] }, denial: null });
+  const automatic = request({ mode: "automatic" });
+  expect((await PATCH(automatic, context)).status).toBe(200);
+  expect(mockSetPolicy).toHaveBeenCalledWith(automatic, "chat-example", "owner", "team");
+});
+it("leaves delegation off when its deployment ceiling is disabled", async () => {
+  mockFeatures.mockResolvedValue({ enabled: true, team: false });
+  expect((await PATCH(request({ mode: "automatic" }), context)).status).toBe(200);
+  expect(mockSetPolicy).not.toHaveBeenCalled();
+});
+it("limits Stop team to the chat owner", async () => {
+  mockOwner.mockReturnValue(false);
+  expect((await PATCH(request({ action: "stop" }), context)).status).toBe(403);
+  expect(mockStop).not.toHaveBeenCalled();
+  mockOwner.mockReturnValue(true);
+  expect((await PATCH(request({ action: "stop" }), context)).status).toBe(200);
+  expect(mockStop).toHaveBeenCalledWith(expect.objectContaining({ subject: "owner" }), conversation);
 });

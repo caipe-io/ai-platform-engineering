@@ -435,3 +435,14 @@ Revisit this model when adding persistent CLI processes, native terminal/BYO
 attachment, the sandbox augmentation, interactive approvals, new native tools, credential delegation,
 different worker placement, cross-replica session execution or new sharing rules.
 Each changes the authority, credential lifetime or isolation assumptions above.
+
+## Automatic chat coordination
+
+- **Entry:** A normal message to Primary can enable handoffs through the chat owner's existing sign-in. Only joined agents with current Use permission are targets. Explicit peer mentions suppress handoff tools for that run.
+- **Fan-in:** The durable delivery queue creates one synthesis job for a primary-originated request. It waits for all assignments, including nested work, to finish. Paused input prevents synthesis. Failures are reported as failures.
+- **Replay:** The synthesis job freezes its prompt and request key before admission. Retries cannot create a second producer or silently incorporate unrelated later replies. Participant permissions and membership are rechecked before dispatch.
+- **Loop control:** Synthesis runs do not receive coordination tools, and the handoff endpoint rejects assignments from a synthesis run. Existing eight-task/four-hop limits still apply to assignments.
+- **Stop:** Stop team marks queued work and its root budget stopped and requests cancellation of admitted runs. Late admissions remain marked for cancellation. An unconfirmed remote stop is not proof that remote execution ended.
+- **Data:** Only bounded, attributed, published results from the request's task chain enter synthesis. Peer text remains user-level data, never system instructions. No files or connected credentials are added to the synthesis prompt.
+- **Lifetime:** Session expiry, policy generation changes, permission revocation, and deployment/runtime disables prevent new execution. No service credential replaces the user's expired authorization.
+- **Transcript:** Participant answers have deterministic message identities across browser subscribers. Canonical replies use MongoDB's unique `_id`; late partial saves cannot replace a completed answer. Legacy duplicates are hidden without deleting history.

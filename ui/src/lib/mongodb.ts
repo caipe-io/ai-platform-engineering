@@ -355,6 +355,7 @@ async function createIndexes(db: Db) {
     // Durable chat assignments use a separate queue from execution runs.
     safeCreateIndex(db, 'chat_agent_handoffs', { status: 1, availableAt: 1 }),
     safeCreateIndex(db, 'chat_agent_handoffs', { conversationId: 1, createdAt: -1 }),
+    safeCreateIndex(db, 'chat_agent_handoffs', { root: 1, summary: 1, status: 1 }),
     safeCreateIndex(db, 'chat_agent_handoffs', { runId: 1 }, { sparse: true }),
     safeCreateIndex(db, 'chat_agent_handoffs', { createdAt: 1 }, { expireAfterSeconds: 30 * 86400 }),
     safeCreateIndex(db, 'chat_handoff_budgets', { expiresAt: 1 }, { expireAfterSeconds: 0 }),

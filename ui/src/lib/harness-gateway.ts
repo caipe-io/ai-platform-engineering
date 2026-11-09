@@ -268,6 +268,7 @@ export async function startHarnessGatewayRun(
   body: Record<string, unknown>,
   auth: AuthResult,
   harnessId = DEFAULT_HARNESS_ID,
+  purpose?: { summary: true },
 ): Promise<{ config: HarnessEngineConfig; run: HarnessRun } | NextResponse> {
   const config = getHarnessEngineConfig();
   if (config instanceof NextResponse) return config;
@@ -324,7 +325,7 @@ export async function startHarnessGatewayRun(
   const admission = await reserveCoordinationTurn(body, auth);
   if (admission instanceof NextResponse) return admission;
   let message: string | NextResponse;
-  try { message = await primaryCoordinationMessage(body, auth, admission); }
+  try { message = purpose?.summary ? String(body.message ?? "") : await primaryCoordinationMessage(body, auth, admission); }
   catch {
     console.error("[coordination] Primary context could not be prepared", { conversationId: body.conversation_id, agentId: body.agent_id });
     await rejectCoordinationTurn(admission);
@@ -336,7 +337,7 @@ export async function startHarnessGatewayRun(
   const response = await engineRequest(config, auth, "/api/v1/runs", {
     method: "POST", headers: callerHeaders,
     body: JSON.stringify({
-      ...(coordinationFeatures?.team && coordination?.mode === "team" && coordination.owner === auth.subject && coordination.expiresAt > new Date() && { coordination_enabled: true }),
+      ...(!purpose?.summary && (body.client_context as Record<string, unknown> | undefined)?.coordination_dispatch !== "direct" && coordinationFeatures?.team && coordination?.mode === "team" && coordination.owner === auth.subject && coordination.expiresAt > new Date() && { coordination_enabled: true }),
       agent_id: body.agent_id,
       conversation_id: body.conversation_id,
       message,

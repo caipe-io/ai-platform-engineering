@@ -623,4 +623,8 @@ migration so they enforce the same `execution_thread_leases` ownership fence.
 - The snapshot is limited to eight peers and 6,000 characters per reply, with truncation marked. It excludes files, tools, credentials and participants the caller cannot use.
 - Context is frozen on the admission generation so retries send identical Engine input. Current chat and agent permissions are rechecked before reuse.
 - Peer text is attributed data at user-message priority. It is never inserted into system instructions.
-- Handoffs remain asynchronous. A queued acknowledgement does not contain results; ask the primary for a combined summary after peers finish. Automatic primary resumption/fan-in is not implemented.
+- Normal messages go to Primary. Its existing owner sign-in authorizes automatic team handoffs; explicit peer mentions produce independent direct replies without delegation tools.
+- Handoffs remain asynchronous. After every assignment in a primary-originated task chain reaches a terminal state, one durable summary job resumes Primary with the original request and attributed results. A paused teammate prevents early synthesis.
+- Summaries use a frozen request key and payload, recheck participant access, and cannot enqueue further handoffs. Failures are included in the final answer; cancellation or expired/revoked authorization prevents new synthesis.
+- Stop team marks queued jobs and their root budgets stopped, requests cancellation of admitted jobs, and keeps polling late admissions until cancellation is confirmed. It does not disable delegation for future messages.
+- The UI keeps one assistant message identity per participant turn across tabs and refresh. Legacy duplicate rows render once without deleting stored history.

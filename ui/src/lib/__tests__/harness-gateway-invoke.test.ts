@@ -64,3 +64,11 @@ it.each(["completed", "failed", "cancelled"])("consumes the committed event tail
     expect(body.code).toBe("harness_run_cancelled");
   }
 });
+
+it("suppresses delegation for an internally requested final summary", async () => {
+  const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({ success: true, data: { ...run, status: "queued" } })));
+  await startHarnessGatewayRun({ agent_id: run.agent_id, conversation_id: run.conversation_id, message: "Summarize published results" }, { subject: "test-user" }, "dynamic_agents", { summary: true });
+  const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+  expect(request.coordination_enabled).toBeUndefined();
+  expect(request.message).toBe("Summarize published results");
+});
