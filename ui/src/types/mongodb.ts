@@ -167,6 +167,8 @@ export interface Message {
   metadata: {
     turn_id: string;
     parallel_group_id?: string;
+    coordination_kind?: "assignment" | "summary";
+    coordination_root_id?: string;
     source?: string;
     model?: string;
     latency_ms?: number;

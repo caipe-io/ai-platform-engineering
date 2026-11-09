@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Loader2, Maximize2, Minimize2, Square } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Square } from "lucide-react";
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
 import { Button } from "@/components/ui/button";
 import { AgentHarnessBadge } from "./AgentHarnessBadge";
@@ -10,11 +10,13 @@ import { cn } from "@/lib/utils";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import type { TurnStatus } from "@/types/a2a";
 
-export function AgentReplyCard({ handle, handles, agent, name, streaming, stopping, readOnly, status, stopError, onStop, inputAction, children }: {
+export function AgentReplyCard({ handle, handles, agent, name, task, preview, streaming, stopping, readOnly, status, stopError, onStop, inputAction, children }: {
   handle: string;
   handles: string[];
   agent?: DynamicAgentConfig;
   name: string;
+  task?: string;
+  preview?: string;
   streaming: boolean;
   stopping?: boolean;
   readOnly?: boolean;
@@ -41,12 +43,13 @@ export function AgentReplyCard({ handle, handles, agent, name, streaming, stoppi
           {(streaming || stopping) && <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" />}{label}
         </span>
         {streaming && onStop && <Button size="sm" variant="outline" aria-label={`Stop @${handle}`} disabled={stopping || readOnly} onClick={onStop}><Square className="mr-1 h-3 w-3" />Stop</Button>}
-        <Button size="icon" variant="ghost" aria-label={`${expanded ? "Collapse" : "Expand"} @${handle} reply`} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
-          {expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+        <Button size="sm" variant="ghost" aria-label={`${expanded ? "Collapse" : "Expand"} @${handle} reply`} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
+          {expanded ? <ChevronUp className="mr-1 h-3 w-3" /> : <ChevronDown className="mr-1 h-3 w-3" />}<span className="text-xs">{expanded ? "Hide activity" : "View activity"}</span>
         </Button>
       </div>
     </header>
-    <div className={cn("min-w-0", !expanded && "max-h-96 overflow-y-auto")}>{children}</div>
+    {!expanded && <div className="space-y-1 px-4 py-3">{task && <p className="line-clamp-1 text-sm">{task}</p>}<p className="line-clamp-2 text-xs text-muted-foreground">{preview?.replace(/[#*_`]/g, "").replace(/\s+/g, " ").slice(0, 180) || (streaming ? "Working on the assignment…" : label)}</p></div>}
+    <div className="min-w-0" hidden={!expanded}>{children}</div>
     {(stopError || inputAction) && <footer className="space-y-2 border-t border-border px-4 py-3">
       {stopError && <p role="alert" className="text-xs text-destructive">{stopError}</p>}{inputAction}
     </footer>}

@@ -22,8 +22,9 @@ const mockChatState = {
   isConversationStreaming: () => mockStreaming,
   streamingConversations: new Map(),
   consumePendingMessage: () => null,
-  addMessage: jest.fn((_conversationId: string, value: Omit<ChatMessage, "id" | "timestamp">, turnId?: string) => {
-    const id = `new-message-${mockConversation.messages.length}`;
+  addMessage: jest.fn((_conversationId: string, value: Omit<ChatMessage, "id" | "timestamp">, turnId?: string, messageId?: string) => {
+    if (messageId && mockConversation.messages.some(message => message.id === messageId)) return messageId;
+    const id = messageId ?? `new-message-${mockConversation.messages.length}`;
     mockConversation.messages.push(message(id, value.role as "user" | "assistant", value.content, { ...value, turnId }));
     return id;
   }),
@@ -479,7 +480,7 @@ it("shows joined agents for @ and routes a pasted mention to that agent in the s
   fireEvent.change(input, { target: { value: "@rev", selectionStart: 4 } });
   expect(screen.getByText("@reviewer")).toBeInTheDocument();
   fireEvent.keyDown(input, { key: "Enter" });
-  expect(coordination.selectAgent).toHaveBeenCalledWith("helper-agent");
+  expect(coordination.selectAgent).not.toHaveBeenCalled();
   fireEvent.change(input, { target: { value: "@reviewer Check this example", selectionStart: 28 } });
   fireEvent.keyDown(input, { key: "Enter" });
   await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledWith(expect.objectContaining({ agentId: "helper-agent", conversationId: "chat-1", message: "Check this example" }), expect.anything()));
@@ -530,7 +531,7 @@ describe("atomic recipient mentions", () => {
     field.setSelectionRange(Number(start), Number(end));
     expect(fireEvent.keyDown(field, { key })).toBe(false);
     expect(field).toHaveValue(expected);
-    expect(coordination.selectAgent).toHaveBeenCalledWith("example-agent");
+    expect(coordination.selectAgent).not.toHaveBeenCalled();
     expect(mockStreamMessage).not.toHaveBeenCalled();
   });
 
@@ -685,12 +686,13 @@ describe("concurrent reply cards", () => {
     await waitFor(() => expect(finishes).toHaveLength(2));
     mockStreaming = true;
     rerender(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
-    const primary = screen.getByRole("region", { name: "Reply from @primary" });
+    expect(screen.queryByRole("region", { name: "Reply from @primary" })).not.toBeInTheDocument();
+    const primary = screen;
     const reviewer = screen.getByRole("region", { name: "Reply from @reviewer" });
-    expect(within(primary).getByText("First live reply")).toBeInTheDocument();
-    expect(within(primary).queryByText("Second live reply")).not.toBeInTheDocument();
+    fireEvent.click(within(reviewer).getByRole("button", { name: "Expand @reviewer reply" }));
+    expect(primary.getByText("First live reply")).toBeInTheDocument();
+    expect(within(reviewer).queryByText("First live reply")).not.toBeInTheDocument();
     expect(within(reviewer).getByText("Second live reply")).toBeInTheDocument();
-    expect(within(primary).getByRole("status")).toHaveTextContent("Responding");
     expect(within(reviewer).getByRole("status")).toHaveTextContent("Responding");
     const assistants = mockConversation.messages.filter(message => message.role === "assistant");
     expect(mockChatState.addStreamEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "tool_start", toolData: expect.objectContaining({ tool_name: "example-agent-tool" }) }), "chat-1", assistants[0].id);
@@ -722,7 +724,7 @@ describe("concurrent reply cards", () => {
     await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
     mockStreaming = true;
     rerender(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
-    expect(within(screen.getByRole("region", { name: "Reply from @primary" })).getByRole("status")).toHaveTextContent("Needs your input");
+    expect(mockConversation.messages.find(message => message.agentId === "example-agent" && message.role === "assistant")?.turnStatus).toBe("waiting_for_input");
     expect(screen.getByRole("button", { name: "Submit" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
     await waitFor(() => expect(mockResumeStream).toHaveBeenCalledWith(expect.objectContaining({ agentId: "example-agent", turnId: expect.any(String) }), expect.anything()));
@@ -752,7 +754,8 @@ describe("concurrent reply cards", () => {
       await waitFor(() => expect(finishes).toHaveLength(2));
       mockStreaming = true;
       rerender(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
-      expect(within(screen.getByRole("region", { name: "Reply from @primary" })).getByText("example-agent-run recovered")).toBeInTheDocument();
+      expect(screen.getByText("example-agent-run recovered")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Expand @reviewer reply" }));
       expect(within(screen.getByRole("region", { name: "Reply from @reviewer" })).getByText("helper-agent-run recovered")).toBeInTheDocument();
       expect(mockStreamMessage).not.toHaveBeenCalled();
       expect(mockConversation.messages.filter(message => message.role === "assistant")).toHaveLength(2);
@@ -769,5 +772,39 @@ it("renders the primary's completed summary outside participant cards while reta
   render(<ChatPanel agentId="helper-agent" conversationId="chat-1" coordination={coordination} />);
   expect(screen.queryByRole("region", { name: "Reply from @primary" })).not.toBeInTheDocument();
   expect(screen.getByText("The combined summary")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Expand @reviewer reply" }));
   expect(within(screen.getByRole("region", { name: "Reply from @reviewer" })).getByText("The helper result")).toBeInTheDocument();
+});
+
+it("automatically prepares delegation for a normal message and keeps a peer mention direct", async () => {
+  setConversation([]);
+  const prepareTeam = jest.fn().mockResolvedValue(undefined);
+  render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={{ ...coordination, prepareTeam }} />);
+  const field = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.change(field, { target: { value: "Ask the team to check the example" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
+  expect(prepareTeam).toHaveBeenCalledTimes(1);
+  expect(mockStreamMessage.mock.calls[0][0]).toMatchObject({ agentId: "example-agent", clientContext: { coordination_dispatch: "automatic" } });
+  fireEvent.change(field, { target: { value: "@reviewer Check the example directly" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
+  expect(prepareTeam).toHaveBeenCalledTimes(1);
+  expect(mockStreamMessage.mock.calls[1][0]).toMatchObject({ agentId: "helper-agent", clientContext: { coordination_dispatch: "direct" } });
+  expect(screen.queryByRole("combobox", { name: "Message recipient" })).not.toBeInTheDocument();
+});
+
+it("collapses completed team work behind the primary's final answer", () => {
+  setConversation([
+    message("task-user", "user", "Check the contract", { agentId: "helper-agent", turnId: `handoff-${"b".repeat(64)}`, coordinationKind: "assignment", coordinationRootId: "example-root" }),
+    message("task-result", "assistant", "The contract is valid", { agentId: "helper-agent", turnId: `handoff-${"b".repeat(64)}`, coordinationKind: "assignment", coordinationRootId: "example-root", parallelGroupId: "team-example", isFinal: true, turnStatus: "done" }),
+    message("team-summary", "assistant", "The combined result is ready", { agentId: "example-agent", coordinationKind: "summary", coordinationRootId: "example-root", parallelGroupId: "team-example", isFinal: true, turnStatus: "done" }),
+  ]);
+  render(<ChatPanel agentId="example-agent" conversationId="chat-1" coordination={coordination} />);
+  expect(screen.getByText("The combined result is ready")).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Reply from @reviewer" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Check the contract")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "View work", exact: true }));
+  expect(screen.getByRole("region", { name: "Reply from @reviewer" })).toBeInTheDocument();
+  expect(mockConversation.messages).toHaveLength(3);
 });

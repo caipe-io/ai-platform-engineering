@@ -26,11 +26,10 @@ import { motion } from "framer-motion";
 import {
 Bot,
 ChevronDown,
-CheckCircle2,
-Circle,
 Download,
 FolderOpen,
 Info,
+Sparkles,
 ListTodo,
 Loader2,
 NotebookText,
@@ -99,12 +98,13 @@ export function DynamicAgentContext({
   const { data: timeline } = useAgentTimeline(turnEvents, isStreaming, "unknown");
   const subagentRuns = timeline.segments.filter((segment) => segment.type === "subagent");
   const [openSections, setOpenSections] = useState(["agents", "coordination"]);
+  const primaryId = coordination?.primaryAgentId ?? agentId;
+  const primaryAgent = coordination?.availableAgents.find(candidate => candidate._id === primaryId) ?? (primaryId === agentId ? agent : undefined);
   const coordinationEnabled = coordination?.enabled !== false;
   const [activeTab, setActiveTab] = useState("coordination");
   const [filesRefreshKey, setFilesRefreshKey] = useState(0);
   const [filesError, setFilesError] = useState<string | null>(null);
   const sectionId = useId();
-  const [coordinationInfoOpen, setCoordinationInfoOpen] = useState(false);
   const toggleSection = (section: string) => setOpenSections((sections) =>
     sections.includes(section) ? sections.filter((value) => value !== section) : [...sections, section]);
   const openSection = (section: string) => {
@@ -334,7 +334,7 @@ export function DynamicAgentContext({
       {!collapsed && (
         <Tabs value={coordinationEnabled ? activeTab : "info"} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
           <TabsList aria-label="Workspace views" className={cn("mx-2 mt-2 grid h-auto shrink-0", coordinationEnabled ? "grid-cols-2" : "grid-cols-1")}>
-            <TabsTrigger value="coordination" aria-label="Agent coordination" className={cn("flex-col gap-0.5 whitespace-normal px-2 text-xs", !coordinationEnabled && "hidden")}><span>Agent coordination</span><Badge variant="secondary" className="px-1 py-0 text-[10px]">Experimental</Badge></TabsTrigger>
+            <TabsTrigger value="coordination" aria-label="Agent coordination" className={cn("flex-col gap-0.5 whitespace-normal px-2 text-xs", !coordinationEnabled && "hidden")}><span>Chat team</span><Badge variant="secondary" className="px-1 py-0 text-[10px]">Experimental</Badge></TabsTrigger>
             <TabsTrigger value="info" className="whitespace-normal px-2 text-xs">Agent info</TabsTrigger>
           </TabsList>
         <ScrollArea className="flex-1">
@@ -387,60 +387,20 @@ export function DynamicAgentContext({
 
             <TabsContent value="coordination" className="mt-0 space-y-4">
             {coordination && <div className="space-y-2">
-              <AddChatAgentDialog coordination={coordination} disabled={readOnly || isStreaming || coordination.loading} />
               {coordination.error ? <div role="alert" className="text-xs text-destructive">{coordination.error}<Button size="sm" variant="ghost" onClick={() => void coordination.refresh()}>Retry</Button></div>
                 : !coordination.loading && !coordination.canManage ? <p className="text-xs text-muted-foreground">Ask the chat owner to add agents. Each person still needs agent Use access.</p>
                 : !coordination.loading && !coordination.available ? <p className="text-xs text-muted-foreground">Configure Harness Engine to add chat agents.</p> : null}
             </div>}
-            {coordination?.agents.length ? <div className="space-y-2">
-              <div className="flex items-center gap-1">
-                <p className="text-xs font-medium">How agents respond</p>
-                <TooltipProvider delayDuration={0}><Tooltip open={coordinationInfoOpen} onOpenChange={setCoordinationInfoOpen}>
-                  <TooltipTrigger asChild>
-                    <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" aria-label="About coordination modes" aria-describedby={`${sectionId}-mode-info`} onClick={() => setCoordinationInfoOpen(true)} onKeyDown={event => { if (event.key === "Escape") setCoordinationInfoOpen(false); }}>
-                      <Info className="h-3.5 w-3.5" aria-hidden="true" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="left" className="max-w-xs whitespace-normal text-left text-xs font-normal leading-relaxed">
-                    <p id={`${sectionId}-mode-info`}>{coordination.mode === "team" ? "Agents can hand tasks to joined agents using the chat owner’s access while that sign-in remains valid. Only the assignment is shared. Up to 8 tasks and 4 hops per chain. Turn this off to stop queued handoffs; use Stop for an active response." : "Agents respond when addressed. Team coordination enables agent-to-agent handoffs."}</p>
-                  </TooltipContent>
-                </Tooltip></TooltipProvider>
-              </div>
-              <div className="grid gap-2" role="group" aria-label="How agents respond">
-                {([
-                  { mode: "mentions", label: "Mentions", description: "You choose which agent responds." },
-                  { mode: "team", label: "Team coordination", description: "Agents can also hand tasks to each other." },
-                ] as const).map(option => {
-                  const selected = (coordination.mode ?? "mentions") === option.mode;
-                  const unavailable = option.mode === "team" && coordination.teamAvailable === false;
-                  const Icon = selected ? CheckCircle2 : Circle;
-                  return <Button key={option.mode} type="button" variant="outline" aria-pressed={selected}
-                    aria-label={option.label} aria-describedby={`${sectionId}-mode-${option.mode}`}
-                    disabled={!coordination.canManage || isStreaming || coordination.loading || unavailable}
-                    onClick={() => void coordination.setMode?.(option.mode)}
-                    className={cn("h-auto min-h-16 w-full justify-start gap-3 whitespace-normal rounded-lg px-3 py-2.5 text-left", selected
-                      ? "border-blue-500 bg-blue-50 text-blue-950 hover:bg-blue-100 hover:text-blue-950 dark:border-blue-400 dark:bg-blue-500/20 dark:text-blue-100 dark:hover:bg-blue-500/25 dark:hover:text-blue-100"
-                      : "border-border bg-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground")}>
-                    <Icon className={cn("h-4 w-4", selected && "text-blue-600 dark:text-blue-300")} aria-hidden="true" />
-                    <span className="min-w-0"><span className="block text-xs font-semibold">{option.label}</span>
-                      <span id={`${sectionId}-mode-${option.mode}`} className={cn("mt-0.5 block text-[11px] font-normal leading-relaxed", selected ? "text-blue-800 dark:text-blue-200" : "text-muted-foreground")}>
-                        {unavailable ? "Disabled by your administrator." : option.description}
-                      </span>
-                    </span>
-                  </Button>;
-                })}
-              </div>
-            </div> : null}
-            {!!coordination?.handoffs?.length && <div className="space-y-2 border-b pb-3"><p className="text-xs font-medium">Recent handoffs</p>{coordination.handoffs.map(job => <div key={job._id} className="text-xs"><span className={agentMentionColor(job.handle, coordination.agents.map(member => member.handle))}>@{job.handle}</span><span className="ml-2">{job.status === "delivered" ? "Completed" : job.status === "pending" || job.status === "processing" ? job.runId ? "Working" : "Queued" : job.status}</span>{job.lastError && job.lastError !== "retrying" && <p className="text-muted-foreground">{job.lastError.replaceAll("_", " ")}</p>}</div>)}</div>}
+
             <WorkspaceSection id={`${sectionId}-agents`} title="Agents" icon={<Users className="h-4 w-4" />} expanded={openSections.includes("agents")} onToggle={() => toggleSection("agents")}>
               <div className="flex min-w-0 items-center gap-2">
-                <AgentAvatar agent={agent} agentId={agentId} rounded="rounded-lg" size="h-8 w-8" iconSize="h-4 w-4" />
+                <AgentAvatar agent={primaryAgent} agentId={primaryId} rounded="rounded-lg" size="h-8 w-8" iconSize="h-4 w-4" />
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-2">
-                    <p className="min-w-0 truncate text-sm font-medium">{agent?.name || "Chat agent"}</p>
-                    {agent && <AgentHarnessBadge compact harnessId={agent.execution_harness_id} presentation={agent.presentation} />}
+                    <p className="min-w-0 truncate text-sm font-medium">{primaryAgent?.name || "Primary"}</p>
+                    {primaryAgent && <AgentHarnessBadge compact harnessId={primaryAgent.execution_harness_id} presentation={primaryAgent.presentation} />}
                   </div>
-                  <p className="text-xs text-muted-foreground">{!!coordination?.agents.length && <><span className={agentMentionColor("primary", [])}>@primary</span><span aria-hidden="true"> · </span></>}{isStreaming && activeAgentIds.has(agentId) ? "Responding" : "Primary agent"}</p>
+                  <p className="text-xs text-muted-foreground">{!!coordination?.agents.length && <><span className={agentMentionColor("primary", [])}>@primary</span><span aria-hidden="true"> · </span></>}{isStreaming && activeAgentIds.has(primaryId) ? "Responding" : "Coordinates & summarizes"}</p>
                 </div>
               </div>
               {!!coordination?.agents.length && <div className="space-y-3 pt-1">
@@ -460,15 +420,17 @@ export function DynamicAgentContext({
                 })}
               </div>}
 
-              {agent?.subagents?.map((subagent) => <div key={subagent.agent_id} className="flex min-w-0 gap-2">
+              {!coordination?.agents.length && agent?.subagents?.map((subagent) => <div key={subagent.agent_id} className="flex min-w-0 gap-2">
                 <Bot className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" /><div className="min-w-0"><p className="break-words text-xs font-medium">{subagent.name}</p><p className="text-xs text-muted-foreground">Configured subagent</p></div>
               </div>)}
-              {subagentRuns.length > 0 && <div className="space-y-2 border-t pt-2"><p className="text-xs text-muted-foreground">Latest turn delegations</p>{subagentRuns.map((run) => <div key={run.id} className="text-xs"><p className="break-words font-medium">{run.info.name}</p><p className="text-muted-foreground">{run.info.status === "running" && !isStreaming ? "Completion unconfirmed" : run.info.status}</p></div>)}</div>}
+              {!coordination?.agents.length && subagentRuns.length > 0 && <div className="space-y-2 border-t pt-2"><p className="text-xs text-muted-foreground">Latest turn delegations</p>{subagentRuns.map((run) => <div key={run.id} className="text-xs"><p className="break-words font-medium">{run.info.name}</p><p className="text-muted-foreground">{run.info.status === "running" && !isStreaming ? "Completion unconfirmed" : run.info.status}</p></div>)}</div>}
               <p className="text-xs text-muted-foreground">Chat sharing does not grant agent or tool access.</p>
             </WorkspaceSection>
-            <WorkspaceSection id={`${sectionId}-coordination`} title="Tasks" icon={<ListTodo className="h-4 w-4" />} expanded={openSections.includes("coordination")} onToggle={() => toggleSection("coordination")}>
+            {coordination && <AddChatAgentDialog coordination={coordination} disabled={readOnly || isStreaming || coordination.loading} />}
+            {!!coordination?.agents.length && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Sparkles className="h-3.5 w-3.5 text-blue-600 dark:text-blue-300" aria-hidden="true"/><span>Ask normally, or @mention an agent directly.</span><TooltipProvider><Tooltip><TooltipTrigger asChild><Button size="icon" variant="ghost" className="h-5 w-5" aria-label="About automatic coordination"><Info className="h-3.5 w-3.5"/></Button></TooltipTrigger><TooltipContent className="max-w-xs text-xs">Normal messages go to Primary. Use @mentions for direct replies. Only joined agents you can use receive assignments.</TooltipContent></Tooltip></TooltipProvider></div>}
+            {!!tasks.length && <WorkspaceSection id={`${sectionId}-coordination`} title="Tasks" icon={<ListTodo className="h-4 w-4" />} expanded={openSections.includes("coordination")} onToggle={() => toggleSection("coordination")}>
               {tasks.length ? <TaskList tasks={tasks} readonly /> : <p className="text-xs text-muted-foreground">No task list published yet.</p>}
-            </WorkspaceSection>
+            </WorkspaceSection>}
             <WorkspaceSection id={`${sectionId}-files`} title="Workspace files" icon={<FolderOpen className="h-4 w-4" />} expanded={showFiles} onToggle={() => toggleSection("files")}>
               <p className="text-xs text-muted-foreground">Files published to this conversation. This does not browse a remote sandbox&apos;s full filesystem.</p>
               <Button variant="ghost" size="sm" disabled={isLoadingFiles} onClick={() => setFilesRefreshKey((key) => key + 1)}><RefreshCw className="mr-2 h-3.5 w-3.5" aria-hidden="true" />Refresh files</Button>

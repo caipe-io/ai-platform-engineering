@@ -5,7 +5,7 @@ import { useChatStore } from "@/store/chat-store";
 import type { ChatCoordinationAgent } from "@/lib/chat-coordination";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 
-export interface ChatHandoff { _id: string; handle: string; status: string; lastError?: string; runId?: string; targetAgentId: string; }
+export interface ChatHandoff { _id: string; handle: string; status: string; lastError?: string; runId?: string; targetAgentId: string; root?: string; summary?: boolean; message?: string; stopRequested?: boolean; }
 
 export interface ChatCoordination {
   enabled?: boolean;
@@ -13,6 +13,8 @@ export interface ChatCoordination {
   mode?: "mentions" | "team";
   handoffs?: ChatHandoff[];
   setMode?: (mode: "mentions" | "team") => Promise<void>;
+  prepareTeam?: () => Promise<void>;
+  stopTeam?: () => Promise<void>;
   agents: ChatCoordinationAgent[];
   availableAgents: DynamicAgentConfig[];
   canManage: boolean;
@@ -95,8 +97,8 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agent_id: agentId, handle }),
     }));
     await load();
-    setSelection({ conversationId, agentId });
-  }, [conversationId, load]);
+    setSelection({ conversationId, agentId: primaryAgentId });
+  }, [conversationId, load, primaryAgentId]);
 
   const setMode = useCallback(async (next: "mentions" | "team") => {
     try {
@@ -105,6 +107,20 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
       }));
       await load();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not update coordination mode."); }
+  }, [conversationId, load]);
+
+  const prepareTeam = useCallback(async () => {
+    if (!canManage || !teamAvailable) return;
+    await readData(await fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/agents`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "automatic" }),
+    }));
+    setModeState("team");
+  }, [canManage, teamAvailable, conversationId]);
+  const stopTeam = useCallback(async () => {
+    await readData(await fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/agents`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "stop" }),
+    }));
+    await load(undefined, true);
   }, [conversationId, load]);
 
   const hasActiveHandoff = handoffs.some(job => job.runId && ["pending", "processing"].includes(job.status));
@@ -131,5 +147,5 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
   }, [mode, conversationId, hasActiveHandoff]);
 
   return { enabled, teamAvailable, mode, handoffs, setMode, agents, availableAgents, canManage, available, loading, error,
-    primaryAgentId, selectedAgentId, selectAgent, refresh, addAgent };
+    primaryAgentId, selectedAgentId, selectAgent, refresh, addAgent, prepareTeam, stopTeam };
 }

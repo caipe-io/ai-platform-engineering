@@ -112,6 +112,8 @@ export interface ChatMessage {
   turnId?: string;
   /** Groups concurrent replies beneath one addressed user prompt. */
   parallelGroupId?: string;
+  coordinationKind?: "assignment" | "summary";
+  coordinationRootId?: string;
   /** Raw accumulated stream content - never overwritten, always appended */
   rawStreamContent?: string;
   /** Task ID from the backend — used for crash recovery (tasks/get polling) */
