@@ -28,17 +28,23 @@ Set these once under `global.llmGateway` in Helm ([plan.md](./plan.md#helm-and-c
 
 ## 3. Validate
 
+Before gateway checks, deploy `LLM_GATEWAY_ENABLED=true` and wait for workload replacement with provider credentials excluded. Run disruptive checks with isolated test workloads and a test team where possible.
+
 Keep valid direct-provider configuration and credentials in the deployment secret store, outside gateway-enabled inference pods. For the disabled-mode check, apply the mode change through Helm/GitOps so it restores provider secret references and replaces pods; wait for rollout completion. Compose must recreate containers with mode-specific credential injection. Missing secrets must not be treated as a successful transition.
 
 | Check | Expected |
 |---|---|
 | Adapter supports `models.list`: Admin → LLM Models → Sync | Gateway models persist in `llm_models`; existing model IDs remain usable |
 | Adapter lacks `models.list`, including `none`: configure or add model entries with IDs matching gateway aliases | Sync is hidden; catalogue entries remain selectable subject to permissions |
-| Chat with an agent | Completion succeeds; the gateway logs `sub`, `agent_id`, `team_id` |
-| Call the gateway with no or forged token | 401 |
-| Set a tiny team limit through CAIPE where supported, otherwise in the gateway; chat again | The request is rejected and CAIPE reports the failure without inferred budget-specific advice or direct-provider fallback |
-| Autonomous task run | Usage attributed to the task owner, agent and team |
+| Chat with an agent | Completion succeeds. JWT mode: verified user (`sub`), agent and team attribution. Key mode: verified agent/team bindings; any user attribution is unverified and `sub` is not required. |
+| Call the gateway with missing or invalid credentials for the selected auth mode | 401 |
+| Set a tiny limit on an isolated test team through CAIPE where supported, otherwise in the gateway; chat as that team again | The request is rejected and CAIPE reports the failure without inferred budget-specific advice or direct-provider fallback |
+| Autonomous task run | JWT mode: verified task-owner, agent and team attribution. Key mode: verified agent/team bindings; task-owner attribution is unverified. |
 | Keep the gateway configured and reachable; deploy `LLM_GATEWAY_ENABLED=false` with restored provider secret references and wait for pod replacement | Every migrated path completes through its direct provider; zero inference requests reach the gateway |
+
+If a production team must be used for the limit check, record its intended limit and reset window first. Restore the intended limit and remaining allowance afterward, accounting for test usage; verify the temporary test limit is no longer active.
+
+After the disabled-mode check, redeploy `LLM_GATEWAY_ENABLED=true` and wait for replacement pods or recreated containers. Verify provider credentials and model-invoking ambient identities are excluded, inference reaches the configured gateway, and the intended limits apply before declaring validation complete.
 
 When rotating a Secret consumed by an inference workload, wait for the Secret update to complete, then perform and verify a rolling restart so new pods load the new credentials. Chart-managed Secret checksums trigger the rollout during deployment; externally managed Secrets require the operator or deployment pipeline to trigger it explicitly.
 
@@ -52,5 +58,6 @@ When rotating a Secret consumed by an inference workload, wait for the Secret up
 - Before switching traffic, prepare the replacement's user, agent and team principals as applicable to the selected auth mode. Configure their budgets and quotas, and compare the effective limits and reset windows with the old gateway. Verify that exceeding a configured limit rejects the request; successful authentication alone is insufficient.
 - Account for usage already consumed in the current budget window. Copying a full budget into a gateway with zero recorded usage can grant additional spending. Preserve consumed usage where supported, or set a temporary remaining allowance until the intended reset (for example, a $100 monthly budget with $80 consumed leaves $20). Include usage during the cutover; pause affected inference if necessary to establish the remaining allowance safely.
 - Budget migration is operator-managed. CAIPE does not automatically transfer gateway limits or usage, or maintain a second authoritative budget database. With adapter `none`, prepare and verify these settings directly in the replacement gateway.
+- Before rollout, inspect component-level `LLM_GATEWAY_BASE_URL` overrides in Helm values, Harness manifests and Compose configuration. Remove stale overrides or update them to the replacement endpoint; changing the global URL alone does not replace explicit local values.
 - Deploy `LLM_GATEWAY_BASE_URL`, `LLM_GATEWAY_ADAPTER`, `LLM_GATEWAY_AUTH`, the audience where applicable, and the corresponding credential references together through Helm/GitOps or Compose. Wait for credential synchronization and the affected workload rollout or container recreation to complete.
-- Re-run step 3 against the replacement gateway, verifying inference and attribution for the selected auth mode. No agent edits are required.
+- Re-run step 3 against the replacement gateway, verifying inference and attribution for the selected auth mode. Check every migrated workload's effective endpoint and gateway traffic; after rollout, no inference should reach the old gateway. Finish with gateway mode enabled and intended limits restored. No agent edits are required.
