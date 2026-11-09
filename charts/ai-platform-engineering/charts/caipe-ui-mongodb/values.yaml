@@ -11,8 +11,9 @@ provider: mongodb
 # This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
 replicaCount: 1
 
-# -- Enable a one-member MongoDB replica set for oplog-based change capture.
-# The keyfile Secret must contain a `keyfile` key and is only used by MongoDB.
+# -- Enable a MongoDB replica set for oplog-based change capture.
+# Each replica has its own data PVC. The keyfile Secret must contain a `keyfile`
+# key shared by every member. Initialize the set and add members after rollout.
 replicaSet:
   enabled: false
   name: rs0

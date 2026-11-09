@@ -3,7 +3,7 @@ kind: StatefulSet
 {{- $provider := include "mongodb.provider" . }}
 {{- if .Values.replicaSet.enabled }}
 {{- if ne $provider "mongodb" }}{{ fail "replicaSet is only supported with provider=mongodb" }}{{ end }}
-{{- if ne (int .Values.replicaCount) 1 }}{{ fail "replicaSet currently supports exactly one MongoDB member" }}{{ end }}
+{{- if lt (int .Values.replicaCount) 1 }}{{ fail "replicaSet requires at least one MongoDB member" }}{{ end }}
 {{- if not .Values.replicaSet.keyFileSecretName }}{{ fail "replicaSet.keyFileSecretName is required when replicaSet.enabled=true" }}{{ end }}
 {{- end }}
 metadata:
