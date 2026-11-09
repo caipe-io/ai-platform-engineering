@@ -334,6 +334,13 @@ export async function startHarnessGatewayRun(
   if (message instanceof NextResponse) { await rejectCoordinationTurn(admission); return message; }
   const coordination = await coordinationPolicy(String(body.conversation_id));
   const coordinationFeatures = coordination?.mode === "team" ? await getCoordinationFeatures() : null;
+  // Persist resume intent before Engine admission so a BFF crash cannot strand
+  // the assignment on its older paused run.
+  if (resume.resumes_run_id && body.client_request_id) {
+    await (await getCollection("chat_agent_handoffs")).updateMany({ conversationId: body.conversation_id,
+      owner: auth.subject, targetAgentId: body.agent_id, runId: resume.resumes_run_id,
+      status: { $in: ["pending", "processing"] } }, { $set: { resumeRequestId: body.client_request_id } });
+  }
   const response = await engineRequest(config, auth, "/api/v1/runs", {
     method: "POST", headers: callerHeaders,
     body: JSON.stringify({
@@ -373,6 +380,11 @@ export async function startHarnessGatewayRun(
     );
   }
   await recordCoordinationRun(admission, envelope.data);
+  if (resume.resumes_run_id) {
+    await (await getCollection("chat_agent_handoffs")).updateMany({ conversationId: body.conversation_id,
+      owner: auth.subject, targetAgentId: body.agent_id, runId: resume.resumes_run_id },
+      { $set: { runId: envelope.data.run_id }, $unset: { resumeRequestId: "" } });
+  }
   if (["queued", "running"].includes(envelope.data.status)) {
     await (await getCollection<GatewayBinding>("harness_gateway_bindings")).updateOne(
       { _id: gatewayBindingId(String(body.agent_id), auth.subject, String(body.conversation_id)), transition_id: { $exists: false } },

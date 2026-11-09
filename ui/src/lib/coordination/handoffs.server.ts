@@ -21,7 +21,7 @@ interface Handoff extends HandoffDeliveryState {
   conversationId: string; generation: string; owner: string; parentRunId: string;
   sourceAgentId: string; targetAgentId: string; handle: string; message: string;
   recipientEmail?: string; root: string; depth: number; runId?: string;
-  summary?: boolean; stopRequested?: boolean; messageFrozen?: boolean;
+  summary?: boolean; stopRequested?: boolean; messageFrozen?: boolean; resumeRequestId?: string;
 }
 const jobs = () => getCollection<Handoff>("chat_agent_handoffs");
 
@@ -175,6 +175,19 @@ export async function runHandoffsOnce(): Promise<void> {
       if (access.denial || !conversationHasAgent(access.conversation, job.sourceAgentId)) throw new Error("access_denied");
       for (const agentId of [job.sourceAgentId, job.targetAgentId]) {
         if (await requireAgentUsePermission({ ...auth, agentId })) throw new Error("access_denied");
+      }
+      if (job.resumeRequestId) {
+        const config = getHarnessEngineConfig();
+        if (config instanceof NextResponse) throw new Error("engine_unavailable");
+        const response = await proxyHarnessEngine(config, auth, "/api/v1/run-requests/lookup", { method: "POST",
+          body: JSON.stringify({ agent_id: job.targetAgentId, conversation_id: job.conversationId, client_request_id: job.resumeRequestId }) });
+        if (!response.ok) throw new Error("engine_unavailable");
+        const resumed = (await response.json()).data as HarnessRun | null;
+        if (resumed) {
+          if (resumed.owner_subject !== job.owner || resumed.agent_id !== job.targetAgentId || resumed.conversation_id !== job.conversationId || resumed.resumes_run_id !== job.runId) throw new Error("access_denied");
+          job.runId = resumed.run_id;
+          await collection.updateOne(fence, { $set: { runId: resumed.run_id }, $unset: { resumeRequestId: "" } });
+        }
       }
       const stopped = job.stopRequested || (await collection.findOne({ _id: job._id }))?.stopRequested;
       if (stopped && !job.runId) { status = "skipped"; }

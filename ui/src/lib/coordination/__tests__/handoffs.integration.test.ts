@@ -174,4 +174,21 @@ run("durable agent assignments", () => {
     expect((await mockDb.collection("chat_agent_handoffs").findOne({ summary: true }))?.lastError).toBe("access_denied");
   });
 
+  it("follows a resumed teammate even if the BFF lost its admission acknowledgement", async () => {
+    await enqueueHandoff(parent, mockAuth, args);
+    mockParent.mockImplementation(async (_config, _auth, path: string) => Response.json({ data: path.includes("child-run")
+      ? { ...parent, run_id: "child-run", agent_id: "helper-agent", status: "paused" } : { ...parent, status: "completed" } }));
+    await runHandoffsOnce();
+    await mockDb.collection("chat_agent_handoffs").updateOne({ summary: { $ne: true } }, { $set: { resumeRequestId: "example-resume-request", availableAt: new Date(0) } });
+    mockParent.mockImplementation(async (_config, _auth, path: string) => {
+      if (path.includes("run-requests/lookup")) return Response.json({ data: { ...parent, run_id: "resumed-run", agent_id: "helper-agent", resumes_run_id: "child-run", status: "completed", last_sequence: 1 } });
+      if (path.includes("/events")) return Response.json({ data: { events: [{ event_type: "result.updated", data: { content: "Completed after input" } }], next_cursor: 1 } });
+      return Response.json({ data: path.includes("resumed-run") ? { ...parent, run_id: "resumed-run", agent_id: "helper-agent", status: "completed", last_sequence: 1 } : { ...parent, status: "completed" } });
+    });
+    await runHandoffsOnce();
+    const job = await mockDb.collection("chat_agent_handoffs").findOne({ summary: { $ne: true } });
+    expect(job?.runId).toBe("resumed-run"); expect(job?.status).toBe("delivered");
+    expect((await mockDb.collection("messages").findOne({ message_id: `handoff-${job?._id}-assistant` }))?.content).toBe("Completed after input");
+  });
+
 });
