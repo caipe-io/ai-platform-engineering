@@ -37,6 +37,7 @@ A gateway passes for its configured authentication mode when:
 - [ ] Requests with no credential → 401.
 - [ ] Record JWT expiry leeway and test immediately before, at and after `exp + L` with controlled clocks. Do not require acceptance inside the leeway window. Verify the runtime refreshes or fails closed rather than sending an expired cached token.
 - [ ] JWT auth: tokens at or after `exp + L` (documented expiry leeway `L` ≤ 60 seconds), wrong-audience tokens and tokens signed by a foreign key → 401; user, agent and team limits each reject the request.
+- [ ] JWT auth: an unexpired token with the expected audience and a valid signature from a trusted test key, but an incorrect issuer (`iss`) → 401. Keep all other claims valid to isolate issuer validation; use only test keys and a test gateway configuration.
 - [ ] Key auth: invalid or revoked keys → 401; agent and team limits each reject the request. Document whether best-effort per-user limits are supported.
 - [ ] Key auth with adapter `none`: an operator-provisioned key stored in CAIPE works without key-issuance capability.
 - [ ] An induced upstream 429 or 5xx reaches the agent with its class unchanged, including provider quota errors containing "budget" or "quota".
