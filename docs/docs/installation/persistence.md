@@ -123,9 +123,14 @@ The bundled MongoDB chart can start one or more members with a shared keyfile
 for oplog-based change capture. It does not initialize replica-set membership.
 The default is a standalone MongoDB process.
 
-1. Create a Kubernetes Secret with a random base64 key (6–1024 characters) under
-   the `keyfile` key. A secret manager and ExternalSecret can provision it
-   without putting the key in Helm values. All members must use the same key.
+1. Generate a long random keyfile, for example with
+   `openssl rand -base64 756 > keyfile`, and store its **literal text** under
+   the Secret's `keyfile` entry. Use `stringData.keyfile`, or create the Secret
+   with `kubectl create secret generic <name> --from-file=keyfile=keyfile`.
+   Putting that text directly in `data.keyfile` makes Kubernetes decode it;
+   use `data` only after encoding the entire keyfile as a Secret value.
+   A secret manager and ExternalSecret can provision the same literal text
+   without putting it in Helm values. All members must use the same keyfile.
 2. Set `mongodb.replicaSet.enabled: true`, `mongodb.replicaSet.name`, and
    `mongodb.replicaSet.keyFileSecretName`. Set `mongodb.replicaCount` for multiple
    members; with persistence enabled, each member gets its own PVC.
@@ -146,6 +151,13 @@ The default is a standalone MongoDB process.
 4. Verify `rs.status()`, `db.hello()`, reads and writes, and oplog retention
    before starting change capture.
 
+For multiple members, update application Secrets to use a replica-set-aware
+MongoDB URI with `replicaSet=rs0` and a list of reachable member hostnames.
+Remove `directConnection=true` if it was set for the standalone server, and
+restart consumers to load the new URI. Every client must be able to resolve
+and reach the hostnames advertised by the replica set so it can follow a new
+primary after failover.
+
 The default readiness probe checks MongoDB process reachability, not whether
 membership has been initialized. A standalone-to-replica-set conversion of a
 single member interrupts service during restart and until a primary is elected.
@@ -153,9 +165,11 @@ With `mongodb.persistence.enabled: false`, replacing a pod loses that member's
 data and replica-set configuration; a one-member set then needs initialization
 again.
 
-For key rotation, put both the old and new keys in the Secret, restart
-secondaries one at a time and then the primary, remove the old key, and repeat
-the rolling restarts. Members must share a key throughout. See
+For key rotation, set the single `keyfile` Secret entry to a YAML sequence
+containing both the old and new keys, preserving its newlines with
+`stringData.keyfile: |` or an equivalent ExternalSecret value. Restart
+secondaries one at a time and then the primary, remove the old key from that
+entry, and repeat the rolling restarts. Members must share a key throughout. See
 [MongoDB's key rotation procedure](https://www.mongodb.com/docs/manual/tutorial/rotate-key-replica-set/).
 
 ### AWS DocumentDB with External Secrets Operator
