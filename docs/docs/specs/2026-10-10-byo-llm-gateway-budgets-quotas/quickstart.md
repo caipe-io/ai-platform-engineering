@@ -44,4 +44,10 @@ When rotating a Secret consumed by an inference workload, wait for the Secret up
 
 ## 4. Swap gateways
 
-- Change `LLM_GATEWAY_BASE_URL` and `LLM_GATEWAY_ADAPTER`, then re-run step 3. No agent edits.
+- Check the replacement gateway's inference authentication requirements. `LLM_GATEWAY_ADAPTER` selects management integration; it does not select or change `LLM_GATEWAY_AUTH`.
+- Prepare authentication before switching traffic:
+  - JWT mode: configure the replacement to trust the token issuer and validate the configured audience and required identity claims.
+  - Key mode: provision per-agent keys in the replacement gateway with the required agent/team bindings, and store them in CAIPE's credentials store. Keys from the previous gateway must not be assumed valid on the replacement.
+- Prepare the replacement adapter's management credential where required; keep it BFF-only and separate from inference credentials.
+- Deploy `LLM_GATEWAY_BASE_URL`, `LLM_GATEWAY_ADAPTER`, `LLM_GATEWAY_AUTH`, the audience where applicable, and the corresponding credential references together through Helm/GitOps or Compose. Wait for credential synchronization and the affected workload rollout or container recreation to complete.
+- Re-run step 3 against the replacement gateway, verifying inference and attribution for the selected auth mode. No agent edits are required.
