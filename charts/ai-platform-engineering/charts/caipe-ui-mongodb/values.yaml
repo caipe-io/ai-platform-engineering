@@ -24,7 +24,8 @@ replicaSet:
   initImage:
     repository: busybox
     tag: "1.37.0"
-    pullPolicy: IfNotPresent
+    # Defaults to image.pullPolicy; override when the init image needs a different policy.
+    pullPolicy: ""
   initContainerResources: {}
 
 # This sets the number of old ReplicaSets to retain for rollback

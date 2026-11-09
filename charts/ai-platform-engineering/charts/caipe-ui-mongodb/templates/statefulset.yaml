@@ -41,7 +41,7 @@ spec:
       initContainers:
         - name: prepare-replica-set-keyfile
           image: "{{ .Values.replicaSet.initImage.repository }}:{{ .Values.replicaSet.initImage.tag }}"
-          imagePullPolicy: {{ .Values.replicaSet.initImage.pullPolicy }}
+          imagePullPolicy: {{ .Values.replicaSet.initImage.pullPolicy | default .Values.image.pullPolicy }}
           command: ["/bin/sh", "-ec"]
           args: ["cp /keyfile-secret/keyfile /keyfile/keyfile && chmod 0400 /keyfile/keyfile"]
           securityContext:
