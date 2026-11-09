@@ -117,6 +117,47 @@ dynamic-agents:
     MONGODB_DATABASE: caipe
 ```
 
+### In-cluster MongoDB replica set
+
+The bundled MongoDB chart can start one or more members with a shared keyfile
+for oplog-based change capture. It does not initialize replica-set membership.
+The default is a standalone MongoDB process.
+
+1. Create a Kubernetes Secret with a random base64 key (6–1024 characters) under
+   the `keyfile` key. A secret manager and ExternalSecret can provision it
+   without putting the key in Helm values. All members must use the same key.
+2. Set `mongodb.replicaSet.enabled: true`, `mongodb.replicaSet.name`, and
+   `mongodb.replicaSet.keyFileSecretName`. Set `mongodb.replicaCount` for multiple
+   members; with persistence enabled, each member gets its own PVC.
+3. Roll out the chart, then connect to member 0 with an authenticated `mongosh`
+   session and initialize the set once:
+
+   ```javascript
+   rs.initiate({
+     _id: "rs0",
+     members: [{ _id: 0, host: "mongodb-0.mongodb.example.svc.cluster.local:27017" }]
+   })
+   ```
+
+   Use the configured set name and a stable hostname reachable by clients and
+   members. A migration service outside Kubernetes must be able to resolve and
+   reach the advertised hostname. Add further members with `rs.add()` after
+   they start.
+4. Verify `rs.status()`, `db.hello()`, reads and writes, and oplog retention
+   before starting change capture.
+
+The default readiness probe checks MongoDB process reachability, not whether
+membership has been initialized. A standalone-to-replica-set conversion of a
+single member interrupts service during restart and until a primary is elected.
+With `mongodb.persistence.enabled: false`, replacing a pod loses that member's
+data and replica-set configuration; a one-member set then needs initialization
+again.
+
+For key rotation, put both the old and new keys in the Secret, restart
+secondaries one at a time and then the primary, remove the old key, and repeat
+the rolling restarts. Members must share a key throughout. See
+[MongoDB's key rotation procedure](https://www.mongodb.com/docs/manual/tutorial/rotate-key-replica-set/).
+
 ### AWS DocumentDB with External Secrets Operator
 
 The optional `caipeDatabase` values let the parent chart manage the shared UI

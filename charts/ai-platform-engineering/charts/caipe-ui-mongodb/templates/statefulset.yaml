@@ -4,7 +4,6 @@ kind: StatefulSet
 {{- $mongoSecurityContext := .Values.securityContext | default dict }}
 {{- if .Values.replicaSet.enabled }}
 {{- if ne $provider "mongodb" }}{{ fail "replicaSet is only supported with provider=mongodb" }}{{ end }}
-{{- if not (regexMatch "^[1-9][0-9]*$" (toString .Values.replicaCount)) }}{{ fail "replicaSet requires a positive integer replicaCount" }}{{ end }}
 {{- if gt (int .Values.replicaCount) 50 }}{{ fail "replicaSet supports at most 50 MongoDB members" }}{{ end }}
 {{- if not (trim .Values.replicaSet.name) }}{{ fail "replicaSet.name is required when replicaSet.enabled=true" }}{{ end }}
 {{- if not (trim .Values.replicaSet.keyFileSecretName) }}{{ fail "replicaSet.keyFileSecretName is required when replicaSet.enabled=true" }}{{ end }}

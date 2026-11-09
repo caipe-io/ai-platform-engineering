@@ -15,7 +15,8 @@ replicaCount: 1
 # With persistence enabled, each member has its own data PVC. Without it, pod
 # replacement loses that member's data and replica-set configuration.
 # The keyfile Secret must contain a `keyfile` key shared by every member.
-# Initialize the set and add members after rollout; see REPLICA_SET.md.
+# Initialize the set and add members after rollout; see
+# docs/docs/installation/persistence.md in the repository.
 replicaSet:
   enabled: false
   name: rs0
