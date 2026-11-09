@@ -181,6 +181,7 @@ export const POST = withErrorHandler(async (
           latency_ms: body.metadata?.latency_ms,
           agent_name: agentName,
           ...(targetAgentId && { agent_id: targetAgentId }),
+          ...(typeof body.metadata?.parallel_group_id === 'string' && { parallel_group_id: body.metadata.parallel_group_id }),
           is_final: body.metadata?.is_final,
           ...(body.metadata?.turn_status && { turn_status: body.metadata.turn_status }),
           ...(body.metadata?.is_interrupted && { is_interrupted: body.metadata.is_interrupted }),
