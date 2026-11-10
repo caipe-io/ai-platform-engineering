@@ -59,6 +59,7 @@ jest.mock("@/lib/harness-engine-proxy", () => ({
 
 jest.mock("@/lib/mongodb", () => ({
   getCollection: (name: string, ...args: unknown[]) => {
+    if (name === "chat_coordination_policies") return Promise.resolve({ findOne: async () => null });
     if (name === "checkpoints_conversation") return Promise.resolve({ findOne: async () => null });
     if (name === "harness_gateway_bindings") return Promise.resolve({
       findOne: mockFindGatewayBinding,
