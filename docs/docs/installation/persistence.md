@@ -123,10 +123,22 @@ The bundled MongoDB chart can start one or more members with a shared keyfile
 for oplog-based change capture. It does not initialize replica-set membership.
 The default is a standalone MongoDB process.
 
-1. Generate a long random keyfile, for example with
-   `openssl rand -base64 756 > keyfile`, and store its **literal text** under
-   the Secret's `keyfile` entry. Use `stringData.keyfile`, or create the Secret
-   with `kubectl create secret generic <name> --from-file=keyfile=keyfile`.
+1. Generate a long random keyfile in an owner-only temporary file and create
+   the Secret from its **literal text**:
+
+   ```bash
+   (
+     set -e
+     keyfile=$(mktemp)
+     trap 'rm -f "$keyfile"' EXIT
+     openssl rand -base64 756 > "$keyfile"
+     kubectl create secret generic <name> --from-file=keyfile="$keyfile"
+   )
+   ```
+
+   `mktemp` creates the file with mode `0600`; the subshell removes it after
+   the Secret is created or if the command fails. You can also use
+   `stringData.keyfile` in a Secret manifest.
    Putting that text directly in `data.keyfile` makes Kubernetes decode it;
    use `data` only after encoding the entire keyfile as a Secret value.
    A secret manager and ExternalSecret can provision the same literal text
@@ -167,9 +179,13 @@ again.
 
 For key rotation, set the single `keyfile` Secret entry to a YAML sequence
 containing both the old and new keys, preserving its newlines with
-`stringData.keyfile: |` or an equivalent ExternalSecret value. Restart
-secondaries one at a time and then the primary, remove the old key from that
-entry, and repeat the rolling restarts. Members must share a key throughout. See
+`stringData.keyfile: |` or an equivalent ExternalSecret value. Replace each
+secondary pod, one at a time, and then the primary pod, waiting for each member
+to become healthy before continuing. Pod replacement reruns the init container
+that copies the updated Secret; restarting only the `mongod` container does not.
+Remove the old key from the Secret and repeat the same pod replacement order.
+Members must share a key throughout. With persistence disabled, replacing a
+pod loses its data and replica-set configuration. See
 [MongoDB's key rotation procedure](https://www.mongodb.com/docs/manual/tutorial/rotate-key-replica-set/).
 
 ### AWS DocumentDB with External Secrets Operator
