@@ -31,6 +31,7 @@ the app so Webex can grant the expanded scope set.
 Mirrors Cisco's official Meetings MCP tool surface, plus local fallback helpers:
 
 - `webex_list_meetings` - list/search meetings with date filters
+- `webex_space_meeting_occurrences` - discover actual meetings shared in spaces, with optional series filtering
 - `webex_userhub_calendar` - best-effort User Hub calendar read for upcoming external-calendar occurrences
 - `webex_resolve_meeting_link` - resolve a Webex join/calendar link through `/v1/meetings` with secrets removed
 - `webex_get_meeting_status` - get a meeting + optional participants
@@ -155,3 +156,13 @@ uv run python server.py --transport streamable-http --port 8000 --host 0.0.0.0
 ```
 
 Tools are then reachable at `http://localhost:8000/mcp/`.
+
+### Space occurrence discovery
+
+Space activities provide additional discovery when public history and User Hub
+omit an occurrence the caller did not attend. Manual discovery follows the
+authenticated service catalog and paginated spaces. Series discovery resolves
+the selected series to its space, then filters concrete occurrence IDs.
+Only meeting metadata is returned, without chat content, participants or media
+credentials. Existing transcript checks still establish content availability.
+Partial discovery is reported explicitly when request, page or time limits apply.

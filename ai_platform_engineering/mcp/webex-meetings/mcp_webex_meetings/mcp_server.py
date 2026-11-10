@@ -16,6 +16,8 @@ from mcp.shared.exceptions import McpError
 from mcp.types import INTERNAL_ERROR, INVALID_PARAMS, ErrorData
 from pydantic import BaseModel, ConfigDict, Field
 
+from .space_occurrences import list_space_meeting_occurrences
+
 WEBEX_API_BASE = "https://webexapis.com/v1"
 USERHUB_DEFAULT_SITE = "https://cisco.webex.com"
 USERHUB_CALENDAR_PATH = "/webappng/api/v1/mymeetings/calendarView"
@@ -113,6 +115,14 @@ class ListMeetings(BaseModel):
             "description": "List/search Webex meetings the authenticated user can see."
         }
     )
+
+
+class SpaceMeetingOccurrences(BaseModel):
+    from_iso: str = Field(description="Inclusive ISO-8601 occurrence start, with timezone.")
+    to_iso: str = Field(description="Exclusive ISO-8601 occurrence end, with timezone.")
+    site_url: str = Field(default=USERHUB_DEFAULT_SITE, description="The caller's Webex site base URL.")
+    meeting_series_id: str | None = Field(default=None, description="Optional saved series ID for a targeted space lookup.")
+    max_results: int = Field(default=200, ge=1, le=1000, description="Maximum distinct actual meeting occurrences.")
 
 
 class UserHubCalendar(BaseModel):
@@ -1106,6 +1116,48 @@ def register_tools(server) -> None:
         if args.meeting_type:
             params["meetingType"] = args.meeting_type
         return await _request("GET", "/meetings", params=params)
+
+    @server.tool(name="webex_space_meeting_occurrences")
+    @_handle_errors
+    async def space_meeting_occurrences(args: SpaceMeetingOccurrences) -> dict[str, Any]:
+        """Discover actual meetings shared in spaces, including absent invitees."""
+        start, end = _parse_iso_datetime(args.from_iso), _parse_iso_datetime(args.to_iso)
+        if start is None or end is None or start >= end or end - start > timedelta(days=365):
+            raise ValueError("Provide an ordered timezone-aware interval of at most 365 days.")
+        site = _normalize_userhub_site_url(args.site_url)
+        bearer = _bearer_from_request()
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+            result = await list_space_meeting_occurrences(
+                client, bearer, start, end, site,
+                meeting_series_id=args.meeting_series_id, max_results=args.max_results,
+            )
+            # The activity feed contains concrete IDs but encrypted page titles.
+            # Existing metadata-only privileges supply the exact recording title,
+            # without downloading transcripts or returning signed media links.
+            semaphore = asyncio.Semaphore(4)
+
+            async def enrich(item: dict[str, Any]) -> None:
+                async with semaphore:
+                    try:
+                        records = await _recording_privilege_transcripts(
+                            client, bearer=bearer, site_url=site, meeting_id=item["id"],
+                            max_results=1, download=False,
+                        )
+                    except (httpx.HTTPError, ValueError):
+                        return
+                if records:
+                    name = records[0].get("meetingTopic")
+                    if isinstance(name, str) and name.strip():
+                        item["title"] = USERHUB_RECORDING_SUFFIX.sub("", name).strip()
+                    item["hasRecording"] = True
+
+            try:
+                async with asyncio.timeout(30):
+                    await asyncio.gather(*(enrich(item) for item in result["items"]))
+            except TimeoutError:
+                result["complete"] = False
+                result.setdefault("warnings", []).append("Some meeting titles could not be verified.")
+            return result
 
     @server.tool(name="webex_userhub_calendar")
     @_handle_errors
