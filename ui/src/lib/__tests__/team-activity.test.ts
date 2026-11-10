@@ -16,8 +16,8 @@ it("keeps the primary synthesis outside work groups and preserves separate chain
   expect(entries[3]).toMatchObject({ id: "direct", complete: false });
 });
 
-it("does not certify unfinished or input-waiting replies as complete", () => {
-  expect(teamActivityEntries([reply("waiting", { parallelGroupId: "turn", isFinal: true, turnStatus: "waiting_for_input" })], "primary")[0])
+it.each(["waiting_for_input", "interrupted", "cancelled"] as const)("keeps %s work visible instead of auto-collapsing it", status => {
+  expect(teamActivityEntries([reply("waiting", { parallelGroupId: "turn", isFinal: true, turnStatus: status })], "primary")[0])
     .toMatchObject({ complete: false });
 });
 

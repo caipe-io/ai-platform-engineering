@@ -2819,6 +2819,8 @@ export function ChatPanel({
                           key={msg.id}
                           framed={participantCard && !teamActivity}
                           teamActivity={teamActivity}
+                          participantHandle={coordination?.agents.find(member => member.agent_id === msg.agentId)?.handle ?? "primary"}
+                          teamAgent={coordination?.availableAgents.find(candidate => candidate._id === (msg.agentId ?? coordination.primaryAgentId)) ?? agent}
                           mentionHandles={mentionHandles}
                           message={remoteMessage ? { ...msg, isInterrupted: false } : msg}
                           onCopy={handleCopy}
@@ -3527,6 +3529,8 @@ function filterEventsForTurn(
 }
 
 interface ChatMessageProps {
+  teamAgent?: DynamicAgentConfig;
+  participantHandle?: string;
   teamActivity?: boolean;
   framed?: boolean;
   mentionHandles?: readonly string[];
@@ -3575,6 +3579,8 @@ interface ChatMessageProps {
 const ChatMessage = React.memo(function ChatMessage({
   framed = false,
   teamActivity = false,
+  teamAgent,
+  participantHandle,
   mentionHandles,
   message,
   onCopy,
@@ -3663,8 +3669,9 @@ const ChatMessage = React.memo(function ChatMessage({
       ) : (
         <AgentAvatar
           agentId={agentId}
-          gradientTheme={agentGradient}
-          customThemeConfig={agentCustomTheme}
+          agent={teamActivity ? teamAgent : undefined}
+          gradientTheme={teamActivity ? undefined : agentGradient}
+          customThemeConfig={teamActivity ? undefined : agentCustomTheme}
           rounded="rounded-xl"
           size="w-9 h-9"
           iconSize="h-4 w-4"
@@ -3700,8 +3707,12 @@ const ChatMessage = React.memo(function ChatMessage({
             </div>
           ) : (
             <>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium">{agentName || getConfig('appName')}</span>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                {teamActivity ? <>
+                  <span className={cn("text-xs font-medium", agentMentionColor(participantHandle ?? "primary", mentionHandles ?? []))}>@{participantHandle ?? "primary"}</span>
+                  <span className="text-xs text-muted-foreground">{teamAgent?.name ?? agentName}</span>
+                  {teamAgent && <AgentHarnessBadge harnessId={teamAgent.execution_harness_id} presentation={teamAgent.presentation} compact />}
+                </> : <span className="text-xs font-medium">{agentName || getConfig('appName')}</span>}
                 {showTimestamp && (
                   <span className="text-[10px] text-muted-foreground/60 font-normal">
                     {message.timestamp instanceof Date

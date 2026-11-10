@@ -15,7 +15,7 @@ export function teamActivityEntries(messages: ChatMessage[], primaryAgentId: str
     if (seen.has(id)) return [];
     seen.add(id);
     const replies = messages.filter(candidate => key(candidate) === id);
-    const complete = replies.every(reply => reply.isFinal && ["done", "cancelled", "interrupted", "error"].includes(reply.turnStatus ?? ""));
+    const complete = replies.every(reply => reply.isFinal && reply.turnStatus === "done");
     return [{ kind: "activity", id, messages: replies, complete }];
   });
 }
