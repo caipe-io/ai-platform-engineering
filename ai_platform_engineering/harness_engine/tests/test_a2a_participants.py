@@ -19,6 +19,7 @@ from a2a.types import (
     StreamResponse,
     Task,
     TaskArtifactUpdateEvent,
+    TaskNotCancelableError,
     TaskState,
     TaskStatus,
     TaskStatusUpdateEvent,
@@ -189,10 +190,11 @@ async def test_message_only_agent_reuses_remote_context_on_follow_up(setup: Any)
     assert sent.context_id == "context-example" and not sent.task_id
 
 
-async def test_unsupported_remote_cancel_drains_to_completion(setup: Any) -> None:
+@pytest.mark.parametrize("cancel_error", [A2AClientError("Cancellation is unsupported"), TaskNotCancelableError()])
+async def test_unsupported_remote_cancel_drains_to_completion(setup: Any, cancel_error: Exception) -> None:
     runtime, client, responses, *_ = setup
     responses(StreamResponse(task=task(TaskState.TASK_STATE_WORKING)))
-    client.cancel_task.side_effect = A2AClientError("Cancellation is unsupported")
+    client.cancel_task.side_effect = cancel_error
     client.get_task.return_value = task(TaskState.TASK_STATE_COMPLETED)
     events = []
     async for event in runtime.execute(context()):

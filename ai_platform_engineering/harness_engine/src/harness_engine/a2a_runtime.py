@@ -20,6 +20,7 @@ from a2a.types import (
     StreamResponse,
     TaskState,
 )
+from a2a.utils.errors import A2AError
 from dynamic_agents.auth.authz import require_agent_use_permission
 from dynamic_agents.auth.token_context import current_traceparent, current_user_token
 from dynamic_agents.services.remote_agent_tool import _field_is_set, _RemoteOutput, remote_agent_client
@@ -123,7 +124,7 @@ class A2ARuntime:
                                 try:
                                     task = await client.cancel_task(CancelTaskRequest(id=task_id), context=call_context)
                                     response = StreamResponse(task=task)
-                                except (httpx.HTTPError, A2AClientError, RuntimeError, ValueError):
+                                except (httpx.HTTPError, A2AError, RuntimeError, ValueError):
                                     # Cancellation is best effort; drain/poll the task.
                                     response = StreamResponse(task=await client.get_task(GetTaskRequest(id=task_id), context=call_context))
                             elif not exhausted:
