@@ -187,6 +187,11 @@ podDisruptionBudget:
 # Non-sensitive application configuration.
 # Each key-value pair is injected as a flat environment variable via ConfigMap (envFrom).
 # For sensitive values (OIDC secrets, MongoDB URI, etc.) use existingSecret or externalSecrets below.
+notifications:
+  internalToken:
+    secretName: ""
+    secretKey: token
+
 config:
   # Optional comma-separated GitHub repository URLs approved for release-note
   # commit comparisons. Unset uses the canonical upstream repository only.

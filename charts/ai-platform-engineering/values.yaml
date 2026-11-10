@@ -42,6 +42,15 @@ tags:
 
 # Global configuration shared across all subcharts
 global:
+  # Optional notification producers. The same existing Secret must be available
+  # to the UI and producer pods. Disabled leaves existing deployments unchanged.
+  notifications:
+    enabled: false
+    internalUrl: "" # defaults to this release's caipe-ui Service
+    tokenSecret:
+      name: ""
+      key: token
+
   # -- Global image tag override. When set, overrides the default appVersion-based
   # image tag for ALL subcharts (MCP servers, dynamic agents, UI, etc.) in a single place.
   # Individual subchart `image.tag` values still take highest precedence.
