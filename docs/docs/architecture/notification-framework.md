@@ -49,3 +49,9 @@ Small implementation units extend the existing inbox.
 - Canonical recipients, bounded request bodies and per-app/per-recipient quotas protect the queue.
 - Successful queue acceptance returns 202; legacy unregistered app publishing retains its existing inbox response.
 - Publishers remain responsible for resource-specific recipients until host resource-level CAS checks are integrated.
+
+## Recipient-bound callback navigation
+
+- Inbox links use an opaque recipient-bound marker. Sign-in returns to the exact destination, including query and anchor.
+- Resolution checks owner, expiry and current app launch access. Markers grant no resource access.
+- Resource-level CAS rechecks remain required before production for resource-backed events. Legacy direct links remain supported.

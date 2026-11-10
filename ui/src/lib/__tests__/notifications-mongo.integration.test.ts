@@ -97,6 +97,8 @@ describeIfMongo("notification persistence against MongoDB", () => {
     expect(doc?.severity).toBe("success");
     expect(doc?.read_by_subjects).toEqual([]);
     expect(doc?.href).toBe("/workflows/run/verify");
+    expect(doc?.callback_marker).toMatch(/^[a-f0-9]{64}$/);
+    expect((await inbox.indexes()).find(index => index.name === "callback_marker_1")?.sparse).toBe(true);
   });
 
   it("does not write a second entry for a redelivered attempt", async () => {
