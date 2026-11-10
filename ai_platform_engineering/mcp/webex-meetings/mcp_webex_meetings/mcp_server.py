@@ -20,6 +20,7 @@ WEBEX_API_BASE = "https://webexapis.com/v1"
 USERHUB_DEFAULT_SITE = "https://cisco.webex.com"
 USERHUB_CALENDAR_PATH = "/webappng/api/v1/mymeetings/calendarView"
 USERHUB_RECORDINGS_PATH = "/webappng/api/v1/recordings"
+RECORDING_PRIVILEGE_PATH = "/wbxappapi/v2/recordings/wbxapp/privilege"
 USERHUB_RECORDINGS_PAGE_SIZE = 100
 USERHUB_RECORDINGS_MAX_RESULTS = 1000
 USERHUB_RECORDING_DETAIL_LIMIT = 100
@@ -765,6 +766,93 @@ async def _list_userhub_recordings(
     return recordings
 
 
+async def _recording_privilege_transcripts(
+    client: httpx.AsyncClient,
+    *,
+    bearer: str,
+    site_url: str,
+    meeting_id: str,
+    max_results: int,
+    download: bool,
+) -> list[dict[str, Any]]:
+    """Resolve readable recap recordings without requiring a library entry.
+
+    This lookup needs a concrete actual instance. A scheduled occurrence or
+    series ID must never resolve to a different recording in the series.
+    """
+    if not re.fullmatch(r"[0-9a-fA-F]{32}_I_\d+", meeting_id):
+        return []
+    site_url = _derive_userhub_site_url(None, site_url)
+    headers = {"Authorization": bearer, "Accept": "application/json"}
+    response = await client.get(
+        f"{site_url}{RECORDING_PRIVILEGE_PATH}",
+        params={
+            "meetingInstanceId": meeting_id,
+            "siteurl": urlparse(site_url).netloc.split(".")[0],
+        },
+        headers=headers,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    rows = payload.get("privileges") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("Recording privilege lookup returned invalid metadata.")
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or row.get("meetingInstanceId") != meeting_id:
+            continue
+        recording_id = row.get("recordUUID")
+        if not isinstance(recording_id, str) or not recording_id or recording_id in seen:
+            continue
+        try:
+            transcript_url = _validated_webex_download_url(
+                row.get("transcriptURL") or row.get("transcriptDownloadLink")
+            )
+        except ValueError:
+            continue
+        seen.add(recording_id)
+        # Whitelist output: the response also contains passwords and signed URLs.
+        item: dict[str, Any] = {
+            "id": recording_id,
+            "recordingId": recording_id,
+            "meetingId": meeting_id,
+            "meetingTopic": row.get("recordName"),
+            "startTime": row.get("recordingStartTime"),
+            "status": "available",
+            "source": "recording_privilege",
+        }
+        if download:
+            item["body"] = None
+            if row.get("preventDownload") is True:
+                item["bodyError"] = "Transcript download is disabled."
+            else:
+                try:
+                    result = await client.get(
+                        transcript_url,
+                        headers={
+                            "Authorization": bearer,
+                            "Accept": "*/*",
+                            "Referer": f"{site_url}/",
+                        },
+                        follow_redirects=False,
+                    )
+                    result.raise_for_status()
+                    if not result.text.lstrip("\ufeff \t\r\n").startswith("WEBVTT"):
+                        raise ValueError("Recording transcript is not valid WebVTT.")
+                    item["body"] = result.text
+                    item["bodyFormat"] = "vtt"
+                except httpx.HTTPStatusError as exc:
+                    item["bodyError"] = f"HTTP {exc.response.status_code}"
+                except (httpx.RequestError, ValueError) as exc:
+                    # Exception text can contain a signed transcript URL.
+                    item["bodyError"] = type(exc).__name__
+        items.append(item)
+        if len(items) >= max_results:
+            break
+    return items
+
+
 async def _userhub_transcripts_for_meeting(
     client: httpx.AsyncClient,
     *,
@@ -1351,8 +1439,30 @@ def register_tools(server) -> None:
                 start if isinstance(start, str) else None
             )
         bearer = _bearer_from_request()
+        privilege_listing: dict[str, Any] | None = None
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
+                if args.meeting_id:
+                    try:
+                        privilege_items = await _recording_privilege_transcripts(
+                            client,
+                            bearer=bearer,
+                            site_url=site_url,
+                            meeting_id=args.meeting_id,
+                            max_results=args.max_results,
+                            download=args.download,
+                        )
+                        if privilege_items:
+                            privilege_listing = {
+                                "items": privilege_items,
+                                "source": "recording_privilege",
+                            }
+                            if not args.download or any(item.get("body") for item in privilege_items):
+                                return privilege_listing
+                    except (httpx.HTTPStatusError, httpx.RequestError, ValueError) as exc:
+                        # The recording library remains an independent fallback.
+                        # Never log raw errors containing signed URLs or secrets.
+                        listing["recordingPrivilegeFallback"] = {"error": type(exc).__name__}
                 fallback_items = await _userhub_transcripts_for_meeting(
                     client,
                     bearer=bearer,
@@ -1365,7 +1475,9 @@ def register_tools(server) -> None:
                     verified_occurrence_start=verified_occurrence_start,
                 )
         except (httpx.HTTPStatusError, httpx.RequestError, ValueError) as exc:
-            logger.warning("User Hub transcript fallback failed: %s", exc)
+            logger.warning("User Hub transcript fallback failed: %s", type(exc).__name__)
+            if privilege_listing is not None:
+                return privilege_listing
             if public_error is not None:
                 raise public_error
             listing["userHubFallback"] = {
@@ -1390,7 +1502,7 @@ def register_tools(server) -> None:
             "siteUrl": site_url,
             "matched": 0,
         }
-        return listing
+        return privilege_listing or listing
 
     # NOTE: webex_get_meeting_summary was removed. The Cisco /v1/meetings/summaries
     # endpoint we mirrored doesn't exist on the public Webex REST API. Webex

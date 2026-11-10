@@ -39,11 +39,10 @@ Mirrors Cisco's official Meetings MCP tool surface, plus local fallback helpers:
 - `webex_delete_meeting` - delete a scheduled meeting
 - `webex_list_recordings` - list recordings
 - `webex_list_transcripts` - list transcripts (and optionally inline-download
-  text), with a User Hub fallback for recordings shared with the caller
+  text), with recording-privilege and User Hub fallbacks for accessible recordings
 
-There is currently no `webex_get_meeting_summary` tool because Webex does not
-publish a public meeting-summary REST endpoint. Use
-`webex_list_transcripts(download=true)` and summarize the transcript instead.
+There is currently no `webex_get_meeting_summary` tool in this server. Use
+`webex_list_transcripts(download=true)` to retrieve transcript content.
 
 `webex_userhub_calendar` intentionally uses the same per-user OAuth token against
 the Webex User Hub calendar feed, for example
@@ -95,10 +94,24 @@ an exact `meeting_id`, or `meeting_title` plus `meeting_start` when the public A
 never exposes an instance ID:
 
 1. Derive the site host from public metadata, or use the supplied `site_url`.
-2. Search the site-specific User Hub recording list, following offset pagination.
-3. Match the recording detail's `meetingInstanceId` to an exact supplied ID,
+2. For an exact actual instance ID (`{series}_I_{instance}`), query the app's
+   `/wbxappapi/v2/recordings/wbxapp/privilege` endpoint. It can expose a readable
+   transcript even when the public API denies access and User Hub omits the
+   recording. Accept only records with the exact requested instance ID.
+3. Otherwise search the site-specific User Hub recording list, following offset pagination.
+4. Match the recording detail's `meetingInstanceId` to an exact supplied ID,
    or verify the title/time lookup against independently fetched instance timing.
-4. Download the transcript URL returned by the authenticated recording stream.
+5. Download the transcript URL returned by the authenticated lookup.
+
+Privilege recovery returns `source=recording_privilege`, with recording IDs and
+recording timestamps. Metadata-only calls do not download transcript content.
+Passwords and signed URLs are never returned. Downloads require a trusted HTTPS
+Webex URL and valid WebVTT; redirects and HTML login responses are not accepted.
+If the privilege lookup fails, the independent User Hub fallback still runs.
+
+This is retrieval for a known actual instance, not complete recap discovery.
+Scheduled and series IDs are not accepted as substitutes, and a missing library
+entry is not evidence that the user lacks access to a native-app recap.
 
 The caller's existing OAuth token is used throughout; no browser cookies or
 server-side token storage are needed. Set `site_url` only when automatic site
