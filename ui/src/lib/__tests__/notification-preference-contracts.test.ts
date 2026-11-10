@@ -83,4 +83,3 @@ describe("preference merge", () => {
     expect(twice).toEqual(once);
   });
 });
-
