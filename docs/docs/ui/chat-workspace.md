@@ -41,8 +41,12 @@ and session refresh. Read-only viewers cannot refresh the session.
   membership order, consistent across autocomplete, the composer, messages and
   workspace controls. Handles remain visible; color never grants access or
   changes routing. Code, links, email addresses and unknown handles stay literal.
-- Chat bubbles use a muted blue surface. Text selection has a separate pale-blue
+- User-message bubbles use a muted blue surface. Text selection has a separate pale-blue
   highlight with dark text so selecting prose or composer text remains visible.
+  These styles apply across all themes, with lighter bubbles in Light and Legacy Light.
+- Primary accents and focus rings use blue in Dark, Light and Midnight. Other
+  themes retain their primary accents. The SSO login button uses the separate
+  brand gradient; its focus ring follows the selected theme.
 
 - Membership is saved on the conversation and survives refresh. Up to eight
   additional agents can join. A configured subagent remains a different concept:
