@@ -103,6 +103,38 @@ routes:
         status: 403
         reason: pdp_denied
 
+  - id: ui-bff-post-api-chat-conversations-id-agents-openfga-agent-use
+    surface: ui_bff
+    method: POST
+    path: /api/chat/conversations/[id]/agents
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: >-
+      OpenFGA user:<sub> can_use agent:<agent_id> gate before adding a coordination
+      agent. Allow expectations assume an eligible interactive web chat owned by
+      the caller, an enabled agent, and an idle Harness Engine conversation.
+    expectations:
+      alice_admin:
+        status: 201
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 201
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+
   - id: ui-bff-post-api-chat-conversations-id-rewind-openfga-agent-use
     surface: ui_bff
     method: POST
