@@ -33,7 +33,7 @@ dependencies = [
     "python-dotenv==1.2.2",
     "cnoe-agent-utils==0.3.9",
     "pydantic==2.12.5",
-    "fastmcp==3.2.0",
+    "fastmcp==3.4.10",
     "mcp==1.30.0",
     "mcp-cloudability",
     "prometheus_client==0.23.1",
@@ -70,6 +70,14 @@ markers = [
     "unit: marks tests as unit tests",
     "integration: marks tests as integration tests",
     "parsers: marks tests as parser tests",
+]
+
+[tool.uv]
+constraint-dependencies = [
+    "cryptography==50.0.0",
+    "pyopenssl==26.4.0",
+    "spiffe==0.4.0",
+    "spiffe-tls==0.4.1",
 ]
 
 [tool.uv.sources]
