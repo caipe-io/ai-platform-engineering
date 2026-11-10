@@ -12,6 +12,8 @@ How an admin will connect a gateway once the phases in [plan.md](./plan.md) ship
 
 ## 2. Point CAIPE at it
 
+Before enabling routing, complete the applicable identity preparation in [T102–T105](./tasks.md#phase-1-identity-preparation-and-agent-data-plane): Keycloak exchange setup for JWT mode, existing-agent identity backfill, default-team and new-agent provisioning, and the AI-assist system identity. Prepare required gateway principals and credentials for the selected auth mode. For phase 4 workloads, also complete T401/T402 identity preparation. Missing preparation must block enablement.
+
 Set these once under `global.llmGateway` in Helm ([plan.md](./plan.md#helm-and-compose)), or in `.env` for Compose.
 
 | Variable | Example |
@@ -28,7 +30,7 @@ Set these once under `global.llmGateway` in Helm ([plan.md](./plan.md#helm-and-c
 
 ## 3. Validate
 
-Before gateway checks, deploy `LLM_GATEWAY_ENABLED=true` and wait for workload replacement with provider credentials excluded. Run disruptive checks with isolated test workloads and a test team where possible.
+Before gateway checks, deploy `LLM_GATEWAY_ENABLED=true` and wait for workload replacement with provider credentials excluded. Use an isolated test team for limit checks. Run the disabled-mode check in an isolated deployment; if it must run on the live deployment, pause and drain live inference first, including scheduled/background work. Keep live inference paused until gateway mode is restored, workload replacement completes, and gateway routing and intended limits are verified. Only controlled validation calls may run during this pause.
 
 Keep valid direct-provider configuration and credentials in the deployment secret store, outside gateway-enabled inference pods. For the disabled-mode check, apply the mode change through Helm/GitOps so it restores provider secret references and replaces pods; wait for rollout completion. Compose must recreate containers with mode-specific credential injection. Missing secrets must not be treated as a successful transition.
 
@@ -37,7 +39,8 @@ Keep valid direct-provider configuration and credentials in the deployment secre
 | Adapter supports `models.list`: Admin → LLM Models → Sync | Gateway models persist in `llm_models`; existing model IDs remain usable |
 | Adapter lacks `models.list`, including `none`: configure or add model entries with IDs matching gateway aliases | Sync is hidden; catalogue entries remain selectable subject to permissions |
 | Chat with an agent | Completion succeeds. JWT mode: verified user (`sub`), agent and team attribution. Key mode: verified agent/team bindings; any user attribution is unverified and `sub` is not required. |
-| Call the gateway with missing or invalid credentials for the selected auth mode | 401 |
+| Call the gateway without credentials, then separately with invalid credentials for the selected auth mode | Both requests return 401 |
+| JWT mode: change an identity claim in a valid test token without re-signing it, then call the gateway | 401; invalid signatures are rejected |
 | Set a tiny limit on an isolated test team through CAIPE where supported, otherwise in the gateway; chat as that team again | The request is rejected and CAIPE reports the failure without inferred budget-specific advice or direct-provider fallback |
 | Autonomous task run | JWT mode: verified task-owner, agent and team attribution. Key mode: verified agent/team bindings; task-owner attribution is unverified. |
 | Keep the gateway configured and reachable; deploy `LLM_GATEWAY_ENABLED=false` with restored provider secret references and wait for pod replacement | Every migrated path completes through its direct provider; zero inference requests reach the gateway |
