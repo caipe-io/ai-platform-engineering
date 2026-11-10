@@ -117,6 +117,77 @@ dynamic-agents:
     MONGODB_DATABASE: caipe
 ```
 
+### In-cluster MongoDB replica set
+
+The bundled MongoDB chart can start one or more members with a shared keyfile
+for oplog-based change capture. It does not initialize replica-set membership.
+The default is a standalone MongoDB process.
+
+1. Generate a long random keyfile in an owner-only temporary file and create
+   the Secret from its **literal text**:
+
+   ```bash
+   (
+     set -e
+     keyfile=$(mktemp)
+     trap 'rm -f "$keyfile"' EXIT
+     openssl rand -base64 756 > "$keyfile"
+     kubectl create secret generic <name> --from-file=keyfile="$keyfile"
+   )
+   ```
+
+   `mktemp` creates the file with mode `0600`; the subshell removes it after
+   the Secret is created or if the command fails. You can also use
+   `stringData.keyfile` in a Secret manifest.
+   Putting that text directly in `data.keyfile` makes Kubernetes decode it;
+   use `data` only after encoding the entire keyfile as a Secret value.
+   A secret manager and ExternalSecret can provision the same literal text
+   without putting it in Helm values. All members must use the same keyfile.
+2. Set `mongodb.replicaSet.enabled: true`, `mongodb.replicaSet.name`, and
+   `mongodb.replicaSet.keyFileSecretName`. Set `mongodb.replicaCount` for multiple
+   members; with persistence enabled, each member gets its own PVC.
+3. Roll out the chart, then connect to member 0 with an authenticated `mongosh`
+   session and initialize the set once:
+
+   ```javascript
+   rs.initiate({
+     _id: "rs0",
+     members: [{ _id: 0, host: "mongodb-0.mongodb.example.svc.cluster.local:27017" }]
+   })
+   ```
+
+   Use the configured set name and a stable hostname reachable by clients and
+   members. A migration service outside Kubernetes must be able to resolve and
+   reach the advertised hostname. Add further members with `rs.add()` after
+   they start.
+4. Verify `rs.status()`, `db.hello()`, reads and writes, and oplog retention
+   before starting change capture.
+
+For multiple members, update application Secrets to use a replica-set-aware
+MongoDB URI with `replicaSet=rs0` and a list of reachable member hostnames.
+Remove `directConnection=true` if it was set for the standalone server, and
+restart consumers to load the new URI. Every client must be able to resolve
+and reach the hostnames advertised by the replica set so it can follow a new
+primary after failover.
+
+The default readiness probe checks MongoDB process reachability, not whether
+membership has been initialized. A standalone-to-replica-set conversion of a
+single member interrupts service during restart and until a primary is elected.
+With `mongodb.persistence.enabled: false`, replacing a pod loses that member's
+data and replica-set configuration; a one-member set then needs initialization
+again.
+
+For key rotation, set the single `keyfile` Secret entry to a YAML sequence
+containing both the old and new keys, preserving its newlines with
+`stringData.keyfile: |` or an equivalent ExternalSecret value. Replace each
+secondary pod, one at a time, and then the primary pod, waiting for each member
+to become healthy before continuing. Pod replacement reruns the init container
+that copies the updated Secret; restarting only the `mongod` container does not.
+Remove the old key from the Secret and repeat the same pod replacement order.
+Members must share a key throughout. With persistence disabled, replacing a
+pod loses its data and replica-set configuration. See
+[MongoDB's key rotation procedure](https://www.mongodb.com/docs/manual/tutorial/rotate-key-replica-set/).
+
 ### AWS DocumentDB with External Secrets Operator
 
 The optional `caipeDatabase` values let the parent chart manage the shared UI

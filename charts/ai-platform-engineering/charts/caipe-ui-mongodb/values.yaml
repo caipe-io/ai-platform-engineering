@@ -11,6 +11,23 @@ provider: mongodb
 # This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
 replicaCount: 1
 
+# -- Enable a MongoDB replica set for oplog-based change capture.
+# With persistence enabled, each member has its own data PVC. Without it, pod
+# replacement loses that member's data and replica-set configuration.
+# The keyfile Secret must contain a `keyfile` key shared by every member.
+# Initialize the set and add members after rollout; see
+# docs/docs/installation/persistence.md in the repository.
+replicaSet:
+  enabled: false
+  name: rs0
+  keyFileSecretName: ""
+  initImage:
+    repository: busybox
+    tag: "1.37.0"
+    # Defaults to image.pullPolicy; override when the init image needs a different policy.
+    pullPolicy: ""
+  initContainerResources: {}
+
 # This sets the number of old ReplicaSets to retain for rollback
 # Kubernetes will automatically clean up ReplicaSets beyond this limit
 revisionHistoryLimit: 3
