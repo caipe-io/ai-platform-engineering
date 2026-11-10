@@ -7,6 +7,9 @@ import { NextRequest, NextResponse } from "next/server";
 const mockGetAuth = jest.fn();
 const mockFindProducer = jest.fn();
 const mockCreate = jest.fn();
+const mockSource = jest.fn();
+const mockEnqueue = jest.fn();
+const mockAudience = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
@@ -44,9 +47,15 @@ jest.mock("@/lib/notification-preferences.server", () => ({ platformHealthNotifi
 jest.mock("@/lib/platform-health-notifications.server", () => ({ runPlatformHealthNotificationAudit: jest.fn() }));
 jest.mock("@/app/api/skills/_lib/request-origin", () => ({ getRequestOrigin: jest.fn() }));
 
+jest.mock("@/lib/notifications/subscriptions.server", () => ({ getNotificationSource: (...args: unknown[]) => mockSource(...args) }));
+jest.mock("@/lib/notifications/delivery.server", () => ({ enqueueNotification: (...args: unknown[]) => mockEnqueue(...args) }));
+jest.mock("@/lib/notifications/audience.server", () => ({ resolveRecipients: (...args: unknown[]) => mockAudience(...args) }));
+
+jest.mock("@/lib/notifications/limits.server", () => ({ consumeNotificationQuota: jest.fn().mockResolvedValue(undefined) }));
+
 import { POST } from "../route";
 
-const app = { installation: { appId: "example-app" }, manifest: { displayName: "Example App" } };
+const app = { installation: { appId: "example-app" }, manifest: { id: "example-app", displayName: "Example App" } };
 const valid = {
   eventKey: "report:2026-10-19:ready",
   recipientUserSubjects: ["user-1"],
@@ -70,9 +79,24 @@ beforeEach(() => {
   mockGetAuth.mockResolvedValue({ session: { isServiceAccount: true, serviceAccountClientId: "example-client" } });
   mockFindProducer.mockReturnValue(app);
   mockCreate.mockResolvedValue(true);
+  mockSource.mockResolvedValue(null);
 });
 
 describe("POST /api/notifications", () => {
+  it("queues only registered app types with canonical recipient identities", async () => {
+    mockSource.mockResolvedValue({ events: [{ id: "report.ready" }] });
+    mockAudience.mockResolvedValue({ recipients: [{ subject: "user-1", email: "test-user@example.test" }], skipped: 0, rejected: 0 });
+    const response = await post({ ...valid, eventType: "report.ready", sourceId: "platform" });
+    expect(response.status).toBe(202);
+    expect(mockEnqueue).toHaveBeenCalledWith(expect.objectContaining({ sourceId: "app:example-app", eventType: "report.ready", recipient: { subject: "user-1", email: "test-user@example.test" } }));
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+  it("rejects an unregistered type for a registered app", async () => {
+    mockSource.mockResolvedValue({ events: [{ id: "report.ready" }] });
+    expect((await post({ ...valid, eventType: "other.event" })).status).toBe(400);
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
   it("creates a notification for the named users and answers 201", async () => {
     const response = await post(valid);
 
@@ -152,6 +176,13 @@ describe("POST /api/notifications", () => {
 
     expect(response.status).toBe(201);
     expect(mockCreate.mock.calls[0][0]).toMatchObject({ severity: "info", href: undefined });
+  });
+
+  it("accepts callbackUri for native or iframe routes and preserves its section marker", async () => {
+    const callbackUri = "/projects/example/wiki/overview.md?view=changes#decision-42";
+    expect((await post({ ...valid, href: undefined, callbackUri })).status).toBe(201);
+    expect(mockCreate.mock.calls[0][0].href).toBe(callbackUri);
+    expect((await post({ ...valid, callbackUri })).status).toBe(400);
   });
 
   it("accepts a local link with a query and fragment", async () => {

@@ -42,3 +42,10 @@ Small implementation units extend the existing inbox.
 - Direct publishing persists delivery jobs and reports failures explicitly. Publication failure must not fail the originating task.
 - `NOTIFICATIONS_INTERNAL_TOKEN` enables the internal endpoint; producers are added separately.
 - Selecting `NOTIFICATIONS_TRANSPORT=jetstream` before its optional implementation is installed fails publication explicitly; it never falls back to direct delivery.
+
+## Registered app publishing
+
+- `POST /api/notifications` accepts registered event types from the installed, bound app service account.
+- Canonical recipients, bounded request bodies and per-app/per-recipient quotas protect the queue.
+- Successful queue acceptance returns 202; legacy unregistered app publishing retains its existing inbox response.
+- Publishers remain responsible for resource-specific recipients until host resource-level CAS checks are integrated.
