@@ -1,5 +1,7 @@
 "use client";
 
+import { CollapsibleAgentText } from "./CollapsibleAgentText";
+
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
 import { FileTree } from "@/components/dynamic-agents/FileTree";
 import type { TaskItem } from "@/components/shared/timeline";
@@ -146,6 +148,7 @@ const SubagentLookupContext = createContext<SubagentLookupFn | undefined>(undefi
 // ═══════════════════════════════════════════════════════════════
 
 interface AgentTimelineProps {
+  teamActivity?: boolean;
   /** Interleaved timeline data from TimelineManager */
   data: TimelineData;
   /** Duration in seconds (for summary bar) */
@@ -196,6 +199,7 @@ export function AgentTimeline({
   downloadingFilePath,
   isDeletingFile,
   deletingFilePath,
+  teamActivity = false,
   pendingHitl = false,
 }: AgentTimelineProps) {
   const { segments, finalAnswer, isStreaming, hasTools } = data;
@@ -306,11 +310,9 @@ export function AgentTimeline({
   // When streaming without tools, render as simple streaming message (no timeline chrome)
   if (showStreamingContent) {
     return (
-      <div className="animate-reveal-ltr bg-muted/30 border border-border/30 rounded-lg px-4 py-3">
-        <MarkdownRenderer
-          content={finalAnswer}
-          isStreaming={true}
-        />
+      <div className={teamActivity ? "select-text" : "animate-reveal-ltr bg-muted/30 border border-border/30 rounded-lg px-4 py-3"}>
+        {teamActivity ? <CollapsibleAgentText><MarkdownRenderer content={finalAnswer} isStreaming /></CollapsibleAgentText> :
+          <MarkdownRenderer content={finalAnswer} isStreaming /> }
       </div>
     );
   }
@@ -398,12 +400,11 @@ export function AgentTimeline({
         {/* Final answer - only shown after streaming completes */}
         {showFinalAnswerOutside && (
           <div className={cn(
-            "bg-muted/30 border border-border/30 rounded-lg px-4 py-3",
+            teamActivity ? "select-text" : "bg-muted/30 border border-border/30 rounded-lg px-4 py-3",
             !wasStreaming && "animate-reveal-ltr"
           )}>
-            <MarkdownRenderer
-              content={finalAnswer}
-            />
+            {teamActivity ? <CollapsibleAgentText><MarkdownRenderer content={finalAnswer} /></CollapsibleAgentText> :
+              <MarkdownRenderer content={finalAnswer} />}
           </div>
         )}
 

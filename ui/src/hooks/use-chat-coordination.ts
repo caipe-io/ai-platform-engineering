@@ -10,6 +10,7 @@ export interface ChatHandoff { _id: string; handle: string; status: string; last
 export interface ChatCoordination {
   enabled?: boolean;
   teamAvailable?: boolean;
+  activityAvailable?: boolean;
   mode?: "mentions" | "team";
   handoffs?: ChatHandoff[];
   setMode?: (mode: "mentions" | "team") => Promise<void>;
@@ -37,6 +38,7 @@ async function readData<T>(response: Response): Promise<T> {
 /** Available agents come from the existing Use-filtered domain endpoint. */
 export function useChatCoordination(conversationId: string, primaryAgentId: string): ChatCoordination {
   const [enabled, setEnabled] = useState(true);
+  const [activityAvailable, setActivityAvailable] = useState(false);
   const [teamAvailable, setTeamAvailable] = useState(true);
   const [mode, setModeState] = useState<"mentions" | "team">("mentions");
   const [handoffs, setHandoffs] = useState<ChatHandoff[]>([]);
@@ -57,11 +59,12 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
         fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/agents`, { signal, cache: "no-store" }),
         fetch("/api/dynamic-agents/available", { signal, cache: "no-store" }),
       ]);
-      const membership = await readData<{ enabled?: boolean; team_available?: boolean; agents: ChatCoordinationAgent[]; can_manage: boolean; available: boolean; mode?: "mentions" | "team"; handoffs?: ChatHandoff[] }>(membershipResponse);
+      const membership = await readData<{ enabled?: boolean; team_available?: boolean; activity_available?: boolean; agents: ChatCoordinationAgent[]; can_manage: boolean; available: boolean; mode?: "mentions" | "team"; handoffs?: ChatHandoff[] }>(membershipResponse);
       const catalog = await readData<DynamicAgentConfig[]>(catalogResponse);
       if (signal?.aborted) return;
       setEnabled(membership.enabled !== false);
       setTeamAvailable(membership.team_available !== false);
+      setActivityAvailable(membership.activity_available === true);
       if (membership.enabled === false) setSelection({ conversationId, agentId: primaryAgentId });
       setAgents(membership.agents);
       setModeState(membership.mode ?? "mentions");
@@ -79,6 +82,7 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
   useEffect(() => {
     const controller = new AbortController();
     setAgents([]);
+    setActivityAvailable(false);
     setHandoffs([]);
     setModeState("mentions");
     setCanManage(false);
@@ -146,6 +150,6 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
     return () => { controller.abort(); clearInterval(timer); };
   }, [mode, conversationId, hasActiveHandoff]);
 
-  return { enabled, teamAvailable, mode, handoffs, setMode, agents, availableAgents, canManage, available, loading, error,
+  return { activityAvailable, enabled, teamAvailable, mode, handoffs, setMode, agents, availableAgents, canManage, available, loading, error,
     primaryAgentId, selectedAgentId, selectAgent, refresh, addAgent, prepareTeam, stopTeam };
 }

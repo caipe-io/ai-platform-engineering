@@ -27,6 +27,22 @@ export interface FeatureFlag {
 
 export const FEATURE_FLAGS: FeatureFlag[] = [
   {
+    id: "agentTeamActivity",
+    label: "Agent Team activity (Experimental)",
+    description: "Use Conversation and Grouped views for chat teams",
+    detail: "Turn off to restore Classic agent reply cards. This changes presentation only; agent assignments, permissions, and running tasks are preserved. Available when enabled by the administrator.",
+    icon: "Eye", category: "chat", defaultValue: true,
+    preferencesKey: "agent_team_activity_enabled",
+  },
+  {
+    id: "groupTeamActivity",
+    label: "Group Agent Team activity",
+    description: "Collect teammate replies beneath Primary",
+    detail: "Use Grouped to collect teammate work in an expandable activity section. Turn off for Conversation, where replies appear inline. Primary's final answer stays in the conversation in both views.",
+    icon: "Eye", category: "chat", defaultValue: true,
+    preferencesKey: "group_team_activity_enabled",
+  },
+  {
     id: "memory",
     label: "Cross-Thread Memory",
     description: "Remember facts about you across conversations",

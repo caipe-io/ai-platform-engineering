@@ -48,7 +48,7 @@ interface PlatformConfigDoc extends PlatformDefaultAgentDocument {
   rag_default_search_team_slug?: unknown;
   rag_ingestor_limits?: unknown;
   platform_llm?: unknown;
-  agent_coordination?: { enabled?: boolean; team?: boolean };
+  agent_coordination?: { enabled?: boolean; team?: boolean; activity?: boolean };
 }
 
 interface TeamConfigDoc {
@@ -376,11 +376,11 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
     if (Object.prototype.hasOwnProperty.call(body, 'agent_coordination')) {
       const features = body.agent_coordination;
       if (!isRecord(features) || !Object.keys(features).length ||
-          Object.keys(features).some(key => !['enabled', 'team'].includes(key) || typeof features[key] !== 'boolean')) {
-        throw new ApiError('agent_coordination accepts enabled and team booleans only', 400);
+          Object.keys(features).some(key => !['enabled', 'team', 'activity'].includes(key) || typeof features[key] !== 'boolean')) {
+        throw new ApiError('agent_coordination accepts enabled, team and activity booleans only', 400);
       }
       const limits = coordinationDeploymentLimits();
-      if ((features.enabled === true && !limits.enabled) || (features.team === true && !limits.team)) {
+      if ((features.enabled === true && !limits.enabled) || (features.team === true && !limits.team) || (features.activity === true && !limits.activity)) {
         throw new ApiError('This feature is disabled by deployment configuration', 409);
       }
       for (const [key, value] of Object.entries(features)) update[`agent_coordination.${key}`] = value;

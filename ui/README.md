@@ -371,3 +371,10 @@ The canonical app loader applies these registrations to installed components, re
 - `titlePrefix: true` creates `[User Feedback][Component][Type]: Short title`. Unmapped features add no label. Impact stays in the body; priority and assignment remain triage decisions.
 - The body includes the authenticated reporter, host version/commit, browser family/major version and OS, entry point, page/related URLs, impact and configured app context. Apps may supply project/page and their own version/commit through the host capability. App-supplied diagnostics are descriptive context, while host build metadata is read server-side.
 - Configure labels that exist in the destination repository. The shared handler does not create or rename repository labels.
+### Agent Team activity (Experimental)
+
+- Joined-agent chats support **Conversation** (inline replies) and **Grouped** (expandable teammate work). Primary's combined answer stays in the main conversation. Long rendered replies offer **Show more / Show less**; tools and files remain independently accessible.
+- **Settings → Chat Behavior → Agent Team activity (Experimental)**: turn off to restore **Classic** reply cards. **Group Agent Team activity** remembers the view across chats and sign-ins. Changing presentation does not stop runs or change permissions.
+- **Platform Defaults → Agent Coordination → Agent Team activity**: administrators can restore Classic for everyone at runtime. Open chats update within 10 seconds.
+- Deployment ceiling: `AGENT_TEAM_ACTIVITY_ENABLED=false` disables the new presentation, including when a runtime or personal preference enables it. Helm exposes this through `caipe-ui.config.AGENT_TEAM_ACTIVITY_ENABLED`.
+- Single-agent chats, configured subagents, and legacy runtimes keep their existing rendering. No chat migration is required.

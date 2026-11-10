@@ -2,15 +2,15 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CoordinationFeatureSettings } from "../CoordinationFeatureSettings";
 
 function installFetch({ deployment = true, fail = false } = {}) {
-  const settings = { enabled: true, team: true };
+  const settings = { enabled: true, team: true, activity: true };
   const fetchMock = jest.fn(async (_url: unknown, init?: RequestInit) => {
     if (init?.method === "PATCH") {
       if (fail) return { ok: false, json: async () => ({ error: "Save failed" }) };
       Object.assign(settings, JSON.parse(String(init.body)).agent_coordination);
     }
     return { ok: true, json: async () => ({ success: true, data: {
-      agent_coordination: { enabled: deployment && settings.enabled, team: deployment && settings.enabled && settings.team },
-      agent_coordination_deployment: { enabled: deployment, team: deployment },
+      agent_coordination: { enabled: deployment && settings.enabled, team: deployment && settings.enabled && settings.team, activity: deployment && settings.enabled && settings.activity },
+      agent_coordination_deployment: { enabled: deployment, team: deployment, activity: deployment },
     } }) };
   });
   global.fetch = fetchMock as unknown as typeof fetch;
@@ -34,7 +34,7 @@ it("keeps deployment-disabled controls read-only", async () => {
   render(<CoordinationFeatureSettings />);
   expect(await screen.findByRole("switch", { name: "Agent Coordination" })).toBeDisabled();
   expect(screen.getByRole("switch", { name: "Team handoffs" })).toBeDisabled();
-  expect(screen.getAllByText("Disabled by deployment configuration")).toHaveLength(2);
+  expect(screen.getAllByText("Disabled by deployment configuration")).toHaveLength(3);
 });
 it("shows a failed save without pretending that the feature was disabled", async () => {
   installFetch({ fail: true });

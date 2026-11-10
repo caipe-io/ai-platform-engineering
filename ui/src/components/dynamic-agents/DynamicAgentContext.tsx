@@ -394,7 +394,7 @@ export function DynamicAgentContext({
 
             <WorkspaceSection id={`${sectionId}-agents`} title="Agents" icon={<Users className="h-4 w-4" />} expanded={openSections.includes("agents")} onToggle={() => toggleSection("agents")}>
               <div className="flex min-w-0 items-center gap-2">
-                <AgentAvatar agent={primaryAgent} agentId={primaryId} rounded="rounded-lg" size="h-8 w-8" iconSize="h-4 w-4" />
+                <AgentAvatar agent={primaryAgent} agentId={primaryId} isStreaming={isStreaming && activeAgentIds.has(primaryId)} rounded="rounded-lg" size="h-8 w-8" iconSize="h-4 w-4" />
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-2">
                     <p className="min-w-0 truncate text-sm font-medium">{primaryAgent?.name || "Primary"}</p>
@@ -408,7 +408,7 @@ export function DynamicAgentContext({
                   const participant = coordination.availableAgents.find(candidate => candidate._id === member.agent_id);
                   const responding = isStreaming && activeAgentIds.has(member.agent_id);
                   return <div key={member.agent_id} className="flex min-w-0 items-center gap-2">
-                    <AgentAvatar agent={participant} agentId={member.agent_id} rounded="rounded-lg" size="h-8 w-8" iconSize="h-4 w-4" />
+                    <AgentAvatar agent={participant} agentId={member.agent_id} isStreaming={responding} rounded="rounded-lg" size="h-8 w-8" iconSize="h-4 w-4" />
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-center gap-2">
                         <p className="min-w-0 truncate text-sm font-medium" title={member.name}>{member.name}</p>
