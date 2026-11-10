@@ -80,6 +80,10 @@ podAnnotations: {}
 # For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
 podLabels: {}
 
+# Optional pod-local hostname mappings, for example when a replica-set member
+# advertises a private load balancer address that cannot loop back to this pod.
+hostAliases: []
+
 # Security contexts are set to satisfy the Kubernetes Pod Security Standards Baseline
 # profile (enforced) and meet all Restricted profile requirements except
 # readOnlyRootFilesystem, which is left false because MongoDB requires writable data
