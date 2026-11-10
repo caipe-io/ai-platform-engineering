@@ -105,7 +105,7 @@ async function safeCreateIndex(
   db: Db,
   collectionName: string,
   keys: Record<string, 1 | -1>,
-  options?: { unique?: boolean; expireAfterSeconds?: number },
+  options?: { unique?: boolean; expireAfterSeconds?: number; sparse?: boolean },
 ): Promise<boolean> {
   try {
     await db.collection(collectionName).createIndex(keys, options ?? {});
@@ -357,6 +357,17 @@ async function createIndexes(db: Db) {
     safeCreateIndex(db, 'publication_requests', { 'resource.kind': 1, 'requested_state.channel_defaults.channel_id': 1, status: 1 }),
     safeCreateIndex(db, 'publication_requests', { 'resource.kind': 1, 'requested_state.space_id': 1, status: 1 }),
 
+    // Notification delivery is a separate durable queue for each recipient/channel.
+    safeCreateIndex(db, 'notification_jobs', { expanded: 1, createdAt: 1 }),
+    safeCreateIndex(db, 'notification_jobs', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    safeCreateIndex(db, 'notification_deliveries', { status: 1, availableAt: 1 }),
+    safeCreateIndex(db, 'notification_deliveries', { status: 1, leaseUntil: 1 }),
+    safeCreateIndex(db, 'notification_deliveries', { 'recipient.subject': 1, createdAt: -1 }),
+    safeCreateIndex(db, 'notification_deliveries', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    safeCreateIndex(db, 'notification_subscriptions', { subject: 1 }),
+    safeCreateIndex(db, 'notification_publish_limits', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    safeCreateIndex(db, 'notification_test_limits', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+
     // Durable header notifications. Direct, team, organization-admin, and
     // global platform audiences share the feed while read state remains
     // personal to each viewer.
@@ -366,6 +377,9 @@ async function createIndexes(db: Db) {
     safeCreateIndex(db, 'in_app_notifications', { recipient_organization_admins: 1, created_at: -1 }),
     safeCreateIndex(db, 'in_app_notifications', { recipient_platform_users: 1, created_at: -1 }),
     safeCreateIndex(db, 'in_app_notifications', { archived_at: 1, created_at: -1 }),
+    // Event notifications carry expires_at and are deleted by MongoDB's TTL
+    // monitor. Entries without the field, such as platform incidents, never expire.
+    safeCreateIndex(db, 'in_app_notifications', { expires_at: 1 }, { expireAfterSeconds: 0 }),
     safeCreateIndex(db, 'platform_health_notification_states', { active_incident_id: 1 }),
     safeCreateIndex(db, 'platform_health_notification_states', { current_status: 1, updated_at: -1 }),
   ]);
