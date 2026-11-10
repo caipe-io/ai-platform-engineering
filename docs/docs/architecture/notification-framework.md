@@ -20,3 +20,10 @@ Small implementation units extend the existing inbox.
 - Validate versioned metadata envelopes, bounded text, stable retry keys, and same-host relative destinations.
 - Query strings and fragments are preserved. Conflicting `callbackUri` and legacy `href` values are rejected.
 - Channel identifiers are contracts only; external delivery remains off until an adapter is installed and explicitly enabled.
+
+## App registration and subscriptions
+
+- Installed apps register 1–30 stable event types using their bound service account and `host.notifications` capability. Registration does not subscribe users.
+- Users can subscribe, pause, select events/channels, and set quiet hours. App subscriptions and all external channels default off.
+- Channel availability and enablement go through an adapter registry; missing integrations are unavailable.
+- The host checks current app launch access. Resource-specific authorization remains the publisher responsibility pending resource-level CAS integration.
