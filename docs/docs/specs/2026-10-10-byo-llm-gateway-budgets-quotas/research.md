@@ -5,16 +5,17 @@
 - Gateways agree on **inference** (OpenAI-compatible) but differ in **administration** (auth, budgets, usage).
 - So CAIPE fixes the data-plane contracts ①–④ and wraps the control plane ⑤ in a capability-flagged adapter.
 
-| | LiteLLM | AgentGateway (`agentgateway.dev`) | Kong AI Gateway | AgentRouter (Envoy AI Gateway) |
+| | LiteLLM OSS | AgentGateway (`agentgateway.dev`) | Kong AI Gateway | AgentRouter (Envoy AI Gateway) |
 |---|---|---|---|---|
 | ① OpenAI wire | native | OpenAI-compatible LLM backends | `ai-proxy` (OpenAI format) | native; also `/v1/embeddings`, `/anthropic/v1/messages` |
-| ② JWT validation | Enterprise license only; OSS uses per-agent virtual keys (see S1) | listener `jwtAuth` (already used for MCP) | `openid-connect` → consumer groups | Envoy Gateway `SecurityPolicy` JWT (JWKS); claims copied to headers |
+| ② JWT validation | Not used; per-agent virtual keys (see S1) | listener `jwtAuth` (already used for MCP) | `openid-connect` → consumer groups | Envoy Gateway `SecurityPolicy` JWT (JWKS); claims copied to headers |
 | Budgets / quotas | `max_budget`, tpm/rpm per key, user and team | token and $ budget limits keyed on claims | `ai-rate-limiting-advanced` per consumer or group | token limits (not $) keyed on claim headers × model, CEL cost; `QuotaPolicy` per backend |
 | ⑤ Admin API | REST `/key`, `/team`, `/spend` | config / K8s policy | Admin API / decK | none; Kubernetes CRDs only |
 | Usage | `/spend`, Prometheus | OTel | Prometheus / OTel | OTel GenAI metrics, Prometheus |
 | ext_authz callout | custom auth hook | native `extAuthz` | plugin | native (Envoy ext_authz) |
 
-- Licence tiers for the JWT and budget features in LiteLLM and Kong must be confirmed per deployment. Where they're missing, use key auth (Decision 6).
+- Delivery order: LiteLLM OSS with per-agent keys first, then AgentGateway and AgentRouter with JWT validation. These three gateways are required; Kong AI Gateway is optional.
+- Confirm JWT and budget plugin/licence requirements when evaluating optional Kong support.
 - **AgentRouter** is Envoy AI Gateway, renamed and donated to the Agentic AI Foundation. It is not the `agentgateway` CAIPE already runs for MCP. It is pre-1.0 (v1alpha CRDs).
 - AgentRouter caveats:
   - Budgets are tokens, with no dollar ledger.
@@ -181,9 +182,9 @@ sequenceDiagram
   Note over DA,KC: autonomous: same exchange, subject = owner token the run carries (#2890 decides how the scheduler gets it)
 ```
 
-**Spike S1 (gates phase 1)** — #2938, run 2026-10-14. **Outcome: K2.** C1 stays the fallback.
+**Spike S1 (informs the phase 1 JWT milestone)** — #2938, run 2026-10-14. **Outcome: K2.** C1 stays the fallback.
 - [x] Keycloak 26.3 exchange emits the mappers of the requested optional scope.
-- [ ] Autonomous runs: exchange an owner token that was itself minted by `requested_subject` impersonation (chained exchange). Not run in S1; moved to T102 as a phase 1 gate.
+- [ ] Autonomous runs: exchange an owner token that was itself minted by `requested_subject` impersonation (chained exchange). Not run in S1; moved to T118 as a JWT rollout gate.
 - [x] Token issuance latency and admin performance with 1k, 5k and 10k client scopes.
 - [ ] If any check fails → [C1](#identity-option-legend) (dynamic agents sign; key optionally in Vault or a cloud KMS).
 
@@ -235,7 +236,7 @@ Scale (60 exchanges, 30 password logins per row; ms p50 / p95):
 | Exchanger must be in the subject token's `aud` | Dynamic agents has no Keycloak client today and user tokens carry `aud=caipe-platform`. Phase 1 adds an exchange-only `caipe-dynamic-agents` client and its audience to user tokens. `caipe-platform` is not reused: it is the BFF's Keycloak admin client (`manage-users`). #3010 may reuse the new client |
 | Realm cache limit | Keycloak values size `cache-embedded-realms-max-count` to the agent count with headroom (50,000 held 10,000 agents) |
 | Gateway clock leeway | Gateway acceptance is bounded by TTL + documented expiry leeway, capped at 60 s (at most 6 min total). The runtime stops using tokens at `exp`. Conformance tests the gateway expiry boundary; S1 observed 60 s on AgentGateway |
-| LiteLLM | JWT auth needs a LiteLLM Enterprise license, so LiteLLM OSS cannot validate the gateway JWT and falls back to per-agent virtual keys (Decision 6). LiteLLM Enterprise can use JWT mode |
+| LiteLLM OSS | Uses per-agent virtual keys (Decision 6); this is the first delivery and validation milestone, independent of JWT exchange |
 | #2901 per-agent clients | Not reused: they are opt-in, operator-enrolled and use client credentials, so their tokens name the agent, not the user. K2 keeps its own scope per agent |
 
 ## Decision 8 — Data and state

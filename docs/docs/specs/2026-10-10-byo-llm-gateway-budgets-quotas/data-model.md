@@ -30,7 +30,7 @@ flowchart LR
 | `LLM_GATEWAY_BASE_URL` | — | Gateway endpoint. Separate from `OPENAI_COMPATIBLE_BASE_URL`, which stays the direct-provider setting (FR-020). |
 | `LLM_GATEWAY_AUTH` | `jwt` | `jwt` (gateway token) · `key` (per-agent gateway key). A gateway property, independent of the adapter. |
 | `LLM_GATEWAY_AUDIENCE` | `llm-gateway` | `aud` of gateway tokens. The gateway must expect the same value. |
-| `LLM_GATEWAY_ADAPTER` | `none` | Gateway management integration: `litellm` · `agentgateway` · `kong` · `agentrouter` · `none`. `none` disables management integration, not gateway routing (see [adapter contract](./contracts/gateway-adapter.md)). |
+| `LLM_GATEWAY_ADAPTER` | `none` | Gateway management integration: `litellm` · `agentgateway` · `agentrouter` · `kong` · `none` (management disabled; gateway routing unaffected). See [adapter contract](./contracts/gateway-adapter.md). |
 | `LLM_GATEWAY_DEFAULT_TEAM` | `platform` | Team charged for agents without `owner_team_slug`. Provisioned at startup. |
 | Adapter admin credential | — | Through the existing secret strategies. Only needed by the UI backend for management integration; not required for `none`. |
 

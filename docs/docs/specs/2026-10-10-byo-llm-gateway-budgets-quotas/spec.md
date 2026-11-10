@@ -12,7 +12,8 @@
 
 - **Problem**: agents call model providers directly. CAIPE cannot route requests, enforce quotas or budgets, or attribute cost to a user, agent or team.
 - **Goal**: one gateway-neutral contract. Agents talk to *any* OpenAI-compatible gateway, and the gateway routes, enforces and meters.
-- **Non-goal**: CAIPE does not ship or operate a gateway. Operators bring their own: LiteLLM, AgentGateway, Kong AI Gateway, AgentRouter or another.
+- **Non-goal**: CAIPE does not ship or operate a gateway. Operators bring their own: LiteLLM OSS, AgentGateway, AgentRouter, optional Kong AI Gateway or another.
+- **Delivery order**: LiteLLM OSS per-agent key validation first, followed by JWT validation on AgentGateway and AgentRouter. All three are required; Kong integration is optional.
 - **Builds on**: the `openai-compatible` provider in `ai_platform_engineering/llm_wrapper/` (#2820).
 
 ### Runtime path
@@ -118,7 +119,7 @@ flowchart LR
   a["Configure gateway"] --> b["Populate model catalogue"] --> c["Set limits"] --> d["Watch usage"] -.-> e["Swap gateway"]
 ```
 
-1. Sets the gateway endpoint, auth mode and adapter type (`litellm` · `agentgateway` · `kong` · `agentrouter` · `none`). The credential comes through the existing secret strategies.
+1. Sets the gateway endpoint, auth mode and adapter type (`litellm` · `agentgateway` · `agentrouter` · `kong` · `none`). The credential comes through the existing secret strategies.
 2. Syncs gateway models into `llm_models` when the adapter declares `models.list`; otherwise maintains model entries through application configuration or the LLM Models UI. Model IDs must match gateway aliases; retaining existing IDs avoids agent edits.
 3. Sets default and per-team, per-agent and per-user limits in the Admin UI. Controls the adapter can't support are hidden.
 4. Views usage and spend, read live from the gateway where the adapter declares `usage.read`.
@@ -246,7 +247,7 @@ flowchart LR
 - **SC-004**: With a gateway configured and reachable and `LLM_GATEWAY_ENABLED=false`, automated tests MUST verify successful direct-provider calls and zero inference requests to the gateway for every migrated path.
 - **SC-005**: Forged identities are rejected with no leeway exception. For JWT auth, the gateway rejects tokens at or after `exp + L`, where its documented expiry leeway `L` is between 0 and 60 seconds. Conformance tests record `L` and verify the expiry boundary; runtime tests verify no token is sent at or after `exp`.
 - **SC-006**: The added latency (cached token) is measured and documented.
-- **SC-007**: At least two different gateways pass [the conformance contract](./contracts/routing-backend-contract.md).
+- **SC-007**: LiteLLM OSS (key mode), AgentGateway (JWT) and AgentRouter (JWT) each pass all applicable checks in [the conformance contract](./contracts/routing-backend-contract.md).
 
 ## Assumptions
 
@@ -261,7 +262,7 @@ flowchart LR
 
 ## Open Decisions
 
-- ~~**OD-1 Signer**~~ Closed 2026-10-14 by spike S1 (#2938): **Keycloak per-agent scope ([K2](./research.md#identity-option-legend))**. [C1](./research.md#identity-option-legend) stays the fallback; claims and budget keys are identical either way. Autonomous runs reuse the chat exchange (2026-11-07); a chained-exchange test gates phase 1 (T102). See [S1 results](./research.md#s1-results).
+- ~~**OD-1 Signer**~~ Closed 2026-10-14 by spike S1 (#2938): **Keycloak per-agent scope ([K2](./research.md#identity-option-legend))**. [C1](./research.md#identity-option-legend) stays the fallback; claims and budget keys are identical either way. Autonomous runs reuse the chat exchange (2026-11-07); a chained-exchange test gates the phase 1 JWT milestone (T118). See [S1 results](./research.md#s1-results).
 
 ## Out of Scope
 

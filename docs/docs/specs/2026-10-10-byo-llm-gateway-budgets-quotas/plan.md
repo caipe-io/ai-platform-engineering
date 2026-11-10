@@ -11,9 +11,17 @@ This PR delivers the **spec/ADR only**. Implementation lands as separate PRs und
 ## Summary
 
 - Agents use any OpenAI-compatible gateway through the `openai-compatible` provider (`llm_wrapper`).
-- Every call carries a short-lived JWT naming the user, agent and owning team. The gateway enforces limits and meters usage.
+- Every call carries a per-agent key or a short-lived JWT, according to the selected auth mode. The gateway enforces limits and meters usage.
 - The UI backend manages models, limits and usage through a capability-flagged adapter.
 - No bundled gateway. One global switch, `LLM_GATEWAY_ENABLED`, is off by default.
+
+## Gateway milestones
+
+1. **LiteLLM OSS:** implement and validate per-agent key routing first. Operator-managed principals, keys and limits are sufficient; the `none` adapter foundation ships in phase 1; named management adapters follow in phase 3.
+2. **AgentGateway and AgentRouter:** implement JWT acquisition and validate both gateways after the key-mode milestone. Both are required.
+3. **Kong AI Gateway:** optional integration; it does not gate completion.
+
+JWT remains the configuration default; LiteLLM OSS deployments explicitly select `LLM_GATEWAY_AUTH=key`. Key mode verifies agent/team bindings, with unverified user attribution and best-effort per-user limits.
 
 ## Technical context
 
@@ -40,14 +48,14 @@ flowchart LR
     gw["LLM gateway"]
   end
   prov["Model providers"]
-  da -- "① inference + JWT" --> gw
-  harness -- "① inference + JWT" --> gw
+  da -- "① inference + key / JWT" --> gw
+  harness -- "① inference + key / JWT" --> gw
   da -- "Token exchange (JWT mode)" --> kc
   harness -- "Token exchange (JWT mode)" --> kc
   rag -- "① embeddings / inference (phase 4)" --> gw
   rag -. "JWT acquisition (phase 4; identity flow TBD)" .-> kc
   bff -- "⑤ admin API + management credential" --> gw
-  gw -- "JWKS" --> kc
+  gw -- "JWKS (JWT mode)" --> kc
   gw --> prov
 ```
 
@@ -89,7 +97,7 @@ global:
 - Implement a shared Helm helper and invoke it from the consuming chart templates: `dynamic-agents` and `caipe-ui` in phase 1, then RAG charts in phase 4. Render environment values as strings.
 - `global.llmGateway.enabled` is authoritative across migrated workloads. Omitted component-level `LLM_GATEWAY_ENABLED` values inherit it; explicit values must match. Reject conflicts in either direction during Helm rendering, before deployment. Render the switch once per workload, without duplicate environment entries, and use the same resolved value for routing and credential injection. Other explicit subchart `config`/`env` keys retain precedence over global values.
 - Imported ConfigMaps or Secrets must not override the resolved switch through `envFrom`. Always render the authoritative switch as one explicit container `env` entry. If `global.llmGateway` or its `enabled` key is omitted, resolve it to `false` and render `LLM_GATEWAY_ENABLED="false"`; provider credential injection must use that same default. This preserves direct-mode behavior, rather than byte-for-byte unchanged manifests. Do not rely on inspecting externally managed Secret contents during Helm rendering.
-- Phase 1 also configures the separate Harness Engine process hosting Deep Agents, including its existing image build and deployment manifests. Derive its switch from the same deployment-wide setting and reject conflicting local values before rollout. Propagate the same routing settings and exchange credentials, enforce provider-credential isolation, and roll that workload on mode changes. Reusing the Dynamic Agents library does not inherit the Dynamic Agents service's environment. Do not assume a dedicated Harness Engine Helm subchart exists; cover its supported deployment path explicitly.
+- Phase 1 also configures the separate Harness Engine process hosting Deep Agents, including its existing image build and deployment manifests. Derive its switch from the same deployment-wide setting and reject conflicting local values before rollout. Propagate the same routing settings and mode-specific credentials, enforce provider-credential isolation, and roll that workload on mode changes. Reusing the Dynamic Agents library does not inherit the Dynamic Agents service's environment. Do not assume a dedicated Harness Engine Helm subchart exists; cover its supported deployment path explicitly.
 - Render `LLM_GATEWAY_ADAPTER` and the admin credential secret reference only for the BFF. Inference services receive routing and identity settings, not management credentials.
 - `helm template` tests cover default-disabled behavior with an explicit false switch, including omitted global configuration and an imported Secret containing a true switch, enabled settings per chart, inherited and matching explicit switches, rejection of conflicting switches in both directions, no duplicate switch entries, other subchart overrides, and BFF-only management settings and secret references.
 - `.env.example` gets the same keys, commented out. The minimal first-install profile is unchanged.
@@ -100,8 +108,11 @@ global:
 - Change mode through Helm/GitOps: reconcile the routing setting and credential references in the same pod-template update. The pod-template change triggers replacement; new pods load the selected secrets at startup. Do not treat an in-place ConfigMap edit as a complete mode change.
 - Enabling routing removes provider credential references. Disabling routing restores them from the configured secret source. Ensure required Secrets are synchronized before rollout; missing credentials must prevent successful direct-mode activation.
 - Wait for replacement pods to become ready and old pods to terminate before reporting success. Rolling updates can temporarily contain both modes; switching is not instantaneous and does not revoke credentials already loaded by old pods.
-- Changes to Secrets consumed by a workload require a rolling restart so replacement pods load the new credentials. Use pod-template checksums for chart-managed configuration and Secrets. For externally managed Secrets, the operator or deployment pipeline must wait for synchronization, trigger a rolling restart and verify rollout completion; changing a Secret alone does not restart pods.
 - Compose must propagate one shared `LLM_GATEWAY_ENABLED` value to each migrated service, reject conflicting service-level values before recreation, and use that same value to select mode-specific credential injection. Recreate affected containers on mode changes. A shared `.env` containing provider keys must not be passed wholesale to gateway-enabled inference containers. Preserve the default-disabled first-install path.
+
+### Secret rotation
+
+When rotating a Secret consumed by an inference workload, wait for the Secret update to complete, then perform and verify a rolling restart so new pods load the new credentials. Chart-managed Secret checksums trigger the rollout during deployment; externally managed Secrets require the operator or deployment pipeline to trigger it explicitly. Changing a Secret alone does not restart pods.
 
 ## Phases
 
@@ -120,14 +131,14 @@ flowchart LR
 | Phase | Delivers | Main code | Gate |
 |---|---|---|---|
 | 0 | Spec/ADR (this PR) + spike S1 | `docs/`, Keycloak spike | approval |
-| 1 | Identity setup and lifecycle for existing/new agents, default team; routing and authorization for agent paths 1–3 | `llm_wrapper/src/llm_wrapper/build.py`, `dynamic_agents/services/{llm_clients,llm}.py`, `dynamic_agents/auth/authz.py`, `ui/src/lib/rbac/keycloak-admin.ts`, agent lifecycle routes | S1 selected [K2](./research.md#identity-option-legend); T102 must validate chained exchange of a scheduler-minted owner token for autonomous runs; identity readiness before routing. Not gated on #1753 (see [tasks](./tasks.md#phase-1-identity-preparation-and-agent-data-plane)) |
-| 2 | Error propagation ④ + attribution ③ + metrics, logs, traces | `llm_wrapper`, `dynamic_agents` | phase 1 |
-| 3 | Control plane: adapter, automated gateway principal provisioning, `llm_models` sync, admin limits/usage UI | `ui/src/app/api/`, `ui/src/lib/`, `ui/src/lib/rbac/keycloak-admin.ts` | phase 1 |
+| 1 | Identity setup and lifecycle for existing/new agents, default team; routing and authorization for agent paths 1–3 | `llm_wrapper/src/llm_wrapper/build.py`, `dynamic_agents/services/{llm_clients,llm}.py`, `dynamic_agents/auth/authz.py`, `ui/src/lib/rbac/keycloak-admin.ts`, agent lifecycle routes | S1 selected [K2](./research.md#identity-option-legend); key-mode T101–T117 first; T118 must validate chained exchange of a scheduler-minted owner token before JWT rollout; identity readiness before routing. Not gated on #1753 (see [tasks](./tasks.md#phase-1-identity-preparation-and-agent-data-plane)) |
+| 2 | Error propagation ④ + attribution ③ + metrics, logs, traces | `llm_wrapper`, `dynamic_agents` | phase 1; key-mode coverage may start after T117, JWT coverage follows T123–T124 |
+| 3 | Control plane: named adapters, automated gateway principal provisioning, `llm_models` sync, admin limits/usage UI | `ui/src/app/api/`, `ui/src/lib/`, `ui/src/lib/rbac/keycloak-admin.ts` | phase 1 |
 | 4 | RAG paths 4–5 (same embedding model id only), with explicit runtime identity and credential preparation | `knowledge_bases/rag/` | phases 1–2; T401/T402 identity design and provisioning before gateway activation |
 | 5 | End-user UX: remaining budget, quota requests | `ui/`; bots keep existing failure reporting (T503) | phase 3 |
 | opt | Gateways with ext_authz ask the BFF CAS adapter for the decision and verified identity headers | `ui/src/lib/authz/` (#2909) | phase 1 |
 
-**Implementation completion gate (SC-007):** the [required conformance task T601](./tasks.md#required-validation) must pass all applicable checks for every in-scope path against at least two different gateways, with versions, authentication modes and results recorded. This gate applies to the implemented feature; it does not block merging this spec/ADR.
+**Implementation completion gate (SC-007):** the [required conformance task T601](./tasks.md#final-acceptance) must pass all applicable checks for every in-scope path against LiteLLM OSS (key mode), AgentGateway (JWT) and AgentRouter (JWT), with versions, authentication modes and results recorded. This gate applies to the implemented feature; it does not block merging this spec/ADR.
 
 ## Constitution check
 
@@ -144,7 +155,7 @@ flowchart LR
 | Risk | Mitigation |
 |---|---|
 | Keycloak can't emit per-agent scope claims at scale | Spike S1; fall back to [C1](./research.md#identity-option-legend) (dynamic agents sign) |
-| Gateway licence tiers lack JWT or budgets | `LLM_GATEWAY_AUTH=key`; adapter `none` |
+| Gateway capabilities differ | LiteLLM OSS uses key mode; adapters expose supported features only. Optional Kong requires plugin/licence validation; adapter `none` does not add missing gateway enforcement. |
 | Shared agents drain the owning team's budget | Per-user limit on top (T1) |
 | Embedding model drift invalidates indexes | Phase 4 only moves if the model id is identical |
 | Gateway outage stops all LLM traffic | Fail closed with a clear error; the switch restores direct calls |

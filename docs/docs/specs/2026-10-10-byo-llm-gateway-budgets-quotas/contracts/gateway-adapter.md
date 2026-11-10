@@ -13,15 +13,17 @@ The UI backend manages the gateway only through this interface. The UI renders o
 | Gateway budget configuration | Available through supported limit capabilities | Operator-managed |
 | Gateway usage display in CAIPE | Available with `usage.read` | Unavailable through the adapter |
 
-```mermaid
-flowchart LR
-  ui["Admin UI"] --> bff["UI backend routes"] --> ad["LlmGatewayAdapter"]
-  ad --> l["litellm<br/>REST /key /team /spend"]
-  ad --> ag["agentgateway<br/>policy config"]
-  ad --> k["kong<br/>Admin API / decK"]
-  ad --> ar["agentrouter<br/>Kubernetes CRDs, Prometheus usage"]
-  ad --> n["none<br/>no management integration"]
-```
+Admin UI management requests go through the BFF to the selected adapter. This path is separate from inference traffic.
+
+| Adapter | Management mechanism | Plan |
+|---|---|---|
+| `litellm` | LiteLLM OSS REST APIs: `/key`, `/team`, `/spend` | Required |
+| `agentgateway` | Policy configuration | Required |
+| `agentrouter` | Kubernetes CRDs for limits; Prometheus for usage | Required |
+| `kong` | Admin API / decK | Optional |
+| `none` | Operator-managed outside CAIPE | Required; no management capabilities |
+
+Each named adapter exposes only its implemented capabilities; inclusion here does not imply support for every operation below.
 
 | Operation | Input | Output | Used by |
 |---|---|---|---|
