@@ -7,8 +7,8 @@ import asyncio
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, Sequence
-from urllib.parse import urljoin, urlsplit
+from typing import Any, AsyncIterator, Literal, Sequence
+from urllib.parse import parse_qsl, urljoin, urlsplit
 
 import httpx
 
@@ -20,6 +20,8 @@ MAX_CATALOG_PAGES = 20
 MAX_CONVERSATIONS = 500
 MAX_ACTIVITY_PAGES = 40
 ACTIVITY_PAGE_SIZE = 100
+ACTIVITY_WORKERS = 4
+CONVERSATION_QUEUE_SIZE = 8
 _SERIES_ID = re.compile(r"[0-9a-fA-F]{32}")
 _ACTUAL_ID = re.compile(r"(?P<series>[0-9a-fA-F]{32})_I_\d+")
 _UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
@@ -32,6 +34,10 @@ _SDK_QUERY = {
     "activitiesLimit": 0,
     "participantsLimit": 0,
 }
+_CATALOG_QUERY_KEYS = frozenset({
+    *_SDK_QUERY, "paginate", "membershipsType", "conversationsLimit", "maxDate",
+    "cursor", "ackFilter", "participantAckFilter", "globalId", "includeParticipants",
+})
 
 
 URLKind = Literal["site", "meeting_info", "base", "catalog", "conversation", "activities", "u2c"]
@@ -40,6 +46,8 @@ URLKind = Literal["site", "meeting_info", "base", "catalog", "conversation", "ac
 def _validated_url(url: str, kind: URLKind) -> str:
     """Validate the destination, including its resource path, before adding auth."""
     try:
+        if len(url) > 4096:
+            raise ValueError("Webex discovery URL is too long")
         parts = urlsplit(url)
         port = parts.port
     except ValueError as error:
@@ -69,6 +77,10 @@ def _validated_url(url: str, kind: URLKind) -> str:
     }[kind]
     if not valid:
         raise ValueError("Invalid Webex discovery resource path")
+    if kind == "catalog":
+        keys = [key for key, _ in parse_qsl(parts.query, keep_blank_values=True)]
+        if len(keys) != len(set(keys)) or any(key not in _CATALOG_QUERY_KEYS for key in keys):
+            raise ValueError("Invalid Webex catalog continuation query")
     return url.rstrip("/") if not parts.query else url
 
 
@@ -110,6 +122,7 @@ class _Discovery:
     completed: set[str] = field(default_factory=set)
     excluded: set[str] = field(default_factory=set)
     warnings: list[str] = field(default_factory=list)
+    next_catalog_urls: list[str] = field(default_factory=list)
     semaphore: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(4))
     requests: int = 0
     stopped: bool = False
@@ -266,25 +279,31 @@ def _conversation_bases(payload: dict[str, Any]) -> list[str]:
         return []
 
 
-async def _catalog(discovery: _Discovery) -> list[str]:
-    result = await discovery.request(U2C_CATALOG_URL, "u2c", "Service catalog", params={"format": "hostmap"})
-    if result is None:
-        return []
-    bases = _conversation_bases(result[0])
-    if not bases:
-        discovery.warn("Service catalog: no conversation service was returned; results are incomplete.")
-        return []
-    pending = [f"{base}/conversations" for base in bases]
+async def _catalog(
+    discovery: _Discovery, catalog_urls: Sequence[str] | None, page_limit: int,
+) -> AsyncIterator[str]:
+    if catalog_urls is None:
+        result = await discovery.request(U2C_CATALOG_URL, "u2c", "Service catalog", params={"format": "hostmap"})
+        if result is None:
+            return
+        bases = _conversation_bases(result[0])
+        if not bases:
+            discovery.warn("Service catalog: no conversation service was returned; results are incomplete.")
+            return
+        pending = [f"{base}/conversations" for base in bases]
+    else:
+        pending = list(dict.fromkeys(catalog_urls))
     visited: set[str] = set()
     conversations: dict[str, datetime | None] = {}
     while pending and not discovery.stopped:
+        if len(visited) >= page_limit:
+            if page_limit == MAX_CATALOG_PAGES:
+                discovery.warn("Conversation page limit reached; results are incomplete.")
+            break
         url = pending.pop(0)
         if url in visited:
             discovery.warn("Conversation catalog: pagination repeated; results are incomplete.")
             continue
-        if len(visited) >= MAX_CATALOG_PAGES:
-            discovery.warn("Conversation page limit reached; results are incomplete.")
-            break
         visited.add(url)
         result = await discovery.request(
             url, "catalog", "Conversation catalog",
@@ -297,8 +316,14 @@ async def _catalog(discovery: _Discovery) -> list[str]:
         if not isinstance(rows, list):
             discovery.warn("Conversation catalog: missing conversation list; results are incomplete.")
             continue
+        earliest = datetime.min.replace(tzinfo=timezone.utc)
+        rows = sorted(
+            (row for row in rows if isinstance(row, dict)),
+            key=lambda row: _last_activity(row.get("lastReadableActivityDate")) or earliest,
+            reverse=True,
+        )
         for row in rows:
-            if not isinstance(row, dict) or "ONE_ON_ONE" in (row.get("tags") or []):
+            if "ONE_ON_ONE" in (row.get("tags") or []):
                 continue
             last_activity = _last_activity(row.get("lastReadableActivityDate"))
             if last_activity is not None and last_activity < discovery.lower:
@@ -311,9 +336,10 @@ async def _catalog(discovery: _Discovery) -> list[str]:
             except ValueError:
                 discovery.warn("Conversation catalog: rejected an untrusted conversation URL.")
                 continue
-            previous = conversations.get(conversation_url)
-            if conversation_url not in conversations or (last_activity is not None and (previous is None or last_activity > previous)):
-                conversations[conversation_url] = last_activity
+            if conversation_url in conversations:
+                continue
+            conversations[conversation_url] = last_activity
+            yield conversation_url
             if len(conversations) >= MAX_CONVERSATIONS:
                 discovery.warn("Conversation limit reached; results are incomplete.")
                 break
@@ -321,7 +347,15 @@ async def _catalog(discovery: _Discovery) -> list[str]:
             break
         next_url = response.links.get("next", {}).get("url")
         if isinstance(next_url, str):
-            pending.append(urljoin(url, next_url))
+            try:
+                next_url = _validated_url(urljoin(url, next_url), "catalog")
+            except ValueError:
+                discovery.warn("Conversation catalog: rejected an untrusted pagination URL.")
+            else:
+                if next_url in visited:
+                    discovery.warn("Conversation catalog: pagination repeated; results are incomplete.")
+                elif next_url not in pending:
+                    pending.append(next_url)
         for base in payload.get("additionalUrls", []) if isinstance(payload.get("additionalUrls"), list) else []:
             if not isinstance(base, str):
                 continue
@@ -332,14 +366,16 @@ async def _catalog(discovery: _Discovery) -> list[str]:
                 continue
             if additional not in visited and additional not in pending:
                 pending.append(additional)
-    earliest = datetime.min.replace(tzinfo=timezone.utc)
-    return sorted(conversations, key=lambda url: conversations[url] or earliest, reverse=True)
+    if len(pending) > 20:
+        discovery.warn("Conversation federation limit reached; results are incomplete.")
+    discovery.next_catalog_urls = pending[:20]
 
 
 async def list_space_meeting_occurrences(
     client: httpx.AsyncClient, bearer: str, from_dt: datetime, to_dt: datetime,
     site_url: str, meeting_series_id: str | None = None, max_results: int = 200,
     *, conversation_urls: Sequence[str] | None = None,
+    catalog_urls: Sequence[str] | None = None, catalog_page_limit: int = MAX_CATALOG_PAGES,
 ) -> dict[str, Any]:
     """Enumerate actual occurrences without returning chat or participant content.
 
@@ -354,36 +390,70 @@ async def list_space_meeting_occurrences(
         raise ValueError("A valid meeting series ID is required")
     if not 1 <= max_results <= 1000:
         raise ValueError("max_results must be between 1 and 1000")
+    if not 1 <= catalog_page_limit <= 20:
+        raise ValueError("catalog_page_limit must be between 1 and 20")
+    if catalog_urls is not None:
+        if len(catalog_urls) > 20 or meeting_series_id is not None or conversation_urls is not None:
+            raise ValueError("Catalog continuations require at most 20 URLs and an unscoped catalog lookup")
+        catalog_urls = [_validated_url(url, "catalog") for url in catalog_urls]
     site_url = _validated_url(site_url if "://" in site_url else f"https://{site_url}", "site")
     discovery = _Discovery(
         client, bearer, from_dt.astimezone(timezone.utc), to_dt.astimezone(timezone.utc),
         site_url, meeting_series_id, max_results,
     )
-    try:
-        async with asyncio.timeout(DISCOVERY_TIMEOUT):
-            urls = list(conversation_urls) if conversation_urls is not None else None
-            if urls is None and meeting_series_id:
-                # The meetingInfo route is a metadata lookup, not meeting registration.
-                result = await discovery.request(
-                    f"{site_url}/wbxappapi/v1/meetingInfo", "meeting_info", "Meeting space", body={
-                        "supportHostKey": False, "supportCountryList": False,
-                        "meetingUUID": meeting_series_id, "disableWebRedirect": True,
-                    },
-                )
-                urls = []
-                if result is not None:
-                    conversation_url = result[0].get("conversationUrl")
-                    if isinstance(conversation_url, str):
-                        urls.append(conversation_url)
-                    else:
-                        discovery.warn("Meeting space: no conversation URL was returned; results are incomplete.")
-            elif urls is None:
-                urls = await _catalog(discovery)
-            for offset in range(0, len(urls), 4):
-                await asyncio.gather(*(discovery.activities(url) for url in urls[offset:offset + 4]))
+    queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=CONVERSATION_QUEUE_SIZE)
+
+    async def produce() -> None:
+        urls = list(conversation_urls) if conversation_urls is not None else None
+        if urls is None and meeting_series_id:
+            # The meetingInfo route is a metadata lookup, not meeting registration.
+            result = await discovery.request(
+                f"{site_url}/wbxappapi/v1/meetingInfo", "meeting_info", "Meeting space", body={
+                    "supportHostKey": False, "supportCountryList": False,
+                    "meetingUUID": meeting_series_id, "disableWebRedirect": True,
+                },
+            )
+            urls = []
+            if result is not None:
+                conversation_url = result[0].get("conversationUrl")
+                if isinstance(conversation_url, str):
+                    urls.append(conversation_url)
+                else:
+                    discovery.warn("Meeting space: no conversation URL was returned; results are incomplete.")
+        if urls is None:
+            async for conversation_url in _catalog(discovery, catalog_urls, min(catalog_page_limit, MAX_CATALOG_PAGES)):
+                await queue.put(conversation_url)
+        else:
+            for conversation_url in dict.fromkeys(urls):
                 if discovery.stopped:
                     break
+                await queue.put(conversation_url)
+        # Only publish EOF after normal producer completion. Cancellation must
+        # not wait on a full queue whose consumers have also been cancelled.
+        for _ in range(ACTIVITY_WORKERS):
+            await queue.put(None)
+
+    async def consume() -> None:
+        while True:
+            conversation_url = await queue.get()
+            try:
+                if conversation_url is None:
+                    return
+                if not discovery.stopped:
+                    await discovery.activities(conversation_url)
+            finally:
+                queue.task_done()
+
+    try:
+        async with asyncio.timeout(DISCOVERY_TIMEOUT):
+            async with asyncio.TaskGroup() as tasks:
+                for _ in range(ACTIVITY_WORKERS):
+                    tasks.create_task(consume())
+                tasks.create_task(produce())
     except TimeoutError:
         discovery.warn("Discovery time limit reached; results are incomplete.")
     items = sorted(discovery.items.values(), key=lambda item: (item["start"], item["id"]), reverse=True)
-    return {"items": items, "complete": not discovery.warnings, "warnings": discovery.warnings}
+    return {
+        "items": items, "complete": not discovery.warnings, "warnings": discovery.warnings,
+        "next_catalog_urls": discovery.next_catalog_urls, "has_more": bool(discovery.next_catalog_urls),
+    }

@@ -123,6 +123,8 @@ class SpaceMeetingOccurrences(BaseModel):
     site_url: str = Field(default=USERHUB_DEFAULT_SITE, description="The caller's Webex site base URL.")
     meeting_series_id: str | None = Field(default=None, description="Optional saved series ID for a targeted space lookup.")
     max_results: int = Field(default=200, ge=1, le=1000, description="Maximum distinct actual meeting occurrences.")
+    catalog_urls: list[str] | None = Field(default=None, max_length=20, description="Validated catalog continuation URLs from the preceding page.")
+    catalog_page_limit: int = Field(default=20, ge=1, le=20, description="Catalog pages to scan before returning a continuation.")
 
 
 class UserHubCalendar(BaseModel):
@@ -1130,6 +1132,7 @@ def register_tools(server) -> None:
             result = await list_space_meeting_occurrences(
                 client, bearer, start, end, site,
                 meeting_series_id=args.meeting_series_id, max_results=args.max_results,
+                catalog_urls=args.catalog_urls, catalog_page_limit=args.catalog_page_limit,
             )
             # The activity feed contains concrete IDs but encrypted page titles.
             # Existing metadata-only privileges supply the exact recording title,
@@ -1150,6 +1153,7 @@ def register_tools(server) -> None:
                     if isinstance(name, str) and name.strip():
                         item["title"] = USERHUB_RECORDING_SUFFIX.sub("", name).strip()
                     item["hasRecording"] = True
+                    item["transcriptVerified"] = True
 
             try:
                 async with asyncio.timeout(30):

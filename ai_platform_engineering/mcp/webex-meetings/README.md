@@ -166,3 +166,9 @@ the selected series to its space, then filters concrete occurrence IDs.
 Only meeting metadata is returned, without chat content, participants or media
 credentials. Existing transcript checks still establish content availability.
 Partial discovery is reported explicitly when request, page or time limits apply.
+
+For interactive callers, `catalog_page_limit=1` reads one catalog page while
+activity workers run concurrently. `next_catalog_urls` and `has_more` let the
+caller resume with `catalog_urls` without repeating completed pages. An explicit
+page boundary is distinct from a failed or truncated request. Verified
+transcript metadata can be reused without repeating the privilege lookup.
