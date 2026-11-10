@@ -105,7 +105,7 @@ async function safeCreateIndex(
   db: Db,
   collectionName: string,
   keys: Record<string, 1 | -1>,
-  options?: { unique?: boolean; expireAfterSeconds?: number },
+  options?: { unique?: boolean; sparse?: boolean; expireAfterSeconds?: number },
 ): Promise<boolean> {
   try {
     await db.collection(collectionName).createIndex(keys, options ?? {});
