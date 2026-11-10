@@ -27,10 +27,7 @@ def main():
     logging.info("Starting MCP server in %s mode on %s:%s", mcp_mode, mcp_host, mcp_port)
     logging.info("MCP Server name: %s", server_name)
 
-    if mcp_mode.lower() in ["sse", "http"]:
-        mcp = FastMCP(f"{server_name} MCP Server", host=mcp_host, port=mcp_port)
-    else:
-        mcp = FastMCP(f"{server_name} MCP Server")
+    mcp = FastMCP(f"{server_name} MCP Server")
 
     mcp.tool()(cloudability.get_version)
     mcp.tool()(cloudability.get_cloudability_api_help)
@@ -39,7 +36,10 @@ def main():
     mcp.tool()(cloudability.get_views)
     mcp.tool()(cloudability.get_portfolio)
 
-    mcp.run(transport=mcp_mode.lower())
+    if mcp_mode.lower() in ["sse", "http"]:
+        mcp.run(transport=mcp_mode.lower(), host=mcp_host, port=mcp_port)
+    else:
+        mcp.run(transport=mcp_mode.lower())
 
 
 if __name__ == "__main__":
