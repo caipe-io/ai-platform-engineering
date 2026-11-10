@@ -167,13 +167,31 @@ it('allows an explicit internal HTTP token endpoint with a public HTTPS issuer',
   expect((await exchangeRefreshToken(tokens())).accessToken).toBe('new');
 });
 
+it.each(['issuer', 'discovery'])('rejects plaintext generic %s discovery before trusting a token endpoint', async setting => {
+  process.env[setting === 'issuer' ? 'OIDC_ISSUER' : 'OIDC_DISCOVERY_URL'] = 'http://identity.example.test/oauth2/default';
+  global.fetch = jest.fn().mockResolvedValue({ ok: true,
+    json: async () => ({ token_endpoint: 'https://untrusted.example.test/token' }) });
+  await expect(exchangeRefreshToken(tokens())).rejects.toBeInstanceOf(RefreshRetryableError);
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it('uses a pinned token endpoint instead of plaintext generic discovery', async () => {
+  process.env.OIDC_DISCOVERY_URL = 'http://identity.example.test/oauth2/default';
+  process.env.OIDC_TOKEN_ENDPOINT = 'http://identity.example.test/token';
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200,
+    json: async () => ({ access_token: 'new', expires_in: 3600 }) });
+  expect((await exchangeRefreshToken(tokens())).accessToken).toBe('new');
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledWith(process.env.OIDC_TOKEN_ENDPOINT, expect.objectContaining({ method: 'POST' }));
+});
+
 const goodResponse = { access_token: 'new', refresh_token: 'rotated', expires_in: 3600 };
 it.each([
   null, [], 'unexpected', {},
   { ...goodResponse, error: 'invalid_grant' },
   { ...goodResponse, access_token: '   ' },
   ...['', ' ', null, {}, 123].map(refresh_token => ({ ...goodResponse, refresh_token })),
-  ...['', ' ', null, {}, 123].map(id_token => ({ ...goodResponse, id_token })),
+  ...['', ' ', {}, 123].map(id_token => ({ ...goodResponse, id_token })),
   ...[-1, 0, 1.5, '3600', null, Number.MAX_SAFE_INTEGER].map(expires_in => ({ ...goodResponse, expires_in })),
   ...[-1, 1.5, '7200', null, Number.MAX_SAFE_INTEGER].map(refresh_expires_in => ({ ...goodResponse, refresh_expires_in })),
 ])('rejects malformed success data as ambiguous without changing credentials: %j', async body => {
@@ -198,15 +216,35 @@ it('supports JWT expiry when expires_in is omitted', async () => {
   expect(await exchangeRefreshToken(tokens())).toMatchObject({ accessToken, expiresAt, refreshToken: 'refresh' });
 });
 
-it.each(['discovery', 'token'])('does not follow %s redirects to another endpoint', async stage => {
+it('keeps rotated credentials when the optional ID token is null', async () => {
+  jest.mocked(fetch).mockResolvedValueOnce({ ok: true, status: 200,
+    json: async () => ({ ...goodResponse, id_token: null }) } as Response);
+  expect(await exchangeRefreshToken(tokens())).toMatchObject({
+    accessToken: 'new', refreshToken: 'rotated', idToken: undefined,
+  });
+});
+
+it('rejects discovery redirects with the redirect policy set on the request', async () => {
+  global.fetch = jest.fn().mockResolvedValue(new Response(null, {
+    status: 307, headers: { location: 'https://untrusted.example.test/discovery' },
+  }));
+  await expect(exchangeRefreshToken(tokens())).rejects.toBeInstanceOf(RefreshRetryableError);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledWith('https://sso.example.test/.well-known/openid-configuration',
+    expect.objectContaining({ redirect: 'error' }));
+});
+
+it.each([301, 302, 303, 307, 308])('does not follow token endpoint redirects: %s', async status => {
   const redirected = jest.fn();
+  const initialRequest = jest.fn();
   const server = createServer((request, response) => {
     if (request.url === '/destination') {
       redirected();
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify(goodResponse));
     } else {
-      response.writeHead(307, { location: '/destination' });
+      initialRequest(request.url);
+      response.writeHead(status, { location: '/destination' });
       response.end();
     }
   });
@@ -215,9 +253,13 @@ it.each(['discovery', 'token'])('does not follow %s redirects to another endpoin
   try {
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     process.env.OIDC_ISSUER = origin;
-    if (stage === 'token') process.env.OIDC_TOKEN_ENDPOINT = `${origin}/token`;
-    global.fetch = realFetch;
+    process.env.OIDC_TOKEN_ENDPOINT = `${origin}/token`;
+    const fetchSpy = jest.fn(realFetch);
+    global.fetch = fetchSpy;
     await expect(exchangeRefreshToken(tokens())).rejects.toThrow();
+    expect(initialRequest).toHaveBeenCalledTimes(1);
+    expect(initialRequest).toHaveBeenCalledWith('/token');
+    expect(fetchSpy).toHaveBeenCalledWith(`${origin}/token`, expect.objectContaining({ redirect: 'error' }));
     expect(redirected).not.toHaveBeenCalled();
   } finally {
     const closed = new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

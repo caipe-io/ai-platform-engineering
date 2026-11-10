@@ -56,6 +56,9 @@ export async function exchangeRefreshToken(tokens: StoredTokens): Promise<Stored
     } else if (internalIssuer && isKeycloakRealm) {
       endpoint = `${realmBase}/protocol/openid-connect/token`;
     } else {
+      // Plaintext discovery cannot choose where client credentials are sent.
+      // Internal HTTP providers must pin their token endpoint in configuration.
+      if (issuerUrl.protocol !== 'https:') throw new Error('OIDC discovery requires HTTPS');
       try {
         const discovery = await fetch(`${realmBase}/.well-known/openid-configuration`, {
           next: { revalidate: 3600 }, redirect: 'error', signal: AbortSignal.timeout(5000),
@@ -101,7 +104,7 @@ export async function exchangeRefreshToken(tokens: StoredTokens): Promise<Stored
   // success may have consumed the old refresh token, so it is never safe to replay.
   if (data.error !== undefined || !nonemptyToken(data.access_token)
     || (data.refresh_token !== undefined && !nonemptyToken(data.refresh_token))
-    || (data.id_token !== undefined && !nonemptyToken(data.id_token))
+    || (data.id_token !== undefined && data.id_token !== null && !nonemptyToken(data.id_token))
     || (data.expires_in !== undefined && !validLifetime(data.expires_in, now))
     || (data.refresh_expires_in !== undefined && !validLifetime(data.refresh_expires_in, now, true))) {
     throw new SessionUnavailableError();
