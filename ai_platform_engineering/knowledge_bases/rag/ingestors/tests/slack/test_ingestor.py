@@ -187,7 +187,7 @@ class TestCheckpointPersistedAfterIngest:
   from the failed run and they are never indexed.
   """
 
-  async def test_reload_failed_ingest_does_not_advance_last_ts(self):
+  async def test_reload_failed_ingest_does_not_advance_last_ts(self) -> None:
     ds = make_datasource(last_ts="1700000000.000000")
     client = make_client()
     client.ingest_documents = AsyncMock(side_effect=RuntimeError("ingest failed"))
@@ -201,7 +201,7 @@ class TestCheckpointPersistedAfterIngest:
     client.upsert_datasource.assert_not_awaited()
     assert ds.metadata["last_ts"] == "1700000000.000000"
 
-  async def test_reload_persists_last_ts_after_successful_ingest(self):
+  async def test_reload_persists_last_ts_after_successful_ingest(self) -> None:
     ds = make_datasource(last_ts="1700000000.000000")
     client = make_client()
     calls = MagicMock()
@@ -218,7 +218,7 @@ class TestCheckpointPersistedAfterIngest:
     assert persisted.metadata["last_ts"] == "1700000500.000000"
 
   @pytest.mark.parametrize("failing_call", ["ingest_documents", "upsert_datasource"])
-  async def test_periodic_reload_failure_marks_its_job_failed(self, failing_call):
+  async def test_periodic_reload_failure_marks_its_job_failed(self, failing_call: str) -> None:
     """A periodic reload (no job_id passed in) creates its own job. If that job stayed
     IN_PROGRESS after a failure, later periodic reloads would skip the datasource and
     the un-checkpointed messages would never be retried."""
@@ -238,7 +238,7 @@ class TestCheckpointPersistedAfterIngest:
     assert job_manager.upsert_job.call_args.kwargs["status"] == JobStatus.FAILED
     client.update_job.assert_not_awaited()
 
-  async def test_first_sync_failed_ingest_does_not_persist_last_ts(self):
+  async def test_first_sync_failed_ingest_does_not_persist_last_ts(self) -> None:
     client = make_client()
     client.ingest_documents = AsyncMock(side_effect=RuntimeError("ingest failed"))
     ds, job_manager, request = make_first_sync_inputs(client)
@@ -252,7 +252,7 @@ class TestCheckpointPersistedAfterIngest:
     client.upsert_datasource.assert_not_awaited()
     assert "last_ts" not in ds.metadata
 
-  async def test_first_sync_persists_last_ts_after_successful_ingest(self):
+  async def test_first_sync_persists_last_ts_after_successful_ingest(self) -> None:
     client = make_client()
     calls = MagicMock()
     calls.attach_mock(client.ingest_documents, "ingest_documents")
