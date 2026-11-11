@@ -1,13 +1,14 @@
 "use client";
 
 import { agentMentionColor } from "@/lib/agent-mention-colors";
-import { handoffAssistantMessageId } from "@/lib/chat-coordination";
+import { handoffAssistantMessageId, participantAssistantMessageId, deduplicateParticipantReplies } from "@/lib/chat-coordination";
 import type { ChatCoordination } from "@/hooks/use-chat-coordination";
 import { agentMentionQuery, agentMentionTokens, leadingAgentMentions } from "@/lib/chat-coordination";
 
 import { fetchChatRunStatus } from "@/lib/harness-engine-session-client";
 import { useComposerDraft } from "@/hooks/use-composer-draft";
 import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
+import { AgentPicker } from "@/components/ui/agent-picker";
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
 import { ContextUsageIndicator } from "@/components/chat/ContextUsageIndicator";
 import { ClaudeSessionPanel } from "@/components/chat/ClaudeSessionPanel";
@@ -48,7 +49,6 @@ import type { DynamicAgentConfig,ReasoningEffort } from "@/types/dynamic-agent";
 import { AnimatePresence,motion,useReducedMotion } from "framer-motion";
 import { Activity,ArrowDown,ArrowLeft,Check,Copy,Loader2,Paperclip,Pencil,RotateCcw,Send,ShieldCheck,Sparkles,Square,User,X } from "lucide-react";
 import { resolveUsableChatAgentId } from "@/lib/chat-agent-selection";
-import { AgentPicker } from "@/components/ui/agent-picker";
 import { signIn,useSession } from "next-auth/react";
 import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
 import Image from "next/image";
@@ -1371,6 +1371,7 @@ export function ChatPanel({
     // Store's setConversationStreaming(null) hook auto-saves after 500ms.
   }, [updateMessage, setConversationStreaming, agentName, coordination?.agents.length]);
 
+  const [expandedTeamRoots, setExpandedTeamRoots] = useState<Set<string>>(() => new Set());
   const recoveryChecked = useRef(new Set<string>());
   const recoverySignature = JSON.stringify(Array.from((conversation?.messages ?? []).reduce((latest, message) => {
     const id = message.agentId ?? coordination?.primaryAgentId ?? agentId;
@@ -1407,7 +1408,7 @@ export function ChatPanel({
         const assistantId = saved?.id ?? (candidate.role === "assistant" ? candidate.id : addMessage(activeConversationId, {
           role: "assistant", content: "", isFinal: false, agentId: runtimeAgentId, agentName: candidate.agentName ?? runtimeAgentId,
           parallelGroupId: candidate.parallelGroupId, streamEvents: [],
-        }, candidate.turnId, handoffAssistantMessageId(candidate.turnId)));
+        }, candidate.turnId, participantAssistantMessageId(candidate.turnId, runtimeAgentId)));
         const adapter = createStreamAdapter({ protocol: agentProtocol as "custom" | "agui" });
         const state: StreamLoopState = { accumulatedText: "", rawStreamContent: "", hitlFormRequested: false, hasError: false };
         if (!coordination?.agents.length) clearStreamEvents(activeConversationId);
@@ -1465,7 +1466,7 @@ export function ChatPanel({
       const outcomes = await Promise.all(targets.map(target => sendBatch(validMessages, target.id!, groupId)));
       return outcomes.every(Boolean);
     }
-    const targetAgentId = explicitAgentId ?? mentionTarget ?? validMessages[0].agentId ?? agentId;
+    const targetAgentId = explicitAgentId ?? mentionTarget ?? validMessages[0].agentId ?? coordination?.primaryAgentId ?? agentId;
     if (coordination?.enabled === false && targetAgentId !== coordination.primaryAgentId) {
       toast("Agent Coordination is disabled by the administrator. Send to the primary agent instead.", "error", 6000);
       return;
@@ -1549,7 +1550,7 @@ export function ChatPanel({
 
     // Add assistant message placeholder with same turnId
     const assistantMsgId = addMessage(convId, { role: "assistant", content: "", agentId: targetAgentId, agentName: targetName,
-      ...(coordination?.agents.length && { streamEvents: [] }), ...(parallelGroupId && { parallelGroupId }) }, turnId);
+      ...(coordination?.agents.length && { streamEvents: [] }), ...(parallelGroupId && { parallelGroupId }) }, turnId, coordination?.agents.length ? participantAssistantMessageId(turnId, targetAgentId) : undefined);
 
     // Create protocol-agnostic adapter
     const adapter = createStreamAdapter({
@@ -1577,7 +1578,10 @@ export function ChatPanel({
     try {
       // Persist each addressed prompt before admission so refresh can discover
       // every participant run, even before the first streamed event arrives.
-      if (coordination?.agents.length) await saveMessagesToServer(convId, { turnId, skipNonFinal: true, requireSuccess: true });
+      if (coordination?.agents.length) {
+        if (targetAgentId === coordination.primaryAgentId && recipients.handles.every(handle => handle === "primary")) await coordination.prepareTeam?.();
+        await saveMessagesToServer(convId, { turnId, skipNonFinal: true, requireSuccess: true });
+      }
       const callbacks = buildStreamCallbacks(convId, assistantMsgId, loopState, toolCallIdToName, targetAgentId);
 
       await adapter.streamMessage(
@@ -1587,7 +1591,7 @@ export function ChatPanel({
           agentId: targetAgentId,
           turnId,
           reasoningEffort: targetAgentId === agentId ? requestReasoningEffort : targetConfig?.model?.reasoning_effort,
-          clientContext,
+          clientContext: { ...clientContext, ...(coordination?.agents.length && { coordination_dispatch: recipients.handles.some(handle => handle !== "primary") ? "direct" : "automatic" }) },
           forwardedProps: targetAgentId === coordination?.primaryAgentId || !coordination ? requestOptions : undefined,
           ...(filesToSend.length > 0 && { files: filesToSend }),
         },
@@ -1949,9 +1953,10 @@ export function ChatPanel({
 
   const handleStop = useCallback(() => {
     if (activeConversationId) {
+      if (coordination?.agents.length && coordination.canManage) void coordination.stopTeam?.().catch(() => toast("Team stop is still pending. Active responses are being stopped; retry if queued tasks remain.", "error", 6000));
       cancelConversationRequest(activeConversationId);
     }
-  }, [activeConversationId, cancelConversationRequest]);
+  }, [activeConversationId, cancelConversationRequest, coordination, toast]);
 
   // Unified slash command executor
   const executeSlashCommand = useCallback(async (commandId: string) => {
@@ -2057,7 +2062,7 @@ export function ChatPanel({
       }
     }
     if (coordination?.agents.length) {
-      const targetIds = recipients.handles.length ? recipients.handles.map(handle => handle === "primary" ? coordination.primaryAgentId : coordination.agents.find(member => member.handle === handle)?.agent_id) : [agentId];
+      const targetIds = recipients.handles.length ? recipients.handles.map(handle => handle === "primary" ? coordination.primaryAgentId : coordination.agents.find(member => member.handle === handle)?.agent_id) : [coordination.primaryAgentId];
       const active = chatStreams(useChatStore.getState().streamingConversations.get(activeConversationId ?? ""));
       const waiting = [...Object.values(participantInputs), ...Object.values(participantApprovals)].some(request => targetIds.includes(request.agentId));
       if (waiting) {
@@ -2166,7 +2171,7 @@ export function ChatPanel({
       .join("\n");
     addMessage(activeConversationId, { role: "user", agentId: resumeAgentId, content: dismissed ? "Input dismissed." : selectionSummary || "Form submitted.", ...(parallelGroupId && { parallelGroupId }) }, turnId);
     const assistantMsgId = addMessage(activeConversationId, { role: "assistant", content: "", agentId: resumeAgentId, agentName: coordination?.agents.find(member => member.agent_id === resumeAgentId)?.name ?? (resumeAgentId === agentId ? agentName : resumeAgentId),
-      ...(coordination?.agents.length && { streamEvents: [] }), ...(parallelGroupId && { parallelGroupId }) }, turnId);
+      ...(coordination?.agents.length && { streamEvents: [] }), ...(parallelGroupId && { parallelGroupId }) }, turnId, coordination?.agents.length ? participantAssistantMessageId(turnId, resumeAgentId) : undefined);
 
     dismissedInputForMessageRef.current.add(pendingUserInput.messageId);
     setParticipantInputs(current => { const next = { ...current }; delete next[pendingUserInput.messageId]; return next; });
@@ -2282,7 +2287,7 @@ export function ChatPanel({
       content: summaryParts.join("\n"),
     }, turnId);
     const assistantMsgId = addMessage(activeConversationId, { role: "assistant", content: "", agentId: resumeAgentId, agentName: coordination?.agents.find(member => member.agent_id === resumeAgentId)?.name ?? (resumeAgentId === agentId ? agentName : resumeAgentId),
-      ...(coordination?.agents.length && { streamEvents: [] }), ...(parallelGroupId && { parallelGroupId }) }, turnId);
+      ...(coordination?.agents.length && { streamEvents: [] }), ...(parallelGroupId && { parallelGroupId }) }, turnId, coordination?.agents.length ? participantAssistantMessageId(turnId, resumeAgentId) : undefined);
 
 
     setPendingToolApproval(null);
@@ -2367,7 +2372,6 @@ export function ChatPanel({
       buildStreamCallbacks, finalizeStreamLoop, suppliedClientContext, requestReasoningEffort, requestOptions, saveMessagesToServer]);
 
   const mentionHandles = coordination?.agents.map(member => member.handle) ?? [];
-  const selectedHandle = coordination?.agents.find(member => member.agent_id === agentId)?.handle ?? "primary";
   const mentionCommands: SlashCommand[] = coordination && coordination.enabled !== false ? [
     { id: coordination.primaryAgentId, label: "primary", description: "Primary chat agent", category: "participant", action: "insert", value: "@primary", labelClassName: agentMentionColor("primary", mentionHandles) },
     ...coordination.agents.filter(member => coordination.availableAgents.some(candidate => candidate._id === member.agent_id)).map(member => ({
@@ -2425,7 +2429,6 @@ export function ChatPanel({
       const caret = inputRef.current?.selectionStart ?? input.length;
       const query = agentMentionQuery(input, caret);
       if (!query) return;
-      if (query.start === 0) coordination?.selectAgent(cmd.id);
       const next = input.slice(0, query.start) + cmd.value + " " + input.slice(caret);
       setInput(next);
       setTimeout(() => {
@@ -2475,7 +2478,7 @@ export function ChatPanel({
       setInput(cmd.value);
       setTimeout(() => inputRef.current?.focus(), 0);
     }
-  }, [input, executeSlashCommand, submitMessage, activeConversationId, updateConversationTitle, coordination]);
+  }, [input, executeSlashCommand, submitMessage, activeConversationId, updateConversationTitle]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     const field = inputRef.current;
@@ -2497,10 +2500,6 @@ export function ChatPanel({
         setCommandPanel(null);
         setShowSlashMenu(false);
         setMentionMenu(false);
-        if (tokens[0].start < inputRecipients.end) {
-          const nextHandle = leadingAgentMentions(next).handles[0];
-          coordination.selectAgent(coordination.agents.find(member => member.handle === nextHandle)?.agent_id ?? coordination.primaryAgentId);
-        }
         setTimeout(() => inputRef.current?.setSelectionRange(start, start), 0);
         return;
       }
@@ -2690,7 +2689,8 @@ export function ChatPanel({
 
             <AnimatePresence mode="popLayout">
               {(() => {
-                const allMessages = deduplicateByKey(conversation?.messages ?? [], (msg) => msg.id);
+                const uniqueMessages = deduplicateByKey(conversation?.messages ?? [], (msg) => msg.id);
+                const allMessages = coordination?.agents.length ? deduplicateParticipantReplies(uniqueMessages) : uniqueMessages;
 
                 return (
                   <>
@@ -2701,6 +2701,8 @@ export function ChatPanel({
                     )}
 
                     {allMessages.map((msg, index, arr) => {
+                      const root = msg.coordinationRootId;
+                      if (msg.coordinationKind === "assignment" && root && !expandedTeamRoots.has(root) && arr.some(message => message.coordinationKind === "summary" && message.coordinationRootId === root && message.isFinal && message.turnStatus === "done")) return null;
                       const isLastMessage = index === arr.length - 1;
                       const remoteMessage = isRemoteResponse && !msg.isFinal && (!externalActivity?.turnId || externalActivity.turnId === msg.turnId);
                       const ownStream = activeParticipantStreams.find(stream => stream.messageId === msg.id);
@@ -2726,7 +2728,7 @@ export function ChatPanel({
 
                       // Queued user bubbles share one turnId and produce one response.
                       // Regenerate the whole batch; older messages may lack that binding.
-                      const canRetryMessage = !panelReadOnly &&
+                      const canRetryMessage = msg.coordinationKind !== "summary" && !panelReadOnly &&
                         !isAutonomousHistory &&
                         !isThisConversationStreaming &&
                         !isRemoteResponse &&
@@ -2779,9 +2781,14 @@ export function ChatPanel({
                         );
                       }
 
-                      const primaryFinal = msg.agentId === coordination?.primaryAgentId && msg.isFinal && msg.turnStatus === "done";
-                      const participantCard = Boolean(msg.parallelGroupId && msg.role === "assistant" && !primaryFinal);
+                      if (msg.role === "user" && handoffAssistantMessageId(msg.turnId)) return null;
+                      const participantCard = Boolean(msg.parallelGroupId && msg.role === "assistant" && msg.agentId !== coordination?.primaryAgentId);
                       const messageView = (
+                        <React.Fragment key={msg.id}>
+                        {msg.coordinationKind === "summary" && root && <div className="mx-6 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
+                          <span className="flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-blue-600 dark:text-blue-300" aria-hidden="true"/>{new Set(arr.filter(message => message.coordinationKind === "assignment" && message.coordinationRootId === root && message.role === "assistant").map(message => message.agentId)).size} agents finished</span>
+                          <Button size="sm" variant="ghost" className="h-7 text-xs" aria-expanded={expandedTeamRoots.has(root)} onClick={() => setExpandedTeamRoots(current => { const next = new Set(current); if (next.has(root)) next.delete(root); else next.add(root); return next; })}>{expandedTeamRoots.has(root) ? "Hide work" : "View work"}</Button>
+                        </div>}
                         <ChatMessage
                           key={msg.id}
                           framed={participantCard}
@@ -2835,14 +2842,16 @@ export function ChatPanel({
                               : undefined
                           }
                         />
+                        </React.Fragment>
                       );
                       if (!participantCard) return messageView;
                       const handle = coordination?.agents.find(member => member.agent_id === msg.agentId)?.handle ?? "primary";
                       const config = coordination?.availableAgents.find(candidate => candidate._id === msg.agentId) ?? (msg.agentId === agentId ? agent : undefined);
                       const firstReply = !arr.slice(0, index).some(previous => previous.role === "assistant" && previous.parallelGroupId === msg.parallelGroupId);
                       return <div key={msg.id} className="space-y-3">
-                        {firstReply && <p className="mx-3 text-xs text-muted-foreground">{new Set(arr.filter(reply => reply.role === "assistant" && reply.parallelGroupId === msg.parallelGroupId).map(reply => reply.agentId)).size > 1 ? "Parallel agent replies" : "Agent reply"}</p>}
+                        {firstReply && <p className="mx-3 text-xs text-muted-foreground">{new Set(arr.filter(reply => reply.role === "assistant" && reply.parallelGroupId === msg.parallelGroupId).map(reply => reply.agentId)).size > 1 ? msg.coordinationKind === "assignment" ? "Team activity" : "Agent replies" : "Agent reply"}</p>}
                         <AgentReplyCard handle={handle} handles={mentionHandles} agent={config} name={msg.agentName ?? config?.name ?? handle}
+                          task={arr.find(candidate => candidate.role === "user" && candidate.turnId === msg.turnId)?.content.replace(/^(@[a-z0-9-]+\s*)+/, "")} preview={msg.content}
                           streaming={isAssistantStreaming} status={msg.turnStatus} stopping={ownStream?.stopping} readOnly={panelReadOnly || ownStream?.readOnly}
                           stopError={ownStream?.stopError} onStop={activeConversationId ? () => cancelConversationRequest(activeConversationId, msg.agentId) : undefined}
                           inputAction={!panelReadOnly && (participantInputs[msg.id] || participantApprovals[msg.id]) ? <Button size="sm" variant="outline" onClick={() => {
@@ -3025,10 +3034,11 @@ export function ChatPanel({
       ) : !isAutonomousHistory && (
       <div className="border-t border-border bg-background shrink-0">
         <div className="max-w-7xl mx-auto px-6 py-3 space-y-2">
-          {coordination?.agents.length && activeParticipantStreams.length > 0 ? <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-            <span>{activeParticipantStreams.length} agent{activeParticipantStreams.length === 1 ? "" : "s"} responding</span>
-            <Button size="sm" variant="ghost" onClick={handleStop} disabled={readOnlySubscription || isStopping}><Square className="mr-1.5 h-3 w-3" />Stop all</Button>
+          {coordination?.agents.length && (activeParticipantStreams.length > 0 || coordination.handoffs?.some(job => ["pending", "processing"].includes(job.status))) ? <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+            <span>{activeParticipantStreams.length ? `${activeParticipantStreams.length} agent${activeParticipantStreams.length === 1 ? "" : "s"} working` : !coordination.handoffs?.some(job => !job.summary && ["pending", "processing"].includes(job.status)) ? "Primary is bringing the results together…" : "Your team is working…"}</span>
+            <Button size="sm" variant="ghost" onClick={handleStop} disabled={readOnlySubscription || isStopping}><Square className="mr-1.5 h-3 w-3" />Stop team</Button>
           </div> : null}
+          {coordination?.handoffs?.find(job => job.summary)?.status === "failed" && <p role="alert" className="text-xs text-muted-foreground">Your team could not finish its combined answer. Check your sign-in and agent access, then ask Primary to summarize the available results.</p>}
           {/* Queued Messages Display */}
           {queuedMessages.length > 0 && (
             <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
@@ -3173,16 +3183,10 @@ export function ChatPanel({
                 }
               }}
             >
-              {coordination?.enabled !== false && !!coordination?.agents.length && <div className="flex items-center gap-2 px-1 pb-1 text-xs text-muted-foreground">
-                <span>To</span>{inputRecipients.handles.length > 0 ? <div aria-label="Message recipients" className="flex flex-wrap gap-1">
-                  {inputRecipients.handles.map(handle => <span key={handle} className={cn("rounded-full bg-muted px-2 py-1", agentMentionColor(handle, mentionHandles))}>@{handle}</span>)}
-                </div> : <div className="w-fit min-w-0 max-w-full"><AgentPicker ariaLabel="Message recipient" value={agentId} onChange={coordination.selectAgent} required hideIdSuffix
-                  options={[
-                    { value: coordination.primaryAgentId, label: "@primary" },
-                    ...coordination.agents.map(member => ({ value: member.agent_id, label: `@${member.handle}`, disabled: !coordination.availableAgents.some(candidate => candidate._id === member.agent_id) })),
-                  ]} disabled={Boolean(!coordination?.agents.length && (isThisConversationStreaming || isRemoteResponse || pendingUserInput || pendingToolApproval))} triggerClassName={cn("h-7 rounded-full border-0 bg-muted text-xs shadow-none hover:bg-muted/80", agentMentionColor(selectedHandle, mentionHandles))} /></div>}
+              {coordination?.enabled !== false && !!coordination?.agents.length && <div className="flex flex-wrap items-center gap-2 px-1 pb-1 text-xs text-muted-foreground">
+                {inputRecipients.handles.length > 0 ? <><span>To</span><div aria-label="Message recipients" className="flex flex-wrap gap-1">{inputRecipients.handles.map(handle => <span key={handle} className={cn("rounded-md bg-muted px-2 py-1", agentMentionColor(handle, mentionHandles))}>@{handle}</span>)}</div></>
+                  : <><Sparkles className="h-3.5 w-3.5 text-blue-600 dark:text-blue-300" aria-hidden="true"/><span>{coordination.teamAvailable === false || !coordination.canManage ? "Primary" : "Primary coordinates your team"}</span></>}
               </div>}
-              {coordination?.enabled !== false && coordination && inputRecipients.handles.length > 1 && <p className="px-1 text-xs text-muted-foreground">Each agent responds in its own live card.</p>}
               {maxEffortAnimationKey > 0 && (
                 <div
                   key={`max-effort-armor-${maxEffortAnimationKey}`}
@@ -3325,7 +3329,7 @@ export function ChatPanel({
                     }
                   }}
                   placeholder={
-                    coordination?.agents.length ? "Message agents, or start with @ to choose recipients…" : isStopping ? "Draft your next message while this response stops…" : isRemoteResponse ? "Response is continuing in another view…" : isThisConversationStreaming
+                    coordination?.agents.length ? "Ask your team, or @mention an agent directly…" : isStopping ? "Draft your next message while this response stops…" : isRemoteResponse ? "Response is continuing in another view…" : isThisConversationStreaming
                       ? `Type to queue another message${queuedMessages.length > 0 ? ` (${queuedMessages.length} queued)` : ""}, or Cmd+Enter to send now...`
                       : placeholder ?? `Ask anything, or type / to see commands, skills, and agents...`
                   }

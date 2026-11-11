@@ -1906,6 +1906,16 @@ describe('chat-store', () => {
       expect(updated!.messages[0].turnId).toBe('turn-1');
     });
 
+    it('shares a canonical answer across initiating and recovering subscribers', () => {
+      useChatStore.setState({ conversations: [makeConversation({ id: 'example-shared' })] });
+      const state = useChatStore.getState();
+      state.addMessage('example-shared', { role: 'assistant', content: 'Finished', isFinal: true }, 'example-turn', 'reply-example-turn-assistant');
+      state.addMessage('example-shared', { role: 'assistant', content: '', isFinal: false }, 'example-turn', 'reply-example-turn-assistant');
+      const messages = useChatStore.getState().conversations[0].messages;
+      expect(messages).toHaveLength(1);
+      expect(messages[0].content).toBe('Finished');
+    });
+
     it('auto-generates title from first user message', () => {
       const conv = makeConversation({ id: 'auto-title', title: 'New Conversation' });
       useChatStore.setState({ conversations: [conv] });

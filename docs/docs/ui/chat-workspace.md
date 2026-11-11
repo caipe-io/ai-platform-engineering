@@ -5,20 +5,16 @@ sidebar_position: 6
 # Chat workspace
 
 Dynamic-agent chats have a resizable workspace panel to the right of the
-conversation. It opens by default with **Agent coordination** selected as the
+conversation. It opens by default with **Chat team** selected as the
 first tab, followed by **Agent info**. Collapse it to an icon rail or select an
 icon to reopen a specific section.
 On narrow screens, the workspace stacks below the conversation.
 
-The **Agent coordination** tab contains:
+The **Chat team** tab contains:
 
-- **Agents:** the primary agent, configured subagents, and the latest turn's
-  observed delegations, and agents attached to the chat. Unconfirmed
-  delegations are not shown as completed.
+- **Agents:** Primary and the agents joined to this chat, with handles and runtime icons.
 - **Tasks:** the latest task list published by the primary agent,
-  restored from saved stream events after refresh. Delegation still follows the
-  agent's configured instructions. Attached agents respond to explicitly
-  addressed messages; owners can enable agent-to-agent handoffs in Team mode.
+  restored from saved stream events after refresh. Empty task sections stay hidden.
 - **Workspace files:** files published to the conversation's existing filesystem
   API, with refresh, preview, and download. This is not a browser for the remote
   worker's entire filesystem. Access errors are distinguished from empty lists.
@@ -33,7 +29,7 @@ default. They grant no agent or tool permissions and still require Harness Engin
 
 | Control | Effect |
 | --- | --- |
-| Admin → Platform defaults → Agent Coordination | Enable/disable joining agents, recipient selection and new participant turns at runtime |
+| Admin → Platform defaults → Agent Coordination | Enable/disable joining agents, direct mentions and new participant turns at runtime |
 | Admin → Platform defaults → Team handoffs | Independently enable/disable automatic assignments; manual mentions remain available |
 | `AGENT_COORDINATION_ENABLED=false` | Deployment ceiling: disable coordination, including team handoffs |
 | `AGENT_TEAM_HANDOFFS_ENABLED=false` | Deployment ceiling: disable automatic handoffs, keep manual participants |
@@ -57,21 +53,22 @@ caipe-ui:
 - Disabling either switch cancels queued handoffs. Active responses can finish,
   replay, resume a pending input or be stopped; disabling does not terminate them.
 - Re-enabling restores the UI and saved membership. It does not revive cancelled
-  queue items. Per-chat Team mode remains an independent owner opt-in and retains
-  its original sign-in expiration; the platform switch never creates delegation.
+  queue items. A new ordinary owner message prepares automatic delegation through
+  that owner's current sign-in; platform switches alone never start execution.
 - Server admission and delivery checks apply to API callers too. UI hiding is not
   the enforcement boundary. Failed configuration reads do not enable coordination.
 
 ## Add an agent from chat
 
-1. Open **Agent coordination → Add agent** as the chat owner.
+1. Open **Chat team → Add agent** as the chat owner.
 2. Choose an existing enabled agent you can Use and a unique handle, for example `reviewer`.
 3. Select **Join chat**. The primary agent and conversation URL stay unchanged.
-4. Start a message with `@reviewer`, select it from `@` autocomplete, or use the
-   **To** picker above the composer. Use `@primary` to return to the primary agent.
+4. Ask normally: Primary decides whether to delegate and returns one combined answer.
+5. Start with `@reviewer` for a direct reply, or select a handle from `@` autocomplete.
+   Multiple leading peer mentions produce independent replies. There is no mode selector.
 
 The workspace lists every joined agent with its name, handle, runtime icon and
-participation status. It does not duplicate the composer’s recipient selector.
+participation status. The composer displays recipient chips only for explicit mentions.
 
 - Address several joined agents with consecutive leading mentions, for example
   `@author @reviewer Check this plan`. **To** shows every recipient. Each unique
@@ -80,13 +77,20 @@ participation status. It does not duplicate the composer’s recipient selector.
   Body mentions are references; only the leading block routes the message.
 - Autocomplete inserts at the caret, including a second mention. Backspace or
   Delete removes each recognized mention as one object and preserves other text.
-- Multiple recipients start concurrently in both coordination modes. A card's
-  **Stop** cancels only its agent; **Stop all** requests every writable active
-  agent to drain. Completion, errors, input requests and reconnects stay scoped
-  to their own card. Expand a card to read a long reply.
+- Multiple explicit recipients start concurrently. A card's **Stop** affects only
+  that agent. **Stop team** also marks queued handoffs stopped and requests all
+  writable active runs to drain. Completion, errors, input requests and reconnects
+  remain scoped to their own reply. **View activity** expands a compact card.
+- When delegated work finishes, the delivery queue resumes Primary once with the
+  request's attributed results. Its final answer is a normal chat response.
+  Completed teammate activity collapses behind **View work**; intermediate
+  assignment prompts are kept out of the user-message transcript.
+- Paused input waits for your response. Failed assignments are included in the
+  final answer. Expired sign-in or revoked access prevents new synthesis.
 - The prompt is saved before each participant's admission. Refresh discovers
-  and replays each admitted run without reposting it. Retry addresses only the
-  saved turn's recipient. No agent-to-agent delegation is required.
+  and replays each admitted run without reposting it. A canonical per-agent/turn
+  reply identity prevents duplicate subscriber rows. Legacy duplicates render once
+  without deleting stored history. Retry addresses only the saved recipient.
 - Primary mentions use blue. Joined agents receive distinct colors in saved
   membership order, consistent across autocomplete, the composer, messages and
   workspace controls. Handles remain visible; color never grants access or

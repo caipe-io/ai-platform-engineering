@@ -63,3 +63,20 @@ export function agentMentionQuery(input: string, caret: number): { start: number
 export function handoffAssistantMessageId(turnId: string | undefined): string | undefined {
   return turnId && /^handoff-[a-f0-9]{64}$/.test(turnId) ? `${turnId}-assistant` : undefined;
 }
+
+/** One answer identity across the initiating tab, recovery subscribers and saves. */
+export function participantAssistantMessageId(turnId: string | undefined, agentId?: string): string | undefined {
+  return handoffAssistantMessageId(turnId) ?? (turnId ? `reply-${agentId ? `${agentId}-` : ""}${turnId}-assistant` : undefined);
+}
+
+/** Render old duplicate subscriber rows once without deleting stored history. */
+export function deduplicateParticipantReplies<T extends { id: string; role: string; agentId?: string; turnId?: string; isFinal?: boolean; turnStatus?: string; content: string }>(messages: T[]): T[] {
+  const result: T[] = [], positions = new Map<string, number>();
+  for (const message of messages) {
+    const key = message.role === "assistant" && message.agentId && message.turnId ? `${message.agentId}:${message.turnId}` : message.id;
+    const index = positions.get(key);
+    if (index === undefined) { positions.set(key, result.length); result.push(message); }
+    else if ((!result[index].isFinal && message.isFinal) || (message.turnStatus === "done" && result[index].turnStatus !== "done") || (result[index].isFinal === message.isFinal && message.content.length > result[index].content.length)) result[index] = message;
+  }
+  return result;
+}

@@ -254,6 +254,8 @@ function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
       agentId: msg.metadata?.agent_id,
       agentName: msg.metadata?.agent_name,
       parallelGroupId: msg.metadata?.parallel_group_id,
+      coordinationKind: msg.metadata?.coordination_kind,
+      coordinationRootId: msg.metadata?.coordination_root_id,
       taskId: msg.metadata?.task_id,
       autonomousRunId: msg.metadata?.run_id,
       autonomousMessageKind: msg.metadata?.kind,
@@ -392,6 +394,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
       addMessage: (conversationId: string, message: Omit<ChatMessage, "id" | "timestamp">, turnId?: string, messageId?: string) => {
         const msgId = messageId || generateId();
+        if (messageId && get().conversations.find(chat => chat.id === conversationId)?.messages.some(message => message.id === messageId)) return messageId;
 
         // Generate turnId for user messages, use provided turnId for assistant messages
         let messageTurnId = turnId;
