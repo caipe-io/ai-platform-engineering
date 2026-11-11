@@ -6,7 +6,8 @@
   the same minor series' `X-Y-0` blog if the patch post is missing, unreadable,
   or empty. Prerelease and build suffixes resolve to
   their base patch version. Matching blog content takes precedence over the
-  changelog; unrelated patch or minor posts are never substituted.
+  changelog in both the upgrade prompt and settings preview; unrelated patch
+  or minor posts are never substituted.
 - Deployment operators approve comparison repositories through the server-side
   `RELEASE_NOTES_ALLOWED_REPOSITORIES` environment variable (comma-separated
   HTTPS GitHub repository URLs, up to 32). Unset permits only the canonical

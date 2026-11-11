@@ -131,6 +131,28 @@ export function releaseNotesRequestUrl(
   return `/api/release-notes?${params.toString()}`;
 }
 
+/** Keep the preview and login prompt on the same version and source policy. */
+export function hasMatchingReleaseNotes(
+  version: string,
+  notes: ReleaseNotesResponse | null,
+  config?: Partial<ReleaseNotesNotificationConfig> | null,
+): notes is ReleaseNotesResponse & { body: string } {
+  const curatedOverride = hasReleaseNotesOverride(config, version);
+  const expectedSource = curatedOverride
+    ? config?.override?.source === "manual" ? "manual" : "repository-markdown"
+    : hasConfiguredReleaseNotesCompare(config) ? "github-compare" : null;
+  const sourceMatches = expectedSource
+    ? notes?.source === expectedSource
+    : ["github", "local", "generated"].includes(notes?.source ?? "");
+  const deployedBase = baseVersion(version);
+  const matchedVersion = normalizeVersion(notes?.matchedVersion);
+  const hasSeriesBlog =
+    (notes?.source === "github" || notes?.source === "local") &&
+    matchedVersion === deployedBase.replace(/\.\d+$/, ".0");
+  return sourceMatches && Boolean(notes?.body) &&
+    (matchedVersion === normalizeVersion(version) || matchedVersion === deployedBase || hasSeriesBlog);
+}
+
 function notificationsEnabledFromSettings(settings: SettingsResponse | null): boolean {
   // User-scoped opt-out. Defaults to enabled unless the user has explicitly
   // turned release note notifications off for their own account.
@@ -257,18 +279,8 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
             ? await notesResponse.json()
             : null;
           if (!cancelled) {
-            const deployedBase = baseVersion(activeReleaseVersion);
-            const matchedVersion = normalizeVersion(notesPayload?.matchedVersion);
-            const expectedSource = curatedOverride ? unavailableNotes?.source : customCompareConfigured ? "github-compare" : null;
-            const sourceMatches = expectedSource ? notesPayload?.source === expectedSource : ["github", "local", "generated"].includes(notesPayload?.source ?? "");
-            const hasSeriesBlog =
-              (notesPayload?.source === "github" || notesPayload?.source === "local") &&
-              matchedVersion === deployedBase.replace(/\.\d+$/, ".0");
-            const hasMatchingCuratedNotes =
-              Boolean(notesPayload?.body) &&
-              (matchedVersion === activeReleaseVersion || matchedVersion === deployedBase || hasSeriesBlog);
             setReleaseMarkdown(
-              sourceMatches && hasMatchingCuratedNotes
+              hasMatchingReleaseNotes(activeReleaseVersion, notesPayload, releaseNotesConfig)
                 ? {
                     matchedVersion: notesPayload.matchedVersion ?? null,
                     title: notesPayload.title ?? null,
