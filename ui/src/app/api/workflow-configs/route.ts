@@ -284,7 +284,7 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       );
     }
 
-    if (body.steps) {
+    if (body.steps !== undefined) {
       validateSteps(body.steps);
     }
     if (body.visibility !== undefined) {
@@ -323,12 +323,6 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       updateFields.shared_with_teams = undefined;
     }
 
-    const selectedSkills = (body.steps ?? existing.steps).flatMap(step => step.type === "step" && Array.isArray(step.config_override?.skills) ? step.config_override.skills as string[] : []);
-    await withSkillReferenceLock(selectedSkills, async () => {
-      await assertSavedSkillsExist(selectedSkills);
-      await collection.updateOne({ _id: id }, { $set: updateFields });
-    });
-
     const merged = {
       ...existing,
       ...body,
@@ -338,6 +332,20 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     };
 
     await assertWorkflowConfigRunnable(merged);
+
+    const stepSkills = (steps: StepEntry[]) => steps.flatMap(step =>
+      step.type === "step" && Array.isArray(step.config_override?.skills)
+        ? step.config_override.skills as string[] : [],
+    );
+    const selectedSkills = stepSkills(merged.steps);
+    const existingSkills = new Set(stepSkills(existing.steps));
+    const addedSkills = selectedSkills.filter(skill => !existingSkills.has(skill));
+    await withSkillReferenceLock(selectedSkills, async () => {
+      // Preserve legacy references during unrelated edits, including full-form
+      // saves. Only newly attached skills must exist at admission time.
+      await assertSavedSkillsExist(addedSkills);
+      await collection.updateOne({ _id: id }, { $set: updateFields });
+    });
 
     await reconcileWorkflowConfigAccess(session, merged, existing);
 

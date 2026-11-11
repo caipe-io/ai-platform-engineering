@@ -378,3 +378,7 @@ paths or crawl settings rotates the cache generation; old results cannot be
 selected or loaded. A complete empty refresh removes stale cached entries.
 Saved skill attachment and retirement share per-skill mutation locks, and
 attachment validates that selected saved skills still exist.
+
+Workflow metadata and unchanged full-form saves preserve legacy skill references.
+Newly attached skills are validated under the attachment/retirement fence; invalid
+merged agent configurations are rejected before persistence or access reconciliation.
