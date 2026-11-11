@@ -209,6 +209,35 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
     jest.restoreAllMocks();
   });
 
+  it.each([/^Next$/, /Advanced/i])(
+    "keeps new team agents on Basic Info until an owner is selected (%s)",
+    async (target) => {
+      const onStepChange = jest.fn();
+      render(
+        <DynamicAgentEditor
+          onStepChange={onStepChange}
+          onCancel={jest.fn()}
+          onSave={jest.fn()}
+        />,
+      );
+      await flushAsync();
+
+      fireEvent.click(screen.getByRole("button", { name: target }));
+
+      expect(onStepChange).not.toHaveBeenCalled();
+      expect(screen.getByRole("heading", { name: /Step 1:/ })).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Select an owner team before continuing.",
+      );
+      expect(screen.getByLabelText(/Owner Team/i)).toHaveFocus();
+
+      await pickTeam(/Owner Team/i, "platform");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+      expect(onStepChange).toHaveBeenCalledWith("instructions");
+    },
+  );
+
   it("disables Create Agent (with a hover tooltip) while Owner Team is empty", async () => {
     render(<DynamicAgentEditor onCancel={jest.fn()} onSave={jest.fn()} />);
     await flushAsync();
@@ -266,6 +295,10 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
     render(<DynamicAgentEditor onCancel={jest.fn()} onSave={jest.fn()} />);
     await flushAsync();
 
+    fireEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Select an owner team before continuing.",
+    );
     fireEvent.change(screen.getByPlaceholderText(/Code Review Agent/i), {
       target: { value: "global-agent" },
     });
@@ -280,31 +313,73 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
       "title",
       expect.stringContaining("Owner Team is required") as unknown as string,
     );
+    fireEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+    expect(screen.getByRole("heading", { name: /Step 2:/ })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("starts on the deep-linked setup step and reports subsequent step changes", async () => {
-    const onStepChange = jest.fn();
-    render(
-      <DynamicAgentEditor
-        initialStep="tools"
-        onStepChange={onStepChange}
-        onCancel={jest.fn()}
-        onSave={jest.fn()}
-      />,
-    );
-    await flushAsync();
+  it.each(["initial", "prop change"])(
+    "blocks ownerless team-agent deep links on %s navigation",
+    async (navigation) => {
+      const props = { agent: null, onCancel: jest.fn(), onSave: jest.fn() };
+      const { rerender } = render(
+        <DynamicAgentEditor
+          {...props}
+          initialStep={navigation === "initial" ? "tools" : "basic"}
+        />,
+      );
+      if (navigation === "prop change") {
+        await flushAsync();
+        rerender(<DynamicAgentEditor {...props} initialStep="tools" />);
+      }
+      await flushAsync();
 
-    expect(
-      screen.getByRole("heading", { name: "Step 3: Tools" }),
-    ).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /Step 1:/ })).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Select an owner team before continuing.",
+      );
+      expect(screen.getByLabelText(/Owner Team/i)).toHaveFocus();
 
-    fireEvent.click(screen.getByRole("button", { name: /Advanced/i }));
+      await pickTeam(/Owner Team/i, "platform");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /Step 1:/ })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+      expect(screen.getByRole("heading", { name: /Step 2:/ })).toBeInTheDocument();
+    },
+  );
 
-    expect(onStepChange).toHaveBeenCalledWith("advanced");
-    expect(
-      screen.getByRole("heading", { name: "Step 6: Advanced" }),
-    ).toBeInTheDocument();
-  });
+  it.each(["team", "global"] as const)(
+    "allows prop-driven step changes for eligible %s agents",
+    async (visibility) => {
+      const onStepChange = jest.fn();
+      const props = {
+        agent: null,
+        onStepChange,
+        onCancel: jest.fn(),
+        onSave: jest.fn(),
+      };
+      const { rerender } = render(<DynamicAgentEditor {...props} />);
+      await flushAsync();
+      if (visibility === "team") {
+        await pickTeam(/Owner Team/i, "platform");
+      } else {
+        fireEvent.click(screen.getByRole("button", { name: /^Global/ }));
+      }
+      rerender(<DynamicAgentEditor {...props} initialStep="tools" />);
+      await flushAsync();
+
+      expect(
+        screen.getByRole("heading", { name: "Step 3: Tools" }),
+      ).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /Advanced/i }));
+
+      expect(onStepChange).toHaveBeenCalledWith("advanced");
+      expect(
+        screen.getByRole("heading", { name: "Step 6: Advanced" }),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("enables Create Agent once Owner Team and the remaining fields are filled", async () => {
     render(<DynamicAgentEditor onCancel={jest.fn()} onSave={jest.fn()} />);
