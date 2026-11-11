@@ -12,7 +12,7 @@ import { motion } from "framer-motion";
 import { AlertCircle,Loader2,LogIn } from "lucide-react";
 import { signIn,useSession } from "next-auth/react";
 import { useRouter,useSearchParams } from "next/navigation";
-import { Suspense,useEffect,useState } from "react";
+import { Suspense,useEffect,useRef,useState } from "react";
 
 // Circuit breaker: detect redirect loops via sessionStorage counter.
 // If we've been redirected to /login more than 3 times within 10 seconds,
@@ -63,6 +63,37 @@ function clearRedirectLoopCounter() {
   sessionStorage.removeItem(LOOP_TS_KEY);
 }
 
+const CALLBACK_FRAGMENT_KEY = "login-callback-fragment";
+
+/** Fragments stay in this tab, outside NextAuth requests and callback cookies. */
+function callbackWithBrowserFragment(callbackUrl: string): string {
+  const saved = sessionStorage.getItem(CALLBACK_FRAGMENT_KEY);
+  sessionStorage.removeItem(CALLBACK_FRAGMENT_KEY);
+  let fragment = window.location.hash;
+  if (saved) {
+    try {
+      const pending = JSON.parse(saved);
+      const age = Date.now() - pending.at;
+      if (pending.path === callbackUrl && typeof pending.fragment === "string" && pending.fragment.startsWith("#") && pending.fragment.length <= 8192 && age >= 0 && age < 900_000) {
+        fragment ||= pending.fragment;
+      }
+    } catch {
+      console.warn("[Login] Discarded invalid pending fragment state.");
+    }
+  }
+  return callbackUrl.includes("#") ? callbackUrl : callbackUrl + fragment;
+}
+
+function signInCallback(callbackUrl: string): string {
+  const destination = callbackWithBrowserFragment(callbackUrl);
+  const index = destination.indexOf("#");
+  if (index < 0) return destination;
+  const path = destination.slice(0, index);
+  sessionStorage.setItem(CALLBACK_FRAGMENT_KEY, JSON.stringify({ path, fragment: destination.slice(index), at: Date.now() }));
+  // Return through the public login page to restore the fragment entirely on the client.
+  return `/login?callbackUrl=${encodeURIComponent(path)}`;
+}
+
 function LoginContent() {
   const { status, data: session } = useSession();
   const router = useRouter();
@@ -80,6 +111,7 @@ function LoginContent() {
   const callbackUrl = getLoginCallbackUrl(
     searchParams.get("callbackUrl"), Boolean(error) && !sessionExpired && !sessionReset && !loopBroken,
   );
+  const redirectDestination = useRef<{ callbackUrl: string; url: string } | null>(null);
 
   // Redirect if already logged in. A stale session_expired URL can remain after
   // a successful OIDC callback, so only explicit reset/loop recovery should hold
@@ -93,7 +125,10 @@ function LoginContent() {
     if (status === "authenticated" && !session?.error) {
       // Clear counter on successful auth redirect (not a loop)
       clearRedirectLoopCounter();
-      router.push(callbackUrl);
+      if (redirectDestination.current?.callbackUrl !== callbackUrl) {
+        redirectDestination.current = { callbackUrl, url: callbackWithBrowserFragment(callbackUrl) };
+      }
+      router.push(redirectDestination.current.url);
     }
   }, [status, session?.error, router, callbackUrl, sessionReset, loopBroken]);
 
@@ -106,7 +141,7 @@ function LoginContent() {
     }
     try {
       rememberLoginReturnTo(callbackUrl);
-      await signIn("oidc", { callbackUrl });
+      await signIn("oidc", { callbackUrl: signInCallback(callbackUrl) });
     } catch (err) {
       console.error("Sign in error:", err);
       setIsLoading(false);

@@ -53,6 +53,7 @@ describe('AuthGuard', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockPathname = '/chat/test-uuid'
+    window.history.replaceState(null, '', '/')
 
     mockUseRouter.mockReturnValue({
       push: mockPush,
@@ -177,6 +178,14 @@ describe('AuthGuard', () => {
 
       expect(screen.queryByTestId('protected-content')).not.toBeInTheDocument()
     })
+
+    it('preserves app query state and the section anchor through sign-in', async () => {
+      mockPathname = '/apps';
+      window.history.replaceState(null, '', '/apps?q=finance#catalog');
+      mockUseSession.mockReturnValue({ data: null, status: 'unauthenticated' } as unknown);
+      render(<AuthGuard><div>Apps</div></AuthGuard>);
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/login?callbackUrl=%2Fapps%3Fq%3Dfinance%23catalog'));
+    });
 
     it('should redirect to /login without callbackUrl when on root path', async () => {
       mockPathname = '/'

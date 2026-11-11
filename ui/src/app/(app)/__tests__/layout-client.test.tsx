@@ -43,7 +43,7 @@ describe("AppLayoutClient", () => {
     const viewportShell = screen.getByTestId("navigation-rail").parentElement;
     const contentColumn = screen.getByTestId("app-header").parentElement;
 
-    expect(viewportShell).toHaveClass("h-dvh", "overflow-hidden");
-    expect(contentColumn).toHaveClass("min-h-0", "overflow-hidden");
+    expect(viewportShell).toHaveClass("fixed", "inset-0", "h-dvh", "overflow-clip");
+    expect(contentColumn).toHaveClass("min-h-0", "overflow-clip");
   });
 });

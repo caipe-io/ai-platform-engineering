@@ -29,6 +29,7 @@ describe('login callback validation', () => {
     '/login?callbackUrl=%2Fchat%2Fexample', `${origin}/login?error=OAuthCallback`,
     '/example/../login',
     '/chat\\example?path=a\\b', `${origin}\\outside.example/chat?path=a\\b`,
+    `/${'a'.repeat(8192)}`,
   ])('rejects an external, malformed, or looping destination %s', value => {
     expect(normalizeCallbackUrl(value, origin)).toBe('/');
   });
@@ -52,6 +53,24 @@ describe('tab-local login retry destination', () => {
     rememberLoginReturnTo('/chat/previous');
     expect(getLoginCallbackUrl('/chat/current', true)).toBe('/chat/current');
     expect(getLoginCallbackUrl('https://outside.example/chat', true)).toBe('/');
+  });
+
+  it.each([
+    '/login?callbackUrl=%2Fchat%2Fother',
+    'https://outside.example/login?callbackUrl=%2Fchat%2Fexample',
+    '/login?callbackUrl=https%3A%2F%2Foutside.example%2Fchat',
+    '/login?callbackUrl=%2Flogin%3FcallbackUrl%3D%252Fchat%252Fexample',
+  ])('rejects an untrusted or mismatched OAuth return wrapper %s', callback => {
+    rememberLoginReturnTo('/chat/example#details');
+    expect(getLoginCallbackUrl(callback, true)).toBe('/');
+  });
+
+  it('unwraps a fragment callback only for a matching pending OAuth retry', () => {
+    const callback = '/login?callbackUrl=%2Fchat%2Fexample';
+    expect(getLoginCallbackUrl(callback, true)).toBe('/');
+    rememberLoginReturnTo('/chat/example#details');
+    expect(getLoginCallbackUrl(callback)).toBe('/');
+    expect(getLoginCallbackUrl(callback, true)).toBe('/chat/example#details');
   });
 
   it.each([Date.now() - 16 * 60_000, Date.now() + 60_000])('discards expired or future records', savedAt => {

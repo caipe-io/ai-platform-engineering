@@ -44,6 +44,10 @@ sequenceDiagram
   Session expiry, session reset, and loop recovery start a new login without
   restoring a previous attempt. Successful application admission clears it.
 - Client-side session expiry also preserves the page's query and fragment.
+  Fragments remain in tab-local storage during OAuth and are restored on the
+  client after sign-in; NextAuth receives a callback without the fragment.
+  An OAuth retry may unwrap a `/login?callbackUrl=...` return only when its
+  destination matches the tab's validated pending attempt.
 
 ## Chat Request
 

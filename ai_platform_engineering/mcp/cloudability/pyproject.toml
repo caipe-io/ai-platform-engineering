@@ -12,8 +12,8 @@ dependencies = [
   "httpx==0.28.1",
   "python-dotenv==1.2.2",
   "pydantic==2.12.5",
-  "mcp==1.21.0",
-  "fastmcp==2.13.3",
+  "mcp==1.30.0",
+  "fastmcp==3.4.10",
   "typing-extensions==4.15.0",
 ]
 

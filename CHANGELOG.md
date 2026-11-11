@@ -1,3 +1,17 @@
+## 1.3.7-rc.7 (2026-11-10)
+
+### Feat
+
+- **mongodb**: support replica sets for Change Data Capture (CDC) (#3267)
+- **notifications**: define event and preference contracts (#2993)
+
+### Fix
+
+- **mongodb**: support pod-local replica set host mapping (#3357)
+- **deps**: update vulnerable Cloudability packages (#3355)
+- **deps**: remediate Dependabot alerts (#3314)
+- **auth**: harden OIDC refresh transport and response validation (#3255)
+
 ## 1.3.7-rc.6 (2026-11-06)
 
 ### Fix

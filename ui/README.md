@@ -59,6 +59,16 @@ Without an override, an internal Keycloak realm URL in `OIDC_DISCOVERY_URL` uses
 its local token path; other providers use their discovery document. Generic
 provider discovery failures never fall back to a Keycloak URL.
 
+Refresh discovery and token requests reject HTTP redirects. Discovered token
+endpoints cannot downgrade HTTPS to HTTP; an explicit internal HTTP endpoint
+remains supported. Endpoints reject embedded credentials and URL fragments.
+Generic provider discovery requires HTTPS. For an internal HTTP provider, pin
+`OIDC_TOKEN_ENDPOINT` explicitly so plaintext discovery cannot redirect credentials
+to an untrusted host. Internal Keycloak realm URLs still use their configured local
+token path directly without discovery.
+Malformed token responses never replace stored credentials and follow the
+existing ambiguous-response recovery rules.
+
 Rejected refresh credentials are suppressed across replicas while a still-valid
 access token finishes its lifetime. Definite retryable failures use a shared
 60-second cooldown. A lost or ambiguous refresh response retains the existing
