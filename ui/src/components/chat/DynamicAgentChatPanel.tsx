@@ -3374,7 +3374,7 @@ const ChatMessage = React.memo(function ChatMessage({
       {isUser ? (
             <div
               className={cn(
-            "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm overflow-hidden bg-primary",
+            "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm overflow-hidden bg-slate-600",
           )}
         >
           {message.senderImage ? (
@@ -3502,7 +3502,7 @@ const ChatMessage = React.memo(function ChatMessage({
               </div>
             ) : message.content.trim() ? (
               <div
-                className="rounded-xl rounded-tr-sm relative overflow-hidden inline-block bg-primary text-primary-foreground px-4 py-3 max-w-full selection:bg-primary-foreground selection:text-primary"
+                className="chat-user-message rounded-xl rounded-tr-sm relative overflow-hidden inline-block px-4 py-3 max-w-full"
               >
                 <div className="overflow-hidden break-words text-left" style={{ overflowWrap: 'anywhere' }}>
                   <MarkdownRenderer content={message.content} variant="user" />
