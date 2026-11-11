@@ -1,3 +1,25 @@
+## 1.4.0-rc.1 (2026-11-11)
+
+### Feat
+
+- **skills**: import pinned original GitHub packages (#3249)
+- **harness-engine**: include portable runtimes in standard installs (#3190)
+- **autonomous**: accept idempotent manual run context (#3213)
+- **apps**: preserve URLs and isolate app scrolling (#3257)
+
+### Fix
+
+- **webex**: bind transcript fallback to the requested occurrence (#3242)
+- **ui**: require agent owner selection before continuing (#3362)
+- **ui**: resolve automatic release blogs by patch version (#3155)
+- **apps**: support shared platform assistant agents (#3189)
+- **auth**: preserve deep links through login retries (#3269)
+- **ui**: add light-mode styling to Skills gallery action buttons (#3183)
+- **skills**: preserve distinct catalog skill identities (#3225)
+- **compose**: pull MinIO from images that are still published (#3094)
+- **chat**: improve selection contrast and use muted blue colors (#3259)
+- **harness**: preserve native model controls during agent publication (#3253)
+
 ## 1.3.7-rc.7 (2026-11-10)
 
 ### Feat
