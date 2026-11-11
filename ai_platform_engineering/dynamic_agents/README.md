@@ -571,4 +571,6 @@ unscanned packages fail closed. Chat overrides cannot clear pins or detach a
 pinned skill. Authorized agent management can explicitly reselect a new version.
 Original Hub command Markdown is materialized without adding frontmatter or
 rewriting its instructions. Supporting references retain their relative paths.
+Legacy unpinned Hub entries without frontmatter retain generated discovery
+metadata; original imports and pinned Hub entries preserve their exact bytes.
 Upstream tool declarations do not grant runtime tools or execution permission.

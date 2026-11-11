@@ -1056,7 +1056,9 @@ class AgentRuntime:
                 self._failed_skills, self._failed_skills_error = detect_missing_skills(self.config.skills, skills_data)
 
                 if skills_data:
-                    self._skills_files, skills_sources = build_skills_files(skills_data)
+                    self._skills_files, skills_sources = build_skills_files(
+                        skills_data, pinned_skill_ids=self.config.skill_pins,
+                    )
                     if skills_sources:
                         # Backend for SkillsMiddleware: use StoreBackend (GridFS) when
                         # enabled so skills are read from the same store as read_file;

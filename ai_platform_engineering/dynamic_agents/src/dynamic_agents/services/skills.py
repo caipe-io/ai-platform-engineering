@@ -12,6 +12,7 @@ import hashlib
 import logging
 import os
 import re
+from collections.abc import Collection
 from datetime import UTC, datetime
 from typing import Any
 
@@ -361,14 +362,16 @@ def _create_file_data(content: str) -> dict[str, Any]:
     }
 
 
-def _build_skill_md(skill: dict[str, Any]) -> str:
+def _build_skill_md(skill: dict[str, Any], *, preserve_original: bool = False) -> str:
     """Build a SKILL.md string (YAML frontmatter + body) from a skill dict."""
     name = skill.get("name", "")
     description = skill.get("description", "")
     content = skill.get("content", "")
+    metadata = skill.get("metadata", {})
 
-    # Pinned original Hub entries are never rewritten, including command Markdown.
-    if skill.get("source") == "hub":
+    # Original imports and pinned Hub packages retain the bytes selected by the owner.
+    # Legacy Hub entries still need generated frontmatter for skill discovery.
+    if skill.get("source") == "hub" and (preserve_original or metadata.get("original_content")):
         return content
 
     # If the original content already has valid frontmatter, use it as-is
@@ -376,7 +379,6 @@ def _build_skill_md(skill: dict[str, Any]) -> str:
         return content
 
     # Build frontmatter + body
-    metadata = skill.get("metadata", {})
     fm_lines = [
         "---",
         f"name: {name}",
@@ -410,11 +412,15 @@ def _build_skill_md(skill: dict[str, Any]) -> str:
 
 def build_skills_files(
     skills: list[dict[str, Any]],
+    *,
+    pinned_skill_ids: Collection[str] = (),
 ) -> tuple[dict[str, Any], list[str]]:
     """Build a ``files`` dict and source paths for StateBackend + SkillsMiddleware.
 
     Args:
         skills: List of skill dicts from ``load_skills()``.
+        pinned_skill_ids: Hub entries whose original bytes must be preserved,
+            even when their cache rows lack original-import metadata.
 
     Returns:
         Tuple of:
@@ -444,7 +450,7 @@ def build_skills_files(
         source_paths.add(source_path)
 
         file_path = f"{source_dir}/{dir_name}/SKILL.md"
-        skill_md = _build_skill_md(skill)
+        skill_md = _build_skill_md(skill, preserve_original=skill.get("id", "") in pinned_skill_ids)
         files[file_path] = _create_file_data(skill_md)
 
         for rel_path, file_content in skill.get("ancillary_files", {}).items():
@@ -505,7 +511,7 @@ def verify_skill_pins(skills: list[dict[str, Any]], pins: dict[str, Any]) -> Non
         )):
             raise ValueError(f"Pinned original skill package is incomplete: {skill_id}")
         expected = pin.model_dump() if hasattr(pin, "model_dump") else pin
-        content_hash = hashlib.sha256(_build_skill_md(skill).encode()).hexdigest()
+        content_hash = hashlib.sha256(_build_skill_md(skill, preserve_original=True).encode()).hexdigest()
         ancillary = skill.get("ancillary_files", {})
         hashes = {}
         for path, content in ancillary.items():
