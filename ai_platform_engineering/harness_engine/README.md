@@ -20,6 +20,7 @@ for publishing, Compose controls and network requirements.
   epochs, persistence, and clear. Each adapter supplies a narrow
   `ProviderSessionManager` for native open/observe/close behavior.
 - Runs and replayable events are stored in `harness_runs` and `harness_events`.
+- Event-head commits and pending-event materialization retry aborted database writes with code 112 using bounded backoff. This handles concurrent producer/replay writes on Mongo-compatible DocumentDB without rerunning the provider or duplicating events. Other database errors still fail immediately.
 - The same caller/agent/conversation tuple receives the same opaque binding.
   AgentCore derives a stable `runtimeSessionId`; Claude persists the SDK result
   session ID and supplies it through `resume` on the next turn.

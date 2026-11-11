@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import defaultdict
+from collections.abc import Callable
 from typing import Protocol
 
 from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from harness_engine.models import (
     TERMINAL_RUN_STATUSES,
@@ -22,6 +24,20 @@ from harness_engine.models import (
     SessionBinding,
     utc_now,
 )
+
+
+def _retry_replay_write[T](write: Callable[[], T]) -> T:
+    """Retry aborted DocumentDB writes without advancing the durable event head."""
+    for attempt in range(8):
+        try:
+            return write()
+        except OperationFailure as exc:
+            # A producer and replay readers can materialize the same pending
+            # event concurrently. Code 112 means this write was aborted.
+            if exc.code != 112 or attempt == 7:
+                raise
+            time.sleep(min(0.02 * 2**attempt, 0.25))
+    raise AssertionError("Replay write retry exhausted")
 
 
 class RevisionConflictError(Exception):
@@ -851,14 +867,14 @@ class MongoRunRepository:
             return
         key = {"run_id": pending["run_id"], "sequence": pending["sequence"]}
         try:
-            self._db.harness_events.update_one(key, {"$setOnInsert": pending}, upsert=True)
+            _retry_replay_write(lambda: self._db.harness_events.update_one(key, {"$setOnInsert": pending}, upsert=True))
         except DuplicateKeyError:
             if not self._db.harness_events.find_one(key):
                 raise
-        self._db.harness_runs.update_one(
+        _retry_replay_write(lambda: self._db.harness_runs.update_one(
             {"run_id": pending["run_id"], "pending_event.sequence": pending["sequence"]},
             {"$unset": {"pending_event": ""}},
-        )
+        ))
 
     async def append_event(
         self, run_id: str, event_type: str, data: dict[str, object], status: RunStatus | None = None
@@ -885,10 +901,10 @@ class MongoRunRepository:
                 }
                 if status is not None:
                     values["status"] = status.value
-                committed = self._db.harness_runs.find_one_and_update(
+                committed = _retry_replay_write(lambda: self._db.harness_runs.find_one_and_update(
                     {"run_id": run_id, "last_sequence": run["last_sequence"], "pending_event": {"$exists": False}},
                     {"$set": values}, return_document=ReturnDocument.AFTER,
-                )
+                ))
                 if committed:
                     self._materialize_pending_event(committed)
                     return event
