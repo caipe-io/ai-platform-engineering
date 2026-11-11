@@ -4,7 +4,10 @@
 """Read meeting occurrence metadata from the Webex SDK conversation APIs."""
 
 import asyncio
+import base64
+import json
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Literal, Sequence
@@ -22,6 +25,9 @@ MAX_ACTIVITY_PAGES = 40
 ACTIVITY_PAGE_SIZE = 100
 ACTIVITY_WORKERS = 4
 CONVERSATION_QUEUE_SIZE = 8
+MAX_CONTINUATION_LENGTH = 512 * 1024
+CONTINUATION_TTL = 24 * 60 * 60
+MAX_BOUNDARY_IDS = 2 * ACTIVITY_PAGE_SIZE
 _SERIES_ID = re.compile(r"[0-9a-fA-F]{32}")
 _ACTUAL_ID = re.compile(r"(?P<series>[0-9a-fA-F]{32})_I_\d+")
 _UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
@@ -110,6 +116,14 @@ def _last_activity(value: Any) -> datetime | None:
 
 
 @dataclass
+class _ActivityCursor:
+    url: str
+    max_date: int
+    seen: set[str] = field(default_factory=set)
+    done: bool = False
+
+
+@dataclass
 class _Discovery:
     client: httpx.AsyncClient
     bearer: str
@@ -123,6 +137,10 @@ class _Discovery:
     excluded: set[str] = field(default_factory=set)
     warnings: list[str] = field(default_factory=list)
     next_catalog_urls: list[str] = field(default_factory=list)
+    catalog_frontier: list[str] | None = None
+    pending_activities: dict[str, _ActivityCursor] = field(default_factory=dict)
+    seen_conversations: set[str] = field(default_factory=set)
+    series_lookup_pending: bool = False
     semaphore: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(4))
     requests: int = 0
     stopped: bool = False
@@ -171,31 +189,31 @@ class _Discovery:
             return None
         return payload, response
 
-    def add_activity(self, activity: dict[str, Any]) -> None:
+    def add_activity(self, activity: dict[str, Any]) -> bool:
         obj = activity.get("object")
         if not isinstance(obj, dict):
-            return
+            return True
         is_summary = activity.get("verb") == "update" and obj.get("objectType") == "locusSessionSummary"
         is_share = activity.get("verb") == "share" and obj.get("objectType") == "meetingContainer"
         if not (is_summary or is_share):
-            return
+            return True
         actual = obj.get("meetingInstanceId")
         match = _ACTUAL_ID.fullmatch(actual) if isinstance(actual, str) else None
         if match is None:
-            return
+            return True
         series = match.group("series")
         if self.meeting_series_id and series.lower() != self.meeting_series_id.lower():
-            return
+            return True
         start = _timestamp(obj.get("startTime") if is_summary else obj.get("published"))
         if start is None:
-            return
+            return True
         if not self.lower <= start < self.upper:
             if is_summary:
                 self.excluded.add(actual)
                 self.items.pop(actual, None)
-            return
+            return True
         if actual in self.excluded or (not is_summary and actual in self.completed):
-            return
+            return True
         item: dict[str, Any] = {
             "id": actual, "meetingSeriesId": series, "meetingType": "meeting",
             "start": start.isoformat(), "source": "space_activity", "siteUrl": self.site_url,
@@ -207,24 +225,36 @@ class _Discovery:
             self.completed.add(actual)
         if actual not in self.items and len(self.items) >= self.max_results:
             self.stopped = True
-            self.warn("Meeting result limit reached; results are incomplete.")
-            return
+            return False
         self.items[actual] = item
+        return True
 
-    async def activities(self, conversation_url: str) -> None:
+    def queue_activity(self, conversation_url: str) -> None:
+        try:
+            conversation_url = _validated_url(conversation_url, "conversation")
+        except ValueError:
+            self.warn("Activities: rejected an untrusted conversation URL.")
+            return
+        if conversation_url in self.seen_conversations:
+            return
+        self.seen_conversations.add(conversation_url)
+        self.pending_activities[conversation_url] = _ActivityCursor(
+            conversation_url, _epoch_ms(min(datetime.now(timezone.utc), self.upper + timedelta(days=1))),
+        )
+
+    async def activities(self, state: _ActivityCursor) -> None:
+        conversation_url = state.url
         try:
             conversation_url = _validated_url(conversation_url, "conversation")
         except ValueError:
             self.warn("Activities: rejected an untrusted conversation URL.")
             return
         # Session completion may be published after the requested start-time window.
-        cursor = _epoch_ms(min(datetime.now(timezone.utc), self.upper + timedelta(days=1)))
         lower_ms = _epoch_ms(self.lower)
-        seen: set[str] = set()
         for _ in range(MAX_ACTIVITY_PAGES):
             result = await self.request(
                 f"{conversation_url}/activities", "activities", "Activities",
-                params={**_SDK_QUERY, "limit": ACTIVITY_PAGE_SIZE, "includeChildren": "true", "maxDate": cursor},
+                params={**_SDK_QUERY, "limit": ACTIVITY_PAGE_SIZE, "includeChildren": "true", "maxDate": state.max_date},
             )
             if result is None:
                 return
@@ -234,36 +264,51 @@ class _Discovery:
                 self.warn("Activities: missing activity list; results are incomplete.")
                 return
             if not rows:
+                state.done = True
                 return
             dates: list[int] = []
             new_ids: set[str] = set()
             reached_creation = False
             for row in rows:
+                if self.stopped:
+                    return
                 if not isinstance(row, dict):
                     continue
                 published = _timestamp(row.get("published"))
                 if published is not None:
                     dates.append(_epoch_ms(published))
                 activity_id = row.get("id")
-                if isinstance(activity_id, str) and activity_id not in seen:
+                if isinstance(activity_id, str) and activity_id not in state.seen:
+                    if not self.add_activity(row):
+                        return
                     new_ids.add(activity_id)
-                    self.add_activity(row)
+                    # Commit progress only after the row was handled. On a
+                    # result cap the rejected row is retried by the next call.
+                    state.seen.add(activity_id)
                 reached_creation |= row.get("verb") == "create" and isinstance(row.get("object"), dict) and row["object"].get("objectType") == "conversation"
             if self.stopped or reached_creation:
+                state.done = reached_creation and not self.stopped
                 return
             if not dates:
                 self.warn("Activities: no usable pagination dates; results are incomplete.")
                 return
             oldest = min(dates)
             if oldest < lower_ms:
+                state.done = True
                 return
-            if oldest > cursor or (oldest == cursor and not new_ids and len(rows) >= ACTIVITY_PAGE_SIZE):
+            if oldest > state.max_date or (oldest == state.max_date and not new_ids and len(rows) >= ACTIVITY_PAGE_SIZE):
                 self.warn("Activities: pagination did not advance; results are incomplete.")
                 return
             # Retain the boundary millisecond so tied activity timestamps are not skipped.
             # An underfilled page contains every row at its oldest timestamp.
-            cursor = oldest - 1 if len(rows) < ACTIVITY_PAGE_SIZE else oldest
-            seen.update(new_ids)
+            next_date = oldest - 1 if len(rows) < ACTIVITY_PAGE_SIZE else oldest
+            if next_date != state.max_date:
+                state.seen = {
+                    row["id"] for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)
+                    and (published := _timestamp(row.get("published"))) is not None
+                    and _epoch_ms(published) == next_date
+                }
+            state.max_date = next_date
         self.warn("Activity page limit reached; results are incomplete.")
 
 
@@ -279,10 +324,8 @@ def _conversation_bases(payload: dict[str, Any]) -> list[str]:
         return []
 
 
-async def _catalog(
-    discovery: _Discovery, catalog_urls: Sequence[str] | None, page_limit: int,
-) -> AsyncIterator[str]:
-    if catalog_urls is None:
+async def _catalog(discovery: _Discovery, page_limit: int) -> AsyncIterator[str]:
+    if discovery.catalog_frontier is None:
         result = await discovery.request(U2C_CATALOG_URL, "u2c", "Service catalog", params={"format": "hostmap"})
         if result is None:
             return
@@ -290,19 +333,22 @@ async def _catalog(
         if not bases:
             discovery.warn("Service catalog: no conversation service was returned; results are incomplete.")
             return
-        pending = [f"{base}/conversations" for base in bases]
-    else:
-        pending = list(dict.fromkeys(catalog_urls))
+        discovery.catalog_frontier = [f"{base}/conversations" for base in bases]
+    pending = discovery.catalog_frontier
     visited: set[str] = set()
-    conversations: dict[str, datetime | None] = {}
     while pending and not discovery.stopped:
-        if len(visited) >= page_limit:
-            if page_limit == MAX_CATALOG_PAGES:
+        if len(visited) >= page_limit or len(discovery.seen_conversations) >= MAX_CONVERSATIONS:
+            if len(discovery.seen_conversations) >= MAX_CONVERSATIONS:
+                discovery.warn("Conversation limit reached; results are incomplete.")
+            elif page_limit == MAX_CATALOG_PAGES:
                 discovery.warn("Conversation page limit reached; results are incomplete.")
             break
-        url = pending.pop(0)
+        # Keep the in-flight page in the frontier until its rows and successors
+        # have been captured. Cancellation before that point safely retries it.
+        url = pending[0]
         if url in visited:
             discovery.warn("Conversation catalog: pagination repeated; results are incomplete.")
+            pending.pop(0)
             continue
         visited.add(url)
         result = await discovery.request(
@@ -310,18 +356,19 @@ async def _catalog(
             params=None if urlsplit(url).query else {**_SDK_QUERY, "paginate": "true", "membershipsType": "memberships"},
         )
         if result is None:
-            continue
+            return
         payload, response = result
         rows = payload.get("items")
         if not isinstance(rows, list):
             discovery.warn("Conversation catalog: missing conversation list; results are incomplete.")
-            continue
+            return
         earliest = datetime.min.replace(tzinfo=timezone.utc)
         rows = sorted(
             (row for row in rows if isinstance(row, dict)),
             key=lambda row: _last_activity(row.get("lastReadableActivityDate")) or earliest,
             reverse=True,
         )
+        new_urls: list[str] = []
         for row in rows:
             if "ONE_ON_ONE" in (row.get("tags") or []):
                 continue
@@ -336,15 +383,14 @@ async def _catalog(
             except ValueError:
                 discovery.warn("Conversation catalog: rejected an untrusted conversation URL.")
                 continue
-            if conversation_url in conversations:
-                continue
-            conversations[conversation_url] = last_activity
-            yield conversation_url
-            if len(conversations) >= MAX_CONVERSATIONS:
-                discovery.warn("Conversation limit reached; results are incomplete.")
-                break
-        if len(conversations) >= MAX_CONVERSATIONS:
-            break
+            if conversation_url not in discovery.seen_conversations:
+                if len(discovery.pending_activities) >= MAX_CONVERSATIONS:
+                    raise ValueError("Conversation continuation exceeds its bounded work limit.")
+                discovery.queue_activity(conversation_url)
+                new_urls.append(conversation_url)
+        # Record all rows and the next-page frontier before yielding to a worker.
+        # Queued, in-flight and not-yet-queued rows therefore survive cancellation.
+        pending.pop(0)
         next_url = response.links.get("next", {}).get("url")
         if isinstance(next_url, str):
             try:
@@ -366,9 +412,76 @@ async def _catalog(
                 continue
             if additional not in visited and additional not in pending:
                 pending.append(additional)
-    if len(pending) > 20:
-        discovery.warn("Conversation federation limit reached; results are incomplete.")
-    discovery.next_catalog_urls = pending[:20]
+        if len(pending) > 20:
+            raise ValueError("Conversation continuation exceeds its bounded federation limit.")
+        for conversation_url in new_urls:
+            if discovery.stopped:
+                break
+            yield conversation_url
+
+
+def _query_binding(discovery: _Discovery) -> dict[str, Any]:
+    return {
+        "from": discovery.lower.isoformat(), "to": discovery.upper.isoformat(),
+        "site": discovery.site_url, "series": discovery.meeting_series_id,
+    }
+
+
+def _encode_continuation(discovery: _Discovery) -> str | None:
+    work = [state for state in discovery.pending_activities.values() if not state.done]
+    if discovery.catalog_frontier == [] and not work and not discovery.series_lookup_pending:
+        return None
+    if len(work) > MAX_CONVERSATIONS or any(len(state.seen) > MAX_BOUNDARY_IDS for state in work):
+        raise ValueError("Meeting discovery continuation exceeds its bounded work limit.")
+    value = {
+        "v": 1, "expires": int(time.time()) + CONTINUATION_TTL, **_query_binding(discovery),
+        "catalog": discovery.catalog_frontier, "series_lookup": discovery.series_lookup_pending,
+        "activities": [{"url": state.url, "max_date": state.max_date, "seen": sorted(state.seen)} for state in work],
+    }
+    encoded = base64.urlsafe_b64encode(json.dumps(value, separators=(",", ":")).encode()).decode().rstrip("=")
+    if len(encoded) > MAX_CONTINUATION_LENGTH:
+        raise ValueError("Meeting discovery continuation exceeds the 512 KiB limit; narrow the date range.")
+    return encoded
+
+
+def _restore_continuation(discovery: _Discovery, token: str) -> None:
+    try:
+        if not isinstance(token, str) or not token or len(token) > MAX_CONTINUATION_LENGTH or not re.fullmatch(r"[A-Za-z0-9_-]+", token):
+            raise ValueError()
+        value = json.loads(base64.b64decode(token + "=" * (-len(token) % 4), altchars=b"-_", validate=True))
+        if not isinstance(value, dict) or set(value) != {"v", "expires", "from", "to", "site", "series", "catalog", "series_lookup", "activities"}:
+            raise ValueError()
+        if type(value["v"]) is not int or value["v"] != 1 or type(value["expires"]) is not int or not time.time() < value["expires"] <= time.time() + CONTINUATION_TTL + 1:
+            raise ValueError()
+        if any(value[key] != expected for key, expected in _query_binding(discovery).items()):
+            raise ValueError()
+        frontier, work, series_lookup = value["catalog"], value["activities"], value["series_lookup"]
+        if frontier is not None and (not isinstance(frontier, list) or len(frontier) > 20 or any(not isinstance(url, str) for url in frontier)):
+            raise ValueError()
+        if not isinstance(work, list) or len(work) > MAX_CONVERSATIONS or type(series_lookup) is not bool:
+            raise ValueError()
+        if discovery.meeting_series_id and frontier != [] or series_lookup and not discovery.meeting_series_id:
+            raise ValueError()
+        frontier = [_validated_url(url, "catalog") for url in frontier] if frontier is not None else None
+        restored: dict[str, _ActivityCursor] = {}
+        for row in work:
+            if not isinstance(row, dict) or set(row) != {"url", "max_date", "seen"}:
+                raise ValueError()
+            url = _validated_url(row["url"], "conversation")
+            cursor, seen = row["max_date"], row["seen"]
+            if type(cursor) is not int or not _epoch_ms(discovery.lower) - 1 <= cursor <= _epoch_ms(discovery.upper + timedelta(days=1)):
+                raise ValueError()
+            if not isinstance(seen, list) or len(seen) > MAX_BOUNDARY_IDS or any(not isinstance(item, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", item) for item in seen):
+                raise ValueError()
+            if url in restored:
+                raise ValueError()
+            restored[url] = _ActivityCursor(url, cursor, set(seen))
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError) as error:
+        raise ValueError("Invalid, expired or mismatched meeting discovery continuation.") from error
+    discovery.catalog_frontier = frontier
+    discovery.pending_activities = restored
+    discovery.seen_conversations = set(restored)
+    discovery.series_lookup_pending = series_lookup
 
 
 async def list_space_meeting_occurrences(
@@ -376,6 +489,7 @@ async def list_space_meeting_occurrences(
     site_url: str, meeting_series_id: str | None = None, max_results: int = 200,
     *, conversation_urls: Sequence[str] | None = None,
     catalog_urls: Sequence[str] | None = None, catalog_page_limit: int = MAX_CATALOG_PAGES,
+    continuation: str | None = None,
 ) -> dict[str, Any]:
     """Enumerate actual occurrences without returning chat or participant content.
 
@@ -396,16 +510,28 @@ async def list_space_meeting_occurrences(
         if len(catalog_urls) > 20 or meeting_series_id is not None or conversation_urls is not None:
             raise ValueError("Catalog continuations require at most 20 URLs and an unscoped catalog lookup")
         catalog_urls = [_validated_url(url, "catalog") for url in catalog_urls]
+    if continuation is not None and (catalog_urls is not None or conversation_urls is not None):
+        raise ValueError("Use one continuation format at a time.")
     site_url = _validated_url(site_url if "://" in site_url else f"https://{site_url}", "site")
     discovery = _Discovery(
         client, bearer, from_dt.astimezone(timezone.utc), to_dt.astimezone(timezone.utc),
         site_url, meeting_series_id, max_results,
     )
+    discovery.catalog_frontier = list(dict.fromkeys(catalog_urls)) if catalog_urls is not None else (
+        [] if meeting_series_id or conversation_urls is not None else None
+    )
+    discovery.series_lookup_pending = meeting_series_id is not None and conversation_urls is None
+    if continuation is not None:
+        _restore_continuation(discovery, continuation)
+    elif conversation_urls is not None:
+        if len(conversation_urls) > MAX_CONVERSATIONS:
+            raise ValueError("Too many conversation URLs.")
+        for conversation_url in conversation_urls:
+            discovery.queue_activity(conversation_url)
     queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=CONVERSATION_QUEUE_SIZE)
 
     async def produce() -> None:
-        urls = list(conversation_urls) if conversation_urls is not None else None
-        if urls is None and meeting_series_id:
+        if discovery.series_lookup_pending:
             # The meetingInfo route is a metadata lookup, not meeting registration.
             result = await discovery.request(
                 f"{site_url}/wbxappapi/v1/meetingInfo", "meeting_info", "Meeting space", body={
@@ -413,20 +539,19 @@ async def list_space_meeting_occurrences(
                     "meetingUUID": meeting_series_id, "disableWebRedirect": True,
                 },
             )
-            urls = []
             if result is not None:
                 conversation_url = result[0].get("conversationUrl")
                 if isinstance(conversation_url, str):
-                    urls.append(conversation_url)
+                    discovery.queue_activity(conversation_url)
+                    discovery.series_lookup_pending = False
                 else:
                     discovery.warn("Meeting space: no conversation URL was returned; results are incomplete.")
-        if urls is None:
-            async for conversation_url in _catalog(discovery, catalog_urls, min(catalog_page_limit, MAX_CATALOG_PAGES)):
-                await queue.put(conversation_url)
-        else:
-            for conversation_url in dict.fromkeys(urls):
-                if discovery.stopped:
-                    break
+        for conversation_url in list(discovery.pending_activities):
+            if discovery.stopped:
+                break
+            await queue.put(conversation_url)
+        if discovery.catalog_frontier != []:
+            async for conversation_url in _catalog(discovery, min(catalog_page_limit, MAX_CATALOG_PAGES)):
                 await queue.put(conversation_url)
         # Only publish EOF after normal producer completion. Cancellation must
         # not wait on a full queue whose consumers have also been cancelled.
@@ -440,7 +565,10 @@ async def list_space_meeting_occurrences(
                 if conversation_url is None:
                     return
                 if not discovery.stopped:
-                    await discovery.activities(conversation_url)
+                    state = discovery.pending_activities[conversation_url]
+                    await discovery.activities(state)
+                    if state.done:
+                        discovery.pending_activities.pop(conversation_url)
             finally:
                 queue.task_done()
 
@@ -452,8 +580,15 @@ async def list_space_meeting_occurrences(
                 tasks.create_task(produce())
     except TimeoutError:
         discovery.warn("Discovery time limit reached; results are incomplete.")
+    except ExceptionGroup as error:
+        if all(isinstance(item, ValueError) for item in error.exceptions):
+            raise ValueError(str(error.exceptions[0])) from error
+        raise
+    discovery.next_catalog_urls = discovery.catalog_frontier or []
+    next_continuation = _encode_continuation(discovery)
     items = sorted(discovery.items.values(), key=lambda item: (item["start"], item["id"]), reverse=True)
     return {
         "items": items, "complete": not discovery.warnings, "warnings": discovery.warnings,
-        "next_catalog_urls": discovery.next_catalog_urls, "has_more": bool(discovery.next_catalog_urls),
+        "next_catalog_urls": discovery.next_catalog_urls, "has_more": next_continuation is not None,
+        "next_continuation": next_continuation,
     }

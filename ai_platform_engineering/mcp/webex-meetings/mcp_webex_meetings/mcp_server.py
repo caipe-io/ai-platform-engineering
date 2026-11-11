@@ -125,6 +125,7 @@ class SpaceMeetingOccurrences(BaseModel):
     max_results: int = Field(default=200, ge=1, le=1000, description="Maximum distinct actual meeting occurrences.")
     catalog_urls: list[str] | None = Field(default=None, max_length=20, description="Validated catalog continuation URLs from the preceding page.")
     catalog_page_limit: int = Field(default=20, ge=1, le=20, description="Catalog pages to scan before returning a continuation.")
+    continuation: str | None = Field(default=None, max_length=512 * 1024, description="Opaque next_continuation from the preceding page; preserves unfinished activity reads.")
 
 
 class UserHubCalendar(BaseModel):
@@ -823,6 +824,8 @@ async def _recording_privilege_transcripts(
             )
         except ValueError:
             continue
+        if not download and row.get("preventDownload") is True:
+            continue
         seen.add(recording_id)
         # Whitelist output: the response also contains passwords and signed URLs.
         item: dict[str, Any] = {
@@ -910,76 +913,82 @@ async def _userhub_transcripts_for_meeting(
     if meeting_id is not None and verified_occurrence_start is not None:
         occurrence_starts[meeting_id] = verified_occurrence_start
     unavailable_instances: set[str] = set()
-    for recording in candidates:
+    semaphore = asyncio.Semaphore(4)
+
+    async def read_candidate(recording: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str] | None:
         recording_uuid = recording.get("recordUUID")
         if not isinstance(recording_uuid, str) or not recording_uuid:
-            continue
+            return None
         try:
-            detail_response = await client.get(
-                f"{site_url}{USERHUB_RECORDINGS_PATH}/{recording_uuid}/stream",
-                headers=headers,
-            )
-            detail_response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            logger.warning(
-                "User Hub recording detail failed for %s: HTTP %s",
-                recording_uuid,
-                exc.response.status_code,
-            )
-            continue
-        detail = detail_response.json()
+            async with semaphore:
+                detail_response = await client.get(
+                    f"{site_url}{USERHUB_RECORDINGS_PATH}/{recording_uuid}/stream",
+                    headers=headers,
+                )
+                detail_response.raise_for_status()
+            detail = detail_response.json()
+        except (httpx.HTTPError, ValueError):
+            logger.warning("User Hub recording detail request failed for %s", recording_uuid)
+            return None
         if not isinstance(detail, dict):
-            continue
+            return None
         detail_meeting_id = detail.get("meetingInstanceId")
         if not isinstance(detail_meeting_id, str) or not detail_meeting_id:
-            continue
+            return None
         if meeting_id is not None and detail_meeting_id != meeting_id:
-            continue
+            return None
+        if not download and detail.get("preventDownload") is True:
+            return None
         download_info = (
             detail.get("downloadRecordingInfo", {}).get("downloadInfo", {})
             if isinstance(detail.get("downloadRecordingInfo"), dict)
             else {}
         )
         try:
-            transcript_url = _validated_webex_download_url(
-                download_info.get("transcriptURL")
-            )
+            transcript_url = _validated_webex_download_url(download_info.get("transcriptURL"))
         except ValueError:
-            continue
-        resolved.append((recording, detail, transcript_url))
-        if meeting_id is not None:
-            if len(resolved) >= max_results:
-                break
-            continue
-        if detail_meeting_id in occurrence_starts:
-            continue
+            return None
+        return recording, detail, transcript_url
 
-        # Verify actual instance timing independently of the requested date
-        # and recording creation time. Shared recordings can remain playable
-        # when the public meeting endpoint denies access.
-        occurrence_starts[detail_meeting_id] = None
+    async def read_occurrence_start(instance_id: str) -> None:
+        # Read each distinct instance once, independently of recording creation
+        # time. A denied public endpoint does not remove shared-recording access.
+        occurrence_starts[instance_id] = None
         try:
-            meeting_response = await client.get(
-                f"{WEBEX_API_BASE}/meetings/{detail_meeting_id}",
-                headers={"Authorization": bearer, "Accept": "application/json"},
-            )
-            meeting_response.raise_for_status()
+            async with semaphore:
+                meeting_response = await client.get(
+                    f"{WEBEX_API_BASE}/meetings/{instance_id}",
+                    headers={"Authorization": bearer, "Accept": "application/json"},
+                )
+                meeting_response.raise_for_status()
+            metadata = meeting_response.json()
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code in {401, 403, 404}:
-                unavailable_instances.add(detail_meeting_id)
-            continue
-        except httpx.RequestError:
-            continue
-        metadata = meeting_response.json()
+                unavailable_instances.add(instance_id)
+            return
+        except (httpx.RequestError, ValueError):
+            return
         if (
-            isinstance(metadata, dict)
-            and metadata.get("id") == detail_meeting_id
+            isinstance(metadata, dict) and metadata.get("id") == instance_id
             and metadata.get("meetingType") == "meeting"
         ):
             start = metadata.get("start")
-            occurrence_starts[detail_meeting_id] = _parse_iso_datetime(
-                start if isinstance(start, str) else None
-            )
+            occurrence_starts[instance_id] = _parse_iso_datetime(start if isinstance(start, str) else None)
+
+    if meeting_id is not None:
+        # An exact identity can stop as soon as the requested segment count is
+        # satisfied. Title/time matching must inspect every bounded candidate.
+        for recording in candidates:
+            candidate = await read_candidate(recording)
+            if candidate is not None:
+                resolved.append(candidate)
+                if len(resolved) >= max_results:
+                    break
+    else:
+        checked = await asyncio.gather(*(read_candidate(recording) for recording in candidates))
+        resolved = [candidate for candidate in checked if candidate is not None]
+        instances = dict.fromkeys(detail["meetingInstanceId"] for _, detail, _ in resolved)
+        await asyncio.gather(*(read_occurrence_start(instance_id) for instance_id in instances))
 
     matched_meeting_id = meeting_id
     if matched_meeting_id is None:
@@ -1025,7 +1034,10 @@ async def _userhub_transcripts_for_meeting(
         occurrence_start = occurrence_starts.get(matched_meeting_id)
         if occurrence_start is not None:
             item["occurrenceStart"] = occurrence_start.isoformat()
-        if download:
+        if download and detail.get("preventDownload") is True:
+            item["body"] = None
+            item["bodyError"] = "Transcript download is disabled."
+        elif download:
             download_headers = {
                 "Authorization": bearer,
                 "Accept": "*/*",
@@ -1133,6 +1145,7 @@ def register_tools(server) -> None:
                 client, bearer, start, end, site,
                 meeting_series_id=args.meeting_series_id, max_results=args.max_results,
                 catalog_urls=args.catalog_urls, catalog_page_limit=args.catalog_page_limit,
+                continuation=args.continuation,
             )
             # The activity feed contains concrete IDs but encrypted page titles.
             # Existing metadata-only privileges supply the exact recording title,

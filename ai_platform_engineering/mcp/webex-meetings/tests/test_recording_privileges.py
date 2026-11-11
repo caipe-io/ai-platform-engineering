@@ -66,6 +66,15 @@ async def test_metadata_only_never_downloads_and_filters_other_instances() -> No
     assert "accessPwd" not in str(items)
 
 
+@pytest.mark.asyncio
+async def test_metadata_only_does_not_offer_a_known_blocked_transcript() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == mcp_server.RECORDING_PRIVILEGE_PATH
+        return httpx.Response(200, json={"privileges": [recording(preventDownload=True)]})
+
+    assert await lookup(handler, download=False) == []
+
+
 @pytest.mark.parametrize("meeting_id", ["a" * 32, "a" * 32 + "_20260105T170000Z", "unknown"])
 @pytest.mark.asyncio
 async def test_never_resolves_scheduled_or_series_id_to_a_different_occurrence(meeting_id: str) -> None:

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -448,3 +449,66 @@ async def test_title_time_lookup_bounds_detail_calls_and_reuses_instance_metadat
     assert len(items) == 1
     assert len(detail_calls) == 100
     assert len(metadata_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_title_time_candidate_reads_run_in_bounded_parallel_workers() -> None:
+    started = asyncio.Event()
+    active = 0
+    maximum = 0
+    metadata_calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal active, maximum, metadata_calls
+        if request.url.path == "/webappng/api/v1/recordings":
+            return httpx.Response(200, json={"recordings": [
+                {"recordUUID": f"segment-{index}", "recordName": "Weekly Sync", "gmtCreateTime": "2026-01-05 13:00:00"}
+                for index in range(8)
+            ]})
+        if request.url.path.endswith("/stream"):
+            active += 1
+            maximum = max(maximum, active)
+            if active == 4:
+                started.set()
+            try:
+                await started.wait()
+                return httpx.Response(200, json={"meetingInstanceId": "instance-1", "downloadRecordingInfo": {
+                    "downloadInfo": {"transcriptURL": "https://media.webex.com/transcript.txt"},
+                }})
+            finally:
+                active -= 1
+        assert request.url.path == "/v1/meetings/instance-1"
+        metadata_calls += 1
+        return httpx.Response(200, json={"id": "instance-1", "meetingType": "meeting", "start": "2026-01-05T13:00:00Z"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        items = await asyncio.wait_for(_userhub_transcripts_for_meeting(
+            client, bearer="Bearer example-user-token", site_url="https://primary.webex.com",
+            meeting_id=None, meeting_title="Weekly Sync", meeting_start=datetime(2026, 1, 5, 13, tzinfo=timezone.utc),
+            max_results=1, download=False,
+        ), timeout=1)
+    assert len(items) == 1
+    assert maximum == 4 and active == 0
+    assert metadata_calls == 1
+
+
+@pytest.mark.parametrize("download", [False, True])
+@pytest.mark.asyncio
+async def test_library_download_block_is_not_advertised_or_bypassed(download: bool) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/webappng/api/v1/recordings":
+            return httpx.Response(200, json={"recordings": [{"recordUUID": "blocked", "recordName": "Weekly Sync"}]})
+        assert request.url.path.endswith("/stream"), "A disabled transcript must not be downloaded"
+        return httpx.Response(200, json={"meetingInstanceId": "instance-1", "preventDownload": True,
+                                        "downloadRecordingInfo": {"downloadInfo": {"transcriptURL": "https://media.webex.com/transcript.txt"}}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        items = await _userhub_transcripts_for_meeting(
+            client, bearer="Bearer example-user-token", site_url="https://primary.webex.com",
+            meeting_id="instance-1", meeting_title=None, meeting_start=None, max_results=1, download=download,
+        )
+    if download:
+        assert items[0]["body"] is None
+        assert items[0]["bodyError"] == "Transcript download is disabled."
+    else:
+        assert items == []

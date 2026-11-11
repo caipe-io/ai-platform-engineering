@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import base64
+import json
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -408,8 +411,10 @@ async def test_result_cap_is_explicit_and_does_not_return_chat_payloads() -> Non
 
     result = await discover(handler, conversation_urls=[CONVERSATION], max_results=1)
     assert len(result["items"]) == 1
-    assert result["complete"] is False
-    assert any("result limit" in warning for warning in result["warnings"])
+    assert result["complete"] is True
+    assert result["has_more"] is True
+    assert result["next_continuation"]
+    assert result["warnings"] == []
 
 
 @pytest.mark.asyncio
@@ -436,7 +441,7 @@ async def test_overall_timeout_returns_partial_status_and_limits_parallel_reques
     assert any("time limit" in warning for warning in result["warnings"])
 
 
-@pytest.mark.parametrize("privilege", ["verified", "missing", "different-instance", "untrusted-url", "denied"])
+@pytest.mark.parametrize("privilege", ["verified", "missing", "different-instance", "untrusted-url", "denied", "download-disabled"])
 @pytest.mark.asyncio
 async def test_tool_only_marks_transcript_verified_after_exact_privilege_metadata_success(
     monkeypatch: pytest.MonkeyPatch, privilege: str,
@@ -452,6 +457,7 @@ async def test_tool_only_marks_transcript_verified_after_exact_privilege_metadat
         return httpx.Response(200, json={"privileges": [] if privilege == "missing" else [{
             "meetingInstanceId": f"{OTHER_SERIES}_I_42" if privilege == "different-instance" else ACTUAL,
             "recordUUID": "recording-1", "recordName": "Weekly Review-20260105 1700",
+            "preventDownload": privilege == "download-disabled",
             "transcriptURL": "https://example.org/file" if privilege == "untrusted-url" else "https://media.webex.com/transcript.vtt?token=example-secret",
         }]})
 
@@ -469,3 +475,167 @@ async def test_tool_only_marks_transcript_verified_after_exact_privilege_metadat
     else:
         assert result["items"][0] == {"id": ACTUAL}
     assert "example-secret" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_result_resume_advances_within_an_activity_page_without_repeating_emitted_rows() -> None:
+    rows = [activity(actual=f"{SERIES}_I_{index}", activity_id=f"event-{index}",
+                     published=f"2026-01-05T1{8-index}:00:00Z") for index in range(3)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        cursor = int(request.url.params["maxDate"])
+        return httpx.Response(200, json={"items": [row for row in rows if spaces._epoch_ms(spaces._timestamp(row["published"])) <= cursor]})
+
+    first = await discover(handler, conversation_urls=[CONVERSATION], max_results=1)
+    pages = [first]
+    while pages[-1]["has_more"]:
+        assert len(pages) < 5, "Continuation repeated a result page instead of advancing"
+        pages.append(await discover(handler, max_results=1, continuation=pages[-1]["next_continuation"]))
+    assert [item["id"] for page in pages for item in page["items"]] == [f"{SERIES}_I_{index}" for index in range(3)]
+    assert all(page["complete"] for page in pages)
+    assert pages[-1]["next_continuation"] is None
+
+
+@pytest.mark.asyncio
+async def test_result_resume_keeps_unread_queued_spaces_and_the_next_catalog_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(spaces, "ACTIVITY_WORKERS", 1)
+    urls = [CONVERSATION.replace("11111111-1111-4111-8111-111111111111", f"{index:08x}-1111-4111-8111-111111111111") for index in range(7)]
+    next_url = "https://conv-primary.wbx2.com/conversation/api/v1/conversations?cursor=next"
+    catalog_requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/u2c/api/v1/catalog":
+            return httpx.Response(200, json={"serviceLinks": {"conversation": "https://conv-primary.wbx2.com/conversation/api/v1"}})
+        if request.url.path.endswith("/conversations"):
+            catalog_requests.append(str(request.url))
+            selected = urls[6:] if request.url.params.get("cursor") else urls[:6]
+            return httpx.Response(200, json={"items": [{"url": url} for url in selected]},
+                                  headers={} if request.url.params.get("cursor") else {"Link": f'<{next_url}>; rel="next"'})
+        url = str(request.url).split("?")[0].removesuffix("/activities")
+        index = urls.index(url)
+        cursor = int(request.url.params["maxDate"])
+        return httpx.Response(200, json={"items": [activity(actual=f"{SERIES}_I_{index}", activity_id=f"event-{index}")] if cursor >= 1767636000000 else []})
+
+    pages = [await discover(handler, max_results=1, catalog_page_limit=1)]
+    assert pages[0]["has_more"] and pages[0]["next_catalog_urls"] == [next_url]
+    while pages[-1]["has_more"]:
+        assert len(pages) < 10
+        pages.append(await discover(handler, max_results=1, catalog_page_limit=1, continuation=pages[-1]["next_continuation"]))
+    assert [item["id"] for page in pages for item in page["items"]] == [f"{SERIES}_I_{index}" for index in range(7)]
+    assert len(catalog_requests) == 2
+    assert all(page["complete"] for page in pages)
+
+
+@pytest.mark.asyncio
+async def test_timeout_resume_preserves_inflight_queued_and_not_yet_queued_spaces(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(spaces, "DISCOVERY_TIMEOUT", 0.02)
+    urls = [CONVERSATION.replace("11111111-1111-4111-8111-111111111111", f"{index:08x}-1111-4111-8111-111111111111") for index in range(14)]
+    next_url = "https://conv-primary.wbx2.com/conversation/api/v1/conversations?cursor=next"
+    slow = True
+    catalog_requests = 0
+    u2c_requests = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal catalog_requests, u2c_requests
+        if request.url.path == "/u2c/api/v1/catalog":
+            u2c_requests += 1
+            return httpx.Response(200, json={"serviceLinks": {"conversation": "https://conv-primary.wbx2.com/conversation/api/v1"}})
+        if request.url.path.endswith("/conversations"):
+            catalog_requests += 1
+            return httpx.Response(200, json={"items": [] if request.url.params.get("cursor") else [{"url": url} for url in urls]},
+                                  headers={} if request.url.params.get("cursor") else {"Link": f'<{next_url}>; rel="next"'})
+        if slow:
+            await asyncio.sleep(0.1)
+        url = str(request.url).split("?")[0].removesuffix("/activities")
+        index = urls.index(url)
+        cursor = int(request.url.params["maxDate"])
+        return httpx.Response(200, json={"items": [activity(actual=f"{SERIES}_I_{index}", activity_id=f"event-{index}")] if cursor >= 1767636000000 else []})
+
+    first = await discover(handler, catalog_page_limit=1)
+    assert not first["complete"] and first["has_more"]
+    assert first["next_catalog_urls"] == [next_url]
+    assert first["items"] == []
+    slow = False
+    monkeypatch.setattr(spaces, "DISCOVERY_TIMEOUT", 1)
+    second = await discover(handler, catalog_page_limit=1, continuation=first["next_continuation"])
+    assert second["complete"] and not second["has_more"]
+    assert {row["id"] for row in second["items"]} == {f"{SERIES}_I_{index}" for index in range(14)}
+    assert catalog_requests == 2 and u2c_requests == 1
+
+
+@pytest.mark.asyncio
+async def test_timeout_before_catalog_response_retains_the_inflight_frontier(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(spaces, "DISCOVERY_TIMEOUT", 0.02)
+    slow = True
+    u2c_requests = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal u2c_requests
+        if request.url.path == "/u2c/api/v1/catalog":
+            u2c_requests += 1
+            return httpx.Response(200, json={"serviceLinks": {"conversation": "https://conv-primary.wbx2.com/conversation/api/v1"}})
+        if slow:
+            await asyncio.sleep(0.1)
+        return httpx.Response(200, json={"items": []})
+
+    first = await discover(handler)
+    assert not first["complete"] and first["has_more"]
+    assert first["next_catalog_urls"] == ["https://conv-primary.wbx2.com/conversation/api/v1/conversations"]
+    slow = False
+    monkeypatch.setattr(spaces, "DISCOVERY_TIMEOUT", 1)
+    second = await discover(handler, continuation=first["next_continuation"])
+    assert second["complete"] and not second["has_more"]
+    assert u2c_requests == 1
+
+
+@pytest.mark.parametrize("change", ["invalid", "expired", "from", "to", "site", "series", "url", "query", "cursor", "oversized"])
+@pytest.mark.asyncio
+async def test_invalid_continuation_fails_before_any_authenticated_request(change: str) -> None:
+    value = {"v": 1, "expires": int(time.time()) + 60, "from": LOWER.isoformat(), "to": UPPER.isoformat(),
+             "site": "https://primary.webex.com", "series": None, "catalog": [], "series_lookup": False,
+             "activities": [{"url": CONVERSATION, "max_date": spaces._epoch_ms(UPPER), "seen": []}]}
+    if change == "expired":
+        value["expires"] = 0
+    elif change in ("from", "to", "site", "series"):
+        value[change] = "different"
+    elif change == "url":
+        value["activities"][0]["url"] = "https://example.org/private"
+    elif change == "query":
+        value["catalog"] = ["https://conv-primary.wbx2.com/conversation/api/v1/conversations?token=example-secret"]
+    elif change == "cursor":
+        value["activities"][0]["max_date"] = 0
+    token = base64.urlsafe_b64encode(json.dumps(value).encode()).decode().rstrip("=")
+    if change == "invalid":
+        token = "not valid"
+    elif change == "oversized":
+        token = "A" * (spaces.MAX_CONTINUATION_LENGTH + 1)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        pytest.fail("Invalid continuation must not reach Webex")
+
+    with pytest.raises(ValueError, match="Invalid, expired or mismatched"):
+        await discover(handler, continuation=token)
+
+
+@pytest.mark.asyncio
+async def test_oversized_generated_continuation_fails_explicitly_instead_of_dropping_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(spaces, "MAX_CONTINUATION_LENGTH", 10)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"items": [activity(), activity(actual=f"{SERIES}_I_2", activity_id="two")]})
+
+    with pytest.raises(ValueError, match="512 KiB"):
+        await discover(handler, conversation_urls=[CONVERSATION], max_results=1)
+
+
+@pytest.mark.asyncio
+async def test_catalog_frontier_overflow_has_a_clear_error_instead_of_truncating_work() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/u2c/api/v1/catalog":
+            return httpx.Response(200, json={"serviceLinks": {"conversation": "https://conv-primary.wbx2.com/conversation/api/v1"}})
+        return httpx.Response(200, json={"items": [], "additionalUrls": [
+            f"https://conv-region-{index}.wbx2.com/conversation/api/v1" for index in range(21)
+        ]})
+
+    with pytest.raises(ValueError, match="bounded federation limit"):
+        await discover(handler)

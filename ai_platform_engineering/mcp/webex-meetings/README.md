@@ -168,7 +168,26 @@ credentials. Existing transcript checks still establish content availability.
 Partial discovery is reported explicitly when request, page or time limits apply.
 
 For interactive callers, `catalog_page_limit=1` reads one catalog page while
-activity workers run concurrently. `next_catalog_urls` and `has_more` let the
-caller resume with `catalog_urls` without repeating completed pages. An explicit
-page boundary is distinct from a failed or truncated request. Verified
-transcript metadata can be reused without repeating the privilege lookup.
+activity workers run concurrently. Pass `next_continuation` back as
+`continuation` while `has_more` is true. It preserves the catalog frontier,
+unfinished spaces and row progress, including after a result limit or timeout.
+The opaque token expires after 24 hours, is bound to the same date range, site
+and series, and has a hard 512 KiB ceiling. Oversized state fails explicitly
+instead of dropping work. Transport the token in a request body, not a URL.
+The older `next_catalog_urls`/`catalog_urls` fields remain compatible for catalog
+page boundaries but do not represent unfinished activity reads.
+
+An intentional result or catalog page boundary returns `complete: true` for the
+page and `has_more: true`; callers must continue before claiming full coverage.
+Provider failures, request limits and timeouts return `complete: false`, retain
+resumable work and explain the interruption in `warnings`.
+
+`transcriptVerified` refers to exact-instance **metadata**, not a completed body
+download: the privilege lookup returned a trusted transcript URL and did not
+explicitly disable downloading. Known download-disabled rows are not offered
+by metadata-only reads. Actual downloads can still fail if access changes or a
+link expires, and those failures remain explicit.
+
+Title/time matching checks candidates with four bounded workers and reads each
+distinct instance's timing once. Multiple matching instances return no items;
+use an exact actual meeting ID to resolve that ambiguity.
