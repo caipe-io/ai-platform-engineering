@@ -153,3 +153,28 @@ it.each([85, 86])('preserves handling of existing index conflicts (%s)', async c
   expect(mockDeleteMany).not.toHaveBeenCalled();
   expect(console.error).not.toHaveBeenCalled();
 });
+
+
+it.each(['aggregate', 'deleteMany'])('continues queued indexes when duplicate cleanup fails in %s', async operation => {
+  const cleanupError = new Error('Duplicate cleanup failed');
+  mockCreateIndex.mockImplementation(async (name, keys) => {
+    if (isUserEmailIndex(name, keys)) throw { code: 11000 };
+    return 'created';
+  });
+  if (operation === 'aggregate') {
+    mockAggregate.mockReturnValue({ toArray: async () => { throw cleanupError; } });
+  } else {
+    mockAggregate.mockReturnValue({ toArray: async () => [
+      { _id: { email: 'member@example.test' }, keepId: 'current', count: 2 },
+    ] });
+    mockDeleteMany.mockRejectedValue(cleanupError);
+  }
+
+  await warmup();
+
+  expect(mockCreateIndex).toHaveBeenCalledWith('users', { keycloak_sub: 1 }, {});
+  expect(mockCreateIndex).toHaveBeenCalledWith('users', { last_login: -1 }, {});
+  expect(mockCreateIndex.mock.calls.filter(([name, keys]) => isUserEmailIndex(name, keys))).toHaveLength(1);
+  expect(console.error).toHaveBeenCalledTimes(1);
+  expect(console.error).toHaveBeenCalledWith(expect.stringContaining('users'), cleanupError);
+});

@@ -144,14 +144,14 @@ async function safeCreateIndex(
       console.warn(
         `⚠️  Duplicate values found in ${collectionName} for unique index ${JSON.stringify(keys)} — deduplicating...`,
       );
-      await deduplicateCollection(db, collectionName, keyFields);
       try {
+        await deduplicateCollection(db, collectionName, keyFields);
         await createIndexWithBuildRetry(db, collectionName, keys, options);
         console.log(`  ✅ Index on ${collectionName} ${JSON.stringify(keys)} created after dedup`);
         return true;
       } catch (retryError) {
         console.error(
-          `  ❌ Index on ${collectionName} ${JSON.stringify(keys)} still failed after dedup:`,
+          `  ❌ Index on ${collectionName} ${JSON.stringify(keys)} failed during duplicate-key recovery:`,
           retryError,
         );
         return false;
