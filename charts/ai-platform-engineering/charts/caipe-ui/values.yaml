@@ -284,6 +284,7 @@ config:
   WEBEX_THREAD_CONTEXT_MAX_CHARS: "4000"
   LOGO_URL: "/logo.svg"
   LOGO_STYLE: "default"
+  LOGO_THEMED: ""
   # SPINNER_COLOR: ""
   SHOW_POWERED_BY: "false"
   # Environment badge label shown next to the app name (e.g. "Dev", "Preview", "Staging", "Prod")
@@ -430,6 +431,8 @@ credentialSecretRefs: []
 # Slack bot admin sync/reload uses OIDC_CLIENT_ID/OIDC_CLIENT_SECRET. Webex bot
 # admin sync/reload still requires WEBEX_BOT_ADMIN_CLIENT_SECRET when enabled.
 existingSecret: ""
+# Optional feature credentials may be absent without preventing UI startup.
+existingSecretOptional: false
 
 # ---------- Keycloak Admin REST client wiring ----------
 #

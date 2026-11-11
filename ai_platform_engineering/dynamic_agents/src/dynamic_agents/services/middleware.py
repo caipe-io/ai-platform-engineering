@@ -519,12 +519,14 @@ def _build_pii(params: dict[str, Any]) -> PIIMiddleware:
 def _instantiate_model(
     model_id: str,
     model_provider: str,
+    streaming: bool | None = None,
 ) -> Any:
     """Instantiate an LLM via `build_chat_model` for middleware that need a model.
 
     Args:
         model_id: LLM model identifier.
         model_provider: LLM provider string.
+        streaming: Agent's streaming override, or None for the deployment default.
 
     Returns:
         Initialized BaseChatModel instance.
@@ -532,6 +534,7 @@ def _instantiate_model(
     return get_configured_llm(
         model_id=model_id,
         model_provider=model_provider,
+        streaming=streaming,
     )
 
 
@@ -547,7 +550,7 @@ def _build_llm_tool_selector(params: dict[str, Any]) -> LLMToolSelectorMiddlewar
     model_id = params.get("model_id")
     model_provider = params.get("model_provider")
     if model_id and model_provider:
-        kwargs["model"] = _instantiate_model(model_id, model_provider)
+        kwargs["model"] = _instantiate_model(model_id, model_provider, params.get("model_streaming"))
 
     return LLMToolSelectorMiddleware(**kwargs)
 
@@ -564,7 +567,7 @@ def _build_model_fallback(params: dict[str, Any]) -> ModelFallbackMiddleware | N
         logger.warning("model_fallback enabled but no model_id/model_provider configured, skipping")
         return None
 
-    fallback_model = _instantiate_model(model_id, model_provider)
+    fallback_model = _instantiate_model(model_id, model_provider, params.get("model_streaming"))
     return ModelFallbackMiddleware(fallback_model)
 
 
@@ -668,6 +671,7 @@ def build_middleware(
     model_provider: str = "unknown",
     attachment_store: Any | None = None,
     enable_prompt_cache: bool = False,
+    model_streaming: bool | None = None,
 ) -> list[AgentMiddleware]:
     """Build the middleware stack from an agent's features config.
 
@@ -686,6 +690,7 @@ def build_middleware(
         session_id: Optional conversation ID for log context.
         agent_name: Agent name for metric labels.
         model_id: Model identifier for metric labels.
+        model_streaming: Agent's streaming override for middleware-owned models.
 
     Returns:
         Ordered list of middleware instances.
@@ -724,6 +729,8 @@ def build_middleware(
 
         # Merge user params over defaults
         params = {**spec.default_params, **entry.params}
+        if spec.model_params and model_streaming is not None:
+            params["model_streaming"] = model_streaming
 
         # Special-case construction for middleware with non-trivial init
         builder = _SPECIAL_BUILDERS.get(entry.type)

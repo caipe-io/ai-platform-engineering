@@ -43,7 +43,7 @@ jobs:
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
         with:
           egress-policy: audit
 
@@ -338,7 +338,7 @@ jobs:
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
         with:
           egress-policy: audit
 
@@ -485,7 +485,7 @@ jobs:
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
         with:
           egress-policy: audit
 
@@ -504,8 +504,9 @@ jobs:
 
       - name: Run TypeScript type checking
         working-directory: ui
-        continue-on-error: true
-        run: npx tsc --noEmit
+        run: |
+          npm run generate:native-extensions
+          npx tsc --noEmit
 
       - name: Run ESLint
         working-directory: ui

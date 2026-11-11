@@ -31,12 +31,14 @@ class ProviderSessionContext:
     conversation_id: str
     profile_id: str
     epoch: int
+    checkpoint_namespace: str = ""
 
 
 @dataclass(frozen=True)
 class ProviderSessionState:
     provider_session_id: str | None
     checkpoint_strategy: CheckpointStrategy
+    native_state_key: str | None = None
 
 
 class ProviderSessionManager(Protocol):
@@ -165,13 +167,15 @@ class CAIPEAgentSessionManager:
         )
 
     async def resolve(
-        self, owner_subject: str, agent_id: str, conversation_id: str
+        self, owner_subject: str, agent_id: str, conversation_id: str, published_version: int | None = None
     ) -> tuple[SessionBinding, AgentVersion]:
         record = await self._repository.get_agent(agent_id)
         if record is None or not record.enabled:
             raise AgentSessionNotRunnableError(agent_id)
 
         latest = await self.current(owner_subject, agent_id, conversation_id)
+        if latest is not None and latest.status == "degraded":
+            raise AgentSessionNotRunnableError("Session needs native-state reconciliation or an explicit clear")
         if latest is not None and latest.status == "active":
             version = await self._repository.get_agent_version(
                 agent_id, latest.agent_version
@@ -182,7 +186,7 @@ class CAIPEAgentSessionManager:
 
         epoch = latest.epoch + 1 if latest else 0
         version = await self._repository.get_agent_version(
-            agent_id, record.current_version
+            agent_id, published_version or record.current_version
         )
         if version is None:
             raise AgentSessionNotRunnableError(agent_id)
@@ -199,6 +203,7 @@ class CAIPEAgentSessionManager:
             conversation_id=conversation_id,
             profile_id=version.blueprint.harness.profile_id,
             epoch=epoch,
+            checkpoint_namespace=((version.blueprint.harness.options.get("runtime", {}).get("backend") or {}).get("config") or {}).get("checkpoint_collection") or getattr(adapter, "checkpoint_namespace", "checkpoints_conversation"),
         )
         provider_state = await adapter.session_manager.open(context)
         binding = await self._repository.create_session(
@@ -212,6 +217,7 @@ class CAIPEAgentSessionManager:
                 profile_id=version.blueprint.harness.profile_id,
                 provider_session_id=provider_state.provider_session_id,
                 checkpoint_strategy=provider_state.checkpoint_strategy,
+                native_state_key=provider_state.native_state_key,
                 epoch=epoch,
             )
         )

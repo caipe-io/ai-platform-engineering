@@ -41,6 +41,10 @@ installing catalog skills into supported coding agents outside the CAIPE UI.
 | Skill hub | External GitHub/GitLab source crawled into CAIPE | MongoDB `skill_hubs`, `hub_skills` |
 | Scanner | Optional prompt-injection and unsafe-tool scanner | `SKILL_SCANNER_URL` sidecar |
 
+Catalog identity is the stable skill ID, not its display name. Skills with the
+same name remain separate entries, with their own authorization and scan state.
+Agent attachments continue to refer to the exact selected ID.
+
 ## Legacy Agentic Workflows URLs
 
 The retired `/agent-builder` page was an older **Agentic Workflows** UI over

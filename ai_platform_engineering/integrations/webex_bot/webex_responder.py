@@ -415,7 +415,8 @@ class WebexThreadedStreamDispatcher:
         parent_id = thread_parent_id or message_id
         space_id = str(payload.get("space_id") or "")
         agent_id = str(payload.get("agent_id") or "")
-        bot_name = _reply_bot_name(str(payload.get("bot_id") or ""))
+        bot_id = str(payload.get("bot_id") or "")
+        bot_name = _reply_bot_name(bot_id)
         text = str(payload.get("text") or "")
         person_id = str(payload.get("person_id") or "")
         obo_token = str(payload.get("obo_token") or "")
@@ -443,13 +444,14 @@ class WebexThreadedStreamDispatcher:
             conversation = self._sse_client.create_conversation(
                 title=text[:50].strip() or "Webex Thread",
                 agent_id=agent_id,
-                idempotency_key=f"webex:{space_id}:{parent_id}",
+                idempotency_key=f"webex:{bot_id}:{space_id}:{parent_id}" if bot_id else f"webex:{space_id}:{parent_id}",
                 metadata={
                     "surface": "webex",
                     "webex_space_id": space_id,
                     "webex_message_id": parent_id,
                     "webex_room_id": room_id,
                     "webex_is_direct": is_direct,
+                    **({"webex_bot_id": bot_id} if bot_id else {}),
                     **({"owner_connector_id": person_id} if person_id else {}),
                 },
                 bearer_token=obo_token,
@@ -488,7 +490,7 @@ class WebexThreadedStreamDispatcher:
                         conversation_id,
                         exc,
                     )
-            thread_key = f"{space_id}:{parent_id}"
+            thread_key = f"{bot_id}:{space_id}:{parent_id}" if bot_id else f"{space_id}:{parent_id}"
             if thread_parent_id:
                 owner_id = self._thread_owner_cache.get(thread_key) or conv_metadata.get(
                     "thread_owner_agent_id"
@@ -531,6 +533,7 @@ class WebexThreadedStreamDispatcher:
                 "webex_space_id": space_id,
                 "webex_room_id": room_id,
                 "webex_is_direct": is_direct,
+                **({"webex_bot_id": bot_id} if bot_id else {}),
                 "webex_message_id": message_id,
                 "webex_thread_parent_id": parent_id,
             }

@@ -20,7 +20,7 @@ export interface ToolInfo {
   /** Tool arguments (used for thought extraction) */
   args?: Record<string, unknown>;
   /** Current status */
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "cancelled";
   /** Error message when status is "failed" */
   error?: string;
   /** Truncated tool result (for display in collapsible) */
@@ -45,7 +45,7 @@ export interface SubagentInfo {
   /** Purpose description (from args.description) */
   purpose?: string;
   /** Current status */
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "cancelled";
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -97,7 +97,7 @@ export interface ErrorSegment {
 }
 
 /** Status segment types */
-export type StatusType = "done" | "interrupted" | "waiting_for_input";
+export type StatusType = "done" | "interrupted" | "waiting_for_input" | "unknown" | "cancelled";
 
 /** A status marker (completion, interruption, or waiting for input) */
 export interface StatusSegment {

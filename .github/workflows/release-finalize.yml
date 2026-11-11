@@ -3,6 +3,21 @@ name: "[Release] Finalize Release"
 on:
   repository_dispatch:
     types: [ci-completed]
+  workflow_run:
+    workflows:
+      - "[CI][MCP] MCP Servers Docker Build and Push"
+      - "[CI] CAIPE RAG Build and Push"
+      - "[CI] Dynamic Agents Build and Push"
+      - "[CI] Harness Engine Build and Push"
+      - "[CI] Autonomous Agents Build and Push"
+      - "[CI] CAIPE UI Build and Push"
+      - "[CI] Audit Service Build and Push"
+      - "[CI] Slack Bot Build and Push"
+      - "[CI] Skill Scanner Build and Push"
+      - "[CI] Keycloak Init Build and Push"
+      - "[CI] OpenFGA Authz Bridge Build and Push"
+      - "[CI][Helm] Publish Tagged Helm Charts"
+    types: [completed]
 
 permissions:
   contents: read
@@ -21,13 +36,22 @@ jobs:
       published: ${{ steps.publish-release.outputs.published }}
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
         with:
           egress-policy: audit
 
       - name: 📥 Extract payload
         id: payload
         env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+          TRIGGER_EVENT: ${{ github.event_name }}
+          UPSTREAM_EVENT: ${{ github.event.workflow_run.event }}
+          UPSTREAM_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          UPSTREAM_SHA: ${{ github.event.workflow_run.head_sha }}
+          UPSTREAM_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          UPSTREAM_WORKFLOW: ${{ github.event.workflow_run.name }}
+          UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           DISPATCH_TAG: ${{ github.event.client_payload.tag }}
           DISPATCH_WORKFLOW: ${{ github.event.client_payload.workflow }}
           DISPATCH_CONCLUSION: ${{ github.event.client_payload.conclusion }}
@@ -37,6 +61,20 @@ jobs:
           TAG="$DISPATCH_TAG"
           WORKFLOW="$DISPATCH_WORKFLOW"
           CONCLUSION="$DISPATCH_CONCLUSION"
+
+          # Completion events close the race where a component dispatch arrives
+          # before its own run is marked completed. Never consume PR/fork code.
+          if [[ "$TRIGGER_EVENT" == "workflow_run" ]]; then
+            if [[ "$UPSTREAM_EVENT" != "push" || "$UPSTREAM_REPOSITORY" != "$GH_REPOSITORY" ]]; then
+              exit 0
+            fi
+            TAG="$UPSTREAM_BRANCH"
+            WORKFLOW="$UPSTREAM_WORKFLOW"
+            CONCLUSION="$UPSTREAM_CONCLUSION"
+            if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then exit 0; fi
+            tag_sha=$(gh api "repos/${GH_REPOSITORY}/commits/${TAG}" --jq '.sha')
+            if [[ "$tag_sha" != "$UPSTREAM_SHA" ]]; then exit 0; fi
+          fi
 
           echo "🏷️ Tag: $TAG"
           echo "📦 Triggered by: $WORKFLOW"

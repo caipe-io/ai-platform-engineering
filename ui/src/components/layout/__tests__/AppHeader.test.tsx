@@ -181,6 +181,8 @@ jest.mock('@/components/notifications/NotificationBell', () => ({
   NotificationBell: () => <button aria-label="Notifications" />,
 }))
 
+jest.mock('@/components/layout/RunningChats', () => ({ RunningChats: () => null }))
+
 const mockToast = jest.fn()
 jest.mock('@/components/ui/toast', () => ({
   useToast: () => ({ toast: mockToast }),

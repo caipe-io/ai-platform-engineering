@@ -447,7 +447,7 @@ export interface AddMessageRequest {
     // same label. Ignored when agent_name is provided directly.
     agent_id?: string;
     is_final?: boolean;
-    turn_status?: string; // "done" | "interrupted" | "waiting_for_input"
+    turn_status?: string; // "done" | "interrupted" | "waiting_for_input" | "cancelled"
     is_interrupted?: boolean;
     task_id?: string;
     timeline_segments?: TimelineSegment[]; // Plan/thinking/answer reconstruction

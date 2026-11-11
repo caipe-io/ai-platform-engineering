@@ -17,6 +17,17 @@ import { useSession } from "next-auth/react";
 import { useParams,useRouter } from "next/navigation";
 import { useEffect,useRef,useState } from "react";
 
+function conversationIdFromRoute(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  try {
+    return decodeURIComponent(value);
+  } catch (error) {
+    if (!(error instanceof URIError)) throw error;
+    // Malformed escapes can be literal legacy IDs; API paths encode them.
+    return value;
+  }
+}
+
 /**
  * ChatContainer - renders the appropriate chat view based on conversation type.
  * This component lives in the layout and persists across conversation switches,
@@ -28,12 +39,12 @@ export function ChatContainer() {
   const { data: session } = useSession();
   
   // Get uuid from params - this will be undefined on /chat (redirect page)
-  const uuid = params?.uuid as string | undefined;
+  const uuid = conversationIdFromRoute(params?.uuid);
 
   const [agentInfo, setAgentInfo] = useState<DynamicAgentConfig | null>(null);
   // Track when a dynamic agent has been deleted but conversation still references it
   const [agentNotFound, setAgentNotFound] = useState(false);
-  const [relinkedAgentId, setRelinkedAgentId] = useState<string | null>(null);
+  const [agentUnavailable, setAgentUnavailable] = useState(false);
 
   // Only subscribe to stable functions — NOT to `conversations`.
   const { setActiveConversation, loadMessagesFromServer } = useChatStore();
@@ -104,7 +115,7 @@ export function ChatContainer() {
       setError(null);
       setAccessLevel(null);
       setAgentNotFound(false);
-      setRelinkedAgentId(null);
+      setAgentUnavailable(false);
       // Don't reset agentInfo - let the agent fetch effect handle it
     }
   }, [uuid, storageMode]);
@@ -287,6 +298,7 @@ export function ChatContainer() {
     if (!uuid) {
       setAgentInfo(null);
       setAgentNotFound(false);
+      setAgentUnavailable(false);
       return;
     }
 
@@ -295,6 +307,7 @@ export function ChatContainer() {
       if (conversationInStore && !isDynamicAgentConversation(conversationInStore)) {
         setAgentInfo(null);
         setAgentNotFound(false);
+        setAgentUnavailable(false);
       }
       return;
     }
@@ -312,6 +325,7 @@ export function ChatContainer() {
 
     fetchedAgentRef.current = { uuid, agentId: selectedAgentId };
     setAgentNotFound(false);
+    setAgentUnavailable(false);
     let cancelled = false;
 
     async function fetchAgentInfo() {
@@ -319,6 +333,7 @@ export function ChatContainer() {
       if (cancelled) return;
       setAgentInfo(result.agent);
       setAgentNotFound(result.notFound);
+      setAgentUnavailable(Boolean(result.unavailable));
       if (result.notFound) {
         console.warn(`[ChatContainer] Agent ${selectedAgentId} not found (deleted)`);
       }
@@ -379,14 +394,8 @@ export function ChatContainer() {
   // participant (participants: []). Treat them the same as conversations whose
   // agent was later deleted: show the full chat history in read-only mode with
   // an "agent deleted" banner and a CTA to start a new conversation.
-  const effectiveAgentId = relinkedAgentId ?? selectedAgentId ?? "deprecated-supervisor-agent";
-  const isAgentGone = !relinkedAgentId && (agentNotFound || !selectedAgentId);
-  const handleAgentRelinked = (agentId: string) => {
-    fetchedAgentRef.current = { uuid, agentId };
-    setRelinkedAgentId(agentId);
-    setAgentInfo(null);
-    setAgentNotFound(false);
-  };
+  const effectiveAgentId = selectedAgentId ?? "deprecated-supervisor-agent";
+  const isAgentGone = agentNotFound || !selectedAgentId;
 
   return (
     <ChatView
@@ -394,11 +403,11 @@ export function ChatContainer() {
       selectedAgentId={effectiveAgentId}
       agent={agentInfo}
       agentNotFound={isAgentGone}
+      agentUnavailable={agentUnavailable}
       readOnly={isReadOnly}
       readOnlyReason={readOnlyReason}
       apiConversation={isApiConversation}
       isLoadingMessages={isLoadingMessages}
-      onAgentRelinked={handleAgentRelinked}
     />
   );
 }

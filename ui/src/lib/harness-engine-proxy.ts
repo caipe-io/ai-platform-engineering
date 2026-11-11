@@ -7,6 +7,16 @@ export interface HarnessEngineConfig {
   internalToken: string;
 }
 
+export interface HarnessConversationReadScope {
+  agentId: string;
+  conversationId: string;
+}
+
+/** Construct only after authorizing the real viewer against the saved conversation. */
+export function harnessConversationReadHeaders(scope: HarnessConversationReadScope): Record<string, string> {
+  return { "X-Harness-Read-Agent": scope.agentId, "X-Harness-Read-Conversation": scope.conversationId };
+}
+
 export function isHarnessEngineConfigured(): boolean {
   return Boolean(
     process.env.HARNESS_ENGINE_URL?.trim() &&
@@ -85,10 +95,12 @@ export async function proxyHarnessEngineStream(
   auth: Pick<AuthResult, "subject" | "traceparent">,
   path: string,
   signal?: AbortSignal,
+  readScope?: HarnessConversationReadScope,
 ): Promise<Response> {
   const headers = buildHarnessEngineHeaders(config, auth);
   if (headers instanceof NextResponse) return headers;
   headers.Accept = "text/event-stream";
+  if (readScope) Object.assign(headers, harnessConversationReadHeaders(readScope));
 
   try {
     const response = await fetch(`${config.url}${path}`, {
@@ -130,9 +142,11 @@ export async function lookupHarnessSession(
   auth: Pick<AuthResult, "subject" | "traceparent">,
   agentId: string,
   conversationId: string,
-): Promise<{ harness_id: string | null } | NextResponse> {
+  readScope?: HarnessConversationReadScope,
+): Promise<{ agent_version?: number | null; harness_id: string | null; native_thread_id?: string | null; pending_interrupt?: Record<string, unknown> | null; active_run?: import("@/types/harness-engine").HarnessRun | null; last_run?: import("@/types/harness-engine").HarnessRun | null } | NextResponse> {
   const response = await proxyHarnessEngine(config, auth, "/api/v1/sessions/lookup", {
     method: "POST",
+    ...(readScope && { headers: harnessConversationReadHeaders(readScope) }),
     body: JSON.stringify({ agent_id: agentId, conversation_id: conversationId }),
   });
   const result = await response.json().catch(() => null);

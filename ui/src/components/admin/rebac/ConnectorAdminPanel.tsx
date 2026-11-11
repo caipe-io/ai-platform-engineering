@@ -645,6 +645,7 @@ export function ConnectorAdminPanel({
   );
   const [discoveryIdentitiesError, setDiscoveryIdentitiesError] = useState<string | null>(null);
   const discoveryFetchedRef = useRef(false);
+  const discoveryFetchGenerationRef = useRef(0);
   const [onboardingDefaults, setOnboardingDefaults] = useState<OnboardingDefaultSelection>({
     team_slug: "",
     agent_id: "",
@@ -812,8 +813,10 @@ export function ConnectorAdminPanel({
     } finally {
       if (generation === itemsFetchGenerationRef.current) {
         await holdLoadingIndicator(startedAt);
-        setItemsLoading(false);
-        setHasLoadedItemsOnce(true);
+        if (generation === itemsFetchGenerationRef.current) {
+          setItemsLoading(false);
+          setHasLoadedItemsOnce(true);
+        }
       }
     }
   }, [adapter, discoveryIdentitiesLoading, selectedDiscoveryIdentityId]);
@@ -1194,6 +1197,7 @@ export function ConnectorAdminPanel({
       forceRefresh?: boolean;
     }) => {
       const startedAt = Date.now();
+      const generation = ++discoveryFetchGenerationRef.current;
       if (opts.append) setDiscoveryLoadingMore(true);
       else {
         setDiscoverLoading(true);
@@ -1212,6 +1216,7 @@ export function ConnectorAdminPanel({
         const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) throw new Error(await res.text());
         const pageData = adapter.parseDiscoveryPage(await res.json());
+        if (generation !== discoveryFetchGenerationRef.current) return;
 
         setDiscoveryNextCursor(pageData.nextCursor);
         setDiscoveryHasMore(pageData.hasMore);
@@ -1253,6 +1258,7 @@ export function ConnectorAdminPanel({
         }
         await loadLegacyChannelHints();
       } catch (err) {
+        if (generation !== discoveryFetchGenerationRef.current) return;
         const msg = err instanceof Error ? err.message : `Failed to discover ${adapter.connectorName} ${adapter.itemPlural}`;
         setDiscoverError(msg);
         setMessage(msg);
@@ -1261,10 +1267,12 @@ export function ConnectorAdminPanel({
           setDiscoveredRows([]);
         }
       } finally {
-        if (opts.append) setDiscoveryLoadingMore(false);
-        else {
-          await holdLoadingIndicator(startedAt);
-          setDiscoverLoading(false);
+        if (generation === discoveryFetchGenerationRef.current) {
+          if (opts.append) setDiscoveryLoadingMore(false);
+          else {
+            await holdLoadingIndicator(startedAt);
+            if (generation === discoveryFetchGenerationRef.current) setDiscoverLoading(false);
+          }
         }
       }
     },
@@ -1272,7 +1280,18 @@ export function ConnectorAdminPanel({
   );
 
   const selectDiscoveryIdentity = (identityId: string) => {
+    if (identityId === selectedDiscoveryIdentityId) return;
+    // Configured and discovered rows belong to the previous bot until the
+    // new bot's requests complete. Never seed its table with those rows.
+    itemsFetchGenerationRef.current++;
+    discoveryFetchGenerationRef.current++;
     setSelectedDiscoveryIdentityId(identityId);
+    setItems([]);
+    setSelectedKey("");
+    setRoutes([]);
+    setDiagnostics(null);
+    setDiscoverLoading(false);
+    setDiscoveryLoadingMore(false);
     discoveryFetchedRef.current = false;
     setDiscoveryLiveFetched(false);
     setDiscoveryNextCursor(null);
@@ -1280,11 +1299,8 @@ export function ConnectorAdminPanel({
     setDiscoveryTotalMatches(null);
     setDiscoverySearch("");
     setDiscoverError(null);
-    const seeded = itemsToDiscovered(items);
-    setDiscoveredItems(seeded);
-    setDiscoveredRows(
-      buildDiscoveredRows(seeded, [], onboardingDefaultsForIdentity(identityId)),
-    );
+    setDiscoveredItems([]);
+    setDiscoveredRows([]);
   };
 
   useEffect(() => {

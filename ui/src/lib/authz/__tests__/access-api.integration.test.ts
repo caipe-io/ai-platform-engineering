@@ -73,3 +73,29 @@ it("maps an OpenFGA outage to an unavailable HTTP result", async () => {
   expect(result.status).toBe(503);
   expect(await result.json()).toMatchObject({ code: "AUTHZ_UNAVAILABLE" });
 });
+
+it("grants, checks, queries and revokes an exact MCP tool through the Access API", async () => {
+  const tool = { type: "tool", id: "mcp-example/read_item" };
+  const intent = { resource: tool, capability: "call", grantee: { type: "user", id: "test-user" } };
+  let granted = false;
+  global.fetch = jest.fn(async (url: string, options: RequestInit) => {
+    const body = JSON.parse(options.body as string);
+    if (url.endsWith("/write")) {
+      expect((body.writes ?? body.deletes).tuple_keys).toEqual([
+        { user: "user:test-user", relation: "caller", object: "tool:mcp-example/read_item" },
+      ]);
+      granted = Boolean(body.writes);
+      return response({});
+    }
+    return response({ allowed: body.tuple_key.relation === "can_manage" ||
+      (granted && body.tuple_key.object === "tool:mcp-example/read_item") });
+  }) as typeof fetch;
+
+  expect((await grant(request("grants", intent))).status).toBe(200);
+  expect(await (await check(request("check", { resource: tool, action: "call" }))).json()).toMatchObject({ decision: "ALLOW" });
+  expect(await (await query(request("query", { resource_type: "tool", action: "call", ids: [tool.id, "mcp-example/other_item"] }))).json()).toEqual({ ids: [tool.id] });
+  expect((await revoke(request("grants", intent, "DELETE"))).status).toBe(200);
+  expect(await (await check(request("check", { resource: tool, action: "call" }))).json()).toMatchObject({ decision: "DENY" });
+  expect(emitGrantAudit).toHaveBeenCalledWith("grant", intent, expect.anything(), { outcome: "success" });
+  expect(emitGrantAudit).toHaveBeenCalledWith("revoke", intent, expect.anything(), { outcome: "success" });
+});

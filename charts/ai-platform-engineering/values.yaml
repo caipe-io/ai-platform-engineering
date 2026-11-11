@@ -42,13 +42,11 @@ tags:
 
 # Global configuration shared across all subcharts
 global:
-  # Include portable runtimes whenever the UI is installed. Provider profiles
-  # below remain operator-owned. Disable to run only Dynamic Agents.
   harnessEngine:
-    enabled: true
-    tokenSecretName: ""
-    tokenSecretKey: HARNESS_ENGINE_INTERNAL_TOKEN
-
+    enabled: false
+    deepAgentsEnabled: false
+    configurationRevision: ""
+    tokenSecret: {name: "", key: HARNESS_ENGINE_INTERNAL_TOKEN}
   # -- Global image tag override. When set, overrides the default appVersion-based
   # image tag for ALL subcharts (MCP servers, dynamic agents, UI, etc.) in a single place.
   # Individual subchart `image.tag` values still take highest precedence.
@@ -935,6 +933,7 @@ caipe-ui:
     CAIPE_ORG_DISPLAY_NAME: "CAIPE"
     LOGO_URL: "/logo.svg"
     LOGO_STYLE: "default"
+    LOGO_THEMED: ""
     # SPINNER_COLOR: ""
     SHOW_POWERED_BY: "false"
     # Environment badge (e.g. "Dev", "Preview", "Staging", "Prod"; empty = hidden)
@@ -1111,6 +1110,20 @@ litellmMcp:
     LITELLM_API_URL: ""
     LITELLM_API_TIMEOUT: "120"
     LITELLM_VERIFY_SSL: "true"
+    LITELLM_TOKEN_ALERTS_ENABLED: "false"
+    LITELLM_TOKEN_ALERT_THRESHOLD: "0.8"
+    LITELLM_TOKEN_ALERT_LIMITS_JSON: "{}"
+    LITELLM_TOKEN_ALERT_TARGETS_JSON: "[]"
+    LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL: "none"
+    LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS: ""
+    LITELLM_TOKEN_ALERT_WEBEX_API_URL: "https://webexapis.com/v1"
+  tokenAlertScanner:
+    enabled: false
+    intervalSeconds: 3600
+    dryRun: false
+    dedupeFile: "/tmp/litellm-token-alerts/state.json"
+    dedupeTtlSeconds: 86400
+    resources: {}
   # Existing Secret containing LITELLM_API_KEY. Takes precedence over secret.name.
   existingSecret: ""
   # Simple Secret creation for local/dev installs. Prefer existingSecret or
@@ -1132,6 +1145,102 @@ litellmMcp:
       #   remoteRef:
       #     key: dev/litellm-mcp
       #     property: LITELLM_API_KEY
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext: {}
+  securityContext: {}
+  resources: {}
+    # requests:
+    #   cpu: 100m
+    #   memory: 256Mi
+    # limits:
+    #   cpu: 500m
+    #   memory: 512Mi
+  livenessProbe:
+    tcpSocket:
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    tcpSocket:
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+######### Cloudability MCP configuration #########
+# Standalone MCP server for Cloudability FinOps reporting.
+# Enable this with litellmMcp when the Grid FinOps agent should answer both
+# LLM spend and broader cloud cost questions.
+cloudabilityMcp:
+  enabled: false
+  nameOverride: "cloudability-mcp"
+  fullnameOverride: ""
+  replicaCount: 1
+  revisionHistoryLimit: 3
+  image:
+    repository: "ghcr.io/cnoe-io/mcp-cloudability"
+    # tag defaults to .Chart.AppVersion when not specified
+    tag: ""
+    pullPolicy: "IfNotPresent"
+  imagePullSecrets: []
+  service:
+    type: ClusterIP
+    port: 8000
+  # Non-sensitive environment variables.
+  config:
+    SERVER_NAME: "Cloudability"
+    CLOUDABILITY_API_URL: "https://api.cloudability.com/v3"
+    CLOUDABILITY_REGION: ""
+  # Existing Secret containing either CLOUDABILITY_API_PUBLIC_KEY/
+  # CLOUDABILITY_API_PRIVATE_KEY, CLOUDABILITY_API_KEY, or
+  # APPTIO_OPENTOKEN/APPTIO_ENVIRONMENT_ID. Takes precedence over secret.name.
+  existingSecret: ""
+  # Simple Secret creation for local/dev installs. Prefer existingSecret or
+  # externalSecrets in shared clusters.
+  secret:
+    create: false
+    name: ""
+    data: {}
+      # CLOUDABILITY_API_KEY: ""
+      # CLOUDABILITY_API_PUBLIC_KEY: ""
+      # CLOUDABILITY_API_PRIVATE_KEY: ""
+      # APPTIO_OPENTOKEN: ""
+      # APPTIO_ENVIRONMENT_ID: ""
+  externalSecrets:
+    enabled: false
+    apiVersion: "v1beta1"
+    refreshInterval: "1h"
+    secretStoreRef:
+      name: "vault"
+      kind: "ClusterSecretStore"
+    data: []
+      # - secretKey: CLOUDABILITY_API_KEY
+      #   remoteRef:
+      #     key: dev/cloudability-mcp
+      #     property: CLOUDABILITY_API_KEY
+      # - secretKey: CLOUDABILITY_API_PUBLIC_KEY
+      #   remoteRef:
+      #     key: dev/cloudability-mcp
+      #     property: CLOUDABILITY_API_PUBLIC_KEY
+      # - secretKey: CLOUDABILITY_API_PRIVATE_KEY
+      #   remoteRef:
+      #     key: dev/cloudability-mcp
+      #     property: CLOUDABILITY_API_PRIVATE_KEY
+      # - secretKey: APPTIO_OPENTOKEN
+      #   remoteRef:
+      #     key: dev/cloudability-mcp
+      #     property: APPTIO_OPENTOKEN
+      # - secretKey: APPTIO_ENVIRONMENT_ID
+      #   remoteRef:
+      #     key: dev/cloudability-mcp
+      #     property: APPTIO_ENVIRONMENT_ID
   podAnnotations: {}
   podLabels: {}
   podSecurityContext: {}
@@ -1750,31 +1859,155 @@ rag-stack:
   milvus:
     enabled: true
 
-# Independent Claude SDK / AgentCore execution service. Enabled with the UI.
+# Optional durable runtimes. Requires existing tokens, MongoDB and workspace storage.
 harnessEngine:
-  replicaCount: 1
-  image:
-    repository: ghcr.io/caipe-io/caipe-harness-engine
-    tag: ""
-    pullPolicy: IfNotPresent
+  mongodbSecret:
+    name: ''
+    key: MONGODB_URI
+  attachmentsClaimName: ''
+  terminationGracePeriodSeconds: 120
+  tmpSizeLimit: 512Mi
+  noProxy: localhost,127.0.0.1,::1,.svc,.svc.cluster.local
   imagePullSecrets: []
-  serviceAccount:
-    annotations: {}
-  podAnnotations: {}
   nodeSelector: {}
   tolerations: []
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      memory: 1Gi
-  # Existing Secrets containing provider environment variables, never blueprints.
-  providerSecrets: []
-  # Reuse the UI's database credentials; only MONGODB_URI is read from it.
-  mongodbSecretName: ""
-  mongodbSecretKey: MONGODB_URI
-  mongodbDatabase: harness_engine
-  claudeSDKProfiles: {}
-  agentcoreRuntimes: {}
-  env: {}
+  extraVolumes: []
+  extraVolumeMounts: []
+  commonEnv: {}
+  engine:
+    image:
+      repository: ghcr.io/caipe-io/caipe-harness-engine-deep
+      tag: ''
+      digest: ''
+      pullPolicy: IfNotPresent
+    args:
+    - python
+    - -m
+    - harness_engine.main
+    database: harness_engine
+    serviceAccountName: ''
+    podLabels: {}
+    sidecars: []
+    env: {}
+    secretEnv: {}
+    envFromSecrets: []
+    affinity: {}
+    persistence:
+      enabled: true
+      existingClaim: ''
+      storageClass: ''
+      size: 5Gi
+    resources: &id001
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: '2'
+        memory: 2Gi
+  workers:
+    sdk:
+      enabled: false
+      image:
+        repository: ghcr.io/caipe-io/caipe-harness-engine
+        tag: ''
+        digest: ''
+        pullPolicy: IfNotPresent
+      args:
+      - python
+      - -m
+      - harness_engine.claude_worker
+      database: harness_worker_sdk
+      tokenSecret:
+        name: ''
+        key: token
+      serviceAccountName: ''
+      podLabels: {}
+      sidecars: []
+      env: {}
+      secretEnv: {}
+      envFromSecrets: []
+      affinity: {}
+      persistence:
+        enabled: true
+        existingClaim: ''
+        storageClass: ''
+        size: 5Gi
+      resources: *id001
+    sdk-acp:
+      enabled: false
+      image:
+        repository: ghcr.io/caipe-io/caipe-claude-acp-worker
+        tag: ''
+        digest: ''
+        pullPolicy: IfNotPresent
+      args:
+      - python
+      - -m
+      - harness_engine.claude_worker
+      database: harness_worker_sdk_acp
+      tokenSecret:
+        name: ''
+        key: token
+      serviceAccountName: ''
+      podLabels: {}
+      sidecars: []
+      env: {}
+      secretEnv: {}
+      envFromSecrets: []
+      affinity: {}
+      persistence:
+        enabled: true
+        existingClaim: ''
+        storageClass: ''
+        size: 5Gi
+      resources: *id001
+    cli-acp:
+      enabled: false
+      image:
+        repository: ghcr.io/caipe-io/caipe-claude-cli-acp-worker
+        tag: ''
+        digest: ''
+        pullPolicy: IfNotPresent
+      args:
+      - python
+      - -m
+      - harness_engine.claude_worker
+      database: harness_worker_cli_acp
+      tokenSecret:
+        name: ''
+        key: token
+      serviceAccountName: ''
+      podLabels: {}
+      sidecars: []
+      env: {}
+      secretEnv: {}
+      envFromSecrets: []
+      affinity: {}
+      persistence:
+        enabled: true
+        existingClaim: ''
+        storageClass: ''
+        size: 5Gi
+      resources: *id001
+  egress:
+    enabled: true
+    image:
+      repository: ghcr.io/caipe-io/caipe-worker-egress
+      tag: ''
+      digest: ''
+      pullPolicy: IfNotPresent
+    allowedDomains: []
+    resources:
+      requests:
+        cpu: 100m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+  networkPolicy:
+    enabled: true
+    databasePort: 27017
+    dnsNamespace: kube-system
+    dnsPodSelector:
+      k8s-app: kube-dns
+    databaseEgress: []

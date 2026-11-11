@@ -4,6 +4,10 @@ metadata:
   name: {{ include "caipe-ui.fullname" . }}
   labels:
     {{- include "caipe-ui.labels" . | nindent 4 }}
+  {{- if dig "harnessEngine" "enabled" false (.Values.global | default dict) }}
+  annotations:
+    reloader.stakater.com/auto: "true"
+  {{- end }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
@@ -16,7 +20,11 @@ spec:
       {{- include "caipe-ui.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
+      {{- $podAnnotations := deepCopy (.Values.podAnnotations | default dict) }}
+      {{- if dig "harnessEngine" "enabled" false (.Values.global | default dict) }}
+      {{- $_ := set $podAnnotations "checksum/harness-config" (toJson .Values.global.harnessEngine | sha256sum) }}
+      {{- end }}
+      {{- with $podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -202,14 +210,17 @@ spec:
               value: {{ index .Values.config "MILVUS_HEALTH_URL" | default (printf "http://%s-milvus:9091/healthz" .Release.Name) | quote }}
             - name: MILVUS_MINIO_HOST
               value: {{ index .Values.config "MILVUS_MINIO_HOST" | default (printf "%s-minio" .Release.Name) | quote }}
-            {{- if dig "harnessEngine" "enabled" false (.Values.global | default dict) }}
+            {{- $harness := dig "harnessEngine" "enabled" false (.Values.global | default dict) }}
+            {{- if $harness }}
             - name: HARNESS_ENGINE_URL
-              value: {{ index .Values.config "HARNESS_ENGINE_URL" | default (printf "http://%s-harness-engine:8010" .Release.Name) | quote }}
+              value: {{ printf "http://%s:8010" (include "ai-platform-engineering.harnessName" (dict "root" . "component" "engine")) | quote }}
             - name: HARNESS_ENGINE_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ dig "harnessEngine" "tokenSecretName" "" .Values.global | default (printf "%s-harness-engine-token" .Release.Name) | quote }}
-                  key: {{ dig "harnessEngine" "tokenSecretKey" "HARNESS_ENGINE_INTERNAL_TOKEN" .Values.global | quote }}
+                  name: {{ required "global.harnessEngine.tokenSecret.name is required" .Values.global.harnessEngine.tokenSecret.name }}
+                  key: {{ required "global.harnessEngine.tokenSecret.key is required" .Values.global.harnessEngine.tokenSecret.key }}
+            - name: HARNESS_ENGINE_DEEP_AGENTS_ENABLED
+              value: {{ .Values.global.harnessEngine.deepAgentsEnabled | quote }}
             {{- end }}
           envFrom:
             # Mount ConfigMap as environment variables (non-sensitive config)
@@ -218,6 +229,7 @@ spec:
             {{- if .Values.existingSecret }}
             - secretRef:
                 name: {{ .Values.existingSecret }}
+                optional: {{ .Values.existingSecretOptional | default false }}
             {{- end }}
             {{- if .Values.externalSecrets.enabled }}
             # Mount ExternalSecret as environment variables (sensitive data)

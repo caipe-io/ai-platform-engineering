@@ -21,7 +21,7 @@ let highlighterPromise: Promise<Highlighter> | null = null;
 function getHighlighter(): Promise<Highlighter> {
   if (!highlighterPromise) {
     highlighterPromise = createHighlighter({
-      themes: ["dark-plus"],
+      themes: ["light-plus", "dark-plus"],
       langs: [],
     });
   }
@@ -73,7 +73,13 @@ md.use(
           language = "text";
         }
       }
-      return hl.codeToHtml(code, { lang: language, theme: "dark-plus" });
+      // Both palettes are emitted as CSS variables; streaming-markdown.css
+      // picks one from the active app theme, so a theme switch needs no re-render.
+      return hl.codeToHtml(code, {
+        lang: language,
+        themes: { light: "light-plus", dark: "dark-plus" },
+        defaultColor: false,
+      });
     },
   }),
 );

@@ -223,7 +223,7 @@ async def test_invoke_rejects_invalid_active_schema_with_422(monkeypatch: pytest
         _id="example-agent", name="Example", owner_id="owner@example.test", system_prompt="Example",
         model={"id": "example-model", "provider": "example"},
     )
-    mongo = SimpleNamespace(get_agent=lambda _agent_id: agent, get_agent_mcp_servers=lambda _agent: [])
+    mongo = SimpleNamespace(_db=None, get_agent=lambda _agent_id: agent, get_agent_mcp_servers=lambda _agent: [])
     response = await chat.chat_invoke(
         ChatRequest(agent_id=agent.id, conversation_id="example-thread", message="hello"),
         user=UserContext(email="test-user@example.test"), mongo=mongo,

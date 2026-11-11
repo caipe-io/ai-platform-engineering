@@ -2,244 +2,245 @@ name: "[CI] Harness Engine Build and Push"
 
 on:
   push:
-    tags:
-      - '**'
-    branches:
-      - main
+    branches: [main]
+    tags: ['**']
+    paths:
+      - .env.example
+      - docker-compose*.yaml
+      - ai_platform_engineering/harness_engine/**
+      - ai_platform_engineering/dynamic_agents/**
+      - ai_platform_engineering/llm_wrapper/**
+      - tests/test_harness_engine_installation.py
+      - tests/test_harness_helm.py
+      - tests/test_harness_release_workflow.py
+      - deploy/harness-engine/**
+      - .github/workflows/ci-harness-engine.yml
+      - .github/actions/publish-prebuild-manifest/**
   pull_request:
     paths:
-      - 'ai_platform_engineering/harness_engine/**'
+      - .env.example
+      - docker-compose*.yaml
+      - ai_platform_engineering/harness_engine/**
+      - ai_platform_engineering/dynamic_agents/**
+      - ai_platform_engineering/llm_wrapper/**
+      - tests/test_harness_engine_installation.py
+      - tests/test_harness_helm.py
+      - tests/test_harness_release_workflow.py
+      - deploy/harness-engine/**
+      - .github/workflows/ci-harness-engine.yml
+      - .github/actions/publish-prebuild-manifest/**
   workflow_dispatch:
     inputs:
       tag_version:
-        description: 'Version tag to apply (e.g., 1.2.0 or 1.2.0-rc.1)'
-        required: false
+        description: 'Optional release tag; otherwise publish only the source SHA'
         type: string
-      force_build:
-        description: 'Force a fresh build of all components (bypass change-detection). Use for coordinated releases.'
         required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: harness-containers-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  determine-changes:
+  metadata:
     runs-on: ubuntu-latest
     outputs:
-      should_build: ${{ steps.set-outputs.outputs.should_build }}
-      tag_version: ${{ steps.version.outputs.tag_version }}
+      tag: ${{ steps.result.outputs.tag }}
+      publish: ${{ steps.result.outputs.publish }}
+      revision: ${{ steps.result.outputs.revision }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-
-      - name: Determine Tag
-        id: version
+          persist-credentials: false
+      - id: release
         uses: ./.github/actions/determine-release-tag
         with:
           manual_tag: ${{ inputs.tag_version }}
-
-      - name: Detect changed paths
-        id: filter
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+      - id: prebuild
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'prebuild/')
+        uses: ./.github/actions/prebuild-version
         with:
-          filters: |
-            harness_engine:
-              - 'ai_platform_engineering/harness_engine/**'
-
-      - name: Set Outputs
-        id: set-outputs
+          head_ref: ${{ github.head_ref }}
+          base_ref: ${{ github.base_ref }}
+          base_sha: ${{ github.event.pull_request.base.sha }}
+      - id: result
         env:
-          HARNESS_ENGINE_CHANGED: ${{ steps.filter.outputs.harness_engine }}
-          TAG_VERSION: ${{ steps.version.outputs.tag_version }}
-          FORCE_BUILD: ${{ inputs.force_build }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag_version }}
+          PREBUILD_TAG: ${{ steps.prebuild.outputs.prebuild_tag }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          SHOULD_BUILD="false"
+          set -euo pipefail
+          revision=$(git rev-parse HEAD)
+          tag="${PREBUILD_TAG:-${RELEASE_TAG:-sha-$revision}}"
+          publish=false
+          if [[ "$EVENT_NAME" != pull_request || -n "$PREBUILD_TAG" ]]; then publish=true; fi
+          printf 'tag=%s\npublish=%s\nrevision=%s\n' "$tag" "$publish" "$revision" >> "$GITHUB_OUTPUT"
 
-          if [ "$FORCE_BUILD" == "true" ]; then
-            SHOULD_BUILD="true"
-            echo "🔁 force_build requested: building fresh regardless of changes"
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            SHOULD_BUILD="true"
-            echo "🏷️ Tag push: building fresh"
-          elif [ "$HARNESS_ENGINE_CHANGED" == "true" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            SHOULD_BUILD="true"
-            echo "📦 Files changed or manual trigger: building"
-          fi
+  tests:
+    needs: metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: ${{ needs.metadata.outputs.revision }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: '3.14'
+      - name: Validate backend contracts
+        working-directory: ai_platform_engineering/harness_engine
+        run: |
+          uv sync --frozen --extra dev
+          uv run ruff check src tests ../../tests/test_release_finalization.py ../../tests/test_harness_engine_installation.py ../../deploy/harness-engine/init-token.py ../../tests/test_harness_release_workflow.py
+          uv run pytest -c pyproject.toml -q tests ../../tests/test_release_finalization.py ../../tests/test_check_pinned_deps.py
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.17.3
+      - name: Validate standard installation and Helm contracts
+        working-directory: ai_platform_engineering/harness_engine
+        run: uv run pytest -c pyproject.toml -q ../../tests/test_harness_engine_installation.py ../../tests/test_harness_helm.py ../../tests/test_harness_release_workflow.py
 
-          echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
-          echo "Outputs: build=$SHOULD_BUILD"
-
-  # Build natively per-platform (no QEMU) and push by digest only;
-  # merge-manifests combines the per-arch digests into the final tagged
-  # multi-arch manifest list. See ci-rag.yml for the incident this pattern
-  # was introduced to fix (QEMU-emulated arm64 timing out/OOMing).
-  build-and-push:
-    runs-on: ${{ matrix.runner }}
-    needs: determine-changes
-    if: |
-      needs.determine-changes.outputs.should_build == 'true' &&
-      (github.event_name != 'pull_request' || !startsWith(github.head_ref, 'prebuild/'))
+  images:
+    needs: [metadata, tests]
     permissions:
       contents: read
       packages: write
-
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: linux/amd64
-            runner: ubuntu-latest
-            arch: amd64
-          - platform: linux/arm64
-            runner: ubuntu-24.04-arm
-            arch: arm64
-
-    env:
-      REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/caipe-harness-engine
-      DOCKERFILE: ai_platform_engineering/harness_engine/build/Dockerfile
-
+        image: [harness-engine, harness-engine-deep, claude-acp-worker, claude-cli-acp-worker, worker-egress]
+        arch: [amd64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 35
     steps:
-      - name: 🔒 Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
-          egress-policy: audit
-
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
-      - name: Extract metadata for Docker
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.')) }}
-            type=raw,value=${{ needs.determine-changes.outputs.tag_version }},enable=${{ needs.determine-changes.outputs.tag_version != '' }}
-            type=ref,event=tag,prefix=
-            type=sha,format=short,prefix=,enable=${{ github.ref != 'refs/heads/main' }}
-
-      - name: Build and push by digest
-        id: build
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+          ref: ${{ needs.metadata.outputs.revision }}
+          persist-credentials: false
+      - id: target
+        env:
+          TARGET: ${{ matrix.image }}
+          OWNER: ${{ github.repository_owner }}
+          REVISION: ${{ needs.metadata.outputs.revision }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            harness-engine) suffix='' ;;
+            harness-engine-deep) suffix=.deep-agents ;;
+            claude-acp-worker) suffix=.claude-acp ;;
+            claude-cli-acp-worker) suffix=.claude-cli-acp ;;
+            worker-egress) suffix=.worker-egress ;;
+            *) exit 1 ;;
+          esac
+          {
+            echo "dockerfile=ai_platform_engineering/harness_engine/build/Dockerfile$suffix"
+            echo "image=ghcr.io/${OWNER,,}/caipe-$TARGET"
+            echo "tag=ghcr.io/${OWNER,,}/caipe-$TARGET:sha-$REVISION-$ARCH"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
-          file: ${{ env.DOCKERFILE }}
-          platforms: ${{ matrix.platform }}
-          labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' }}
-          cache-from: type=gha,scope=${{ matrix.arch }}
-          cache-to: type=gha,mode=min,scope=${{ matrix.arch }}
-          provenance: false
-          sbom: false
-
-      - name: Export digest
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
+          file: ${{ steps.target.outputs.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: ${{ steps.target.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.metadata.outputs.revision }}
+          cache-from: type=gha,scope=harness-${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=min,scope=harness-${{ matrix.image }}-${{ matrix.arch }}
+      - name: Smoke test with release container restrictions
+        env:
+          IMAGE: ${{ steps.target.outputs.tag }}
+          TARGET: ${{ matrix.image }}
+        run: bash deploy/harness-engine/smoke-image.sh "$IMAGE" "$TARGET"
+      - name: Verify worker network boundary
+        if: matrix.image == 'worker-egress'
+        env:
+          IMAGE: ${{ steps.target.outputs.tag }}
         run: |
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
-
-      - name: Upload digest
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+          python3 deploy/harness-engine/test-compose-contract.py
+          bash deploy/harness-engine/test-worker-network.sh "$IMAGE"
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        if: needs.metadata.outputs.publish == 'true'
         with:
-          name: digests-${{ matrix.arch }}
-          path: /tmp/digests/*
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Publish tested architecture image
+        if: needs.metadata.outputs.publish == 'true'
+        env:
+          IMAGE_TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker push "$IMAGE_TAG"
+          digest=$(docker image inspect "$IMAGE_TAG" --format '{{index .RepoDigests 0}}')
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${digest##*@sha256:}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: needs.metadata.outputs.publish == 'true'
+        with:
+          name: harness-${{ matrix.image }}--${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
-  # Combine the per-arch digests into a single tagged multi-arch manifest list.
-  merge-manifests:
+  manifests:
+    needs: [metadata, images]
+    if: needs.metadata.outputs.publish == 'true'
     runs-on: ubuntu-latest
-    needs: [determine-changes, build-and-push]
-    if: |
-      needs.determine-changes.outputs.should_build == 'true' &&
-      (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main')
     permissions:
       contents: read
       packages: write
-    env:
-      REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/caipe-harness-engine
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [harness-engine, harness-engine-deep, claude-acp-worker, claude-cli-acp-worker, worker-egress]
     steps:
-      - name: 🔒 Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
-          egress-policy: audit
-
-      - name: Download digests
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+          ref: ${{ needs.metadata.outputs.revision }}
+          persist-credentials: false
+      - id: image
+        env:
+          OWNER: ${{ github.repository_owner }}
+          TARGET: ${{ matrix.image }}
+        run: echo "repository=ghcr.io/${OWNER,,}/caipe-$TARGET" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/publish-prebuild-manifest
         with:
-          pattern: digests-*
-          path: /tmp/digests
-          merge-multiple: true
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
-      - name: Extract metadata for Docker
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.')) }}
-            type=raw,value=${{ needs.determine-changes.outputs.tag_version }},enable=${{ needs.determine-changes.outputs.tag_version != '' }}
-            type=ref,event=tag,prefix=
-            type=sha,format=short,prefix=,enable=${{ github.ref != 'refs/heads/main' }}
-
-      - name: Create manifest list and push
-        working-directory: /tmp/digests
+          artifact_pattern: harness-${{ matrix.image }}--*
+          image_repository: ${{ steps.image.outputs.repository }}
+          image_ref: ${{ steps.image.outputs.repository }}:${{ needs.metadata.outputs.tag }}
+          registry_username: ${{ github.actor }}
+          registry_token: ${{ github.token }}
+      - name: Publish source tag and stable latest alias
+        env:
+          IMAGE: ${{ steps.image.outputs.repository }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          REVISION: ${{ needs.metadata.outputs.revision }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
-          readarray -t tags < <(jq -r '.tags[] | "-t", .' <<< "$DOCKER_METADATA_OUTPUT_JSON")
-          images=()
-          for digest in *; do
-            images+=("${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:${digest}")
-          done
-          docker buildx imagetools create "${tags[@]}" "${images[@]}"
+          set -euo pipefail
+          docker buildx imagetools create --tag "$IMAGE:sha-$REVISION" "$IMAGE:$TAG"
+          if [[ "$REF_TYPE" == tag && "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE:$TAG"
+          fi
+          docker buildx imagetools inspect "$IMAGE:$TAG" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Inspect image
-        run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
-
-  # Notify release-finalize workflow when this CI completes (for final release builds only)
   notify-release:
+    needs: [metadata, images, manifests]
+    if: always() && github.ref_type == 'tag' && !contains(github.ref_name, '-')
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Required for repository_dispatch via gh api
-    needs: [determine-changes, build-and-push, merge-manifests]
-    if: |
-      always() &&
-      startsWith(github.ref, 'refs/tags/') &&
-      needs.determine-changes.outputs.tag_version != '' &&
-      !contains(needs.determine-changes.outputs.tag_version, '-')
+      contents: write
     steps:
-      - name: 🔑 Generate GitHub App token
-        id: app-token
+      - id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
         with:
           app-id: ${{ secrets.CI_BUILD_APP_ID }}
@@ -247,39 +248,19 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
-
-      - name: 🔔 Notify release finalize
+      - name: Notify release gate
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          TAG_VERSION: ${{ needs.determine-changes.outputs.tag_version }}
-          BUILD_PUSH_RESULT: ${{ needs.build-and-push.result }}
-          MERGE_RESULT: ${{ needs.merge-manifests.result }}
-          GH_REPOSITORY: ${{ github.repository }}
-          GH_WORKFLOW: ${{ github.workflow }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          IMAGES_RESULT: ${{ needs.images.result }}
+          MANIFESTS_RESULT: ${{ needs.manifests.result }}
+          WORKFLOW: ${{ github.workflow }}
         run: |
-          # Determine overall conclusion
-          BUILD_RESULT="$BUILD_PUSH_RESULT"
-          MERGE_RESULT_VAL="$MERGE_RESULT"
-
-          # Consider skipped as success (job conditions not met)
-          if [[ "$BUILD_RESULT" == "skipped" ]]; then BUILD_RESULT="success"; fi
-          if [[ "$MERGE_RESULT_VAL" == "skipped" ]]; then MERGE_RESULT_VAL="success"; fi
-
-          if [[ "$BUILD_RESULT" == "success" && "$MERGE_RESULT_VAL" == "success" ]]; then
-            CONCLUSION="success"
-          else
-            CONCLUSION="failure"
-          fi
-
-          echo "🔔 Notifying release-finalize: tag=$TAG_VERSION, conclusion=$CONCLUSION"
-
-          gh api --method POST "/repos/${GH_REPOSITORY}/dispatches" --input - <<EOF
-          {
-            "event_type": "ci-completed",
-            "client_payload": {
-              "tag": "$TAG_VERSION",
-              "workflow": "$GH_WORKFLOW",
-              "conclusion": "$CONCLUSION"
-            }
-          }
-          EOF
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then exit 0; fi
+          conclusion=failure
+          if [[ "$IMAGES_RESULT" == success && "$MANIFESTS_RESULT" == success ]]; then conclusion=success; fi
+          jq -n --arg tag "$TAG" --arg workflow "$WORKFLOW" --arg conclusion "$conclusion" \
+            '{event_type:"ci-completed",client_payload:{tag:$tag,workflow:$workflow,conclusion:$conclusion}}' \
+            | gh api --method POST "/repos/$REPOSITORY/dispatches" --input -

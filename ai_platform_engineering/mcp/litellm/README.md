@@ -24,11 +24,94 @@ LITELLM_API_KEY=
 LITELLM_API_TIMEOUT=120
 LITELLM_VERIFY_SSL=true
 SERVER_NAME=LITELLM
+LITELLM_TOKEN_ALERTS_ENABLED=false
+LITELLM_TOKEN_ALERT_THRESHOLD=0.8
+LITELLM_TOKEN_ALERT_LIMITS_JSON={}
+LITELLM_TOKEN_ALERT_TARGETS_JSON=[]
+LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL=none
+LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS=
+LITELLM_TOKEN_ALERT_WEBEX_API_URL=https://webexapis.com/v1
+LITELLM_TOKEN_ALERT_SCANNER_ENABLED=false
+LITELLM_TOKEN_ALERT_SCAN_INTERVAL_SECONDS=3600
+LITELLM_TOKEN_ALERT_SCANNER_DRY_RUN=false
+LITELLM_TOKEN_ALERT_DEDUPE_FILE=/tmp/litellm-token-alerts/state.json
+LITELLM_TOKEN_ALERT_DEDUPE_TTL_SECONDS=86400
+WEBEX_TOKEN=
 ```
 
 `LITELLM_TOKEN` and `LITELLM_API_TOKEN` are also accepted as compatibility aliases.
 `LITELLM_API_TIMEOUT` is optional and defaults to 30 seconds. Use a larger value
 for slower analytics endpoints such as spend logs.
+
+## Token Usage Alerts
+
+The `evaluate_token_usage_alert` tool checks LiteLLM user daily activity reports
+and returns whether a user or API key has reached the configured token-usage
+threshold. It is disabled by default:
+
+```bash
+LITELLM_TOKEN_ALERTS_ENABLED=false
+LITELLM_TOKEN_ALERT_THRESHOLD=0.8
+```
+
+While disabled, the tool still returns `notification.would_notify=true` when the
+threshold is reached, but it does not send a notification. This is the intended
+mode for local validation. Pass `param_token_limit` directly for one-off tests,
+or configure repeatable limits with a JSON map:
+
+```bash
+LITELLM_TOKEN_ALERT_LIMITS_JSON='{"user@example.com":1000000,"default":500000}'
+```
+
+To test real Webex delivery for one user only, enable alerting and Webex, set a
+Webex bot token, and allowlist the target recipient:
+
+```bash
+LITELLM_TOKEN_ALERTS_ENABLED=true
+LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL=webex
+LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS=mouledel@example.com
+WEBEX_TOKEN=<webex-bot-token>
+```
+
+Then call `evaluate_token_usage_alert` with `param_dry_run=false` and
+`param_notification_recipient="mouledel@example.com"`. The alert will remain
+suppressed for recipients outside `LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS`.
+`WEBEX_ACCESS_TOKEN` and `WEBEX_INTEGRATION_BOT_ACCESS_TOKEN` are accepted as
+token aliases. The allowlist is required for Webex delivery.
+
+## Automatic Webex Alerts
+
+Automatic delivery is handled by the token alert scanner. It periodically scans
+configured targets, evaluates usage with `evaluate_token_usage_alert`, and sends
+Webex when a target reaches the threshold. Configure explicit targets with user
+or API-key limits:
+
+```bash
+LITELLM_TOKEN_ALERTS_ENABLED=true
+LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL=webex
+LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS=mouledel@example.com
+LITELLM_TOKEN_ALERT_TARGETS_JSON='[{"user_id":"mouledel@example.com","token_limit":1000000,"recipient":"mouledel@example.com"}]'
+LITELLM_TOKEN_ALERT_SCANNER_ENABLED=true
+LITELLM_TOKEN_ALERT_SCAN_INTERVAL_SECONDS=3600
+WEBEX_TOKEN=<webex-bot-token>
+```
+
+If `LITELLM_TOKEN_ALERT_TARGETS_JSON` is empty, the scanner falls back to each
+non-`default` key in `LITELLM_TOKEN_ALERT_LIMITS_JSON` as a `user_id`. The
+scanner stores sent alert keys in `LITELLM_TOKEN_ALERT_DEDUPE_FILE` so the same
+target is not notified on every scan; the default dedupe window is 24 hours.
+
+Run one scanner process locally:
+
+```bash
+uv run python token_alert_scanner.py
+```
+
+For Docker Compose local testing, enable the scanner profile:
+
+```bash
+docker compose -f docker-compose/docker-compose.litellm.dev.yaml --profile litellm-alerts up --build
+```
 
 ## Running
 
@@ -156,15 +239,24 @@ Recommended FinOps agent prompt rules:
 
 - When asked "what can you do?", mention LiteLLM token reports, spend per
   LLM/model, user-level usage and spend, top model usage, available model
-  inventory, downloadable HTML reports with visualization charts, and CSV
-  exports. Mention supported fiscal periods such as `FY26Q1`.
+  inventory, downloadable HTML reports with visualization charts, CSV exports,
+  and, when the Cloudability MCP server is configured, broader cloud budgets,
+  views, portfolio resources, allocation, and Apptio Cloudability API data.
+  Mention supported fiscal periods such as `FY26Q1`.
 - For every report request, call the relevant curated LiteLLM report tool with
   `report_format: "all"` unless the user explicitly asks for a single format.
+- For blended FinOps questions, use LiteLLM for AI gateway/model spend and
+  Cloudability for broader cloud infrastructure spend. Keep those categories
+  separate in the answer before drawing combined conclusions.
 - After the report tool returns, call `write_file` for every item in
   `files_to_write` so the HTML chart report and CSV export appear in Grid Files
   by default.
 - Only say the reports are available in Files after every `write_file` call
   succeeds.
+
+The ready-made `config/app-config.finops.yaml` seed creates a Grid FinOps
+dynamic agent wired to both the `litellm` and `cloudability` MCP servers. For
+local development, run it with `docker-compose/docker-compose.finops.dev.yaml`.
 
 The generated server registers 110 read-only tools, including:
 

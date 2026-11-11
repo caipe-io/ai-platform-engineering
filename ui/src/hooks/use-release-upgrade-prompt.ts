@@ -91,7 +91,7 @@ function baseVersion(value: string): string {
   return value.trim().replace(/^v/i, "").split(/[-+]/)[0];
 }
 
-function resolvePromptVersion(versionInfo: { version?: string; packageVersion?: string } | null): string | null {
+export function resolvePromptVersion(versionInfo: { version?: string; packageVersion?: string } | null): string | null {
   const candidates = [versionInfo?.version, versionInfo?.packageVersion].map(normalizeVersion);
   return (
     candidates.find(
