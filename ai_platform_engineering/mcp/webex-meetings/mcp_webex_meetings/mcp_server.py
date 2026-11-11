@@ -16,13 +16,18 @@ from mcp.shared.exceptions import McpError
 from mcp.types import INTERNAL_ERROR, INVALID_PARAMS, ErrorData
 from pydantic import BaseModel, ConfigDict, Field
 
+from .space_occurrences import list_space_meeting_occurrences
+
 WEBEX_API_BASE = "https://webexapis.com/v1"
 USERHUB_DEFAULT_SITE = "https://cisco.webex.com"
 USERHUB_CALENDAR_PATH = "/webappng/api/v1/mymeetings/calendarView"
 USERHUB_RECORDINGS_PATH = "/webappng/api/v1/recordings"
+RECORDING_PRIVILEGE_PATH = "/wbxappapi/v2/recordings/wbxapp/privilege"
 USERHUB_RECORDINGS_PAGE_SIZE = 100
 USERHUB_RECORDINGS_MAX_RESULTS = 1000
 USERHUB_RECORDING_DETAIL_LIMIT = 100
+USERHUB_RECORDING_DISCOVERY_WINDOW = timedelta(days=2)
+USERHUB_OCCURRENCE_MATCH_WINDOW = timedelta(hours=12)
 USERHUB_RECORDING_SUFFIX = re.compile(r"-\d{8}\s+\d{4}(?:-\d+)?$")
 SENSITIVE_KEY_SUBSTRINGS = ("password", "hostkey")
 
@@ -110,6 +115,17 @@ class ListMeetings(BaseModel):
             "description": "List/search Webex meetings the authenticated user can see."
         }
     )
+
+
+class SpaceMeetingOccurrences(BaseModel):
+    from_iso: str = Field(description="Inclusive ISO-8601 occurrence start, with timezone.")
+    to_iso: str = Field(description="Exclusive ISO-8601 occurrence end, with timezone.")
+    site_url: str = Field(default=USERHUB_DEFAULT_SITE, description="The caller's Webex site base URL.")
+    meeting_series_id: str | None = Field(default=None, description="Optional saved series ID for a targeted space lookup.")
+    max_results: int = Field(default=200, ge=1, le=1000, description="Maximum distinct actual meeting occurrences.")
+    catalog_urls: list[str] | None = Field(default=None, max_length=20, description="Validated catalog continuation URLs from the preceding page.")
+    catalog_page_limit: int = Field(default=20, ge=1, le=20, description="Catalog pages to scan before returning a continuation.")
+    continuation: str | None = Field(default=None, max_length=512 * 1024, description="Opaque next_continuation from the preceding page; preserves unfinished activity reads.")
 
 
 class UserHubCalendar(BaseModel):
@@ -704,12 +720,12 @@ def _select_userhub_recording_candidates(
             (abs(recording_time - meeting_start), recording)
             for recording in candidates
             if (recording_time := _userhub_recording_time(recording)) is not None
-            and abs(recording_time - meeting_start) <= timedelta(days=2)
+            and abs(recording_time - meeting_start) <= USERHUB_RECORDING_DISCOVERY_WINDOW
         ]
         nearby_with_distance.sort(key=lambda item: item[0])
-        nearby = [recording for _, recording in nearby_with_distance]
-        if nearby:
-            candidates = nearby
+        # This only bounds discovery. A nearby recording is not proof that
+        # its meeting instance belongs to the requested occurrence.
+        candidates = [recording for _, recording in nearby_with_distance]
     return candidates[:USERHUB_RECORDING_DETAIL_LIMIT]
 
 
@@ -763,6 +779,95 @@ async def _list_userhub_recordings(
     return recordings
 
 
+async def _recording_privilege_transcripts(
+    client: httpx.AsyncClient,
+    *,
+    bearer: str,
+    site_url: str,
+    meeting_id: str,
+    max_results: int,
+    download: bool,
+) -> list[dict[str, Any]]:
+    """Resolve readable recap recordings without requiring a library entry.
+
+    This lookup needs a concrete actual instance. A scheduled occurrence or
+    series ID must never resolve to a different recording in the series.
+    """
+    if not re.fullmatch(r"[0-9a-fA-F]{32}_I_\d+", meeting_id):
+        return []
+    site_url = _derive_userhub_site_url(None, site_url)
+    headers = {"Authorization": bearer, "Accept": "application/json"}
+    response = await client.get(
+        f"{site_url}{RECORDING_PRIVILEGE_PATH}",
+        params={
+            "meetingInstanceId": meeting_id,
+            "siteurl": urlparse(site_url).netloc.split(".")[0],
+        },
+        headers=headers,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    rows = payload.get("privileges") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("Recording privilege lookup returned invalid metadata.")
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or row.get("meetingInstanceId") != meeting_id:
+            continue
+        recording_id = row.get("recordUUID")
+        if not isinstance(recording_id, str) or not recording_id or recording_id in seen:
+            continue
+        try:
+            transcript_url = _validated_webex_download_url(
+                row.get("transcriptURL") or row.get("transcriptDownloadLink")
+            )
+        except ValueError:
+            continue
+        if not download and row.get("preventDownload") is True:
+            continue
+        seen.add(recording_id)
+        # Whitelist output: the response also contains passwords and signed URLs.
+        item: dict[str, Any] = {
+            "id": recording_id,
+            "recordingId": recording_id,
+            "meetingId": meeting_id,
+            "meetingTopic": row.get("recordName"),
+            "startTime": row.get("recordingStartTime"),
+            "status": "available",
+            "source": "recording_privilege",
+        }
+        if download:
+            item["body"] = None
+            if row.get("preventDownload") is True:
+                item["bodyError"] = "Transcript download is disabled."
+            else:
+                try:
+                    result = await client.get(
+                        transcript_url,
+                        headers={
+                            "Authorization": bearer,
+                            "Accept": "*/*",
+                            "Referer": f"{site_url}/",
+                        },
+                        follow_redirects=False,
+                    )
+                    result.raise_for_status()
+                    if not result.text.lstrip("\ufeff \t\r\n").startswith("WEBVTT"):
+                        raise ValueError("Recording transcript is not valid WebVTT.")
+                    item["body"] = result.text
+                    item["bodyFormat"] = "vtt"
+                except httpx.HTTPStatusError as exc:
+                    item["bodyError"] = f"HTTP {exc.response.status_code}"
+                except (httpx.RequestError, ValueError) as exc:
+                    # Exception text can contain a signed transcript URL.
+                    item["bodyError"] = type(exc).__name__
+        items.append(item)
+        if len(items) >= max_results:
+            break
+    return items
+
+
 async def _userhub_transcripts_for_meeting(
     client: httpx.AsyncClient,
     *,
@@ -773,6 +878,7 @@ async def _userhub_transcripts_for_meeting(
     meeting_start: datetime | None,
     max_results: int,
     download: bool,
+    verified_occurrence_start: datetime | None = None,
 ) -> list[dict[str, Any]]:
     recordings = await _list_userhub_recordings(
         client,
@@ -783,7 +889,7 @@ async def _userhub_transcripts_for_meeting(
     candidates = _select_userhub_recording_candidates(
         recordings,
         meeting_title=meeting_title,
-        meeting_start=meeting_start,
+        meeting_start=meeting_start if meeting_id is None else None,
     )
     if meeting_title and not candidates:
         recordings = await _list_userhub_recordings(
@@ -794,55 +900,135 @@ async def _userhub_transcripts_for_meeting(
         )
         candidates = _select_userhub_recording_candidates(
             recordings,
-            meeting_title=meeting_title,
-            meeting_start=meeting_start,
+            meeting_title=meeting_title if meeting_id is None else None,
+            meeting_start=meeting_start if meeting_id is None else None,
         )
     headers = {
         "Authorization": bearer,
         "Accept": "application/json",
         "clientType": "web",
     }
-    items: list[dict[str, Any]] = []
-    matched_meeting_id = meeting_id
-    for recording in candidates:
+    resolved: list[tuple[dict[str, Any], dict[str, Any], str]] = []
+    occurrence_starts: dict[str, datetime | None] = {}
+    if meeting_id is not None and verified_occurrence_start is not None:
+        occurrence_starts[meeting_id] = verified_occurrence_start
+    unavailable_instances: set[str] = set()
+    semaphore = asyncio.Semaphore(4)
+    candidate_read_failed = False
+
+    async def read_candidate(recording: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str] | None:
+        nonlocal candidate_read_failed
         recording_uuid = recording.get("recordUUID")
         if not isinstance(recording_uuid, str) or not recording_uuid:
-            continue
+            return None
         try:
-            detail_response = await client.get(
-                f"{site_url}{USERHUB_RECORDINGS_PATH}/{recording_uuid}/stream",
-                headers=headers,
-            )
-            detail_response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            logger.warning(
-                "User Hub recording detail failed for %s: HTTP %s",
-                recording_uuid,
-                exc.response.status_code,
-            )
-            continue
-        detail = detail_response.json()
+            async with semaphore:
+                detail_response = await client.get(
+                    f"{site_url}{USERHUB_RECORDINGS_PATH}/{recording_uuid}/stream",
+                    headers=headers,
+                )
+                detail_response.raise_for_status()
+            detail = detail_response.json()
+        except httpx.HTTPStatusError:
+            logger.warning("User Hub recording detail request failed for %s", recording_uuid)
+            return None
+        except (httpx.RequestError, ValueError):
+            # An unread candidate must not make another instance appear unique.
+            candidate_read_failed = True
+            return None
         if not isinstance(detail, dict):
-            continue
+            return None
         detail_meeting_id = detail.get("meetingInstanceId")
         if not isinstance(detail_meeting_id, str) or not detail_meeting_id:
-            continue
-        if matched_meeting_id is not None and detail_meeting_id != matched_meeting_id:
-            continue
+            return None
+        if meeting_id is not None and detail_meeting_id != meeting_id:
+            return None
+        if not download and detail.get("preventDownload") is True:
+            return None
         download_info = (
             detail.get("downloadRecordingInfo", {}).get("downloadInfo", {})
             if isinstance(detail.get("downloadRecordingInfo"), dict)
             else {}
         )
         try:
-            transcript_url = _validated_webex_download_url(
-                download_info.get("transcriptURL")
-            )
+            transcript_url = _validated_webex_download_url(download_info.get("transcriptURL"))
         except ValueError:
-            continue
-        if matched_meeting_id is None:
-            matched_meeting_id = detail_meeting_id
+            return None
+        return recording, detail, transcript_url
 
+    async def read_occurrence_start(instance_id: str) -> None:
+        # Read each distinct instance once, independently of recording creation
+        # time. A denied public endpoint does not remove shared-recording access.
+        occurrence_starts[instance_id] = None
+        try:
+            async with semaphore:
+                meeting_response = await client.get(
+                    f"{WEBEX_API_BASE}/meetings/{instance_id}",
+                    headers={"Authorization": bearer, "Accept": "application/json"},
+                )
+                meeting_response.raise_for_status()
+            metadata = meeting_response.json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in {401, 403, 404}:
+                unavailable_instances.add(instance_id)
+            return
+        except (httpx.RequestError, ValueError):
+            return
+        if (
+            isinstance(metadata, dict) and metadata.get("id") == instance_id
+            and metadata.get("meetingType") == "meeting"
+        ):
+            start = metadata.get("start")
+            occurrence_starts[instance_id] = _parse_iso_datetime(start if isinstance(start, str) else None)
+
+    if meeting_id is not None:
+        # An exact identity can stop as soon as the requested segment count is
+        # satisfied. Title/time matching must inspect every bounded candidate.
+        for recording in candidates:
+            candidate = await read_candidate(recording)
+            if candidate_read_failed:
+                raise RuntimeError("User Hub recording metadata could not be verified.")
+            if candidate is not None:
+                resolved.append(candidate)
+                if len(resolved) >= max_results:
+                    break
+    else:
+        checked = await asyncio.gather(*(read_candidate(recording) for recording in candidates))
+        if candidate_read_failed:
+            raise RuntimeError("User Hub recording metadata could not be verified.")
+        resolved = [candidate for candidate in checked if candidate is not None]
+        instances = dict.fromkeys(detail["meetingInstanceId"] for _, detail, _ in resolved)
+        await asyncio.gather(*(read_occurrence_start(instance_id) for instance_id in instances))
+
+    matched_meeting_id = meeting_id
+    if matched_meeting_id is None:
+        if meeting_start is None:
+            return []
+        matching_instances: set[str] = set()
+        for recording, detail, _ in resolved:
+            instance_id = detail["meetingInstanceId"]
+            occurrence_start = occurrence_starts.get(instance_id)
+            if occurrence_start is not None:
+                if abs(occurrence_start - meeting_start) <= USERHUB_OCCURRENCE_MATCH_WINDOW:
+                    matching_instances.add(instance_id)
+            elif instance_id in unavailable_instances:
+                recording_start = _userhub_recording_time(recording)
+                if (
+                    recording_start is not None
+                    and abs(recording_start - meeting_start) <= USERHUB_OCCURRENCE_MATCH_WINDOW
+                ):
+                    matching_instances.add(instance_id)
+        # Multiple nearby instances are ambiguous. Never choose an occurrence
+        # merely because its recording was returned first.
+        if len(matching_instances) != 1:
+            return []
+        matched_meeting_id = matching_instances.pop()
+
+    items: list[dict[str, Any]] = []
+    for recording, detail, transcript_url in resolved:
+        if detail["meetingInstanceId"] != matched_meeting_id:
+            continue
+        recording_uuid = recording["recordUUID"]
         start_time = _userhub_recording_time(recording)
         item: dict[str, Any] = {
             "id": recording_uuid,
@@ -855,7 +1041,13 @@ async def _userhub_transcripts_for_meeting(
             "coHost": detail.get("coHost"),
             "shareToMe": detail.get("shareToMe"),
         }
-        if download:
+        occurrence_start = occurrence_starts.get(matched_meeting_id)
+        if occurrence_start is not None:
+            item["occurrenceStart"] = occurrence_start.isoformat()
+        if download and detail.get("preventDownload") is True:
+            item["body"] = None
+            item["bodyError"] = "Transcript download is disabled."
+        elif download:
             download_headers = {
                 "Authorization": bearer,
                 "Accept": "*/*",
@@ -948,6 +1140,51 @@ def register_tools(server) -> None:
         if args.meeting_type:
             params["meetingType"] = args.meeting_type
         return await _request("GET", "/meetings", params=params)
+
+    @server.tool(name="webex_space_meeting_occurrences")
+    @_handle_errors
+    async def space_meeting_occurrences(args: SpaceMeetingOccurrences) -> dict[str, Any]:
+        """Discover actual meetings shared in spaces, including absent invitees."""
+        start, end = _parse_iso_datetime(args.from_iso), _parse_iso_datetime(args.to_iso)
+        if start is None or end is None or start >= end or end - start > timedelta(days=365):
+            raise ValueError("Provide an ordered timezone-aware interval of at most 365 days.")
+        site = _normalize_userhub_site_url(args.site_url)
+        bearer = _bearer_from_request()
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+            result = await list_space_meeting_occurrences(
+                client, bearer, start, end, site,
+                meeting_series_id=args.meeting_series_id, max_results=args.max_results,
+                catalog_urls=args.catalog_urls, catalog_page_limit=args.catalog_page_limit,
+                continuation=args.continuation,
+            )
+            # The activity feed contains concrete IDs but encrypted page titles.
+            # Existing metadata-only privileges supply the exact recording title,
+            # without downloading transcripts or returning signed media links.
+            semaphore = asyncio.Semaphore(4)
+
+            async def enrich(item: dict[str, Any]) -> None:
+                async with semaphore:
+                    try:
+                        records = await _recording_privilege_transcripts(
+                            client, bearer=bearer, site_url=site, meeting_id=item["id"],
+                            max_results=1, download=False,
+                        )
+                    except (httpx.HTTPError, ValueError):
+                        return
+                if records:
+                    name = records[0].get("meetingTopic")
+                    if isinstance(name, str) and name.strip():
+                        item["title"] = USERHUB_RECORDING_SUFFIX.sub("", name).strip()
+                    item["hasRecording"] = True
+                    item["transcriptVerified"] = True
+
+            try:
+                async with asyncio.timeout(30):
+                    await asyncio.gather(*(enrich(item) for item in result["items"]))
+            except TimeoutError:
+                result["complete"] = False
+                result.setdefault("warnings", []).append("Some meeting titles could not be verified.")
+            return result
 
     @server.tool(name="webex_userhub_calendar")
     @_handle_errors
@@ -1270,9 +1507,41 @@ def register_tools(server) -> None:
         meeting_start = requested_meeting_start or _parse_iso_datetime(
             str(meeting.get("start")) if meeting and meeting.get("start") else None
         )
+        verified_occurrence_start = None
+        if (
+            meeting is not None
+            and meeting.get("id") == args.meeting_id
+            and meeting.get("meetingType") == "meeting"
+        ):
+            start = meeting.get("start")
+            verified_occurrence_start = _parse_iso_datetime(
+                start if isinstance(start, str) else None
+            )
         bearer = _bearer_from_request()
+        privilege_listing: dict[str, Any] | None = None
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
+                if args.meeting_id:
+                    try:
+                        privilege_items = await _recording_privilege_transcripts(
+                            client,
+                            bearer=bearer,
+                            site_url=site_url,
+                            meeting_id=args.meeting_id,
+                            max_results=args.max_results,
+                            download=args.download,
+                        )
+                        if privilege_items:
+                            privilege_listing = {
+                                "items": privilege_items,
+                                "source": "recording_privilege",
+                            }
+                            if not args.download or any(item.get("body") for item in privilege_items):
+                                return privilege_listing
+                    except (httpx.HTTPStatusError, httpx.RequestError, ValueError) as exc:
+                        # The recording library remains an independent fallback.
+                        # Never log raw errors containing signed URLs or secrets.
+                        listing["recordingPrivilegeFallback"] = {"error": type(exc).__name__}
                 fallback_items = await _userhub_transcripts_for_meeting(
                     client,
                     bearer=bearer,
@@ -1282,9 +1551,12 @@ def register_tools(server) -> None:
                     meeting_start=meeting_start,
                     max_results=args.max_results,
                     download=args.download,
+                    verified_occurrence_start=verified_occurrence_start,
                 )
         except (httpx.HTTPStatusError, httpx.RequestError, ValueError) as exc:
-            logger.warning("User Hub transcript fallback failed: %s", exc)
+            logger.warning("User Hub transcript fallback failed: %s", type(exc).__name__)
+            if privilege_listing is not None:
+                return privilege_listing
             if public_error is not None:
                 raise public_error
             listing["userHubFallback"] = {
@@ -1309,7 +1581,7 @@ def register_tools(server) -> None:
             "siteUrl": site_url,
             "matched": 0,
         }
-        return listing
+        return privilege_listing or listing
 
     # NOTE: webex_get_meeting_summary was removed. The Cisco /v1/meetings/summaries
     # endpoint we mirrored doesn't exist on the public Webex REST API. Webex
