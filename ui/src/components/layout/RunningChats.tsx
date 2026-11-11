@@ -36,39 +36,18 @@ export function RunningChats() {
     title: conversations.find(conversation => conversation.id === id)?.title || "Untitled chat",
     saving: !streams.has(id) && external[id]?.state === "saving",
   }));
-  const single = destinations.length === 1 ? destinations[0] : undefined;
   const indicator = (
     <>
       <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-emerald-500 motion-safe:animate-pulse" />
       <span>{label}</span>
-      {single && (
-        <span className="hidden max-w-36 md:inline-flex">
-          <span className="truncate">{single.title}</span>
-        </span>
-      )}
     </>
   );
-
-  if (single) {
-    return (
-      <Button variant="ghost" className={controlClass} asChild>
-        <GuardedNavigationLink
-          href={single.href}
-          aria-label={`${label}: ${single.title}. Open chat`}
-          aria-current={pathname === single.href ? "page" : undefined}
-          title={`${single.title} — ${single.saving ? "Saving response…" : "Streaming"}`}
-        >
-          {indicator}
-        </GuardedNavigationLink>
-      </Button>
-    );
-  }
 
   return <LiveChatsMenu destinations={destinations} pathname={pathname} label={label} indicator={indicator} />;
 }
 
-// Mount menu state only while there are multiple destinations. A completed run
-// must not leave a stale open menu when a later run starts.
+// Mount menu state only while there are live chats, so a completed run cannot
+// leave a stale open menu when a later run starts.
 function LiveChatsMenu({ destinations, pathname, label, indicator }: {
   destinations: LiveChatDestination[];
   pathname: string;
@@ -114,7 +93,7 @@ function LiveChatsMenu({ destinations, pathname, label, indicator }: {
                     onClick={() => setOpen(false)}
                     className="block w-full min-w-0 rounded-md px-2 py-2 text-left hover:bg-muted focus-visible:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    <span className="block truncate text-sm font-medium">{title}</span>
+                    <span className="block whitespace-normal break-words text-sm font-medium">{title}</span>
                     <span className="block text-xs text-muted-foreground">
                       {saving ? "Saving response…" : "Streaming"}{pathname === href ? " · Current chat" : ""}
                     </span>

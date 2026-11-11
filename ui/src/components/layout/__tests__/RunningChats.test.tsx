@@ -48,11 +48,15 @@ it("keeps the live indicator visible for the currently open chat", () => {
   addChat("example-primary", "Primary chat");
   mockPathname = "/chat/example-primary";
   render(<RunningChats />);
-  const link = screen.getByRole("link", { name: "Live Agent Chat (1): Primary chat. Open chat" });
+  const trigger = screen.getByRole("button", { name: "Live Agent Chat (1). Choose a chat" });
+  expect(trigger).toHaveTextContent(/^Live Agent Chat \(1\)$/);
+  expect(trigger.querySelector(".motion-safe\\:animate-pulse")).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Open Primary chat" })).not.toBeInTheDocument();
+  fireEvent.click(trigger);
+  const link = screen.getByRole("link", { name: "Open Primary chat" });
   expect(link).toHaveAttribute("href", "/chat/example-primary");
   expect(link).toHaveAttribute("aria-current", "page");
   expect(link).toHaveTextContent("Primary chat");
-  expect(link.querySelector(".motion-safe\\:animate-pulse")).toBeInTheDocument();
 });
 
 it("lists every live chat with a link to its specific conversation", () => {
@@ -91,8 +95,9 @@ it("preserves the existing unsaved-editor navigation guard", () => {
   mockPathname = "/dynamic-agents";
   useUnsavedChangesStore.setState({ hasUnsavedChanges: true });
   render(<RunningChats />);
+  fireEvent.click(screen.getByRole("button", { name: "Live Agent Chat (1). Choose a chat" }));
   const event = new MouseEvent("click", { bubbles: true, cancelable: true });
-  fireEvent(screen.getByRole("link", { name: "Live Agent Chat (1): Primary chat. Open chat" }), event);
+  fireEvent(screen.getByRole("link", { name: "Open Primary chat" }), event);
   expect(event.defaultPrevented).toBe(true);
   expect(useUnsavedChangesStore.getState().pendingNavigationHref).toBe("/chat/example-primary");
 });
@@ -109,32 +114,42 @@ it("preserves the unsaved-editor guard when choosing among several chats", () =>
   expect(screen.queryByRole("region", { name: "Live Agent Chat" })).not.toBeInTheDocument();
 });
 
-it("updates the direct destination when streams finish and hides when none remain", () => {
+it("updates an open picker as streams finish and resets it when none remain", () => {
   addChat("example-primary", "Primary chat");
   addChat("example-secondary", "Secondary chat");
   const { rerender, container } = render(<RunningChats />);
   fireEvent.click(screen.getByRole("button", { name: "Live Agent Chat (2). Choose a chat" }));
   mockState.streamingConversations.delete("example-primary");
   rerender(<RunningChats />);
-  expect(screen.queryByRole("region", { name: "Live Agent Chat" })).not.toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Live Agent Chat (1): Secondary chat. Open chat" })).toHaveAttribute("href", "/chat/example-secondary");
+  expect(screen.getByRole("button", { name: "Live Agent Chat (1). Choose a chat" })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.queryByRole("link", { name: "Open Primary chat" })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open Secondary chat" })).toHaveAttribute("href", "/chat/example-secondary");
   addChat("example-tertiary", "Third chat");
   rerender(<RunningChats />);
-  expect(screen.getByRole("button", { name: "Live Agent Chat (2). Choose a chat" })).toHaveAttribute("aria-expanded", "false");
-  expect(screen.queryByRole("region", { name: "Live Agent Chat" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Live Agent Chat (2). Choose a chat" })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByRole("link", { name: "Open Third chat" })).toBeVisible();
   mockState.streamingConversations.clear();
   rerender(<RunningChats />);
   expect(container).toBeEmptyDOMElement();
+  addChat("example-next", "Next chat");
+  rerender(<RunningChats />);
+  expect(screen.getByRole("button", { name: "Live Agent Chat (1). Choose a chat" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("region", { name: "Live Agent Chat" })).not.toBeInTheDocument();
 });
 
 it("encodes conversation IDs and keeps long titles available without widening the control", () => {
-  const title = "Example investigation ".repeat(12);
+  const title = "Example investigation ".repeat(12).trim();
   addChat("example/id?query", title);
   render(<RunningChats />);
-  const link = screen.getByRole("link", { name: `Live Agent Chat (1): ${title}. Open chat` });
+  const trigger = screen.getByRole("button", { name: "Live Agent Chat (1). Choose a chat" });
+  expect(trigger).toHaveTextContent(/^Live Agent Chat \(1\)$/);
+  expect(trigger).not.toHaveTextContent(title);
+  fireEvent.click(trigger);
+  const link = screen.getByRole("link", { name: `Open ${title}` });
   expect(link).toHaveAttribute("href", "/chat/example%2Fid%3Fquery");
-  expect(link).toHaveAttribute("title", `${title} — Streaming`);
-  expect(link.querySelector(".truncate")?.parentElement).toHaveClass("max-w-36");
+  expect(link).toHaveAttribute("title", title);
+  expect(screen.getByText(title)).toHaveClass("whitespace-normal", "break-words");
+  expect(link.querySelector(".truncate")).not.toBeInTheDocument();
 });
 
 it("does not show a live chat for an unconfirmed status check", () => {

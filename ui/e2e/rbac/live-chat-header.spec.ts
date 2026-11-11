@@ -52,9 +52,12 @@ test.describe("live-chat header navigation", () => {
     await bootLiveChats(page);
     await page.goto(`/chat/${primaryId}`);
     const header = page.locator("header");
-    const single = header.getByRole("link", { name: "Live Agent Chat (1): Primary investigation. Open chat" });
+    const single = header.getByRole("button", { name: "Live Agent Chat (1). Choose a chat" });
     await expect(single).toBeVisible({ timeout: 30_000 });
-    await expect(single).toHaveAttribute("aria-current", "page");
+    await expect(single).toHaveText(/^Live Agent Chat \(1\)$/);
+    await single.click();
+    await expect(page.getByRole("region", { name: "Live Agent Chat" }).getByRole("link", { name: "Open Primary investigation" })).toHaveAttribute("aria-current", "page");
+    await page.keyboard.press("Escape");
     await page.getByTestId("conversation-history-scroll").getByTitle("Secondary investigation").click();
     await expect(page).toHaveURL(new RegExp(`/chat/${secondaryId}$`));
     const trigger = header.getByRole("button", { name: "Live Agent Chat (2). Choose a chat" });
@@ -89,9 +92,12 @@ test.describe("live-chat header navigation", () => {
       }
     });
     await page.goto(`/chat/${encodeURIComponent(legacyId)}`);
-    const link = page.locator("header").getByRole("link", { name: "Live Agent Chat (1): Legacy investigation. Open chat" });
-    await expect(link).toBeVisible({ timeout: 30_000 });
+    const single = page.locator("header").getByRole("button", { name: "Live Agent Chat (1). Choose a chat" });
+    await expect(single).toBeVisible({ timeout: 30_000 });
+    await single.click();
+    const link = page.getByRole("region", { name: "Live Agent Chat" }).getByRole("link", { name: "Open Legacy investigation" });
     await expect(link).toHaveAttribute("aria-current", "page");
+    await page.keyboard.press("Escape");
     await page.getByTestId("conversation-history-scroll").getByTitle("Secondary investigation").click();
     const trigger = page.locator("header").getByRole("button", { name: "Live Agent Chat (2). Choose a chat" });
     await trigger.click();
@@ -103,34 +109,40 @@ test.describe("live-chat header navigation", () => {
     expect(observedIds).not.toContain(encodeURIComponent(legacyId));
   });
 
-  test("keeps the compact link usable on mobile and respects reduced motion", async ({ page }) => {
+  test("keeps the compact picker usable on mobile and respects reduced motion", async ({ page }) => {
     await bootLiveChats(page);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto(`/chat/${primaryId}`);
-    const link = page.locator("header").getByRole("link", { name: "Live Agent Chat (1): Primary investigation. Open chat" });
-    await expect(link).toBeVisible({ timeout: 30_000 });
-    await expect(link).toHaveAttribute("href", `/chat/${primaryId}`);
-    await expect(link.locator(".truncate")).not.toBeVisible();
-    const dot = link.locator("[aria-hidden=true]");
+    const trigger = page.locator("header").getByRole("button", { name: "Live Agent Chat (1). Choose a chat" });
+    await expect(trigger).toBeVisible({ timeout: 30_000 });
+    await expect(trigger).toHaveText(/^Live Agent Chat \(1\)$/);
+    const dot = trigger.locator("[aria-hidden=true]");
     await expect(dot).toHaveCSS("animation-name", "none");
-    const bounds = await link.boundingBox();
+    const bounds = await trigger.boundingBox();
     expect(bounds).not.toBeNull();
     expect(bounds!.x).toBeGreaterThanOrEqual(0);
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+    await trigger.click();
+    await expect(page.getByRole("region", { name: "Live Agent Chat" }).getByRole("link", { name: "Open Primary investigation" })).toHaveAttribute("href", `/chat/${primaryId}`);
   });
 
-  test("constrains a long title while keeping its complete accessible name", async ({ page }) => {
+  test("keeps long titles out of the header and wraps the full title in the picker", async ({ page }) => {
     const title = "Example investigation with a long conversation title ".repeat(8).trim();
     await bootLiveChats(page, title);
     await page.goto(`/chat/${primaryId}`);
-    const link = page.locator("header").getByRole("link", { name: `Live Agent Chat (1): ${title}. Open chat` });
-    await expect(link).toBeVisible({ timeout: 30_000 });
-    const titleElement = link.locator(".truncate");
+    const trigger = page.locator("header").getByRole("button", { name: "Live Agent Chat (1). Choose a chat" });
+    await expect(trigger).toBeVisible({ timeout: 30_000 });
+    await expect(trigger).toHaveText(/^Live Agent Chat \(1\)$/);
+    await trigger.click();
+    const link = page.getByRole("region", { name: "Live Agent Chat" }).getByRole("link", { name: `Open ${title}` });
+    const titleElement = link.locator("span").first();
     await expect(titleElement).toHaveText(title);
     const bounds = await titleElement.boundingBox();
-    expect(bounds!.width).toBeLessThanOrEqual(144);
-    expect(await titleElement.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
-    await expect(link).toHaveAttribute("title", `${title} — Streaming`);
+    expect(bounds!.width).toBeLessThanOrEqual(288);
+    expect(bounds!.height).toBeGreaterThan(40);
+    expect(await titleElement.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await expect(titleElement).toHaveCSS("white-space", "normal");
+    await expect(link).toHaveAttribute("title", title);
   });
 });
