@@ -59,7 +59,7 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
         fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/agents`, { signal, cache: "no-store" }),
         fetch("/api/dynamic-agents/available", { signal, cache: "no-store" }),
       ]);
-      const membership = await readData<{ enabled?: boolean; team_available?: boolean; activity_available?: boolean; agents: ChatCoordinationAgent[]; can_manage: boolean; available: boolean; mode?: "mentions" | "team"; handoffs?: ChatHandoff[] }>(membershipResponse);
+      const membership = await readData<{ enabled?: boolean; team_available?: boolean; activity_available?: boolean; remote_agents?: DynamicAgentConfig[]; agents: ChatCoordinationAgent[]; can_manage: boolean; available: boolean; mode?: "mentions" | "team"; handoffs?: ChatHandoff[] }>(membershipResponse);
       const catalog = await readData<DynamicAgentConfig[]>(catalogResponse);
       if (signal?.aborted) return;
       setEnabled(membership.enabled !== false);
@@ -71,7 +71,7 @@ export function useChatCoordination(conversationId: string, primaryAgentId: stri
       setHandoffs(membership.handoffs ?? []);
       setCanManage(membership.can_manage);
       setAvailable(membership.available);
-      setAvailableAgents(catalog.filter(agent => agent.enabled && !agent.presentation?.app));
+      setAvailableAgents([...catalog.filter(agent => agent.enabled && !agent.presentation?.app), ...(membership.remote_agents ?? [])]);
     } catch (error) {
       if (!signal?.aborted) setError(error instanceof Error ? error.message : "Could not load chat agents.");
     } finally {

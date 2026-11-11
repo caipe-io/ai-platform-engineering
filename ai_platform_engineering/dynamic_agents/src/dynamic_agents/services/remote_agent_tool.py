@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
-from contextlib import aclosing
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import aclosing, asynccontextmanager
 from typing import Any
 from urllib.parse import urlparse
 
@@ -158,6 +159,36 @@ async def resolve_remote_agent_auth_headers(
     return {header_name: header_value}
 
 
+@asynccontextmanager
+async def remote_agent_client(
+    *, endpoint: str, credential_source: dict[str, Any] | None,
+    caller_token: str | None, credential_api_url: str | None,
+    credential_service_audience: str = "caipe-credential-service",
+    allowed_http_origins: list[str], timeout_seconds: int,
+    streaming: bool, max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+    auth_resolver: Callable[[str | None], Awaitable[dict[str, str]]] | None = None,
+) -> AsyncIterator[Any]:
+    """Shared registry transport: never follow redirects or move credentials across origins."""
+    policy = A2ADestinationPolicy(endpoint, allowed_http_origins)
+    headers = await auth_resolver(caller_token) if auth_resolver else await resolve_remote_agent_auth_headers(
+        credential_source, caller_token=caller_token, credential_api_url=credential_api_url,
+        credential_service_audience=credential_service_audience,
+    )
+    timeout = httpx.Timeout(float(timeout_seconds))
+    async with httpx.AsyncClient(
+        transport=A2ABoundedTransport(max_response_bytes), timeout=timeout,
+        follow_redirects=False, event_hooks={"request": [policy.request_hook(headers)]},
+    ) as http_client:
+        factory = ClientFactory(ClientConfig(
+            streaming=streaming, supported_protocol_bindings=["JSONRPC", "HTTP+JSON"], httpx_client=http_client,
+        ))
+        client = await factory.create_from_url(endpoint, resolver_http_kwargs={"timeout": timeout})
+        try:
+            yield client
+        finally:
+            await client.close()
+
+
 class RemoteAgentTool(BaseTool):
     """LangChain tool that delegates through the official A2A Python SDK."""
 
@@ -197,47 +228,34 @@ class RemoteAgentTool(BaseTool):
     async def _execute(self, message: str, runtime: ToolRuntime | None) -> str:
         # The runtime cache outlives individual requests, so resolve caller-scoped
         # auth at tool-call time using the active request token.
-        policy = A2ADestinationPolicy(self.a2a_url, self.allowed_http_origins)
         token = current_user_token.get() or self.bearer_token
-        headers = await self._resolve_auth_headers(token)
-        timeout = httpx.Timeout(float(self.timeout))
-        async with httpx.AsyncClient(
-            transport=A2ABoundedTransport(self.max_response_bytes),
-            timeout=timeout, follow_redirects=False, event_hooks={"request": [policy.request_hook(headers)]}
-        ) as http_client:
-            factory = ClientFactory(
-                ClientConfig(
-                    streaming=self.streaming,
-                    supported_protocol_bindings=["JSONRPC", "HTTP+JSON"],
-                    httpx_client=http_client,
+        async with remote_agent_client(
+            endpoint=self.a2a_url, credential_source=self.credential_source,
+            caller_token=token, credential_api_url=self.credential_api_url,
+            credential_service_audience=self.credential_service_audience,
+            allowed_http_origins=self.allowed_http_origins, timeout_seconds=self.timeout,
+            streaming=self.streaming, max_response_bytes=self.max_response_bytes,
+            auth_resolver=self._resolve_auth_headers,
+        ) as client:
+            request = SendMessageRequest(
+                message=Message(
+                    message_id=str(uuid.uuid4()),
+                    role=Role.ROLE_USER,
+                    parts=[Part(text=message)],
                 )
             )
-            client = await factory.create_from_url(
-                self.a2a_url,
-                resolver_http_kwargs={"timeout": timeout},
-            )
-            try:
-                request = SendMessageRequest(
-                    message=Message(
-                        message_id=str(uuid.uuid4()),
-                        role=Role.ROLE_USER,
-                        parts=[Part(text=message)],
-                    )
-                )
-                output = _RemoteOutput(self.max_output_bytes)
-                context = ClientCallContext(timeout=float(self.timeout))
-                async with aclosing(client.send_message(request, context=context)) as responses:
-                    async for response in responses:
-                        changed = output.update(response)
-                        if changed and self.streaming and runtime and runtime.tool_call_id:
-                            runtime.stream_writer(
-                                {"type": "tool_output", "tool_call_id": runtime.tool_call_id, "result": output.text}
-                            )
-                if output.stream_seen and not output.finished:
-                    raise RuntimeError("Remote A2A stream ended before the task completed")
-                return output.text or "Remote agent returned no text response."
-            finally:
-                await client.close()
+            output = _RemoteOutput(self.max_output_bytes)
+            context = ClientCallContext(timeout=float(self.timeout))
+            async with aclosing(client.send_message(request, context=context)) as responses:
+                async for response in responses:
+                    changed = output.update(response)
+                    if changed and self.streaming and runtime and runtime.tool_call_id:
+                        runtime.stream_writer(
+                            {"type": "tool_output", "tool_call_id": runtime.tool_call_id, "result": output.text}
+                        )
+            if output.stream_seen and not output.finished:
+                raise RuntimeError("Remote A2A stream ended before the task completed")
+            return output.text or "Remote agent returned no text response."
 
 
 async def create_remote_agent_tool(

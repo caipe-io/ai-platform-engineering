@@ -21,6 +21,11 @@ const HARNESS_PRESENTATIONS: Record<string, HarnessPresentation> = {
       "border-teal-500/30 bg-teal-500/10 text-teal-700 dark:text-teal-300",
     dotClassName: "bg-teal-500",
   },
+  a2a_remote: {
+    id: "a2a_remote", label: "Remote A2A agent", shortLabel: "A2A",
+    badgeClassName: "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+    dotClassName: "bg-sky-500",
+  },
   agentcore: {
     id: "agentcore",
     label: "Amazon Bedrock AgentCore",

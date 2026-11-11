@@ -2,6 +2,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GET, POST, PATCH } from "./route";
 
+const mockRemoteAgent = jest.fn();
+const mockRemoteUse = jest.fn();
+const mockPrepareRemote = jest.fn();
+jest.mock("@/lib/chat-a2a.server", () => ({
+  a2aRegistryId: (id: string) => id.startsWith("a2a-remote-") ? id.slice(4) : null,
+  availableChatA2AAgents: async () => [],
+  chatA2AAgent: (...args: unknown[]) => mockRemoteAgent(...args),
+  requireChatA2AUse: (...args: unknown[]) => mockRemoteUse(...args),
+  prepareChatA2AExecution: (...args: unknown[]) => mockPrepareRemote(...args),
+}));
 const mockFeatures = jest.fn();
 jest.mock("@/lib/coordination/features.server", () => ({ getCoordinationFeatures: () => mockFeatures() }));
 const mockSetPolicy = jest.fn();
@@ -107,6 +117,24 @@ it("binds team authorization to the authenticated owner instead of request ident
   expect(mockSetPolicy).toHaveBeenCalledWith(change, "chat-example", "owner", "team");
 });
 
+it("joins an authorized registered A2A participant without creating a dynamic agent", async () => {
+  mockRemoteAgent.mockResolvedValue({ _id: "a2a-remote-example", name: "Example remote", enabled: true });
+  mockRemoteUse.mockResolvedValue(null);
+  const response = await POST(request({ agent_id: "a2a-remote-example", handle: "remote-helper" }), context);
+  expect(response.status).toBe(201);
+  expect(mockPrepareRemote).toHaveBeenCalledWith("a2a-remote-example", expect.objectContaining({ subject: "owner" }));
+  expect(mockFindAgent).not.toHaveBeenCalled();
+  expect(mockUpdate.mock.calls[0][1].$push.coordination_agents.agent_id).toBe("a2a-remote-example");
+});
+it("does not attach a disabled or unauthorized remote agent", async () => {
+  mockRemoteAgent.mockResolvedValueOnce(null);
+  expect((await POST(request({ agent_id: "a2a-remote-example", handle: "remote-helper" }), context)).status).toBe(409);
+  mockRemoteAgent.mockResolvedValue({ enabled: true });
+  mockRemoteUse.mockResolvedValue(NextResponse.json({}, { status: 403 }));
+  expect((await POST(request({ agent_id: "a2a-remote-example", handle: "remote-helper" }), context)).status).toBe(403);
+  expect(mockPrepareRemote).not.toHaveBeenCalled();
+  expect(mockUpdate).not.toHaveBeenCalled();
+});
 it("keeps history readable but blocks attachment when coordination is disabled", async () => {
   mockFeatures.mockResolvedValue({ enabled: false, team: false });
   const response = await GET(request(), context);

@@ -1790,7 +1790,7 @@ export function DynamicAgentEditor({
                         {!isDeepAgents && !selectedHarness && (
                           <option value={harnessId}>{harnessId} (unavailable)</option>
                         )}
-                        {harnessDescriptors.filter(descriptor => descriptor.id !== "dynamic_agents").map((descriptor) => (
+                        {harnessDescriptors.filter(descriptor => descriptor.id !== "dynamic_agents" && descriptor.id !== "a2a_remote").map((descriptor) => (
                           <option
                             key={descriptor.id}
                             value={descriptor.id}
