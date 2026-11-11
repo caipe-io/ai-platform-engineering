@@ -209,6 +209,35 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
     jest.restoreAllMocks();
   });
 
+  it.each([/^Next$/, /Advanced/i])(
+    "keeps new team agents on Basic Info until an owner is selected (%s)",
+    async (target) => {
+      const onStepChange = jest.fn();
+      render(
+        <DynamicAgentEditor
+          onStepChange={onStepChange}
+          onCancel={jest.fn()}
+          onSave={jest.fn()}
+        />,
+      );
+      await flushAsync();
+
+      fireEvent.click(screen.getByRole("button", { name: target }));
+
+      expect(onStepChange).not.toHaveBeenCalled();
+      expect(screen.getByRole("heading", { name: /Step 1:/ })).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Select an owner team before continuing.",
+      );
+      expect(screen.getByLabelText(/Owner Team/i)).toHaveFocus();
+
+      await pickTeam(/Owner Team/i, "platform");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+      expect(onStepChange).toHaveBeenCalledWith("instructions");
+    },
+  );
+
   it("disables Create Agent (with a hover tooltip) while Owner Team is empty", async () => {
     render(<DynamicAgentEditor onCancel={jest.fn()} onSave={jest.fn()} />);
     await flushAsync();
@@ -266,6 +295,10 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
     render(<DynamicAgentEditor onCancel={jest.fn()} onSave={jest.fn()} />);
     await flushAsync();
 
+    fireEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Select an owner team before continuing.",
+    );
     fireEvent.change(screen.getByPlaceholderText(/Code Review Agent/i), {
       target: { value: "global-agent" },
     });
@@ -280,6 +313,9 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
       "title",
       expect.stringContaining("Owner Team is required") as unknown as string,
     );
+    fireEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+    expect(screen.getByRole("heading", { name: /Step 2:/ })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("starts on the deep-linked setup step and reports subsequent step changes", async () => {

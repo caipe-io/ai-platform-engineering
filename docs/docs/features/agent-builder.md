@@ -154,7 +154,11 @@ and skills later without rebuilding the agent.
 
 ## Ownership and sharing
 
-Every agent has an owner team.
+Team-visible agents require an owner team. Global agents can have an owner team.
+
+- Choose an owner team on **Basic Info** before pressing **Next** or selecting a
+  later setup step for a new team-visible agent. If it is missing, the builder
+  focuses the owner picker and explains what to select.
 
 - **Team visibility** grants use according to the selected team relationships.
 - **Global visibility** makes the agent discoverable across the organization

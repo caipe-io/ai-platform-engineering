@@ -1022,10 +1022,25 @@ export function DynamicAgentEditor({
 
   const selectStep = React.useCallback(
     (step: StepId) => {
+      if (
+        !isEditing &&
+        visibility === "team" &&
+        activeStep === "basic" &&
+        step !== "basic" &&
+        !ownerTeamSlug.trim()
+      ) {
+        setError("Select an owner team before continuing.");
+        document.getElementById("ownerTeam")?.focus();
+        return;
+      }
+
+      setError((previous) =>
+        previous === "Select an owner team before continuing." ? null : previous,
+      );
       setActiveStep(step);
       onStepChange?.(step);
     },
-    [onStepChange],
+    [activeStep, isEditing, onStepChange, ownerTeamSlug, visibility],
   );
 
   // Local state for the in-app "you have unsaved changes" confirmation when the
@@ -2398,7 +2413,10 @@ export function DynamicAgentEditor({
                   currentUserTeamSlugs={availableTeams
                     .map((team) => team.slug)
                     .filter((slug): slug is string => Boolean(slug))}
-                  onOwnerTeamChange={setOwnerTeamSlug}
+                  onOwnerTeamChange={(slug) => {
+                    setOwnerTeamSlug(slug);
+                    if (slug.trim()) setError(null);
+                  }}
                   onSharedTeamsChange={setSharedWithTeams}
                   onTransfer={(_newOwnerSlug, confirmedNotMember) => {
                     // The component already applied the new slug via
@@ -2439,6 +2457,11 @@ export function DynamicAgentEditor({
                       Select a team you belong to as the owner. You manage this
                       agent as its creator; team members can use it; team admins
                       can manage it.
+                      {!isEditing && visibility === "team" && (
+                        <span className="block font-medium text-foreground">
+                          Choose an owner team before continuing.
+                        </span>
+                      )}
                     </>
                   }
                   shareHelpText={
