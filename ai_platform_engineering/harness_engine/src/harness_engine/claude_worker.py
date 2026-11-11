@@ -62,6 +62,7 @@ def create_worker_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        config.require_private_token()
         await repo.initialize()
         try:
             yield
@@ -78,7 +79,8 @@ def create_worker_app(
         x_harness_engine_subject: Annotated[str | None, Header()] = None,
     ) -> str:
         if (
-            not authorization
+            config.internal_token == "local-development-only"
+            or not authorization
             or not hmac.compare_digest(authorization, f"Bearer {config.internal_token}")
             or not x_harness_engine_subject
         ):

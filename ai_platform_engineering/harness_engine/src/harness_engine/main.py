@@ -109,6 +109,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        resolved_settings.require_private_token()
         await resolved_repository.initialize()
         await refresh_agentcore_profiles()
         yield
@@ -132,7 +133,7 @@ def create_app(
         x_harness_engine_subject: Annotated[str | None, Header()] = None,
     ) -> str:
         expected = f"Bearer {resolved_settings.internal_token}"
-        if not authorization or not hmac.compare_digest(authorization, expected):
+        if resolved_settings.internal_token == "local-development-only" or not authorization or not hmac.compare_digest(authorization, expected):
             raise HTTPException(
                 status.HTTP_401_UNAUTHORIZED, "Invalid internal service credential"
             )

@@ -3,5 +3,5 @@ Render additional Kubernetes resources from the stable-key extraDeployMap.
 */ -}}
 {{- range $_, $resource := .Values.extraDeployMap }}
 ---
-{{- toYaml $resource }}
+{{ toYaml $resource }}
 {{- end }}

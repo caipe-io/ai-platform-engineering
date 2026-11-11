@@ -111,6 +111,11 @@ class Settings(BaseSettings):
     claude_acp_tools: list[str] = Field(default_factory=list)
     deep_agents_enabled: bool = False
 
+    def require_private_token(self) -> None:
+        """Reject the public development credential before serving requests."""
+        if self.internal_token == "local-development-only":
+            raise ValueError("Set a private HARNESS_ENGINE_INTERNAL_TOKEN before starting Harness Engine")
+
     def agentcore_targets(self) -> dict[str, AgentCoreRuntimeTarget]:
         """Parse the operator allowlist without exposing raw settings to clients."""
 

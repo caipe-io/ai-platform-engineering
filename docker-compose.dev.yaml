@@ -656,6 +656,8 @@ services:
       # Chat runtime health endpoint URL
       - A2A_BASE_URL=${A2A_BASE_URL:-http://dynamic-agents:8001}
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
+      - HARNESS_ENGINE_URL=${HARNESS_ENGINE_URL:-http://harness-engine:8010}
+      - HARNESS_ENGINE_INTERNAL_TOKEN=${HARNESS_ENGINE_INTERNAL_TOKEN:-}
       # Feature gate for autonomous-task UI surfaces and /api/autonomous proxy.
       - ENABLE_AUTONOMOUS_AGENTS=${ENABLE_AUTONOMOUS_AGENTS:-false}
       # Autonomous Agents - URL the UI's /api/autonomous proxy targets.
@@ -767,6 +769,8 @@ services:
       - AUDIT_LOG_BACKEND=${AUDIT_LOG_BACKEND:-service}
       - AUDIT_SERVICE_URL=${AUDIT_SERVICE_URL:-http://audit-service:8010}
     volumes:
+      - harness_token:/run/harness-engine:ro
+      - ./deploy/harness-engine/run-with-token.sh:/opt/harness/run-with-token.sh:ro
       # APP_CONFIG_FILE remains accepted as an alias for CAIPE_APP_CONFIG_FILE.
       # If neither is set, mount the committed example template config/app-config.yaml.
       - ${CAIPE_APP_CONFIG_FILE:-${APP_CONFIG_FILE:-./config/app-config.yaml}}:/app/config/app-config.yaml:ro
@@ -788,8 +792,10 @@ services:
       # bind-mounts only selected source/config files, so the dev image's
       # installed dependencies and generated Next cache stay intact.
     # Hot-reload command: next dev rebuilds on edits to bind-mounted ./ui/src.
-    command: npm run dev
+    command: ["/bin/sh", "/opt/harness/run-with-token.sh", "npm", "run", "dev"]
     depends_on:
+      harness-token-init:
+        condition: service_completed_successfully
       # RBAC profile: wait for realm/JWKS readiness before UI startup seed/scope sync
       # calls Keycloak Admin APIs. Non-RBAC UI runs keep working because this
       # dependency is optional when the keycloak service is not selected.
@@ -914,6 +920,8 @@ services:
       # Chat runtime health endpoint URL
       - A2A_BASE_URL=${A2A_BASE_URL:-http://dynamic-agents:8001}
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
+      - HARNESS_ENGINE_URL=${HARNESS_ENGINE_URL:-http://harness-engine:8010}
+      - HARNESS_ENGINE_INTERNAL_TOKEN=${HARNESS_ENGINE_INTERNAL_TOKEN:-}
       - SKILL_SCANNER_URL=${SKILL_SCANNER_URL:-http://skill-scanner:8000}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-${GITHUB_PERSONAL_ACCESS_TOKEN:-}}
       - MONGODB_URI=${MONGODB_URI:-mongodb://admin:changeme@caipe-mongodb:27017/caipe?authSource=admin}
@@ -980,6 +988,8 @@ services:
       - AUDIT_LOG_BACKEND=${AUDIT_LOG_BACKEND:-service}
       - AUDIT_SERVICE_URL=${AUDIT_SERVICE_URL:-http://audit-service:8010}
     volumes:
+      - harness_token:/run/harness-engine:ro
+      - ./deploy/harness-engine/run-with-token.sh:/opt/harness/run-with-token.sh:ro
       # App config only — NO source bind-mounts. The runner stage uses the
       # prebuilt .next/standalone bundle and ignores ./ui/src etc., so any
       # bind-mount here would either be dead weight or actively shadow
@@ -987,8 +997,10 @@ services:
       # entrypoint writes env-config.js into).
       - ${CAIPE_APP_CONFIG_FILE:-${APP_CONFIG_FILE:-./config/app-config.yaml}}:/app/config/app-config.yaml:ro
       - ./charts/ai-platform-engineering/data/skills:/charts/ai-platform-engineering/data/skills:ro
-    command: /app/entrypoint.sh
+    command: ["/bin/sh", "/opt/harness/run-with-token.sh", "/app/entrypoint.sh"]
     depends_on:
+      harness-token-init:
+        condition: service_completed_successfully
       keycloak:
         condition: service_healthy
         required: false
@@ -1065,6 +1077,63 @@ services:
   #
   # Ports:
   #   - 8100: Dynamic Agents API (proxied via UI at /api/dynamic-agents)
+  # Portable execution backends, available with the standard agent profile.
+  # Provider profiles stay empty until an operator configures credentials/targets.
+  # Persist a private per-install credential before either consumer starts.
+  harness-token-init:
+    image: ghcr.io/caipe-io/caipe-harness-engine:${HARNESS_ENGINE_IMAGE_TAG:-1.3.7-rc.7}
+    command: ["python", "/opt/harness/init-token.py"]
+    environment:
+      HARNESS_ENGINE_INTERNAL_TOKEN: ${HARNESS_ENGINE_INTERNAL_TOKEN:-}
+    network_mode: none
+    read_only: true
+    mem_limit: 64m
+    pids_limit: 32
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - harness_token:/workspace
+      - ./deploy/harness-engine/init-token.py:/opt/harness/init-token.py:ro
+    profiles: [dynamic-agents, harness-engine, caipe-ui, caipe-ui-prod]
+
+  harness-engine:
+    image: ghcr.io/caipe-io/caipe-harness-engine:${HARNESS_ENGINE_IMAGE_TAG:-1.3.7-rc.7}
+    build:
+      context: .
+      dockerfile: ai_platform_engineering/harness_engine/build/Dockerfile
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 128
+    command: ["/bin/sh", "/opt/harness/run-with-token.sh", "python", "-m", "harness_engine.main"]
+    volumes:
+      - harness_workspace:/workspace
+      - harness_token:/run/harness-engine:ro
+      - ./deploy/harness-engine/run-with-token.sh:/opt/harness/run-with-token.sh:ro
+    depends_on:
+      harness-token-init:
+        condition: service_completed_successfully
+    env_file: [.env]
+    environment:
+      HARNESS_ENGINE_INTERNAL_TOKEN: ${HARNESS_ENGINE_INTERNAL_TOKEN:-}
+      HARNESS_ENGINE_STORAGE_BACKEND: mongodb
+      HARNESS_ENGINE_MONGODB_URI: ${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/harness_engine?authSource=admin}
+      HARNESS_ENGINE_MONGODB_DATABASE: harness_engine
+      HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON: ${HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON:-{}}
+      HARNESS_ENGINE_AGENTCORE_RUNTIMES_JSON: ${HARNESS_ENGINE_AGENTCORE_RUNTIMES_JSON:-{}}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles: [dynamic-agents, harness-engine]
+
   dynamic-agents:
     build:
       context: .
@@ -2685,6 +2754,8 @@ services:
       - caipe-ui
 
 volumes:
+  harness_workspace:
+  harness_token:
   mongodb_data:
     driver: local
   mongodb_config:
