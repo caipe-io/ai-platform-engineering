@@ -1014,7 +1014,10 @@ export function DynamicAgentEditor({
 
   // Step wizard state
   const [requestedStep, setActiveStep] = React.useState<StepId>(initialStep);
-  const activeStep = steps.some((step) => step.id === requestedStep) ? requestedStep : "basic";
+  const needsOwnerTeam = !isEditing && visibility === "team" && !ownerTeamSlug.trim();
+  const activeStep = !needsOwnerTeam && steps.some((step) => step.id === requestedStep)
+    ? requestedStep
+    : "basic";
 
   React.useEffect(() => {
     setActiveStep(initialStep);
@@ -1022,13 +1025,8 @@ export function DynamicAgentEditor({
 
   const selectStep = React.useCallback(
     (step: StepId) => {
-      if (
-        !isEditing &&
-        visibility === "team" &&
-        activeStep === "basic" &&
-        step !== "basic" &&
-        !ownerTeamSlug.trim()
-      ) {
+      if (needsOwnerTeam && step !== "basic") {
+        setActiveStep("basic");
         setError("Select an owner team before continuing.");
         document.getElementById("ownerTeam")?.focus();
         return;
@@ -1040,8 +1038,14 @@ export function DynamicAgentEditor({
       setActiveStep(step);
       onStepChange?.(step);
     },
-    [activeStep, isEditing, onStepChange, ownerTeamSlug, visibility],
+    [needsOwnerTeam, onStepChange],
   );
+
+  React.useEffect(() => {
+    // Reject deep links just like clicks, so selecting an owner later does not
+    // resume a step request that was blocked while the owner was missing.
+    if (needsOwnerTeam && requestedStep !== "basic") selectStep(requestedStep);
+  }, [needsOwnerTeam, requestedStep, selectStep]);
 
   // Local state for the in-app "you have unsaved changes" confirmation when the
   // user clicks the back arrow. We don't route this through the global store's
