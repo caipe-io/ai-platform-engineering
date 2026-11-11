@@ -4,6 +4,7 @@ import { PLATFORM_CONFIG_ID } from "@/lib/platform-default-agent";
 export interface CoordinationFeatures {
   enabled: boolean;
   team: boolean;
+  activity: boolean;
 }
 
 interface FeatureDocument {
@@ -14,13 +15,13 @@ interface FeatureDocument {
 /** Deployment settings are ceilings: runtime settings cannot override a disabled feature. */
 export function coordinationDeploymentLimits(): CoordinationFeatures {
   const enabled = process.env.AGENT_COORDINATION_ENABLED !== "false";
-  return { enabled, team: enabled && process.env.AGENT_TEAM_HANDOFFS_ENABLED !== "false" };
+  return { enabled, team: enabled && process.env.AGENT_TEAM_HANDOFFS_ENABLED !== "false", activity: enabled && process.env.AGENT_TEAM_ACTIVITY_ENABLED !== "false" };
 }
 
 export function resolveCoordinationFeatures(settings?: Partial<CoordinationFeatures>): CoordinationFeatures {
   const limits = coordinationDeploymentLimits();
   const enabled = limits.enabled && settings?.enabled !== false;
-  return { enabled, team: enabled && limits.team && settings?.team !== false };
+  return { enabled, team: enabled && limits.team && settings?.team !== false, activity: enabled && limits.activity && settings?.activity !== false };
 }
 
 /** No process cache: each admission and queue delivery observes the current admin switches. */

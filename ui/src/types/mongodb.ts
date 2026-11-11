@@ -267,6 +267,8 @@ export interface UserSettings {
     auto_scroll_enabled: string;
     show_timestamps_enabled: string;
     show_context_usage_enabled: string;
+    agent_team_activity_enabled?: string;
+    group_team_activity_enabled?: string;
     // Per-user opt-out for the post-login release notes notification. When
     // false, the release upgrade dialog/toast is suppressed for this user only
     // (it does not change the platform-wide admin configuration). Defaults to

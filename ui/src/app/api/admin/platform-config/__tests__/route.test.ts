@@ -1037,6 +1037,15 @@ describe("coordination runtime switches", () => {
     }
     expect(mockGetCollection).not.toHaveBeenCalled();
   });
+  it("restores Classic presentation without cancelling assignments", async () => {
+    const updateOne = jest.fn().mockResolvedValue({});
+    const updateMany = jest.fn().mockResolvedValue({});
+    mockGetCollection.mockImplementation(async (name: string) => name === "platform_config" ? { updateOne, findOne: async () => ({ agent_coordination: { activity: false } }) } : { updateMany });
+    const { PATCH } = await import("../route");
+    const response = await PATCH(request("/api/admin/platform-config", { method: "PATCH", body: JSON.stringify({ agent_coordination: { activity: false } }) }));
+    expect((await response.json()).data.agent_coordination).toEqual({ enabled: true, team: true, activity: false });
+    expect(updateMany).not.toHaveBeenCalled();
+  });
   it("rejects non-admin changes before reading or writing feature settings", async () => {
     mockRequireAdmin.mockRejectedValue(new Error("Denied"));
     const { PATCH } = await import("../route");

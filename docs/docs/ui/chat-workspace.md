@@ -32,6 +32,8 @@ default. They grant no agent or tool permissions and still require Harness Engin
 | Admin → Platform defaults → Agent Coordination | Enable/disable joining agents, direct mentions and new participant turns at runtime |
 | Admin → Platform defaults → Team handoffs | Independently enable/disable automatic assignments; manual mentions remain available |
 | `AGENT_COORDINATION_ENABLED=false` | Deployment ceiling: disable coordination, including team handoffs |
+| Admin → Platform defaults → Agent Team activity | Restore Classic reply cards at runtime; execution is unchanged |
+| `AGENT_TEAM_ACTIVITY_ENABLED=false` | Deployment ceiling: keep Classic presentation |
 | `AGENT_TEAM_HANDOFFS_ENABLED=false` | Deployment ceiling: disable automatic handoffs, keep manual participants |
 
 Set environment variables on the UI/BFF container, or use Helm:
@@ -210,3 +212,12 @@ sequenceDiagram
 - This is bounded asynchronous handoff, not a conductor, distributed task board,
   shared filesystem or sandbox isolation. Existing container hardening and runtime
   security boundaries still apply.
+
+## Agent Team activity views (Experimental)
+
+- **Conversation:** teammate replies appear inline with avatars and runtime identity.
+- **Grouped:** teammate work stays in an expandable activity section; finished work collapses by default. Primary's combined answer remains in the main conversation.
+- Long replies preserve rendered Markdown and selection with **Show more / Show less**. Tools and workspace files stay outside the collapsed prose.
+- Active avatars spin in the transcript and roster. Team progress and Stop team stay above the composer.
+- Settings → Chat Behavior → **Agent Team activity (Experimental)** restores Classic reply cards per user. View preferences sync to the account. These switches change presentation only.
+- Chats without joined agents keep their existing layout, including configured subagents; no migration is required.

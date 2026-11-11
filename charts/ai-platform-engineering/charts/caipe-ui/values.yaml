@@ -197,6 +197,7 @@ config:
   # Experimental chat participants and automatic team handoffs. Deployment ceilings.
   AGENT_COORDINATION_ENABLED: "true"
   AGENT_TEAM_HANDOFFS_ENABLED: "true"
+  AGENT_TEAM_ACTIVITY_ENABLED: "true"
   SSO_ENABLED: "true"
   # Built-in skill IDs to seed (comma-separated whitelist).
   # "none" (default) disables auto-seeding entirely — use "Import template skills"

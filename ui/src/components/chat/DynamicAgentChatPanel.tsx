@@ -42,6 +42,11 @@ import { createStreamEvent,FILE_TOOL_NAMES,TODO_TOOL_NAME,type StreamEvent } fro
 import { cn,deduplicateByKey,generateId } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import { agentStream, chatStreams } from "@/store/chat-stream-state";
+import { CollapsibleAgentText } from "./CollapsibleAgentText";
+import { AgentTeamActivity } from "./AgentTeamActivity";
+import { teamActivityEntries } from "@/lib/team-activity";
+import { persistFeatureFlag } from "@/store/feature-flag-store";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AgentReplyCard } from "./AgentReplyCard";
 import { useFeatureFlagStore } from "@/store/feature-flag-store";
 import { ChatMessage as ChatMessageType,Conversation,type MessageAttachment,TurnStatus } from "@/types/a2a";
@@ -169,6 +174,14 @@ export function ChatPanel({
   const initializeFeatureFlags = useFeatureFlagStore((s) => s.initialize);
   const autoScrollEnabled = useFeatureFlagStore((s) => s.flags.autoScroll ?? true);
   const showTimestamps = useFeatureFlagStore((s) => s.flags.showTimestamps ?? false);
+  const activityPreference = useFeatureFlagStore(s => s.flags.agentTeamActivity ?? true);
+  const groupedActivity = useFeatureFlagStore(s => s.flags.groupTeamActivity ?? true);
+  const teamActivity = Boolean(coordination?.agents.length && coordination.activityAvailable && activityPreference);
+  const selectActivityView = (value: string) => {
+    const grouped = value === "grouped";
+    useFeatureFlagStore.getState().setEnabled("groupTeamActivity", grouped);
+    void persistFeatureFlag("groupTeamActivity", grouped).catch(() => toast("View saved in this browser; account sync failed.", "error"));
+  };
   const showContextUsage = useFeatureFlagStore((s) => s.flags.showContextUsage ?? true);
 
   useEffect(() => {
@@ -2622,6 +2635,16 @@ export function ChatPanel({
             busy={isConversationStreaming(conversationId) || Boolean(migrationActivity)} />
         )}
 
+            {teamActivity && <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-2">
+              <span className="text-sm font-medium">Agent Team activity <span className="ml-1 text-xs font-normal text-muted-foreground">Experimental</span></span>
+              <Tabs value={groupedActivity ? "grouped" : "conversation"} onValueChange={selectActivityView}>
+                <TabsList aria-label="Agent Team activity view" className="h-8">
+                  <TabsTrigger value="conversation" className="text-xs">Conversation</TabsTrigger>
+                  <TabsTrigger value="grouped" className="text-xs">Grouped</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>}
+
       {/* Messages Area */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
         <ScrollArea className="flex-1" viewportRef={scrollViewportRef}>
@@ -2700,9 +2723,12 @@ export function ChatPanel({
                       </div>
                     )}
 
-                    {allMessages.map((msg, index, arr) => {
+                    {(() => {
+                    const renderMessage = (msg: ChatMessageType) => {
+                      const arr = allMessages;
+                      const index = arr.indexOf(msg);
                       const root = msg.coordinationRootId;
-                      if (msg.coordinationKind === "assignment" && root && !expandedTeamRoots.has(root) && arr.some(message => message.coordinationKind === "summary" && message.coordinationRootId === root && message.isFinal && message.turnStatus === "done")) return null;
+                      if (!teamActivity && msg.coordinationKind === "assignment" && root && !expandedTeamRoots.has(root) && arr.some(message => message.coordinationKind === "summary" && message.coordinationRootId === root && message.isFinal && message.turnStatus === "done")) return null;
                       const isLastMessage = index === arr.length - 1;
                       const remoteMessage = isRemoteResponse && !msg.isFinal && (!externalActivity?.turnId || externalActivity.turnId === msg.turnId);
                       const ownStream = activeParticipantStreams.find(stream => stream.messageId === msg.id);
@@ -2785,13 +2811,16 @@ export function ChatPanel({
                       const participantCard = Boolean(msg.parallelGroupId && msg.role === "assistant" && msg.agentId !== coordination?.primaryAgentId);
                       const messageView = (
                         <React.Fragment key={msg.id}>
-                        {msg.coordinationKind === "summary" && root && <div className="mx-6 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
+                        {!teamActivity && msg.coordinationKind === "summary" && root && <div className="mx-6 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
                           <span className="flex items-center gap-1.5"><Check className="h-3.5 w-3.5 text-blue-600 dark:text-blue-300" aria-hidden="true"/>{new Set(arr.filter(message => message.coordinationKind === "assignment" && message.coordinationRootId === root && message.role === "assistant").map(message => message.agentId)).size} agents finished</span>
                           <Button size="sm" variant="ghost" className="h-7 text-xs" aria-expanded={expandedTeamRoots.has(root)} onClick={() => setExpandedTeamRoots(current => { const next = new Set(current); if (next.has(root)) next.delete(root); else next.add(root); return next; })}>{expandedTeamRoots.has(root) ? "Hide work" : "View work"}</Button>
                         </div>}
                         <ChatMessage
                           key={msg.id}
-                          framed={participantCard}
+                          framed={participantCard && !teamActivity}
+                          teamActivity={teamActivity}
+                          participantHandle={coordination?.agents.find(member => member.agent_id === msg.agentId)?.handle ?? "primary"}
+                          teamAgent={coordination?.availableAgents.find(candidate => candidate._id === (msg.agentId ?? coordination.primaryAgentId)) ?? agent}
                           mentionHandles={mentionHandles}
                           message={remoteMessage ? { ...msg, isInterrupted: false } : msg}
                           onCopy={handleCopy}
@@ -2844,7 +2873,7 @@ export function ChatPanel({
                         />
                         </React.Fragment>
                       );
-                      if (!participantCard) return messageView;
+                      if (teamActivity || !participantCard) return messageView;
                       const handle = coordination?.agents.find(member => member.agent_id === msg.agentId)?.handle ?? "primary";
                       const config = coordination?.availableAgents.find(candidate => candidate._id === msg.agentId) ?? (msg.agentId === agentId ? agent : undefined);
                       const firstReply = !arr.slice(0, index).some(previous => previous.role === "assistant" && previous.parallelGroupId === msg.parallelGroupId);
@@ -2863,7 +2892,15 @@ export function ChatPanel({
                         </AgentReplyCard>
                       </div>;
 
-                    })}
+                    };
+                    return teamActivity ? teamActivityEntries(allMessages, coordination!.primaryAgentId).map(entry =>
+                      entry.kind === "message" ? renderMessage(entry.message) :
+                        <AgentTeamActivity key={entry.id} grouped={groupedActivity} complete={entry.complete && !coordination?.handoffs?.some(job => job.root === entry.id && ["pending", "processing"].includes(job.status))}
+                          count={new Set(entry.messages.map(message => message.agentId)).size}>
+                          {entry.messages.map(renderMessage)}
+                        </AgentTeamActivity>
+                    ) : allMessages.map(renderMessage);
+                    })()}
                   </>
                 );
               })()}
@@ -3034,7 +3071,7 @@ export function ChatPanel({
       ) : !isAutonomousHistory && (
       <div className="border-t border-border bg-background shrink-0">
         <div className="max-w-7xl mx-auto px-6 py-3 space-y-2">
-          {coordination?.agents.length && (activeParticipantStreams.length > 0 || coordination.handoffs?.some(job => ["pending", "processing"].includes(job.status))) ? <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+          {coordination?.agents.length && (activeParticipantStreams.length > 0 || coordination.handoffs?.some(job => ["pending", "processing"].includes(job.status))) ? <div role="status" className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
             <span>{activeParticipantStreams.length ? `${activeParticipantStreams.length} agent${activeParticipantStreams.length === 1 ? "" : "s"} working` : !coordination.handoffs?.some(job => !job.summary && ["pending", "processing"].includes(job.status)) ? "Primary is bringing the results together…" : "Your team is working…"}</span>
             <Button size="sm" variant="ghost" onClick={handleStop} disabled={readOnlySubscription || isStopping}><Square className="mr-1.5 h-3 w-3" />Stop team</Button>
           </div> : null}
@@ -3492,6 +3529,9 @@ function filterEventsForTurn(
 }
 
 interface ChatMessageProps {
+  teamAgent?: DynamicAgentConfig;
+  participantHandle?: string;
+  teamActivity?: boolean;
   framed?: boolean;
   mentionHandles?: readonly string[];
   message: ChatMessageType;
@@ -3538,6 +3578,9 @@ interface ChatMessageProps {
 
 const ChatMessage = React.memo(function ChatMessage({
   framed = false,
+  teamActivity = false,
+  teamAgent,
+  participantHandle,
   mentionHandles,
   message,
   onCopy,
@@ -3626,8 +3669,9 @@ const ChatMessage = React.memo(function ChatMessage({
       ) : (
         <AgentAvatar
           agentId={agentId}
-          gradientTheme={agentGradient}
-          customThemeConfig={agentCustomTheme}
+          agent={teamActivity ? teamAgent : undefined}
+          gradientTheme={teamActivity ? undefined : agentGradient}
+          customThemeConfig={teamActivity ? undefined : agentCustomTheme}
           rounded="rounded-xl"
           size="w-9 h-9"
           iconSize="h-4 w-4"
@@ -3663,8 +3707,12 @@ const ChatMessage = React.memo(function ChatMessage({
             </div>
           ) : (
             <>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium">{agentName || getConfig('appName')}</span>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                {teamActivity ? <>
+                  <span className={cn("text-xs font-medium", agentMentionColor(participantHandle ?? "primary", mentionHandles ?? []))}>@{participantHandle ?? "primary"}</span>
+                  <span className="text-xs text-muted-foreground">{teamAgent?.name ?? agentName}</span>
+                  {teamAgent && <AgentHarnessBadge harnessId={teamAgent.execution_harness_id} presentation={teamAgent.presentation} compact />}
+                </> : <span className="text-xs font-medium">{agentName || getConfig('appName')}</span>}
                 {showTimestamp && (
                   <span className="text-[10px] text-muted-foreground/60 font-normal">
                     {message.timestamp instanceof Date
@@ -3875,12 +3923,12 @@ const ChatMessage = React.memo(function ChatMessage({
                 deletingFilePath={deletingFilePath}
                 getSubagentInfo={getSubagentInfo}
                 pendingHitl={pendingHitl}
+                teamActivity={teamActivity}
               />
             ) : displayContent ? (
               // Legacy fallback: completed message with no persisted events
-              <div className="rounded-xl bg-card/50 border border-border/50 px-4 py-3">
-                <MarkdownRenderer content={displayContent} />
-              </div>
+              teamActivity ? <CollapsibleAgentText><MarkdownRenderer content={displayContent} /></CollapsibleAgentText> :
+                <div className="rounded-xl bg-card/50 border border-border/50 px-4 py-3"><MarkdownRenderer content={displayContent} /></div>
             ) : effectiveTurnStatus === "interrupted" ? (
               <div className="text-xs text-destructive px-1">
                 {interruptedTurnFallbackText(message.error)}

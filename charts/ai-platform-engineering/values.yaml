@@ -845,6 +845,7 @@ caipe-ui:
     # Experimental chat participants and automatic team handoffs. Deployment ceilings.
     AGENT_COORDINATION_ENABLED: "true"
     AGENT_TEAM_HANDOFFS_ENABLED: "true"
+    AGENT_TEAM_ACTIVITY_ENABLED: "true"
     SSO_ENABLED: "false"
     # Okta background sync is configured via the structured `oktaSync:` block
     # below (sibling of `config:`), modeled after the Backstage Okta provider.

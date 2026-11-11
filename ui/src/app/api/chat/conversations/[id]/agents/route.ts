@@ -41,6 +41,7 @@ export const GET = withErrorHandler(async (request: NextRequest, context: Contex
     agents: access.conversation.coordination_agents ?? [],
     enabled: features.enabled,
     team_available: features.team,
+    activity_available: features.activity,
     can_manage: features.enabled && access.canManage,
     available: features.enabled && isHarnessEngineConfigured(),
     mode: features.team ? (await coordinationPolicy(access.conversation._id))?.mode ?? "mentions" : "mentions",
