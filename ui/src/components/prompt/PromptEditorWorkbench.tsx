@@ -6,6 +6,8 @@ import React,{ useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useTheme } from "@/components/theme-provider";
+import { isLightColorTheme } from "@/lib/color-theme";
 import { cn } from "@/lib/utils";
 
 const CodeMirrorEditor = React.lazy(() => import("@uiw/react-codemirror"));
@@ -53,6 +55,8 @@ export function PromptEditorWorkbench({
   onSuggest,
   className,
 }: PromptEditorWorkbenchProps) {
+  const { resolvedTheme } = useTheme();
+  const editorIsLight = isLightColorTheme(resolvedTheme);
   const [tab, setTab] = useState<"edit" | "preview">("edit");
   const [showSuggest, setShowSuggest] = useState(false);
   const [instruction, setInstruction] = useState("");
@@ -190,7 +194,7 @@ export function PromptEditorWorkbench({
       </div>
 
       {tab === "edit" ? (
-        <div className="overflow-hidden rounded-lg border border-border/30 bg-[#1e1e2e]" style={{ height }}>
+        <div className={cn("overflow-hidden rounded-lg border", editorIsLight ? "border-border bg-white" : "border-border/30 bg-[#1e1e2e]")} style={{ height }}>
           <React.Suspense
             fallback={
               <div className="flex h-48 items-center justify-center text-zinc-500">
@@ -202,7 +206,7 @@ export function PromptEditorWorkbench({
             <CodeMirrorEditor
               value={value}
               onChange={(next: string) => onChange(next)}
-              theme="dark"
+              theme={editorIsLight ? "light" : "dark"}
               height={`${height}px`}
               style={{ fontSize: "15px" }}
               basicSetup={{

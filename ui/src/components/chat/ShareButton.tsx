@@ -22,6 +22,8 @@ interface ShareButtonProps {
   sharing?: Conversation["sharing"];
   accessLevel?: Conversation["accessLevel"];
   className?: string;
+  disabled?: boolean;
+  onBeforeOpen?: () => Promise<boolean>;
 }
 
 export function ShareButton({
@@ -33,6 +35,8 @@ export function ShareButton({
   sharing,
   accessLevel,
   className,
+  disabled = false,
+  onBeforeOpen,
 }: ShareButtonProps) {
   const [showDialog, setShowDialog] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -51,8 +55,9 @@ export function ShareButton({
     }
   };
 
-  const handleOpenDialog = (e: React.MouseEvent) => {
+  const handleOpenDialog = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (onBeforeOpen && !(await onBeforeOpen())) return;
     setShowDialog(true);
   };
 
@@ -82,6 +87,7 @@ export function ShareButton({
               <Button
                 variant="ghost"
                 size="icon"
+                disabled={disabled}
                 onClick={shouldOpenDialog ? handleOpenDialog : handleQuickCopy}
                 className={cn("h-6 w-6", className)}
                 aria-label={isOwner ? "Share conversation" : sharedByText}

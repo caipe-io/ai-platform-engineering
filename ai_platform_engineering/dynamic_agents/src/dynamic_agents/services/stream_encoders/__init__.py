@@ -9,14 +9,17 @@ Protocol selection is per-request via query parameter::
 """
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 # ═══════════════════════════════════════════════════════════════
 # StreamEncoder ABC
 # ═══════════════════════════════════════════════════════════════
 
 
-class StreamEncoder(ABC):
+FrameT = TypeVar("FrameT", default=str)
+
+
+class StreamEncoder(ABC, Generic[FrameT]):
     """Abstract base class for stream encoders.
 
     Each abstract method corresponds to a specific event in the stream
@@ -42,30 +45,30 @@ class StreamEncoder(ABC):
     """
 
     @abstractmethod
-    def on_run_start(self, run_id: str, thread_id: str) -> list[str]:
+    def on_run_start(self, run_id: str, thread_id: str) -> list[FrameT]:
         """Stream is beginning. Called once at the top of stream/resume."""
 
     @abstractmethod
-    def on_chunk(self, chunk: tuple) -> list[str]:
+    def on_chunk(self, chunk: tuple) -> list[FrameT]:
         """Process a raw LangGraph astream() chunk. Called per chunk."""
 
     @abstractmethod
-    def on_stream_end(self) -> list[str]:
+    def on_stream_end(self) -> list[FrameT]:
         """All chunks have been processed. Flush any buffered state."""
 
     @abstractmethod
-    def on_run_finish(self, run_id: str, thread_id: str) -> list[str]:
+    def on_run_finish(self, run_id: str, thread_id: str) -> list[FrameT]:
         """Stream completed successfully."""
 
     @abstractmethod
-    def on_run_error(self, message: str, code: str | None = None) -> list[str]:
+    def on_run_error(self, message: str, code: str | None = None) -> list[FrameT]:
         """Unrecoverable error terminated the stream."""
 
     @abstractmethod
-    def on_warning(self, message: str) -> list[str]:
+    def on_warning(self, message: str) -> list[FrameT]:
         """Non-fatal warning (e.g., MCP server unavailable)."""
 
-    def on_structured_output(self, payload: dict[str, Any], schema_id: str | None = None) -> list[str]:
+    def on_structured_output(self, payload: dict[str, Any], schema_id: str | None = None) -> list[FrameT]:
         """Capture a validated submission on this request's encoder.
 
         Built-in encoders also emit protocol-specific events. The concrete
@@ -95,7 +98,7 @@ class StreamEncoder(ABC):
         tool_args: dict[str, Any] | None = None,
         allowed_decisions: list[str] | None = None,
         tool_approvals: list[dict[str, Any]] | None = None,
-    ) -> list[str]:
+    ) -> list[FrameT]:
         """Agent execution paused — requires human input or approval.
 
         Emitted for both form-based input (``request_user_input``) and tool

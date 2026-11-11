@@ -16,6 +16,7 @@
 export interface RawSSEEvent {
   event: string;
   data: string;
+  id?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -56,11 +57,14 @@ export async function* parseSSEStream(
         if (!eventStr.trim()) continue;
 
         let eventType = "message";
+        let id: string | undefined;
         const dataLines: string[] = [];
 
         for (const line of eventStr.split("\n")) {
           if (line.startsWith("event: ")) {
             eventType = line.slice(7).trim();
+          } else if (line.startsWith("id:")) {
+            id = line.slice(3).trim();
           } else if (line.startsWith("data: ")) {
             dataLines.push(line.slice(6));
           } else if (line.startsWith("data:")) {
@@ -75,7 +79,7 @@ export async function* parseSSEStream(
 
         // Join multiple data lines with newlines (SSE spec)
         const eventData = dataLines.join("\n");
-        yield { event: eventType, data: eventData };
+        yield { event: eventType, data: eventData, ...(id !== undefined && { id }) };
       }
     }
   } finally {

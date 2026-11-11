@@ -2,6 +2,7 @@
 
 import { LoadingScreen } from "@/components/loading-screen";
 import { isTokenExpired } from "@/lib/auth-utils";
+import { buildLoginUrl, clearLoginReturnTo } from "@/lib/auth/callback-url";
 import { getConfig } from "@/lib/config";
 import { useSession } from "next-auth/react";
 import { signOutWithFeedback } from "@/lib/sign-out";
@@ -32,11 +33,9 @@ export function AuthGuard({ children }: AuthGuardProps) {
    * user returns here after re-authenticating (e.g. /chat/<uuid>).
    */
   const loginUrl = useCallback((params?: string): string => {
-    const cb = pathname && pathname !== '/' && pathname !== '/login'
-      ? `callbackUrl=${encodeURIComponent(pathname)}`
-      : '';
-    const parts = [params, cb].filter(Boolean).join('&');
-    return parts ? `/login?${parts}` : '/login';
+    const target = typeof window !== 'undefined' && window.location.pathname === pathname
+      ? `${pathname}${window.location.search}${window.location.hash}` : pathname;
+    return buildLoginUrl(target, params);
   }, [pathname]);
 
   // Check for corrupted session cookies on mount
@@ -158,6 +157,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
         sessionStorage.removeItem('token-expiry-handling');
       }
 
+      clearLoginReturnTo();
       console.log("[AuthGuard] ✅ Authorization complete, rendering app");
     }
   }, [status, session, router, loginUrl]);

@@ -1,3 +1,81 @@
+## 1.3.7-rc.7 (2026-11-10)
+
+### Feat
+
+- **mongodb**: support replica sets for Change Data Capture (CDC) (#3267)
+- **notifications**: define event and preference contracts (#2993)
+
+### Fix
+
+- **mongodb**: support pod-local replica set host mapping (#3357)
+- **deps**: update vulnerable Cloudability packages (#3355)
+- **deps**: remediate Dependabot alerts (#3314)
+- **auth**: harden OIDC refresh transport and response validation (#3255)
+
+## 1.3.7-rc.6 (2026-11-06)
+
+### Fix
+
+- **ui**: restore live chat navigation in the header (#3247)
+
+## 1.3.7-rc.5 (2026-11-05)
+
+### Feat
+
+- **helm**: add optional persistent harness runtimes (#3238)
+
+## 1.3.7-rc.4 (2026-11-05)
+
+### Feat
+
+- **webex**: sign bot-specific team scope for native assistants (#3244)
+
+### Fix
+
+- **webex**: keep incomplete space routes recoverable (#3243)
+
+## 1.3.7-rc.3 (2026-11-05)
+
+### Feat
+
+- **harness**: persist sessions and publish restricted runtime containers
+- add cloudability mcp to FinOps agent and alerting on litellm token usage  (#2019)
+
+### Fix
+
+- **llm**: support non-streaming proxies and agent UI overrides (#3035)
+- **ui**: theme the grid logo and keep the CAIPE logo unchanged (#3231)
+- **ui**: follow the app theme in code blocks and prompt editors (#3182)
+- **compose**: publish langfuse-web on host port 3001 (#3145)
+- **cloudability**: repair dependency pins and local package resolution (#3216)
+
+## 1.3.6 (2026-11-02)
+
+### Fix
+
+- **ui**: clarify curated release note version targeting (#3204)
+
+## 1.3.5 (2026-11-02)
+
+### Feat
+
+- **feedback**: unify component reports through the host (#2397)
+
+### Fix
+
+- **github-mcp**: run github-mcp-server in http mode in docker-compose (#3193)
+
+## 1.3.4 (2026-10-30)
+
+### Feat
+
+- **ui**: support curated release note overrides (#3143)
+- **ui**: configure Agentic App connection guidance (#3144)
+
+### Fix
+
+- **ci**: install and refresh AWS MCP runtime CLIs (#3154)
+
 ## 1.3.3 (2026-10-29)
 
 ### Feat

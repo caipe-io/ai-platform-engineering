@@ -1,0 +1,20 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { ClaudeSessionPanel } from "../ClaudeSessionPanel";
+
+it("shows reconnection progress and shared-viewer restrictions", () => {
+  const { rerender } = render(<ClaudeSessionPanel activity="checking" readOnly />);
+  expect(screen.getByRole("status")).toHaveTextContent("Reconnecting");
+  expect(screen.queryByText(/Sending messages or stopping work requires additional access/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Claude session: Reconnecting" }));
+  expect(screen.getByText(/Viewing shared session/)).toBeInTheDocument();
+  expect(screen.getByText(/Sending messages or stopping work requires additional access/)).toBeInTheDocument();
+  rerender(<ClaudeSessionPanel activity="running" readOnly={false} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Working");
+  expect(screen.queryByText(/Viewing shared session/)).not.toBeInTheDocument();
+  expect(screen.getByText(/Refreshing or closing this page does not stop a response/)).toBeInTheDocument();
+  rerender(<ClaudeSessionPanel activity="stopping" readOnly={false} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Stopping");
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.queryByText(/Refreshing or closing this page does not stop a response/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Claude session: Stopping" })).toHaveFocus();
+});

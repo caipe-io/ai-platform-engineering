@@ -1,5 +1,6 @@
 "use client";
 
+import { ReleaseNotesOverrideSettings } from "@/components/settings/ReleaseNotesOverrideSettings";
 import { ReleaseNotesPreview } from "@/components/settings/ReleaseNotesPreview";
 import { AutoSaveStatus } from "@/components/settings/shared/AutoSaveStatus";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
@@ -314,6 +315,7 @@ export function PlatformAnnouncementsSettings({
             />
           </div>
 
+          <ReleaseNotesOverrideSettings readOnly={readOnly || Boolean(loadError)} />
           <ReleaseNotesPreview isAdmin />
         </div>
       )}

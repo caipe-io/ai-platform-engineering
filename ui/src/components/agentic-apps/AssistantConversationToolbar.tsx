@@ -1,14 +1,12 @@
 "use client";
 
 import { ExternalLink, Maximize2, MoreVertical, Plus, RotateCcw, X } from "lucide-react";
-import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Props {
-  viewTabs: ReactNode;
   menuOpen: boolean;
   onMenuOpenChange: (open: boolean) => void;
   expanded: boolean;
@@ -28,7 +26,6 @@ export function AssistantConversationToolbar(props: Props) {
     action();
   }
   return <div className="flex shrink-0 items-center gap-1">
-    {props.viewTabs}
     <Popover open={props.menuOpen} onOpenChange={props.onMenuOpenChange}>
       <PopoverTrigger asChild>
         <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Conversation actions" aria-expanded={props.menuOpen}>

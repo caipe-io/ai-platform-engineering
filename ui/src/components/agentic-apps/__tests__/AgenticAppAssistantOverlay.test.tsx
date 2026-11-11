@@ -6,6 +6,8 @@ import type { Conversation } from "@/types/a2a";
 import { applyAssistantFontScale } from "@/lib/appearance-preferences";
 import { AgenticAppAssistantOverlay } from "../AgenticAppAssistantOverlay";
 
+jest.mock("../AssistantConnectionGuidance", () => ({ AssistantConnectionGuidance: ({ appId }: { appId: string }) => <button type="button" data-app-id={appId}>Connect</button> }));
+
 jest.mock("@/native-extensions/HostConversationActions", () => ({ __esModule: true, default: () => <h2>Saved app chat</h2> }));
 
 function action(name: string): HTMLElement {
@@ -54,6 +56,7 @@ jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
     readOnly,
     composerDraft,
     emptyStateTitle,
+    showAgentHeader,
     suggestedPrompts,
   }: {
     conversationId?: string;
@@ -62,6 +65,7 @@ jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
     readOnly?: boolean;
     composerDraft?: { text: string } | null;
     emptyStateTitle?: string;
+    showAgentHeader?: boolean;
     suggestedPrompts?: string[];
   }) => (
     <div
@@ -69,6 +73,7 @@ jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
       data-conversation-id={conversationId}
       data-agent-id={agentId}
       data-empty-title={emptyStateTitle}
+      data-agent-header={String(showAgentHeader)}
       data-suggestions={JSON.stringify(suggestedPrompts ?? [])}
       data-draft={composerDraft?.text ?? ""}
       data-context={JSON.stringify(clientContext ?? {})}
@@ -107,6 +112,19 @@ describe("AgenticAppAssistantOverlay", () => {
   });
 
   afterEach(() => jest.restoreAllMocks());
+
+  it("places the view tabs below the assistant header", async () => {
+    renderExampleOverlay();
+    await screen.findByTestId("chat-panel");
+    const tabs = screen.getByRole("tablist", { name: "Ask Example views" });
+    const header = screen.getByRole("button", { name: "Conversation actions" }).closest("header");
+    expect(tabs.previousElementSibling).toBe(header);
+    expect(tabs).toContainElement(screen.getByRole("tab", { name: "Chat" }));
+    expect(tabs).toContainElement(screen.getByRole("tab", { name: "History" }));
+    expect(header).toContainElement(screen.getByRole("button", { name: "Connect" }));
+    expect(screen.getByRole("button", { name: "Connect" })).toHaveAttribute("data-app-id", "example-app");
+    expect(header).toContainElement(screen.getByRole("button", { name: "Conversation actions" }));
+  });
 
   it("renders a floating launcher and opens an opaque shared chat panel", async () => {
     const onOpenChange = jest.fn();
@@ -158,6 +176,7 @@ describe("AgenticAppAssistantOverlay", () => {
     expect(chat).toHaveAttribute("data-conversation-id", "assistant-conversation");
     expect(chat).toHaveAttribute("data-agent-id", "agent-example");
     expect(chat).toHaveAttribute("data-empty-title", "Ask Example");
+    expect(chat).toHaveAttribute("data-agent-header", "false");
     expect(chat).toHaveAttribute("data-suggestions", "[]");
   });
 

@@ -239,6 +239,7 @@ const sidebars: SidebarsConfig = {
       items: [
         { type: 'doc', id: 'architecture/index', label: 'Solution Architecture' },
         { type: 'doc', id: 'architecture/gateway', label: 'AgentGateway' },
+        { type: 'doc', id: 'architecture/claude-acp', label: 'Claude ACP' },
         { type: 'doc', id: 'architecture/scheduler', label: 'Scheduler' },
         { type: 'doc', id: 'architecture/autonomous-agents', label: 'Autonomous Agents' },
         {
@@ -316,6 +317,7 @@ const sidebars: SidebarsConfig = {
             { type: 'doc', id: 'security/auth-flow', label: 'Authentication Flow' },
             { type: 'doc', id: 'security/browser-sessions', label: 'Browser Sessions' },
             { type: 'doc', id: 'security/agent-context-hmac', label: 'Agent Context HMAC' },
+            { type: 'doc', id: 'security/claude-acp-threat-model', label: 'Claude ACP Threat Model' },
             {
               type: 'category',
               label: 'RBAC',

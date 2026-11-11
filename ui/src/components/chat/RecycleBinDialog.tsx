@@ -41,10 +41,8 @@ interface RecycleBinDialogProps {
 /** Calculate days remaining before auto-purge */
 export function daysRemaining(deletedAt: Date | string): number {
   const deleted = new Date(deletedAt);
-  const purgeDate = new Date(deleted);
-  purgeDate.setDate(purgeDate.getDate() + RETENTION_DAYS);
   const now = new Date();
-  const diff = purgeDate.getTime() - now.getTime();
+  const diff = deleted.getTime() + RETENTION_DAYS * 24 * 60 * 60 * 1000 - now.getTime();
   return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
 }
 

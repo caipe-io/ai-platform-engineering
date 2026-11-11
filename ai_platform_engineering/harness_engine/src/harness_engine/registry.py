@@ -34,6 +34,11 @@ class HarnessRegistry:
             raise ValueError(
                 f"Provider session manager harness ID mismatch: {', '.join(mismatched)}"
             )
+        for adapter in adapters:
+            if adapter.descriptor.contract_version == 2 and not all(
+                callable(getattr(adapter, name, None)) for name in ("execute", "cancel_run")
+            ):
+                raise ValueError("Version 2 adapters require execute and cancel_run")
 
     @property
     def catalog_revision(self) -> str:

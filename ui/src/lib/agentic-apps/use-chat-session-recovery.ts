@@ -46,6 +46,13 @@ export function useChatSessionRecovery(): void {
           return;
         }
         const data = await response.json();
+        if (data.data?.runtime === "harness_engine") {
+          // The chat panel replays the Engine journal directly. This observer
+          // only polls app-owned runtimes that publish their saved transcript.
+          unsupported.add(id);
+          useChatStore.getState().setExternalActivity(id, null);
+          return;
+        }
         if (typeof data.running !== "boolean" || data.turnId !== undefined &&
             (typeof data.turnId !== "string" || data.turnId.length > 128)) throw new Error("Invalid app turn status");
         if (!currentWatch() || Date.now() > watch.deadline || useChatStore.getState().streamingConversations.has(id)) return;

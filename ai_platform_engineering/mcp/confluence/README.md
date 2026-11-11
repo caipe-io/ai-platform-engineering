@@ -26,6 +26,18 @@ MCP_HOST=0.0.0.0
 MCP_PORT=18000
 ```
 
+For caller-connected OAuth, AgentGateway forwards the provider token on
+`X-CAIPE-Provider-Token`. Configure `CONFLUENCE_API_URL` with the complete REST
+base, including `/wiki/rest/api`. For Cloud OAuth, use
+`https://api.atlassian.com/ex/confluence/<cloud-id>/wiki/rest/api`.
+
+The read-only `search_content` tool uses the supported CQL search endpoint.
+It returns visible content with source URLs, supports bounded pagination and
+can include page bodies. The connected account needs the search/content read
+scopes required by [the search API](https://developer.atlassian.com/cloud/confluence/rest/v1/api-group-search/).
+Legacy space listing and the newer space API have different endpoint and scope
+requirements; a successful connection does not qualify every advertised tool.
+
 ```bash
 set -a; source .env; set +a && uv run python mcp_confluence/server.py
 ```

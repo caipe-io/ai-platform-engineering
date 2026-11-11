@@ -637,6 +637,7 @@ services:
       - DESCRIPTION=${DESCRIPTION:-}
       - LOGO_URL=${LOGO_URL:-}
       - LOGO_STYLE=${LOGO_STYLE:-}
+      - LOGO_THEMED=${LOGO_THEMED:-}
       - SPINNER_COLOR=${SPINNER_COLOR:-}
       - SHOW_POWERED_BY=${SHOW_POWERED_BY:-}
       - SUPPORT_EMAIL=${SUPPORT_EMAIL:-}
@@ -898,6 +899,7 @@ services:
       - DESCRIPTION=${DESCRIPTION:-}
       - LOGO_URL=${LOGO_URL:-}
       - LOGO_STYLE=${LOGO_STYLE:-}
+      - LOGO_THEMED=${LOGO_THEMED:-}
       - SPINNER_COLOR=${SPINNER_COLOR:-}
       - SHOW_POWERED_BY=${SHOW_POWERED_BY:-}
       - SUPPORT_EMAIL=${SUPPORT_EMAIL:-}
@@ -1804,7 +1806,7 @@ services:
       - deps
 
   milvus-minio:
-    image: quay.io/minio/minio:RELEASE.2024-05-28T17-19-04Z
+    image: milvusdb/minio:RELEASE.2024-12-18T13-15-44Z
     container_name: milvus-minio
     environment:
       - MINIO_ACCESS_KEY=minioadmin
@@ -1878,7 +1880,7 @@ services:
         condition: service_healthy
       langfuse-clickhouse:
         condition: service_healthy
-    ports: ["3001:3000"]
+    ports: ["${LANGFUSE_PORT:-3001}:3000"]
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@langfuse-postgres:5432/postgres
       - SALT=mysalt
@@ -1905,7 +1907,7 @@ services:
       - LANGFUSE_S3_MEDIA_UPLOAD_PREFIX=media/
       - REDIS_HOST=langfuse-redis
       - REDIS_AUTH=myredissecret
-      - NEXTAUTH_URL=http://localhost:3001
+      - NEXTAUTH_URL=http://localhost:${LANGFUSE_PORT:-3001}
       - NEXTAUTH_SECRET=mysecret
     profiles:
       - tracing
@@ -1933,8 +1935,10 @@ services:
       - tracing
 
   langfuse-minio:
-    image: quay.io/minio/minio
+    image: cgr.dev/chainguard/minio
     container_name: langfuse-minio
+    # Keep root: existing langfuse_minio_data volumes are root-owned.
+    user: "0:0"
     restart: always
     entrypoint: sh
     command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'

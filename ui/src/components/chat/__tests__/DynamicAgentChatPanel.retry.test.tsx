@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { StreamCallbacks } from "@/lib/streaming/callbacks";
 import { apiClient } from "@/lib/api-client";
 import type { ExternalChatActivity } from "@/store/chat-store";
 import type { ChatMessage, Conversation } from "@/types/a2a";
@@ -9,12 +10,14 @@ let mockStreaming = false;
 const mockPush = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 const mockToast = jest.fn();
-const mockStreamMessage = jest.fn().mockResolvedValue(undefined);
+const mockStreamMessage = jest.fn(async (_params: unknown, callbacks: StreamCallbacks) => { callbacks.onDone?.(); });
+const mockRecoverRun = jest.fn(async (_run: string, callbacks: StreamCallbacks) => { callbacks.onContent?.("Recovered final answer", []); callbacks.onDone?.(); });
 const mockChatState = {
   activeConversationId: "chat-1",
   getActiveConversation: () => mockConversation,
   get conversations() { return [mockConversation]; },
   isConversationStreaming: () => mockStreaming,
+  streamingConversations: new Map(),
   consumePendingMessage: () => null,
   addMessage: jest.fn((_conversationId: string, value: Omit<ChatMessage, "id" | "timestamp">, turnId?: string) => {
     const id = `new-message-${mockConversation.messages.length}`;
@@ -28,12 +31,14 @@ const mockChatState = {
   appendToMessage: jest.fn(),
   clearStreamEvents: jest.fn(),
   setConversationStreaming: jest.fn(),
+  cancelConversationRequest: jest.fn(),
   loadMessagesFromServer: jest.fn(),
   externalActivity: {} as Record<string, ExternalChatActivity>,
   contextUsageByConversation: {},
   messageHistory: {},
   setContextUsage: jest.fn(),
   loadOlderMessagesFromServer: jest.fn().mockResolvedValue(undefined),
+  createConversation: jest.fn().mockResolvedValue("new-chat"),
 };
 
 jest.mock("@/store/chat-store", () => ({
@@ -54,7 +59,7 @@ jest.mock("@/components/autonomous/api", () => ({
   autonomousApi: { openFollowUpChat: jest.fn(), listFollowUpChats: async () => ({}) },
 }));
 jest.mock("@/lib/streaming", () => ({
-  createStreamAdapter: () => ({ streamMessage: mockStreamMessage, abort: jest.fn() }),
+  createStreamAdapter: () => ({ streamMessage: mockStreamMessage, recoverRun: mockRecoverRun, abort: jest.fn() }),
 }));
 jest.mock("@/hooks/useDynamicAgentTimeline", () => ({ useAgentTimeline: () => ({ data: {} }) }));
 jest.mock("@/components/shared/timeline", () => ({
@@ -94,6 +99,7 @@ const mockAttachment = { mime_type: "text/plain", name: "example.txt", data: "ZX
 beforeEach(() => {
   jest.clearAllMocks();
   mockStreaming = false;
+  mockChatState.streamingConversations.clear();
   mockChatState.externalActivity = {};
   HTMLElement.prototype.scrollIntoView = jest.fn();
   setConversation([
@@ -102,6 +108,151 @@ beforeEach(() => {
     message("u2", "user", "second question"),
     message("a2", "assistant", "second answer"),
   ]);
+});
+
+describe("Engine run recovery after refresh", () => {
+  const status = (data: Record<string, unknown>) => jest.spyOn(global, "fetch").mockResolvedValue({
+    ok: true, json: async () => ({ data }),
+  } as Response);
+
+  it('restores pending Stop after refresh and records a confirmed stop without an error', async () => {
+    setConversation([message('assistant-example', 'assistant', 'partial', { turnId: 'turn-example', isFinal: false })]);
+    const fetchMock = status({ runtime: 'harness_engine', status: 'running', run_id: 'run-example', turn_id: 'turn-example', cancellation_requested: true });
+    mockRecoverRun.mockImplementationOnce(async (_id, callbacks) => { callbacks.onCancelled?.(); });
+    try {
+      render(<ChatPanel agentId='example-agent' conversationId='chat-1' />);
+      await waitFor(() => expect(mockConversation.messages[0]).toMatchObject({ isFinal: true, turnStatus: 'cancelled' }));
+      expect(mockChatState.setConversationStreaming).toHaveBeenCalledWith('chat-1', expect.objectContaining({ stopping: true }));
+      expect(mockConversation.messages[0].content).not.toContain('Error');
+      expect(mockStreamMessage).not.toHaveBeenCalled();
+    } finally { fetchMock.mockRestore(); }
+  });
+
+  it('blocks Enter and Cmd+Enter while Stop is pending and preserves the draft', async () => {
+    mockStreaming = true;
+    mockChatState.streamingConversations.set('chat-1', { stopping: true });
+    render(<ChatPanel agentId='example-agent' conversationId='chat-1' />);
+    expect(screen.getByRole('button', { name: 'Stopping response' })).toBeDisabled();
+    const composer = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(composer, { target: { value: 'next question' } });
+    fireEvent.keyDown(composer, { key: 'Enter', metaKey: true });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await act(async () => {});
+    expect(composer).toHaveValue('next question');
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+    expect(screen.getByText(/Waiting for active work to finish/)).toBeInTheDocument();
+  });
+
+  it('queues Cmd+Enter behind confirmed stop instead of sending after a fixed delay', async () => {
+    mockStreaming = true;
+    mockChatState.streamingConversations.set('chat-1', { streamAdapter: { canRecoverOnRefresh: true } });
+    const { rerender } = render(<ChatPanel agentId='example-agent' conversationId='chat-1' />);
+    const composer = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(composer, { target: { value: 'replacement question' } });
+    fireEvent.keyDown(composer, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(mockChatState.cancelConversationRequest).toHaveBeenCalledWith('chat-1'));
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+    expect(composer).toHaveValue('');
+    mockStreaming = false;
+    mockChatState.streamingConversations.clear();
+    rerender(<ChatPanel agentId='example-agent' conversationId='chat-1' />);
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
+    expect(lastRequest()).toMatchObject({ message: 'replacement question' });
+  });
+
+  it("replays a shared read-only response without submitting a prompt or enabling controls", async () => {
+    setConversation([message("assistant-example", "assistant", "partial", { turnId: "turn-example", isFinal: false })]);
+    const fetchMock = status({ runtime: "harness_engine", status: "idle", run_id: "run-example", turn_id: "turn-example" });
+    try {
+      render(<ChatPanel agentId="example-agent" conversationId="chat-1" readOnly readOnlyReason="agent_unavailable" />);
+      await waitFor(() => expect(mockRecoverRun).toHaveBeenCalledWith("run-example", expect.any(Object), "chat-1"));
+      expect(mockChatState.setConversationStreaming).toHaveBeenCalledWith("chat-1", expect.objectContaining({ readOnly: true }));
+      await waitFor(() => expect(mockConversation.messages[0]).toMatchObject({ isFinal: true, content: "Recovered final answer" }));
+      expect(screen.queryByRole("textbox")).toBeNull();
+      expect(screen.getByText("Read-only conversation")).toBeInTheDocument();
+      expect(screen.getByText(/Sharing this chat does not grant access to its agent/)).toBeInTheDocument();
+      expect(screen.getByText(/To reply, ask the owner to share the agent with you/)).toBeInTheDocument();
+      expect(mockStreamMessage).not.toHaveBeenCalled();
+    } finally { fetchMock.mockRestore(); }
+  });
+
+  it.each(["running", "idle"])("rebuilds a missing assistant from a matching %s run without sending the prompt again", async (runStatus) => {
+    setConversation([message("user-example", "user", "saved prompt", { turnId: "turn-example" })]);
+    const fetchMock = status({ runtime: "harness_engine", status: runStatus, run_id: "run-example", turn_id: "turn-example" });
+    try {
+      render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+      await waitFor(() => expect(mockRecoverRun).toHaveBeenCalledWith("run-example", expect.any(Object), "chat-1"));
+      await waitFor(() => expect(mockConversation.messages.at(-1)).toMatchObject({ role: "assistant", turnId: "turn-example", content: "Recovered final answer", isFinal: true }));
+      expect(mockStreamMessage).not.toHaveBeenCalled();
+    } finally { fetchMock.mockRestore(); }
+  });
+
+  it.each([undefined, "turn-previous"])("does not attach an unrelated running turn (%s)", async (turnId) => {
+    setConversation([message("user-example", "user", "saved prompt", { turnId: "turn-next" })]);
+    const fetchMock = status({ runtime: "harness_engine", status: "running", run_id: "run-example", turn_id: turnId });
+    try {
+      render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+      await act(async () => {});
+      expect(mockRecoverRun).not.toHaveBeenCalled();
+      expect(mockChatState.addMessage).not.toHaveBeenCalled();
+    } finally { fetchMock.mockRestore(); }
+  });
+
+  it("does not attach an earlier completed run to a later saved prompt", async () => {
+    setConversation([message("user-example", "user", "unsent prompt", { turnId: "turn-next" })]);
+    const fetchMock = status({ runtime: "harness_engine", status: "idle", run_id: "run-example", turn_id: "turn-previous" });
+    try {
+      render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/chat/stream/status", expect.any(Object)));
+      await act(async () => {});
+      expect(mockRecoverRun).not.toHaveBeenCalled();
+      expect(mockChatState.addMessage).not.toHaveBeenCalled();
+    } finally { fetchMock.mockRestore(); }
+  });
+
+  it.each([undefined, null, "turn-other"])("does not replace an unfinished assistant with an unrelated maintenance run (%s)", async (turnId) => {
+    setConversation([message("assistant-example", "assistant", "Unfinished answer", { turnId: "turn-example", isFinal: false })]);
+    const fetchMock = status({ runtime: "harness_engine", status: "idle", run_id: "run-maintenance", turn_id: turnId });
+    try {
+      render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      await act(async () => {});
+      expect(mockRecoverRun).not.toHaveBeenCalled();
+      expect(mockConversation.messages.at(-1)).toMatchObject({ content: "Unfinished answer", isFinal: false });
+    } finally { fetchMock.mockRestore(); }
+  });
+
+  it("keeps app-owned runs in their application's lifecycle", async () => {
+    setConversation([message("user-example", "user", "saved prompt")]);
+    const fetchMock = status({ status: "running", run_id: "app-run" });
+    try {
+      render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+      await act(async () => {});
+      expect(mockRecoverRun).not.toHaveBeenCalled();
+      expect(mockChatState.addMessage).not.toHaveBeenCalled();
+    } finally { fetchMock.mockRestore(); }
+  });
+});
+
+it("starts a separate chat from the agent picker and leaves the shared source untouched", async () => {
+  const original = { ...mockConversation, participants: [{ type: "agent" as const, id: "original-agent" }], sharing: { shared_with: ["viewer@example.test"] } };
+  mockConversation = original;
+  const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ success: true, data: [
+    { _id: "other-agent", name: "Other Agent", enabled: true },
+  ] }) } as Response);
+  const update = jest.spyOn(apiClient, "updateConversation");
+  try {
+    render(<ChatPanel agentId="original-agent" conversationId="chat-1" readOnly readOnlyReason="agent_unavailable" />);
+    fireEvent.click(screen.getByRole("button", { name: "New chat with another agent" }));
+    expect(screen.getByRole("button", { name: "Start new chat" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("combobox"));
+    fireEvent.click(await screen.findByRole("option", { name: "Other Agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start new chat" }));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/chat/new-chat"));
+    expect(mockChatState.createConversation).toHaveBeenCalledWith("other-agent", { activate: false });
+    expect(mockConversation).toBe(original);
+    expect(update).not.toHaveBeenCalled();
+  } finally { fetchMock.mockRestore(); update.mockRestore(); }
 });
 
 describe("retry alongside edit", () => {
@@ -233,6 +384,23 @@ describe("retry alongside edit", () => {
   });
 });
 
+describe("authoritative completion", () => {
+  it("does not label an unfinished saved response as done", () => {
+    setConversation([message("user-example", "user", "example"), message("assistant-example", "assistant", "partial", { isFinal: false, turnStatus: undefined })]);
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    expect(screen.getByText("Completion has not been confirmed by the server.")).toBeInTheDocument();
+    expect(screen.queryByText("Response was interrupted")).not.toBeInTheDocument();
+  });
+
+  it("keeps a subscription closure interrupted without a server completion event", async () => {
+    setConversation([message("user-example", "user", "example"), message("assistant-example", "assistant", "partial", { isFinal: true, isInterrupted: true })]);
+    mockStreamMessage.mockResolvedValueOnce(undefined);
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(mockConversation.messages.at(-1)).toMatchObject({ turnStatus: "interrupted" }));
+  });
+});
+
 describe("retry is unavailable when it would be unsafe", () => {
   it("keeps an app draft pending until the remote response releases the composer", async () => {
     mockChatState.externalActivity["chat-1"] = { agentId: "example-agent", state: "running" };
@@ -273,6 +441,8 @@ describe("retry is unavailable when it would be unsafe", () => {
 
   it("hides retry in a read-only shared conversation", () => {
     render(<ChatPanel agentId="example-agent" conversationId="chat-1" readOnly readOnlyReason="shared_readonly" />);
+    expect(screen.getByText("Read-only conversation")).toBeInTheDocument();
+    expect(screen.getByText(/ask the owner for Can edit access to this chat/)).toBeInTheDocument();
     expectNoRetry();
   });
 

@@ -1,0 +1,67 @@
+# Layer after docker-compose.yaml, compose.deep-agents.yaml and compose.worker-egress.yaml.
+# Add a runtime=claude_code_acp profile to the Engine's private worker map.
+services:
+  harness-engine:
+    networks: [default, harness-workers]
+    environment:
+      HARNESS_ENGINE_CLAUDE_WORKER_PROFILES_JSON: ${HARNESS_ENGINE_CLAUDE_WORKER_PROFILES_JSON:?set private worker connections}
+
+  caipe-ui:
+    networks: [default, harness-workers]
+
+  caipe-mongodb:
+    networks: [default, harness-workers]
+
+  claude-acp-worker:
+    profiles: [harness-engine]
+    build: !reset null
+    image: ${CLAUDE_ACP_WORKER_IMAGE:-ghcr.io/caipe-io/caipe-claude-acp-worker:${HARNESS_IMAGE_TAG:?set a release, prebuild or source SHA tag}}
+    pull_policy: always
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: ${CLAUDE_WORKER_CPUS:-2.0}
+    mem_limit: ${CLAUDE_WORKER_MEMORY:-2g}
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777
+    networks: [harness-workers]
+    depends_on:
+      worker-egress:
+        condition: service_healthy
+    init: true
+    environment:
+      HOME: /workspace
+      PYTHONDONTWRITEBYTECODE: "1"
+      HTTPS_PROXY: http://worker-egress:3128
+      HTTP_PROXY: http://worker-egress:3128
+      NO_PROXY: localhost,127.0.0.1,::1,caipe-ui,caipe-mongodb,harness-engine
+      https_proxy: http://worker-egress:3128
+      http_proxy: http://worker-egress:3128
+      no_proxy: localhost,127.0.0.1,::1,caipe-ui,caipe-mongodb,harness-engine
+      AWS_EC2_METADATA_DISABLED: "true"
+      HARNESS_ENGINE_INTERNAL_TOKEN: ${CLAUDE_ACP_WORKER_INTERNAL_TOKEN:?set a distinct private worker token}
+      HARNESS_ENGINE_STORAGE_BACKEND: mongodb
+      HARNESS_ENGINE_MONGODB_URI: ${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/harness_engine?authSource=admin}
+      HARNESS_ENGINE_MONGODB_DATABASE: ${CLAUDE_ACP_MONGODB_DATABASE:-harness_claude_acp}
+      HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON: ${CLAUDE_ACP_PROFILES_JSON:?set Claude model and workspace profiles}
+      HARNESS_ENGINE_CLAUDE_TOOL_BROKER_URL: http://caipe-ui:3000
+      HARNESS_ENGINE_CLAUDE_ACP_TOOLS: '[]'
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+      CLAUDE_CODE_USE_BEDROCK: ${CLAUDE_CODE_USE_BEDROCK:-0}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+    volumes:
+      - claude-acp-workspace:/workspace
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  claude-acp-workspace:

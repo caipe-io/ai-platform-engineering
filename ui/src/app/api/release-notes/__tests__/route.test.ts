@@ -168,14 +168,14 @@ describe("/api/release-notes", () => {
     expect(githubUrls.at(-1)).toBe(`${RAW_BASE}/2026-01-01-release-1-3-0.md`);
   });
 
-  it.each(["unreadable", "empty"])("tries the series post when the exact patch post is %s", async failure => {
+  it.each(["unreadable", "empty", "frontmatter-only"])("tries the series post when the exact patch post is %s", async failure => {
     jest.resetModules();
     mockGithub(["1-3-0", "1-3-3"].map(suffix => ({
       name: `2026-01-01-release-${suffix}.md`, type: "file", download_url: `${RAW_BASE}/2026-01-01-release-${suffix}.md`,
     })));
     const fallback = global.fetch;
     global.fetch = jest.fn(async (url: string | URL) => String(url).endsWith("1-3-3.md")
-      ? { ok: failure === "empty", text: async () => "" } as Response
+      ? { ok: failure !== "unreadable", text: async () => failure === "frontmatter-only" ? "---\ntitle: Example patch release\n---\n\n<!-- truncate -->\n" : "" } as Response
       : fallback(url));
     const { GET } = await import("../route");
     const data = await (await GET(new NextRequest("https://example.test/api/release-notes?version=1.3.3"))).json();
@@ -351,7 +351,7 @@ describe("/api/release-notes", () => {
     const response = await GET(new NextRequest("https://app.example.test/api/release-notes?version=1&compare=platform"));
     expect(response.status).toBe(500);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
-    expect(log).toHaveBeenCalledWith("[Release Notes API] Configured compare unavailable");
+    expect(log).toHaveBeenCalledWith("[Release Notes API] Configured release notes unavailable");
   });
 
   it("returns 400 when no version is provided", async () => {

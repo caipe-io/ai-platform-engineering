@@ -204,14 +204,14 @@ class APIClient {
   }
 
   async getConversation(id: string): Promise<Conversation> {
-    return this.request(`/api/chat/conversations/${id}`);
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}`);
   }
 
   async updateConversation(
     id: string,
     data: UpdateConversationRequest
   ): Promise<Conversation> {
-    return this.request(`/api/chat/conversations/${id}`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -221,26 +221,26 @@ class APIClient {
     id: string,
     metadata: Record<string, unknown>,
   ): Promise<Conversation> {
-    return this.request(`/api/chat/conversations/${id}/metadata`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}/metadata`, {
       method: 'PATCH',
       body: JSON.stringify({ metadata }),
     });
   }
 
   async deleteConversation(id: string): Promise<{ deleted: boolean; permanent: boolean }> {
-    return this.request(`/api/chat/conversations/${id}`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
   }
 
   async permanentDeleteConversation(id: string): Promise<{ deleted: boolean; permanent: boolean }> {
-    return this.request(`/api/chat/conversations/${id}?permanent=true`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}?permanent=true`, {
       method: 'DELETE',
     });
   }
 
   async restoreConversation(id: string): Promise<Conversation> {
-    return this.request(`/api/chat/conversations/${id}/restore`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}/restore`, {
       method: 'POST',
     });
   }
@@ -253,13 +253,13 @@ class APIClient {
   }
 
   async archiveConversation(id: string): Promise<Conversation> {
-    return this.request(`/api/chat/conversations/${id}/archive`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}/archive`, {
       method: 'POST',
     });
   }
 
   async pinConversation(id: string): Promise<Conversation> {
-    return this.request(`/api/chat/conversations/${id}/pin`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}/pin`, {
       method: 'POST',
     });
   }
@@ -278,7 +278,7 @@ class APIClient {
     if (params?.order) searchParams.set('order', params.order);
 
     return this.request(
-      `/api/chat/conversations/${conversationId}/messages?${searchParams}`
+      `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages?${searchParams}`
     );
   }
 
@@ -286,7 +286,7 @@ class APIClient {
     conversationId: string,
     data: AddMessageRequest
   ): Promise<Message> {
-    return this.request(`/api/chat/conversations/${conversationId}/messages`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(conversationId)}/messages`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -301,7 +301,7 @@ class APIClient {
     removed_messages: number;
     checkpoint_id: string | null;
   }> {
-    return this.request(`/api/chat/conversations/${conversationId}/rewind`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(conversationId)}/rewind`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -331,7 +331,7 @@ class APIClient {
     if (params?.page_size) searchParams.set('page_size', params.page_size.toString());
 
     return this.request(
-      `/api/chat/conversations/${conversationId}/turns?${searchParams}`
+      `/api/chat/conversations/${encodeURIComponent(conversationId)}/turns?${searchParams}`
     );
   }
 
@@ -339,7 +339,7 @@ class APIClient {
     conversationId: string,
     data: UpsertTurnRequest,
   ): Promise<Turn> {
-    return this.request(`/api/chat/conversations/${conversationId}/turns`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(conversationId)}/turns`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -353,7 +353,7 @@ class APIClient {
     conversationId: string,
     data: ShareConversationRequest
   ): Promise<Conversation> {
-    return this.request(`/api/chat/conversations/${conversationId}/share`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(conversationId)}/share`, {
       method: 'POST',
       body: JSON.stringify(data),
     });

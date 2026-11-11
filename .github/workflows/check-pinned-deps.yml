@@ -5,6 +5,9 @@ on:
     paths:
       - 'pyproject.toml'
       - 'uv.lock'
+      - '**/pyproject.toml'
+      - '**/uv.lock'
+      - '.github/workflows/check-pinned-deps.yml'
       - '**/package.json'
       - '**/package-lock.json'
       - 'scripts/check_pinned_deps.py'

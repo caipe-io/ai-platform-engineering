@@ -13,7 +13,8 @@
 
 import type { StreamAdapter } from "../adapter";
 import type { RawStreamEvent,StreamCallbacks,StreamParams } from "../callbacks";
-import { parseSSEStream,type RawSSEEvent } from "../parse-sse";
+import { type RawSSEEvent } from "../parse-sse";
+import { recoverableStream } from "./recoverable-stream";
 import {
 createAGUIProtocolState,
 processAGUIEvent,
@@ -32,6 +33,11 @@ const CANCEL_URL = `${STREAM_BASE}/cancel`;
 export class AGUIStreamAdapter implements StreamAdapter {
   private abortController: AbortController | null = null;
   private protocolState: AGUIProtocolState;
+  private persistentRun = false;
+
+  get canRecoverOnRefresh(): boolean {
+    return this.persistentRun;
+  }
 
   constructor() {
     this.protocolState = createAGUIProtocolState();
@@ -45,7 +51,7 @@ export class AGUIStreamAdapter implements StreamAdapter {
   }
 
   async cancelStream(conversationId: string, agentId: string): Promise<boolean> {
-    this.abort();
+    if (!this.persistentRun) this.abort();
 
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -66,7 +72,7 @@ export class AGUIStreamAdapter implements StreamAdapter {
       }
 
       const result = await response.json();
-      return result.cancelled ?? false;
+      return result.cancelled === true || result.cancellation_requested === true;
     } catch (error) {
       console.error("[AGUIAdapter] Cancel error:", error);
       return false;
@@ -77,6 +83,7 @@ export class AGUIStreamAdapter implements StreamAdapter {
     const url = `${STREAM_BASE}/start`;
     const body = JSON.stringify({
       message: params.message,
+      client_request_id: params.turnId ?? crypto.randomUUID(),
       conversation_id: params.conversationId,
       agent_id: params.agentId,
       ...(params.reasoningEffort && { reasoning_effort: params.reasoningEffort }),
@@ -97,6 +104,7 @@ export class AGUIStreamAdapter implements StreamAdapter {
       agent_id: params.agentId,
       ...(params.reasoningEffort && { reasoning_effort: params.reasoningEffort }),
       resume_data: params.resumeData,
+      client_request_id: crypto.randomUUID(),
       protocol: "agui",
       ...(params.forwardedProps && { forwarded_props: params.forwardedProps }),
       ...(params.clientContext && { client_context: params.clientContext }),
@@ -105,9 +113,15 @@ export class AGUIStreamAdapter implements StreamAdapter {
     await this._stream(url, body, callbacks);
   }
 
+  async recoverRun(runId: string, callbacks: StreamCallbacks, conversationId?: string): Promise<void> {
+    const scope = conversationId ? `&conversation_id=${encodeURIComponent(conversationId)}` : "";
+    await this._stream(`/api/harness-engine/runs/${encodeURIComponent(runId)}/events/stream?after=0&protocol=agui${scope}`, undefined, callbacks);
+  }
+
   // ── Private: shared stream loop ────────────────────────────
 
-  private async _stream(url: string, body: string, callbacks: StreamCallbacks): Promise<void> {
+  private async _stream(url: string, body: string | undefined, callbacks: StreamCallbacks): Promise<void> {
+    this.persistentRun = false;
     resetProtocolState(this.protocolState);
 
     if (this.abortController) {
@@ -122,7 +136,7 @@ export class AGUIStreamAdapter implements StreamAdapter {
 
     try {
       const response = await fetch(url, {
-        method: "POST",
+        method: body === undefined ? "GET" : "POST",
         credentials: "same-origin",
         headers,
         body,
@@ -142,7 +156,10 @@ export class AGUIStreamAdapter implements StreamAdapter {
         );
       }
 
-      for await (const raw of parseSSEStream(response)) {
+      this.persistentRun = Boolean(response.headers.get("X-Harness-Run-ID"));
+      const harnessId = response.headers.get("X-Harness-ID");
+      if (this.persistentRun && harnessId) callbacks.onRuntime?.(harnessId);
+      for await (const raw of recoverableStream(response, "agui", this.abortController.signal)) {
         this._emitRawEvent(raw, callbacks);
 
         // Parse and dispatch via protocol state machine

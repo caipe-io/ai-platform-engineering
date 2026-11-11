@@ -87,6 +87,7 @@ helm show values oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.1.0
 | config.KEYCLOAK_RESOURCE_SERVER_ID | string | `"caipe-platform"` |  |
 | config.KEYCLOAK_URL | string | `""` |  |
 | config.LOGO_STYLE | string | `"default"` |  |
+| config.LOGO_THEMED | string | `""` |  |
 | config.LOGO_URL | string | `"/logo.svg"` |  |
 | config.MONGODB_DATABASE | string | `"caipe"` |  |
 | config.NEXTAUTH_URL | string | `"http://localhost:3000"` |  |

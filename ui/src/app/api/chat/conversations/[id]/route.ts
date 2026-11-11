@@ -13,6 +13,7 @@ withErrorHandler,
 import { getCollection,isMongoDBConfigured } from '@/lib/mongodb';
 import { requireConversationResourcePermission } from '@/lib/rbac/conversation-implicit-authz';
 import type { Conversation,UpdateConversationRequest } from '@/types/mongodb';
+import { getAgentId } from '@/types/a2a';
 import { NextRequest,NextResponse } from 'next/server';
 import { deleteConversationsPermanently } from '../delete-permanently';
 
@@ -87,6 +88,19 @@ export const PUT = withErrorHandler(async (
     }
 
     await requireConversationResourcePermission(session, user.email, conversation, 'write');
+
+    if (body.participants !== undefined) {
+      if (!Array.isArray(body.participants) || body.participants.some(participant =>
+        !participant || typeof participant.id !== 'string' || !['agent', 'user'].includes(participant.type))) {
+        throw new ApiError('Invalid participants', 400);
+      }
+      // The agent identifies the conversation's runtime and shared history.
+      // Changing it in place strands the existing checkpoints and subscribers.
+      const agents = body.participants.filter(participant => participant.type === 'agent');
+      if (agents.length > 1 || getAgentId(body) !== getAgentId(conversation)) {
+        throw new ApiError('This conversation keeps its original agent. Start a new chat to use another agent.', 409);
+      }
+    }
 
     // Build update
     const update: Partial<Pick<Conversation, 'is_archived' | 'is_pinned' | 'participants' | 'tags' | 'title' | 'updated_at'>> & {

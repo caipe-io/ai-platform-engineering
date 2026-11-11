@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -26,6 +27,8 @@ from harness_engine.models import (
 )
 from harness_engine.repository import RunRepository
 from harness_engine.sessions import DeterministicProviderSessionManager, ProviderSessionManager
+
+logger = logging.getLogger(__name__)
 
 
 class AgentCoreDataClient(Protocol):
@@ -108,7 +111,7 @@ class AgentCoreAdapter:
         ]
         return HarnessDescriptor(
             id="agentcore",
-            display_name="Amazon Bedrock AgentCore",
+            display_name="Amazon Bedrock AgentCore (Remote sessions)",
             adapter_version="1.0.0",
             execution_mode=ExecutionMode.PROVIDER_MANAGED,
             availability="available" if profiles else "misconfigured",
@@ -222,13 +225,12 @@ class AgentCoreAdapter:
     ) -> AsyncIterator[CanonicalEventDraft]:
         if not context.binding.provider_session_id:
             raise RuntimeError("AgentCore session manager did not assign a runtime session ID")
+        actor_id = "caipe-user-" + hashlib.sha256(context.binding.owner_subject.encode()).hexdigest()[:32]
         request: dict[str, Any] = {
             "harnessArn": target.arn,
             "runtimeSessionId": context.binding.provider_session_id,
-            "runtimeUserId": (
-                "caipe-user-"
-                + hashlib.sha256(context.binding.owner_subject.encode()).hexdigest()[:32]
-            ),
+            "runtimeUserId": actor_id,
+            "actorId": actor_id,
             "qualifier": target.qualifier,
             "messages": [
                 {
@@ -257,6 +259,15 @@ class AgentCoreAdapter:
                 break
             if not isinstance(raw, dict):
                 continue
+            for error_type in ("runtimeClientError", "internalServerException", "validationException"):
+                if error_type in raw:
+                    logger.error(
+                        "AgentCore %s for run %s (AWS request %s)",
+                        error_type,
+                        context.turn.run_id,
+                        response.get("ResponseMetadata", {}).get("RequestId", "unknown"),
+                    )
+                    raise RuntimeError(f"AgentCore reported {error_type}")
             delta = raw.get("contentBlockDelta", {}).get("delta", {})
             text = delta.get("text")
             if text:

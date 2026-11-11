@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 
@@ -92,7 +93,7 @@ def blueprint(
 
 
 @pytest.fixture
-def settings() -> Settings:
+def settings(tmp_path: Path) -> Settings:
     return Settings(
         internal_token="test-internal-token-value",
         storage_backend="memory",
@@ -109,7 +110,7 @@ def settings() -> Settings:
             {
                 "safe": {
                     "model": "claude-example",
-                    "cwd": "/workspace",
+                    "cwd": str(tmp_path / "workspace"),
                     "permission_mode": "dontAsk",
                 }
             }

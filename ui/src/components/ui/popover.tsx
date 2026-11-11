@@ -134,6 +134,8 @@ interface PopoverContentProps {
   onFocusCapture?: React.FocusEventHandler<HTMLDivElement>;
   onMouseEnter?: React.MouseEventHandler<HTMLDivElement>;
   onMouseLeave?: React.MouseEventHandler<HTMLDivElement>;
+  /** Called once per opening, after the content is positioned and focusable. */
+  onOpenAutoFocus?: (content: HTMLDivElement) => void;
   portalled?: boolean;
 }
 
@@ -169,11 +171,13 @@ export function PopoverContent({
   onFocusCapture,
   onMouseEnter,
   onMouseLeave,
+  onOpenAutoFocus,
   portalled = true,
 }: PopoverContentProps) {
   const { open, setOpen, triggerRef } = React.useContext(PopoverStateContext);
   const portalContainer = React.useContext(PortalContainerContext);
   const contentRef = React.useRef<HTMLDivElement>(null);
+  const didAutoFocus = React.useRef(false);
   const [coords, setCoords] = React.useState<{ top: number; left: number } | null>(null);
   const [mounted, setMounted] = React.useState(false);
 
@@ -289,7 +293,7 @@ export function PopoverContent({
       window.removeEventListener("scroll", onChange, true);
       resizeObserver?.disconnect();
     };
-  }, [open,computeCoords,triggerRef]);
+  }, [open,computeCoords,triggerRef,mounted]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -310,6 +314,16 @@ export function PopoverContent({
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [open, setOpen, triggerRef]);
+
+  React.useLayoutEffect(() => {
+    if (!open) {
+      didAutoFocus.current = false;
+      return;
+    }
+    if (!coords || !contentRef.current || didAutoFocus.current) return;
+    didAutoFocus.current = true;
+    onOpenAutoFocus?.(contentRef.current);
+  }, [open, coords, onOpenAutoFocus]);
 
   if (!open || !mounted) return null;
 
@@ -341,6 +355,10 @@ export function PopoverContent({
       onFocusCapture={onFocusCapture}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onAnimationEnd={(event) => {
+        // Transforms change visual bounds without triggering ResizeObserver.
+        if (event.target === event.currentTarget) computeCoords();
+      }}
       style={{
         position: "fixed",
         top: coords?.top ?? -9999,

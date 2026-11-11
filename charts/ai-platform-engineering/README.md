@@ -108,6 +108,7 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | caipe-ui.config.KEYCLOAK_RESOURCE_SERVER_ID | string | `"caipe-platform"` |  |
 | caipe-ui.config.KEYCLOAK_URL | string | `""` |  |
 | caipe-ui.config.LOGO_STYLE | string | `"default"` |  |
+| caipe-ui.config.LOGO_THEMED | string | `""` |  |
 | caipe-ui.config.LOGO_URL | string | `"/logo.svg"` |  |
 | caipe-ui.config.MONGODB_DATABASE | string | `"caipe"` |  |
 | caipe-ui.config.NEXTAUTH_URL | string | `"http://localhost:3000"` |  |

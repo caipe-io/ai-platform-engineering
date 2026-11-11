@@ -92,6 +92,8 @@ published.
 
 ## Local Checks
 
+For dependency additions and updates, follow the [dependency management policy](DEPENDENCY_POLICY.md).
+
 Run the relevant checks before opening a PR. These are the same commands CI runs.
 
 | Scope | Command |

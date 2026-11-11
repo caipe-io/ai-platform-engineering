@@ -182,7 +182,7 @@ async def test_invoke_real_initialization_maps_non_string_dialect_to_422(monkeyp
     response = await chat.chat_invoke(
         ChatRequest(agent_id=agent.id, conversation_id="example-session", message="Healthy", client_context=context),
         user=UserContext(email="test-user@example.test"),
-        mongo=SimpleNamespace(get_agent=lambda _id: agent, get_agent_mcp_servers=lambda _agent: []),
+        mongo=SimpleNamespace(_db=None, get_agent=lambda _id: agent, get_agent_mcp_servers=lambda _agent: []),
     )
     assert response.status_code == 422
     assert "$schema must be a string" in json.loads(response.body)["error"]

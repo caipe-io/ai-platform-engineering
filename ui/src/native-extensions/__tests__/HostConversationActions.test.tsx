@@ -13,8 +13,8 @@ jest.mock("../host-chat", () => ({ loadHostConversation: (...args: unknown[]) =>
 jest.mock("@/store/chat-store", () => ({ useChatStore: {
   getState: () => ({ deleteConversation: mockArchive, updateConversationTitle: mockRename }), setState: jest.fn(),
 } }));
-jest.mock("@/components/chat/ShareButton", () => ({ ShareButton: ({ conversationId }: { conversationId: string }) =>
-  <button>Share {conversationId}</button> }));
+jest.mock("@/components/chat/ShareButton", () => ({ ShareButton: ({ conversationId, disabled }: { conversationId: string; disabled?: boolean }) =>
+  <button disabled={disabled}>Share {conversationId}</button> }));
 
 const props = { appId: "example-app", agentId: "example-agent", conversationId: "example-chat",
   onArchived: jest.fn(), onHistoryChange: jest.fn() };
@@ -101,6 +101,8 @@ it("fails closed when app or conversation access is denied", async () => {
 it("blocks archive while the app is changing conversations", async () => {
   render(<HostConversationActions {...props} disabled />);
   expect(await screen.findByRole("button", { name: "Archive conversation" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Share example-chat" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Rename conversation" })).toBeDisabled();
   expect(mockArchive).not.toHaveBeenCalled();
 });
 

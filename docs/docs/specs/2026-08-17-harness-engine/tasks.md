@@ -1,6 +1,6 @@
 # Tasks: Harness Engine
 
-> **Canonical delivery phases (2026-10-21):** See [Delivery phases](delivery-phases.md): Phase 1 independent engine/gateway (PR 2401); Phase 2 separate Deep Agents integration and pluggable builder; Phase 3 external sandbox execution; Phase 4 cross-harness composition. The numbered **workstreams** below preserve old task IDs and implementation history; they are not release phases or a reviewer approval record.
+> **Canonical delivery phases (2026-10-21):** See [Delivery phases](delivery-phases.md): independent engine/gateway (PR 2401); Deep Agents integration and pluggable builder; external sandbox execution; cross-harness composition. The numbered **workstreams** below preserve old task IDs and implementation history; they are not release phases or a reviewer approval record.
 
 **Input**: Design documents in `docs/docs/specs/2026-08-17-harness-engine/`
 **Prerequisites**: [spec.md](./spec.md), [plan.md](./plan.md), [research.md](./research.md), [data-model.md](./data-model.md), [mongodb-migration.md](./mongodb-migration.md), [quickstart.md](./quickstart.md), and the contracts beginning with [rest-api-v1.md](./contracts/rest-api-v1.md)
@@ -109,7 +109,7 @@ This amendment supersedes any task below that edits `ai_platform_engineering/dyn
 
 ---
 
-## Workstream 3: User Story 1 — Deep Agents Compatibility (Delivery Phase 2)
+## Workstream 3: User Story 1 — Deep Agents Compatibility
 
 **Goal**: Execute existing agents through a `deepagents` compatibility adapter without changing clients, stored documents, streams, cache behavior, or rollback.
 
@@ -128,7 +128,7 @@ This amendment supersedes any task below that edits `ai_platform_engineering/dyn
 - [ ] T034 [US1] Run the unchanged Dynamic Agents pytest suite plus contract and conformance suites from `ai_platform_engineering/dynamic_agents/` — SC-001, SC-002, SC-004; done with zero removed or weakened assertions.
 - [ ] T035 [US1] Run `ai_platform_engineering/dynamic_agents/tests/performance/benchmark_compatibility.py` against baseline and adapter — NFR-001, NFR-002, NFR-005; done when p95 and memory gates pass.
 
-**Checkpoint**: This is the Deep Agents compatibility milestone in delivery Phase 2. It is not a prerequisite for the independent Phase 1 engine/gateway slice.
+**Checkpoint**: This milestone verifies Deep Agents compatibility. It is not a prerequisite for the independent Phase 1 engine/gateway slice.
 
 ---
 
@@ -325,23 +325,23 @@ This amendment supersedes any task below that edits `ai_platform_engineering/dyn
 | Technical dependency | Delivery meaning |
 |---|---|
 | Independent package/gateway/portable-contract/provider-lifecycle workstreams | Phase 1 foundation, with current-path review and release gates still required |
-| Compatibility freeze and runtime/event/lifecycle workstreams | Prepare Phase 2 integration and preserve native behavior |
-| UI catalog/validation foundations | Phase 1 capability truthfulness; Phase 2 reusable feature panels and switching |
+| Compatibility freeze and runtime/event/lifecycle workstreams | Integrate Deep Agents and preserve native behavior |
+| UI catalog/validation foundations | Phase 1 capability truthfulness; reusable feature panels and switching |
 | Native state, scoped credentials, worker protocol, sandbox lifecycle | Phase 3 depends on proven state and identity boundaries; it does not block the existing experimental provider slice |
-| Delegation contracts and child-run lifecycle | Phase 4 builds on engine admission and authorized execution; native Deep Agents subagents remain a Phase 2 parity obligation |
+| Delegation contracts and child-run lifecycle | Phase 4 builds on engine admission and authorized execution; native Deep Agents subagents remain a native runtime compatibility obligation |
 | Operations, rollout and certification | Apply to each selected delivery phase; certify only implemented capabilities |
 
 ### Stable backlog
 
 - Existing task IDs and checkboxes are retained; this update does not revalidate historical completion claims.
-- Some original tasks target an earlier in-service layout. Reconcile their paths and contracts with the current engine package and [Phase 2 sketches](deep-agents-integration-pending.md) before implementation.
+- Some original tasks target an earlier in-service layout. Reconcile their paths and contracts with the current engine package and [Deep Agents integration sketches](deep-agents-integration-pending.md) before implementation.
 - Validation tasks remain gates for the phase that implements the corresponding behavior. Do not infer that all target-architecture tests must pass to merge Phase 1.
 - Do not shadow live tool execution to compare backends; use recorded events, controlled fixtures or side-effect-free validation.
 
 ## Implementation Strategy
 
 1. **Phase 1:** complete the independent opt-in engine/gateway slice and its current-path correctness/review gates; preserve the Dynamic Agents default.
-2. **Phase 2:** integrate `DeepAgentsAdapter` and the pluggable builder through parity, identity, migration and rollback gates.
+2. **Deep Agents integration:** integrate `DeepAgentsAdapter` and the pluggable builder through parity, identity, migration and rollback gates.
 3. **Phase 3:** implement external sandbox workers with `SandboxManager` retained inside Harness Engine.
 4. **Phase 4:** implement governed cross-harness delegation and child-run UI.
 

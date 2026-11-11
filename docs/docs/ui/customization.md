@@ -45,6 +45,7 @@ Control the application name, logo, tagline, and other branding elements.
 | `DESCRIPTION` | `Where Humans and AI agents collaborate...` | Description text used in metadata and UI |
 | `LOGO_URL` | `/logo.svg` | Logo image path (relative to `public/` or absolute URL) |
 | `LOGO_STYLE` | `default` | Logo rendering: `default` (original colors) or `white` (inverted for dark backgrounds) |
+| `LOGO_THEMED` | unset | The grid logo (`LOGO_URL=/grid-neon-logo.svg`) is drawn as inline SVG that follows the accent gradient and light/dark theme. Set `false` to show it as the plain `LOGO_URL` image. The default CAIPE logo and custom logos are never redrawn |
 | `FAVICON_URL` | `/favicon.ico` | Browser tab favicon (relative or absolute URL) |
 | `SUPPORT_EMAIL` | `support@example.com` | Contact email shown in support/help links |
 | `SHOW_POWERED_BY` | `true` | Show "Powered by OSS caipe.io" footer (`true` or `false`) |
@@ -56,7 +57,7 @@ Control the application name, logo, tagline, and other branding elements.
 APP_NAME=Grid
 TAGLINE=Enterprise AI Platform
 DESCRIPTION=Intelligent automation for platform engineering teams
-LOGO_URL=/grid-logo.svg
+LOGO_URL=/grid-neon-logo.svg
 LOGO_STYLE=white
 FAVICON_URL=/grid-favicon.png
 SUPPORT_EMAIL=support@grid.cisco.com
@@ -146,6 +147,12 @@ Available themes:
 | `cyberpunk` | Neon pink and cyan on deep purple-black, dystopian vibes |
 | `tron` | Glowing electric cyan on near-black, digital frontier aesthetic |
 | `matrix` | Green phosphor on black, digital rain aesthetic |
+
+User-message bubbles use muted blue in every theme, with lighter bubbles in Light
+and Legacy Light. Text selection uses a pale-blue highlight with dark text across
+the UI. Dark, Light and Midnight use blue primary accents and focus rings; other
+themes retain their own accents. The SSO login button uses the separate brand
+gradient, while its keyboard focus ring follows the selected theme.
 
 ### Gradient Theme
 
@@ -247,7 +254,7 @@ A fully customized deployment:
 # Branding
 APP_NAME=Grid
 TAGLINE=Enterprise AI Platform
-LOGO_URL=/grid-logo.svg
+LOGO_URL=/grid-neon-logo.svg
 LOGO_STYLE=white
 FAVICON_URL=/grid-favicon.png
 SUPPORT_EMAIL=support@grid.cisco.com

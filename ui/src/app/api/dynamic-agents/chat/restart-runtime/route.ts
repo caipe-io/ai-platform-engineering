@@ -16,17 +16,16 @@ getAuthFromBearerOrSession,
 import { getServerConfig } from "@/lib/config";
 import { requireAgentPermission } from "@/lib/rbac/resource-authz";
 import { NextRequest,NextResponse } from "next/server";
+import { authenticateRequest } from "@/lib/da-proxy";
+import { authorizeConversationWriteAccess, resolveConversationRuntimeId } from "@/app/api/v1/chat/_conversation-authz";
+import { getPinnedHarnessGatewayTarget, getHarnessGatewayNativeThread } from "@/lib/harness-gateway";
+import { getHarnessEngineConfig, proxyHarnessEngine } from "@/lib/harness-engine-proxy";
 
 export async function POST(request: NextRequest): Promise<Response> {
   const config = getServerConfig();
 
   const dynamicAgentsUrl = config.dynamicAgentsUrl;
-  if (!dynamicAgentsUrl) {
-    return NextResponse.json(
-      { success: false, error: "Dynamic agents URL not configured" },
-      { status: 500 }
-    );
-  }
+
 
   // Authenticate the request
   let accessToken: string | undefined;
@@ -95,6 +94,28 @@ export async function POST(request: NextRequest): Promise<Response> {
       { status: 401 }
     );
   }
+
+  const auth = await authenticateRequest(request);
+  if (auth instanceof NextResponse) return auth;
+  const access = await authorizeConversationWriteAccess(auth, body.conversation_id, body.agent_id);
+  if (access.denial) return access.denial;
+  const runtimeId = await resolveConversationRuntimeId(access.conversation);
+  const pinned = auth.subject ? await getPinnedHarnessGatewayTarget(body.agent_id, auth.subject, runtimeId) : null;
+  if (pinned instanceof NextResponse) return pinned;
+  if (pinned?.kind === "harness_engine") {
+    const engine = getHarnessEngineConfig();
+    if (engine instanceof NextResponse) return engine;
+    return proxyHarnessEngine(engine, auth, "/api/v1/sessions/restart-runtime", { method: "POST", body: JSON.stringify({ ...body, conversation_id: runtimeId }) });
+  }
+
+  if (!dynamicAgentsUrl) {
+    return NextResponse.json(
+      { success: false, error: "Dynamic agents URL not configured" },
+      { status: 500 }
+    );
+  }
+
+  body.conversation_id = await getHarnessGatewayNativeThread(body.agent_id, auth.subject, runtimeId);
 
   // Build headers for the backend request
   const backendHeaders: Record<string, string> = {
