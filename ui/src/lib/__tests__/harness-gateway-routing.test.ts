@@ -1,6 +1,6 @@
 /** @jest-environment node */
 import { NextResponse } from "next/server";
-import { clearHarnessGatewayBinding, getPinnedHarnessGatewayTarget, resolveHarnessGatewayTarget } from "../harness-gateway";
+import { clearHarnessGatewayBinding, getHarnessGatewayStatus, getPinnedHarnessGatewayTarget, resolveHarnessGatewayTarget } from "../harness-gateway";
 
 const mockFindAgent = jest.fn();
 const mockLookupSession = jest.fn();
@@ -154,4 +154,14 @@ it("fences pinned-only callers while a session handoff is in progress", async ()
   const key = [...bindings.keys()][0];
   bindings.set(key, { ...bindings.get(key), transition_id: "example-transition" });
   expect((await getPinnedHarnessGatewayTarget("agent-example", context.subject, context.conversationId) as NextResponse).status).toBe(409);
+});
+
+it("forwards the owner's retained sandbox details without resolving a mutable agent profile", async () => {
+  const sandbox = { instance_id: "sandbox-1", display_name: "Pinned environment", portal_url: "https://sandbox.example.test/environments/1",
+    policy_revision: "v1", policy_summary: "Private", status: "configured" };
+  mockLookupSession.mockResolvedValue({ harness_id: "claude_code_acp", sandbox });
+  const response = await getHarnessGatewayStatus({ agent_id: "agent-example", conversation_id: context.conversationId }, { subject: context.subject });
+  expect((await response.json()).data.sandbox).toEqual(sandbox);
+  expect(mockLookupSession).toHaveBeenCalledWith(expect.anything(), { subject: context.subject }, "agent-example", context.conversationId);
+  expect(mockFindAgent).not.toHaveBeenCalled();
 });

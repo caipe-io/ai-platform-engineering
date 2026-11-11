@@ -1,18 +1,44 @@
 "use client";
 
-import { Folder, Loader2, Radio, ShieldCheck } from "lucide-react";
-import { useId, useState } from "react";
+import { ExternalLink, Folder, Loader2, Radio, ShieldCheck } from "lucide-react";
+import { useEffect, useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { readHarnessSandbox } from "@/lib/harness-sandbox";
+import type { HarnessSandboxInfo } from "@/types/harness-engine";
 
-export function ClaudeSessionPanel({ activity, readOnly, cli = false }: {
+export function ClaudeSessionPanel({ activity, readOnly, cli = false, agentId, conversationId }: {
   activity: "checking" | "running" | "saving" | "idle" | "stopping";
   readOnly: boolean;
   cli?: boolean;
+  agentId?: string;
+  conversationId?: string;
 }) {
   const [open, setOpen] = useState(false);
   const detailsId = useId();
+  const [connection, setConnection] = useState<{ key: string; sandbox?: HarnessSandboxInfo; error?: string } | null>(null);
+  const connectionKey = `${agentId ?? ""}/${conversationId ?? ""}`;
+  useEffect(() => {
+    if (!open || readOnly || !agentId || !conversationId) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch("/api/v1/chat/stream/status", {
+          method: "POST", signal: controller.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agent_id: agentId, conversation_id: conversationId }),
+        });
+        const envelope = await response.json();
+        if (!response.ok || !envelope.success) throw new Error("Session details unavailable");
+        if (!controller.signal.aborted) setConnection({ key: connectionKey, sandbox: readHarnessSandbox(envelope.data?.sandbox) });
+      } catch {
+        if (!controller.signal.aborted) setConnection({ key: connectionKey, error: "Sandbox details could not be loaded. Close and reopen this panel to retry." });
+      }
+    })();
+    return () => controller.abort();
+  }, [open, readOnly, agentId, conversationId, connectionKey]);
+  const sandbox = !readOnly && connection?.key === connectionKey ? connection.sandbox : undefined;
   const label = { checking: "Reconnecting", running: "Working", saving: "Saving response", idle: "Ready", stopping: "Stopping" }[activity];
   return (
     <Popover open={open} onOpenChange={setOpen} className="shrink-0">
@@ -34,6 +60,15 @@ export function ClaudeSessionPanel({ activity, readOnly, cli = false }: {
           </div>
           <p className="flex gap-2 text-xs text-muted-foreground"><Folder className="h-4 w-4 shrink-0" aria-hidden="true" />This conversation keeps its Claude session. Refreshing or closing this page does not stop a response.</p>
           <p className="flex gap-2 text-xs text-muted-foreground"><ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />{readOnly ? "You can follow this response. Sending messages or stopping work requires additional access." : "Your agent and tool permissions apply to each request. Model access is managed by your administrator."}</p>
+          <p className="text-xs text-muted-foreground">Chat attachments and editing earlier messages to rewind native state are unavailable for Claude (ACP). Add files through the sandbox application and continue with a new text message.</p>
+          {sandbox && <section aria-label="Conversation sandbox" className="space-y-2 border-t pt-3 text-xs">
+            <p className="font-medium break-words">{sandbox.display_name}</p>
+            <p className="text-muted-foreground break-words">{sandbox.policy_summary}</p>
+            <p className="text-muted-foreground break-all">Profile revision: {sandbox.policy_revision}</p>
+            <Button asChild variant="outline" size="sm"><a href={sandbox.portal_url} target="_blank" rel="noopener noreferrer">Manage sandbox <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" /></a></Button>
+            <p className="text-muted-foreground">Manage files, lifecycle and profile settings in the sandbox application. Suspending or deleting it can interrupt work. Deleting this chat does not erase its files.</p>
+          </section>}
+          {!readOnly && connection?.key === connectionKey && connection.error && <p role="status" className="text-xs text-muted-foreground">{connection.error}</p>}
         </div>
       </PopoverContent>
     </Popover>

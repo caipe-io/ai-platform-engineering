@@ -14,8 +14,9 @@ import {
 } from "@/components/ai-review";
 import { TeamOwnershipFields } from "@/components/rbac/TeamOwnershipFields";
 import { HarnessFeaturePanels } from "@/components/harness-engine/HarnessFeaturePanels";
-import { ClaudeACPSettings } from "@/components/harness-engine/ClaudeACPSettings";
+import { ClaudeACPSettings, ClaudeSandboxSetup } from "@/components/harness-engine/ClaudeACPSettings";
 import { HarnessHelp } from "@/components/harness-engine/HarnessHelp";
+import { sandboxPortalUrl } from "@/lib/harness-sandbox";
 import { harnessBuilderSections, harnessDisplayName, harnessStatusLabel, supportsHarnessCapability, validateHarnessOptionsSchema } from "@/lib/harness-builder";
 import { HarnessOptionsForm } from "@/components/harness-engine/HarnessOptionsForm";
 import { UnsavedChangesDialog } from "@/components/shared/UnsavedChangesDialog";
@@ -580,6 +581,7 @@ export function DynamicAgentEditor({
     [harnessDescriptors, harnessId],
   );
   const isDeepAgents = harnessId === "dynamic_agents";
+  const sandboxPortal = sandboxPortalUrl(harnessDescriptors.find(item => item.id === "claude_code_acp")?.ui_schema.sandbox_portal_url);
   const [harnessSwitchConfirmed, setHarnessSwitchConfirmed] = React.useState(false);
   const requiresHarnessConfirmation = isEditing && harnessId !== (agent?.execution_harness_id || "dynamic_agents");
   const supportsTools = supportsHarnessCapability(selectedHarness, "tools.broker", isDeepAgents);
@@ -639,6 +641,18 @@ export function DynamicAgentEditor({
     setHarnessOptions({});
     setHarnessLoadError(null);
     toast("AgentCore connection selected. Save this agent to use it.", "success");
+  }
+
+  async function refreshSandboxConnections() {
+    const response = await fetch("/api/harness-engine/harnesses", { cache: "no-store" });
+    const result = await response.json();
+    if (!response.ok || !result?.success || !Array.isArray(result.data?.harnesses)) {
+      throw new Error("Harness catalog could not be refreshed");
+    }
+    setHarnessDescriptors(result.data.harnesses);
+    setCatalogRevision(result.data.catalog_revision ?? null);
+    return (result.data.harnesses as HarnessDescriptor[]).find(item => item.id === "claude_code_acp")
+      ?.profiles.filter(profile => profile.available && profile.sandbox).length ?? 0;
   }
 
   // Sync request_user_input interrupt rule with builtin tool enabled state
@@ -1868,7 +1882,7 @@ export function DynamicAgentEditor({
                       </div>
                     )}
                     {["claude_code_acp", "claude_code_cli_acp"].includes(harnessId) && selectedHarness ? (
-                      <ClaudeACPSettings descriptor={selectedHarness} profileId={harnessProfileId} />
+                      <ClaudeACPSettings descriptor={selectedHarness} profileId={harnessProfileId} onRefresh={refreshSandboxConnections} />
                     ) : isDeepAgents ? (
                       <p className="text-xs text-muted-foreground">
                         Configure tools, knowledge, and skills for LangChain Deep
@@ -1882,6 +1896,11 @@ export function DynamicAgentEditor({
                         {isEditing && <p>Saved Deep Agents settings are retained and apply when Deep Agents is selected.</p>}
                       </div>
                     )}
+
+                    {harnessId !== "claude_code_acp" && sandboxPortal && <details className="text-xs">
+                      <summary className="cursor-pointer font-medium">Set up a Claude Code sandbox</summary>
+                      <div className="mt-3"><ClaudeSandboxSetup portalUrl={sandboxPortal} onRefresh={refreshSandboxConnections} /></div>
+                    </details>}
 
                     {requiresHarnessConfirmation && <label className="flex items-start gap-2 text-sm">
                       <input type="checkbox" checked={harnessSwitchConfirmed} onChange={event => setHarnessSwitchConfirmed(event.target.checked)} />

@@ -18,6 +18,7 @@ from harness_engine.adapters.base import ExecutionUnconfirmedError
 from harness_engine.adapters.claude_sdk import ClaudeHarnessOptions, ClaudeSDKAdapter
 from harness_engine.claude_acp_process import managed_acp_process
 from harness_engine.claude_acp_tools import ClaudeACPToolBridge
+from harness_engine.claude_sandbox import SandboxProcess, managed_sandbox_process
 from harness_engine.config import Settings
 from harness_engine.models import (
     AdapterEvaluation,
@@ -65,10 +66,12 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
         self._command = settings.claude_acp_command
         self._tools = settings.claude_acp_tools
         self._runtime = settings.claude_acp_runtime
+        self._remote_drained: set[str] = set()
 
     @property
     def descriptor(self) -> HarnessDescriptor:
         descriptor = super().descriptor
+        sandboxed = any(profile.sandbox is not None for profile in self._profiles.values())
         return descriptor.model_copy(
             update={
                 "display_name": "Claude Code CLI ACP worker" if self._runtime == "claude_code_cli_acp" else "Claude Agent SDK ACP worker",
@@ -84,6 +87,14 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
                     "session.cross_replica": CapabilityResult(
                         level=CapabilityLevel.UNAVAILABLE,
                         explanation="Provider transcripts require the worker's persistent workspace volume",
+                    ),
+                    "sandbox.isolation": CapabilityResult(
+                        level=CapabilityLevel.EMULATED if sandboxed else CapabilityLevel.UNAVAILABLE,
+                        explanation="An admitted external sandbox enforces the selected environment boundary",
+                    ),
+                    "sandbox.workspace": CapabilityResult(
+                        level=CapabilityLevel.NATIVE if sandboxed else CapabilityLevel.UNAVAILABLE,
+                        explanation="Preprovisioned sandbox profiles retain their private persistent workspace",
                     ),
                 },
             }
@@ -101,7 +112,35 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
                     message="The Claude ACP worker tool bridge is not configured",
                 )
             )
+        profile = self._profiles.get(blueprint.harness.profile_id)
+        if blueprint.workspace.persistence != "none" and (profile is None or not profile.sandbox):
+            result.issues.append(ValidationIssue(
+                path="workspace.persistence", capability="sandbox.workspace", level=CapabilityLevel.UNAVAILABLE,
+                severity="error", message="This profile has no admitted persistent sandbox workspace",
+            ))
         return result
+
+    @asynccontextmanager
+    async def _process(
+        self, client: ACPEventClient, context: RunContext, workspace: Path,
+        env: dict[str, str], mcp_servers: list[HttpMcpServer],
+    ) -> AsyncIterator[SandboxProcess]:
+        profile = self._profile(context.binding.profile_id)
+        if profile.sandbox is not None:
+            process = None
+            try:
+                async with managed_sandbox_process(
+                    client, profile.sandbox, context, bridge=self._tool_bridge, mcp_servers=mcp_servers,
+                ) as process:
+                    yield process
+            finally:
+                if process is not None and process.drained:
+                    self._remote_drained.add(context.turn.run_id)
+        else:
+            async with managed_acp_process(
+                client, self._command, env=env, cwd=workspace, run_id=context.turn.run_id,
+            ) as connection:
+                yield SandboxProcess(connection, str(workspace), env["CLAUDE_CONFIG_DIR"], mcp_servers)
 
     @asynccontextmanager
     async def _bind_tools(self, context: RunContext) -> AsyncIterator[tuple[list[HttpMcpServer], dict[str, str]]]:
@@ -114,10 +153,17 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
                 yield tools
 
     async def stream(self, context: RunContext) -> AsyncIterator[CanonicalEventDraft]:
-        async with self._bind_tools(context) as (mcp_servers, tool_names):
-            async with aclosing(self._stream(context, mcp_servers, tool_names)) as events:
-                async for event in events:
-                    yield event
+        try:
+            async with self._bind_tools(context) as (mcp_servers, tool_names):
+                async with aclosing(self._stream(context, mcp_servers, tool_names)) as events:
+                    async for event in events:
+                        yield event
+        except asyncio.CancelledError:
+            if self._profile(context.binding.profile_id).sandbox is not None and context.turn.run_id not in self._remote_drained:
+                raise ExecutionUnconfirmedError("Sandbox cancellation has no confirmed process/tool drain") from None
+            raise
+        finally:
+            self._remote_drained.discard(context.turn.run_id)
 
     async def _stream(
         self, context: RunContext, mcp_servers: list[HttpMcpServer], tool_names: dict[str, str]
@@ -125,7 +171,8 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
         profile = self._profile(context.binding.profile_id)
         options = ClaudeHarnessOptions.model_validate(context.blueprint.harness.options)
         workspace = Path(profile.cwd) / hashlib.sha256(context.binding.binding_id.encode()).hexdigest()
-        await asyncio.to_thread(workspace.mkdir, parents=True, exist_ok=True, mode=0o700)
+        if profile.sandbox is None:
+            await asyncio.to_thread(workspace.mkdir, parents=True, exist_ok=True, mode=0o700)
         # Service and delegated caller tokens never enter the agent subprocess.
         provider_keys = {
             "PATH",
@@ -160,13 +207,8 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
         env["CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT"] = "900000"
         env["CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS"] = "0"
         client = ACPEventClient(tool_names)
-        async with managed_acp_process(
-            client,
-            self._command,
-            env=env,
-            cwd=workspace,
-            run_id=context.turn.run_id,
-        ) as connection:
+        async with self._process(client, context, workspace, env, mcp_servers) as process:
+            connection = process.connection
             initialized = await connection.initialize(protocol_version=1, client_capabilities=ClientCapabilities())
             if initialized.protocol_version != 1:
                 raise ValueError("The configured agent did not negotiate ACP v1")
@@ -194,10 +236,10 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
                 if not initialized.agent_capabilities or not initialized.agent_capabilities.load_session:
                     raise ValueError("The configured ACP agent cannot reload persistent sessions")
                 await connection.load_session(
-                    cwd=str(workspace), session_id=session_id, mcp_servers=mcp_servers, **meta
+                    cwd=process.cwd, session_id=session_id, mcp_servers=process.mcp_servers, **meta
                 )
             else:
-                session = await connection.new_session(cwd=str(workspace), mcp_servers=mcp_servers, **meta)
+                session = await connection.new_session(cwd=process.cwd, mcp_servers=process.mcp_servers, **meta)
                 session_id = session.session_id
                 yield CanonicalEventDraft(event_type="session.updated", data={"provider_session_id": session_id})
             if profile.permission_mode == "plan":

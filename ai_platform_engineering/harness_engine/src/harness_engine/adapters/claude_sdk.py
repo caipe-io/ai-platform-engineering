@@ -88,6 +88,8 @@ class ClaudeSDKAdapter:
                 harness_id="claude_agent_sdk",
                 display_name=alias.replace("-", " ").replace("_", " ").title(),
                 description=profile.description or "Operator-managed Claude SDK policy",
+                sandbox=profile.sandbox.public() if profile.sandbox else None,
+                owner_subject=profile.sandbox.owner_subject if profile.sandbox else None,
             )
             for alias, profile in sorted(self._profiles.items())
         ]

@@ -150,6 +150,7 @@ def check_pyproject(path: Path) -> None:
             continue
 
         # Environment markers constrain installation, not the package version.
+
         requirement = value.split(";", 1)[0].strip()
         pkg_name = re.split(r"[><=~^!(\s\[]", requirement)[0].strip().lower().replace("_", "-")
 

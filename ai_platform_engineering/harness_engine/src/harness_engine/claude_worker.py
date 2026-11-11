@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 from collections.abc import AsyncIterator
@@ -53,7 +54,7 @@ def create_worker_app(
     tool_bridge = ClaudeACPToolBridge(config.port)
     local = adapter or (
         ClaudeACPAdapter(worker_config, tool_bridge=tool_bridge)
-        if config.claude_acp_command
+        if config.uses_claude_acp
         else ClaudeSDKAdapter(worker_config)
     )
     registry = HarnessRegistry([local])
@@ -132,9 +133,28 @@ def create_worker_app(
             or context.turn.attachments
         ):
             raise HTTPException(400, "Invalid admitted SDK context")
-        validation = registry.validate(context.blueprint)
+        validation = registry.validate(context.blueprint, owner_subject=subject)
         if not validation.valid:
             raise HTTPException(422, "Worker profile does not support this execution configuration")
+        profile = config.claude_sdk_profiles().get(context.binding.profile_id)
+        expected_sandbox = profile.sandbox.public() if profile and profile.sandbox else None
+        claimed_sandbox = context.binding.sandbox
+        if ((claimed_sandbox is None) != (expected_sandbox is None)
+                or (claimed_sandbox and expected_sandbox and (
+                    claimed_sandbox.instance_id != expected_sandbox.instance_id
+                    or claimed_sandbox.policy_revision != expected_sandbox.policy_revision
+                ))):
+            raise HTTPException(409, "Worker sandbox does not match the retained execution placement")
+        worker_execution_target = None
+        if profile and profile.sandbox:
+            local_target = {
+                "url": profile.sandbox.url, "profile_id": context.binding.profile_id,
+                "sandbox": profile.sandbox.execution_identity(), "model": profile.model,
+                "permission_mode": profile.permission_mode, "native_tools": sorted(set(config.claude_acp_tools)),
+            }
+            worker_execution_target = hashlib.sha256(
+                json.dumps(local_target, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
         token = request.headers.get("x-harness-caller-token")
         if context.blueprint.tools.bindings and not token:
             raise HTTPException(401, "MCP tools require delegated caller credentials")
@@ -145,6 +165,7 @@ def create_worker_app(
                 "binding": context.binding.model_copy(
                     update={
                         "native_state_key": f"claude-worker:{context.binding.binding_id}",
+                        "worker_execution_target": worker_execution_target,
                     }
                 ),
             }
@@ -200,7 +221,11 @@ def create_worker_app(
                         EXTENSION: {
                             "transport": "http-ndjson-v1",
                             "durableReplay": True,
-                            "runtime": config.claude_acp_runtime if config.claude_acp_command else "sdk",
+                            "runtime": config.claude_acp_runtime if config.uses_claude_acp else "sdk",
+                            **({"sandboxTransportVersion": 1} if any(
+                                profile.sandbox and profile.sandbox.owner_subject == subject
+                                for profile in config.claude_sdk_profiles().values()
+                            ) else {}),
                         }
                     },
                 }
@@ -237,6 +262,9 @@ def create_worker_app(
                             "harness_id",
                             "profile_id",
                             "epoch",
+                            "execution_target",
+                            "worker_execution_target",
+                            "native_state_key",
                         )
                     ):
                         raise HTTPException(409, "Worker session conflicts with the admitted context")

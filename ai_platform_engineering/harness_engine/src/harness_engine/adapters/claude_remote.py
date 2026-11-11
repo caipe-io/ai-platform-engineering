@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -12,8 +13,9 @@ from typing import Any
 import httpx2 as httpx
 
 from harness_engine.acp_events import EXTENSION
-from harness_engine.adapters.base import ExecutionUnconfirmedError
+from harness_engine.adapters.base import ExecutionRejectedError, ExecutionUnconfirmedError
 from harness_engine.adapters.claude_sdk import ClaudeSDKAdapter
+from harness_engine.claude_sandbox import ADMISSION_MESSAGES
 from harness_engine.config import Settings
 from harness_engine.models import (
     AdapterEvaluation,
@@ -54,6 +56,8 @@ class RemoteClaudeSDKAdapter:
             if (value.runtime == runtime if runtime else value.runtime != "claude_code_cli_acp")
         }
         self._harness_id = runtime or "claude_agent_sdk_remote"
+        self._claude_acp = claude_acp or claude_cli_acp
+        self._portal_url = settings.sandbox_portal_url
         self._template = ClaudeSDKAdapter(settings.model_copy(update={"storage_backend": "memory"}))
         self._transport = transport
         self._active: dict[str, RemoteAttempt] = {}
@@ -64,6 +68,7 @@ class RemoteClaudeSDKAdapter:
     @property
     def descriptor(self) -> HarnessDescriptor:
         native = CapabilityResult(level=CapabilityLevel.NATIVE)
+        sandboxed = any(profile.sandbox is not None for profile in self._profiles.values())
         return self._template.descriptor.model_copy(
             update={
                 "id": self._harness_id,
@@ -76,6 +81,8 @@ class RemoteClaudeSDKAdapter:
                         harness_id=self._harness_id,
                         display_name=alias,
                         description=profile.description,
+                        sandbox=profile.sandbox.public() if profile.sandbox else None,
+                        owner_subject=profile.sandbox.owner_subject if profile.sandbox else None,
                     )
                     for alias, profile in sorted(self._profiles.items())
                 ],
@@ -95,6 +102,18 @@ class RemoteClaudeSDKAdapter:
                         explanation="Selected MCP tools retain caller and agent authorization through CAIPE",
                         constraints={"approval_policy": ["never"]},
                     ),
+                    "sandbox.isolation": CapabilityResult(
+                        level=CapabilityLevel.EMULATED if sandboxed else CapabilityLevel.UNAVAILABLE,
+                        explanation="Preprovisioned profiles use an admitted external sandbox boundary",
+                    ),
+                    "sandbox.workspace": CapabilityResult(
+                        level=CapabilityLevel.NATIVE if sandboxed else CapabilityLevel.UNAVAILABLE,
+                        explanation="The selected sandbox retains its private persistent workspace",
+                    ),
+                },
+                "ui_schema": {
+                    **self._template.descriptor.ui_schema,
+                    **({"sandbox_portal_url": self._portal_url} if self._claude_acp and self._portal_url else {}),
                 },
             }
         )
@@ -112,7 +131,24 @@ class RemoteClaudeSDKAdapter:
                     message="This worker profile does not enable MCP tools",
                 )
             )
+        if blueprint.workspace.persistence != "none" and (profile is None or profile.sandbox is None):
+            result.issues.append(ValidationIssue(
+                path="workspace.persistence", capability="sandbox.workspace", level=CapabilityLevel.UNAVAILABLE,
+                severity="error", message="This profile has no admitted persistent sandbox workspace",
+            ))
         return result
+
+    def binding_target(self, profile_id: str) -> str | None:
+        profile = self._profiles[profile_id]
+        if profile.sandbox is None:
+            return None
+        target = {
+            "url": profile.url, "profile_id": profile.profile_id,
+            "runtime": profile.runtime, "sandbox": profile.sandbox.execution_identity(),
+        }
+        # Credential rotation does not change native placement. Endpoint,
+        # identity, owner and approved configuration changes do.
+        return hashlib.sha256(json.dumps(target, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     async def _request(self, client: httpx.AsyncClient, method: str, params: dict[str, Any]) -> dict[str, Any]:
         rpc = {"jsonrpc": "2.0", "method": method, "params": params}
@@ -208,10 +244,12 @@ class RemoteClaudeSDKAdapter:
                     raise ValueError("Worker does not support the durable ACP transport")
                 if initialized["_meta"][EXTENSION].get("runtime", "sdk") != profile.runtime:
                     raise ValueError("Worker runtime does not match its operator profile")
+                if profile.sandbox is not None and initialized["_meta"][EXTENSION].get("sandboxTransportVersion") != 1:
+                    raise ValueError("Worker does not support the admitted sandbox data plane")
                 setup = {
                     "cwd": "/workspace",
                     "mcpServers": [],
-                    "_meta": {EXTENSION: {"context": forwarded.model_dump(mode="json")}},
+                    "_meta": {EXTENSION: {"context": forwarded.model_dump(mode="json", exclude_none=True)}},
                 }
                 method = "session/resume" if context.binding.provider_session_id else "session/new"
                 if method == "session/resume":
@@ -220,11 +258,12 @@ class RemoteClaudeSDKAdapter:
                     setup["sessionId"] = session_id
                 await self._request(client, method, setup)
                 cursor = 0
+                rejection: str | None = None
                 for retry in range(3):
                     params = {
                         "sessionId": session_id,
                         "prompt": [{"type": "text", "text": context.turn.message}],
-                        "_meta": {EXTENSION: {"context": forwarded.model_dump(mode="json"), "after": cursor}},
+                        "_meta": {EXTENSION: {"context": forwarded.model_dump(mode="json", exclude_none=True), "after": cursor}},
                     }
                     rpc = {"jsonrpc": "2.0", "id": run_id, "method": "session/prompt", "params": params}
                     try:
@@ -253,6 +292,8 @@ class RemoteClaudeSDKAdapter:
                                     ):
                                         raise ValueError("ACP worker replay is not contiguous")
                                     cursor = event.sequence
+                                    if event.event_type == "run.failed" and event.data.get("code") in ADMISSION_MESSAGES:
+                                        rejection = event.data["code"]
                                     if event.event_type not in {
                                         "run.started",
                                         "run.completed",
@@ -272,6 +313,8 @@ class RemoteClaudeSDKAdapter:
                                         raise ValueError("ACP completion did not confirm the committed event tail")
                                     drained = True
                                     if run["status"] == "failed":
+                                        if rejection is not None:
+                                            raise ExecutionRejectedError(rejection, ADMISSION_MESSAGES[rejection])
                                         raise RuntimeError("Remote SDK execution failed")
                                     yield TurnOutcome(
                                         status="cancelled" if run["status"] == "cancelled" else "completed"
@@ -304,6 +347,8 @@ class RemoteClaudeSDKAdapter:
                             "ACP worker stop could not be confirmed",
                             extra={"run_id": run_id, "error_type": type(error).__name__},
                         )
+                    except asyncio.CancelledError:
+                        raise ExecutionUnconfirmedError("Worker cancellation was interrupted before drain confirmation") from None
                     if not drained:
                         raise ExecutionUnconfirmedError(
                             "The worker may still be executing; retain the session reservation"

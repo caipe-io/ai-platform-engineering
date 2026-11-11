@@ -1,6 +1,7 @@
 "use client";
 
 import { fetchChatRunStatus } from "@/lib/harness-engine-session-client";
+import { readHarnessSandbox } from "@/lib/harness-sandbox";
 import { useComposerDraft } from "@/hooks/use-composer-draft";
 import type { AssistantDraft } from "@/lib/agentic-apps/assistant-draft";
 import { AgentAvatar } from "@/components/dynamic-agents/AgentAvatar";
@@ -362,6 +363,9 @@ export function ChatPanel({
   const slashCommands = useSlashCommands(agentSkills, agent?.allowed_tools, agent?.subagents);
 
   const conversation = getActiveConversation();
+  const showClaudeSession = !agent?.presentation?.app && (observedRuntime?.conversationId === activeConversationId
+    ? ["claude_code_acp", "claude_code_cli_acp"].includes(observedRuntime.harnessId ?? "")
+    : !conversation?.messages.length && ["claude_code_acp", "claude_code_cli_acp"].includes(agent?.execution_harness_id ?? ""));
   const conversationTitle = useChatStore((state) => state.conversations
     .find((item) => item.id === (conversationId ?? state.activeConversationId))
     ?.title?.trim()) || "New chat";
@@ -1399,6 +1403,10 @@ export function ChatPanel({
     if (validMessages.length === 0 || isThisConversationStreaming || isRemoteResponse) return;
     const messageToSend = buildQueuedBatchPrompt(validMessages);
     const filesToSend = validMessages.flatMap((message) => message.files);
+    if (showClaudeSession && filesToSend.length > 0) {
+      toast("Claude (ACP) does not support chat attachments. Add the files in the sandbox application, then send a text prompt.", "error", 8000);
+      return;
+    }
 
     // Create conversation if needed. This hits POST /api/chat/conversations
     // which is gated by the Web UI backend auth middleware, so we have to handle the
@@ -1537,7 +1545,7 @@ export function ChatPanel({
       });
       setConversationStreaming(convId, null);
     }
-  }, [isAutonomousHistory, isThisConversationStreaming, activeConversationId, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, requestReasoningEffort, session?.user, showAuthErrorToast, suppliedClientContext, toast, requestOptions, isRemoteResponse]);
+  }, [isAutonomousHistory, isThisConversationStreaming, activeConversationId, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, requestReasoningEffort, session?.user, showAuthErrorToast, suppliedClientContext, toast, requestOptions, isRemoteResponse, showClaudeSession]);
 
   const submitMessage = useCallback(
     (messageToSend: string, filesToSend: InputFile[] = []) => submitMessageBatch([{
@@ -1585,6 +1593,7 @@ export function ChatPanel({
   }, [isSavingEdit]);
 
   const requestEditedMessageSave = useCallback(() => {
+    if (showClaudeSession) return;
     if (!editingMessageId || !activeConversationId || isSavingEdit || isRemoteResponse) return;
     const targetMessage = getActiveConversation()?.messages.find(
       (message) => message.id === editingMessageId,
@@ -1613,9 +1622,11 @@ export function ChatPanel({
     isRemoteResponse,
     isSavingEdit,
     toast,
+    showClaudeSession,
   ]);
 
   const saveEditedMessage = useCallback(async () => {
+    if (showClaudeSession) return;
     if (!editingMessageId || !activeConversationId || isSavingEdit || isRemoteResponse) return;
     const targetMessage = getActiveConversation()?.messages.find(
       (message) => message.id === editingMessageId,
@@ -1690,6 +1701,7 @@ export function ChatPanel({
     submitMessage,
     toast,
     truncateConversationFromMessage,
+    showClaudeSession,
   ]);
 
   // The Home page hero composer creates a conversation and navigates here
@@ -1850,8 +1862,24 @@ export function ChatPanel({
 
   // Handle /clear command
   const handleClearCommand = useCallback(async () => {
+    if (showClaudeSession && activeConversationId) {
+      try {
+        const response = await fetch("/api/v1/chat/stream/status", { method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agent_id: agentId, conversation_id: activeConversationId }) });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error("Session details unavailable");
+        if (readHarnessSandbox(result.data?.sandbox)) {
+          toast("This sandbox is reserved for this conversation. To start fresh, create another sandbox and select its registered profile in Agent Builder. Your existing chat and files are kept.", "info", 10000);
+          return;
+        }
+      } catch {
+        toast("Could not check this Claude session. Your conversation was kept; try again when its connection is available.", "error", 8000);
+        return;
+      }
+    }
     await createConversation(agentId);
-  }, [createConversation, agentId]);
+  }, [createConversation, agentId, activeConversationId, showClaudeSession, toast]);
 
   const handleStop = useCallback(() => {
     if (activeConversationId) {
@@ -1878,6 +1906,10 @@ export function ChatPanel({
   // toasting anything rejected so the user knows why it didn't attach.
   const addFiles = useCallback((incoming: File[]) => {
     if (incoming.length === 0) return;
+    if (showClaudeSession) {
+      toast("Claude (ACP) does not support chat attachments. Add the files in the sandbox application, then send a text prompt.", "error", 8000);
+      return;
+    }
     setAttachments((prev) => {
       const { accepted, rejected } = validateFiles(
         prev.map((a) => a.file),
@@ -1898,7 +1930,7 @@ export function ChatPanel({
       }));
       return [...prev, ...staged];
     });
-  }, [toast]);
+  }, [toast, showClaudeSession]);
 
   const removeAttachment = useCallback((id: string) => {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
@@ -1943,6 +1975,10 @@ export function ChatPanel({
   // Wrapper for form submission that uses input state
   const handleSubmit = useCallback(async (forceSend = false) => {
     if (isStopping) return;
+    if (showClaudeSession && attachments.length > 0) {
+      toast("Remove the staged attachments before sending to Claude (ACP). Add files through the sandbox application instead.", "error", 8000);
+      return;
+    }
     // Allow a turn with text OR attachments (a file-only send is valid).
     if (!input.trim() && attachments.length === 0) return;
 
@@ -2015,7 +2051,7 @@ export function ChatPanel({
     setAttachments([]);
 
     await submitMessage(message, encodedFiles);
-  }, [input, attachments, submitMessage, isThisConversationStreaming, isStopping, activeConversationId, pendingUserInput, slashCommands, executeSlashCommand, handleEffortCommand, handleStop]);
+  }, [input, attachments, submitMessage, isThisConversationStreaming, isStopping, activeConversationId, pendingUserInput, slashCommands, executeSlashCommand, handleEffortCommand, handleStop, showClaudeSession, toast]);
 
   // Auto-submit pending message from use case selection
   useEffect(() => {
@@ -2372,9 +2408,8 @@ export function ChatPanel({
     }
   };
 
-  const showClaudeSession = !agent?.presentation?.app && (observedRuntime?.conversationId === activeConversationId
-    ? ["claude_code_acp", "claude_code_cli_acp"].includes(observedRuntime.harnessId ?? "")
-    : !conversation?.messages.length && ["claude_code_acp", "claude_code_cli_acp"].includes(agent?.execution_harness_id ?? ""));
+
+
   const headerControls = (
     <div className="flex max-w-full flex-wrap items-center justify-end gap-1">
       {apiConversation && <ApiConversationIndicator readOnly={panelReadOnly} />}
@@ -2382,7 +2417,7 @@ export function ChatPanel({
       {showClaudeSession ? (
         <ClaudeSessionPanel activity={isStopping ? "stopping" : externalActivity?.state ?? (isThisConversationStreaming ? "running" : "idle")}
           cli={(observedRuntime?.conversationId === activeConversationId ? observedRuntime.harnessId : agent?.execution_harness_id) === "claude_code_cli_acp"}
-          readOnly={panelReadOnly || Boolean(readOnlySubscription)} />
+          readOnly={panelReadOnly || Boolean(readOnlySubscription)} agentId={agentId} conversationId={activeConversationId ?? undefined} />
       ) : showAgentHeader && (agent ? (
         <AgentHarnessBadge harnessId={agent.execution_harness_id} presentation={agent.presentation} />
       ) : (
@@ -2513,6 +2548,7 @@ export function ChatPanel({
                       const isLocalCommand = msg.content.trim() === "/skills" ||
                         msg.content.trim() === "/help";
                       const canEditMessage = msg.role === "user" &&
+                        !showClaudeSession &&
                         isOwnMessage &&
                         isConversationOwner &&
                         !isLocalCommand &&
@@ -3058,6 +3094,7 @@ export function ChatPanel({
                 multiple
                 accept={ACCEPT_ATTRIBUTE}
                 className="hidden"
+                disabled={showClaudeSession}
                 onChange={handleFileInputChange}
               />
 
@@ -3135,7 +3172,7 @@ export function ChatPanel({
                 </span>
 
                 {/* Attach files */}
-                <div className="shrink-0">
+                <div className="shrink-0" title={showClaudeSession ? "Claude (ACP) does not support chat attachments. Add files through the sandbox application." : undefined}>
                   <Button
                     size="icon"
                     onClick={() => fileInputRef.current?.click()}
@@ -3143,6 +3180,7 @@ export function ChatPanel({
                     className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
                     title="Attach files"
                     aria-label="Attach files"
+                    disabled={showClaudeSession}
                   >
                     <Paperclip className="h-4 w-4" />
                   </Button>
