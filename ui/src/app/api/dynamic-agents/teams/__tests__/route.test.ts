@@ -8,6 +8,7 @@ const mockGetAuthFromBearerOrSession = jest.fn();
 const mockGetCollection = jest.fn();
 const mockGetRbacCollection = jest.fn();
 const mockRequireResourcePermission = jest.fn();
+const mockFilterResourcesByPermission = jest.fn();
 
 jest.mock("@/lib/api-middleware", () => ({
   getAuthFromBearerOrSession: (...args: unknown[]) => mockGetAuthFromBearerOrSession(...args),
@@ -27,6 +28,7 @@ jest.mock("@/lib/rbac/mongo-collections", () => ({
 
 jest.mock("@/lib/rbac/resource-authz", () => ({
   requireResourcePermission: (...args: unknown[]) => mockRequireResourcePermission(...args),
+  filterResourcesByPermission: (...args: unknown[]) => mockFilterResourcesByPermission(...args),
 }));
 
 const session = { sub: "alice-sub" };
@@ -37,6 +39,7 @@ describe("GET /api/dynamic-agents/teams", () => {
     jest.clearAllMocks();
     mockGetAuthFromBearerOrSession.mockResolvedValue({ user, session });
     mockRequireResourcePermission.mockRejectedValue(new Error("not org admin"));
+    mockFilterResourcesByPermission.mockImplementation(async (_session, resources) => resources);
   });
 
   it("marks can_own_agents for team members, not just admins", async () => {
@@ -70,5 +73,62 @@ describe("GET /api/dynamic-agents/teams", () => {
         expect.objectContaining({ slug: "sre", user_role: "admin", can_own_agents: true }),
       ]),
     );
+  });
+
+  it("does not offer foreign teams as owners just because the caller manages the organization", async () => {
+    mockRequireResourcePermission.mockResolvedValue(undefined);
+    mockGetCollection.mockResolvedValue({
+      find: jest.fn().mockReturnValue({
+        project: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        toArray: jest.fn().mockResolvedValue([
+          { _id: "team-1", name: "Primary", slug: "primary" },
+          { _id: "team-2", name: "Secondary", slug: "secondary" },
+          { _id: "team-3", name: "Other", slug: "other" },
+          { _id: "team-4", name: "Legacy without slug" },
+        ]),
+      }),
+    });
+    mockFilterResourcesByPermission.mockImplementation(async (_session, _resources, target) =>
+      target.action === "use" ? ["primary"] : ["secondary"],
+    );
+
+    const { GET } = await import("../route");
+    const response = await GET(new NextRequest("http://localhost/api/dynamic-agents/teams"));
+    const body = await response.json();
+
+    expect(body.data).toEqual([
+      expect.objectContaining({ slug: "primary", user_role: "member", can_own_agents: true }),
+      expect.objectContaining({ slug: "secondary", user_role: "admin", can_own_agents: true }),
+      expect.objectContaining({ slug: "other", user_role: null, can_own_agents: false }),
+      expect.objectContaining({ name: "Legacy without slug", can_own_agents: false }),
+    ]);
+    expect(mockFilterResourcesByPermission).toHaveBeenCalledTimes(2);
+    expect(mockGetRbacCollection).not.toHaveBeenCalled();
+  });
+
+  it("keeps a membership record visible but disables ownership when its authorization grants are missing", async () => {
+    mockGetRbacCollection.mockResolvedValue({
+      find: jest.fn().mockReturnValue({
+        toArray: jest.fn().mockResolvedValue([
+          { team_slug: "primary", relationship: "member", status: "active", user_email: user.email },
+        ]),
+      }),
+    });
+    mockGetCollection.mockResolvedValue({
+      find: jest.fn().mockReturnValue({
+        project: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        toArray: jest.fn().mockResolvedValue([{ _id: "team-1", name: "Primary", slug: "primary" }]),
+      }),
+    });
+    mockFilterResourcesByPermission.mockResolvedValue([]);
+
+    const { GET } = await import("../route");
+    const response = await GET(new NextRequest("http://localhost/api/dynamic-agents/teams"));
+
+    expect((await response.json()).data).toEqual([
+      expect.objectContaining({ slug: "primary", user_role: "member", can_own_agents: false }),
+    ]);
   });
 });

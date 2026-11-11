@@ -32,6 +32,7 @@ import {
 } from "@/lib/rbac/openfga-agent-tools";
 import { cascadeDeleteAutonomousTasksForAgent } from "@/lib/dynamic-agents/autonomousTaskCascade";
 import { filterAgentsByOwnershipScopeForSession } from "@/lib/rbac/agent-ownership-scope";
+import { canUseAgentOwnerTeam } from "@/lib/rbac/agent-owner-team";
 import { caipeOrgKey } from "@/lib/rbac/organization";
 import {
   getPlatformDefaultAgentId,
@@ -547,35 +548,7 @@ async function canUseOwnerTeam(
 ): Promise<boolean> {
   const ownerTeamSlug = normalizeString(ownerTeam.slug);
   if (!ownerTeamSlug) return false;
-  return canUseTeamSlug(session, ownerTeamSlug);
-}
-
-async function canUseTeamSlug(
-  session: Parameters<typeof requireResourcePermission>[0],
-  teamSlug: string,
-): Promise<boolean> {
-  try {
-    await requireResourcePermission(session, {
-      type: "team",
-      id: teamSlug,
-      action: "use",
-    });
-    return true;
-  } catch {
-    // assisted-by Codex Codex-sonnet-4-6
-    // Team admins/owners may be represented only by the manage relation in
-    // older projections; they still count as members for owner-team selection.
-    try {
-      await requireResourcePermission(session, {
-        type: "team",
-        id: teamSlug,
-        action: "manage",
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  }
+  return canUseAgentOwnerTeam(session, ownerTeamSlug);
 }
 
 async function requireAgentWritePermission(
