@@ -53,7 +53,7 @@ if TYPE_CHECKING:  # pragma: no cover - import-cycle break
 
 logger = logging.getLogger("autonomous_agents")
 
-DedupStrategy = Literal["header", "signature", "none"]
+DedupStrategy = Literal["header", "signature", "none", "manual"]
 
 
 @dataclass(frozen=True)
@@ -226,11 +226,15 @@ async def claim_trigger_instance(
     task_id: str,
     dedup_key: DedupKey,
     body: bytes,
+    run_id: str | None = None,
 ) -> TriggerClaim:
     """Insert a row in ``trigger_instances`` or report a duplicate.
 
     Pre-condition: ``dedup_key.key is not None``. Callers that hit a
     ``DedupKey`` with no key MUST skip this helper entirely.
+
+    Manual dispatch supplies a preallocated ``run_id`` so retries never
+    depend on a separate best-effort audit update.
 
     Returns
     -------
@@ -258,7 +262,7 @@ async def claim_trigger_instance(
         "dedup_strategy": dedup_key.strategy,
         "delivery_header_name": dedup_key.header_name,
         "delivery_header_value": dedup_key.header_value,
-        "run_id": None,
+        "run_id": run_id,
     }
 
     created, existing = await mongo.record_trigger_instance(doc)
