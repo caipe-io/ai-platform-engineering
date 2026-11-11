@@ -547,7 +547,7 @@ async def test_library_download_block_is_not_advertised_or_bypassed(download: bo
         assert items == []
 
 
-@pytest.mark.parametrize("failure", ["network", "malformed"])
+@pytest.mark.parametrize("failure", ["network", "malformed", "rate_limited", "upstream_error"])
 @pytest.mark.asyncio
 async def test_unread_candidate_cannot_make_another_title_time_match_appear_unique(failure: str) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -559,6 +559,8 @@ async def test_unread_candidate_cannot_make_another_title_time_match_appear_uniq
         if request.url.path.endswith("/unread/stream"):
             if failure == "network":
                 raise httpx.ReadTimeout("private diagnostic", request=request)
+            if failure in {"rate_limited", "upstream_error"}:
+                return httpx.Response(429 if failure == "rate_limited" else 503)
             return httpx.Response(200, text="<html>not metadata</html>")
         assert request.url.path.endswith("/readable/stream")
         return httpx.Response(200, json={"meetingInstanceId": "instance-1", "downloadRecordingInfo": {

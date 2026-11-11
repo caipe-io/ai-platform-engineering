@@ -930,8 +930,10 @@ async def _userhub_transcripts_for_meeting(
                 )
                 detail_response.raise_for_status()
             detail = detail_response.json()
-        except httpx.HTTPStatusError:
-            logger.warning("User Hub recording detail request failed for %s", recording_uuid)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429 or exc.response.status_code >= 500:
+                candidate_read_failed = True
+            logger.warning("User Hub recording detail HTTP %s for %s", exc.response.status_code, recording_uuid)
             return None
         except (httpx.RequestError, ValueError):
             # An unread candidate must not make another instance appear unique.
