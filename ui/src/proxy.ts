@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { AUTH_RETURN_TO_HEADER } from "@/lib/auth/callback-url";
 import { RESERVED_HOST_PATHS } from "../app-sdk/reserved-paths.mjs";
 import { isAgenticAppsEnabled, loadConfiguredAgenticApps } from "@/lib/agentic-apps/config";
 import { agenticAppForHostPath } from "@/lib/agentic-apps/host-routes";
@@ -23,10 +24,14 @@ const APP_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
  */
 export function proxy(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
+  const headers = new Headers(request.headers);
+  const returnTo = request.nextUrl.clone();
+  if (returnTo.searchParams.has("_rsc")) returnTo.searchParams.delete("_rsc");
+  // Capture the public URL before rewrites and overwrite caller-supplied values.
+  headers.set(AUTH_RETURN_TO_HEADER, `${pathname}${returnTo.search}`);
   // Only the public app rewrite may supply this transport header. In
   // particular, direct callers of the authenticated runtime route cannot.
   if (pathname.startsWith(`${AGENTIC_APP_RUNTIME_BASE}/`)) {
-    const headers = new Headers(request.headers);
     headers.delete(RUNTIME_NEXT_URL_HEADER);
     return NextResponse.next({ request: { headers } });
   }
@@ -34,7 +39,7 @@ export function proxy(request: NextRequest): NextResponse {
   if (nativeApiExtension) {
     const runtimeUrl = request.nextUrl.clone();
     runtimeUrl.pathname = `${nativeApiExtension.api.basePath}${pathname}`;
-    return NextResponse.rewrite(runtimeUrl);
+    return NextResponse.rewrite(runtimeUrl, { request: { headers } });
   }
 
   // Runtime selection takes precedence over compiled native page claims.
@@ -51,7 +56,7 @@ export function proxy(request: NextRequest): NextResponse {
         url.pathname = profile?.mode === "iframe"
           ? `/agentic-app-routes/${owner.installation.appId}${pathname}`
           : `/native-extensions/${owner.installation.appId}${pathname}`;
-        return NextResponse.rewrite(url);
+        return NextResponse.rewrite(url, { request: { headers } });
       }
     } catch {
       return NextResponse.json({ error: "Application route configuration unavailable" }, { status: 503 });
@@ -60,13 +65,12 @@ export function proxy(request: NextRequest): NextResponse {
   const appPath = parseAgenticAppPath(pathname);
 
   if (!appPath || isHostShellRequest(request)) {
-    return NextResponse.next();
+    return NextResponse.next({ request: { headers } });
   }
 
   const runtimeUrl = request.nextUrl.clone();
   runtimeUrl.pathname = `${AGENTIC_APP_RUNTIME_BASE}${appPath}`;
 
-  const headers = new Headers(request.headers);
   headers.delete(RUNTIME_NEXT_URL_HEADER);
   const nextUrl = headers.get("next-url");
   if (nextUrl !== null) headers.set(RUNTIME_NEXT_URL_HEADER, nextUrl);

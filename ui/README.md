@@ -59,6 +59,16 @@ Without an override, an internal Keycloak realm URL in `OIDC_DISCOVERY_URL` uses
 its local token path; other providers use their discovery document. Generic
 provider discovery failures never fall back to a Keycloak URL.
 
+Refresh discovery and token requests reject HTTP redirects. Discovered token
+endpoints cannot downgrade HTTPS to HTTP; an explicit internal HTTP endpoint
+remains supported. Endpoints reject embedded credentials and URL fragments.
+Generic provider discovery requires HTTPS. For an internal HTTP provider, pin
+`OIDC_TOKEN_ENDPOINT` explicitly so plaintext discovery cannot redirect credentials
+to an untrusted host. Internal Keycloak realm URLs still use their configured local
+token path directly without discovery.
+Malformed token responses never replace stored credentials and follow the
+existing ambiguous-response recovery rules.
+
 Rejected refresh credentials are suppressed across replicas while a still-valid
 access token finishes its lifetime. Definite retryable failures use a shared
 60-second cooldown. A lost or ambiguous refresh response retains the existing
@@ -82,12 +92,19 @@ login session until that helper is migrated.
 - Failed presence connections retry with exponential backoff from five seconds to one minute. A valid roster resets the backoff.
 - This is conversation presence, independent of execution-stream subscribers, durable run events, and replay cursors. It requires MongoDB storage.
 
+### Live chat navigation
+
+- The top-right **Live Agent Chat** control counts every streaming chat, including the current chat. Its green dot pulses unless reduced motion is requested.
+- One chat shows its title and links directly to that conversation. Multiple chats open a titled list with individual links and a current-chat marker.
+- App-owned recovery observations are deduplicated against browser streams. Saving responses remain listed until recovery completes.
+- Opening the list focuses the first chat; Tab reaches other destinations and Enter opens them. Escape returns focus to the trigger.
+- Ordinary navigation preserves the shared unsaved-editor guard; modified clicks retain native new-tab/window behavior. The list uses the shared `Popover` for navigation rather than a form selection control.
+
 ### Migrate an existing conversation
 
 - Eligible Deep Agents chats show **Migrate to Harness Engine** above the messages. Conversation write access and agent-use permission are required.
 - Migration preserves messages, LangGraph checkpoints, files, and pending approvals. Future responses run independently of browser refreshes; existing LangGraph history was already persistent.
 - Active Engine responses do not trigger the chat's browser refresh warning after the server confirms run admission. Legacy streams and requests awaiting admission keep the warning.
-- Background chats appear in the header's **N running** menu, with each conversation title and a direct return action. The currently open chat uses its own progress indicator instead of a global banner. This is a navigation menu built with the shared `Popover`, not a form selection control.
 - Finish or stop an active execution first. Both Engine reservations and the native checkpoint's producer lease are checked; the native execution fence also protects the handoff from concurrent requests.
 - Confirm the migration in the dialog. The current draft stays in place and no prompt or approval is submitted.
 - If the connection is interrupted, reopen the chat and select **Resume migration**. The server reuses the original handoff rather than creating a second execution.
@@ -139,6 +156,11 @@ and names truncate independently, with their full text available on hover.
 
 The Agents list shows the execution harness logo beside each name. App-defined
 agents use their app's logo instead; hovering identifies the app or harness.
+
+Hosted apps can share a platform agent for their assistant pop-ups. A shared
+agent keeps its own identity and access checks, while each app still checks
+launch access. An assistant with an app-owned `streamPath` must have a unique
+agent ID so its stream routes to exactly one app.
 
 The themed conversation picker below New Chat defaults to All chats and offers
 Web chats, API chats, Autonomous runs, Scheduled runs, and Webhook runs in that

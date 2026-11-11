@@ -100,3 +100,37 @@ executor separation and OpenShell/Kata remain follow-up work; see the
 - Roll back previous image digests and overlay configuration; preserve volumes.
   Drain active runs and dispatched tools before replacing workers. Process exit
   alone does not confirm cancellation of an external tool.
+
+## Standard Compose installation
+
+The `dynamic-agents` profile includes the Engine. Standard UI and Engine startup
+waits for `harness-token-init`, which generates a private random credential once
+in the `harness_token` volume. Only these consumers mount that volume, read-only;
+other containers do not receive it. It is not printed or stored in `.env`.
+Existing private `HARNESS_ENGINE_INTERNAL_TOKEN` values remain supported; the
+public `local-development-only` placeholder is rejected by startup and the service.
+
+The standard application images use stable 1.3.6. Harness Engine is experimental
+and pinned separately to the published 1.3.7-rc.7 image because stable 1.3.6 has no
+Engine image. Set `HARNESS_ENGINE_IMAGE_TAG` to change that pin. The canonical
+runtime pipeline publishes prebuilds and all worker variants; there is no second
+Engine-only publishing workflow. Stable `latest` is updated only on a final tag,
+never a manual RC/hotfix dispatch. Release failure notifications use the pushed
+tag even if metadata determination fails.
+
+To rotate Compose credentials, first drain runs/tools and stop the UI and Engine.
+Set a new private value in `.env` (or leave it empty to generate a new value), run:
+
+```bash
+docker compose run --rm --no-deps harness-token-init python /opt/harness/init-token.py --rotate
+docker compose up -d --force-recreate harness-token-init caipe-ui harness-engine
+```
+
+Use `-f docker-compose.dev.yaml` and the active UI service name for development.
+Restart **both** consumers together. Preserve the token volume during ordinary
+upgrades; do not rotate while external work may still be executing.
+
+Helm remains opt-in and uses the existing hardened chart: enable
+`global.harnessEngine.enabled`, explicitly supply `global.harnessEngine.tokenSecret`
+and `harnessEngine.mongodbSecret`, and follow [Helm rotation](HELM.md#rotation-upgrade-and-rollback).
+Templates do not guess database keys, generate random Secrets, or use live lookups.

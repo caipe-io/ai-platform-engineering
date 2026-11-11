@@ -5,17 +5,27 @@ on:
     branches: [main]
     tags: ['**']
     paths:
+      - .env.example
+      - docker-compose*.yaml
       - ai_platform_engineering/harness_engine/**
       - ai_platform_engineering/dynamic_agents/**
       - ai_platform_engineering/llm_wrapper/**
+      - tests/test_harness_engine_installation.py
+      - tests/test_harness_helm.py
+      - tests/test_harness_release_workflow.py
       - deploy/harness-engine/**
       - .github/workflows/ci-harness-engine.yml
       - .github/actions/publish-prebuild-manifest/**
   pull_request:
     paths:
+      - .env.example
+      - docker-compose*.yaml
       - ai_platform_engineering/harness_engine/**
       - ai_platform_engineering/dynamic_agents/**
       - ai_platform_engineering/llm_wrapper/**
+      - tests/test_harness_engine_installation.py
+      - tests/test_harness_helm.py
+      - tests/test_harness_release_workflow.py
       - deploy/harness-engine/**
       - .github/workflows/ci-harness-engine.yml
       - .github/actions/publish-prebuild-manifest/**
@@ -78,15 +88,21 @@ jobs:
         with:
           ref: ${{ needs.metadata.outputs.revision }}
           persist-credentials: false
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: '3.14'
       - name: Validate backend contracts
         working-directory: ai_platform_engineering/harness_engine
         run: |
           uv sync --frozen --extra dev
-          uv run ruff check src tests ../../tests/test_release_finalization.py
+          uv run ruff check src tests ../../tests/test_release_finalization.py ../../tests/test_harness_engine_installation.py ../../deploy/harness-engine/init-token.py ../../tests/test_harness_release_workflow.py
           uv run pytest -c pyproject.toml -q tests ../../tests/test_release_finalization.py ../../tests/test_check_pinned_deps.py
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.17.3
+      - name: Validate standard installation and Helm contracts
+        working-directory: ai_platform_engineering/harness_engine
+        run: uv run pytest -c pyproject.toml -q ../../tests/test_harness_engine_installation.py ../../tests/test_harness_helm.py ../../tests/test_harness_release_workflow.py
 
   images:
     needs: [metadata, tests]

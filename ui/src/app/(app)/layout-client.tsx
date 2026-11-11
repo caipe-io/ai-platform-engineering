@@ -33,11 +33,12 @@ export function AppLayoutClient({
       initialCollapsed={initialNavigationCollapsed}
     >
       <HeaderBreadcrumbSlotProvider>
-        <div className="app-shell-canvas flex h-dvh overflow-hidden bg-background noise-overlay">
+        {/* Clip rather than hide overflow: iframe anchors/focus must never scroll Grid's chrome. */}
+        <div className="app-shell-canvas fixed inset-0 flex h-dvh overflow-clip bg-background noise-overlay">
           <ApplicationNavigationRail />
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-clip">
             <AppHeader />
-            <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-clip">
               {children}
             </div>
           </div>

@@ -121,6 +121,7 @@ describe("External App runtime route", () => {
           "x-example-app-position": "admin",
           "x-caipe-roles": "admin",
           "x-caipe-assistant-context": "forged-context",
+          "x-caipe-auth-return-to": "/chat/example?tab=activity",
           "x-untrusted-hop": "remove-me",
         },
       }),
@@ -135,6 +136,7 @@ describe("External App runtime route", () => {
     expect(headers.get("x-forwarded-prefix")).toBe("/apps/example-app");
     expect(headers.get("cookie")).toBeNull();
     expect(headers.get("x-caipe-assistant-context")).toBeNull();
+    expect(headers.get("x-caipe-auth-return-to")).toBeNull();
     expect(headers.get("keep-alive")).toBeNull();
     expect(headers.get("x-untrusted-hop")).toBeNull();
     expect(headers.get("x-example-app-position")).toBeNull();

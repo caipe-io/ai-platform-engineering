@@ -148,6 +148,12 @@ Available themes:
 | `tron` | Glowing electric cyan on near-black, digital frontier aesthetic |
 | `matrix` | Green phosphor on black, digital rain aesthetic |
 
+User-message bubbles use muted blue in every theme, with lighter bubbles in Light
+and Legacy Light. Text selection uses a pale-blue highlight with dark text across
+the UI. Dark, Light and Midnight use blue primary accents and focus rings; other
+themes retain their own accents. The SSO login button uses the separate brand
+gradient, while its keyboard focus ring follows the selected theme.
+
 ### Gradient Theme
 
 | Variable | Default | Allowed Values | Description |

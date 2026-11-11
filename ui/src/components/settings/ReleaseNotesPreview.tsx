@@ -5,6 +5,7 @@ import { ReleaseUpgradeDialog } from "@/components/release/ReleaseUpgradeDialog"
 import { Button } from "@/components/ui/button";
 import {
   hasConfiguredReleaseNotesCompare,
+  hasMatchingReleaseNotes,
   releaseNotesRequestUrl,
   type ReleaseMarkdown,
   type ReleaseNote,
@@ -16,10 +17,6 @@ import { useState } from "react";
 function normalizeVersion(value?: string | null): string | null {
   const version = value?.trim().replace(/^v/,"");
   return version || null;
-}
-
-function baseVersion(value: string): string {
-  return value.trim().replace(/^v/i,"").split(/[-+]/)[0];
 }
 
 export function ReleaseNotesPreview({ isAdmin }: { isAdmin: boolean }): React.ReactElement {
@@ -61,23 +58,17 @@ export function ReleaseNotesPreview({ isAdmin }: { isAdmin: boolean }): React.Re
           ) ?? null;
       setRelease(match);
 
-      if (match) {
-        setMarkdown(null);
-      } else {
+      try {
         const notesResponse = await fetch(
           releaseNotesRequestUrl(nextVersion, releaseNotesConfig),
         );
         const notesPayload = await notesResponse.json();
         if (!notesResponse.ok) {
-          setRelease(null); setMarkdown(null);
+          setMarkdown(null);
+          if (match) return;
           throw new Error(notesPayload?.error || "Release notes could not be loaded.");
         }
-        const exactMatch =
-          Boolean(notesPayload?.body) &&
-          (customCompareConfigured ||
-            normalizeVersion(notesPayload?.matchedVersion) === normalizeVersion(nextVersion) ||
-            normalizeVersion(notesPayload?.matchedVersion) === baseVersion(nextVersion));
-        setMarkdown(exactMatch ? {
+        setMarkdown(hasMatchingReleaseNotes(nextVersion, notesPayload, releaseNotesConfig) ? {
           matchedVersion: notesPayload.matchedVersion ?? null,
           title: notesPayload.title ?? null,
           date: notesPayload.date ?? null,
@@ -86,6 +77,10 @@ export function ReleaseNotesPreview({ isAdmin }: { isAdmin: boolean }): React.Re
           markdownBaseUrl: notesPayload.markdownBaseUrl,
           changelogUrl: notesPayload.changelogUrl ?? null,
         } : null);
+      } catch (notesError) {
+        if (!match) throw notesError;
+        console.warn("[release-notes] Preview blog unavailable; showing changelog", notesError);
+        setMarkdown(null);
       }
     } catch (error) {
       console.warn("[release-notes] Preview content could not be loaded",error);

@@ -1641,7 +1641,7 @@ if (typeof window !== 'undefined') {
       const localMsgs = conv?.messages || [];
 
       try {
-        const res = await fetch(`/api/chat/conversations/${convId}/messages?pageSize=100`);
+        const res = await fetch(`/api/chat/conversations/${encodeURIComponent(convId)}/messages?pageSize=100`);
         const data = await res.json();
         const mongoMsgs = data.items || data.data || [];
 
@@ -1680,7 +1680,7 @@ if (typeof window !== 'undefined') {
     mongo: async () => {
       const convId = useChatStore.getState().activeConversationId;
       if (!convId) { console.log('No active conversation'); return; }
-      const res = await fetch(`/api/chat/conversations/${convId}/messages?pageSize=100`);
+      const res = await fetch(`/api/chat/conversations/${encodeURIComponent(convId)}/messages?pageSize=100`);
       const data = await res.json();
       const items = (data.items || data.data || []) as StoredMessage[];
       console.log(`MongoDB: ${items.length} messages for ${convId}`);

@@ -17,6 +17,17 @@ import { useSession } from "next-auth/react";
 import { useParams,useRouter } from "next/navigation";
 import { useEffect,useRef,useState } from "react";
 
+function conversationIdFromRoute(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  try {
+    return decodeURIComponent(value);
+  } catch (error) {
+    if (!(error instanceof URIError)) throw error;
+    // Malformed escapes can be literal legacy IDs; API paths encode them.
+    return value;
+  }
+}
+
 /**
  * ChatContainer - renders the appropriate chat view based on conversation type.
  * This component lives in the layout and persists across conversation switches,
@@ -28,7 +39,7 @@ export function ChatContainer() {
   const { data: session } = useSession();
   
   // Get uuid from params - this will be undefined on /chat (redirect page)
-  const uuid = params?.uuid as string | undefined;
+  const uuid = conversationIdFromRoute(params?.uuid);
 
   const [agentInfo, setAgentInfo] = useState<DynamicAgentConfig | null>(null);
   // Track when a dynamic agent has been deleted but conversation still references it
