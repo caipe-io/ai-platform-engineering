@@ -33,6 +33,22 @@ sequenceDiagram
     BFF-->>Browser: Encrypted session cookie
 ```
 
+### Returning after sign-in
+
+- The request proxy captures the original public path and query before rewrites.
+  The server session guard includes this destination in the login `callbackUrl`.
+- Login accepts relative paths and absolute URLs from the browser's own origin;
+  external destinations and login loops fall back to `/`.
+- Before SSO, the destination is saved in tab-local session storage for 15 minutes.
+  An OAuth error return uses it only when the callback parameter is missing.
+  Session expiry, session reset, and loop recovery start a new login without
+  restoring a previous attempt. Successful application admission clears it.
+- Client-side session expiry also preserves the page's query and fragment.
+  Fragments remain in tab-local storage during OAuth and are restored on the
+  client after sign-in; NextAuth receives a callback without the fragment.
+  An OAuth retry may unwrap a `/login?callbackUrl=...` return only when its
+  destination matches the tab's validated pending attempt.
+
 ## Chat Request
 
 ```mermaid

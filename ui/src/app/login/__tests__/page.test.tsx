@@ -363,6 +363,74 @@ describe('Login Page', () => {
   // ─────────────────────────────────────────────────────────────────────
 
   describe('callbackUrl redirect flow', () => {
+    it.each([null, 'session_expired', 'session_reset', 'loop'])('does not restore an abandoned destination for a new login (%s)', async recovery => {
+      sessionStorageData['login-return-to'] = JSON.stringify({ path: '/chat/abandoned', savedAt: Date.now() });
+      mockSearchParamsGet.mockImplementation((key: string) => key === recovery ? 'true' : null);
+      if (recovery === 'loop') {
+        sessionStorageData['login-redirect-count'] = '2';
+        sessionStorageData['login-redirect-ts'] = String(Date.now());
+      }
+      mockUseSession.mockReturnValue({ data: null, status: 'unauthenticated' } as unknown);
+      render(<LoginPage />);
+      fireEvent.click(screen.getByText(/sign in with sso/i));
+      await waitFor(() => expect(mockSignIn).toHaveBeenCalledWith('oidc', { callbackUrl: '/' }));
+    });
+
+    it.each(['unauthenticated', 'authenticated'])('normalizes the absolute OAuth retry destination when %s', async status => {
+      mockSearchParamsGet.mockImplementation((key: string) => {
+        if (key === 'callbackUrl') return `${window.location.origin}/chat/example?tab=activity`;
+        if (key === 'error') return 'OAuthCallback';
+        return null;
+      });
+      mockUseSession.mockReturnValue({ data: status === 'authenticated' ? { user: { name: 'Example' } } : null, status } as unknown);
+      render(<LoginPage />);
+      if (status === 'unauthenticated') {
+        fireEvent.click(screen.getByText(/sign in with sso/i));
+        await waitFor(() => expect(mockSignIn).toHaveBeenCalledWith('oidc', { callbackUrl: '/chat/example?tab=activity' }));
+      } else {
+        await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/chat/example?tab=activity'));
+      }
+    });
+
+    it('restores the attempted destination when an error page drops callbackUrl', async () => {
+      mockSearchParamsGet.mockImplementation((key: string) => key === 'callbackUrl' ? '/apps/example?tab=activity' : null);
+      mockUseSession.mockReturnValue({ data: null, status: 'unauthenticated' } as unknown);
+      const first = render(<LoginPage />);
+      fireEvent.click(screen.getByText(/sign in with sso/i));
+      await waitFor(() => expect(mockSignIn).toHaveBeenCalledWith('oidc', { callbackUrl: '/apps/example?tab=activity' }));
+      first.unmount();
+      mockSignIn.mockClear();
+      mockSearchParamsGet.mockImplementation((key: string) => key === 'error' ? 'Configuration' : null);
+      render(<LoginPage />);
+      fireEvent.click(screen.getByText(/sign in with sso/i));
+      await waitFor(() => expect(mockSignIn).toHaveBeenCalledWith('oidc', { callbackUrl: '/apps/example?tab=activity' }));
+    });
+
+    it.each([false, true])('retains a query and private fragment through an OAuth retry (callback retained: %s)', async retained => {
+      const destination = '/schedules?path=a\\b#details\\section';
+      const oauthCallback = '/login?callbackUrl=%2Fschedules%3Fpath%3Da%5Cb';
+      mockSearchParamsGet.mockImplementation(key => key === 'callbackUrl' ? destination : null);
+      mockUseSession.mockReturnValue({ data: null, status: 'unauthenticated' } as unknown);
+      const first = render(<LoginPage />);
+      fireEvent.click(screen.getByText(/sign in with sso/i));
+      await waitFor(() => expect(mockSignIn).toHaveBeenCalledWith('oidc', { callbackUrl: oauthCallback }));
+      first.unmount();
+      mockSignIn.mockClear();
+      mockSearchParamsGet.mockImplementation(key => {
+        if (key === 'error') return 'OAuthCallback';
+        if (key === 'callbackUrl' && retained) return `${window.location.origin}${oauthCallback}`;
+        return null;
+      });
+      const retry = render(<LoginPage />);
+      fireEvent.click(screen.getByText(/sign in with sso/i));
+      await waitFor(() => expect(mockSignIn).toHaveBeenCalledWith('oidc', { callbackUrl: oauthCallback }));
+      retry.unmount();
+      mockSearchParamsGet.mockImplementation(key => key === 'callbackUrl' ? '/schedules?path=a\\b' : null);
+      mockUseSession.mockReturnValue({ data: { user: { name: 'Example' } }, status: 'authenticated' } as unknown);
+      render(<LoginPage />);
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith(destination));
+    });
+
     it('should redirect authenticated user to callbackUrl from search params', async () => {
       mockSearchParamsGet.mockImplementation((key: string) => {
         if (key === 'callbackUrl') return '/chat/b76e290b-d90d-4dd6-8db7-fbda49f3fa6d'

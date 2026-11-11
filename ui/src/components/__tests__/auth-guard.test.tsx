@@ -8,6 +8,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { signOut, useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { AuthGuard } from '../auth-guard'
+import { LOGIN_RETURN_TO_KEY, rememberLoginReturnTo } from '@/lib/auth/callback-url'
 
 // Mock Next Auth
 jest.mock('next-auth/react', () => ({
@@ -97,6 +98,31 @@ describe('AuthGuard', () => {
         if (key === 'ssoEnabled') return true
         return undefined
       })
+    })
+
+    it('preserves the browser query and fragment when reauthenticating', async () => {
+      mockPathname = '/chat/example'
+      window.history.replaceState({}, '', '/chat/example?tab=activity#details')
+      mockUseSession.mockReturnValue({ data: null, status: 'unauthenticated' } as unknown)
+      try {
+        render(<AuthGuard><div>Protected Content</div></AuthGuard>)
+        await waitFor(() => expect(mockPush).toHaveBeenCalledWith(
+          '/login?callbackUrl=%2Fchat%2Fexample%3Ftab%3Dactivity%23details',
+        ))
+      } finally {
+        window.history.replaceState({}, '', '/')
+      }
+    })
+
+    it('clears the retry destination after successful application admission', async () => {
+      rememberLoginReturnTo('/chat/example')
+      mockUseSession.mockReturnValue({
+        data: { user: { email: 'test-user@example.com' }, isAuthorized: true },
+        status: 'authenticated',
+      } as unknown)
+      render(<AuthGuard><div>Protected Content</div></AuthGuard>)
+      await waitFor(() => expect(sessionStorage.getItem(LOGIN_RETURN_TO_KEY)).toBeNull())
+      expect(mockPush).not.toHaveBeenCalled()
     })
 
     it('should show loading screen while checking SSO config', () => {

@@ -1,8 +1,6 @@
-export const APP_PAGE_PATH_HEADER = "x-caipe-app-page-path";
 export const RUNTIME_NEXT_URL_HEADER = "x-caipe-runtime-next-url";
 
 const HOST_CONTROLLED_REQUEST_HEADERS = new Set([
-  APP_PAGE_PATH_HEADER,
   "authorization",
   "connection",
   "content-length",

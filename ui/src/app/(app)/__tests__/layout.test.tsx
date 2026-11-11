@@ -75,13 +75,21 @@ describe("AppLayout", () => {
   });
   beforeEach(() => {
     jest.clearAllMocks();
-    mockGetHeader.mockReset();
+    mockGetHeader.mockReturnValue(null);
     process.env.APP_USAGE_ENABLED = "true";
     mockGetConfig.mockReturnValue(true);
     (getServerSession as jest.Mock).mockResolvedValue({
       user: { email: "user@example.com" },
       isAuthorized: true,
     });
+  });
+
+  it.each([null, { error: 'SessionExpired' }])('preserves the requested page and query for a missing or expired session', async session => {
+    (getServerSession as jest.Mock).mockResolvedValue(session);
+    mockGetHeader.mockReturnValue('/chat/example?tab=activity');
+    await expect(AppLayout({ children: <span>Protected page</span> })).rejects.toThrow('redirect');
+    expect(redirect).toHaveBeenCalledWith('/login?callbackUrl=%2Fchat%2Fexample%3Ftab%3Dactivity');
+    expect(mockAfter).not.toHaveBeenCalled();
   });
 
   it("defers the aggregate write without capturing a user identity", async () => {

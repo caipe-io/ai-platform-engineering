@@ -16,11 +16,20 @@ beforeEach(() => {
 });
 
 describe("External Apps request routing", () => {
+  it('overwrites an untrusted return-target header with the original page and query', () => {
+    const response = proxy(new NextRequest('https://host.example/chat/example?tab=activity&_rsc=transport', {
+      headers: { 'x-caipe-auth-return-to': 'https://outside.example/forged' },
+    }));
+    expect(response.headers.get('x-middleware-request-x-caipe-auth-return-to')).toBe('/chat/example?tab=activity');
+    expect(response.headers.get('x-caipe-auth-return-to')).toBeNull();
+  });
+
   it("preserves the child's Next-Url through the host route without trusting a caller transport header", () => {
     const response = proxy(new NextRequest("https://host.example/apps/example-app/report?_rsc=example", {
       headers: { rsc: "1", "next-url": "/apps/example-app/items", "x-caipe-runtime-next-url": "/forged" },
     }));
     expect(response.headers.get("x-middleware-request-x-caipe-runtime-next-url")).toBe("/apps/example-app/items");
+    expect(response.headers.get("x-middleware-request-x-caipe-auth-return-to")).toBe("/apps/example-app/report");
     expect(response.headers.get("x-middleware-rewrite")).toContain("?_rsc=example");
   });
 
@@ -120,10 +129,10 @@ describe("External Apps configuration failures", () => {
 });
 
 it("owns the app sign-in callback path and replaces caller-supplied values", () => {
-  const response = proxy(new NextRequest("https://host.example.test/apps?q=finance", {headers:{"x-caipe-app-page-path":"//other.example.test"}}));
-  expect(response.headers.get("x-middleware-request-x-caipe-app-page-path")).toBe("/apps?q=finance");
-  const other = proxy(new NextRequest("https://host.example.test/chat", {headers:{"x-caipe-app-page-path":"/apps?forged=1"}}));
-  expect(other.headers.get("x-middleware-request-x-caipe-app-page-path")).toBeNull();
+  const response = proxy(new NextRequest("https://host.example.test/apps?q=finance", {headers:{"x-caipe-auth-return-to":"//other.example.test"}}));
+  expect(response.headers.get("x-middleware-request-x-caipe-auth-return-to")).toBe("/apps?q=finance");
+  const other = proxy(new NextRequest("https://host.example.test/chat", {headers:{"x-caipe-auth-return-to":"/apps?forged=1"}}));
+  expect(other.headers.get("x-middleware-request-x-caipe-auth-return-to")).toBe("/chat");
 });
 
 it("retains the public path and query when a configured app claims a host route", () => {
@@ -132,7 +141,7 @@ it("retains the public path and query when a configured app claims a host route"
     installation:{appId:"example-app",installed:true,enabled:true,selectedUiProfile:"hosted",hostRouteClaims:["/example"]},
     manifest:{ui:{profiles:[{id:"hosted",mode:"iframe"}]}}
   }] as unknown as ReturnType<typeof loadConfiguredAgenticApps>);
-  const response = proxy(new NextRequest("https://host.example.test/example/wiki?wikiSearch=release", {headers:{"x-caipe-app-page-path":"/forged"}}));
-  expect(response.headers.get("x-middleware-request-x-caipe-app-page-path")).toBe("/example/wiki?wikiSearch=release");
+  const response = proxy(new NextRequest("https://host.example.test/example/wiki?wikiSearch=release", {headers:{"x-caipe-auth-return-to":"/forged"}}));
+  expect(response.headers.get("x-middleware-request-x-caipe-auth-return-to")).toBe("/example/wiki?wikiSearch=release");
   expect(response.headers.get("x-middleware-rewrite")).toBe("https://host.example.test/agentic-app-routes/example-app/example/wiki?wikiSearch=release");
 });

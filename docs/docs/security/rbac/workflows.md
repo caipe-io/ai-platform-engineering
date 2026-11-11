@@ -65,6 +65,28 @@ Sequence diagrams and flow narratives for "what happens when X". Pair this with 
 
 This is the **once-per-session** flow. After it completes, the user holds a Keycloak-backed UI session and usually never sees Keycloak (or the upstream IdP — Okta / Duo SSO / etc.) again until the Keycloak SSO session can no longer be refreshed.
 
+### Returning to a protected page
+
+- Opening `/chat/example?tab=activity` without a valid session redirects to
+  `/login` with that path and query as the `callbackUrl`. The request proxy
+  overwrites caller-supplied return headers before rewrites; the server session
+  guard reads the original destination from this request-only header.
+- `ui/src/lib/auth/callback-url.ts` validates relative paths and absolute URLs
+  from the browser's own origin. External origins, credentials, malformed
+  destinations, and login loops fall back to `/`.
+- Before sign-in, the login page saves the destination in tab-local session
+  storage for 15 minutes. On an OAuth error return, it restores the saved destination
+  only if `callbackUrl` is missing. Explicit callbacks take priority, and an
+  ordinary fresh login, session expiry, session reset, or loop recovery does not
+  restore a previous attempt.
+- Successful application admission clears the saved destination. Client-side
+  session recovery also preserves the current query and fragment.
+- Returning to a page still requires the normal session, admission, and
+  resource authorization checks. See [Authentication flow](../auth-flow.md)
+  for the broader browser-session flow.
+
+### Broker account setup
+
 The default Keycloak "first broker login" flow shows a "Review Profile" page and, if a local account with the same email already exists, a "Confirm Link Account" page. **Both are eliminated** by the custom flow patched in by `init-idp.sh`:
 
 ```
