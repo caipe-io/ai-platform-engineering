@@ -512,3 +512,30 @@ async def test_library_download_block_is_not_advertised_or_bypassed(download: bo
         assert items[0]["bodyError"] == "Transcript download is disabled."
     else:
         assert items == []
+
+
+@pytest.mark.parametrize("failure", ["network", "malformed"])
+@pytest.mark.asyncio
+async def test_unread_candidate_cannot_make_another_title_time_match_appear_unique(failure: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/webappng/api/v1/recordings":
+            return httpx.Response(200, json={"recordings": [
+                {"recordUUID": name, "recordName": "Weekly Sync", "gmtCreateTime": "2026-01-05 13:00:00"}
+                for name in ["unread", "readable"]
+            ]})
+        if request.url.path.endswith("/unread/stream"):
+            if failure == "network":
+                raise httpx.ReadTimeout("private diagnostic", request=request)
+            return httpx.Response(200, text="<html>not metadata</html>")
+        assert request.url.path.endswith("/readable/stream")
+        return httpx.Response(200, json={"meetingInstanceId": "instance-1", "downloadRecordingInfo": {
+            "downloadInfo": {"transcriptURL": "https://media.webex.com/transcript.txt"},
+        }})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(RuntimeError, match="metadata could not be verified"):
+            await _userhub_transcripts_for_meeting(
+                client, bearer="Bearer example-user-token", site_url="https://primary.webex.com",
+                meeting_id=None, meeting_title="Weekly Sync", meeting_start=datetime(2026, 1, 5, 13, tzinfo=timezone.utc),
+                max_results=1, download=False,
+            )

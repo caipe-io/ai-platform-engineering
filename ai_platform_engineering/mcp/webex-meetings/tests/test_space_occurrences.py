@@ -588,12 +588,12 @@ async def test_timeout_before_catalog_response_retains_the_inflight_frontier(mon
     assert u2c_requests == 1
 
 
-@pytest.mark.parametrize("change", ["invalid", "expired", "from", "to", "site", "series", "url", "query", "cursor", "oversized"])
+@pytest.mark.parametrize("change", ["invalid", "expired", "from", "to", "site", "series", "url", "query", "cursor", "oversized", "completed", "excluded"])
 @pytest.mark.asyncio
 async def test_invalid_continuation_fails_before_any_authenticated_request(change: str) -> None:
     value = {"v": 1, "expires": int(time.time()) + 60, "from": LOWER.isoformat(), "to": UPPER.isoformat(),
              "site": "https://primary.webex.com", "series": None, "catalog": [], "series_lookup": False,
-             "activities": [{"url": CONVERSATION, "max_date": spaces._epoch_ms(UPPER), "seen": []}]}
+             "activities": [{"url": CONVERSATION, "max_date": spaces._epoch_ms(UPPER), "seen": []}], "completed": [], "excluded": []}
     if change == "expired":
         value["expires"] = 0
     elif change in ("from", "to", "site", "series"):
@@ -604,6 +604,8 @@ async def test_invalid_continuation_fails_before_any_authenticated_request(chang
         value["catalog"] = ["https://conv-primary.wbx2.com/conversation/api/v1/conversations?token=example-secret"]
     elif change == "cursor":
         value["activities"][0]["max_date"] = 0
+    elif change in ("completed", "excluded"):
+        value[change] = ["not-an-actual-meeting"]
     token = base64.urlsafe_b64encode(json.dumps(value).encode()).decode().rstrip("=")
     if change == "invalid":
         token = "not valid"
@@ -639,3 +641,65 @@ async def test_catalog_frontier_overflow_has_a_clear_error_instead_of_truncating
 
     with pytest.raises(ValueError, match="bounded federation limit"):
         await discover(handler)
+
+
+@pytest.mark.asyncio
+async def test_continuation_preserves_excluded_summaries_before_an_older_share() -> None:
+    excluded = f"{SERIES}_I_1"
+    rows = [
+        activity(actual=excluded, activity_id="excluded-summary", start="2026-01-04T23:59:00Z", published="2026-01-05T20:00:00Z"),
+        activity(actual=f"{SERIES}_I_2", activity_id="valid-b", start="2026-01-05T17:00:00Z", published="2026-01-05T19:00:00Z"),
+        activity(actual=f"{SERIES}_I_3", activity_id="valid-c", start="2026-01-05T16:00:00Z", published="2026-01-05T18:00:00Z"),
+        activity(actual=excluded, activity_id="later-container", summary=False, start="2026-01-05T00:01:00Z", published="2026-01-05T00:01:00Z"),
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        cursor = int(request.url.params["maxDate"])
+        return httpx.Response(200, json={"items": [row for row in rows if spaces._epoch_ms(spaces._timestamp(row["published"])) <= cursor]})
+
+    unpaged = await discover(handler, conversation_urls=[CONVERSATION])
+    pages = [await discover(handler, conversation_urls=[CONVERSATION], max_results=1)]
+    while pages[-1]["has_more"]:
+        assert len(pages) < 5
+        pages.append(await discover(handler, max_results=1, continuation=pages[-1]["next_continuation"]))
+    assert [item["id"] for page in pages for item in page["items"]] == [item["id"] for item in unpaged["items"]]
+    assert {item["id"] for page in pages for item in page["items"]} == {f"{SERIES}_I_2", f"{SERIES}_I_3"}
+    assert all(page["complete"] for page in pages)
+
+
+@pytest.mark.asyncio
+async def test_later_page_reports_a_prior_share_invalidated_by_another_space(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(spaces, "ACTIVITY_WORKERS", 1)
+    excluded = f"{SERIES}_I_1"
+    valid = f"{SERIES}_I_2"
+    primary = [
+        activity(actual=excluded, activity_id="share-a", summary=False, start="2026-01-05T00:01:00Z", published="2026-01-05T20:00:00Z"),
+        activity(actual=valid, activity_id="valid-b", start="2026-01-05T17:00:00Z", published="2026-01-05T19:00:00Z"),
+    ]
+    secondary = [activity(actual=excluded, activity_id="excluded-summary", start="2026-01-04T23:59:00Z", published="2026-01-05T20:00:00Z")]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        rows = primary if request.url.host == "conv-primary.wbx2.com" else secondary
+        cursor = int(request.url.params["maxDate"])
+        return httpx.Response(200, json={"items": [row for row in rows if spaces._epoch_ms(spaces._timestamp(row["published"])) <= cursor]})
+
+    first = await discover(handler, conversation_urls=[CONVERSATION, SECONDARY], max_results=1)
+    assert [row["id"] for row in first["items"]] == [excluded]
+    assert first["excluded_meeting_ids"] == [] and first["has_more"]
+    second = await discover(handler, max_results=1, continuation=first["next_continuation"])
+    assert [row["id"] for row in second["items"]] == [valid]
+    assert second["excluded_meeting_ids"] == [excluded]
+    assert second["complete"] and not second["has_more"]
+
+
+@pytest.mark.asyncio
+async def test_exclusion_output_bound_is_enforced_even_without_a_continuation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(spaces, "MAX_OCCURRENCE_MARKERS", 1)
+    rows = [activity(actual=f"{SERIES}_I_{index}", activity_id=f"excluded-{index}", start="2026-01-04T23:59:00Z") for index in range(2)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        cursor = int(request.url.params["maxDate"])
+        return httpx.Response(200, json={"items": rows if cursor >= 1767636000000 else []})
+
+    with pytest.raises(ValueError, match="bounded work limit"):
+        await discover(handler, conversation_urls=[CONVERSATION])

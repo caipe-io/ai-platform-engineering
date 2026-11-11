@@ -28,6 +28,7 @@ CONVERSATION_QUEUE_SIZE = 8
 MAX_CONTINUATION_LENGTH = 512 * 1024
 CONTINUATION_TTL = 24 * 60 * 60
 MAX_BOUNDARY_IDS = 2 * ACTIVITY_PAGE_SIZE
+MAX_OCCURRENCE_MARKERS = 4096
 _SERIES_ID = re.compile(r"[0-9a-fA-F]{32}")
 _ACTUAL_ID = re.compile(r"(?P<series>[0-9a-fA-F]{32})_I_\d+")
 _UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
@@ -199,7 +200,7 @@ class _Discovery:
             return True
         actual = obj.get("meetingInstanceId")
         match = _ACTUAL_ID.fullmatch(actual) if isinstance(actual, str) else None
-        if match is None:
+        if match is None or len(actual) > 128:
             return True
         series = match.group("series")
         if self.meeting_series_id and series.lower() != self.meeting_series_id.lower():
@@ -429,13 +430,16 @@ def _query_binding(discovery: _Discovery) -> dict[str, Any]:
 
 def _encode_continuation(discovery: _Discovery) -> str | None:
     work = [state for state in discovery.pending_activities.values() if not state.done]
+    if len(work) > MAX_CONVERSATIONS or any(len(state.seen) > MAX_BOUNDARY_IDS for state in work) or any(
+        len(markers) > MAX_OCCURRENCE_MARKERS for markers in (discovery.completed, discovery.excluded)
+    ):
+        raise ValueError("Meeting discovery continuation exceeds its bounded work limit.")
     if discovery.catalog_frontier == [] and not work and not discovery.series_lookup_pending:
         return None
-    if len(work) > MAX_CONVERSATIONS or any(len(state.seen) > MAX_BOUNDARY_IDS for state in work):
-        raise ValueError("Meeting discovery continuation exceeds its bounded work limit.")
     value = {
         "v": 1, "expires": int(time.time()) + CONTINUATION_TTL, **_query_binding(discovery),
         "catalog": discovery.catalog_frontier, "series_lookup": discovery.series_lookup_pending,
+        "completed": sorted(discovery.completed), "excluded": sorted(discovery.excluded),
         "activities": [{"url": state.url, "max_date": state.max_date, "seen": sorted(state.seen)} for state in work],
     }
     encoded = base64.urlsafe_b64encode(json.dumps(value, separators=(",", ":")).encode()).decode().rstrip("=")
@@ -449,12 +453,17 @@ def _restore_continuation(discovery: _Discovery, token: str) -> None:
         if not isinstance(token, str) or not token or len(token) > MAX_CONTINUATION_LENGTH or not re.fullmatch(r"[A-Za-z0-9_-]+", token):
             raise ValueError()
         value = json.loads(base64.b64decode(token + "=" * (-len(token) % 4), altchars=b"-_", validate=True))
-        if not isinstance(value, dict) or set(value) != {"v", "expires", "from", "to", "site", "series", "catalog", "series_lookup", "activities"}:
+        if not isinstance(value, dict) or set(value) != {"v", "expires", "from", "to", "site", "series", "catalog", "series_lookup", "activities", "completed", "excluded"}:
             raise ValueError()
         if type(value["v"]) is not int or value["v"] != 1 or type(value["expires"]) is not int or not time.time() < value["expires"] <= time.time() + CONTINUATION_TTL + 1:
             raise ValueError()
         if any(value[key] != expected for key, expected in _query_binding(discovery).items()):
             raise ValueError()
+        for key in ("completed", "excluded"):
+            if not isinstance(value[key], list) or len(value[key]) > MAX_OCCURRENCE_MARKERS or any(
+                not isinstance(item, str) or len(item) > 128 or not _ACTUAL_ID.fullmatch(item) for item in value[key]
+            ):
+                raise ValueError()
         frontier, work, series_lookup = value["catalog"], value["activities"], value["series_lookup"]
         if frontier is not None and (not isinstance(frontier, list) or len(frontier) > 20 or any(not isinstance(url, str) for url in frontier)):
             raise ValueError()
@@ -471,7 +480,7 @@ def _restore_continuation(discovery: _Discovery, token: str) -> None:
             cursor, seen = row["max_date"], row["seen"]
             if type(cursor) is not int or not _epoch_ms(discovery.lower) - 1 <= cursor <= _epoch_ms(discovery.upper + timedelta(days=1)):
                 raise ValueError()
-            if not isinstance(seen, list) or len(seen) > MAX_BOUNDARY_IDS or any(not isinstance(item, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", item) for item in seen):
+            if not isinstance(seen, list) or len(seen) > MAX_BOUNDARY_IDS or any(not isinstance(item, str) or not re.fullmatch(r"[^\x00-\x1f\x7f]{1,256}", item) for item in seen):
                 raise ValueError()
             if url in restored:
                 raise ValueError()
@@ -482,6 +491,8 @@ def _restore_continuation(discovery: _Discovery, token: str) -> None:
     discovery.pending_activities = restored
     discovery.seen_conversations = set(restored)
     discovery.series_lookup_pending = series_lookup
+    discovery.completed = set(value["completed"])
+    discovery.excluded = set(value["excluded"])
 
 
 async def list_space_meeting_occurrences(
@@ -591,4 +602,5 @@ async def list_space_meeting_occurrences(
         "items": items, "complete": not discovery.warnings, "warnings": discovery.warnings,
         "next_catalog_urls": discovery.next_catalog_urls, "has_more": next_continuation is not None,
         "next_continuation": next_continuation,
+        "excluded_meeting_ids": sorted(discovery.excluded),
     }

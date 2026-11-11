@@ -182,6 +182,12 @@ page and `has_more: true`; callers must continue before claiming full coverage.
 Provider failures, request limits and timeouts return `complete: false`, retain
 resumable work and explain the interruption in `warnings`.
 
+Apply `excluded_meeting_ids` to accumulated results and selections before adding
+each page. These exact actual IDs retract an earlier share when session timing
+proves that it falls outside the requested interval. Completed and excluded
+markers survive continuation, each bounded to 4096 IDs of at most 128 characters;
+the token's total size ceiling still applies.
+
 `transcriptVerified` refers to exact-instance **metadata**, not a completed body
 download: the privilege lookup returned a trusted transcript URL and did not
 explicitly disable downloading. Known download-disabled rows are not offered

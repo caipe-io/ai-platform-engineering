@@ -914,8 +914,10 @@ async def _userhub_transcripts_for_meeting(
         occurrence_starts[meeting_id] = verified_occurrence_start
     unavailable_instances: set[str] = set()
     semaphore = asyncio.Semaphore(4)
+    candidate_read_failed = False
 
     async def read_candidate(recording: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str] | None:
+        nonlocal candidate_read_failed
         recording_uuid = recording.get("recordUUID")
         if not isinstance(recording_uuid, str) or not recording_uuid:
             return None
@@ -927,8 +929,12 @@ async def _userhub_transcripts_for_meeting(
                 )
                 detail_response.raise_for_status()
             detail = detail_response.json()
-        except (httpx.HTTPError, ValueError):
+        except httpx.HTTPStatusError:
             logger.warning("User Hub recording detail request failed for %s", recording_uuid)
+            return None
+        except (httpx.RequestError, ValueError):
+            # An unread candidate must not make another instance appear unique.
+            candidate_read_failed = True
             return None
         if not isinstance(detail, dict):
             return None
@@ -980,12 +986,16 @@ async def _userhub_transcripts_for_meeting(
         # satisfied. Title/time matching must inspect every bounded candidate.
         for recording in candidates:
             candidate = await read_candidate(recording)
+            if candidate_read_failed:
+                raise RuntimeError("User Hub recording metadata could not be verified.")
             if candidate is not None:
                 resolved.append(candidate)
                 if len(resolved) >= max_results:
                     break
     else:
         checked = await asyncio.gather(*(read_candidate(recording) for recording in candidates))
+        if candidate_read_failed:
+            raise RuntimeError("User Hub recording metadata could not be verified.")
         resolved = [candidate for candidate in checked if candidate is not None]
         instances = dict.fromkeys(detail["meetingInstanceId"] for _, detail, _ in resolved)
         await asyncio.gather(*(read_occurrence_start(instance_id) for instance_id in instances))
