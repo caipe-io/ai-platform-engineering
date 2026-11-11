@@ -842,6 +842,9 @@ caipe-ui:
     SKILLS_HOOK_FILE: "/app/data/skills-live-skills/caipe-catalog.sh"
     # Feature flags
     ENABLE_SUBAGENT_CARDS: "true"
+    # Experimental chat participants and automatic team handoffs. Deployment ceilings.
+    AGENT_COORDINATION_ENABLED: "true"
+    AGENT_TEAM_HANDOFFS_ENABLED: "true"
     SSO_ENABLED: "false"
     # Okta background sync is configured via the structured `oktaSync:` block
     # below (sibling of `config:`), modeled after the Backstage Okta provider.

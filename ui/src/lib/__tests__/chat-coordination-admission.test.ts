@@ -1,18 +1,21 @@
 /** @jest-environment node */
 import { NextResponse } from "next/server";
 import { reserveCoordinationTurn, recordCoordinationRun, rejectCoordinationTurn } from "../chat-coordination-admission";
+const mockFeatures = jest.fn();
+jest.mock("@/lib/coordination/features.server", () => ({ getCoordinationFeatures: () => mockFeatures() }));
 const mockFind = jest.fn();
 const mockInsert = jest.fn();
 const mockReplace = jest.fn();
 const mockUpdate = jest.fn();
 jest.mock("@/lib/mongodb", () => ({ getCollection: async (name: string) => name === "conversations"
-  ? { findOne: async () => ({ coordination_agents: [{ agent_id: "helper" }] }) }
+  ? { findOne: async () => ({ participants: [{ type: "agent", id: "primary" }], coordination_agents: [{ agent_id: "helper" }] }) }
   : { findOne: mockFind, insertOne: mockInsert, replaceOne: mockReplace, updateOne: mockUpdate } }));
 const auth = { subject: "test-owner" };
 const body = () => ({ agent_id: "helper", conversation_id: "chat-example", client_request_id: "new-request" });
 const previous = { _id: "chat-example", generation: "previous", agent_id: "primary", owner_subject: "test-owner", request_id: "previous-request", run_id: "previous-run" };
 beforeEach(() => {
   jest.resetAllMocks();
+  mockFeatures.mockResolvedValue({ enabled: true, team: true });
   process.env.HARNESS_ENGINE_URL = "https://engine.example.test";
   process.env.HARNESS_ENGINE_INTERNAL_TOKEN = "test-internal-token";
   mockFind.mockResolvedValue(null);
@@ -53,4 +56,14 @@ it("restores the paused turn fence when its resume is rejected", async () => {
   const ticket = await reserveCoordinationTurn({ ...body(), command: "resume" }, auth);
   await rejectCoordinationTurn(ticket as Exclude<typeof ticket, NextResponse>);
   expect(mockReplace).toHaveBeenLastCalledWith(expect.objectContaining({ generation: expect.any(String), run_id: { $exists: false } }), { ...previous, agent_id: "helper" });
+});
+
+it("blocks new participant turns when disabled while preserving primary turns and paused-run recovery", async () => {
+  mockFeatures.mockResolvedValue({ enabled: false, team: false });
+  expect((await reserveCoordinationTurn(body(), auth) as NextResponse).status).toBe(403);
+  expect(mockInsert).not.toHaveBeenCalled();
+  expect(await reserveCoordinationTurn({ ...body(), agent_id: "primary" }, auth)).toMatchObject({ agent_id: "primary" });
+  mockFind.mockResolvedValue({ ...previous, agent_id: "helper" });
+  jest.spyOn(global, "fetch").mockResolvedValue(Response.json({ data: { run_id: "previous-run", conversation_id: "chat-example", agent_id: "helper", status: "paused" } }));
+  expect(await reserveCoordinationTurn({ ...body(), command: "resume" }, auth)).toMatchObject({ agent_id: "helper" });
 });

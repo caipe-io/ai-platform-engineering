@@ -15,7 +15,7 @@ The **Agent coordination** tab contains:
 - **Agents:** the primary agent, configured subagents, and the latest turn's
   observed delegations, and agents attached to the chat. Unconfirmed
   delegations are not shown as completed.
-- **Coordination:** the latest task list published by the primary agent,
+- **Tasks:** the latest task list published by the primary agent,
   restored from saved stream events after refresh. Delegation still follows the
   agent's configured instructions. Attached agents respond to explicitly
   addressed messages; owners can enable agent-to-agent handoffs in Team mode.
@@ -26,6 +26,42 @@ The **Agent coordination** tab contains:
 The **Agent info** tab preserves configuration, context usage, chat export,
 and session refresh. Read-only viewers cannot refresh the session.
 
+## Optional experimental features
+
+**Agent Coordination** and **Team handoffs** are experimental and enabled by
+default. They grant no agent or tool permissions and still require Harness Engine.
+
+| Control | Effect |
+| --- | --- |
+| Admin → Platform defaults → Agent Coordination | Enable/disable joining agents, recipient selection and new participant turns at runtime |
+| Admin → Platform defaults → Team handoffs | Independently enable/disable automatic assignments; manual mentions remain available |
+| `AGENT_COORDINATION_ENABLED=false` | Deployment ceiling: disable coordination, including team handoffs |
+| `AGENT_TEAM_HANDOFFS_ENABLED=false` | Deployment ceiling: disable automatic handoffs, keep manual participants |
+
+Set environment variables on the UI/BFF container, or use Helm:
+
+```yaml
+caipe-ui:
+  config:
+    AGENT_COORDINATION_ENABLED: "true"
+    AGENT_TEAM_HANDOFFS_ENABLED: "false"
+```
+
+- Deployment changes take effect after a container restart/Helm rollout. Admin
+  switches are persisted in `platform_config.agent_coordination` without a restart.
+- Deployment `false` cannot be overridden by Admin. Otherwise the runtime switch
+  applies; missing values default to enabled.
+- Open chats refresh capability controls within 10 seconds or on window focus.
+  With coordination off, the panel shows Agent info and the composer uses the
+  primary agent. Existing membership, history and separate sessions remain saved.
+- Disabling either switch cancels queued handoffs. Active responses can finish,
+  replay, resume a pending input or be stopped; disabling does not terminate them.
+- Re-enabling restores the UI and saved membership. It does not revive cancelled
+  queue items. Per-chat Team mode remains an independent owner opt-in and retains
+  its original sign-in expiration; the platform switch never creates delegation.
+- Server admission and delivery checks apply to API callers too. UI hiding is not
+  the enforcement boundary. Failed configuration reads do not enable coordination.
+
 ## Add an agent from chat
 
 1. Open **Agent coordination → Add agent** as the chat owner.
@@ -33,6 +69,9 @@ and session refresh. Read-only viewers cannot refresh the session.
 3. Select **Join chat**. The primary agent and conversation URL stay unchanged.
 4. Start a message with `@reviewer`, select it from `@` autocomplete, or use the
    **To** picker above the composer. Use `@primary` to return to the primary agent.
+
+The workspace lists every joined agent with its name, handle, runtime icon and
+participation status. It does not duplicate the composer’s recipient selector.
 
 - A recognized leading `@mention` is deleted as one object with Backspace or
   Delete. Any unselected message text remains. Removing the selected recipient's
@@ -90,19 +129,26 @@ Opening or collapsing the workspace does not start, stop, or replace a run.
 
 ## Team coordination and handoffs
 
-- **Mentions & assignments** is the default. Address a joined agent with `@handle`.
+- **Mentions** is the default: you choose which agent responds, using the
+  composer **To** picker or `@handle`.
+- Both response modes remain visible as buttons with short descriptions. The
+  active mode has a blue outline, tinted surface and checkmark. The composer is
+  the single recipient-selection control; the workspace shows the participant roster.
+- Detailed delegation limits and sign-in behavior remain in the info tooltip.
 - The chat owner can enable **Team coordination** in the right workspace panel.
 - Deep Agents and Claude SDK/ACP/CLI workers then receive `handoff_to_agent`.
   AgentCore can receive assignments; its remote runtime must implement a compatible
   tool to originate them.
 - The tool advertises other joined agents' names and handles to each agent,
   including the primary. It does not advertise their tools or share their files.
-  Mentions mode does not expose this handoff tool or its participant roster.
+  Only Team mode advertises the roster through the handoff tool. The workspace
+  roster remains visible in both modes.
 - The tool accepts a joined handle and a self-contained assignment. It queues work
   durably and returns an assignment ID. The receiving run starts after the sender
   completes. No model-output mention parser silently launches work.
 - The panel shows queued, working, completed, stopped or failed assignments.
-  Click a handle to select that participant and follow its Harness session.
+  Assignment results appear in the shared transcript. Use the composer **To**
+  picker or `@handle` to address a follow-up.
 - Each agent retains its separate session. Only the assignment text is transferred;
   transcripts, sandbox files and credentials are not automatically shared.
 - A chain allows at most eight assignments and four hops. Identical assignments

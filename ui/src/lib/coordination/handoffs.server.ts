@@ -1,3 +1,4 @@
+import { getCoordinationFeatures } from "./features.server";
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateRequest, type AuthResult } from "@/lib/da-proxy";
 import { ApiError } from "@/lib/api-error";
@@ -28,6 +29,7 @@ function participants(chat: Conversation) {
 }
 
 async function enabledPolicy(run: HarnessRun) {
+  if (!(await getCoordinationFeatures()).team) return null;
   const policy = await coordinationPolicy(run.conversation_id);
   if (!policy || policy.mode !== "team" || policy.owner !== run.owner_subject || !policy.sessionId || policy.expiresAt <= new Date()) return null;
   return policy;
@@ -150,6 +152,7 @@ export async function runHandoffsOnce(): Promise<void> {
     const fence = { _id: job._id, leaseToken: lease.$set.leaseToken };
     let status: Handoff["status"] = "pending", error: string | undefined;
     try {
+      if (!job.runId && !(await getCoordinationFeatures()).team) throw new Error("coordination_disabled");
       const policy = await coordinationPolicy(job.conversationId);
       if (!policy || policy.generation !== job.generation || policy.mode !== "team" || policy.owner !== job.owner || policy.expiresAt <= new Date()) throw new Error("coordination_disabled");
       const auth = await executionAuth(policy);
@@ -163,6 +166,7 @@ export async function runHandoffsOnce(): Promise<void> {
       if (["failed", "cancelled"].includes(parent.status) || parent.cancellation_requested) status = "skipped";
       else if (parent.status === "completed") {
         if (!job.runId) {
+          if (!(await getCoordinationFeatures()).team) throw new Error("coordination_disabled");
           const target = await resolveHarnessGatewayTarget(job.targetAgentId, { subject: auth.subject!, conversationId: job.conversationId, requireEngine: true });
           if (target instanceof NextResponse || target.kind !== "harness_engine") throw new Error("engine_unavailable");
           await saveAssignment(job, access.conversation);

@@ -1,5 +1,6 @@
 "use client";
 
+import { CoordinationFeatureSettings } from "./CoordinationFeatureSettings";
 import { AutoSaveStatus } from "@/components/settings/shared/AutoSaveStatus";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
 import { Button } from "@/components/ui/button";
@@ -260,6 +261,7 @@ export function PlatformDefaultsSettings({
 
   return (
     <>
+      <CoordinationFeatureSettings readOnly={readOnly} />
       <SettingsCard
         description="This fallback applies only when a person has not chosen a personal default agent."
         title={<span className="flex items-center gap-2"><Bot className="h-5 w-5 text-primary" />Platform default agent</span>}

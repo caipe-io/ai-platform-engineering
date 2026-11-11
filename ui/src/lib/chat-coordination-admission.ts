@@ -1,3 +1,5 @@
+import { getCoordinationFeatures } from "@/lib/coordination/features.server";
+import { getAgentId } from "@/types/a2a";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import type { AuthResult } from "@/lib/da-proxy";
@@ -24,6 +26,9 @@ interface Admission {
 export async function reserveCoordinationTurn(body: Record<string, unknown>, auth: AuthResult): Promise<Admission | NextResponse | null> {
   const conversation = await (await getCollection<Conversation>("conversations")).findOne({ _id: String(body.conversation_id) });
   if (!conversation?.coordination_agents?.length) return null;
+  if (body.agent_id !== getAgentId(conversation) && body.command !== "resume" && !(await getCoordinationFeatures()).enabled) {
+    return NextResponse.json({ error: "Agent Coordination is disabled by the administrator" }, { status: 403 });
+  }
   const collection = await getCollection<Admission>("chat_coordination_admissions");
   const key = String(body.conversation_id);
   const previous = await collection.findOne({ _id: key });
