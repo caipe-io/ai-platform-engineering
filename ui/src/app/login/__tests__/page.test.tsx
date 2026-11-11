@@ -362,6 +362,19 @@ describe('Login Page', () => {
   // ─────────────────────────────────────────────────────────────────────
 
   describe('callbackUrl redirect flow', () => {
+    it.each([null, 'session_expired', 'session_reset', 'loop'])('does not restore an abandoned destination for a new login (%s)', async recovery => {
+      sessionStorageData['login-return-to'] = JSON.stringify({ path: '/chat/abandoned', savedAt: Date.now() });
+      mockSearchParamsGet.mockImplementation((key: string) => key === recovery ? 'true' : null);
+      if (recovery === 'loop') {
+        sessionStorageData['login-redirect-count'] = '2';
+        sessionStorageData['login-redirect-ts'] = String(Date.now());
+      }
+      mockUseSession.mockReturnValue({ data: null, status: 'unauthenticated' } as unknown);
+      render(<LoginPage />);
+      fireEvent.click(screen.getByText(/sign in with sso/i));
+      await waitFor(() => expect(mockSignIn).toHaveBeenCalledWith('oidc', { callbackUrl: '/' }));
+    });
+
     it.each(['unauthenticated', 'authenticated'])('normalizes the absolute OAuth retry destination when %s', async status => {
       mockSearchParamsGet.mockImplementation((key: string) => {
         if (key === 'callbackUrl') return `${window.location.origin}/chat/example?tab=activity`;

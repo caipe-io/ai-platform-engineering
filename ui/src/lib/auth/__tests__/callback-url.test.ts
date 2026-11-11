@@ -14,6 +14,8 @@ describe('login callback validation', () => {
     [`${origin}/chat/example?tab=activity`, '/chat/example?tab=activity'],
     ['/apps/example?repo=example%2Frepo&report=saved', '/apps/example?repo=example%2Frepo&report=saved'],
     ['/api/auth/example/start?retry=true', '/api/auth/example/start?retry=true'],
+    ['/schedules?path=a\\b#section\\details', '/schedules?path=a\\b#section\\details'],
+    [`${origin}/schedules?path=a\\b#section\\details`, '/schedules?path=a\\b#section\\details'],
   ])('retains a safe destination %s', (value, expected) => {
     expect(normalizeCallbackUrl(value, origin)).toBe(expected);
   });
@@ -26,6 +28,7 @@ describe('login callback validation', () => {
     '/chat/\nexample', '/.//outside.example', 'javascript:alert(1)',
     '/login?callbackUrl=%2Fchat%2Fexample', `${origin}/login?error=OAuthCallback`,
     '/example/../login',
+    '/chat\\example?path=a\\b', `${origin}\\outside.example/chat?path=a\\b`,
   ])('rejects an external, malformed, or looping destination %s', value => {
     expect(normalizeCallbackUrl(value, origin)).toBe('/');
   });
@@ -70,6 +73,16 @@ describe('tab-local login retry destination', () => {
     rememberLoginReturnTo('/chat/example');
     rememberLoginReturnTo('/');
     expect(getLoginCallbackUrl(null, true)).toBe('/');
+  });
+
+  it.each(['{', 'null', '[]', '1', 'true', '"record"', '{}',
+    '{"path":"/chat/example","savedAt":"invalid"}',
+  ])('silently discards a corrupt recovery record %s', record => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    sessionStorage.setItem(LOGIN_RETURN_TO_KEY, record);
+    expect(getLoginCallbackUrl(null, true)).toBe('/');
+    expect(sessionStorage.getItem(LOGIN_RETURN_TO_KEY)).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('keeps sign-in available when browser storage is disabled', () => {

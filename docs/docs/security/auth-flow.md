@@ -40,8 +40,9 @@ sequenceDiagram
 - Login accepts relative paths and absolute URLs from the browser's own origin;
   external destinations and login loops fall back to `/`.
 - Before SSO, the destination is saved in tab-local session storage for 15 minutes.
-  Error recovery uses it only when the callback parameter is missing. Successful
-  application admission clears it; an ordinary new login does not restore it.
+  An OAuth error return uses it only when the callback parameter is missing.
+  Session expiry, session reset, and loop recovery start a new login without
+  restoring a previous attempt. Successful application admission clears it.
 - Client-side session expiry also preserves the page's query and fragment.
 
 ## Chat Request

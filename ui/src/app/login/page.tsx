@@ -75,8 +75,10 @@ function LoginContent() {
   const error = searchParams.get("error");
   const sessionExpired = searchParams.get("session_expired") === "true";
   const sessionReset = searchParams.get("session_reset");
+  // Session expiry/reset and loop recovery start a new login. Only an OAuth
+  // error return may recover a destination from the preceding sign-in attempt.
   const callbackUrl = getLoginCallbackUrl(
-    searchParams.get("callbackUrl"), Boolean(error || sessionExpired || sessionReset || loopBroken),
+    searchParams.get("callbackUrl"), Boolean(error) && !sessionExpired && !sessionReset && !loopBroken,
   );
 
   // Redirect if already logged in. A stale session_expired URL can remain after
