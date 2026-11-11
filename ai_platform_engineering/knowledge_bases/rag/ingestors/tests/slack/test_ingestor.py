@@ -158,3 +158,91 @@ class TestProcessChannelIngestionSeedsSyncedLookback:
     client.upsert_datasource.assert_awaited_once()
     persisted = client.upsert_datasource.call_args.args[0]
     assert persisted.metadata["synced_lookback_days"] == 7
+
+
+def make_syncer(newest_ts: str = "1700000500.000000") -> MagicMock:
+  syncer = MagicMock()
+  syncer.fetch_channel_messages = MagicMock(return_value=([{"ts": newest_ts}], newest_ts))
+  syncer.group_messages_by_thread = MagicMock(return_value=[MagicMock()])
+  return syncer
+
+
+def make_first_sync_inputs(client: MagicMock) -> tuple[DataSourceInfo, MagicMock, SlackIngestRequest]:
+  ds = make_datasource(last_ts=None, lookback_days=7, synced_lookback_days=None)
+  ds.metadata.pop("last_ts", None)
+  client.list_datasources = AsyncMock(return_value=[ds])
+  job_manager = make_job_manager()
+  job_manager.get_job = AsyncMock(
+    return_value=JobInfo(job_id="job-1", status=JobStatus.PENDING, created_at=0, datasource_id=ds.datasource_id)
+  )
+  request = SlackIngestRequest(channel_id="C123", lookback_days=7, reload_interval=86400)
+  return ds, job_manager, request
+
+
+class TestCheckpointPersistedAfterIngest:
+  """last_ts must only advance once the fetched messages are in the index.
+
+  If the checkpoint is persisted before ingest_documents, a failed ingest (or a crash
+  between the two calls) still advances it, so the next reload starts after the messages
+  from the failed run and they are never indexed.
+  """
+
+  async def test_reload_failed_ingest_does_not_advance_last_ts(self):
+    ds = make_datasource(last_ts="1700000000.000000")
+    client = make_client()
+    client.ingest_documents = AsyncMock(side_effect=RuntimeError("ingest failed"))
+    syncer = make_syncer(newest_ts="1700000500.000000")
+
+    with patch.object(ingestor_module, "SlackChannelSyncer", return_value=syncer):
+      with patch.object(ingestor_module, "WebClient"):
+        with pytest.raises(RuntimeError, match="ingest failed"):
+          await reload_datasource(client, make_job_manager(), ds)
+
+    client.upsert_datasource.assert_not_awaited()
+    assert ds.metadata["last_ts"] == "1700000000.000000"
+
+  async def test_reload_persists_last_ts_after_successful_ingest(self):
+    ds = make_datasource(last_ts="1700000000.000000")
+    client = make_client()
+    calls = MagicMock()
+    calls.attach_mock(client.ingest_documents, "ingest_documents")
+    calls.attach_mock(client.upsert_datasource, "upsert_datasource")
+    syncer = make_syncer(newest_ts="1700000500.000000")
+
+    with patch.object(ingestor_module, "SlackChannelSyncer", return_value=syncer):
+      with patch.object(ingestor_module, "WebClient"):
+        await reload_datasource(client, make_job_manager(), ds)
+
+    assert [name for name, *_ in calls.mock_calls] == ["ingest_documents", "upsert_datasource"]
+    persisted = client.upsert_datasource.call_args.args[0]
+    assert persisted.metadata["last_ts"] == "1700000500.000000"
+
+  async def test_first_sync_failed_ingest_does_not_persist_last_ts(self):
+    client = make_client()
+    client.ingest_documents = AsyncMock(side_effect=RuntimeError("ingest failed"))
+    ds, job_manager, request = make_first_sync_inputs(client)
+    syncer = make_syncer(newest_ts="1700000500.000000")
+
+    with patch.object(ingestor_module, "SlackChannelSyncer", return_value=syncer):
+      with patch.object(ingestor_module, "WebClient"):
+        with pytest.raises(RuntimeError, match="ingest failed"):
+          await process_channel_ingestion(client, job_manager, request, "job-1")
+
+    client.upsert_datasource.assert_not_awaited()
+    assert "last_ts" not in ds.metadata
+
+  async def test_first_sync_persists_last_ts_after_successful_ingest(self):
+    client = make_client()
+    calls = MagicMock()
+    calls.attach_mock(client.ingest_documents, "ingest_documents")
+    calls.attach_mock(client.upsert_datasource, "upsert_datasource")
+    ds, job_manager, request = make_first_sync_inputs(client)
+    syncer = make_syncer(newest_ts="1700000500.000000")
+
+    with patch.object(ingestor_module, "SlackChannelSyncer", return_value=syncer):
+      with patch.object(ingestor_module, "WebClient"):
+        await process_channel_ingestion(client, job_manager, request, "job-1")
+
+    assert [name for name, *_ in calls.mock_calls] == ["ingest_documents", "upsert_datasource"]
+    persisted = client.upsert_datasource.call_args.args[0]
+    assert persisted.metadata["last_ts"] == "1700000500.000000"
