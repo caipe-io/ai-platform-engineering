@@ -294,6 +294,7 @@ class TestListAndGet:
         assert response.json() == {
             "minimum_schedule_interval_seconds": 1800,
             "enabled_webhook_providers": ["github", "jira", "slack", "pagerduty"],
+            "review_execution_version": 1,
         }
 
     def test_list_tasks_initially_empty(self, client: TestClient):

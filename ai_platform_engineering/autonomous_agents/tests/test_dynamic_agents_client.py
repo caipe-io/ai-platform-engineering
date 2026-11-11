@@ -700,3 +700,24 @@ class TestAutonomousFlag:
             await invoke_dynamic_agent_streaming(prompt="hi", task_id="t1", agent_id="agent-x")
         body = client.stream.call_args.kwargs["json"]
         assert body["autonomous"] is True
+
+
+@pytest.mark.parametrize("version", [None, 1])
+async def test_bounded_review_requires_runtime_capability(monkeypatch, version):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    import httpx
+
+    from autonomous_agents.services import dynamic_agents_client as subject
+
+    monkeypatch.setattr(subject, "get_settings", lambda: SimpleNamespace(dynamic_agents_url="http://runtime.example.test"))
+    monkeypatch.setattr(subject, "_task_headers_with_auth", AsyncMock(return_value={"Authorization": "Bearer test-owner"}))
+    client_class = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"review_execution_version": version}))
+    monkeypatch.setattr(subject.httpx, "AsyncClient", lambda **kwargs: client_class(transport=transport, **kwargs))
+    if version is None:
+        with pytest.raises(subject.DynamicAgentsClientError, match="runtime update"):
+            await subject.require_review_runtime(agent_id="example-agent", owner_email="owner@example.test", owner_sub="owner")
+    else:
+        await subject.require_review_runtime(agent_id="example-agent", owner_email="owner@example.test", owner_sub="owner")

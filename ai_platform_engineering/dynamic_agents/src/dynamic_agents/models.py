@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -580,6 +580,8 @@ class AppContextPromptConfig(BaseModel):
 class DynamicAgentConfigBase(BaseModel):
     """Base fields for dynamic agent configuration."""
 
+    _source_config_hash: str | None = PrivateAttr(default=None)
+    review_scope: dict[str, str] | None = Field(default=None, description="Pinned read-only review delegation scope")
     name: str = Field(..., description="Display name")
     description: str | None = Field(None, description="Optional description")
     system_prompt: str = Field(..., description="Main system prompt / instructions")

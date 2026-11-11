@@ -60,4 +60,5 @@ async def probe_agent(
         "id": agent.id,
         "name": agent.name,
         "enabled": getattr(agent, "enabled", True),
+        "review_execution_version": 1,
     }

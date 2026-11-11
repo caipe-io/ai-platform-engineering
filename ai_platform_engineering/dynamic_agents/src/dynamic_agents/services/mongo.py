@@ -5,6 +5,8 @@ handled by the Next.js gateway. This module provides read-only access
 to agent and MCP server configurations.
 """
 
+import hashlib
+import json
 import logging
 from functools import lru_cache
 from pathlib import Path
@@ -172,7 +174,9 @@ class MongoDBService:
         """Get a dynamic agent config by ID."""
         doc = self._get_agents_collection().find_one({"_id": agent_id})
         if doc:
-            return DynamicAgentConfig(**_strip_nulls(doc))
+            config = DynamicAgentConfig(**_strip_nulls(doc))
+            config._source_config_hash = hashlib.sha256(json.dumps(doc, sort_keys=True, default=str).encode()).hexdigest()
+            return config
         return None
 
     def resolve_rag_datasource_ids(

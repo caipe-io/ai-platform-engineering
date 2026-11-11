@@ -489,3 +489,62 @@ Follow the project-wide contribution guidelines in [AGENTS.md](../../../../AGENT
 - Branch naming: `prebuild/feat/autonomous-agents-<description>`
 - Commits: conventional commits + DCO sign-off (`git commit -s`)
 - Lint before committing: `uv run ruff check src/`
+
+### Checkpointed repository review
+
+Tasks opt in through `metadata.review_execution_version=1` and a configured
+`metadata.repository`. `metadata.review_method_bindings` maps reporting aliases
+to scanned original Hub attachment IDs. The event must match that repository,
+PR number and head SHA. Inventory, related-file groups and cross-group
+verification run in isolated contexts with narrowed read-only tools. Groups
+use estimated diff-token budgets and at most five files; a failed multi-file
+group splits. Large files are paged within a group. Coverage is model-reported,
+validated against the inventory, and never inferred from transport success.
+
+Each phase has a three-minute timeout, two attempts per invocation and a bounded
+JSON report. A run has a twenty-minute budget; exhausted or missing evidence
+remains incomplete. The final publication phase retains the configured agent's
+existing publication guards and is never automatically retried after an
+uncertain write. This advisory review is not an approval or merge gate.
+
+Checkpoints bind task, owner, agent configuration, policy and exact head, and
+expire after seven days. `POST /tasks/{task_id}/runs/{run_id}/resume-review`
+requires the authenticated task owner/admin, a failed run and a private
+checkpoint with no publication attempt. It starts a new run, preserves completed
+phases and narrows source context again. Concurrent requests return the same
+resuming run ID. A new manual review request performs fresh inspection.
+The run's `review_execution` field distinguishes completed, incomplete and
+skipped reviews from generic execution status.
+
+Scoped manual reviews use `POST /tasks/{task_id}/reviews/run` with a request UUID,
+repository, PR number and exact head SHA. The authenticated task owner/admin is
+required; the task must opt into bounded reviews. The server supplies manual
+context and uses the existing capacity-limited FIFO and delivery deduplication.
+The generic task trigger remains unchanged. The agent independently verifies
+the live open/non-draft PR and head before any inspection or publication.
+
+If Dynamic Agents uses a different MongoDB database or collection on the shared
+Mongo connection, set `DYNAMIC_AGENTS_MONGODB_DATABASE` and
+`DYNAMIC_AGENTS_COLLECTION` on Autonomous to match that service. Defaults use the
+autonomous database and `dynamic_agents`. Task deletion purges private review
+checkpoints alongside run history.
+
+Review inspection and publication compare the Dynamic Agents configuration hash
+against the same Mongo snapshot used to construct that agent. The runtime probe
+must advertise review execution v1; older services fail closed. Delegated
+general-purpose reviewers receive the pinned scope and source-trust rules in
+their own system prompt, independent of the parent's task description.
+
+`metadata.review_phase_methods` may assign method aliases to `inspect` and
+`verify`. Both roles require non-empty lists when methods are configured, and
+together must cover every configured original method. Defaults require all
+attached methods. Required IDs must appear in complete phase evidence; this is
+reviewer-reported evidence, not proof of causal attribution. The roles are part
+of the checkpoint fingerprint.
+
+Resume uses the same capacity-limited FIFO as webhook/manual reviews. Its
+producer lease is renewed while queued or executing; checkpoint writes and
+cleanup are fenced to that run. Persistence has a ten-second timeout within the
+twenty-minute review budget. A remote timeout cannot prove the remote read has
+stopped, so automatic retry and resume are disabled for that checkpoint. Inspect
+its private phase conversation before starting a fresh review.

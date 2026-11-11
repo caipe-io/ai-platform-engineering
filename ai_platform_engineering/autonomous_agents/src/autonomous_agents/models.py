@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal, Optional
+from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -386,6 +387,16 @@ class FollowUpContext(BaseModel):
     )
 
 
+class ReviewRunCreate(BaseModel):
+    """Only a PR identity may be supplied to the authenticated review endpoint."""
+
+    model_config = {"extra": "forbid"}
+    request_id: UUID
+    repository: str = Field(pattern=r"^[\w.-]+/[\w.-]+$", max_length=300)
+    pull_request_number: int = Field(gt=0, strict=True)
+    head_sha: str = Field(pattern=r"^[a-f0-9]{40}$")
+
+
 class TaskRunFollowUpCreate(BaseModel):
     """Authenticated UI request to continue one webhook run."""
 
@@ -419,6 +430,7 @@ class TaskRun(BaseModel):
     status: TaskStatus
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None
+    review_execution: dict[str, Any] | None = None
     response_preview: str | None = None
     error: str | None = None
     # When this run was produced by a follow-up reply (e.g. the Webex
