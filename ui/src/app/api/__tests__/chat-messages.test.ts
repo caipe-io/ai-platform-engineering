@@ -160,6 +160,7 @@ describe('GET /api/chat/conversations/[id]/messages', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: legacyId,
       owner_id: 'user@example.com',
     });
@@ -182,6 +183,7 @@ describe('GET /api/chat/conversations/[id]/messages', () => {
     // Conversation exists and user is owner
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
@@ -291,6 +293,7 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
@@ -358,6 +361,7 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
@@ -433,6 +437,7 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
@@ -486,6 +491,7 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
@@ -514,10 +520,15 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [{ type: 'agent', id: 'example-agent' }],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
     mockCollections['conversations'] = convCol;
+
+    const agentsCol = createMockCollection();
+    agentsCol.findOne.mockResolvedValue({ _id: 'example-agent', name: 'Hello Agent' });
+    mockCollections['dynamic_agents'] = agentsCol;
 
     const msgCol = createMockCollection();
     msgCol.updateOne.mockResolvedValue({ upsertedId: 'new-id', upsertedCount: 1, modifiedCount: 0, acknowledged: true });
@@ -607,6 +618,7 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com', // Different owner
       sharing: { shared_with: [] },
@@ -643,6 +655,7 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'kevin@example.com', // the real Slack user's email
       sharing: { shared_with: [] },
@@ -688,7 +701,11 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
     });
 
     const convCol = createMockCollection();
-    convCol.findOne.mockResolvedValue({ _id: testConversationId, owner_id: 'mnavalta@example.com' });
+    convCol.findOne.mockResolvedValue({
+      participants: [],
+      _id: testConversationId,
+      owner_id: 'test-owner@example.com',
+    });
     mockCollections['conversations'] = convCol;
 
     const msgCol = createMockCollection();
@@ -708,7 +725,7 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
     const res = await POST(req, { params: Promise.resolve({ id: testConversationId }) });
     expect(res.status).toBe(201);
     const updateDoc = msgCol.updateOne.mock.calls[0][1];
-    expect(updateDoc.$setOnInsert.owner_id).toBe('mnavalta@example.com');
+    expect(updateDoc.$setOnInsert.owner_id).toBe('test-owner@example.com');
   });
 
   it('resolves agent_id to the display name when agent_name is absent', async () => {
@@ -718,7 +735,11 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
     });
 
     const convCol = createMockCollection();
-    convCol.findOne.mockResolvedValue({ _id: testConversationId, owner_id: 'kevin@example.com' });
+    convCol.findOne.mockResolvedValue({
+      participants: [{ type: 'agent', id: 'agent-hello-agent' }],
+      _id: testConversationId,
+      owner_id: 'test-owner@example.com',
+    });
     mockCollections['conversations'] = convCol;
 
     // dynamic_agents lookup: agent-hello-agent → "Hello Agent"
@@ -748,7 +769,7 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
     const updateDoc = msgCol.updateOne.mock.calls[0][1];
     // Stored as the display name web uses — same label across both surfaces.
     expect(updateDoc.$set.metadata.agent_name).toBe('Hello Agent');
-    expect(updateDoc.$set.metadata).not.toHaveProperty('agent_id');
+    expect(updateDoc.$set.metadata.agent_id).toBe('agent-hello-agent');
   });
 
   it('derives agent_name from the conversation agent participant when the client sends none (web)', async () => {
@@ -810,6 +831,7 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
@@ -871,6 +893,7 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
@@ -933,6 +956,7 @@ describe('POST /api/chat/conversations/[id]/messages', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
@@ -1003,6 +1027,7 @@ describe('Sender identity in shared conversations', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'owner@example.com', // Different from sender
       sharing: { shared_with: ['alice@example.com'] },
@@ -1068,6 +1093,7 @@ describe('Sender identity in shared conversations', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'bob@example.com',
     });
@@ -1123,6 +1149,7 @@ describe('Sender identity in shared conversations', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
@@ -1177,6 +1204,7 @@ describe('Sender identity in shared conversations', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'alice@example.com',
     });
@@ -1235,6 +1263,7 @@ describe('Sender identity in shared conversations', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
@@ -1295,6 +1324,7 @@ describe('Sender identity in shared conversations', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
@@ -1363,6 +1393,7 @@ describe('Sender identity in shared conversations', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
@@ -1437,6 +1468,7 @@ describe('Sender identity in shared conversations', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
@@ -1503,6 +1535,7 @@ describe('Cross-device message persistence', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
@@ -1670,6 +1703,7 @@ describe('POST /api/chat/conversations/[id]/messages — admin audit write block
   function setupConversationMocks(ownerEmail: string) {
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: ownerEmail,
       title: 'Test Conversation',

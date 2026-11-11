@@ -129,6 +129,7 @@ const TEST_CONV_ID = '12345678-1234-1234-1234-123456789abc';
 function makeConversation(overrides: unknown = {}) {
   return {
     _id: TEST_CONV_ID,
+    participants: [],
     title: 'Test Conversation',
     owner_id: OWNER_EMAIL,
     created_at: new Date(),

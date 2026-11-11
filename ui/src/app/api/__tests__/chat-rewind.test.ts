@@ -6,7 +6,7 @@ import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
 const mockRequireAgentUsePermission = jest.fn().mockResolvedValue(null);
-const mockAuthorizeConversationWriteAccess = jest.fn().mockResolvedValue({ denial: null });
+const mockAuthorizeConversationWriteAccess = jest.fn();
 const mockGetCollection = jest.fn();
 jest.mock("@/lib/harness-gateway", () => ({ getPinnedHarnessGatewayTarget: async () => null }));
 
@@ -82,6 +82,10 @@ describe("POST /api/chat/conversations/[id]/rewind", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAuthorizeConversationWriteAccess.mockImplementation(async (_auth, id) => ({
+      denial: null,
+      conversation: await (await mockGetCollection("conversations")).findOne({ _id: id }),
+    }));
   });
 
   afterAll(() => {

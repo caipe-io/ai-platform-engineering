@@ -137,6 +137,7 @@ describe('POST /api/chat/conversations/[id]/messages — owner_id', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
@@ -207,6 +208,7 @@ describe('POST /api/chat/conversations/[id]/messages — owner_id', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'user@example.com',
       owner_subject: 'test-sub',
@@ -248,6 +250,7 @@ describe('POST /api/chat/conversations/[id]/messages — owner_id', () => {
     // Conversation belongs to alice
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       owner_id: 'alice@example.com',
       sharing: { shared_with: [{ email: 'bob@example.com' }] },
@@ -309,6 +312,7 @@ describe('POST /api/chat/conversations/[id]/messages — owner_id', () => {
     // the same mock collection, so findOne must return the legacy doc for both.
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [],
       _id: testConversationId,
       // owner_id is absent (legacy data)
     });
@@ -366,10 +370,15 @@ describe('POST /api/chat/conversations/[id]/messages — owner_id', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [{ type: 'agent', id: 'example-agent' }],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
     mockCollections['conversations'] = convCol;
+
+    const agentsCol = createMockCollection();
+    agentsCol.findOne.mockResolvedValue({ _id: 'example-agent', name: 'Example Agent' });
+    mockCollections['dynamic_agents'] = agentsCol;
 
     const sharingCol = createMockCollection();
     mockCollections['sharing_access'] = sharingCol;
@@ -400,7 +409,7 @@ describe('POST /api/chat/conversations/[id]/messages — owner_id', () => {
         metadata: {
           turn_id: 'turn-1',
           is_final: true,
-          agent_name: 'argocd',
+          agent_name: 'Client Label',
           latency_ms: 1200,
         },
       }),
@@ -412,7 +421,7 @@ describe('POST /api/chat/conversations/[id]/messages — owner_id', () => {
     const updateDoc = msgCol.updateOne.mock.calls[0][1];
     expect(updateDoc.$setOnInsert.owner_id).toBe('user@example.com');
     expect(updateDoc.$setOnInsert.role).toBe('assistant');
-    expect(updateDoc.$set.metadata.agent_name).toBe('argocd');
+    expect(updateDoc.$set.metadata.agent_name).toBe('Example Agent');
     expect(updateDoc.$set.metadata.latency_ms).toBe(1200);
   });
 
@@ -425,10 +434,15 @@ describe('POST /api/chat/conversations/[id]/messages — owner_id', () => {
 
     const convCol = createMockCollection();
     convCol.findOne.mockResolvedValue({
+      participants: [{ type: 'agent', id: 'example-agent' }],
       _id: testConversationId,
       owner_id: 'user@example.com',
     });
     mockCollections['conversations'] = convCol;
+
+    const agentsCol = createMockCollection();
+    agentsCol.findOne.mockResolvedValue({ _id: 'example-agent', name: 'Example Agent' });
+    mockCollections['dynamic_agents'] = agentsCol;
 
     const sharingCol = createMockCollection();
     mockCollections['sharing_access'] = sharingCol;
@@ -461,7 +475,7 @@ describe('POST /api/chat/conversations/[id]/messages — owner_id', () => {
           is_final: true,
           model: 'gpt-4o',
           latency_ms: 800,
-          agent_name: 'aws',
+          agent_name: 'Client Label',
         },
         stream_events: [
           { id: 'e1', type: 'tool_start', toolName: 'cost_explorer' },
@@ -475,7 +489,7 @@ describe('POST /api/chat/conversations/[id]/messages — owner_id', () => {
     const updateDoc = msgCol.updateOne.mock.calls[0][1];
     expect(updateDoc.$setOnInsert.owner_id).toBe('user@example.com');
     expect(updateDoc.$set.metadata.latency_ms).toBe(800);
-    expect(updateDoc.$set.metadata.agent_name).toBe('aws');
+    expect(updateDoc.$set.metadata.agent_name).toBe('Example Agent');
     expect(updateDoc.$set.metadata.is_final).toBe(true);
     expect(updateDoc.$set.stream_events).toHaveLength(1);
   });

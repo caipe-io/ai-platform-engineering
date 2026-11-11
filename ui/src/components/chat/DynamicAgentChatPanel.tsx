@@ -1,5 +1,6 @@
 "use client";
 
+import { agentMentionColor } from "@/lib/agent-mention-colors";
 import { handoffAssistantMessageId } from "@/lib/chat-coordination";
 import type { ChatCoordination } from "@/hooks/use-chat-coordination";
 import { leadingAgentMention } from "@/lib/chat-coordination";
@@ -2278,11 +2279,13 @@ export function ChatPanel({
       addStreamEvent, setConversationStreaming, clearStreamEvents, getActiveConversation,
       buildStreamCallbacks, finalizeStreamLoop, suppliedClientContext, requestReasoningEffort, requestOptions]);
 
+  const mentionHandles = coordination?.agents.map(member => member.handle) ?? [];
+  const selectedHandle = coordination?.agents.find(member => member.agent_id === agentId)?.handle ?? "primary";
   const mentionCommands: SlashCommand[] = coordination ? [
-    { id: coordination.primaryAgentId, label: "primary", description: "Primary chat agent", category: "participant", action: "insert", value: "@primary" },
+    { id: coordination.primaryAgentId, label: "primary", description: "Primary chat agent", category: "participant", action: "insert", value: "@primary", labelClassName: agentMentionColor("primary", mentionHandles) },
     ...coordination.agents.filter(member => coordination.availableAgents.some(candidate => candidate._id === member.agent_id)).map(member => ({
       id: member.agent_id, label: member.handle, description: member.name,
-      category: "participant" as const, action: "insert" as const, value: `@${member.handle}`,
+      category: "participant" as const, action: "insert" as const, value: `@${member.handle}`, labelClassName: agentMentionColor(member.handle, mentionHandles),
     })),
   ] : [];
   const menuCommands = mentionMenu ? mentionCommands : slashCommands;
@@ -2679,6 +2682,7 @@ export function ChatPanel({
                       return (
                         <ChatMessage
                           key={msg.id}
+                          mentionHandles={mentionHandles}
                           message={remoteMessage ? { ...msg, isInterrupted: false } : msg}
                           onCopy={handleCopy}
                           canEdit={canEditMessage}
@@ -3072,7 +3076,7 @@ export function ChatPanel({
                   options={[
                     { value: coordination.primaryAgentId, label: "@primary" },
                     ...coordination.agents.map(member => ({ value: member.agent_id, label: `@${member.handle}`, disabled: !coordination.availableAgents.some(candidate => candidate._id === member.agent_id) })),
-                  ]} disabled={isThisConversationStreaming || isRemoteResponse || Boolean(pendingUserInput || pendingToolApproval)} triggerClassName="h-7 rounded-full border-0 bg-blue-500/10 text-xs text-blue-600 shadow-none hover:bg-blue-500/15 dark:text-blue-400" /></div>
+                  ]} disabled={isThisConversationStreaming || isRemoteResponse || Boolean(pendingUserInput || pendingToolApproval)} triggerClassName={cn("h-7 rounded-full border-0 bg-muted text-xs shadow-none hover:bg-muted/80", agentMentionColor(selectedHandle, mentionHandles))} /></div>
               </div>}
               {maxEffortAnimationKey > 0 && (
                 <div
@@ -3196,8 +3200,8 @@ export function ChatPanel({
                     </motion.span>
                   )}
                 </AnimatePresence>
-                {highlightedMention && <div ref={mentionHighlightRef} aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-1.5 py-2 text-sm leading-6 text-foreground">
-                  <span className="text-blue-600 dark:text-blue-400">{highlightedMention}</span>{input.slice(highlightedMention.length)}{"\n"}
+                {highlightedMention && <div ref={mentionHighlightRef} aria-hidden="true" className="pointer-events-none select-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-1.5 py-2 text-sm leading-6 text-foreground">
+                  <span className={agentMentionColor(inputMention ?? "primary", mentionHandles)}>{highlightedMention}</span>{input.slice(highlightedMention.length)}{"\n"}
                 </div>}
                 <TextareaAutosize
                   ref={inputRef}
@@ -3218,7 +3222,7 @@ export function ChatPanel({
                       ? `Type to queue another message${queuedMessages.length > 0 ? ` (${queuedMessages.length} queued)` : ""}, or Cmd+Enter to send now...`
                       : placeholder ?? `Ask anything, or type / to see commands, skills, and agents...`
                   }
-                  className={cn("relative min-h-10 w-full resize-none bg-transparent px-1.5 py-2 text-sm leading-6 caret-foreground outline-none placeholder:text-muted-foreground", highlightedMention ? "text-transparent selection:text-foreground" : "text-foreground")}
+                  className={cn("relative min-h-10 w-full resize-none bg-transparent px-1.5 py-2 text-sm leading-6 caret-foreground outline-none placeholder:text-muted-foreground", highlightedMention ? "text-transparent" : "text-foreground")}
                   minRows={1}
                   maxRows={10}
                 />
@@ -3377,6 +3381,7 @@ function filterEventsForTurn(
 }
 
 interface ChatMessageProps {
+  mentionHandles?: readonly string[];
   message: ChatMessageType;
   onCopy: (content: string, id: string) => void;
   canEdit?: boolean;
@@ -3420,6 +3425,7 @@ interface ChatMessageProps {
 }
 
 const ChatMessage = React.memo(function ChatMessage({
+  mentionHandles,
   message,
   onCopy,
   canEdit = false,
@@ -3619,7 +3625,7 @@ const ChatMessage = React.memo(function ChatMessage({
                 className="chat-user-message rounded-xl rounded-tr-sm relative overflow-hidden inline-block px-4 py-3 max-w-full"
               >
                 <div className="overflow-hidden break-words text-left" style={{ overflowWrap: 'anywhere' }}>
-                  <MarkdownRenderer content={message.content} variant="user" />
+                  <MarkdownRenderer content={message.content} variant="user" mentionHandles={mentionHandles} />
                 </div>
               </div>
             ) : null}
