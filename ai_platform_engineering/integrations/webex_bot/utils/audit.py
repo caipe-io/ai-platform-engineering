@@ -24,6 +24,8 @@ AuditPdp = Literal["keycloak", "agent_gateway", "openfga"]
 WebexAuditReasonCode = Literal[
     "OK",
     "WEBEX_USER_NOT_LINKED",
+    "WEBEX_IDENTITY_AUTO_LINKED",
+    "WEBEX_IDENTITY_AUTO_LINK_REJECTED",
     "WEBEX_IDENTITY_UNAVAILABLE",
     "WEBEX_WORKSPACE_UNCONFIGURED",
     "WEBEX_SPACE_TEAM_NOT_FOUND",

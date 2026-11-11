@@ -121,6 +121,7 @@ def test_bot_catalog_exposes_policy_without_token_metadata(
     catalog = service.bot_catalog()
 
     assert catalog == {
+        "auto_link": {"enabled": False, "configured": False},
         "bots": [
             {
                 "id": "primary",
