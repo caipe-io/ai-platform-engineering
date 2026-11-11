@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { ObjectId } from "mongodb";
 import { conversationHasAgent } from "@/lib/chat-coordination";
 // GET /api/chat/conversations/[id]/messages - Get all messages in conversation
 //   Reads persisted message rows for conversation history and audit views.
@@ -167,9 +169,7 @@ export const POST = withErrorHandler(async (
   // Upsert: update if message_id exists, insert otherwise.
   // $set updates content/metadata/events on every call (idempotent).
   // $setOnInsert sets immutable fields only on first insert.
-  const result = await messages.updateOne(
-    { message_id: body.message_id, conversation_id: conversationId },
-    {
+  const update = {
       $set: {
         content: body.content ?? '',
         metadata: {
@@ -214,9 +214,20 @@ export const POST = withErrorHandler(async (
         ...(senderName && { sender_name: senderName }),
         ...(senderImage && { sender_image: senderImage }),
       },
-    },
-    { upsert: true }
-  );
+  };
+  // Mongo's _id uniqueness fences concurrent subscribers without requiring a
+  // destructive unique-index migration over legacy transcript rows.
+  const canonical = body.role === "assistant" && body.message_id?.startsWith("reply-")
+    ? new ObjectId(createHash("sha256").update(JSON.stringify([conversationId, body.message_id])).digest("hex").slice(0, 24)) : undefined;
+  const filter = canonical
+    ? { _id: canonical, conversation_id: conversationId, ...(!(body.metadata?.is_final && body.metadata?.turn_status === "done") && { "metadata.turn_status": { $ne: "done" } }) }
+    : { message_id: body.message_id, conversation_id: conversationId };
+  let result;
+  try { result = await messages.updateOne(filter, update, { upsert: true }); }
+  catch (error) {
+    if (!canonical || (error as { code?: number }).code !== 11000) throw error;
+    result = await messages.updateOne(filter, update, { upsert: false });
+  }
 
   // Only increment total_messages on new inserts (not updates)
   if (result.upsertedId) {

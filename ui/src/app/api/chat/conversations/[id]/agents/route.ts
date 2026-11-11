@@ -1,6 +1,6 @@
 import { getCoordinationFeatures } from "@/lib/coordination/features.server";
 import { coordinationPolicy, setCoordinationPolicy } from "@/lib/coordination/policy.server";
-import { listHandoffs } from "@/lib/coordination/handoffs.server";
+import { listHandoffs, stopHandoffs } from "@/lib/coordination/handoffs.server";
 import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeConversationReadAccess } from "@/app/api/v1/chat/_conversation-authz";
@@ -100,6 +100,17 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Cont
   if (access instanceof NextResponse) return access;
   if (!access.canManage) throw new ApiError("Only the chat owner can change coordination mode", 403);
   const body = await request.json();
+  if (body.action === "stop") {
+    await stopHandoffs(access.auth, access.conversation);
+    return NextResponse.json({ success: true });
+  }
+  if (body.mode === "automatic") {
+    if (!(await getCoordinationFeatures()).team) return NextResponse.json({ success: true });
+    if (!access.conversation.coordination_agents?.length) return NextResponse.json({ success: true });
+    const current = await coordinationPolicy(access.conversation._id);
+    if (current?.mode === "team" && current.owner === access.auth.subject && current.sessionId && current.expiresAt > new Date()) return NextResponse.json({ success: true });
+    body.mode = "team";
+  }
   if (!["mentions", "team"].includes(body.mode)) throw new ApiError("Choose a coordination mode", 400);
   if (body.mode === "team" && !(await getCoordinationFeatures()).team) throw new ApiError("Team handoffs are disabled by the administrator", 403);
   if (body.mode === "team" && (!isHarnessEngineConfigured() || !access.conversation.coordination_agents?.length)) {
