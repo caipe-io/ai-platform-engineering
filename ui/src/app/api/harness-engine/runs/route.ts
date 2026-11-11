@@ -47,6 +47,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   const conversationId = await resolveConversationRuntimeId(conversationAuthz.conversation);
   const target = await resolveHarnessGatewayTarget(body.agent_id, {
     subject: auth.subject, conversationId, traceparent: auth.traceparent,
+    requireEngine: Boolean(conversationAuthz.conversation.coordination_agents?.length),
   });
   if (target instanceof NextResponse) return target;
   if (target.kind !== "harness_engine") {

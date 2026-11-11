@@ -114,5 +114,5 @@ export async function GET(
   if (protocol !== "agui" && protocol !== "custom") return new Response(body, response);
 
   const run = (await access.response.json()).data;
-  return new Response(translateCanonicalStream(body, run, protocol, after ?? "0"), { status: 200, headers: { ...Object.fromEntries(response.headers), "X-Harness-Run-ID": runId, "X-Harness-Conversation-ID": run.conversation_id } });
+  return new Response(translateCanonicalStream(body, run, protocol, after ?? "0"), { status: 200, headers: { ...Object.fromEntries(response.headers), "X-Harness-Run-ID": runId, "X-Harness-Conversation-ID": run.conversation_id, "X-Harness-Agent-ID": run.agent_id } });
 }

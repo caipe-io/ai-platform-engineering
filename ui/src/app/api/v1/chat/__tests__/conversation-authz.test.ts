@@ -71,3 +71,11 @@ it("returns 404 for a missing conversation", async () => {
   expect((await authorizeConversationReadAccess(auth, conversation._id, "agent-primary")).denial?.status).toBe(404);
   expect(mockPermission).not.toHaveBeenCalled();
 });
+
+it("accepts only saved coordination members after checking conversation permissions", async () => {
+  mockFindConversation.mockResolvedValue({ ...conversation, coordination_agents: [{ agent_id: "agent-secondary", handle: "reviewer" }] });
+  expect((await authorizeConversationWriteAccess(auth, conversation._id, "agent-secondary")).denial).toBeNull();
+  expect((await authorizeConversationReadAccess(auth, conversation._id, "agent-unknown")).denial?.status).toBe(409);
+  mockPermission.mockRejectedValue(Object.assign(new Error("Denied"), { statusCode: 403 }));
+  expect((await authorizeConversationWriteAccess(auth, conversation._id, "agent-secondary")).denial?.status).toBe(403);
+});

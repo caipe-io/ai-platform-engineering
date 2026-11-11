@@ -138,6 +138,8 @@ export interface ChatMessage {
    *  Persisted to metadata.agent_name and drives the Insights "Favorite/Top
    *  Agents" breakdowns. */
   agentName?: string;
+  /** The chat participant addressed by this turn. */
+  agentId?: string;
   /** End-to-end client-measured turn latency in milliseconds (request → final
    *  response). Persisted to metadata.latency_ms for response-time analytics. */
   latencyMs?: number;

@@ -10,7 +10,7 @@ export interface SlashCommand {
   id: string;
   label: string;
   description: string;
-  category: "skill" | "mcp" | "subagent" | "command";
+  category: "skill" | "mcp" | "subagent" | "command" | "participant";
   icon?: React.ReactNode;
   action: "insert" | "execute";
   value: string;
@@ -24,9 +24,10 @@ interface SlashCommandMenuProps {
   visible: boolean;
 }
 
-const CATEGORY_ORDER: SlashCommand["category"][] = ["command", "skill", "mcp", "subagent"];
+const CATEGORY_ORDER: SlashCommand["category"][] = ["participant", "command", "skill", "mcp", "subagent"];
 
 const CATEGORY_LABELS: Record<SlashCommand["category"], string> = {
+  participant: "Chat agents",
   command: "Commands",
   skill: "Skills",
   mcp: "MCP Servers",
@@ -34,6 +35,7 @@ const CATEGORY_LABELS: Record<SlashCommand["category"], string> = {
 };
 
 const CATEGORY_ICONS: Record<SlashCommand["category"], React.ReactNode> = {
+  participant: <Bot className="h-3 w-3" />,
   command: <Terminal className="h-3 w-3" />,
   skill: <Zap className="h-3 w-3" />,
   mcp: <Bot className="h-3 w-3" />,
@@ -161,8 +163,8 @@ export function SlashCommandMenu({
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium font-mono">
-                              {cmd.category === "mcp" || cmd.category === "subagent" ? `/@${cmd.label}` : `/${cmd.id}`}
+                            <span className={cn("text-sm font-medium font-mono", cmd.category === "participant" && "text-blue-600 dark:text-blue-400")}>
+                              {cmd.category === "participant" ? `@${cmd.label}` : cmd.category === "mcp" || cmd.category === "subagent" ? `/@${cmd.label}` : `/${cmd.id}`}
                             </span>
                           </div>
                           <p className="text-xs text-muted-foreground truncate">
