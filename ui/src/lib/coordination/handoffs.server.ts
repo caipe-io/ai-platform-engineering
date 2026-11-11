@@ -41,7 +41,7 @@ export async function handoffTools(run: HarnessRun) {
   if (!chat || !conversationHasAgent(chat, run.agent_id)) return [];
   const targets = participants(chat).filter(member => member.agent_id !== run.agent_id);
   if (!targets.length) return [];
-  return [{ tool_id: HANDOFF_TOOL, description: `Assign one self-contained task to a joined agent. Runs after this turn completes. Targets: ${targets.map(t => `@${t.handle} (${t.name})`).join(", ")}. Maximum ${MAX_HANDOFFS} handoffs and ${MAX_HANDOFF_DEPTH} hops per chain. This does not share your full transcript or files. Do not wait for the result inside this turn.`, input_schema: HANDOFF_SCHEMA }];
+  return [{ tool_id: HANDOFF_TOOL, description: `Assign one self-contained task to a joined agent. Runs after this turn completes. Targets: ${targets.map(t => `@${t.handle} (${t.name})`).join(", ")}. Maximum ${MAX_HANDOFFS} handoffs and ${MAX_HANDOFF_DEPTH} hops per chain. Results are published in this same chat, and the primary receives published replies on its next turn. Queued acknowledgement is not completion. This does not share your full transcript or files. Do not wait for the result inside this turn.`, input_schema: HANDOFF_SCHEMA }];
 }
 
 export async function enqueueHandoff(run: HarnessRun, auth: AuthResult, input: unknown) {

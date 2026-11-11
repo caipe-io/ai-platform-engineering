@@ -6,7 +6,9 @@ import asyncio
 import threading
 from importlib import import_module
 from importlib.util import find_spec
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import mongomock
 import pytest
@@ -259,7 +261,7 @@ async def test_cancellation_is_registered_while_runtime_setup_drains(monkeypatch
         blueprint=namespace(id="example", harness=namespace(options={"runtime": snapshot}), model=config.model),
         prompt=namespace(system="Help"),
         binding=namespace(owner_subject="test-user", provider_session_id="example", last_run_id=None, native_state_key="example", agent_version=1, conversation_id="example"),
-        turn=namespace(traceparent=None, config_override=None, client_context=None, run_id="example-run", command="start", handoff_owner=None, attachments=[]),
+        turn=namespace(traceparent=None, config_override=None, client_context=None, run_id="example-run", command="start", handoff_owner=None, attachments=[], coordination_enabled=False),
     )
     async def produce() -> None:
         async for _ in runtime.execute(context):
@@ -273,3 +275,21 @@ async def test_cancellation_is_registered_while_runtime_setup_drains(monkeypatch
     native.stream.assert_not_called()
     assert not runtime.active
     assert db.execution_thread_leases.count_documents({"active_run": {"$ne": None}}) == 0
+
+
+@pytest.mark.skipif(find_spec("dynamic_agents") is None, reason="Requires the deep-agents extra")
+@pytest.mark.asyncio
+async def test_participant_namespace_uses_saved_chat_membership() -> None:
+    runtime_type = import_module("harness_engine.deep_agents_runtime").DeepAgentsRuntime
+    runtime = object.__new__(runtime_type)
+    database = mongomock.MongoClient().example
+    database.conversations.insert_one({"_id": "shared-chat", "participants": [{"type": "agent", "id": "primary-agent"}],
+                                       "coordination_agents": [{"agent_id": "helper-agent"}]})
+    runtime.mongo = SimpleNamespace(_db=database)
+    runtime.initialize = AsyncMock()
+    assert await runtime.is_coordination_participant("shared-chat", "helper-agent")
+    assert not await runtime.is_coordination_participant("shared-chat", "primary-agent")
+    assert not await runtime.is_coordination_participant("shared-chat", "unknown-agent")
+    assert not await runtime.is_coordination_participant("another-chat", "helper-agent")
+    database.conversations.update_one({"_id": "shared-chat"}, {"$set": {"deleted_at": "deleted"}})
+    assert not await runtime.is_coordination_participant("shared-chat", "helper-agent")

@@ -601,3 +601,26 @@ migration so they enforce the same `execution_thread_leases` ownership fence.
   tools, checkpoint persistence and event replay remain real.
 - These tests do not certify model quality or live Slack/Webex delivery. App-owned
   assistants retain their own declared stream and lifecycle.
+
+### Concurrent chat participants
+
+- New Deep Agents sessions for saved additional chat participants use a native
+  checkpoint ID derived from their owner/agent/session binding. The primary
+  agent retains its existing conversation checkpoint ID.
+- Membership comes from the application database, never prompt text. A failed
+  membership lookup does not open a shared fallback thread.
+- Existing session bindings and native producer fences remain unchanged. A
+  legacy participant bound to a shared native thread must finish or explicitly
+  migrate that session before it can run alongside another producer on that
+  thread.
+- The BFF fences each participant's admission and the UI persists separate
+  response journals. These boundaries do not grant agent or tool access.
+
+### Primary awareness of chat participants
+
+- Joined chat participants are distinct from configured subagents; attaching one does not change the agent definition.
+- On each new primary turn, the BFF supplies the authorized participant roster, latest handoff states and each peer's latest published final reply. This works in Mentions and Team coordination modes.
+- The snapshot is limited to eight peers and 6,000 characters per reply, with truncation marked. It excludes files, tools, credentials and participants the caller cannot use.
+- Context is frozen on the admission generation so retries send identical Engine input. Current chat and agent permissions are rechecked before reuse.
+- Peer text is attributed data at user-message priority. It is never inserted into system instructions.
+- Handoffs remain asynchronous. A queued acknowledgement does not contain results; ask the primary for a combined summary after peers finish. Automatic primary resumption/fan-in is not implemented.

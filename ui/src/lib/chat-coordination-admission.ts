@@ -1,6 +1,6 @@
 import { getCoordinationFeatures } from "@/lib/coordination/features.server";
 import { getAgentId } from "@/types/a2a";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import type { AuthResult } from "@/lib/da-proxy";
 import { buildHarnessEngineHeaders, getHarnessEngineConfig, harnessConversationReadHeaders } from "@/lib/harness-engine-proxy";
@@ -19,45 +19,69 @@ interface Admission {
   previous?: Admission;
 }
 
-/** One admitted turn per coordinated chat, across agents, users and BFF replicas.
- * A subscriber disconnect never releases execution ownership. Uncertain
- * admissions fail closed; only an authoritative terminal run releases the fence.
+export function coordinationAdmissionId(conversationId: string, agentId: string): string {
+  return "participant-" + createHash("sha256").update(JSON.stringify([conversationId, agentId])).digest("hex");
+}
+
+/** A participant has one producer across callers and BFF replicas. Peers can
+ * run concurrently; disconnects and uncertain admissions never release a fence.
  */
+async function previousOutcome(previous: Admission, conversationId: string, body: Record<string, unknown>, auth: AuthResult): Promise<"reuse" | "resume" | "finished" | NextResponse> {
+  if (previous.agent_id === body.agent_id && previous.owner_subject === auth.subject && previous.request_id === body.client_request_id) return "reuse";
+  if (!previous.run_id) return NextResponse.json({ error: "The previous turn's admission is still unconfirmed. Retry its original request before starting another turn." }, { status: 409 });
+  const config = getHarnessEngineConfig();
+  if (config instanceof NextResponse) return config;
+  const headers = buildHarnessEngineHeaders(config, auth);
+  if (headers instanceof NextResponse) return headers;
+  let response: Response;
+  try {
+    response = await fetch(`${config.url}/api/v1/runs/${encodeURIComponent(previous.run_id)}`, {
+      headers: { ...headers, ...harnessConversationReadHeaders({ conversationId, agentId: previous.agent_id }) },
+      cache: "no-store", signal: AbortSignal.timeout(10_000),
+    });
+  } catch (error) {
+    console.warn("[chat-coordination] Could not verify the previous turn", error);
+    return NextResponse.json({ error: "Could not verify whether the previous turn finished. Try again shortly." }, { status: 503 });
+  }
+  const run = (await response.json().catch(() => null))?.data;
+  if (!response.ok || run?.run_id !== previous.run_id || run?.conversation_id !== conversationId || run?.agent_id !== previous.agent_id) {
+    return NextResponse.json({ error: "Could not verify the previous chat turn" }, { status: 503 });
+  }
+  if (body.command === "resume" && run.status === "paused" && previous.agent_id === body.agent_id && previous.owner_subject === auth.subject) return "resume";
+  if (!["completed", "failed", "cancelled"].includes(run.status)) {
+    return NextResponse.json({ error: "This agent is responding or waiting for input. Finish or stop its current turn first." }, { status: 409 });
+  }
+  return "finished";
+}
+
 export async function reserveCoordinationTurn(body: Record<string, unknown>, auth: AuthResult): Promise<Admission | NextResponse | null> {
-  const conversation = await (await getCollection<Conversation>("conversations")).findOne({ _id: String(body.conversation_id) });
+  const conversationId = String(body.conversation_id);
+  const conversation = await (await getCollection<Conversation>("conversations")).findOne({ _id: conversationId });
   if (!conversation?.coordination_agents?.length) return null;
   if (body.agent_id !== getAgentId(conversation) && body.command !== "resume" && !(await getCoordinationFeatures()).enabled) {
     return NextResponse.json({ error: "Agent Coordination is disabled by the administrator" }, { status: 403 });
   }
   const collection = await getCollection<Admission>("chat_coordination_admissions");
-  const key = String(body.conversation_id);
-  const previous = await collection.findOne({ _id: key });
-  if (previous) {
-    if (previous.agent_id === body.agent_id && previous.owner_subject === auth.subject && previous.request_id === body.client_request_id) return previous;
-    if (!previous.run_id) return NextResponse.json({ error: "The previous turn's admission is still unconfirmed. Retry its original request before starting another turn." }, { status: 409 });
-    const config = getHarnessEngineConfig();
-    if (config instanceof NextResponse) return config;
-    const headers = buildHarnessEngineHeaders(config, auth);
-    if (headers instanceof NextResponse) return headers;
-    let response: Response;
-    try {
-      response = await fetch(`${config.url}/api/v1/runs/${encodeURIComponent(previous.run_id)}`, {
-        headers: { ...headers, ...harnessConversationReadHeaders({ conversationId: key, agentId: previous.agent_id }) },
-        cache: "no-store", signal: AbortSignal.timeout(10_000),
-      });
-    } catch (error) {
-      console.warn("[chat-coordination] Could not verify the previous turn", error);
-      return NextResponse.json({ error: "Could not verify whether the previous turn finished. Try again shortly." }, { status: 503 });
+  let key = coordinationAdmissionId(conversationId, String(body.agent_id));
+  let previous: Admission | null;
+  // Retain old chat-wide ownership until its run is authoritatively terminal.
+  // A paused legacy run resumes behind its original fence before migrating.
+  const legacy = await collection.findOne({ _id: conversationId });
+  if (legacy) {
+    const outcome = await previousOutcome(legacy, conversationId, body, auth);
+    if (outcome instanceof NextResponse) return outcome;
+    if (outcome === "reuse") return legacy;
+    if (outcome === "resume") { key = conversationId; previous = legacy; }
+    else {
+      await collection.deleteOne({ _id: legacy._id, generation: legacy.generation });
+      if (await collection.findOne({ _id: conversationId })) return NextResponse.json({ error: "The previous chat turn changed. Check its status and retry." }, { status: 409 });
+      previous = await collection.findOne({ _id: key });
     }
-    const envelope = await response.json().catch(() => null);
-    const run = envelope?.data;
-    if (!response.ok || run?.run_id !== previous.run_id || run?.conversation_id !== key || run?.agent_id !== previous.agent_id) {
-      return NextResponse.json({ error: "Could not verify the previous chat turn" }, { status: 503 });
-    }
-    const resuming = body.command === "resume" && run.status === "paused" && previous.agent_id === body.agent_id && previous.owner_subject === auth.subject;
-    if (!resuming && !["completed", "failed", "cancelled"].includes(run.status)) {
-      return NextResponse.json({ error: "Another agent is responding or waiting for input in this chat. Finish or stop that turn first." }, { status: 409 });
-    }
+  } else previous = await collection.findOne({ _id: key });
+  if (previous && previous !== legacy) {
+    const outcome = await previousOutcome(previous, conversationId, body, auth);
+    if (outcome instanceof NextResponse) return outcome;
+    if (outcome === "reuse") return previous;
   }
   const ticket: Admission = { _id: key, generation: randomUUID(), agent_id: String(body.agent_id), owner_subject: auth.subject,
     request_id: typeof body.client_request_id === "string" ? body.client_request_id : randomUUID() };
@@ -87,7 +111,7 @@ export async function recordCoordinationRun(ticket: Admission | null, run: Harne
 export async function reconcileCoordinationRun(run: HarnessRun | null | undefined): Promise<void> {
   if (!run?.client_request_id) return;
   await (await getCollection<Admission>("chat_coordination_admissions")).updateOne({
-    _id: run.conversation_id, agent_id: run.agent_id, owner_subject: run.owner_subject,
+    _id: { $in: [run.conversation_id, coordinationAdmissionId(run.conversation_id, run.agent_id)] }, agent_id: run.agent_id, owner_subject: run.owner_subject,
     request_id: run.client_request_id, run_id: { $exists: false },
   }, { $set: { run_id: run.run_id } });
 }

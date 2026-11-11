@@ -166,6 +166,7 @@ export interface Message {
   sender_image?: string;
   metadata: {
     turn_id: string;
+    parallel_group_id?: string;
     source?: string;
     model?: string;
     latency_ms?: number;
@@ -437,6 +438,7 @@ export interface AddMessageRequest {
   sender_image?: string;
   metadata?: {
     turn_id: string;
+    parallel_group_id?: string;
     // Source of the message; defaults to 'web' when omitted. Integrations
     // (Slack bot, scheduler) set this so stats attribute per-surface.
     source?: string;

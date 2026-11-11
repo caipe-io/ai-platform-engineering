@@ -110,6 +110,8 @@ export interface ChatMessage {
   feedback?: MessageFeedback;
   /** Turn ID links user message to its assistant response for event grouping */
   turnId?: string;
+  /** Groups concurrent replies beneath one addressed user prompt. */
+  parallelGroupId?: string;
   /** Raw accumulated stream content - never overwritten, always appended */
   rawStreamContent?: string;
   /** Task ID from the backend — used for crash recovery (tasks/get polling) */

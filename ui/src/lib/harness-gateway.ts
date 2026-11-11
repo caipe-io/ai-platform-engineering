@@ -1,3 +1,4 @@
+import { primaryCoordinationMessage } from "@/lib/coordination/context.server";
 import { getCoordinationFeatures } from "@/lib/coordination/features.server";
 import { coordinationPolicy } from "@/lib/coordination/policy.server";
 import { createHash } from "node:crypto";
@@ -322,6 +323,14 @@ export async function startHarnessGatewayRun(
   } : {};
   const admission = await reserveCoordinationTurn(body, auth);
   if (admission instanceof NextResponse) return admission;
+  let message: string | NextResponse;
+  try { message = await primaryCoordinationMessage(body, auth, admission); }
+  catch {
+    console.error("[coordination] Primary context could not be prepared", { conversationId: body.conversation_id, agentId: body.agent_id });
+    await rejectCoordinationTurn(admission);
+    return NextResponse.json({ success: false, error: "Chat coordination context is unavailable" }, { status: 503 });
+  }
+  if (message instanceof NextResponse) { await rejectCoordinationTurn(admission); return message; }
   const coordination = await coordinationPolicy(String(body.conversation_id));
   const coordinationFeatures = coordination?.mode === "team" ? await getCoordinationFeatures() : null;
   const response = await engineRequest(config, auth, "/api/v1/runs", {
@@ -330,7 +339,7 @@ export async function startHarnessGatewayRun(
       ...(coordinationFeatures?.team && coordination?.mode === "team" && coordination.owner === auth.subject && coordination.expiresAt > new Date() && { coordination_enabled: true }),
       agent_id: body.agent_id,
       conversation_id: body.conversation_id,
-      message: body.message ?? "",
+      message,
       ...(selectedVersion && { agent_version: selectedVersion }),
       ...resume,
       ...(body.command === "rewind" && { command: "rewind", rewind_data: body.rewind_data }),

@@ -4,7 +4,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import { Conversation, ChatMessage, MessageFeedback, TurnStatus, getAgentId, buildParticipants } from "@/types/a2a";
 import { StreamEvent,type ContextUsageEventData } from "@/lib/streaming/types";
 import { generateId } from "@/lib/utils";
-import type { StreamAdapter } from "@/lib/streaming";
+import { agentStream, chatStreams, updateChatStream, type StreamingState } from "./chat-stream-state";
 import { apiClient, type ConversationListFilter } from "@/lib/api-client";
 import { getStorageMode, shouldUseLocalStorage } from "@/lib/storage-config";
 import type { Artifact, Message as StoredMessage, StoredStreamEvent } from "@/types/mongodb";
@@ -65,22 +65,6 @@ function isConversationMissingError(error: unknown): boolean {
   return message.includes("404") || message.includes("not found");
 }
 
-// Track streaming state per conversation
-interface StreamingState {
-  agentId?: string;
-  conversationId: string;
-  messageId: string;
-  /** Abortable handle for the active stream (wraps the stream adapter's abort). */
-  client: { abort: () => void };
-  // For Dynamic Agents: adapter reference for backend cancellation
-  streamAdapter?: StreamAdapter;
-  /** View-only subscriptions must never send execution controls. */
-  readOnly?: boolean;
-  /** Keep the subscription and execution fence until the server confirms stop. */
-  stopping?: boolean;
-  stopError?: string;
-}
-
 interface MessageHistoryState {
   nextPage: number;
   hasMore: boolean;
@@ -125,11 +109,11 @@ interface ChatState {
   appendToMessage: (conversationId: string, messageId: string, content: string) => void;
   truncateConversationFromMessage: (conversationId: string, messageId: string) => void;
   setStreaming: (streaming: boolean) => void;
-  setConversationStreaming: (conversationId: string, state: StreamingState | null) => void;
+  setConversationStreaming: (conversationId: string, state: StreamingState | null, agentId?: string) => void;
   isConversationStreaming: (conversationId: string) => boolean;
-  cancelConversationRequest: (conversationId: string) => void;
+  cancelConversationRequest: (conversationId: string, agentId?: string) => void;
   // Stream events (for Dynamic Agents)
-  addStreamEvent: (event: StreamEvent, conversationId?: string) => void;
+  addStreamEvent: (event: StreamEvent, conversationId?: string, messageId?: string) => void;
   setContextUsage: (conversationId: string,usage: ContextUsageEventData) => void;
   clearStreamEvents: (conversationId?: string) => void;
   getConversationStreamEvents: (conversationId: string) => StreamEvent[];
@@ -142,7 +126,7 @@ interface ChatState {
   setPendingMessage: (message: string | null) => void;
   consumePendingMessage: () => string | null;
   loadConversationsFromServer: (options?: { filter?: ConversationListFilter; append?: boolean }) => Promise<void>; // Load conversations from server (MongoDB mode only)
-  saveMessagesToServer: (conversationId: string, options?: { skipNonFinal?: boolean }) => Promise<void>; // Save messages to MongoDB after streaming
+  saveMessagesToServer: (conversationId: string, options?: { skipNonFinal?: boolean; turnId?: string; requireSuccess?: boolean }) => Promise<void>; // Save messages to MongoDB after streaming
   loadMessagesFromServer: (conversationId: string, options?: { force?: boolean }) => Promise<void>; // Load messages from MongoDB when opening conversation
   loadOlderMessagesFromServer: (conversationId: string) => Promise<void>;
   evictOldMessageContent: (conversationId: string, messageIdsToEvict: string[]) => void; // Evict content from old messages to free memory
@@ -269,6 +253,7 @@ function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
       turnId: msg.metadata?.turn_id,
       agentId: msg.metadata?.agent_id,
       agentName: msg.metadata?.agent_name,
+      parallelGroupId: msg.metadata?.parallel_group_id,
       taskId: msg.metadata?.task_id,
       autonomousRunId: msg.metadata?.run_id,
       autonomousMessageKind: msg.metadata?.kind,
@@ -510,15 +495,24 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         set({ isStreaming: streaming });
       },
 
-      setConversationStreaming: (conversationId: string, state: StreamingState | null) => {
-        const wasReadOnly = get().streamingConversations.get(conversationId)?.readOnly;
+      setConversationStreaming: (conversationId: string, state: StreamingState | null, agentId?: string) => {
+        const previous = agentStream(get().streamingConversations.get(conversationId), agentId);
+        const wasReadOnly = previous?.readOnly;
+        const completedTurnId = !state && previous ? get().conversations.find(chat => chat.id === conversationId)?.messages.find(message => message.id === previous.messageId)?.turnId : undefined;
         set((prev: ChatState) => {
           const newMap = new Map(prev.streamingConversations);
+          const updated = updateChatStream(newMap.get(conversationId), state, agentId);
+          if (updated) newMap.set(conversationId, updated);
+          else newMap.delete(conversationId);
           if (state) {
-            newMap.set(conversationId, state);
             // Clear input-required when streaming resumes (user submitted input)
             const newInputRequired = new Set(prev.inputRequiredConversations);
-            newInputRequired.delete(conversationId);
+            const chat = prev.conversations.find(conversation => conversation.id === conversationId);
+            const latestByAgent = new Map<string, ChatMessage>();
+            for (const message of chat?.messages ?? []) if (message.role === "assistant") latestByAgent.set(message.agentId ?? "primary", message);
+            const waitingPeer = Array.from(latestByAgent.values()).some(message => message.agentId !== state.agentId && message.turnStatus === "waiting_for_input" && !message.isFinal);
+            if (waitingPeer) newInputRequired.add(conversationId);
+            else newInputRequired.delete(conversationId);
             console.log(`[Store] Started streaming for conversation: ${conversationId}`);
             return {
               streamingConversations: newMap,
@@ -526,7 +520,6 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
               inputRequiredConversations: newInputRequired,
             };
           }
-          newMap.delete(conversationId);
           console.log(`[Store] Stopped streaming for conversation: ${conversationId}, remaining: ${newMap.size}`);
           const newIsStreaming = newMap.size > 0;
           console.log(`[Store] Global isStreaming: ${newIsStreaming}`);
@@ -556,7 +549,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           pendingSaveTimestamps.set(conversationId, Date.now());
           // Use setTimeout to let the final message update settle before saving
           setTimeout(() => {
-            get().saveMessagesToServer(conversationId)
+            get().saveMessagesToServer(conversationId, completedTurnId ? { turnId: completedTurnId } : undefined)
               .then(() => {
                 pendingSaveTimestamps.delete(conversationId);
                 console.log(`[ChatStore] Post-stream save completed for: ${conversationId.substring(0, 8)}`);
@@ -573,9 +566,14 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         return get().streamingConversations.has(conversationId);
       },
 
-      cancelConversationRequest: (conversationId: string) => {
+      cancelConversationRequest: (conversationId: string, agentId?: string) => {
         const state = get();
-        const streamingState = state.streamingConversations.get(conversationId);
+        const aggregate = state.streamingConversations.get(conversationId);
+        if (!agentId && aggregate?.participantStreams) {
+          for (const stream of chatStreams(aggregate)) state.cancelConversationRequest(conversationId, stream.agentId);
+          return;
+        }
+        const streamingState = agentStream(aggregate, agentId);
         if (streamingState) {
           if (streamingState.readOnly) return;
           // Get conversation to check if it's a Dynamic Agent
@@ -585,18 +583,18 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             if (streamingState.stopping) return;
             const agentId = streamingState.agentId ?? (conv ? getAgentId(conv) : undefined);
             if (!agentId) return;
-            const pending = { ...streamingState, stopping: true, stopError: undefined };
-            set({ streamingConversations: new Map(get().streamingConversations).set(conversationId, pending) });
+            const pending = { ...streamingState, agentId, stopping: true, stopError: undefined };
+            get().setConversationStreaming(conversationId, pending, agentId);
             void persistentAdapter.cancelStream(conversationId, agentId).catch((error) => {
               console.error('[ChatStore] Backend cancel failed:', error);
               return false;
             }).then((accepted) => {
               // A completed response or a newer turn must not be changed by a
               // late cancellation reply. Keep following the current producer.
-              if (!accepted && get().streamingConversations.get(conversationId) === pending) {
-                set({ streamingConversations: new Map(get().streamingConversations).set(conversationId, {
+              if (!accepted && agentStream(get().streamingConversations.get(conversationId), agentId) === pending) {
+                get().setConversationStreaming(conversationId, {
                   ...pending, stopping: false, stopError: 'Could not confirm Stop. The response is still active; try again.',
-                }) });
+                }, agentId);
               }
             });
             return;
@@ -624,7 +622,9 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           streamingState.client.abort();
           // Remove from streaming map
           const newMap = new Map(state.streamingConversations);
-          newMap.delete(conversationId);
+          const remaining = updateChatStream(newMap.get(conversationId), null, agentId);
+          if (remaining) newMap.set(conversationId, remaining);
+          else newMap.delete(conversationId);
           set({
             streamingConversations: newMap,
             isStreaming: newMap.size > 0,
@@ -635,7 +635,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             // CRITICAL: Copy conversation-level streamEvents to the message for persistence.
             // During streaming, events are collected at conversation.streamEvents. When we cancel,
             // we must attach them to the message so historical messages render timelines correctly.
-            const turnStreamEvents = conv?.streamEvents || [];
+            const turnStreamEvents = msg.streamEvents ?? conv?.streamEvents ?? [];
             state.appendToMessage(conversationId, streamingState.messageId, "\n\n*Request cancelled*");
             state.updateMessage(conversationId, streamingState.messageId, { 
               isFinal: true,
@@ -666,7 +666,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       // Stream Events (for Dynamic Agents)
       // ═══════════════════════════════════════════════════════════════
 
-      addStreamEvent: (event: StreamEvent, conversationId?: string) => {
+      addStreamEvent: (event: StreamEvent, conversationId?: string, messageId?: string) => {
         const convId = conversationId || get().activeConversationId;
         if (!convId) return;
 
@@ -677,6 +677,8 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
                 ? {
                     ...c,
                     streamEvents: [...(c.streamEvents || []), event],
+                    ...(messageId && { messages: c.messages.map(message => message.id === messageId
+                      ? { ...message, streamEvents: [...(message.streamEvents ?? []), event] } : message) }),
                   }
                 : c
             ),
@@ -1128,7 +1130,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       //     isFinal=true. Used by periodic saves during streaming to avoid writing
       //     stale intermediate content to MongoDB. The final save (after streaming
       //     ends) omits this flag so the correct final content is written.
-      saveMessagesToServer: async (conversationId: string, options?: { skipNonFinal?: boolean }) => {
+      saveMessagesToServer: async (conversationId: string, options?: { skipNonFinal?: boolean; turnId?: string; requireSuccess?: boolean }) => {
         const storageMode = getStorageMode();
         if (storageMode !== 'mongodb') return;
 
@@ -1159,29 +1161,19 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
         let savedCount = 0;
 
-        // Only save the current turn. A queued batch can contain several user
-        // bubbles sharing one turn ID and one assistant response.
-        // Messages are append-only: older messages were already persisted by prior
-        // saveMessagesToServer calls. Re-saving them all is wasteful and causes
-        // request spam (one POST per message × every turn).
+        // A completion saves its own turn even when another agent is still
+        // streaming. Periodic saves retain every active participant's prompt.
         const lastAssistantMsg = lastAssistantIdx >= 0 ? conv.messages[lastAssistantIdx] : null;
-        const messagesToSave: { msg: typeof conv.messages[0]; idx: number }[] = [];
-        const currentTurnId = lastAssistantMsg?.turnId;
-        if (currentTurnId) {
-          conv.messages.forEach((message, index) => {
-            if (message.role === 'user' && message.turnId === currentTurnId) {
-              messagesToSave.push({ msg: message, idx: index });
-            }
-          });
-        } else {
-          for (let index = conv.messages.length - 1; index >= 0; index -= 1) {
-            if (conv.messages[index].role === 'user') {
-              messagesToSave.push({ msg: conv.messages[index], idx: index });
-              break;
-            }
-          }
-        }
-        if (lastAssistantMsg) messagesToSave.push({ msg: lastAssistantMsg, idx: lastAssistantIdx });
+        const streams = chatStreams(state.streamingConversations.get(conversationId));
+        const readOnlyTurns = new Set(streams.filter(stream => stream.readOnly).map(stream => conv.messages.find(message => message.id === stream.messageId)?.turnId));
+        const turnIds = new Set(options?.turnId ? [options.turnId] : [
+          lastAssistantMsg?.turnId,
+          ...streams.map(stream => conv.messages.find(message => message.id === stream.messageId)?.turnId),
+        ].filter((id): id is string => Boolean(id)));
+        for (const turnId of readOnlyTurns) if (turnId) turnIds.delete(turnId);
+        const messagesToSave = conv.messages.map((msg, idx) => ({ msg, idx })).filter(({ msg, idx }) => turnIds.size
+          ? Boolean(msg.turnId && turnIds.has(msg.turnId))
+          : readOnlyTurns.size ? false : idx === lastAssistantIdx || msg.role === 'user' && idx === conv.messages.findLastIndex(message => message.role === 'user'));
 
         for (const { msg, idx } of messagesToSave) {
           // PERIODIC SAVE GUARD: Skip non-final assistant messages during
@@ -1197,7 +1189,9 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           try {
             // Attach conversation-level stream events to the last assistant message.
             let serializedStreamEvents: StoredStreamEvent[] | undefined;
-            if (idx === lastAssistantIdx && persistableStreamEvents.length > 0) {
+            if (msg.streamEvents) {
+              serializedStreamEvents = msg.streamEvents.filter(event => event.type !== "context_usage").map(serializeStreamEvent);
+            } else if (idx === lastAssistantIdx && persistableStreamEvents.length > 0) {
               serializedStreamEvents = persistableStreamEvents.map(serializeStreamEvent);
               console.log(`[ChatStore] Attaching ${persistableStreamEvents.length} conversation-level stream events to assistant message ${msg.id}`);
             }
@@ -1244,6 +1238,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
                 // message by DynamicAgentChatPanel.finalizeStreamLoop.
                 ...(msg.agentName && { agent_name: msg.agentName }),
                 ...(msg.agentId && { agent_id: msg.agentId }),
+                ...(msg.parallelGroupId && { parallel_group_id: msg.parallelGroupId }),
                 ...(msg.latencyMs != null && { latency_ms: msg.latencyMs }),
               },
               stream_events: serializedStreamEvents,
@@ -1253,6 +1248,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             savedCount++;
           } catch (error) {
             console.error(`[ChatStore] Failed to save message ${msg.id}:`, getErrorMessage(error, ""));
+            if (options?.requireSuccess) throw error;
           }
         }
 
