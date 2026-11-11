@@ -13,6 +13,7 @@ import httpx2 as httpx
 from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server
 
 from harness_engine.config import Settings
+from harness_engine.coordination_tools import coordination_tools
 from harness_engine.models import RunContext
 
 logger = logging.getLogger(__name__)
@@ -30,8 +31,13 @@ class ClaudeToolBroker:
 
     @asynccontextmanager
     async def bind_tools(self, context: RunContext) -> AsyncIterator[tuple[list[SdkMcpTool[Any]], dict[str, str]]]:
+        extra = await coordination_tools(context, self.url, self.transport)
+        extra_tools = [SdkMcpTool(name=schema["tool_id"], description=schema["description"],
+                                  input_schema=schema["input_schema"], handler=handler)
+                       for schema, handler in extra]
+        extra_names = {f"mcp__caipe__{schema['tool_id']}": schema["tool_id"] for schema, _ in extra}
         if not context.blueprint.tools.bindings:
-            yield [], {}
+            yield extra_tools, extra_names
             return
         if not self.url or context.identity is None or context.identity.subject != context.binding.owner_subject:
             raise PermissionError("Selected tools require the CAIPE broker and delegated caller identity")
@@ -51,8 +57,8 @@ class ClaudeToolBroker:
             selected_ids = list(dict.fromkeys(binding.tool_id for binding in context.blueprint.tools.bindings))
             if {tool["tool_id"] for tool in schemas} != set(selected_ids):
                 raise ValueError("The tool broker returned a different allowlist")
-            tools: list[SdkMcpTool[Any]] = []
-            names: dict[str, str] = {}
+            tools: list[SdkMcpTool[Any]] = list(extra_tools)
+            names: dict[str, str] = dict(extra_names)
             pending: set[asyncio.Task[dict[str, Any]]] = set()
             by_id = {schema["tool_id"]: schema for schema in schemas}
             for index, tool_id in enumerate(selected_ids):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 from collections.abc import AsyncIterator
 from contextlib import aclosing
 from typing import Any
@@ -18,7 +19,10 @@ from dynamic_agents.services.execution import RuntimeEvent, execute_turn
 from dynamic_agents.services.execution_lease import reserve_native_thread
 from dynamic_agents.services.mongo import MongoDBService, _strip_nulls
 from dynamic_agents.services.runtime_cache import AgentRuntimeCache
+from dynamic_agents.services.turn_tools import current_turn_tools
+from langchain_core.tools import StructuredTool
 
+from harness_engine.coordination_tools import coordination_tools
 from harness_engine.models import AgentBlueprint, CanonicalEventDraft, RunContext, TurnOutcome, utc_now
 
 
@@ -127,7 +131,18 @@ class DeepAgentsRuntime:
         trace_scope = current_traceparent.set(context.turn.traceparent)
         cancellation_event = asyncio.Event()
         self.active[context.turn.run_id] = (None, cancellation_event)
+        tool_scope = None
         try:
+            extras = await coordination_tools(context, os.getenv("AUTHZ_SERVICE_URL", ""))
+            tools = []
+            for schema, handler in extras:
+                async def assign(handle: str, message: str, _handler: Any = handler) -> str:
+                    result = await _handler({"handle": handle, "message": message})
+                    return json.dumps(result)
+
+                tools.append(StructuredTool.from_function(coroutine=assign, name=schema["tool_id"],
+                    description=schema["description"], args_schema=schema["input_schema"]))
+            tool_scope = current_turn_tools.set(tools)
             # Reuse the existing CAS adapter. The BFF also checks conversation
             # write before admission; its service credential is never a tool credential.
             await require_agent_use_permission(context.blueprint.id, delegated_user_sub=identity.subject)
@@ -198,6 +213,7 @@ class DeepAgentsRuntime:
                             context.binding.agent_version,
                             context.turn.client_context,
                             context.turn.config_override,
+                            context.turn.run_id if extras else None,
                             lease.get("cache_generation", 0) if lease else 0,
                         ],
                         sort_keys=True,
@@ -275,6 +291,8 @@ class DeepAgentsRuntime:
                                         status=event.status, interrupt=event.interrupt, result=event.result
                                     )
         finally:
+            if tool_scope is not None:
+                current_turn_tools.reset(tool_scope)
             self.active.pop(context.turn.run_id, None)
             current_user_token.reset(token_scope)
             current_traceparent.reset(trace_scope)

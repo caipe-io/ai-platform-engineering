@@ -1,3 +1,5 @@
+import { coordinationPolicy, setCoordinationPolicy } from "@/lib/coordination/policy.server";
+import { listHandoffs } from "@/lib/coordination/handoffs.server";
 import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeConversationReadAccess } from "@/app/api/v1/chat/_conversation-authz";
@@ -37,6 +39,8 @@ export const GET = withErrorHandler(async (request: NextRequest, context: Contex
     agents: access.conversation.coordination_agents ?? [],
     can_manage: access.canManage,
     available: isHarnessEngineConfigured(),
+    mode: (await coordinationPolicy(access.conversation._id))?.mode ?? "mentions",
+    handoffs: await listHandoffs(access.conversation._id),
   } }, { headers: { "Cache-Control": "no-store" } });
 });
 
@@ -84,4 +88,17 @@ export const POST = withErrorHandler(async (request: NextRequest, context: Conte
   }, { $push: { coordination_agents: membership }, $set: { updated_at: new Date() } });
   if (!result.modifiedCount) throw new ApiError("This agent or handle is already in the chat, or the chat has reached its limit of eight additional agents. Refresh the list and try again.", 409);
   return NextResponse.json({ success: true, data: membership }, { status: 201 });
+});
+
+export const PATCH = withErrorHandler(async (request: NextRequest, context: Context) => {
+  const access = await authorize(request, context);
+  if (access instanceof NextResponse) return access;
+  if (!access.canManage) throw new ApiError("Only the chat owner can change coordination mode", 403);
+  const body = await request.json();
+  if (!["mentions", "team"].includes(body.mode)) throw new ApiError("Choose a coordination mode", 400);
+  if (body.mode === "team" && (!isHarnessEngineConfigured() || !access.conversation.coordination_agents?.length)) {
+    throw new ApiError("Add a joined agent before enabling team coordination", 409);
+  }
+  await setCoordinationPolicy(request, access.conversation._id, access.auth.subject!, body.mode);
+  return NextResponse.json({ success: true });
 });

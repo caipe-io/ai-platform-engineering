@@ -506,3 +506,41 @@ it("keeps a queued prompt's recipient when the composer switches to another part
   rerender(<ChatPanel agentId="helper-agent" conversationId="chat-1" coordination={{ ...coordination, selectedAgentId: "helper-agent" }} />);
   await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledWith(expect.objectContaining({ agentId: "example-agent", message: "Queued for primary" }), expect.anything()));
 });
+
+describe("atomic recipient mentions", () => {
+  const text = "@reviewer Keep this message";
+  const selected = { ...coordination, selectedAgentId: "helper-agent" };
+  it.each([
+    ["Backspace", "@reviewer", 9, 9, ""],
+    ["Backspace", text, 10, 10, "Keep this message"],
+    ["Delete", text, 0, 0, "Keep this message"],
+    ["Delete", text, 4, 4, "Keep this message"],
+    ["Backspace", text, 3, 7, "Keep this message"],
+    ["Delete", text, 0, text.length, ""],
+  ])("removes the whole mention with %s at selection %s:%s", (key, value, start, end, expected) => {
+    setConversation([]);
+    render(<ChatPanel agentId="helper-agent" conversationId="chat-1" coordination={selected} />);
+    const field = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value, selectionStart: String(value).length } });
+    field.setSelectionRange(Number(start), Number(end));
+    expect(fireEvent.keyDown(field, { key })).toBe(false);
+    expect(field).toHaveValue(expected);
+    expect(coordination.selectAgent).toHaveBeenCalledWith("example-agent");
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [text, text.length, false],
+    ["@outsider Keep this message", 4, false],
+    [text, 4, true],
+    [text, 0, false],
+  ])("preserves native Backspace outside known mentions or during composition", (value, caret, isComposing) => {
+    setConversation([]);
+    render(<ChatPanel agentId="helper-agent" conversationId="chat-1" coordination={selected} />);
+    const field = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value, selectionStart: String(value).length } });
+    field.setSelectionRange(Number(caret), Number(caret));
+    expect(fireEvent.keyDown(field, { key: "Backspace", isComposing })).toBe(true);
+    expect(coordination.selectAgent).not.toHaveBeenCalled();
+  });
+});

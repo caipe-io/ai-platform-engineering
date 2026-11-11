@@ -340,6 +340,7 @@ class ExecutionIdentity(StrictModel):
 
 
 class CreateRunRequest(StrictModel):
+    coordination_enabled: bool = Field(False, exclude_if=lambda value: not value)
     agent_version: int | None = Field(None, ge=1)
     agent_id: str = Field(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     conversation_id: str = Field(..., min_length=1, max_length=256)
@@ -445,6 +446,7 @@ class RenderedPrompt(StrictModel):
 
 
 class TurnInput(StrictModel):
+    coordination_enabled: bool = Field(False, exclude_if=lambda value: not value)
     run_id: str
     message: str
     traceparent: str | None = None

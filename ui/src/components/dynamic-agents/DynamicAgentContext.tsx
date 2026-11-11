@@ -383,6 +383,15 @@ export function DynamicAgentContext({
                 : !coordination.loading && !coordination.canManage ? <p className="text-xs text-muted-foreground">Ask the chat owner to add agents. Each person still needs agent Use access.</p>
                 : !coordination.loading && !coordination.available ? <p className="text-xs text-muted-foreground">Configure Harness Engine to add chat agents.</p> : null}
             </div>}
+            {coordination?.agents.length ? <div className="space-y-2">
+              <p className="text-xs font-medium">Coordination mode</p>
+              <div className="flex flex-wrap gap-1" role="group" aria-label="Coordination mode">
+                <Button size="sm" variant={coordination.mode !== "team" ? "secondary" : "ghost"} disabled={!coordination.canManage || isStreaming} onClick={() => void coordination.setMode?.("mentions")}>Mentions &amp; assignments</Button>
+                <Button size="sm" variant={coordination.mode === "team" ? "secondary" : "ghost"} disabled={!coordination.canManage || isStreaming} onClick={() => void coordination.setMode?.("team")}>Team coordination</Button>
+              </div>
+              <p className="text-xs text-muted-foreground">{coordination.mode === "team" ? "Agents can hand tasks to joined agents using the chat owner’s access while that sign-in remains valid. Only the assignment is shared. Up to 8 tasks and 4 hops per chain. Turn this off to stop queued handoffs; use Stop for an active response." : "Agents respond when addressed. Team coordination enables agent-to-agent handoffs."}</p>
+            </div> : null}
+            {!!coordination?.handoffs?.length && <div className="space-y-2 border-b pb-3"><p className="text-xs font-medium">Agent handoffs</p>{coordination.handoffs.map(job => <div key={job._id} className="text-xs"><Button variant="link" size="sm" className="h-auto p-0 text-blue-500" onClick={() => coordination.selectAgent(job.targetAgentId)}>@{job.handle}</Button><span className="ml-2">{job.status === "delivered" ? "Completed" : job.status === "pending" || job.status === "processing" ? job.runId ? "Working" : "Queued" : job.status}</span>{job.lastError && job.lastError !== "retrying" && <p className="text-muted-foreground">{job.lastError.replaceAll("_", " ")}</p>}</div>)}</div>}
             <WorkspaceSection id={`${sectionId}-agents`} title="Agents" icon={<Users className="h-4 w-4" />} expanded={openSections.includes("agents")} onToggle={() => toggleSection("agents")}>
               <div className="flex min-w-0 items-center gap-2">
                 <AgentAvatar agent={agent} agentId={agentId} rounded="rounded-lg" size="h-8 w-8" iconSize="h-4 w-4" />

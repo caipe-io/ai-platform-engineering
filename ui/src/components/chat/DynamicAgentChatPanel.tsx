@@ -1,5 +1,6 @@
 "use client";
 
+import { handoffAssistantMessageId } from "@/lib/chat-coordination";
 import type { ChatCoordination } from "@/hooks/use-chat-coordination";
 import { leadingAgentMention } from "@/lib/chat-coordination";
 
@@ -1349,11 +1350,14 @@ export function ChatPanel({
   const recoveryTurnId = conversation?.messages?.at(-1)?.turnId;
   const recoveryAgentId = conversation?.messages?.at(-1)?.agentId ?? agentId;
   const recoveryAgentName = conversation?.messages?.at(-1)?.agentName ?? coordination?.agents.find(member => member.agent_id === recoveryAgentId)?.name ?? (recoveryAgentId === agentId ? agentName : recoveryAgentId);
+  const recoveryKey = `${activeConversationId}:${recoveryTurnId ?? ""}`;
+  const recoveryHandoffRunId = coordination?.handoffs?.find(job => `handoff-${job._id}` === recoveryTurnId)?.runId;
   useEffect(() => {
     const checked = recoveryChecked.current;
     if (!activeConversationId || isLoadingMessages || isThisConversationStreaming || isAutonomousHistory) return;
-    if (!recoveryMessageId || !["assistant", "user"].includes(recoveryMessageRole ?? "") || checked.has(activeConversationId)) return;
-    checked.add(activeConversationId);
+    if (!recoveryMessageId || !["assistant", "user"].includes(recoveryMessageRole ?? "") || checked.has(recoveryKey)) return;
+    if (handoffAssistantMessageId(recoveryTurnId) && !recoveryHandoffRunId) return;
+    checked.add(recoveryKey);
     let disposed = false;
     let subscribed = false;
     const recoveryController = new AbortController();
@@ -1375,8 +1379,11 @@ export function ChatPanel({
       subscribed = true;
       // Periodic persistence omits an unfinished assistant placeholder. Rebuild
       // it from the admitted run rather than submitting the saved prompt again.
-      const assistantId = recoveryMessageRole === "assistant" ? recoveryMessageId : addMessage(
-        activeConversationId, { role: "assistant", content: "", isFinal: false, agentId: recoveryAgentId, agentName: recoveryAgentName }, recoveryTurnId,
+      const canonicalHandoffId = handoffAssistantMessageId(recoveryTurnId);
+      const savedAssistant = canonicalHandoffId && useChatStore.getState().conversations
+        .find(chat => chat.id === activeConversationId)?.messages.find(message => message.id === canonicalHandoffId);
+      const assistantId = savedAssistant ? savedAssistant.id : recoveryMessageRole === "assistant" && !canonicalHandoffId ? recoveryMessageId : addMessage(
+        activeConversationId, { role: "assistant", content: "", isFinal: false, agentId: recoveryAgentId, agentName: recoveryAgentName }, recoveryTurnId, canonicalHandoffId,
       );
       const adapter = createStreamAdapter({ protocol: agentProtocol as "custom" | "agui" });
       const state: StreamLoopState = { accumulatedText: "", rawStreamContent: "", hitlFormRequested: false, hasError: false };
@@ -1396,10 +1403,10 @@ export function ChatPanel({
     return () => {
       disposed = true;
       recoveryController.abort();
-      if (!subscribed) checked.delete(activeConversationId);
+      if (!subscribed) checked.delete(recoveryKey);
     };
   }, [activeConversationId, agentId, agentProtocol, isLoadingMessages, isThisConversationStreaming, isRemoteResponse,
-    isAutonomousHistory, panelReadOnly, recoveryMessageId, recoveryMessageRole, recoveryMessageFinal, recoveryTurnId, recoveryAgentId, recoveryAgentName, addMessage, clearStreamEvents, updateMessage, setConversationStreaming,
+    isAutonomousHistory, panelReadOnly, recoveryKey, recoveryHandoffRunId, recoveryMessageId, recoveryMessageRole, recoveryMessageFinal, recoveryTurnId, recoveryAgentId, recoveryAgentName, addMessage, clearStreamEvents, updateMessage, setConversationStreaming,
     buildStreamCallbacks, finalizeStreamLoop]);
 
   // A queued batch renders as separate user bubbles but is sent as one prompt,
@@ -2372,6 +2379,32 @@ export function ChatPanel({
   }, [input, executeSlashCommand, submitMessage, activeConversationId, updateConversationTitle, coordination]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    const field = inputRef.current;
+    if (highlightedMention && coordination && field && !e.nativeEvent.isComposing &&
+        (e.key === "Backspace" || e.key === "Delete")) {
+      const start = field.selectionStart;
+      const end = field.selectionEnd;
+      const mentionEnd = highlightedMention.length;
+      const tokenEnd = input[mentionEnd] === " " ? mentionEnd + 1 : mentionEnd;
+      const touchesMention = start !== end
+        ? start < mentionEnd && end > 0
+        : e.key === "Backspace" ? start > 0 && start <= tokenEnd : start < mentionEnd;
+      if (touchesMention) {
+        e.preventDefault();
+        // A recognized recipient is one editable object, including its separator.
+        // Expanding a partial selection preserves any unselected message text.
+        setInput(input.slice(Math.max(end, tokenEnd)));
+        setCommandPanel(null);
+        setShowSlashMenu(false);
+        setMentionMenu(false);
+        const removedAgentId = highlightedMention === "@primary" ? coordination.primaryAgentId
+          : coordination.agents.find(member => `@${member.handle}` === highlightedMention)?.agent_id;
+        if (removedAgentId === coordination.selectedAgentId) coordination.selectAgent(coordination.primaryAgentId);
+        setTimeout(() => inputRef.current?.setSelectionRange(0, 0), 0);
+        return;
+      }
+    }
+
     if (commandPanel) {
       if (e.key === "Escape") {
         e.preventDefault();

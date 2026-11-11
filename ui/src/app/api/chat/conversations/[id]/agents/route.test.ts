@@ -1,7 +1,10 @@
 /** @jest-environment node */
 import { NextRequest, NextResponse } from "next/server";
-import { GET, POST } from "./route";
+import { GET, POST, PATCH } from "./route";
 
+const mockSetPolicy = jest.fn();
+jest.mock("@/lib/coordination/policy.server", () => ({ coordinationPolicy: async () => null, setCoordinationPolicy: (...args: unknown[]) => mockSetPolicy(...args) }));
+jest.mock("@/lib/coordination/handoffs.server", () => ({ listHandoffs: async () => [] }));
 const mockRead = jest.fn();
 const mockUse = jest.fn();
 const mockOwner = jest.fn();
@@ -81,4 +84,21 @@ it("rejects disabled agents and app-owned assistants", async () => {
   mockApp.mockImplementation(id => id === "agent-helper" ? {} : null);
   expect((await POST(request(), context)).status).toBe(409);
   expect(mockUpdate).not.toHaveBeenCalled();
+});
+
+it("keeps shared viewers from authorizing background handoffs", async () => {
+  mockOwner.mockReturnValue(false);
+  expect((await PATCH(request({ mode: "team" }), context)).status).toBe(403);
+  expect(mockSetPolicy).not.toHaveBeenCalled();
+});
+it("requires a joined agent before team mode and rejects unknown modes", async () => {
+  expect((await PATCH(request({ mode: "team" }), context)).status).toBe(409);
+  expect((await PATCH(request({ mode: "unknown" }), context)).status).toBe(400);
+  expect(mockSetPolicy).not.toHaveBeenCalled();
+});
+it("binds team authorization to the authenticated owner instead of request identity", async () => {
+  mockRead.mockResolvedValue({ conversation: { ...conversation, coordination_agents: [{ agent_id: "agent-helper", handle: "helper" }] }, denial: null });
+  const change = request({ mode: "team", owner: "other-user" });
+  expect((await PATCH(change, context)).status).toBe(200);
+  expect(mockSetPolicy).toHaveBeenCalledWith(change, "chat-example", "owner", "team");
 });

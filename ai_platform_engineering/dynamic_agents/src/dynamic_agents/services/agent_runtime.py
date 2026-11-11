@@ -106,6 +106,7 @@ from dynamic_agents.services.structured_response import (
 )
 from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryMiddleware
 from dynamic_agents.services.tracing import TracingManager
+from dynamic_agents.services.turn_tools import current_turn_tools
 
 if TYPE_CHECKING:
     from dynamic_agents.services.mongo import MongoDBService
@@ -992,6 +993,8 @@ class AgentRuntime:
         remote_agent_tools = await self._build_remote_agent_tools()
         if remote_agent_tools:
             tools = tools + remote_agent_tools
+
+        tools = tools + list(current_turn_tools.get() or [])
 
         # 3. Wrap all tools with error handling
         #    Exceptions become LLM-visible "ERROR: ..." strings instead of crashing the agent loop.
