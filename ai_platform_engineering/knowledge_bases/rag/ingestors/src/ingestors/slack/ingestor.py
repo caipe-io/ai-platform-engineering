@@ -516,6 +516,10 @@ async def reload_datasource(
     logger.error(traceback.format_exc())
     if job_id:
       await job_manager.add_error_msg(job_id, str(e))
+      # A periodic reload creates its own job, and no caller marks it failed. Left
+      # IN_PROGRESS, it would make every later periodic reload skip this datasource,
+      # so the messages kept un-checkpointed above would never be retried.
+      await job_manager.upsert_job(job_id, status=JobStatus.FAILED, message=f"Error reloading {datasource_info.datasource_id}: {e}")
     raise
 
 

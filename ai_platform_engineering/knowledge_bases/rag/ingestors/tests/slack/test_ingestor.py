@@ -217,6 +217,27 @@ class TestCheckpointPersistedAfterIngest:
     persisted = client.upsert_datasource.call_args.args[0]
     assert persisted.metadata["last_ts"] == "1700000500.000000"
 
+  @pytest.mark.parametrize("failing_call", ["ingest_documents", "upsert_datasource"])
+  async def test_periodic_reload_failure_marks_its_job_failed(self, failing_call):
+    """A periodic reload (no job_id passed in) creates its own job. If that job stayed
+    IN_PROGRESS after a failure, later periodic reloads would skip the datasource and
+    the un-checkpointed messages would never be retried."""
+    ds = make_datasource(last_ts="1700000000.000000")
+    client = make_client()
+    setattr(client, failing_call, AsyncMock(side_effect=RuntimeError("write failed")))
+    job_manager = make_job_manager()
+    syncer = make_syncer(newest_ts="1700000500.000000")
+
+    with patch.object(ingestor_module, "SlackChannelSyncer", return_value=syncer):
+      with patch.object(ingestor_module, "WebClient"):
+        with pytest.raises(RuntimeError, match="write failed"):
+          await reload_datasource(client, job_manager, ds)
+
+    job_manager.upsert_job.assert_awaited_once()
+    assert job_manager.upsert_job.call_args.args == ("job-1",)
+    assert job_manager.upsert_job.call_args.kwargs["status"] == JobStatus.FAILED
+    client.update_job.assert_not_awaited()
+
   async def test_first_sync_failed_ingest_does_not_persist_last_ts(self):
     client = make_client()
     client.ingest_documents = AsyncMock(side_effect=RuntimeError("ingest failed"))
