@@ -57,11 +57,11 @@ function update(body: unknown) {
 }
 beforeEach(() => {
   jest.clearAllMocks();
-  mockExisting = { _id: "workflow-example", name: "Example", owner_id: "user@example.test", visibility: "private", steps: [step(["skill-retired"])] };
+  mockExisting = { _id: "workflow-example", name: "Example", owner_id: "user@example.test", visibility: "private", updated_at: "2026-01-01T00:00:00.000Z", steps: [step(["skill-retired"])] };
   mockWriteAccess.mockResolvedValue(undefined);
   mockRunnable.mockResolvedValue(undefined);
   mockReconcile.mockResolvedValue(undefined);
-  mockUpdate.mockResolvedValue({ modifiedCount: 1 });
+  mockUpdate.mockResolvedValue({ matchedCount: 1, modifiedCount: 1 });
   mockSkillLookup.mockResolvedValue(null);
 });
 
@@ -111,4 +111,68 @@ it("keeps workflow-write authorization ahead of metadata changes", async () => {
 it("rejects null steps without persisting", async () => {
   expect((await update({ steps: null })).status).toBe(400);
   expect(mockUpdate).not.toHaveBeenCalled();
+});
+
+it("rejects a stale full-form save after another request detaches and retires a skill", async () => {
+  const snapshot = structuredClone(mockExisting);
+  let resumeSave!: () => void;
+  let validationStarted!: () => void;
+  const started = new Promise<void>(resolve => { validationStarted = resolve; });
+  mockRunnable.mockImplementationOnce(() => new Promise<void>(resolve => {
+    resumeSave = resolve;
+    validationStarted();
+  }));
+  mockUpdate.mockImplementation(async (filter, mutation) => {
+    if (filter.updated_at !== mockExisting.updated_at ||
+        JSON.stringify(filter.steps) !== JSON.stringify(mockExisting.steps)) {
+      return { matchedCount: 0, modifiedCount: 0 };
+    }
+    mockExisting = { ...mockExisting, ...mutation.$set };
+    return { matchedCount: 1, modifiedCount: 1 };
+  });
+
+  const staleSave = update({ name: "Stale save", steps: snapshot.steps });
+  await started;
+  expect((await update({ steps: [step([])] })).status).toBe(200);
+  // Retirement can now remove the detached skill. The lookup remains absent.
+  mockSkillLookup.mockResolvedValue(null);
+  mockReconcile.mockClear();
+  resumeSave();
+
+  const response = await staleSave;
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: "The workflow changed during save; reload before retrying" });
+  expect(mockExisting.name).toBe("Example");
+  expect(mockExisting.steps).toEqual([step([])]);
+  expect(mockReconcile).not.toHaveBeenCalled();
+});
+
+it("rejects changed references even if another writer preserves the timestamp", async () => {
+  mockUpdate.mockImplementation(async filter => ({
+    matchedCount: JSON.stringify(filter.steps) === JSON.stringify([step([])]) ? 1 : 0,
+  }));
+  expect((await update({ steps: [step(["skill-retired"])] })).status).toBe(409);
+  expect(mockUpdate.mock.calls[0][0]).toEqual({
+    _id: "workflow-example", updated_at: mockExisting.updated_at, steps: mockExisting.steps,
+  });
+  expect(mockReconcile).not.toHaveBeenCalled();
+});
+
+it("supports a legacy workflow without a timestamp and assigns a save revision", async () => {
+  delete mockExisting.updated_at;
+  expect((await update({ name: "Renamed" })).status).toBe(200);
+  expect(mockUpdate.mock.calls[0][0].updated_at).toEqual({ $exists: false });
+  expect(mockUpdate.mock.calls[0][1].$set.updated_at).toBeInstanceOf(Date);
+});
+
+it("advances the revision when the clock has not advanced", async () => {
+  const now = Date.now();
+  mockExisting.updated_at = new Date(now);
+  const clock = jest.spyOn(Date, "now").mockReturnValue(now);
+  try {
+    expect((await update({ name: "Renamed" })).status).toBe(200);
+    expect(mockUpdate.mock.calls[0][1].$set.updated_at.getTime()).toBe(now + 1);
+  } finally {
+    clock.mockRestore();
+  }
 });

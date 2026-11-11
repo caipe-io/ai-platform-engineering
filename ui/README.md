@@ -394,13 +394,18 @@ is still referenced. Retain orchestration skills and other consumers when
 retiring shortened review-method copies.
 
 Original Hub packages fail closed when a required asset is skipped or a crawl is
-truncated. Pinned imports derive stable identities from their entry paths, so
-equally named skills cannot overwrite each other. Changing Hub revision, entry
+truncated. Pinned import identities include the entry-path hash and skill name, so
+equally named skills at different paths cannot overwrite each other. An upstream
+frontmatter name change changes the ID even if the path stays the same; reselect
+the renamed skill in existing agent attachments. Changing Hub revision, entry
 paths or crawl settings rotates the cache generation; old results cannot be
 selected or loaded. A complete empty refresh removes stale cached entries.
 Saved skill attachment and retirement share per-skill mutation locks, and
 attachment validates that selected saved skills still exist.
 
 Workflow metadata and unchanged full-form saves preserve legacy skill references.
-Newly attached skills are validated under the attachment/retirement fence; invalid
-merged agent configurations are rejected before persistence or access reconciliation.
+Newly attached skills are validated under the attachment/retirement fence. Workflow
+saves reject concurrent revision or reference changes with 409; reload before
+retrying. Workflow step-agent validation runs before persistence or workflow access
+reconciliation. Dynamic-agent saves reconcile access before skill admission and
+attempt to roll back those access changes if admission or persistence fails.
