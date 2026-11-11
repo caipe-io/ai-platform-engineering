@@ -92,6 +92,12 @@ login session until that helper is migrated.
 - Failed presence connections retry with exponential backoff from five seconds to one minute. A valid roster resets the backoff.
 - This is conversation presence, independent of execution-stream subscribers, durable run events, and replay cursors. It requires MongoDB storage.
 
+### Durable chat turns
+
+- In MongoDB mode, the chat saves all user bubbles and attachments in a turn before dispatching execution. A failed save prevents the run from starting and surfaces the error in the chat.
+- Engine execution and its canonical event log survive tab closure. Reopening the conversation uses the saved turn ID to find and replay the run, including a run that completed while the tab was closed.
+- Periodic saves remain best effort; unfinished assistant placeholders are omitted from the admission save.
+
 ### Live chat navigation
 
 - The top-right **Live Agent Chat** control counts every streaming chat, including the current chat. Its green dot pulses unless reduced motion is requested.

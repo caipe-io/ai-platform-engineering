@@ -20,6 +20,7 @@ const mockChatState = {
   appendToMessage: jest.fn(),
   clearStreamEvents: jest.fn(),
   setConversationStreaming: jest.fn(),
+  saveMessagesToServer: jest.fn().mockResolvedValue(undefined),
   loadMessagesFromServer: jest.fn(),
   externalActivity: {},
   streamingConversations: new Map(),

@@ -31,6 +31,7 @@ const mockChatState = {
   appendToMessage: jest.fn(),
   clearStreamEvents: jest.fn(),
   setConversationStreaming: jest.fn(),
+  saveMessagesToServer: jest.fn().mockResolvedValue(undefined),
   cancelConversationRequest: jest.fn(),
   loadMessagesFromServer: jest.fn(),
   externalActivity: {} as Record<string, ExternalChatActivity>,
@@ -59,6 +60,7 @@ jest.mock("@/components/autonomous/api", () => ({
   autonomousApi: { openFollowUpChat: jest.fn(), listFollowUpChats: async () => ({}) },
 }));
 jest.mock("@/lib/streaming", () => ({
+  StreamError: jest.requireActual("@/lib/streaming/stream-error").StreamError,
   createStreamAdapter: () => ({ streamMessage: mockStreamMessage, recoverRun: mockRecoverRun, abort: jest.fn() }),
 }));
 jest.mock("@/hooks/useDynamicAgentTimeline", () => ({ useAgentTimeline: () => ({ data: {} }) }));
@@ -253,6 +255,33 @@ it("starts a separate chat from the agent picker and leaves the shared source un
     expect(mockConversation).toBe(original);
     expect(update).not.toHaveBeenCalled();
   } finally { fetchMock.mockRestore(); update.mockRestore(); }
+});
+
+describe("durable turn admission", () => {
+  it("waits for the prompt save before starting detached execution", async () => {
+    let finishSave!: () => void;
+    mockChatState.saveMessagesToServer.mockImplementationOnce(() => new Promise<void>(resolve => { finishSave = resolve; }));
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Retry this prompt" })[0]);
+    await waitFor(() => expect(mockChatState.saveMessagesToServer).toHaveBeenCalledWith("chat-1", {
+      skipNonFinal: true, requireSuccess: true,
+    }));
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+    await act(async () => { finishSave(); });
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not start a detached run when the prompt cannot be saved", async () => {
+    mockChatState.saveMessagesToServer.mockRejectedValueOnce(new Error("Durable write failed"));
+    render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Retry this prompt" })[0]);
+    await waitFor(() => expect(mockChatState.updateMessage).toHaveBeenCalledWith("chat-1", expect.any(String),
+      expect.objectContaining({ turnStatus: "interrupted" })));
+    expect(mockChatState.appendToMessage).toHaveBeenCalledWith("chat-1", expect.any(String),
+      expect.stringContaining("Durable write failed"));
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+    expect(mockChatState.setConversationStreaming).toHaveBeenLastCalledWith("chat-1", null);
+  });
 });
 
 describe("retry alongside edit", () => {

@@ -141,7 +141,7 @@ interface ChatState {
   setPendingMessage: (message: string | null) => void;
   consumePendingMessage: () => string | null;
   loadConversationsFromServer: (options?: { filter?: ConversationListFilter; append?: boolean }) => Promise<void>; // Load conversations from server (MongoDB mode only)
-  saveMessagesToServer: (conversationId: string, options?: { skipNonFinal?: boolean }) => Promise<void>; // Save messages to MongoDB after streaming
+  saveMessagesToServer: (conversationId: string, options?: { skipNonFinal?: boolean; requireSuccess?: boolean }) => Promise<void>; // Save messages to MongoDB after streaming
   loadMessagesFromServer: (conversationId: string, options?: { force?: boolean }) => Promise<void>; // Load messages from MongoDB when opening conversation
   loadOlderMessagesFromServer: (conversationId: string) => Promise<void>;
   evictOldMessageContent: (conversationId: string, messageIdsToEvict: string[]) => void; // Evict content from old messages to free memory
@@ -1121,11 +1121,13 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       // No localStorage cache, no "saved vs stale" tracking needed.
       //
       // Options:
+      //   requireSuccess: Reject on a failed write so a new run cannot start
+      //     without the persisted user turn needed to recover it after tab close.
       //   skipNonFinal: When true, skip saving assistant messages that don't have
       //     isFinal=true. Used by periodic saves during streaming to avoid writing
       //     stale intermediate content to MongoDB. The final save (after streaming
       //     ends) omits this flag so the correct final content is written.
-      saveMessagesToServer: async (conversationId: string, options?: { skipNonFinal?: boolean }) => {
+      saveMessagesToServer: async (conversationId: string, options?: { skipNonFinal?: boolean; requireSuccess?: boolean }) => {
         const storageMode = getStorageMode();
         if (storageMode !== 'mongodb') return;
 
@@ -1249,6 +1251,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             savedCount++;
           } catch (error) {
             console.error(`[ChatStore] Failed to save message ${msg.id}:`, getErrorMessage(error, ""));
+            if (options?.requireSuccess) throw error;
           }
         }
 

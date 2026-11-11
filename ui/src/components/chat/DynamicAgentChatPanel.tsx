@@ -1490,6 +1490,13 @@ export function ChatPanel({
     try {
       const callbacks = buildStreamCallbacks(convId, assistantMsgId, loopState, toolCallIdToName);
 
+      // A detached run can outlive this tab. Persist every user bubble before
+      // dispatch so reopening can match its turn ID and replay the durable run.
+      await useChatStore.getState().saveMessagesToServer(convId, {
+        skipNonFinal: true,
+        requireSuccess: true,
+      });
+
       await adapter.streamMessage(
         {
           message: messageToSend,

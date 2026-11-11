@@ -1099,6 +1099,42 @@ describe('chat-store', () => {
   });
 
   describe('saveMessagesToServer — queued batches', () => {
+    it('anchors all queued prompts before dispatch without saving an unfinished answer', async () => {
+      const turnId = 'turn-detached';
+      useChatStore.setState({ conversations: [makeConversation({
+        id: 'detached-conversation', messages: [
+          makeMessage({ id: 'prompt-one', role: 'user', content: 'First', turnId }),
+          makeMessage({ id: 'prompt-two', role: 'user', content: 'Second', turnId }),
+          makeMessage({ id: 'reply', role: 'assistant', content: '', turnId, isFinal: false }),
+        ],
+      })] });
+      await useChatStore.getState().saveMessagesToServer('detached-conversation', {
+        skipNonFinal: true, requireSuccess: true,
+      });
+      expect(mockApiClient.addMessage.mock.calls.map(([, message]) => message.message_id))
+        .toEqual(['prompt-one', 'prompt-two']);
+      expect(mockApiClient.addMessage).toHaveBeenCalledWith('detached-conversation',
+        expect.objectContaining({ metadata: expect.objectContaining({ turn_id: turnId }) }));
+    });
+
+    it('rejects a failed admission save instead of allowing an unanchored run', async () => {
+      useChatStore.setState({ conversations: [makeConversation({
+        id: 'failed-anchor', messages: [
+          makeMessage({ id: 'prompt', role: 'user', content: 'Hello', turnId: 'turn-anchor' }),
+          makeMessage({ id: 'reply', role: 'assistant', content: '', turnId: 'turn-anchor', isFinal: false }),
+        ],
+      })] });
+      mockApiClient.addMessage.mockRejectedValueOnce(new Error('Database unavailable'));
+      await expect(useChatStore.getState().saveMessagesToServer('failed-anchor', {
+        skipNonFinal: true, requireSuccess: true,
+      })).rejects.toThrow('Database unavailable');
+      // Best-effort periodic saves keep their existing error behavior.
+      mockApiClient.addMessage.mockRejectedValueOnce(new Error('Database unavailable'));
+      await expect(useChatStore.getState().saveMessagesToServer('failed-anchor', {
+        skipNonFinal: true,
+      })).resolves.toBeUndefined();
+    });
+
     it('persists every user bubble sharing the latest assistant turn', async () => {
       const turnId = 'turn-batch';
       const conv = makeConversation({
