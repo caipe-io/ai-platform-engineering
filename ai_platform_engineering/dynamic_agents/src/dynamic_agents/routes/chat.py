@@ -47,6 +47,7 @@ async def _enforce_chat_authz(*, agent_id: str, user_sub: str | None, autonomous
 
 # Fields that CANNOT be overridden via config_override
 _REJECTED_OVERRIDE_FIELDS: set[str] = {
+    "skill_pins",
     "app_context_prompt",
     "ui",
     "name",

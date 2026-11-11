@@ -95,7 +95,7 @@ from dynamic_agents.services.model_capabilities import (
     get_model_capabilities,
 )
 from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
-from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills
+from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills, verify_skill_pins
 from dynamic_agents.services.skills_backend import ReadOnlySkillsBackend
 from dynamic_agents.services.structured_response import (
     STRUCTURED_OUTPUT_EVENT,
@@ -1049,12 +1049,16 @@ class AgentRuntime:
                     self.config.skills,
                     mongodb_uri=self.settings.mongodb_uri,
                     mongodb_database=self.settings.mongodb_database,
+                    strict=bool(self.config.skill_pins),
                 )
 
+                verify_skill_pins(skills_data, self.config.skill_pins)
                 self._failed_skills, self._failed_skills_error = detect_missing_skills(self.config.skills, skills_data)
 
                 if skills_data:
-                    self._skills_files, skills_sources = build_skills_files(skills_data)
+                    self._skills_files, skills_sources = build_skills_files(
+                        skills_data, pinned_skill_ids=self.config.skill_pins,
+                    )
                     if skills_sources:
                         # Backend for SkillsMiddleware: use StoreBackend (GridFS) when
                         # enabled so skills are read from the same store as read_file;
@@ -1072,6 +1076,8 @@ class AgentRuntime:
                         )
             except Exception as e:
                 logger.warning(f"Agent '{self.config.name}': failed to load skills: {e}", exc_info=True)
+                if self.config.skill_pins:
+                    raise
                 self._failed_skills = list(self.config.skills)
                 self._failed_skills_error = f"Skills loading failed: {e}"
 

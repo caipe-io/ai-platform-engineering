@@ -1,3 +1,4 @@
+import { withSkillReferenceLock, assertSavedSkillsExist } from "@/lib/skill-reference-lock";
 import {
 ApiError,
 successResponse,
@@ -226,7 +227,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     await assertWorkflowConfigRunnable(config);
 
     const collection = await getCollection<WorkflowConfig>("workflow_configs");
-    await collection.insertOne(config);
+    const selectedSkills = config.steps.flatMap(step => step.type === "step" && Array.isArray(step.config_override?.skills) ? step.config_override.skills as string[] : []);
+    await withSkillReferenceLock(selectedSkills, async () => {
+      await assertSavedSkillsExist(selectedSkills);
+      await collection.insertOne(config);
+    });
 
     await reconcileWorkflowConfigAccess(session, config);
 
@@ -279,7 +284,7 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       );
     }
 
-    if (body.steps) {
+    if (body.steps !== undefined) {
       validateSteps(body.steps);
     }
     if (body.visibility !== undefined) {
@@ -305,9 +310,11 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
         (await normalizeSharedWithTeamSlugs(mergedSharedWithTeams)) ?? undefined;
     }
 
+    const previousUpdatedAt = new Date(existing.updated_at).getTime();
     const updateFields: Record<string, unknown> = {
       ...body,
-      updated_at: new Date(),
+      // Advance the save revision even when two updates share a millisecond.
+      updated_at: new Date(Math.max(Date.now(), Number.isFinite(previousUpdatedAt) ? previousUpdatedAt + 1 : 0)),
     };
     if (mergedVisibility === "team") {
       updateFields.shared_with_teams = mergedSharedWithTeams;
@@ -318,8 +325,6 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
       updateFields.shared_with_teams = undefined;
     }
 
-    await collection.updateOne({ _id: id }, { $set: updateFields });
-
     const merged = {
       ...existing,
       ...body,
@@ -329,6 +334,27 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     };
 
     await assertWorkflowConfigRunnable(merged);
+
+    const stepSkills = (steps: StepEntry[]) => steps.flatMap(step =>
+      step.type === "step" && Array.isArray(step.config_override?.skills)
+        ? step.config_override.skills as string[] : [],
+    );
+    const selectedSkills = stepSkills(merged.steps);
+    const existingSkills = new Set(stepSkills(existing.steps));
+    const addedSkills = selectedSkills.filter(skill => !existingSkills.has(skill));
+    await withSkillReferenceLock(selectedSkills, async () => {
+      // Preserve legacy references during unrelated edits, including full-form
+      // saves. The conditional write preserves that exemption only while the
+      // stored revision and references still match the snapshot we validated.
+      await assertSavedSkillsExist(addedSkills);
+      const result = await collection.updateOne(
+        { _id: id, updated_at: existing.updated_at === undefined ? { $exists: false } : existing.updated_at, steps: existing.steps },
+        { $set: updateFields },
+      );
+      if (result.matchedCount !== 1) {
+        throw new ApiError("The workflow changed during save; reload before retrying", 409);
+      }
+    });
 
     await reconcileWorkflowConfigAccess(session, merged, existing);
 

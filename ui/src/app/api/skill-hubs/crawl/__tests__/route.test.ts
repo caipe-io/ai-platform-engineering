@@ -169,6 +169,9 @@ describe("POST /api/skill-hubs/crawl — guard does NOT over-fire", () => {
       "caipe-io",
       "ai-platform-engineering",
       undefined,
+      undefined,
+      undefined,
+      {},
     );
   });
 

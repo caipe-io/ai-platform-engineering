@@ -1,3 +1,4 @@
+import { withSkillReferenceLock } from "@/lib/skill-reference-lock";
 import {
 getAgentSkillVisibleToUser,
 hydrateAgentSkillTeamShares,
@@ -226,6 +227,12 @@ async function deleteAgentSkillFromMongoDB(
 
   if (existing.is_system && !canMutateBuiltinSkill(existing)) {
     throw new ApiError(BUILTIN_LOCKED_MESSAGE, 403);
+  }
+  const agents = await getCollection("dynamic_agents");
+  const workflows = await getCollection("workflow_configs");
+  if (await agents.findOne({ skills: id }, { projection: { _id: 1 } }) ||
+    await workflows.findOne({ "steps.config_override.skills": id }, { projection: { _id: 1 } })) {
+    throw new ApiError("This skill is still referenced by an agent or workflow. Detach it before retiring it.", 409);
   }
   await collection.deleteOne({ id });
 
@@ -629,7 +636,7 @@ export const DELETE = withErrorHandler(async (request: NextRequest) => {
 
   return await withAuth(request, async (req, user, session) => {
     await requireSkillPermission(session, id, "delete");
-    await deleteAgentSkillFromMongoDB(id);
+    await withSkillReferenceLock([id], () => deleteAgentSkillFromMongoDB(id));
     // Drop history rows for this skill so we don't leak orphaned
     // revision documents that nobody can render. Best-effort: a
     // failure here doesn't undo the delete (the skill is already
