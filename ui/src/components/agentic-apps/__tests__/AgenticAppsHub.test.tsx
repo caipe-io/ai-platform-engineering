@@ -5,7 +5,7 @@ import type { PublicAgenticApp } from "@/types/agentic-app";
 const mockRouter = { push: jest.fn() };
 const mockGetSettings = jest.fn();
 const mockUpdatePreferences = jest.fn();
-jest.mock("next/navigation", () => ({ useRouter: () => mockRouter }));
+jest.mock("next/navigation", () => ({ useRouter: () => mockRouter, useSearchParams: () => new URLSearchParams(window.location.search) }));
 jest.mock("@/lib/api-client", () => ({ apiClient: {
   getSettings: (...args: unknown[]) => mockGetSettings(...args),
   updatePreferences: (...args: unknown[]) => mockUpdatePreferences(...args),
@@ -20,6 +20,7 @@ const apps: PublicAgenticApp[] = [
     canLaunch: false, blockedReasons: ["unauthorized"], categories: ["research"], capabilities: [], uiMode: "iframe" },
 ];
 beforeEach(() => {
+  window.history.replaceState(null, "", "/apps");
   mockRouter.push.mockClear();
   mockGetSettings.mockReset().mockResolvedValue({ preferences: { favorite_agentic_apps: [] } });
   mockUpdatePreferences.mockReset().mockImplementation(async ({ favorite_agentic_apps }) => ({ preferences: { favorite_agentic_apps } }));
@@ -156,6 +157,64 @@ it("shows catalog failures without rendering launch links", async () => {
 it("redirects expired sessions to login without launching an app", async () => {
   jest.mocked(global.fetch).mockResolvedValueOnce({ ok: false, status: 401 } as Response);
   render(<AgenticAppsHub />);
-  await waitFor(() => expect(mockRouter.push).toHaveBeenCalledWith("/login?callbackUrl=%2F"));
+  await waitFor(() => expect(mockRouter.push).toHaveBeenCalledWith("/login?callbackUrl=%2Fapps"));
   expect(screen.queryByRole("link", { name: "Example workspace" })).not.toBeInTheDocument();
+});
+
+it("restores a bookmarked search and preserves unrelated URL state while editing", async () => {
+  window.history.replaceState(null, "", "/apps?q=document-search&assistant=1#catalog");
+  render(<AgenticAppsHub />);
+  const input = await screen.findByRole("searchbox", { name: "Search apps" });
+  expect(input).toHaveValue("document-search");
+  expect(screen.getByRole("link", { name: "Example workspace" })).toBeInTheDocument();
+  expect(screen.queryByText("Secondary workspace")).not.toBeInTheDocument();
+  const push = jest.spyOn(window.history, "pushState");
+  const replace = jest.spyOn(window.history, "replaceState");
+  fireEvent.focus(input);
+  fireEvent.change(input, { target: { value: "research" } });
+  fireEvent.change(input, { target: { value: "secondary" } });
+  expect(push).toHaveBeenCalledTimes(1);
+  expect(replace).toHaveBeenCalledTimes(1);
+  expect(new URLSearchParams(window.location.search).get("q")).toBe("secondary");
+  expect(new URLSearchParams(window.location.search).get("assistant")).toBe("1");
+  expect(window.location.hash).toBe("#catalog");
+  fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  expect(new URLSearchParams(window.location.search).has("q")).toBe(false);
+  push.mockRestore(); replace.mockRestore();
+});
+
+it("restores catalog results when URL state changes through Back/Forward", async () => {
+  const { rerender } = render(<AgenticAppsHub />);
+  await screen.findByRole("searchbox", { name: "Search apps" });
+  act(() => { window.history.replaceState(null, "", "/apps?q=research"); window.dispatchEvent(new PopStateEvent("popstate")); });
+  rerender(<AgenticAppsHub />);
+  await waitFor(() => expect(screen.getByRole("searchbox", { name: "Search apps" })).toHaveValue("research"));
+  expect(screen.queryByRole("link", { name: "Example workspace" })).not.toBeInTheDocument();
+  act(() => { window.history.replaceState(null, "", "/apps?q=engineering"); window.dispatchEvent(new PopStateEvent("popstate")); });
+  rerender(<AgenticAppsHub />);
+  expect(await screen.findByRole("link", { name: "Example workspace" })).toBeInTheDocument();
+});
+
+
+it("starts a new search entry after another navigation while the input remains focused", async () => {
+  const view = render(<AgenticAppsHub />);
+  const input = await screen.findByRole("searchbox");
+  fireEvent.focus(input);
+  fireEvent.change(input, { target: { value: "engineering" } });
+  act(() => window.history.pushState(null, "", "/apps?q=research"));
+  view.rerender(<AgenticAppsHub />);
+  expect(input).toHaveValue("research");
+  const push = jest.spyOn(window.history, "pushState");
+  const replace = jest.spyOn(window.history, "replaceState");
+  fireEvent.change(input, { target: { value: "secondary" } });
+  expect(push).toHaveBeenCalledTimes(1);
+  expect(replace).not.toHaveBeenCalled();
+  push.mockRestore(); replace.mockRestore();
+});
+
+it("preserves the catalog fragment when its API session expires", async () => {
+  window.history.replaceState(null, "", "/apps?q=example#catalog");
+  jest.mocked(global.fetch).mockResolvedValueOnce({ ok: false, status: 401 } as Response);
+  render(<AgenticAppsHub />);
+  await waitFor(() => expect(mockRouter.push).toHaveBeenCalledWith("/login?callbackUrl=%2Fapps%3Fq%3Dexample%23catalog"));
 });

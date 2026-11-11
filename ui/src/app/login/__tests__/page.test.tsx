@@ -99,6 +99,7 @@ describe('Login Page', () => {
   })
 
   beforeEach(() => {
+    window.history.replaceState(null, "", "/login")
     jest.clearAllMocks()
     sessionStorageData = {}
     Object.defineProperty(window, 'sessionStorage', { value: mockSessionStorage, writable: true })
@@ -530,4 +531,62 @@ describe('Login Page', () => {
       })
     })
   })
+  it.each([['/apps?q=example', '#catalog'], ['/apps?q=example#explicit', '#explicit']])('keeps fragments client-side during OAuth: %s', async (callbackUrl, fragment) => {
+    window.history.replaceState(null, '', '/login#catalog')
+    mockSearchParamsGet.mockImplementation(key => key === 'callbackUrl' ? callbackUrl : null)
+    mockUseSession.mockReturnValue({ data: null, status: 'unauthenticated' } as unknown)
+    render(<LoginPage />)
+    fireEvent.click(screen.getByText(/sign in with sso/i))
+    await waitFor(() => expect(mockSignIn).toHaveBeenCalledWith('oidc', { callbackUrl: '/login?callbackUrl=%2Fapps%3Fq%3Dexample' }))
+    expect(JSON.parse(sessionStorageData['login-callback-fragment'])).toMatchObject({ path: '/apps?q=example', fragment })
+  })
+
+  it('restores and consumes the fragment after returning from OAuth', async () => {
+    sessionStorageData['login-callback-fragment'] = JSON.stringify({ path: '/apps?q=example', fragment: '#catalog', at: Date.now() })
+    mockSearchParamsGet.mockImplementation(key => key === 'callbackUrl' ? '/apps?q=example' : null)
+    mockUseSession.mockReturnValue({ data: { user: { name: 'Example' } }, status: 'authenticated' } as unknown)
+    render(<LoginPage />)
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/apps?q=example#catalog'))
+    expect(sessionStorageData['login-callback-fragment']).toBeUndefined()
+  })
+
+  it('keeps the consumed fragment stable when authentication refreshes before navigation completes', async () => {
+    sessionStorageData['login-callback-fragment'] = JSON.stringify({ path: '/apps?q=example', fragment: '#catalog', at: Date.now() })
+    mockSearchParamsGet.mockImplementation(key => key === 'callbackUrl' ? '/apps?q=example' : null)
+    mockUseSession.mockReturnValue({ data: { user: { name: 'Example' } }, status: 'authenticated' } as unknown)
+    const { rerender } = render(<LoginPage />)
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/apps?q=example#catalog'))
+    mockUseSession.mockReturnValue({ data: null, status: 'loading' } as unknown)
+    rerender(<LoginPage />)
+    mockUseSession.mockReturnValue({ data: { user: { name: 'Example' } }, status: 'authenticated' } as unknown)
+    rerender(<LoginPage />)
+    await waitFor(() => expect(mockPush).toHaveBeenCalledTimes(2))
+    expect(mockPush.mock.calls).toEqual([['/apps?q=example#catalog'], ['/apps?q=example#catalog']])
+  })
+
+  it('retains fragments throughout the fifteen-minute OAuth window', async () => {
+    sessionStorageData['login-callback-fragment'] = JSON.stringify({ path: '/apps?q=example', fragment: '#catalog', at: Date.now() - 840_000 })
+    mockSearchParamsGet.mockImplementation(key => key === 'callbackUrl' ? '/apps?q=example' : null)
+    mockUseSession.mockReturnValue({ data: { user: { name: 'Example' } }, status: 'authenticated' } as unknown)
+    render(<LoginPage />)
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/apps?q=example#catalog'))
+  })
+
+  it.each([['/other', 0], ['/apps?q=example', 1_000_000]])('discards a mismatched or expired pending fragment: %s', async (path, age) => {
+    sessionStorageData['login-callback-fragment'] = JSON.stringify({ path, fragment: '#catalog', at: Date.now() - Number(age) })
+    mockSearchParamsGet.mockImplementation(key => key === 'callbackUrl' ? '/apps?q=example' : null)
+    mockUseSession.mockReturnValue({ data: { user: { name: 'Example' } }, status: 'authenticated' } as unknown)
+    render(<LoginPage />)
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/apps?q=example'))
+    expect(sessionStorageData['login-callback-fragment']).toBeUndefined()
+  })
+
+  it('preserves an inherited bookmark fragment when the session is already authenticated', async () => {
+    window.history.replaceState(null, '', '/login#catalog')
+    mockSearchParamsGet.mockImplementation(key => key === 'callbackUrl' ? '/apps?q=example' : null)
+    mockUseSession.mockReturnValue({ data: { user: { name: 'Example' } }, status: 'authenticated' } as unknown)
+    render(<LoginPage />)
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/apps?q=example#catalog'))
+  })
+
 })

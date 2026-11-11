@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { RESERVED_HOST_PATHS } from "../app-sdk/reserved-paths.mjs";
 import { isAgenticAppsEnabled, loadConfiguredAgenticApps } from "@/lib/agentic-apps/config";
 import { agenticAppForHostPath } from "@/lib/agentic-apps/host-routes";
-import { RUNTIME_NEXT_URL_HEADER } from "@/lib/agentic-apps/request-headers";
+import { APP_PAGE_PATH_HEADER, RUNTIME_NEXT_URL_HEADER } from "@/lib/agentic-apps/request-headers";
 
 import { AGENTIC_APP_PUBLIC_BASE, AGENTIC_APP_RUNTIME_BASE } from "@/lib/agentic-apps/runtime";
 import {
@@ -51,7 +51,9 @@ export function proxy(request: NextRequest): NextResponse {
         url.pathname = profile?.mode === "iframe"
           ? `/agentic-app-routes/${owner.installation.appId}${pathname}`
           : `/native-extensions/${owner.installation.appId}${pathname}`;
-        return NextResponse.rewrite(url);
+        const headers = new Headers(request.headers);
+        headers.set(APP_PAGE_PATH_HEADER, pathname + request.nextUrl.search);
+        return NextResponse.rewrite(url, { request: { headers } });
       }
     } catch {
       return NextResponse.json({ error: "Application route configuration unavailable" }, { status: 503 });
@@ -60,7 +62,12 @@ export function proxy(request: NextRequest): NextResponse {
   const appPath = parseAgenticAppPath(pathname);
 
   if (!appPath || isHostShellRequest(request)) {
-    return NextResponse.next();
+    const headers = new Headers(request.headers);
+    headers.delete(APP_PAGE_PATH_HEADER);
+    if (pathname === "/apps" || pathname.startsWith("/apps/")) {
+      headers.set(APP_PAGE_PATH_HEADER, pathname + request.nextUrl.search);
+    }
+    return NextResponse.next({ request: { headers } });
   }
 
   const runtimeUrl = request.nextUrl.clone();

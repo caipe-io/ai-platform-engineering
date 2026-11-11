@@ -203,6 +203,38 @@ describe("AgenticAppShell", () => {
     post.mockRestore();
   });
 
+  it("keeps conversation keys out of every frame message and retains them across path navigation", async () => {
+    mockSearch = "assistant_chat=chat-1&legacy_chat=chat-1&tab=overview";
+    window.history.replaceState(null, "", "/apps/example-app?" + mockSearch + "#summary");
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => ({ item: app({
+      assistantEnabled: false, assistantOptions: { legacyConversationQueryParams: ["legacy_chat"] },
+    }) }) });
+    const view = render(<AgenticAppShell appId="example-app" path={[]} />);
+    const iframe = await screen.findByTitle("Example App") as HTMLIFrameElement;
+    expect(iframe.getAttribute("src")).not.toMatch(/assistant_chat|legacy_chat/);
+    const post = jest.spyOn(iframe.contentWindow!, "postMessage");
+    const send = (data: object) => act(() => window.dispatchEvent(new MessageEvent("message", {
+      origin: window.location.origin, source: iframe.contentWindow,
+      data: { version: "1.0", appId: "example-app", ...data },
+    })));
+    fireEvent.load(iframe);
+    send({ type: "caipe.agenticApp.bridge.connect.v1" });
+    const initialMessages = post.mock.calls.filter(([message]) => message.type === "caipe.agenticApp.navigation.v1");
+    expect(initialMessages.length).toBeGreaterThanOrEqual(3);
+    for (const [message] of initialMessages) expect(message.href).toBe("/apps/example-app?tab=overview#summary");
+    send({ type: "caipe.agenticApp.navigate.v1", href: "/apps/example-app/details?tab=report&assistant_chat=other&legacy_chat=other" });
+    expect(window.location.pathname).toBe("/apps/example-app/details");
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get("assistant_chat")).toBe("chat-1");
+    expect(params.get("legacy_chat")).toBe("chat-1");
+    mockSearch = window.location.search;
+    view.rerender(<AgenticAppShell appId="example-app" path={["details"]} />);
+    for (const [message] of post.mock.calls.filter(([message]) => message.type === "caipe.agenticApp.navigation.v1")) {
+      expect(message.href).not.toMatch(/assistant_chat|legacy_chat/);
+    }
+    post.mockRestore();
+  });
+
   it("keeps the connected iframe document across app paths and continues syncing queries", async () => {
     const view = render(<AgenticAppShell appId="example-app" path={[]} />);
     const iframe = await screen.findByTitle("Example App") as HTMLIFrameElement;

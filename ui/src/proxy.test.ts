@@ -118,3 +118,21 @@ describe("External Apps configuration failures", () => {
     expect(loadConfiguredAgenticApps).toHaveBeenCalledTimes(1);
   });
 });
+
+it("owns the app sign-in callback path and replaces caller-supplied values", () => {
+  const response = proxy(new NextRequest("https://host.example.test/apps?q=finance", {headers:{"x-caipe-app-page-path":"//other.example.test"}}));
+  expect(response.headers.get("x-middleware-request-x-caipe-app-page-path")).toBe("/apps?q=finance");
+  const other = proxy(new NextRequest("https://host.example.test/chat", {headers:{"x-caipe-app-page-path":"/apps?forged=1"}}));
+  expect(other.headers.get("x-middleware-request-x-caipe-app-page-path")).toBeNull();
+});
+
+it("retains the public path and query when a configured app claims a host route", () => {
+  jest.mocked(isAgenticAppsEnabled).mockReturnValue(true);
+  jest.mocked(loadConfiguredAgenticApps).mockReturnValue([{
+    installation:{appId:"example-app",installed:true,enabled:true,selectedUiProfile:"hosted",hostRouteClaims:["/example"]},
+    manifest:{ui:{profiles:[{id:"hosted",mode:"iframe"}]}}
+  }] as unknown as ReturnType<typeof loadConfiguredAgenticApps>);
+  const response = proxy(new NextRequest("https://host.example.test/example/wiki?wikiSearch=release", {headers:{"x-caipe-app-page-path":"/forged"}}));
+  expect(response.headers.get("x-middleware-request-x-caipe-app-page-path")).toBe("/example/wiki?wikiSearch=release");
+  expect(response.headers.get("x-middleware-rewrite")).toBe("https://host.example.test/agentic-app-routes/example-app/example/wiki?wikiSearch=release");
+});
