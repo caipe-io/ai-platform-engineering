@@ -39,8 +39,10 @@ npm run serve
 ## Foundation branding
 
 - The homepage uses the Sandbox statement from the [CNCF website guidelines](https://github.com/cncf/foundation/blob/main/policies-guidance/website-guidelines.md).
+- An “A CNCF Sandbox Project” badge with the official CNCF icon appears directly below the homepage headline and opens CAIPE's landscape entry.
 - The shared footer carries the LF Projects copyright and policy link.
 - Official, unmodified logos are served locally from `static/img/foundation/`:
   - CNCF [color](https://github.com/cncf/artwork/blob/main/other/cncf/horizontal/color/cncf-color.svg) and [white](https://github.com/cncf/artwork/blob/main/other/cncf/horizontal/white/cncf-white.svg) variants for light and dark themes.
+  - CNCF [white icon](https://github.com/cncf/artwork/blob/main/other/cncf/icon/white/cncf-icon-white.svg) for the hero badge.
   - Linux Foundation [stacked white logo](https://www.linuxfoundation.org/hubfs/lf-stacked-white.svg) for the dark footer.
 - Preserve logo proportions, colors, and clear space when updating the layout. See the [CNCF](https://www.cncf.io/brand-guidelines/) and [Linux Foundation](https://www.linuxfoundation.org/brand-guidelines) brand guidelines.
