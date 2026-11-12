@@ -182,7 +182,8 @@ credentials. Existing transcript checks still establish content availability.
 Partial discovery is reported explicitly when request, page or time limits apply.
 
 For interactive callers, `catalog_page_limit=1` reads one catalog page while
-activity workers run concurrently. Pass `next_continuation` back as
+eight bounded activity workers run concurrently. Discovery requests and recap
+metadata enrichment each use an eight-request cap. Pass `next_continuation` back as
 `continuation` while `has_more` is true. It preserves the catalog frontier,
 unfinished spaces and row progress, including after a result limit or timeout.
 The opaque token expires after 24 hours, is bound to the same date range, site

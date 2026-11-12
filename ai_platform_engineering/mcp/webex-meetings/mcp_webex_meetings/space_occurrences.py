@@ -23,8 +23,8 @@ MAX_CATALOG_PAGES = 20
 MAX_CONVERSATIONS = 500
 MAX_ACTIVITY_PAGES = 40
 ACTIVITY_PAGE_SIZE = 100
-ACTIVITY_WORKERS = 4
-CONVERSATION_QUEUE_SIZE = 8
+ACTIVITY_WORKERS = 8
+CONVERSATION_QUEUE_SIZE = 2 * ACTIVITY_WORKERS
 MAX_CONTINUATION_LENGTH = 512 * 1024
 CONTINUATION_TTL = 24 * 60 * 60
 MAX_BOUNDARY_IDS = 2 * ACTIVITY_PAGE_SIZE
@@ -142,7 +142,7 @@ class _Discovery:
     pending_activities: dict[str, _ActivityCursor] = field(default_factory=dict)
     seen_conversations: set[str] = field(default_factory=set)
     series_lookup_pending: bool = False
-    semaphore: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(4))
+    semaphore: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(ACTIVITY_WORKERS))
     requests: int = 0
     stopped: bool = False
 

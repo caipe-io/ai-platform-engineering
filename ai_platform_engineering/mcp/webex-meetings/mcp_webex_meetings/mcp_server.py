@@ -16,7 +16,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import INTERNAL_ERROR, INVALID_PARAMS, ErrorData
 from pydantic import BaseModel, ConfigDict, Field
 
-from .space_occurrences import list_space_meeting_occurrences
+from .space_occurrences import ACTIVITY_WORKERS, list_space_meeting_occurrences
 
 WEBEX_API_BASE = "https://webexapis.com/v1"
 USERHUB_DEFAULT_SITE = "https://cisco.webex.com"
@@ -1225,7 +1225,7 @@ def register_tools(server) -> None:
             # The activity feed contains concrete IDs but encrypted page titles.
             # Existing metadata-only privileges supply the exact recording title,
             # without downloading transcripts or returning signed media links.
-            semaphore = asyncio.Semaphore(4)
+            semaphore = asyncio.Semaphore(ACTIVITY_WORKERS)
 
             async def enrich(item: dict[str, Any]) -> None:
                 async with semaphore:
