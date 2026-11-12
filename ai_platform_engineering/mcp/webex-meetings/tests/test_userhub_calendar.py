@@ -6,6 +6,60 @@ from mcp_webex_meetings.mcp_server import (
 )
 
 
+def test_post_meeting_query_requests_the_all_past_meetings_view() -> None:
+    params = _userhub_calendar_params(UserHubCalendar(meeting_view_type="post"))
+    assert params["meetingViewType"] == "post"
+    assert params["showMeetings"] == 2
+    assert params["hidePastMeeting"] == "false"
+
+
+def test_post_meeting_normalization_preserves_actual_identity_without_join_link() -> None:
+    actual = "a" * 32 + "_I_123456789"
+    result = _normalize_userhub_calendar_item({
+        "id": actual,
+        "seriesId": "a" * 32,
+        "subject": "Example review",
+        "startTime": {"dateTime": "2026-10-15 09:00:10", "timeZone": "America/Los_Angeles"},
+        "endTime": {"dateTime": "2026-10-15 10:00:00", "timeZone": "America/Los_Angeles"},
+        "webex": {
+            "wbxIsPostMeeting": True, "wbxMeetingUuid": actual,
+            "wbxSiteUrl": "https://primary.webex.com", "wbxHasRecording": True,
+            "wbxHasTranscript": True, "wbxHost": {"wbxHostEmail": "host@example.com"},
+        },
+    })
+    assert result["id"] == actual
+    assert result["meetingSeriesId"] == "a" * 32
+    assert result["title"] == "Example review"
+    assert result["start"] == "2026-10-15T16:00:10+00:00"
+    assert result["meetingType"] == "meeting"
+    assert result["state"] == "ended"
+    assert result["siteUrl"] == "https://primary.webex.com"
+    assert result["hostEmail"] == "host@example.com"
+    assert result["webLink"] is None
+    assert result["source"] == "userhub_history"
+    # A metadata flag is not proof of readable transcript content.
+    assert "hasTranscript" not in result
+    assert "transcriptVerified" not in result
+
+
+def test_invitation_uuid_is_never_promoted_to_an_actual_meeting() -> None:
+    for post in (False, True):
+        result = _normalize_userhub_calendar_item({
+            "id": "calendar-invitation", "subject": "Example review",
+            "webex": {"wbxIsPostMeeting": post, "wbxMeetingUuid": "a" * 32 + "_20261015T160000Z"},
+        })
+        assert "meetingType" not in result
+        assert result["id"] == "calendar-invitation"
+
+
+def test_conflicting_post_meeting_ids_are_not_accepted_as_an_actual() -> None:
+    result = _normalize_userhub_calendar_item({
+        "id": "a" * 32 + "_I_1",
+        "webex": {"wbxIsPostMeeting": True, "wbxMeetingUuid": "b" * 32 + "_I_2"},
+    })
+    assert "meetingType" not in result
+
+
 def test_userhub_calendar_query_requests_meetings_from_requested_start() -> None:
     args = UserHubCalendar(
         from_iso="2026-08-30T12:00:00Z",

@@ -130,6 +130,13 @@ class SpaceMeetingOccurrences(BaseModel):
 
 
 class UserHubCalendar(BaseModel):
+    meeting_view_type: Literal["upcoming", "post"] | None = Field(
+        default=None,
+        description=(
+            "User Hub view: 'post' reads completed meeting instances, including shared meetings; "
+            "'upcoming' reads invitations. Omit to preserve the site's default calendar view."
+        ),
+    )
     from_iso: Annotated[
         str | None,
         Field(
@@ -533,7 +540,7 @@ def _userhub_time_to_iso(value: Any) -> tuple[str | None, str | None, str | None
 def _organizer_email(organizer: Any) -> str | None:
     if not isinstance(organizer, dict):
         return None
-    for key in ("email", "emailAddress", "mail", "userName"):
+    for key in ("email", "emailAddress", "mail", "userName", "wbxHostEmail"):
         value = organizer.get(key)
         if value:
             return str(value)
@@ -554,7 +561,7 @@ def _normalize_userhub_calendar_item(item: Any) -> dict[str, Any]:
     location = item.get("location")
     organizer = item.get("organizer") or item.get("host") or item.get("hostInfo")
 
-    return {
+    normalized = {
         "id": item.get("id") or item.get("meetingId") or item.get("confId"),
         "seriesId": (
             item.get("seriesId")
@@ -583,6 +590,27 @@ def _normalize_userhub_calendar_item(item: Any) -> dict[str, Any]:
         "isAllDay": item.get("isAllDay"),
         "originalStartTime": item.get("originalStartTime"),
     }
+    webex = item.get("webex")
+    if isinstance(webex, dict) and webex.get("wbxIsPostMeeting") is True:
+        actual_id = webex.get("wbxMeetingUuid") or item.get("id")
+        # Invitation UUIDs can identify a series or scheduled occurrence. Only
+        # explicit post-meeting rows with a concrete instance are actuals.
+        match = re.fullmatch(r"(?P<series>[0-9a-fA-F]{32})_I_\d+", actual_id) if isinstance(actual_id, str) else None
+        if match and (not item.get("id") or item["id"] == actual_id):
+            normalized.update({
+                "id": actual_id,
+                "meetingSeriesId": match.group("series"),
+                "title": subject,
+                "meetingType": "meeting",
+                "state": "ended",
+                "source": "userhub_history",
+                "hostEmail": _organizer_email(organizer) or _organizer_email(webex.get("wbxHost")),
+            })
+            if isinstance(webex.get("wbxHasRecording"), bool):
+                normalized["hasRecording"] = webex["wbxHasRecording"]
+            if isinstance(webex.get("wbxSiteUrl"), str):
+                normalized["siteUrl"] = _normalize_userhub_site_url(webex["wbxSiteUrl"])
+    return normalized
 
 
 def _sanitize_sensitive(obj: Any) -> Any:
@@ -627,6 +655,12 @@ def _userhub_calendar_params(args: UserHubCalendar) -> dict[str, Any]:
         "hidePastMeeting": "false",
         "showMeetings": 1,
     }
+    if args.meeting_view_type is not None:
+        params["meetingViewType"] = args.meeting_view_type
+        if args.meeting_view_type == "post":
+            # User Hub's All past meetings view includes hosted and shared
+            # instances. Date bounds alone still return calendar invitations.
+            params["showMeetings"] = 2
     from_dt = _parse_iso_datetime(args.from_iso)
     if from_dt is not None:
         # Date-only bounds can be interpreted in the user's local timezone.

@@ -32,7 +32,7 @@ Mirrors Cisco's official Meetings MCP tool surface, plus local fallback helpers:
 
 - `webex_list_meetings` - list/search meetings with date filters
 - `webex_space_meeting_occurrences` - discover actual meetings shared in spaces, with optional series filtering
-- `webex_userhub_calendar` - best-effort User Hub calendar read for upcoming external-calendar occurrences
+- `webex_userhub_calendar` - User Hub invitations and the separate completed-meeting view
 - `webex_resolve_meeting_link` - resolve a Webex join/calendar link through `/v1/meetings` with secrets removed
 - `webex_get_meeting_status` - get a meeting + optional participants
 - `webex_create_meeting` - schedule a meeting
@@ -59,9 +59,14 @@ the overlap from the returned rows. Without `to_iso`, User Hub chooses its own
 default window. Callers scanning larger ranges should use bounded segments and
 deduplicate occurrences; a response at `max_results` may be incomplete.
 
-The calendar request mirrors the User Hub web client: `meetingListType=All`,
-`hidePastMeeting=false`, and `showMeetings=1`. `showMeetings` asks the feed to
-include meeting entries rather than returning only calendar-shell metadata.
+Date bounds alone do not switch User Hub from invitations to completed meetings.
+Use `meeting_view_type="post"` to request its Past meetings tab with
+`meetingViewType=post`, `showMeetings=2` (all hosted and shared meetings),
+`meetingListType=All`, and `hidePastMeeting=false`. Explicit post-meeting rows
+retain their actual instance ID, series, title, UTC dates and site even without
+a join link. Invitation UUIDs are never promoted to actual instances, and content
+availability still requires a separate check. Omitting the view preserves the
+existing calendar query (`showMeetings=1`).
 Calendar reads currently start at `offset=0` and request at most 500 rows; the
 tool then applies the requested ISO time window and title filter locally.
 
