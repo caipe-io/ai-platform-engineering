@@ -97,7 +97,7 @@ jobs:
           uv sync --frozen --extra dev
           uv run ruff check src tests ../../tests/test_release_finalization.py ../../tests/test_harness_engine_installation.py ../../deploy/harness-engine/init-token.py ../../tests/test_harness_release_workflow.py
           uv run pytest -c pyproject.toml -q tests ../../tests/test_release_finalization.py ../../tests/test_check_pinned_deps.py
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
         with:
           version: v3.17.3
       - name: Validate standard installation and Helm contracts
@@ -167,7 +167,7 @@ jobs:
         run: |
           python3 deploy/harness-engine/test-compose-contract.py
           bash deploy/harness-engine/test-worker-network.sh "$IMAGE"
-      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         if: needs.metadata.outputs.publish == 'true'
         with:
           registry: ghcr.io
