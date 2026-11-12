@@ -1963,6 +1963,9 @@ harnessEngine:
       resources: *id001
     cli-acp:
       enabled: false
+      # Requires Linux Landlock ABI 6+; never silently falls back to unisolated execution.
+      # "disabled" is an explicit operator opt-out for a trusted single-user worker.
+      isolation: landlock
       image:
         repository: ghcr.io/caipe-io/caipe-claude-cli-acp-worker
         tag: ''

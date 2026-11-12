@@ -109,6 +109,7 @@ class Settings(BaseSettings):
     claude_acp_command: list[str] = Field(default_factory=list)
     claude_acp_runtime: Literal["claude_code_acp", "claude_code_cli_acp"] = "claude_code_acp"
     claude_acp_tools: list[str] = Field(default_factory=list)
+    claude_cli_isolation: Literal["landlock", "disabled"] = "landlock"
     deep_agents_enabled: bool = False
 
     def require_private_token(self) -> None:

@@ -20,6 +20,7 @@ from harness_engine.adapters.claude_acp import ClaudeACPAdapter
 from harness_engine.adapters.claude_sdk import ClaudeSDKAdapter
 from harness_engine.brokers import DefaultPromptCompiler
 from harness_engine.claude_acp_tools import ClaudeACPToolBridge
+from harness_engine.claude_isolation import check_isolation
 from harness_engine.config import Settings
 from harness_engine.coordinator import RunCoordinator
 from harness_engine.models import TERMINAL_RUN_STATUSES, ExecutionIdentity, RunContext, RunRecord
@@ -63,6 +64,8 @@ def create_worker_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         config.require_private_token()
+        if config.claude_acp_runtime == "claude_code_cli_acp" and config.claude_cli_isolation == "landlock":
+            await check_isolation()
         await repo.initialize()
         try:
             yield

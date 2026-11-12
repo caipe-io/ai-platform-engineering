@@ -53,6 +53,29 @@ def test_disabled_defaults_create_no_runtime(chart: Path) -> None:
     assert not docs(render(chart, "global.harnessEngine.enabled=false"))
 
 
+@pytest.mark.parametrize("isolation", [None, "disabled"])
+def test_cli_isolation_default_and_explicit_opt_out(chart: Path, isolation: str | None) -> None:
+    settings = worker_settings() + ["harnessEngine.workers.cli-acp.enabled=true",
+                                   "harnessEngine.workers.cli-acp.tokenSecret.name=example-cli-token"]
+    if isolation:
+        settings.append(f"harnessEngine.workers.cli-acp.isolation={isolation}")
+    resources = docs(render(chart, *settings))
+    for deployment in (d for d in resources if d["kind"] == "Deployment"):
+        env = {e["name"]: e for e in deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])}
+        if deployment["metadata"]["name"].endswith("-cli-acp"):
+            assert env["HARNESS_ENGINE_CLAUDE_CLI_ISOLATION"]["value"] == (isolation or "landlock")
+        else:
+            assert "HARNESS_ENGINE_CLAUDE_CLI_ISOLATION" not in env
+
+
+@pytest.mark.parametrize("setting", ["isolation=unknown", "env.HARNESS_ENGINE_CLAUDE_CLI_ISOLATION=disabled"])
+def test_cli_isolation_rejects_invalid_or_shadowed_policy(chart: Path, setting: str) -> None:
+    result = render(chart, *worker_settings(), "harnessEngine.workers.cli-acp.enabled=true",
+                    "harnessEngine.workers.cli-acp.tokenSecret.name=example-cli-token",
+                    f"harnessEngine.workers.cli-acp.{setting}")
+    assert result.returncode != 0
+
+
 def test_render_is_stable_and_requires_existing_credentials(chart: Path) -> None:
     first = render(chart)
     second = render(chart)
