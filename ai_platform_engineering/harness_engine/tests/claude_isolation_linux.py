@@ -170,6 +170,7 @@ time.sleep(60)
             try:
                 os.killpg(child.pid, signal.SIGKILL)
             except ProcessLookupError:
+                # Successful cancellation already removed the process group.
                 pass
             child.wait()
             child.stderr.close()

@@ -24,7 +24,14 @@ from harness_engine.claude_acp_tools import ClaudeACPToolBridge
 from harness_engine.claude_isolation import check_isolation
 from harness_engine.claude_tools import ClaudeToolBroker
 from harness_engine.config import Settings
-from harness_engine.models import AgentBlueprint, ExecutionIdentity, RenderedPrompt, RunContext, SessionBinding, TurnInput
+from harness_engine.models import (
+    AgentBlueprint,
+    ExecutionIdentity,
+    RenderedPrompt,
+    RunContext,
+    SessionBinding,
+    TurnInput,
+)
 
 
 class Model(BaseHTTPRequestHandler):
@@ -156,8 +163,11 @@ async def verify(root: str, proxy_port: int) -> None:
         print("PASS: isolated real CLI, Bash, ACP streaming, two MCP calls, session resume, token exclusion and capability revocation")
     finally:
         server.should_exit = True
-        await serving
-        listener.close()
+        try:
+            # Wait for graceful shutdown, but fail the fixture if the server hangs.
+            await asyncio.wait_for(serving, timeout=10)
+        finally:
+            listener.close()
 
 
 if __name__ == "__main__":
