@@ -845,7 +845,7 @@ export function SetupWizardDialog({
                           <span className="grid h-12 w-12 place-items-center rounded-2xl border border-primary/20 bg-primary/10 text-primary"><MessageSquare className="h-6 w-6" /></span>
                         </div>
                         <p className="text-xs font-medium uppercase tracking-widest text-primary">Make something useful</p>
-                        <h3 className="mt-3 max-w-md text-3xl font-semibold tracking-tight">Your first agent starts<br className="hidden sm:block" /> with one small job.</h3>
+                        <h3 className="mt-3 max-w-md text-3xl font-semibold tracking-tight">Your first agent starts here.</h3>
                         <p className="mt-4 max-w-md text-sm leading-7 text-muted-foreground">Choose an AI, give your agent instructions, then say hello. We’ll save your place as you go.</p>
                         <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground"><span>01 · Choose its AI</span><span>02 · Give it a job</span><span>03 · Try a conversation</span></div>
                       </div>
