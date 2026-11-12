@@ -86,6 +86,23 @@ def stream_gateway(
                 envelope = response.json()
                 if isinstance(envelope, dict) and envelope.get("code") in {"HARNESS_RUNTIME_MISMATCH", "APP_STREAM_REQUIRED"}:
                     raise NativeConversation
+                if response.status_code == 409:
+                    # Redelivery may rebuild newer thread context. Find the
+                    # original run instead of changing its admitted input.
+                    lookup = client.post(
+                        f"{base_url}/api/harness-engine/run-requests/lookup",
+                        json={key: body[key] for key in ("agent_id", "conversation_id", "client_request_id")},
+                        headers={**headers(), "Accept": "application/json"},
+                    )
+                    if lookup.status_code in _RETRYABLE:
+                        response = lookup
+                    else:
+                        lookup.raise_for_status()
+                        known = lookup.json()
+                        data = known.get("data") if isinstance(known, dict) and known.get("success") else None
+                        if isinstance(data, dict) and isinstance(data.get("run_id"), str) and data["run_id"]:
+                            run_id = data["run_id"]
+                            break
             if response.status_code not in _RETRYABLE:
                 response.raise_for_status()
                 run = response.json()
@@ -95,6 +112,8 @@ def stream_gateway(
                     raise RuntimeError("Harness Gateway did not confirm run admission")
                 break
         except httpx.TransportError:
+            # Admission may have succeeded; retain the key and use the bounded
+            # retry/backoff below rather than dispatching another transport.
             pass
         except httpx.HTTPStatusError as exc:
             raise RuntimeError(f"Harness Gateway admission failed (HTTP {exc.response.status_code})") from None
@@ -125,6 +144,8 @@ def stream_gateway(
                         if event["type"] in _TERMINAL:
                             return
         except httpx.TransportError:
+            # Keep the last complete cursor. The shared retry budget/backoff
+            # below also handles interrupted and empty subscription responses.
             pass
         except httpx.HTTPStatusError as exc:
             raise RuntimeError(f"Harness Gateway replay denied (HTTP {exc.response.status_code})") from None

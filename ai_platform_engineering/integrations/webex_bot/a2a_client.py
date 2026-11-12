@@ -233,6 +233,8 @@ class WebexSSEClient:
                         yield event
                 return
             except NativeConversation:
+                # An explicit pre-admission native/app binding uses the signed
+                # native SSE path below; no Engine execution was started.
                 pass
             finally:
                 if self._http_client is None:

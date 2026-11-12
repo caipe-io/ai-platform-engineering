@@ -49,6 +49,11 @@ sequenceDiagram
 - Slack message timestamps (scoped by workspace/channel) and Webex message IDs
   produce stable admission keys for redelivery of the same platform message.
   Calls without a delivery ID receive a fresh key for that invocation.
+- If admission conflicts after redelivery rebuilds the thread context, the bot
+  looks up the original run through the BFF and replays it. Lookup requires
+  current agent-use and conversation-write access and is scoped to the caller,
+  agent, conversation epoch and delivery key. It cannot start a replacement run
+  or change the original input fingerprint. A missing run remains a conflict.
 - Reconnects use numeric event/subframe cursors; duplicate events are discarded.
   Incomplete SSE frames replay from the previous complete frame.
 - Empty/failed subscriptions retry at most five times, resetting the budget

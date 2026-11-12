@@ -75,7 +75,7 @@ def test_only_explicit_native_bindings_can_fall_back(status: int, code: str, err
 
     with httpx.Client(transport=httpx.MockTransport(handle)) as client, pytest.raises(error) as caught:
         list(stream_gateway(client, "https://example.test", PAYLOAD, headers))
-    assert len(requests) == 1
+    assert len(requests) == (2 if status == 409 and code == "active_run" else 1)
     assert "private-value" not in str(caught.value)
 
 
@@ -107,6 +107,71 @@ def test_redelivered_platform_message_keeps_its_admission_key(delivery_field: st
         for _ in range(2):
             list(stream_gateway(client, "https://example.test", {**PAYLOAD, "client_context": {delivery_field: "example-delivery"}}, headers))
     assert len(keys) == 2 and keys[0] == keys[1]
+
+
+@pytest.mark.parametrize("delivery_field", ["delivery_id", "webex_message_id"])
+def test_redelivery_with_new_thread_context_looks_up_and_replays_the_original_run(delivery_field: str) -> None:
+    admitted, looked_up, streamed = [], [], []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/run-requests/lookup"):
+            looked_up.append(json.loads(request.content))
+            return httpx.Response(200, json={"success": True, "data": {"run_id": "original-run"}})
+        if request.method == "POST":
+            admitted.append(json.loads(request.content))
+            if len(admitted) > 1:
+                return httpx.Response(409, json={"success": False, "error": "Request ID was already used with different input"})
+            return httpx.Response(202, json={"success": True, "data": {"run_id": "original-run"}})
+        streamed.append(request.url.path)
+        return httpx.Response(200, content=frame("1.0", "RUN_FINISHED"))
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        for context in ("Original thread", "Thread now includes a bot reply"):
+            list(stream_gateway(client, "https://example.test", {
+                **PAYLOAD, "message": f"{context}\nHello", "client_context": {delivery_field: "same-delivery"},
+            }, headers))
+    assert admitted[0]["message"] != admitted[1]["message"]
+    assert admitted[0]["client_request_id"] == admitted[1]["client_request_id"]
+    assert looked_up == [{key: admitted[0][key] for key in ("agent_id", "conversation_id", "client_request_id")}]
+    assert streamed == ["/api/harness-engine/runs/original-run/events/stream"] * 2
+
+
+@pytest.mark.parametrize("status,data,expected_status", [
+    (200, None, 409), (200, {"run_id": ""}, 409), (403, None, 403),
+])
+def test_unresolved_or_denied_redelivery_never_restarts_or_falls_back(status: int, data: object, expected_status: int) -> None:
+    paths = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path.endswith("/run-requests/lookup"):
+            return httpx.Response(status, json={"success": status == 200, "data": data})
+        return httpx.Response(409, json={"success": False, "error": "Request conflict"})
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client, pytest.raises(RuntimeError, match=f"HTTP {expected_status}"):
+        list(stream_gateway(client, "https://example.test", PAYLOAD, headers))
+    assert paths == ["/api/harness-engine/runs", "/api/harness-engine/run-requests/lookup"]
+
+
+@pytest.mark.parametrize("phase", ["admission", "replay", "lookup"])
+def test_transport_retries_keep_their_backoff_and_bound(monkeypatch: pytest.MonkeyPatch, phase: str) -> None:
+    calls, sleeps = [], []
+    monkeypatch.setattr("ai_platform_engineering.integrations.slack_bot.utils.harness_gateway.time.sleep", sleeps.append)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if phase == "admission" or request.method == "GET":
+            raise httpx.ReadError("Disconnected", request=request)
+        if phase == "lookup":
+            if request.url.path.endswith("/run-requests/lookup"):
+                return httpx.Response(503)
+            return httpx.Response(409, json={"success": False})
+        return httpx.Response(202, json={"success": True, "data": {"run_id": "example-run"}})
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client, pytest.raises(RuntimeError):
+        list(stream_gateway(client, "https://example.test", PAYLOAD, headers))
+    assert len(calls) == {"admission": 6, "replay": 7, "lookup": 12}[phase]
+    assert sleeps == [0.25, 0.5, 1.0, 2.0, 4.0]
 
 
 @pytest.mark.parametrize("envelope", [{"success": True, "data": None}, {"success": True, "data": {}}, []])

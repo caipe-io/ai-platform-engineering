@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { POST as startRun } from "../runs/route";
+import { POST as lookupRunRequest } from "../run-requests/lookup/route";
 import { GET as getRun, DELETE as cancelRun } from "../runs/[runId]/route";
 import { GET as getEvents } from "../runs/[runId]/events/route";
 import { GET as streamRun } from "../runs/[runId]/events/stream/route";
@@ -97,6 +98,48 @@ describe("Harness Engine BFF session routes", () => {
     );
     expect(JSON.stringify(fetchMock.mock.calls[0][1]?.headers)).not.toContain("must-not-leave-bff");
   });
+
+  it("looks up only the caller's delivery in the authorized conversation epoch", async () => {
+    mockAuthorizeConversationWriteAccess.mockResolvedValue({ conversation: { _id: "conversation-epoch" }, denial: null });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(NextResponse.json({ success: true, data: ownedRun }));
+    const response = await lookupRunRequest(new NextRequest("https://example.test/api/harness-engine/run-requests/lookup", {
+      method: "POST", headers: { "X-Harness-Engine-Subject": "injected-user" },
+      body: JSON.stringify({ agent_id: "agent-example", conversation_id: "conversation-example", client_request_id: "delivery-example", owner_subject: "injected-user", message: "Changed context" }),
+    }));
+    expect(response.status).toBe(200);
+    expect(mockRequireAgentUsePermission).toHaveBeenCalledWith(expect.objectContaining({ subject: "test-user", agentId: "agent-example" }));
+    expect(mockAuthorizeConversationWriteAccess).toHaveBeenCalledWith(expect.objectContaining({ subject: "test-user" }), "conversation-example", "agent-example");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith("http://harness-engine:8010/api/v1/run-requests/lookup", expect.objectContaining({
+      method: "POST", headers: expect.objectContaining({ Authorization: "Bearer internal-test-token", "X-Harness-Engine-Subject": "test-user" }),
+      body: JSON.stringify({ agent_id: "agent-example", conversation_id: "conversation-epoch", client_request_id: "delivery-example" }),
+    }));
+    expect(JSON.stringify(fetchMock.mock.calls[0][1]?.headers)).not.toContain("must-not-leave-bff");
+  });
+
+  it.each(["authentication", "agent", "conversation"])("denies %s failures before run lookup", async gate => {
+    const denial = NextResponse.json({ success: false, error: "Denied" }, { status: gate === "authentication" ? 401 : 403 });
+    if (gate === "authentication") mockAuthenticateRequest.mockResolvedValue(denial);
+    if (gate === "agent") mockRequireAgentUsePermission.mockResolvedValue(denial);
+    if (gate === "conversation") mockAuthorizeConversationWriteAccess.mockResolvedValue({ denial, conversation: null });
+    const fetchMock = jest.spyOn(global, "fetch");
+    const response = await lookupRunRequest(new NextRequest("https://example.test/api/harness-engine/run-requests/lookup", {
+      method: "POST", body: JSON.stringify({ agent_id: "agent-example", conversation_id: "conversation-example", client_request_id: "delivery-example" }),
+    }));
+    expect(response).toBe(denial);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([null, {}, { agent_id: "agent-example", conversation_id: "conversation-example", client_request_id: " " }])(
+    "rejects invalid delivery lookup bodies (%j)", async body => {
+      const fetchMock = jest.spyOn(global, "fetch");
+      const response = await lookupRunRequest(new NextRequest("https://example.test/api/harness-engine/run-requests/lookup", {
+        method: "POST", body: JSON.stringify(body),
+      }));
+      expect(response.status).toBe(400);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([["detail", getRun], ["events", getEvents], ["stream", streamRun]] as const)(
     "lets a shared reader follow %s with bounded conversation scope and their own identity", async (name, handler) => {

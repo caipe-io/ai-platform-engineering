@@ -566,6 +566,7 @@ class SSEClient:
               return {"success": False, "error": event.message or "Harness run failed"}
         return {"success": True, "content": "".join(content)}
       except NativeConversation:
+        # Explicit native/app bindings retain the non-streaming BFF invocation.
         pass
 
     headers = self._get_headers(bearer_token=bearer_token)
