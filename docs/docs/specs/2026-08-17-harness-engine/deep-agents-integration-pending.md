@@ -57,6 +57,12 @@ The diagram shows the common execution path after native session adoption. Durin
 | Reusable runtime | LangGraph execution/checkpoints, existing tools, middleware, skills, subagents and files |
 | Existing management services | Authoritative agent identity/access metadata and referenced resource configuration |
 
+### Native remote delegation pilot
+
+- Selected A2A registry entries can opt into upstream `CompiledSubAgent` dispatch with `features.remote_agents_as_subagents`.
+- The pilot reuses the authenticated SDK transport and keeps existing agents on the named-tool path by default. See [runtime configuration and limits](https://github.com/caipe-io/ai-platform-engineering/blob/main/ai_platform_engineering/dynamic_agents/README.md#native-remote-subagents-opt-in).
+- A compiled subgraph is not a durable Engine child run. A2A task/context persistence, acknowledged cancellation, remote input/auth continuation and cross-harness ACP delegation remain delivery gates. No Agent Server dependency is added.
+
 ## 2. Integration requirements
 
 The table records the independent Engine gaps that motivated native runtime integration; consult the implementation guide above for current behavior.

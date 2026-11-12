@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
+from collections.abc import Callable
 from contextlib import aclosing
 from typing import Any
 from urllib.parse import urlparse
@@ -51,6 +52,10 @@ def _text_parts(message: Any) -> list[str]:
     return [part.text for part in parts if getattr(part, "text", None)]
 
 
+class RemoteAgentContinuationRequired(RuntimeError):
+    """A remote task needs a continuation that this invocation cannot provide."""
+
+
 class _RemoteOutput:
     """Accumulate artifact snapshots and append chunks without duplicating output."""
 
@@ -61,6 +66,7 @@ class _RemoteOutput:
         self.status_text = ""
         self.stream_seen = False
         self.finished = False
+        self.requires_continuation = False
 
     @property
     def text(self) -> str:
@@ -101,6 +107,7 @@ class _RemoteOutput:
                 TaskState.TASK_STATE_REJECTED,
             }:
                 raise RuntimeError(self.status_text or "Remote A2A task failed or was canceled")
+            self.requires_continuation = status.state in {TaskState.TASK_STATE_INPUT_REQUIRED, TaskState.TASK_STATE_AUTH_REQUIRED}
             self.finished = status.state in {
                 TaskState.TASK_STATE_COMPLETED,
                 TaskState.TASK_STATE_INPUT_REQUIRED,
@@ -188,13 +195,21 @@ class RemoteAgentTool(BaseTool):
         )
 
     async def _arun(self, message: str, runtime: ToolRuntime | None = None) -> str:
+        def on_update(text: str) -> None:
+            if runtime and runtime.tool_call_id:
+                runtime.stream_writer({"type": "tool_output", "tool_call_id": runtime.tool_call_id, "result": text})
+
+        return await self.invoke_agent(message, on_update)
+
+    async def invoke_agent(self, message: str, on_update: Callable[[str], None] | None = None, *, require_completed: bool = False) -> str:
+        """Shared SDK transport for legacy tools and native subagent delegation."""
         try:
             async with asyncio.timeout(self.timeout):
-                return await self._execute(message, runtime)
+                return await self._execute(message, on_update, require_completed=require_completed)
         except TimeoutError as exc:
             raise TimeoutError(f"Remote A2A execution exceeded its {self.timeout} second deadline") from exc
 
-    async def _execute(self, message: str, runtime: ToolRuntime | None) -> str:
+    async def _execute(self, message: str, on_update: Callable[[str], None] | None, *, require_completed: bool = False) -> str:
         # The runtime cache outlives individual requests, so resolve caller-scoped
         # auth at tool-call time using the active request token.
         policy = A2ADestinationPolicy(self.a2a_url, self.allowed_http_origins)
@@ -229,10 +244,10 @@ class RemoteAgentTool(BaseTool):
                 async with aclosing(client.send_message(request, context=context)) as responses:
                     async for response in responses:
                         changed = output.update(response)
-                        if changed and self.streaming and runtime and runtime.tool_call_id:
-                            runtime.stream_writer(
-                                {"type": "tool_output", "tool_call_id": runtime.tool_call_id, "result": output.text}
-                            )
+                        if changed and self.streaming and on_update:
+                            on_update(output.text)
+                if require_completed and output.requires_continuation:
+                    raise RemoteAgentContinuationRequired("Remote agent requires input or authentication; continuation is not enabled")
                 if output.stream_seen and not output.finished:
                     raise RuntimeError("Remote A2A stream ended before the task completed")
                 return output.text or "Remote agent returned no text response."
@@ -243,6 +258,7 @@ class RemoteAgentTool(BaseTool):
 async def create_remote_agent_tool(
     *,
     a2a_url: str,
+    registry_id: str | None = None,
     name: str | None = None,
     description: str | None = None,
     bearer_token: str | None = None,
@@ -273,6 +289,7 @@ async def create_remote_agent_tool(
     safe_name = _sanitize_tool_name(name or "") or _sanitize_tool_name(urlparse(a2a_url).hostname or "")
     return RemoteAgentTool(
         name=safe_name or "remote_agent",
+        metadata={"remote_agent_id": registry_id} if registry_id else None,
         description=description or f"Remote A2A agent at {a2a_url}",
         a2a_url=a2a_url,
         bearer_token=bearer_token,

@@ -184,7 +184,7 @@ class LangGraphStreamHelper:
         first = namespace[0]
         if first in self._namespace_mapping:
             # Replace with correlated tool_call_id
-            correlated = (self._namespace_mapping[first],) + namespace[1:]
+            correlated = tuple(self._namespace_mapping.get(part, part) for part in namespace)
             logger.debug(f"[sse:correlate] {first} → {self._namespace_mapping[first]}")
             return correlated
         else:
@@ -193,6 +193,13 @@ class LangGraphStreamHelper:
                 f"[sse:correlate] Unknown namespace {first}, mapping has {list(self._namespace_mapping.keys())}"
             )
             return ()
+
+    @staticmethod
+    def normalize_remote_output(data: Any, namespace: tuple[str, ...]) -> tuple[Any, tuple[str, ...]]:
+        """Attach a compiled remote agent's progress to its enclosing task call."""
+        if isinstance(data, dict) and data.get("type") == "remote_agent_output" and namespace:
+            return {"type": "tool_output", "tool_call_id": namespace[-1], "result": data["result"]}, namespace[:-1]
+        return data, namespace
 
     def accumulate_content(self, content: str) -> None:
         """Append a content chunk to the buffer."""

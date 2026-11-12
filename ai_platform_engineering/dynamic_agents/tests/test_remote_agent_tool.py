@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 import threading
 import time
 from contextlib import contextmanager
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -29,14 +31,25 @@ from a2a.types import (
     TaskState,
     TaskStatus,
 )
-from langchain_core.messages import AIMessage
+from deepagents import create_deep_agent
+from deepagents.backends.state import StateBackend
+from deepagents.middleware.subagents import SubAgentMiddleware
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
+from langgraph.types import Command
 from starlette.applications import Starlette
 
 from dynamic_agents.auth.token_context import current_user_token
+from dynamic_agents.models import FeaturesConfig
+from dynamic_agents.services.agent_runtime import AgentRuntime
 from dynamic_agents.services.credential_exchange import CredentialExchangeClient
+from dynamic_agents.services.remote_agent_subagent import create_remote_agent_subagent
 from dynamic_agents.services.remote_agent_tool import RemoteAgentTool, create_remote_agent_tool
+from dynamic_agents.services.stream_encoders.agui_sse import AGUIStreamEncoder
+from dynamic_agents.services.stream_encoders.custom_sse import CustomStreamEncoder
 
 
 class _CaptureAuthorization:
@@ -347,3 +360,136 @@ async def test_oversized_card_is_rejected_before_transport_selection() -> None:
         with pytest.raises(RuntimeError, match="responses exceeded 10 bytes"):
             await tool.ainvoke({"message": "hello"})
         assert not any(headers.get("content-type", "").startswith("application/json") for headers in _CaptureAuthorization.requests)
+
+
+class _ToolCallingFakeModel(FakeMessagesListChatModel):
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "_ToolCallingFakeModel":
+        return self
+
+
+@pytest.mark.parametrize("binding", ["JSONRPC", "HTTP+JSON"])
+@pytest.mark.parametrize("nested", [False, True])
+async def test_native_task_delegates_and_streams_without_an_extra_model(binding: str, nested: bool) -> None:
+    with _sdk_agent_server(binding, executor=_StreamingExecutor(), streaming=True) as endpoint:
+        transport = await create_remote_agent_tool(a2a_url=endpoint, allowed_http_origins=[endpoint],
+            name="remote_example", description="Example remote agent", streaming=True, bearer_token="stale")
+        spec = create_remote_agent_subagent(transport)
+        model = _ToolCallingFakeModel(responses=[
+            AIMessage(content="", tool_calls=[{"name": "task", "args": {
+                "description": "hello", "subagent_type": spec["name"]}, "id": "remote-call"}]),
+            AIMessage(content="Remote work complete."),
+        ])
+        if nested:
+            child = {"name": "local-child", "description": "Example child", "system_prompt": "Delegate the task", "model": model,
+                "tools": [], "middleware": [SubAgentMiddleware(backend=StateBackend, subagents=[spec])]}
+            parent = _ToolCallingFakeModel(responses=[AIMessage(content="", tool_calls=[{"name": "task", "args": {
+                "description": "Delegate the example", "subagent_type": "local-child"}, "id": "local-call"}]),
+                AIMessage(content="Parent complete.")])
+            graph = create_deep_agent(model=parent, tools=[], subagents=[child])
+        else:
+            graph = create_deep_agent(model=model, tools=[], subagents=[spec])
+        encoders = [CustomStreamEncoder(), AGUIStreamEncoder()]
+        frames = [[], []]
+        messages = []
+        token = current_user_token.set("active-caller")
+        try:
+            async for chunk in graph.astream({"messages": [HumanMessage(content="Delegate the example task")]},
+                stream_mode=["custom", "updates", "tasks"], subgraphs=True):
+                if chunk[1] == "updates" and isinstance(chunk[2], dict):
+                    for update in chunk[2].values():
+                        if isinstance(update, dict):
+                            messages.extend(update.get("messages", []))
+                for encoder, output in zip(encoders, frames, strict=True):
+                    output.extend(encoder.on_chunk(chunk))
+        finally:
+            current_user_token.reset(token)
+        for output in frames:
+            events = [json.loads(line[6:]) for frame in output for line in frame.splitlines() if line.startswith("data: ")]
+            snapshots = [event.get("value", event) for event in events
+                if event.get("name") == "TOOL_OUTPUT" or event.get("type") == "tool_output"]
+            assert [item["result"] for item in snapshots] == ["first ", "first second"]
+            assert all(item["tool_call_id"] == "remote-call" and item["namespace"] == (["local-call"] if nested else []) for item in snapshots)
+        assert _CaptureAuthorization.requests
+        assert all(item.get("authorization") == "Bearer active-caller" for item in _CaptureAuthorization.requests)
+        assert any(isinstance(msg, ToolMessage) and msg.tool_call_id == "remote-call" and msg.content == "first second" for msg in messages)
+        assert any(isinstance(msg, AIMessage) and msg.content == "Remote work complete." for msg in messages)
+
+
+async def test_shared_subagent_resolves_each_caller_without_persisting_credentials() -> None:
+    with _sdk_agent_server() as endpoint:
+        transport = await create_remote_agent_tool(a2a_url=endpoint, allowed_http_origins=[endpoint], bearer_token="stale")
+        graph = create_remote_agent_subagent(transport)["runnable"]
+        for caller in ["first-caller", "second-caller"]:
+            token = current_user_token.set(caller)
+            try:
+                state = await graph.ainvoke({"messages": [HumanMessage(content="hello")]})
+            finally:
+                current_user_token.reset(token)
+            assert state["messages"][-1].content == "echo: hello"
+            assert _CaptureAuthorization.authorization == f"Bearer {caller}"
+            assert set(state) == {"messages"}
+            assert caller not in repr(state) and "stale" not in repr(state)
+
+
+async def test_failed_delegation_does_not_trigger_parent_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    transport = await create_remote_agent_tool(a2a_url="https://agent.example.test", bearer_token="caller")
+    invoke = AsyncMock(side_effect=TimeoutError("uncertain remote outcome"))
+    monkeypatch.setattr(type(transport), "invoke_agent", invoke)
+    state = await create_remote_agent_subagent(transport)["runnable"].ainvoke({"messages": [HumanMessage(content="hello")]})
+    assert "do not automatically retry" in state["messages"][-1].content
+    invoke.assert_awaited_once()
+
+
+async def test_native_cancellation_closes_the_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    started, closed = asyncio.Event(), asyncio.Event()
+    async def invoke(self, message, on_update, **kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            closed.set()
+    transport = await create_remote_agent_tool(a2a_url="https://agent.example.test", bearer_token="caller")
+    monkeypatch.setattr(type(transport), "invoke_agent", invoke)
+    task = asyncio.create_task(create_remote_agent_subagent(transport)["runnable"].ainvoke({"messages": [HumanMessage(content="hello")]}))
+    await asyncio.wait_for(started.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert closed.is_set()
+
+
+def test_native_delegation_requires_explicit_opt_in() -> None:
+    assert AgentRuntime._uses_remote_subagents(SimpleNamespace(features=None)) is False
+    assert AgentRuntime._uses_remote_subagents(SimpleNamespace(features=FeaturesConfig())) is False
+    assert AgentRuntime._uses_remote_subagents(SimpleNamespace(features=FeaturesConfig(remote_agents_as_subagents=True))) is True
+
+
+async def test_native_task_approval_precedes_remote_network_requests() -> None:
+    with _sdk_agent_server() as endpoint:
+        transport = await create_remote_agent_tool(a2a_url=endpoint, allowed_http_origins=[endpoint], bearer_token="caller")
+        spec = create_remote_agent_subagent(transport)
+        model = _ToolCallingFakeModel(responses=[AIMessage(content="", tool_calls=[{"name": "task", "args": {
+            "description": "hello", "subagent_type": spec["name"]}, "id": "approved-call"}]), AIMessage(content="Done")])
+        graph = create_deep_agent(model=model, tools=[], subagents=[spec], checkpointer=MemorySaver(), interrupt_on={"task": True})
+        config = {"configurable": {"thread_id": "approval-example"}}
+        result = await graph.ainvoke({"messages": [HumanMessage(content="Delegate")]}, config)
+        assert result["__interrupt__"]
+        assert _CaptureAuthorization.requests == []
+        result = await graph.ainvoke(Command(resume={"decisions": [{"type": "approve"}]}), config)
+        assert _CaptureAuthorization.requests
+        assert any(isinstance(msg, ToolMessage) and msg.content == "echo: hello" for msg in result["messages"])
+
+
+@pytest.mark.parametrize("state", [TaskState.TASK_STATE_INPUT_REQUIRED, TaskState.TASK_STATE_AUTH_REQUIRED])
+async def test_native_subagent_does_not_report_a_remote_pause_as_completion(state, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def responses(*args, **kwargs):
+        yield SimpleNamespace(task=Task(id="remote-task", context_id="remote-context", status=TaskStatus(state=state)))
+    client = SimpleNamespace(send_message=responses, close=AsyncMock())
+    factory = SimpleNamespace(create_from_url=AsyncMock(return_value=client))
+    monkeypatch.setattr("dynamic_agents.services.remote_agent_tool.ClientFactory", lambda config: factory)
+    transport = await create_remote_agent_tool(a2a_url="https://agent.example.test", bearer_token="caller")
+    # Legacy callers retain their response contract; native mode rejects the unsupported continuation.
+    assert await transport.ainvoke({"message": "hello"}) == "Remote agent returned no text response."
+    result = await create_remote_agent_subagent(transport)["runnable"].ainvoke({"messages": [HumanMessage(content="hello")]})
+    assert "RemoteAgentContinuationRequired" in result["messages"][-1].content
+    assert client.close.await_count == 2

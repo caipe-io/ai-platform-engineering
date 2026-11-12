@@ -67,6 +67,13 @@ describe("MiddlewarePicker", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("preserves native remote delegation when editing middleware", async () => {
+    const onChange = jest.fn();
+    render(<MiddlewarePicker value={{ middleware: [], remote_agents_as_subagents: true }} onChange={onChange} />);
+    fireEvent.click(await screen.findByLabelText("Enable PII Detection"));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ remote_agents_as_subagents: true }));
+  });
+
   it("materializes the full stack when an off middleware is enabled", async () => {
     const onChange = jest.fn();
     render(<MiddlewarePicker value={undefined} onChange={onChange} />);

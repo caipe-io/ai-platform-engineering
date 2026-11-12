@@ -103,6 +103,7 @@ class CustomStreamEncoder(StreamEncoder[FrameT]):
         namespace: tuple[str, ...],
     ) -> list[FrameT]:
         """Encode transport-neutral runtime signals in the custom protocol."""
+        data, namespace = self._helper.normalize_remote_output(data, namespace)
         if isinstance(data, dict) and data.get("type") == STRUCTURED_OUTPUT_EVENT:
             if isinstance(data.get("payload"), dict):
                 return self.on_structured_output(data["payload"], data.get("schema_id"))
