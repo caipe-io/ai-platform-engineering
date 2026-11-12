@@ -117,8 +117,8 @@ docker compose --env-file .env.example -f docker-compose.yaml config --images \
 | sort
 ```
 
-The UI image should be `ghcr.io/cnoe-io/caipe-ui:<version>`, not
-`ghcr.io/cnoe-io/caipe-ui:<version>-prod`, unless that suffixed image is known
+The UI image should be `ghcr.io/caipe-io/caipe-ui:<version>`, not
+`ghcr.io/caipe-io/caipe-ui:<version>-prod`, unless that suffixed image is known
 to be published for the release.
 
 ## Recovery Commands For Local Testing
