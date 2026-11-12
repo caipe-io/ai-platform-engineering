@@ -1,3 +1,10 @@
+## 1.4.0-rc.3 (2026-11-12)
+
+### Fix
+
+- **harness**: tolerate missing caller MCP connections (#3374)
+- **compose**: pull CAIPE images from ghcr.io/caipe-io (#3365)
+
 ## 1.4.0-rc.2 (2026-11-12)
 
 ### Feat
