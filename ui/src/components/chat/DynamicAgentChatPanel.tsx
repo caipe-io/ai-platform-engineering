@@ -1331,59 +1331,91 @@ export function ChatPanel({
     // Store's setConversationStreaming(null) hook auto-saves after 500ms.
   }, [updateMessage, setConversationStreaming, agentName]);
 
-  const recoveryChecked = useRef(new Set<string>());
+  const recoveredRuns = useRef(new Map<string, string>());
+  const discoveredRuns = useRef(new Map<string, string>());
   const recoveryMessageId = conversation?.messages?.at(-1)?.id;
   const recoveryMessageRole = conversation?.messages?.at(-1)?.role;
   const recoveryMessageFinal = conversation?.messages?.at(-1)?.isFinal;
   const recoveryTurnId = conversation?.messages?.at(-1)?.turnId;
   useEffect(() => {
-    const checked = recoveryChecked.current;
     if (!activeConversationId || isLoadingMessages || isThisConversationStreaming || isAutonomousHistory) return;
-    if (!recoveryMessageId || !["assistant", "user"].includes(recoveryMessageRole ?? "") || checked.has(activeConversationId)) return;
-    checked.add(activeConversationId);
     let disposed = false;
-    let subscribed = false;
+    let polling = false;
+    let watchEngine = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const recoveryController = new AbortController();
-    void (async () => {
-      const response = await fetchChatRunStatus(agentId, activeConversationId, recoveryController.signal);
-      if (!response.ok || disposed) return;
-      const { data } = await response.json();
-      if (data?.runtime === "harness_engine" && typeof data.harness_id === "string") {
-        setObservedRuntime({ conversationId: activeConversationId, harnessId: data.harness_id });
-      }
-      if (data?.runtime !== "harness_engine" || !data.run_id || data.status === "waiting_for_input") return;
-      // Maintenance runs (handoff/rewind) have no chat turn identity. They must
-      // never replace an unfinished answer or confirm that earlier turn.
-      if (!recoveryTurnId || data.turn_id !== recoveryTurnId) return;
-      if (data.status !== "running" && (recoveryMessageRole === "assistant" ? recoveryMessageFinal : !data.turn_id || data.turn_id !== recoveryTurnId)) return;
-      // A popup and the full chat share this store. Only one subscriber rebuilds
-      // the current turn; its command and checkpoints remain server-owned.
-      if (useChatStore.getState().streamingConversations.has(activeConversationId)) return;
-      subscribed = true;
-      // Periodic persistence omits an unfinished assistant placeholder. Rebuild
-      // it from the admitted run rather than submitting the saved prompt again.
-      const assistantId = recoveryMessageRole === "assistant" ? recoveryMessageId : addMessage(
-        activeConversationId, { role: "assistant", content: "", isFinal: false }, recoveryTurnId,
-      );
-      const adapter = createStreamAdapter({ protocol: agentProtocol as "custom" | "agui" });
-      const state: StreamLoopState = { accumulatedText: "", rawStreamContent: "", hitlFormRequested: false, hasError: false };
-      clearStreamEvents(activeConversationId);
-      updateMessage(activeConversationId, assistantId, { isFinal: false });
-      setConversationStreaming(activeConversationId, { conversationId: activeConversationId, messageId: assistantId,
-        client: { abort: () => adapter.abort() }, streamAdapter: adapter, readOnly: panelReadOnly || data.is_run_owner === false,
-        stopping: data.cancellation_requested === true });
+    const reconcile = async () => {
+      if (disposed || polling) return;
+      clearTimeout(timer);
+      polling = true;
       try {
-        await adapter.recoverRun(data.run_id, buildStreamCallbacks(activeConversationId, assistantId, state, new Map()), activeConversationId);
+        const response = await fetchChatRunStatus(agentId, activeConversationId, recoveryController.signal);
+        if (disposed) return;
+        if (!response.ok) { watchEngine = false; return; }
+        const { data } = await response.json();
+        if (disposed) return;
+        watchEngine = data?.runtime === "harness_engine";
+        if (data?.runtime === "harness_engine" && typeof data.harness_id === "string") {
+          setObservedRuntime(current => current?.conversationId === activeConversationId && current.harnessId === data.harness_id
+            ? current : { conversationId: activeConversationId, harnessId: data.harness_id });
+        }
+        if (!watchEngine || typeof data.run_id !== "string" || !data.run_id || typeof data.turn_id !== "string" || !data.turn_id) return;
+        if (useChatStore.getState().streamingConversations.has(activeConversationId)) return;
+        // Maintenance runs (handoff/rewind) have no chat turn identity. They must
+        // never replace an unfinished answer or confirm that earlier turn.
+        let messages = useChatStore.getState().conversations.find(c => c.id === activeConversationId)?.messages;
+        if (!messages?.some(message => message.turnId === data.turn_id)) {
+          discoveredRuns.current.set(activeConversationId, data.run_id);
+          await useChatStore.getState().loadMessagesFromServer(activeConversationId, { force: true });
+          if (disposed) return;
+          messages = useChatStore.getState().conversations.find(c => c.id === activeConversationId)?.messages;
+        }
+        const last = messages?.at(-1);
+        if (!last || last.turnId !== data.turn_id || data.status === "waiting_for_input") return;
+        if (data.status !== "running" && last.role === "assistant" && last.isFinal) return;
+        if (recoveredRuns.current.get(activeConversationId) === data.run_id) return;
+        // A popup and the full chat share this store. Only one subscriber rebuilds
+        // the current turn; its command and checkpoints remain server-owned.
+        if (useChatStore.getState().streamingConversations.has(activeConversationId)) return;
+        recoveredRuns.current.set(activeConversationId, data.run_id);
+        const observeOnly = panelReadOnly || data.is_run_owner === false || discoveredRuns.current.get(activeConversationId) === data.run_id;
+        // Periodic persistence omits an unfinished assistant placeholder. Rebuild
+        // it from the admitted run rather than submitting the saved prompt again.
+        const assistantId = last.role === "assistant" ? last.id : addMessage(
+          activeConversationId, { role: "assistant", content: "", isFinal: false }, data.turn_id,
+        );
+        const adapter = createStreamAdapter({ protocol: agentProtocol as "custom" | "agui" });
+        const state: StreamLoopState = { accumulatedText: "", rawStreamContent: "", hitlFormRequested: false, hasError: false };
+        clearStreamEvents(activeConversationId);
+        updateMessage(activeConversationId, assistantId, { isFinal: false, ...(observeOnly && { isReadOnlyReplay: true }) });
+        setConversationStreaming(activeConversationId, { conversationId: activeConversationId, messageId: assistantId,
+          client: { abort: () => adapter.abort() }, streamAdapter: adapter, readOnly: observeOnly,
+          stopping: data.cancellation_requested === true });
+        try {
+          await adapter.recoverRun(data.run_id, buildStreamCallbacks(activeConversationId, assistantId, state, new Map()), activeConversationId);
+        } catch (error) {
+          state.hasError = true;
+          state.errorMessage = error instanceof Error ? error.message : "Run recovery failed";
+        }
+        finalizeStreamLoop(activeConversationId, assistantId, state);
       } catch (error) {
-        state.hasError = true;
-        state.errorMessage = error instanceof Error ? error.message : "Run recovery failed";
+        if (!disposed) console.error("[DynamicAgent] Run status recovery failed", error);
+      } finally {
+        polling = false;
+        if (!disposed && watchEngine) timer = setTimeout(() => { void reconcile(); }, 3000);
       }
-      finalizeStreamLoop(activeConversationId, assistantId, state);
-    })().catch(error => { if (!disposed) console.error("[DynamicAgent] Run status recovery failed", error); });
+    };
+    const onFocus = () => { if (watchEngine) void reconcile(); };
+    const onVisible = () => { if (document.visibilityState === "visible") onFocus(); };
+    void reconcile();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       disposed = true;
+      clearTimeout(timer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
       recoveryController.abort();
-      if (!subscribed) checked.delete(activeConversationId);
     };
   }, [activeConversationId, agentId, agentProtocol, isLoadingMessages, isThisConversationStreaming, isRemoteResponse,
     isAutonomousHistory, panelReadOnly, recoveryMessageId, recoveryMessageRole, recoveryMessageFinal, recoveryTurnId, addMessage, clearStreamEvents, updateMessage, setConversationStreaming,
