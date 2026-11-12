@@ -126,6 +126,12 @@ derivation is unavailable, or set `userhub_fallback=false` to disable this path.
 User Hub endpoints are not part of Webex's public REST API. Keep this behavior as
 a guarded fallback and expect Webex may change its response shape or paths.
 
+Date-bounded transcript searches also send `from_iso` and `to_iso` to both
+User Hub recording searches, including the keyword-free retry for renamed
+recordings. Date-only User Hub bounds overlap UTC edges by one day. Exact-ID
+public transcript and recording-privilege checks remain exact; selected-meeting
+retrieval without bounds retains its existing behavior.
+
 Recording-list pagination uses pages of 100 and stops at the reported total,
 an empty/short page, or 1,000 rows. Title/time discovery filters by normalized
 title (including removal of User Hub's timestamp suffix) and recording creation

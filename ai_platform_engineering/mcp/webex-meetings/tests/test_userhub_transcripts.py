@@ -574,3 +574,67 @@ async def test_unread_candidate_cannot_make_another_title_time_match_appear_uniq
                 meeting_id=None, meeting_title="Weekly Sync", meeting_start=datetime(2026, 1, 5, 13, tzinfo=timezone.utc),
                 max_results=1, download=False,
             )
+
+
+@pytest.mark.parametrize("meeting_id", [None, "a" * 32 + "_I_123456789"])
+@pytest.mark.asyncio
+async def test_picker_date_range_reaches_keyword_and_renamed_recording_search(
+    monkeypatch: pytest.MonkeyPatch, meeting_id: str | None,
+) -> None:
+    from test_recording_transcripts import transcript_tool
+    from mcp_webex_meetings import mcp_server
+
+    actual = "a" * 32 + "_I_123456789"
+    searched: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/meetingTranscripts":
+            # A known occurrence stays an exact lookup, including when the
+            # recording was created later than the requested history anchor.
+            assert dict(request.url.params) == {"meetingId": actual, "max": "100"}
+            return httpx.Response(200, json={"items": []})
+        if request.url.path == "/v1/meetings/" + actual:
+            return httpx.Response(200, json={"id": actual, "meetingType": "meeting", "start": "2026-11-11T13:00:00Z"})
+        if request.url.path == mcp_server.RECORDING_PRIVILEGE_PATH:
+            return httpx.Response(200, json={"privileges": []})
+        if request.url.path == mcp_server.USERHUB_RECORDINGS_PATH:
+            assert request.url.params["startDate"] == "2026-11-08"
+            assert request.url.params["endDate"] == "2026-11-13"
+            keyword = request.url.params["keyword"]
+            searched.append(keyword)
+            return httpx.Response(200, json={"recordings": [] if keyword else [{
+                "recordUUID": "recent", "recordName": "Weekly Sync", "gmtCreateTime": "2026-11-11 13:02:00",
+            }]})
+        assert request.url.path.endswith("/recent/stream"), "Availability must not download transcript bodies"
+        return httpx.Response(200, json={"meetingInstanceId": actual, "downloadRecordingInfo": {
+            "downloadInfo": {"transcriptURL": "https://media.webex.com/transcript.txt"},
+        }})
+
+    result = await transcript_tool(monkeypatch, handler)(mcp_server.ListTranscripts(
+        meeting_id=meeting_id, meeting_title="Changed Title" if meeting_id else "Weekly Sync",
+        meeting_start="2026-11-11T13:00:00Z", from_iso="2026-11-09T15:00:00Z", to_iso="2026-11-12T15:00:00Z",
+        download=False, max_results=100,
+    ))
+    assert searched == ["Changed Title" if meeting_id else "Weekly Sync", ""]
+    assert [row["meetingId"] for row in result["items"]] == [actual]
+
+
+@pytest.mark.parametrize("bounds", [
+    {"from_iso": "not-a-date"}, {"to_iso": "2026-11-12T15:00:00"},
+    {"from_iso": "2026-11-12T15:00:00Z", "to_iso": "2026-11-09T15:00:00Z"},
+])
+@pytest.mark.asyncio
+async def test_invalid_picker_range_cannot_turn_into_unbounded_recording_search(
+    monkeypatch: pytest.MonkeyPatch, bounds: dict[str, str],
+) -> None:
+    from test_recording_transcripts import transcript_tool
+    from mcp.shared.exceptions import McpError
+    from mcp_webex_meetings import mcp_server
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        pytest.fail("Invalid bounds must fail before querying Webex")
+
+    with pytest.raises(McpError):
+        await transcript_tool(monkeypatch, handler)(mcp_server.ListTranscripts(
+            meeting_title="Weekly Sync", meeting_start="2026-11-11T13:00:00Z", **bounds,
+        ))

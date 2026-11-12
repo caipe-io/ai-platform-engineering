@@ -709,11 +709,15 @@ def _userhub_recording_params(
     offset: int,
     limit: int,
     keyword: str | None,
+    from_dt: datetime | None = None,
+    to_dt: datetime | None = None,
 ) -> dict[str, Any]:
     return {
         "filterType": "",
-        "startDate": "",
-        "endDate": "",
+        # User Hub interprets date-only bounds in the account's timezone.
+        # Overlap UTC edges; exact occurrence checks still decide the match.
+        "startDate": (from_dt - timedelta(days=1)).date().isoformat() if from_dt else "",
+        "endDate": (to_dt + timedelta(days=1)).date().isoformat() if to_dt else "",
         "keyword": keyword or "",
         "orderBy": "createTime",
         "orderType": "DESC",
@@ -794,6 +798,8 @@ async def _list_userhub_recordings(
     bearer: str,
     site_url: str,
     keyword: str | None,
+    from_dt: datetime | None = None,
+    to_dt: datetime | None = None,
 ) -> list[dict[str, Any]]:
     headers = {"Authorization": bearer, "Accept": "application/json"}
     recordings: list[dict[str, Any]] = []
@@ -809,6 +815,8 @@ async def _list_userhub_recordings(
                 offset=offset,
                 limit=page_size,
                 keyword=keyword,
+                from_dt=from_dt,
+                to_dt=to_dt,
             ),
             headers=headers,
         )
@@ -926,12 +934,16 @@ async def _userhub_transcripts_for_meeting(
     max_results: int,
     download: bool,
     verified_occurrence_start: datetime | None = None,
+    from_dt: datetime | None = None,
+    to_dt: datetime | None = None,
 ) -> list[dict[str, Any]]:
     recordings = await _list_userhub_recordings(
         client,
         bearer=bearer,
         site_url=site_url,
         keyword=meeting_title,
+        from_dt=from_dt,
+        to_dt=to_dt,
     )
     candidates = _select_userhub_recording_candidates(
         recordings,
@@ -944,6 +956,8 @@ async def _userhub_transcripts_for_meeting(
             bearer=bearer,
             site_url=site_url,
             keyword=None,
+            from_dt=from_dt,
+            to_dt=to_dt,
         )
         candidates = _select_userhub_recording_candidates(
             recordings,
@@ -1423,12 +1437,18 @@ def register_tools(server) -> None:
     @_handle_errors
     async def list_transcripts(args: ListTranscripts) -> dict[str, Any]:
         """List transcripts, with a User Hub fallback for shared recordings."""
+        from_dt = _parse_iso_datetime(args.from_iso)
+        to_dt = _parse_iso_datetime(args.to_iso)
+        if (args.from_iso and from_dt is None) or (args.to_iso and to_dt is None):
+            raise ValueError("Transcript date bounds must include a timezone.")
+        if from_dt is not None and to_dt is not None and from_dt >= to_dt:
+            raise ValueError("Transcript date bounds must be increasing.")
         params: dict[str, Any] = {"max": args.max_results}
         if args.meeting_id:
             params["meetingId"] = args.meeting_id
-        if args.from_iso:
+        if args.from_iso and not args.meeting_id:
             params["from"] = args.from_iso
-        if args.to_iso:
+        if args.to_iso and not args.meeting_id:
             params["to"] = args.to_iso
         requested_meeting_start = _parse_iso_datetime(args.meeting_start)
         if args.meeting_start and requested_meeting_start is None:
@@ -1603,6 +1623,8 @@ def register_tools(server) -> None:
                     max_results=args.max_results,
                     download=args.download,
                     verified_occurrence_start=verified_occurrence_start,
+                    from_dt=from_dt,
+                    to_dt=to_dt,
                 )
         except (httpx.HTTPStatusError, httpx.RequestError, ValueError) as exc:
             logger.warning("User Hub transcript fallback failed: %s", type(exc).__name__)
