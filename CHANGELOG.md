@@ -1,3 +1,17 @@
+## 1.4.0-rc.2 (2026-11-12)
+
+### Feat
+
+- **integrations**: add opt-in Harness Gateway transport for Slack and Webex (#3241)
+
+### Fix
+
+- **webex**: clarify identity linking completion (#3146)
+- **chat**: persist turn anchors before detached execution (#3368)
+- **ui**: use the live chat picker for every count (#3370)
+- **harness**: retry DocumentDB replay write conflicts (#3369)
+- **mongodb**: batch startup indexes with bounded concurrency (#3245)
+
 ## 1.4.0-rc.1 (2026-11-11)
 
 ### Feat
