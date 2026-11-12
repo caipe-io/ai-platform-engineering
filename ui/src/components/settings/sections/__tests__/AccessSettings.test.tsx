@@ -106,6 +106,14 @@ describe("AccessSettings", () => {
     expect(screen.getByText(/confirmation could not be delivered/)).toBeInTheDocument();
   });
 
+  it("omits the return action when dot-segment normalization produces an external link", async () => {
+    mockSearchParams = new URLSearchParams({ webex_link: "success", return_to: "/a/..//example.test" });
+    installFetchMock({ webex_link_available: true, webex_linked: true });
+    render(<AccessSettings />);
+    expect(await screen.findByText("Your Webex account has been linked.")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Return to your app" })).not.toBeInTheDocument();
+  });
+
   it("shows a mapped error banner for a known failure reason", async () => {
     mockSearchParams = new URLSearchParams("webex_link=error&reason=WEBEX_ORG_MISMATCH");
     installFetchMock({ webex_link_available: true });

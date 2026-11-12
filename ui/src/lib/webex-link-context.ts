@@ -3,7 +3,7 @@ export function safeWebexReturnTo(value: string | null | undefined): string | un
   if (!value || value.length > 2048 || !value.startsWith("/") || value.startsWith("//") || /[\\%\x00-\x20\x7f]/.test(value)) return undefined;
   try {
     const url = new URL(value, "https://example.test");
-    if (url.origin !== "https://example.test" || url.pathname.startsWith("/api/") || url.pathname === "/login") return undefined;
+    if (url.origin !== "https://example.test" || url.pathname.startsWith("//") || url.pathname.startsWith("/api/") || url.pathname === "/login") return undefined;
     return `${url.pathname}${url.search}${url.hash}`;
   } catch { return undefined; }
 }
