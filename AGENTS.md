@@ -143,6 +143,7 @@ Do not add Slack/Webex bots to that default path.
 - Service accounts: dynamic Keycloak confidential clients + OpenFGA `service_account` tuples + Mongo `service_accounts` collection; BFF (Next.js) orchestrates create/rotate/revoke/scope; caller-keyed tool authz added to the OpenFGA ext_authz bridge (2026-06-05-service-accounts)
 - Python 3.13 Harness Engine supports provider adapters; the optional Python 3.14 Deep Agents integration reuses the Dynamic Agents runtime. Compatibility-service execution remains the default unless explicitly enabled.
 - MongoDB `harness_agents`, `harness_agent_versions`, `harness_sessions`, `harness_runs`, and `harness_events` preserve execution versions, native session bindings and cursor replay. Native checkpoints stay in the application database, with a shared `execution_thread_leases` producer fence.
+- Slack and Webex independently opt into detached Gateway run admission and cursor replay with `SLACK_HARNESS_GATEWAY_ENABLED` and `WEBEX_HARNESS_GATEWAY_ENABLED` (both default off). Their shared HTTP transport is `integrations/slack_bot/utils/harness_gateway.py`; cross-bot contract tests live in `tests/test_bot_harness_gateway.py`.
 
 ## Recent Changes
 - 2026-08-17-harness-engine: Added an independent AgentCore Harness Engine with detached runs, replayable sessions, and W3C trace propagation

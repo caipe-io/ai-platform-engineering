@@ -15,6 +15,8 @@ from urllib.parse import quote
 
 import httpx
 
+from ai_platform_engineering.integrations.slack_bot.utils.harness_gateway import NativeConversation, stream_gateway
+
 from .utils.native_assistant_context import native_assistant_headers
 
 logger = logging.getLogger("caipe.webex_bot.a2a_client")
@@ -177,11 +179,13 @@ class WebexSSEClient:
         timeout: int = 300,
         auth_client: Optional[Any] = None,
         http_client: Optional[httpx.Client] = None,
+        harness_gateway_enabled: bool = False,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.auth_client = auth_client
         self._http_client = http_client
+        self.harness_gateway_enabled = harness_gateway_enabled
 
     def _get_headers(self, bearer_token: Optional[str] = None) -> Dict[str, str]:
         headers = {
@@ -219,6 +223,22 @@ class WebexSSEClient:
             payload["client_context"] = client_context
         if reasoning_effort:
             payload["reasoning_effort"] = reasoning_effort
+
+        if self.harness_gateway_enabled:
+            client = self._http_client or httpx.Client(timeout=self.timeout)
+            try:
+                for data in stream_gateway(client, self.base_url, payload, lambda: self._get_headers(bearer_token)):
+                    event = self._parse_event(data)
+                    if event is not None:
+                        yield event
+                return
+            except NativeConversation:
+                # An explicit pre-admission native/app binding uses the signed
+                # native SSE path below; no Engine execution was started.
+                pass
+            finally:
+                if self._http_client is None:
+                    client.close()
 
         url = f"{self.base_url}/api/v1/chat/stream/start"
         yield from self._stream_sse(url, payload, bearer_token=bearer_token)
