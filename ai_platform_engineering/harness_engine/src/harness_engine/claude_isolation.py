@@ -37,7 +37,9 @@ def private_workspace(workspace: Path) -> None:
     if not workspace.is_absolute() or workspace.resolve() != workspace:
         raise ValueError("Claude CLI isolation requires a canonical absolute workspace")
     info = workspace.stat()
-    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+    # Kubernetes fsGroup volumes propagate setgid to child directories. This
+    # controls group inheritance, not access; group/other permissions stay zero.
+    if info.st_uid != os.getuid() or (stat.S_IMODE(info.st_mode) & ~stat.S_ISGID) != 0o700:
         raise ValueError("Claude CLI isolation requires a worker-owned workspace with mode 0700")
     for name in (".tmp", ".claude"):
         child = workspace / name

@@ -96,10 +96,12 @@ class Model(BaseHTTPRequestHandler):
 
 async def verify(root: str, proxy_port: int) -> None:
     await check_isolation()
+    # Emulate Kubernetes fsGroup: new session directories inherit setgid.
+    os.chmod(root, 0o2700)
     # All values are disposable fixtures, including the caller bearer retained
     # in the parent broker. Never inherit real provider credentials in this test.
     for key in list(os.environ):
-        if key.startswith(("ANTHROPIC_", "AWS_", "CLAUDE_CODE_")):
+        if key.startswith(("ANTHROPIC_", "AWS_", "CLAUDE_CODE_", "HARNESS_ENGINE_")):
             del os.environ[key]
     os.environ.update(ANTHROPIC_API_KEY="fixture-model-key", ANTHROPIC_BASE_URL="http://model.example.test")
     for key in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):
