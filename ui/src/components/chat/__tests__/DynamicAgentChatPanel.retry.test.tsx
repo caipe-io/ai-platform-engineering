@@ -70,7 +70,8 @@ jest.mock("@/lib/streaming", () => ({
   StreamError: jest.requireActual("@/lib/streaming/stream-error").StreamError,
   createStreamAdapter: () => ({ streamMessage: mockStreamMessage, recoverRun: mockRecoverRun, abort: jest.fn() }),
 }));
-jest.mock("@/hooks/useDynamicAgentTimeline", () => ({ useAgentTimeline: () => ({ data: {} }) }));
+const mockUseAgentTimeline = jest.fn<{ data: object }, [unknown, boolean, unknown]>(() => ({ data: {} }));
+jest.mock("@/hooks/useDynamicAgentTimeline", () => ({ useAgentTimeline: (...args: [unknown, boolean, unknown]) => mockUseAgentTimeline(...args) }));
 jest.mock("@/components/shared/timeline", () => ({
   MarkdownRenderer: ({ content }: { content: string }) => <div>{content}</div>,
 }));
@@ -401,6 +402,24 @@ describe("shared Engine turn discovery", () => {
       expect(mockChatState.loadMessagesFromServer).not.toHaveBeenCalled();
       expect(mockRecoverRun).not.toHaveBeenCalled();
       expect(mockChatState.setConversationStreaming).not.toHaveBeenCalled();
+    } finally { view.unmount(); fetchMock.mockRestore(); }
+  });
+
+  it("renders replay events on their registered assistant rather than a later saved answer", async () => {
+    const liveEvents = [{ type: "tool_start", timestamp: new Date(), name: "example" }];
+    const savedEvents = [{ type: "tool_end", timestamp: new Date(), name: "other" }];
+    setConversation([message("active-reply", "assistant", "Partial answer", { turnId: "active-turn", isFinal: false }),
+      message("other-reply", "assistant", "Another completed answer", { turnId: "other-turn", isFinal: true, streamEvents: savedEvents as ChatMessage["streamEvents"] })],
+      { streamEvents: liveEvents as Conversation["streamEvents"] });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ data: [] }) } as Response);
+    mockStreaming = true;
+    mockChatState.streamingConversations.set("chat-1", { messageId: "active-reply", readOnly: true });
+    const view = render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    try {
+      expect(mockUseAgentTimeline).toHaveBeenCalledWith(liveEvents, true, undefined);
+      expect(mockUseAgentTimeline).toHaveBeenCalledWith(savedEvents, false, undefined);
+      expect(mockUseAgentTimeline).not.toHaveBeenCalledWith(liveEvents, false, expect.anything());
+      expect(screen.getByRole("button", { name: "Stop generating" })).toBeDisabled();
     } finally { view.unmount(); fetchMock.mockRestore(); }
   });
 

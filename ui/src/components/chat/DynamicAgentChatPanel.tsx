@@ -568,6 +568,7 @@ export function ChatPanel({
   const isThisConversationStreaming = activeConversationId
     ? isConversationStreaming(activeConversationId)
     : false;
+  const streamingMessageId = useChatStore(state => activeConversationId ? state.streamingConversations.get(activeConversationId)?.messageId : undefined);
   const readOnlySubscription = useChatStore(state => activeConversationId ? state.streamingConversations.get(activeConversationId)?.readOnly : false);
   const isStopping = useChatStore(state => activeConversationId ? state.streamingConversations.get(activeConversationId)?.stopping === true : false);
   const stopError = useChatStore(state => activeConversationId ? state.streamingConversations.get(activeConversationId)?.stopError : undefined);
@@ -2579,7 +2580,9 @@ export function ChatPanel({
                     {allMessages.map((msg, index, arr) => {
                       const isLastMessage = index === arr.length - 1;
                       const remoteMessage = isRemoteResponse && !msg.isFinal && (!externalActivity?.turnId || externalActivity.turnId === msg.turnId);
-                      const isAssistantStreaming = (isThisConversationStreaming || remoteMessage) && msg.role === "assistant" && isLastMessage;
+                      const isAssistantStreaming = msg.role === "assistant" && (isThisConversationStreaming
+                        ? (streamingMessageId ? msg.id === streamingMessageId : isLastMessage)
+                        : remoteMessage && isLastMessage);
                       const messageOwner = msg.senderEmail ?? conversation?.owner_id;
                       const isOwnMessage = !messageOwner || !session?.user?.email ||
                         messageOwner === session.user.email;
@@ -2630,9 +2633,9 @@ export function ChatPanel({
 
                       // Get SSE events for this message turn:
                       // - For completed messages: use msg.streamEvents (persisted with the message)
-                      // - For streaming (latest message): use conversation.streamEvents (live buffer)
+                      // - For the subscribed message: use conversation.streamEvents (live buffer)
                       // - Fall back to timestamp-based filtering if msg.streamEvents is not available
-                      const isStreaming = isLastAssistantMessage && isAssistantStreaming;
+                      const isStreaming = isAssistantStreaming;
                       let turnEvents: StreamEvent[];
                       
                       if (msg.role !== "assistant") {
