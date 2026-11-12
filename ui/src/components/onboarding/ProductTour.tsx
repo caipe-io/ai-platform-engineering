@@ -159,7 +159,7 @@ export function ProductTourDialog({
   const [spotlight, setSpotlight] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [step, setStep] = useState(initialPayload?.state.current_step ?? 1);
   const [saving, setSaving] = useState(false);
-  const [starting, setStarting] = useState(initialPayload?.state.status === "not_started");
+  const [starting, setStarting] = useState(open && initialPayload?.state.status === "not_started");
   const [error, setError] = useState<string | null>(null);
   const startRequest = useRef<Promise<void>>(Promise.resolve());
 
@@ -176,6 +176,8 @@ export function ProductTourDialog({
           setError(reason instanceof Error ? reason.message : "Could not start the tour");
         })
         .finally(() => setStarting(false));
+    } else {
+      setStarting(false);
     }
   }, [initialPayload, open]);
 

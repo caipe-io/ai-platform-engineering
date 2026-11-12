@@ -140,6 +140,22 @@ describe("ProductTourGate", () => {
     });
   });
 
+  it("starts a never-started tour manually before setup is complete", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (!init?.method) return response(tourPayload("not_started", false));
+      return originalFetch(input, init);
+    }) as jest.Mock;
+    render(<ProductTourGate />);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    act(() => requestProductTour(true));
+    const next = await screen.findByRole("button", { name: "Next" });
+    await waitFor(() => expect(next).toBeEnabled());
+    fireEvent.click(next);
+    expect(await screen.findByRole("heading", { name: "Pick up where you left off" })).toBeInTheDocument();
+  });
+
   it("replays on demand even after completion", async () => {
     const fetchMock = global.fetch as jest.Mock;
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
