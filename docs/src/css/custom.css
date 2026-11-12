@@ -1,5 +1,10 @@
 /* CAIPE – Teal/Cyan theme, inspired by reactnative.dev */
 
+/* Preserve the official logo color in the shared dark footer. */
+.footer a:has(> .footer__logo) {
+  opacity: 1;
+}
+
 :root {
   /* Primary teal palette */
   --ifm-color-primary: #0284c7;
