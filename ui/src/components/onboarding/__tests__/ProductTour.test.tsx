@@ -2,6 +2,9 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { requestProductTour } from "@/lib/product-tour";
 import { ProductTourGate } from "../ProductTour";
 
+const mockGetConfig = jest.fn();
+jest.mock("@/lib/config", () => ({ getConfig: () => mockGetConfig() }));
+
 const mockPush = jest.fn();
 
 jest.mock("next/navigation", () => ({
@@ -35,6 +38,7 @@ function tourPayload(status = "not_started", autoStart = true) {
 describe("ProductTourGate", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetConfig.mockReturnValue(true);
     global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input) !== "/api/onboarding/product-tour") {
         return response({ error: "Not found" }, 404);
@@ -63,6 +67,13 @@ describe("ProductTourGate", () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it("does not fetch or open automatic guidance when onboarding is disabled", () => {
+    mockGetConfig.mockReturnValue(false);
+    render(<ProductTourGate />);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("starts after setup, saves progress, and supports a persistent skip", async () => {

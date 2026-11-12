@@ -229,7 +229,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
         started_at: previous.started_at ?? now,
         updated_at: now,
         ...(action === "complete" ? { completed_at: now, dismissed_at: undefined } : {}),
-        ...(action === "dismiss" ? { dismissed_at: now } : {}),
+        ...(action === "dismiss" ? { dismissed_at: now, checklist_hidden: true } : {}),
         ...(action === "hide_checklist" ? { checklist_hidden: true } : {}),
         run_count: Math.max(1, previous.run_count ?? 0),
       };

@@ -4936,7 +4936,7 @@ update_keycloak_client_urls() {
     return 0
   fi
 
-  local target_origin="$(_ui_public_url)"
+  local target_origin="$(_browser_ui_url)"
   for client_id in caipe-ui caipe-platform; do
     local uuid
     uuid=$(curl -s -H "Authorization: Bearer $tok" \
@@ -5051,16 +5051,16 @@ _upstream_idp_configured() {
 }
 
 _browser_ui_url() {
-  if $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; then
-    printf 'https://%s' "$CAIPE_DOMAIN"
+  if [[ -n "${CAIPE_UI_URL:-}" ]] || { $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; }; then
+    _ui_public_url
   else
     printf 'http://localhost:%s' "$UI_PORT"
   fi
 }
 
 _browser_oidc_issuer() {
-  if $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; then
-    printf 'https://%s/realms/caipe' "$CAIPE_DOMAIN"
+  if [[ -n "${CAIPE_IDP_URL:-}" ]] || { $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; }; then
+    printf '%s/realms/caipe' "$(_idp_public_url)"
   else
     printf 'http://localhost:%s/realms/caipe' "$KEYCLOAK_PORT"
   fi
@@ -6947,7 +6947,7 @@ DAEOF
     OIDC_ISSUER: "${da_oidc_issuer}"
     OIDC_DISCOVERY_URL: "$(_internal_oidc_issuer)"
     OIDC_CLIENT_ID: "${da_oidc_client_id}"
-    CORS_ORIGINS: '["$(_ui_public_url)", "http://localhost:3000"]'
+    CORS_ORIGINS: '["${_da_cors_origin}", "http://localhost:3000"]'
 DAEOF
       # Pass OIDC_REQUIRED_ADMIN_GROUP to dynamic-agents so it matches the UI's
       # admin group. When unset, it falls back to generic pattern matching

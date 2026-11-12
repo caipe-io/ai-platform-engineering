@@ -88,6 +88,26 @@ describe("admin setup wizard route", () => {
     });
   });
 
+  it("persists exit without completing setup or losing choices", async () => {
+    platformConfig.findOne.mockResolvedValue({ setup_wizard: {
+      status: "in_progress", current_step: 2, selection: { model_id: "example-model" },
+    } });
+    const { PATCH } = await import("../route");
+    const body = await (await PATCH(request({
+      method: "PATCH", body: JSON.stringify({ action: "dismiss", current_step: 2 }),
+    }))).json();
+    expect(body.data.state).toMatchObject({
+      status: "dismissed", checklist_hidden: true, current_step: 2,
+      selection: { model_id: "example-model" },
+    });
+    expect(body.data.state.completed_at).toBeUndefined();
+    expect(platformConfig.updateOne).toHaveBeenCalledWith(
+      expect.anything(), expect.objectContaining({ $set: expect.objectContaining({
+        setup_wizard: expect.objectContaining({ status: "dismissed", checklist_hidden: true }),
+      }) }), expect.anything(),
+    );
+  });
+
   it("offers auto-start only for a fresh enabled deployment", async () => {
     const { GET } = await import("../route");
     const response = await GET(request());

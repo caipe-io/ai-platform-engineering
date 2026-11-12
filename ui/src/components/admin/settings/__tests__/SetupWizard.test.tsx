@@ -430,6 +430,20 @@ describe("SetupWizardSettings", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
+  it("keeps exited setup hidden after the gate remounts", async () => {
+    global.fetch = jest.fn(() => response({ ...setupPayload, data: {
+      ...setupPayload.data, state: { ...setupPayload.data.state, status: "dismissed", checklist_hidden: true },
+    } })) as jest.Mock;
+    const view = render(<SetupWizardGate />);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /resume setup|continue setup|setup checklist/i })).not.toBeInTheDocument();
+    view.unmount();
+    render(<SetupWizardGate />);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /resume setup|continue setup|setup checklist/i })).not.toBeInTheDocument();
+  });
+
   it("offers one-click resume after manually minimizing previously completed setup", async () => {
     const originalFetch = global.fetch;
     const saved = { ...setupPayload.data, state: { ...setupPayload.data.state, current_step: 2, checklist_hidden: true } };

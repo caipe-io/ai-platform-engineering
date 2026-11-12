@@ -219,17 +219,27 @@ it("preserves the catalog fragment when its API session expires", async () => {
   await waitFor(() => expect(mockRouter.push).toHaveBeenCalledWith("/login?callbackUrl=%2Fapps%3Fq%3Dexample%23catalog"));
 });
 
-  it("asks before directing an administrator to install the Weather App", async () => {
-    render(<AgenticAppsHub />);
 
-    expect(await screen.findByText("Try the Weather App")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Ask to install" }));
+it("asks before directing an administrator to install the Weather App", async () => {
+  render(<AgenticAppsHub />);
 
-    expect(await screen.findByRole("heading", { name: "Install the Weather App?" })).toBeInTheDocument();
-    expect(screen.getByText(/will not change your deployment automatically/i)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /open install guide/i })).toHaveAttribute(
-      "href",
-      "https://caipe.io/docs/features/agentic-apps/",
-    );
-  });
+  expect(await screen.findByText("Try the Weather App")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Ask to install" }));
 
+  expect(await screen.findByRole("heading", { name: "Install the Weather App?" })).toBeInTheDocument();
+  expect(screen.getByText(/will not change your deployment automatically/i)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /open install guide/i })).toHaveAttribute(
+    "href",
+    "https://caipe.io/docs/features/agentic-apps/",
+  );
+});
+
+
+it("does not offer installation when the starter app is already configured", async () => {
+  jest.mocked(global.fetch).mockResolvedValueOnce({ ok: true, json: async () => ({
+    items: [{ ...apps[0], appId: "weather" }],
+  }) } as Response);
+  render(<AgenticAppsHub />);
+  await screen.findByRole("link", { name: "Example workspace" });
+  expect(screen.queryByText("Try the Weather App")).not.toBeInTheDocument();
+});

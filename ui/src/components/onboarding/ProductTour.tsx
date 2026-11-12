@@ -16,6 +16,7 @@ import {
   type ProductTourPayload,
   type ProductTourState,
 } from "@/lib/product-tour";
+import { getConfig } from "@/lib/config";
 import { cn } from "@/lib/utils";
 import {
   Check,
@@ -295,6 +296,7 @@ export function ProductTourGate(): React.ReactElement | null {
   }, []);
 
   useEffect(() => {
+    if (!getConfig("setupWizardEnabled")) return;
     let cancelled = false;
     void requestJson<ApiEnvelope<ProductTourPayload>>("/api/onboarding/product-tour")
       .then((response) => {

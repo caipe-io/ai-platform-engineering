@@ -4,6 +4,7 @@ import {
   withAuth,
   withErrorHandler,
 } from "@/lib/api-middleware";
+import { getServerConfig } from "@/lib/config";
 import { getCollection } from "@/lib/mongodb";
 import {
   DEFAULT_PRODUCT_TOUR_STATE,
@@ -69,7 +70,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     const eligible = setupState.status === "completed";
 
     return successResponse({
-      auto_start: eligible && (state.status === "not_started" || state.status === "in_progress"),
+      auto_start: getServerConfig().setupWizardEnabled && eligible && (state.status === "not_started" || state.status === "in_progress"),
       eligible,
       state,
     });

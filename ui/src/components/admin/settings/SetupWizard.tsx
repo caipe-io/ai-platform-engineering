@@ -1574,7 +1574,7 @@ export function SetupWizardGate(): React.ReactElement | null {
     }
   };
 
-  if (!payload || checklistHidden || (!resumeAvailable && (payload.state.checklist_hidden || payload.state.status === "completed"))) return null;
+  if (!payload || checklistHidden || payload.state.status === "dismissed" || (!resumeAvailable && (payload.state.checklist_hidden || payload.state.status === "completed"))) return null;
 
   const checklistItems: Array<{
     label: string;
@@ -1637,7 +1637,7 @@ export function SetupWizardGate(): React.ReactElement | null {
             </ul>
             <div className="mt-4 grid gap-2">
               <Button size="sm" onClick={() => openWizard(false)}>
-                {payload.state.status === "dismissed" ? "Continue setup" : "Resume setup"}<ChevronRight className="ml-1 h-3.5 w-3.5" />
+                Resume setup<ChevronRight className="ml-1 h-3.5 w-3.5" />
               </Button>
               <div className="grid gap-2">
                 <Button size="sm" variant="outline" className="w-full justify-center" onClick={() => void restartSetup()}>

@@ -2,6 +2,9 @@
 
 import { NextRequest } from "next/server";
 
+const mockGetServerConfig = jest.fn();
+jest.mock("@/lib/config", () => ({ getServerConfig: () => mockGetServerConfig() }));
+
 const mockWithAuth = jest.fn();
 const mockGetCollection = jest.fn();
 
@@ -40,6 +43,7 @@ describe("product tour route", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetServerConfig.mockReturnValue({ setupWizardEnabled: true });
     platformConfig.findOne.mockResolvedValue({
       _id: "platform_settings",
       setup_wizard: { status: "completed", current_step: 5 },
@@ -59,6 +63,13 @@ describe("product tour route", () => {
       { email: "user@example.com" },
       { sub: "user-sub", user: { email: "user@example.com" } },
     ));
+  });
+
+  it("suppresses automatic tours when onboarding is disabled", async () => {
+    mockGetServerConfig.mockReturnValue({ setupWizardEnabled: false });
+    const { GET } = await import("../route");
+    const body = await (await GET(request())).json();
+    expect(body.data).toMatchObject({ auto_start: false, eligible: true });
   });
 
   it("offers the tour once platform setup is complete", async () => {

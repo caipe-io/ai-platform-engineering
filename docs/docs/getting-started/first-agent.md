@@ -62,3 +62,23 @@ Connected accounts require an enabled OAuth connector. Open **Configure connecte
 apps** to set up the provider, then **Credentials → Connected Apps** to connect
 your account. Provider support determines whether dynamic client registration is
 available; an arbitrary MCP URL does not guarantee OAuth or DCR support.
+
+## Skip guided onboarding
+
+Setup is optional. Choose **Exit setup** at any step to save your choices and
+hide the checklist across sessions without marking setup complete. Resume from
+**Admin → Platform configuration → Setup Wizard** whenever needed.
+
+To suppress the automatic setup checklist and product tour for the deployment,
+set these Helm values and upgrade the release:
+
+```yaml
+caipe-ui:
+  config:
+    SETUP_WIZARD_ENABLED: "false"
+```
+
+For the standalone UI chart, use `config.SETUP_WIZARD_ENABLED: "false"`.
+For Docker Compose, set `SETUP_WIZARD_ENABLED=false` and recreate the UI container.
+For the installer, use `--no-setup-wizard` or `ENABLE_SETUP_WIZARD=false`.
+Manual setup in Admin and tour replay in Settings remain available.
