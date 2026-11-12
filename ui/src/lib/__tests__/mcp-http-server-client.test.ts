@@ -54,6 +54,21 @@ it("reports a missing caller provider connection before making any upstream requ
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
+it.each([401, 403].flatMap(status => ["", "not-json"].map(body => ({ status, body }))))(
+  "preserves HTTP $status with an invalid JSON error body '$body'",
+  async ({ status, body }) => {
+    fetchMock.mockImplementation(async () => new Response(body, {
+      status, headers: { "content-type": "application/json" },
+    }));
+    const expected = { statusCode: status, code: status === 403 ? "MCP_TOOL_ACCESS_DENIED" : "MCP_AUTH_REQUIRED" };
+    await expect(listHttpMcpTools(input)).rejects.toMatchObject(expected);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fetchMock.mockClear();
+    await expect(callHttpMcpTool(input)).rejects.toMatchObject(expected);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  },
+);
+
 it("keeps an upstream failure ambiguous, sanitizes its body and never repeats the call", async () => {
   fetchMock.mockResolvedValueOnce(Response.json({ jsonrpc: "2.0", result: {} }))
     .mockResolvedValueOnce(new Response(null, { status: 202 }))

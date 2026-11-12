@@ -174,6 +174,9 @@ async function mcpJsonRpc(input: {
       },
       body: JSON.stringify(input.payload),
     });
+    // Authentication failures may have an empty or non-JSON body. Preserve the
+    // HTTP status before decoding so callers can handle unavailable connections.
+    rejectMcpAuthorization(response.status);
     return {
       ok: response.ok,
       status: response.status,
