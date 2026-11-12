@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ChatMessage, Conversation } from "@/types/a2a";
+import type { useChatStore } from "@/store/chat-store";
 import { ChatPanel } from "../DynamicAgentChatPanel";
 
 let mockConversation: Conversation;
+type StreamRegistration = Parameters<ReturnType<typeof useChatStore.getState>["setConversationStreaming"]>[1];
 const mockOpenChat = jest.fn();
 const mockPush = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
@@ -19,7 +21,11 @@ const mockChatState = {
   updateMessage: jest.fn(),
   appendToMessage: jest.fn(),
   clearStreamEvents: jest.fn(),
-  setConversationStreaming: jest.fn(),
+  setConversationStreaming: jest.fn((id: string, registration: StreamRegistration): void => {
+    if (registration) mockChatState.streamingConversations.set(id, registration);
+    else mockChatState.streamingConversations.delete(id);
+  }),
+  saveMessagesToServer: jest.fn().mockResolvedValue(undefined),
   loadMessagesFromServer: jest.fn(),
   externalActivity: {},
   streamingConversations: new Map(),

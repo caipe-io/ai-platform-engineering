@@ -1487,9 +1487,36 @@ export function ChatPanel({
       streamAdapter: adapter,
     });
 
+    const admissionIsCurrent = () => {
+      const current = useChatStore.getState().streamingConversations.get(convId);
+      return current?.messageId === assistantMsgId && current.streamAdapter === adapter && !current.stopping;
+    };
+    const cancelPendingAdmission = () => {
+      updateMessage(convId, assistantMsgId, { isFinal: true, turnStatus: "cancelled", isInterrupted: false });
+      const current = useChatStore.getState().streamingConversations.get(convId);
+      if (current?.messageId === assistantMsgId && current.streamAdapter === adapter) {
+        setConversationStreaming(convId, null);
+      }
+    };
+    let dispatched = false;
+
     try {
       const callbacks = buildStreamCallbacks(convId, assistantMsgId, loopState, toolCallIdToName);
 
+      // A detached run can outlive this tab. Persist every user bubble before
+      // dispatch so reopening can match its turn ID and replay the durable run.
+      await useChatStore.getState().saveMessagesToServer(convId, {
+        skipNonFinal: true,
+        requireSuccess: true,
+      });
+
+      // Stop or another subscriber may replace this turn while its save waits.
+      // Never dispatch it afterward or clear a newer turn's registration.
+      if (!admissionIsCurrent()) {
+        cancelPendingAdmission();
+        return;
+      }
+      dispatched = true;
       await adapter.streamMessage(
         {
           message: messageToSend,
@@ -1508,23 +1535,26 @@ export function ChatPanel({
       finalizeStreamLoop(convId, assistantMsgId, loopState);
 
     } catch (error) {
+      if (!dispatched && !admissionIsCurrent()) {
+        cancelPendingAdmission();
+        return;
+      }
       console.error("[DynamicAgent] Stream error:", error);
 
-      // Auth failures (401/403/503-pdp_unavailable) come through as
-      // StreamError with structured fields populated by the Web UI backend. Surface
+      // Both message saves and streams carry structured auth failures. Surface
       // them as a toast (with sign-in CTA when applicable) instead of
       // burying them inside the assistant turn — see showAuthErrorToast
       // for the rationale.
       const authInterruptedReason = interruptedAuthReason(error);
-      const isAuthError = error instanceof StreamError && error.isAuthError();
+      const isAuthError = (error instanceof StreamError && error.isAuthError()) ||
+        (error instanceof APIClientError && (error.reason || error.status === 401 || error.status === 403));
       if (isAuthError) {
-        const se = error as StreamError;
         showAuthErrorToast({
-          status: se.status,
-          message: se.message,
-          code: se.code,
-          reason: se.reason,
-          action: se.action,
+          status: error.status,
+          message: error.message,
+          code: error.code,
+          reason: error.reason,
+          action: error.action,
         });
       } else if (!(error as Error).message?.startsWith("Session expired:")) {
         appendToMessage(convId, assistantMsgId, `\n\n**Error:** ${(error as Error).message || "Failed to connect to agent endpoint"}`);

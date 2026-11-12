@@ -92,6 +92,21 @@ async function installMultimodalMocks(
     title: "Multimodal Input E2E",
   });
 
+  let userTurnPersisted = false;
+  await page.route(`**/api/chat/conversations/${CHAT_CONVERSATION_ID}/messages`, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    const message = route.request().postDataJSON();
+    if (message.role === "user") userTurnPersisted = true;
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({ success: true, data: message }),
+    });
+  });
+
   await page.route("**/api/dynamic-agents**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     const method = route.request().method();
@@ -146,6 +161,7 @@ async function installMultimodalMocks(
       await route.continue();
       return;
     }
+    expect(userTurnPersisted).toBe(true);
     streamStartRequests.push(JSON.parse(route.request().postData() ?? "{}"));
     await fulfillSuccessStream(route);
   });
