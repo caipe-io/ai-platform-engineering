@@ -515,6 +515,37 @@ dynamic_agents/
 
 ## Remote A2A agents
 
+### Remote Agents registry and discovery
+
+- Open **Agents > Remote Agents** to register, edit and remove A2A endpoints.
+  Agent builders use the same registry under **Advanced > Remote A2A Agents**.
+- Enter an agent base URL or a JSON Agent Card URL. **Discover Agent Card**
+  previews the full card and fills the name, description and protocol metadata.
+- **Public URLs** discovers up to eight supplied URLs per request. It sends no
+  caller JWT or saved credentials. Review a result before registering it; nothing
+  is automatically added. For protected cards, configure authentication before
+  reading the card in the registration form.
+- Choose **No authentication (public agent)** for anonymous A2A calls. Existing
+  entries continue to use their configured authentication, defaulting to user JWT.
+- Discovery and registry writes require organization management permission;
+  other authenticated authors can view registered metadata.
+
+Kubernetes discovery is off by default. In the Dynamic Agents subchart, enable
+`a2aDiscovery.enabled` and configure `a2aDiscovery.namespaces` (empty uses the
+release namespace). The chart projects a short-lived Kubernetes API token and
+creates namespace Roles granting only `list` on Services and EndpointSlices.
+For custom deployments, set `REMOTE_A2A_DISCOVERY_NAMESPACES` to a JSON array,
+mount the standard service-account token and CA, and supply equivalent read-only
+RBAC. The setting belongs on the service receiving the discovery API calls.
+
+Services opt in with label `caipe.io/a2a-discovery: "true"` and a TCP port named
+`a2a-https` or `a2a`. Optional annotation `caipe.io/a2a-path` supplies the base
+path or JSON card path. Discovery shows ready endpoints and excludes ExternalName
+Services. It uses Service DNS names rather than scanning Pod IPs. HTTP services
+still require their exact origin in `REMOTE_A2A_ALLOWED_HTTP_ORIGINS`; discovery
+does not relax credential destination policy. No Secret or Pod permissions are
+needed. See the [A2A Agent Card specification](https://a2a-protocol.org/latest/specification/agent-card/).
+
 - Register endpoints in **Agents > Advanced > Remote A2A Agents** as a platform admin.
 - Select multiple registry entries for an agent or its subagents. Each entry becomes a callable tool.
 - Configure an overall execution deadline (1–600 seconds); agent authors can override it per selection.

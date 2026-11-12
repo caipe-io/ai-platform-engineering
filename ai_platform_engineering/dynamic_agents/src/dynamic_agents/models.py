@@ -128,7 +128,7 @@ class RemoteAgentCredentialSource(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    kind: Literal["caller_token", "secret_ref", "provider_connection"] = "caller_token"
+    kind: Literal["none", "caller_token", "secret_ref", "provider_connection"] = "caller_token"
     target: Literal["header"] = "header"
     name: str = Field(default="Authorization", min_length=1, max_length=256, pattern=r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
     secret_ref: str | None = None

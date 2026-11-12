@@ -74,7 +74,7 @@ export interface RemoteAgentRegistryEntry {
 }
 
 export interface RemoteAgentCredentialSource {
-  kind: "caller_token" | "secret_ref" | "provider_connection";
+  kind: "none" | "caller_token" | "secret_ref" | "provider_connection";
   target: "header";
   name: string;
   secret_ref?: string;

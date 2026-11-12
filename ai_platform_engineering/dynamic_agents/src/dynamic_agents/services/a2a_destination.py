@@ -1,9 +1,19 @@
 """Keep A2A credentials on the configured origin, including SDK-selected transports."""
 
 from collections.abc import Awaitable, Callable
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+
+
+def agent_card_location(endpoint: str) -> tuple[str, str | None]:
+    """Accept either an agent base URL or an explicit JSON Agent Card URL."""
+    parsed = urlsplit(endpoint)
+    if parsed.query:
+        raise ValueError("Use an authentication header rather than an Agent Card URL query")
+    if parsed.path.endswith(".json"):
+        return urlunsplit((parsed.scheme, parsed.netloc, "", "", "")), parsed.path
+    return endpoint, None
 
 
 def _origin(url: str) -> tuple[str, str, int]:

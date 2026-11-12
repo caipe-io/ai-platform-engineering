@@ -23,6 +23,7 @@ import { ApiError } from "@/lib/api-middleware";
 import { GET, POST } from "../route";
 import { PUT, DELETE } from "../[id]/route";
 import { POST as PROBE } from "../probe/route";
+import { GET as DISCOVERY_CONFIG, POST as DISCOVER } from "../discovery/route";
 
 const request = (body: unknown) => ({ json: async () => body }) as never;
 
@@ -72,9 +73,11 @@ it.each([403, 503])("blocks all remote mutations and probes on CAS failure %s, e
   await expect(PUT(request({}), context)).rejects.toThrow("CAS refused");
   await expect(DELETE(request({}), context)).rejects.toThrow("CAS refused");
   await expect(PROBE(request({}))).rejects.toThrow("CAS refused");
+  await expect(DISCOVERY_CONFIG(request({}))).rejects.toThrow("CAS refused");
+  await expect(DISCOVER(request({}))).rejects.toThrow("CAS refused");
   expect(mockCollection.insertOne).not.toHaveBeenCalled();
   expect(mockCollection.findOneAndUpdate).not.toHaveBeenCalled();
-  expect(mockRequireResourcePermission).toHaveBeenCalledTimes(4);
+  expect(mockRequireResourcePermission).toHaveBeenCalledTimes(6);
 });
 
 
