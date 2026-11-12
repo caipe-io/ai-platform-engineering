@@ -362,6 +362,22 @@ describe("shared Engine turn discovery", () => {
       expect(mockChatState.setConversationStreaming).not.toHaveBeenCalled();
     } finally { view.unmount(); fetchMock.mockRestore(); }
   });
+
+  it("replays the matching shared turn when another reply was saved later", async () => {
+    setConversation([message("active-prompt", "user", "Still running", { turnId: "active-turn" }),
+      message("other-reply", "assistant", "Another completed answer", { turnId: "other-turn", isFinal: true })]);
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ data: {
+      ...idle, status: "running", run_id: "active-run", turn_id: "active-turn",
+    } }) } as Response);
+    const view = render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    try {
+      await act(async () => {});
+      expect(mockRecoverRun).toHaveBeenCalledWith("active-run", expect.any(Object), "chat-1");
+      expect(mockChatState.setConversationStreaming).toHaveBeenCalledWith("chat-1", expect.objectContaining({ readOnly: true }));
+      expect(mockConversation.messages.find(m => m.id === "other-reply")).toMatchObject({ content: "Another completed answer", isFinal: true });
+      expect(mockConversation.messages.at(-1)).toMatchObject({ turnId: "active-turn", timestamp: mockConversation.messages[0].timestamp });
+    } finally { view.unmount(); fetchMock.mockRestore(); }
+  });
 });
 
 it("starts a separate chat from the agent picker and leaves the shared source untouched", async () => {

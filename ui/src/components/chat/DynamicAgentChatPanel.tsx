@@ -1370,15 +1370,15 @@ export function ChatPanel({
           if (disposed) return;
           messages = useChatStore.getState().conversations.find(c => c.id === activeConversationId)?.messages;
         }
-        const last = messages?.at(-1);
-        if (!last || last.turnId !== data.turn_id || data.status === "waiting_for_input") return;
+        const last = messages?.findLast(message => message.turnId === data.turn_id);
+        if (!last || data.status === "waiting_for_input") return;
         if (data.status !== "running" && last.role === "assistant" && last.isFinal) return;
         if (recoveredRuns.current.get(activeConversationId) === data.run_id) return;
         // A popup and the full chat share this store. Only one subscriber rebuilds
         // the current turn; its command and checkpoints remain server-owned.
         if (useChatStore.getState().streamingConversations.has(activeConversationId)) return;
         recoveredRuns.current.set(activeConversationId, data.run_id);
-        const observeOnly = panelReadOnly || data.is_run_owner === false || discoveredRuns.current.get(activeConversationId) === data.run_id;
+        const observeOnly = panelReadOnly || data.is_run_owner === false || discoveredRuns.current.get(activeConversationId) === data.run_id || last.id !== messages?.at(-1)?.id;
         // Periodic persistence omits an unfinished assistant placeholder. Rebuild
         // it from the admitted run rather than submitting the saved prompt again.
         const assistantId = last.role === "assistant" ? last.id : addMessage(
@@ -1387,7 +1387,8 @@ export function ChatPanel({
         const adapter = createStreamAdapter({ protocol: agentProtocol as "custom" | "agui" });
         const state: StreamLoopState = { accumulatedText: "", rawStreamContent: "", hitlFormRequested: false, hasError: false };
         clearStreamEvents(activeConversationId);
-        updateMessage(activeConversationId, assistantId, { isFinal: false, ...(observeOnly && { isReadOnlyReplay: true }) });
+        updateMessage(activeConversationId, assistantId, { isFinal: false, ...(observeOnly && { isReadOnlyReplay: true }),
+          ...(last.role === "user" && { timestamp: last.timestamp }) });
         setConversationStreaming(activeConversationId, { conversationId: activeConversationId, messageId: assistantId,
           client: { abort: () => adapter.abort() }, streamAdapter: adapter, readOnly: observeOnly,
           stopping: data.cancellation_requested === true });
