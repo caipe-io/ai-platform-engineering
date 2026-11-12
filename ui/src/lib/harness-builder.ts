@@ -7,7 +7,38 @@ export function harnessStatusLabel(id: string, certification?: HarnessDescriptor
 }
 
 export function harnessDisplayName(descriptor: Pick<HarnessDescriptor, "id" | "display_name">): string {
-  return descriptor.id === "claude_agent_sdk" ? "Claude Agent SDK (Local)" : descriptor.display_name;
+  return ({ claude_agent_sdk: "Claude Agent SDK", claude_agent_sdk_remote: "Claude Agent SDK",
+    claude_code_cli_acp: "Claude Code", claude_code_acp: "Claude Agent SDK (Advanced ACP)" } as Record<string, string>)[descriptor.id] ?? descriptor.display_name;
+}
+
+/** Presentation groups never replace the runtime/profile IDs persisted in blueprints. */
+export function harnessFamily(id: string): string {
+  return id === "claude_agent_sdk_remote" ? "claude_agent_sdk" : id;
+}
+
+export function selectableHarness(descriptor: HarnessDescriptor): boolean {
+  return descriptor.availability === "available" && descriptor.certification !== "blocked";
+}
+
+export function harnessChoices(descriptors: HarnessDescriptor[], advanced: boolean, currentId: string): HarnessDescriptor[] {
+  const families = new Map<string, HarnessDescriptor>();
+  for (const descriptor of descriptors) {
+    if (descriptor.id === "dynamic_agents" || (descriptor.id === "claude_code_acp" && !advanced && currentId !== descriptor.id)) continue;
+    const family = harnessFamily(descriptor.id);
+    const previous = families.get(family);
+    if (!previous || (!selectableHarness(previous) && selectableHarness(descriptor))) families.set(family, descriptor);
+  }
+  return [...families.values()];
+}
+
+export function harnessProfileChoices(descriptors: HarnessDescriptor[], id: string) {
+  return descriptors.filter(descriptor => harnessFamily(descriptor.id) === harnessFamily(id)).flatMap(descriptor =>
+    descriptor.profiles.map(profile => ({
+      runtimeId: descriptor.id, profileId: profile.id,
+      value: harnessFamily(id) === "claude_agent_sdk" ? JSON.stringify([descriptor.id, profile.id]) : profile.id,
+      label: profile.display_name + (harnessFamily(id) === "claude_agent_sdk" ? ` · ${descriptor.id === "claude_agent_sdk" ? "Local" : "Remote worker"}` : ""),
+      available: selectableHarness(descriptor) && profile.available,
+    })));
 }
 
 export const HARNESS_RENDERERS = [

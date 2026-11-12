@@ -205,7 +205,7 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
       target: { value: "claude_agent_sdk" },
     });
 
-    expect(screen.getByLabelText("Operator profile")).toHaveValue("safe");
+    expect(screen.getByLabelText("Operator profile")).toHaveValue(JSON.stringify(["claude_agent_sdk", "safe"]));
     expect(screen.getByText(/Profiles are managed by your administrator/)).toBeInTheDocument();
 
     fireEvent.focus(screen.getByRole("button", { name: "About operator profiles" }));
@@ -330,20 +330,20 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     await flushAsync();
     fireEvent.click(screen.getByRole("button", { name: "About agent runtimes" }));
     const guide = screen.getByRole("dialog", { name: "Choose how your agent runs" });
-    expect(within(guide).getByText(/directly inside the Harness Engine service/)).toBeInTheDocument();
+    expect(within(guide).getByText(/local execution inside Harness Engine/)).toBeInTheDocument();
     expect(within(guide).getByText(/Agent Client Protocol \(ACP\) adapter process/)).toBeInTheDocument();
     expect(within(guide).getByText(/Claude Code command-line application/)).toBeInTheDocument();
-    expect(within(guide).getAllByText("Experimental")).toHaveLength(5);
+    expect(within(guide).getAllByText("Experimental")).toHaveLength(4);
     expect(within(guide).getAllByText("Stable")).toHaveLength(1);
     expect(screen.getByLabelText("Execution harness")).toHaveValue("dynamic_agents");
   });
 
   it.each([
     ["agentcore", "Amazon Bedrock AgentCore (Remote sessions)"],
-    ["claude_agent_sdk", "Claude Agent SDK (Local)"],
-    ["claude_agent_sdk_remote", "Claude Agent SDK (Remote worker)"],
-    ["claude_code_acp", "Claude Agent SDK (ACP)"],
-    ["claude_code_cli_acp", "Claude Code CLI (ACP)"],
+    ["claude_agent_sdk", "Claude Agent SDK"],
+    ["claude_agent_sdk_remote", "Claude Agent SDK"],
+    ["claude_code_acp", "Claude Agent SDK (Advanced ACP)"],
+    ["claude_code_cli_acp", "Claude Code"],
   ])("keeps configured %s selectable by default and labels it experimental", async (id, label) => {
     const fetchMock = mockFetch(null, true);
     const implementation = fetchMock.getMockImplementation()!;
@@ -359,6 +359,10 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     render(<DynamicAgentEditor agent={null} onCancel={jest.fn()} onSave={jest.fn()} />);
     await flushAsync();
     expect(screen.getByLabelText("Execution harness")).toHaveValue("dynamic_agents");
+    if (id === "claude_code_acp") {
+      expect(screen.queryByRole("option", { name: `${label} — Experimental` })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByLabelText("Show advanced runtimes"));
+    }
     expect(screen.getByRole("option", { name: `${label} — Experimental` })).toBeEnabled();
   });
 });
@@ -368,6 +372,7 @@ it.each([["claude-acp", "claude_code_acp"], ["claude-cli-acp", "claude_code_cli_
   const fetchMock = mockFetch(null, fixture);
   render(<DynamicAgentEditor agent={editAgent} onCancel={jest.fn()} onSave={jest.fn()} />);
   await flushAsync();
+  if (harnessId === "claude_code_acp") fireEvent.click(screen.getByLabelText("Show advanced runtimes"));
   fireEvent.change(screen.getByLabelText("Execution harness"), { target: { value: harnessId } });
   expect(screen.getByRole("region", { name: "Claude configuration" })).toHaveTextContent("Responses continue when you refresh");
   expect(screen.getByLabelText("Operator profile")).toHaveValue("safe");
@@ -382,4 +387,39 @@ it.each([["claude-acp", "claude_code_acp"], ["claude-cli-acp", "claude_code_cli_
   const payload = JSON.parse(String(call?.[1]?.body));
   expect(payload.blueprint).toMatchObject({ harness: { id: harnessId, profile_id: "safe" },
     model: { policy: "harness_default" }, tools: { approval_policy: "never" }, thread: { persistence: "durable" } });
+});
+
+
+it.each(["claude_agent_sdk_remote", "claude_code_acp"])("preserves saved %s runtime, profile and options with grouped choices", async (runtimeId) => {
+  const fetchMock = mockFetch(null, true);
+  const base = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (url, init) => {
+    if (String(url) === "/api/harness-engine/agents/hello-world") return jsonResponse({ success: true, data: {
+      record: { revision: 2 }, version: { blueprint: { harness: { id: runtimeId, profile_id: "safe", options: { max_turns: 7 } } } },
+    } });
+    const result = await base(url, init);
+    if (String(url).endsWith("/api/harness-engine/harnesses")) {
+      const body = await result.json();
+      const template = body.data.harnesses[0];
+      body.data.harnesses = ["claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp"].map(id => ({ ...template, id,
+        profiles: template.profiles.map((profile: object) => ({ ...profile, harness_id: id })) }));
+      return jsonResponse(body);
+    }
+    return result;
+  });
+  render(<DynamicAgentEditor agent={{ ...editAgent, execution_harness_id: runtimeId }} onCancel={jest.fn()} onSave={jest.fn()} />);
+  await flushAsync();
+  expect(screen.getByLabelText("Execution harness")).toHaveValue(runtimeId === "claude_agent_sdk_remote" ? "claude_agent_sdk" : runtimeId);
+  if (runtimeId === "claude_agent_sdk_remote") {
+    expect(screen.getAllByRole("option", { name: "Claude Agent SDK — Experimental" })).toHaveLength(1);
+    expect(screen.getByLabelText("Operator profile")).toHaveValue(JSON.stringify([runtimeId, "safe"]));
+    fireEvent.change(screen.getByLabelText("Operator profile"), { target: { value: JSON.stringify(["claude_agent_sdk", "safe"]) } });
+    expect(screen.getByRole("checkbox", { name: /existing conversations keep/i })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Operator profile"), { target: { value: JSON.stringify([runtimeId, "safe"]) } });
+  }
+  expect(screen.queryByRole("checkbox", { name: /existing conversations keep/i })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+  await flushAsync();
+  const write = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/harness-engine/agent-drafts/validate"));
+  expect(JSON.parse(String(write?.[1]?.body)).blueprint.harness).toEqual({ id: runtimeId, profile_id: "safe", options: { max_turns: 7 } });
 });

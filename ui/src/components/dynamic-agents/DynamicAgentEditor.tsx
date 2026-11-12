@@ -16,7 +16,7 @@ import { TeamOwnershipFields } from "@/components/rbac/TeamOwnershipFields";
 import { HarnessFeaturePanels } from "@/components/harness-engine/HarnessFeaturePanels";
 import { ClaudeACPSettings } from "@/components/harness-engine/ClaudeACPSettings";
 import { HarnessHelp } from "@/components/harness-engine/HarnessHelp";
-import { harnessBuilderSections, harnessDisplayName, harnessStatusLabel, supportsHarnessCapability, validateHarnessOptionsSchema } from "@/lib/harness-builder";
+import { harnessBuilderSections, harnessChoices, harnessDisplayName, harnessFamily, harnessProfileChoices, selectableHarness, harnessStatusLabel, supportsHarnessCapability, validateHarnessOptionsSchema } from "@/lib/harness-builder";
 import { HarnessOptionsForm } from "@/components/harness-engine/HarnessOptionsForm";
 import { UnsavedChangesDialog } from "@/components/shared/UnsavedChangesDialog";
 import { Button } from "@/components/ui/button";
@@ -579,6 +579,10 @@ export function DynamicAgentEditor({
     () => harnessDescriptors.find((descriptor) => descriptor.id === harnessId),
     [harnessDescriptors, harnessId],
   );
+  const [showAdvancedRuntimes, setShowAdvancedRuntimes] = React.useState(false);
+  const runtimeChoices = harnessChoices(harnessDescriptors, showAdvancedRuntimes, harnessId);
+  const profileChoices = harnessProfileChoices(harnessDescriptors, harnessId);
+  const selectedProfileValue = profileChoices.find(item => item.runtimeId === harnessId && item.profileId === harnessProfileId)?.value ?? harnessProfileId;
   const isDeepAgents = harnessId === "dynamic_agents";
   const [harnessSwitchConfirmed, setHarnessSwitchConfirmed] = React.useState(false);
   const requiresHarnessConfirmation = isEditing && harnessId !== (agent?.execution_harness_id || "dynamic_agents");
@@ -1795,10 +1799,13 @@ export function DynamicAgentEditor({
                       <Select
                         id="harnessId"
                         aria-label="Execution harness"
-                        value={harnessId}
+                        value={harnessFamily(harnessId)}
                         onChange={(event) => {
                           if (event.target.value === "__add_existing_agentcore__") setConnectionDialogOpen(true);
-                          else selectHarness(event.target.value);
+                          else {
+                            const choice = runtimeChoices.find(item => harnessFamily(item.id) === event.target.value);
+                            selectHarness(choice?.id ?? event.target.value);
+                          }
                         }}
                         disabled={loading || harnessLoading || !!readOnly}
                         className="flex h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
@@ -1806,17 +1813,14 @@ export function DynamicAgentEditor({
                         <option value="dynamic_agents">
                           LangChain Deep Agents (default) — {harnessStatusLabel("dynamic_agents", harnessDescriptors.find(item => item.id === "dynamic_agents")?.certification)}
                         </option>
-                        {!isDeepAgents && !selectedHarness && (
-                          <option value={harnessId}>{harnessId} (unavailable)</option>
+                        {!isDeepAgents && !selectedHarness && !runtimeChoices.some(item => harnessFamily(item.id) === harnessFamily(harnessId)) && (
+                          <option value={harnessFamily(harnessId)}>{harnessDisplayName({ id: harnessId, display_name: harnessId })} (unavailable)</option>
                         )}
-                        {harnessDescriptors.filter(descriptor => descriptor.id !== "dynamic_agents").map((descriptor) => (
+                        {runtimeChoices.map((descriptor) => (
                           <option
                             key={descriptor.id}
-                            value={descriptor.id}
-                            disabled={
-                              descriptor.availability !== "available" ||
-                              descriptor.certification === "blocked"
-                            }
+                            value={harnessFamily(descriptor.id)}
+                            disabled={!selectableHarness(descriptor)}
                           >
                             {harnessDisplayName(descriptor)} — {harnessStatusLabel(descriptor.id, descriptor.certification)}
                           </option>
@@ -1829,6 +1833,10 @@ export function DynamicAgentEditor({
                       </Select>
                       <HarnessHelp harnessId={harnessId} descriptors={harnessDescriptors} />
                     </div>
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <input type="checkbox" checked={showAdvancedRuntimes} onChange={event => setShowAdvancedRuntimes(event.target.checked)} disabled={loading || !!readOnly} />
+                      Show advanced runtimes
+                    </label>
                     {selectedHarness && (
                       <div className="space-y-2">
                         <div className="flex items-center gap-1.5">
@@ -1859,10 +1867,13 @@ export function DynamicAgentEditor({
                         </div>
                         <Select
                           id="harnessProfile"
-                          value={harnessProfileId}
-                          onChange={(event) =>
-                            setHarnessProfileId(event.target.value)
-                          }
+                          value={selectedProfileValue}
+                          onChange={(event) => {
+                            const choice = profileChoices.find(item => item.value === event.target.value);
+                            if (!choice) return;
+                            if (choice.runtimeId !== harnessId) selectHarness(choice.runtimeId);
+                            setHarnessProfileId(choice.profileId);
+                          }}
                           disabled={loading || !!readOnly}
                           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                         >
@@ -1870,24 +1881,25 @@ export function DynamicAgentEditor({
                           {harnessProfileId && !selectedHarness.profiles.some((profile) => profile.id === harnessProfileId) && (
                             <option value={harnessProfileId} disabled>{harnessProfileId} (unavailable)</option>
                           )}
-                          {selectedHarness.profiles.map((profile) => (
+                          {profileChoices.map((profile) => (
                             <option
-                              key={profile.id}
-                              value={profile.id}
+                              key={profile.value}
+                              value={profile.value}
                               disabled={!profile.available}
                             >
-                              {profile.display_name}
+                              {profile.label}
                             </option>
                           ))}
                         </Select>
                         <p className="text-xs text-muted-foreground">
                           Profiles are managed by your administrator and define
                           the execution model, security settings, and limits.
+                          {selectedHarness.profiles.find(profile => profile.id === harnessProfileId)?.description && ` ${selectedHarness.profiles.find(profile => profile.id === harnessProfileId)?.description}`}
                         </p>
                       </div>
                     )}
                     {["claude_code_acp", "claude_code_cli_acp"].includes(harnessId) && selectedHarness ? (
-                      <ClaudeACPSettings descriptor={selectedHarness} profileId={harnessProfileId} />
+                      <ClaudeACPSettings descriptor={{ ...selectedHarness, display_name: harnessDisplayName(selectedHarness) }} profileId={harnessProfileId} />
                     ) : isDeepAgents ? (
                       <p className="text-xs text-muted-foreground">
                         Configure tools, knowledge, and skills for LangChain Deep
@@ -2989,7 +3001,7 @@ export function DynamicAgentEditor({
             ) : (
               <div className="space-y-4 pt-2">
                 <div>
-                  <Label>{selectedHarness?.display_name} options</Label>
+                  <Label>{selectedHarness && harnessDisplayName(selectedHarness)} options</Label>
                   <p className="text-xs text-muted-foreground">Configure the options available for the selected operator profile.</p>
                 </div>
                 {selectedHarness && (
@@ -3068,7 +3080,7 @@ export function DynamicAgentEditor({
               {subagents.length} subagent(s)
             </>
           ) : (
-            <>{selectedHarness?.display_name ?? harnessId} · {selectedHarness?.profiles.find((profile) => profile.id === harnessProfileId)?.display_name || "Select an operator profile"}</>
+            <>{selectedHarness ? harnessDisplayName(selectedHarness) : harnessId} · {selectedHarness?.profiles.find((profile) => profile.id === harnessProfileId)?.display_name || "Select an operator profile"}</>
           )}
         </div>
         <Button
