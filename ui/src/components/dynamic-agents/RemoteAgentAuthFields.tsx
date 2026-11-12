@@ -20,7 +20,7 @@ export function defaultRemoteAgentAuth(): RemoteAgentCredentialSource {
 
 export function isRemoteAgentAuthConfigured(source: RemoteAgentCredentialSource): boolean {
   return Boolean(source.name.trim()) && (
-    source.kind === "caller_token" ||
+    source.kind === "none" || source.kind === "caller_token" ||
     (source.kind === "secret_ref" && Boolean(source.secret_ref?.trim())) ||
     (source.kind === "provider_connection" && Boolean(source.provider?.trim()))
   );
@@ -44,7 +44,7 @@ export function RemoteAgentAuthFields({
   const [retry, setRetry] = React.useState(0);
 
   React.useEffect(() => {
-    if (value.kind === "caller_token") {
+    if (value.kind === "none" || value.kind === "caller_token") {
       setLoading(false);
       setError(null);
       return;
@@ -104,6 +104,7 @@ export function RemoteAgentAuthFields({
             })}
           >
             <option value="caller_token">User JWT</option>
+            <option value="none">No authentication (public agent)</option>
             <option value="secret_ref">Saved secret</option>
             <option value="provider_connection">Connected credential</option>
           </Select>
@@ -114,7 +115,7 @@ export function RemoteAgentAuthFields({
             id={`${idPrefix}-auth-header`}
             placeholder="Authorization"
             value={value.name}
-            disabled={disabled}
+            disabled={disabled || value.kind === "none"}
             onChange={(event) => onChange({ ...value, name: event.target.value })}
           />
         </div>
@@ -163,7 +164,7 @@ export function RemoteAgentAuthFields({
         </div>
       )}
       <p className="text-xs text-muted-foreground">
-        Authorization sends a Bearer token. Other headers receive the credential value directly.
+        {value.kind === "none" ? "No caller credentials are sent to this agent." : "Authorization sends a Bearer token. Other headers receive the credential value directly."}
       </p>
     </div>
   );

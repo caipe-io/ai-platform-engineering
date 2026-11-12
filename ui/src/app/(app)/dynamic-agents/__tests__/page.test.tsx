@@ -92,6 +92,10 @@ jest.mock("@/components/dynamic-agents/LLMProvidersTab", () => ({
   LLMProvidersTab: () => <div data-testid="model-providers-tab">LLMProvidersTab</div>,
 }));
 
+jest.mock("@/components/dynamic-agents/RemoteAgentsTab", () => ({
+  RemoteAgentsTab: () => <div data-testid="remote-agents-tab">RemoteAgentsTab</div>,
+}));
+
 jest.mock("@/components/dynamic-agents/LLMModelsTab", () => ({
   LLMModelsTab: ({
     selectedModelId,
@@ -155,7 +159,7 @@ describe("DynamicAgentsPage", () => {
     );
 
     const navigation = screen.getByRole("navigation", { name: "Agent sections" });
-    expect(within(navigation).getByRole("button", { name: /Agents/i })).toHaveAttribute(
+    expect(within(navigation).getByRole("button", { name: "Agents", exact: true })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -322,5 +326,12 @@ describe("DynamicAgentsPage", () => {
     fireEvent.click(within(navigation).getByRole("button", { name: /MCP Servers/i }));
 
     expect(mockPush).toHaveBeenCalledWith("/dynamic-agents?tab=mcp-servers");
+  });
+
+  it("opens the Remote Agents tab through its shareable URL", () => {
+    mockSearchParams = new URLSearchParams("tab=remote-agents");
+    render(<DynamicAgentsPage />);
+    expect(screen.getByTestId("remote-agents-tab")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Remote Agents" })).toBeInTheDocument();
   });
 });
