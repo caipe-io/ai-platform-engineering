@@ -444,6 +444,52 @@ inside the remote worker; it does not introduce another browser session manager.
   non-root worker with only its own credentials and an isolated workspace.
   Directories alone do not provide operating-system sandboxing.
 
+#### Claude Code CLI process isolation
+
+The `claude_code_cli_acp` worker defaults to `HARNESS_ENGINE_CLAUDE_CLI_ISOLATION=landlock`.
+Helm sets this through `harnessEngine.workers.cli-acp.isolation: landlock`.
+Upgrade the CLI worker image together with the chart; older images cannot enforce this setting.
+The SDK and SDK ACP workers retain their existing behavior.
+
+The CLI image includes a native launcher that applies Linux Landlock **ABI 6+**
+and an additional seccomp filter before starting the ACP adapter, CLI, or any
+descendants. Startup exercises enforcement; missing support prevents readiness.
+No root, user namespaces, additional capabilities, node changes or Kubernetes
+pod-creation permissions are required. The existing `RuntimeDefault` seccomp,
+read-only root filesystem and dropped capabilities remain in place.
+
+| Control | Enforced boundary |
+| --- | --- |
+| Files | Worker-owned canonical workspace, private `HOME`/`.claude`/temporary directory; required image runtime files are read-only. Sibling workspaces, sensitive `/proc` files and arbitrary credential mounts are not readable. |
+| Processes | Inherited Landlock signal scoping; seccomp denies ptrace, cross-process memory/FD access, shared System V IPC and escape from the worker's process group. Container init and the worker drain descendants. |
+| Networking | TCP connects only to the worker broker and operator proxy **ports**; TCP binds, UDP, Unix sockets and alternative socket protocols are denied. The trusted worker resolves the proxy before launch. |
+| Credentials | Caller JWTs stay in the broker. The CLI receives a run-scoped capability; each MCP call retains current caller/agent authorization and capabilities are revoked at turn end. |
+
+Configure one HTTP egress proxy through `HTTPS_PROXY`/`HTTP_PROXY` (and matching
+lowercase variants if present). Embedded proxy credentials are rejected.
+The Helm worker egress service supplies this configuration. Landlock port rules
+are **not destination or domain rules**: retain enforced NetworkPolicies, the
+egress proxy's domain policy and authenticated local endpoints. Arbitrary direct
+networking, local listening servers and Unix-socket tools are intentionally unsupported.
+
+This is shared-kernel hardening, not a microVM or a guarantee against resource
+exhaustion. File metadata visibility is not fully hidden. Model-provider secrets
+explicitly supplied in the CLI environment remain visible to that CLI; they are
+not user JWTs. Credential-file based provider login is not automatically mounted
+through this boundary. Review operator runtime mounts; never mount secrets into
+the image runtime paths allowed read access by the launcher.
+
+An operator may explicitly set `harnessEngine.workers.cli-acp.isolation: disabled`
+(or the matching environment variable outside Helm) for a separately trusted
+single-user environment. There is no automatic fallback. Do not disable isolation
+to work around an unsupported kernel on a shared worker.
+
+`deploy/harness-engine/smoke-image.sh IMAGE claude-cli-acp-worker` runs the real
+kernel denial tests and real CLI/ACP/MCP/resume tests against a local model fixture,
+with no external model credentials. Tests require a Linux host exposing ABI 6;
+failure is not skipped. Include these checks when upgrading the node kernel,
+container runtime, Claude binary, or launcher policy.
+
 The optional [worker overlay](../../deploy/harness-engine/compose.claude-sdk.yaml)
 adds a worker to the Deep Agents overlay together with the shared
 [egress overlay](../../deploy/harness-engine/compose.worker-egress.yaml), loaded once. It is also a template for a separate

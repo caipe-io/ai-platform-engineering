@@ -1,4 +1,10 @@
 # Optional Claude Code CLI worker with a separate native workspace.
+FROM debian:bookworm-slim AS isolation
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev libseccomp-dev && rm -rf /var/lib/apt/lists/*
+COPY ai_platform_engineering/harness_engine/build/claude-sandbox.c /src/claude-sandbox.c
+RUN gcc -O2 -Wall -Wextra -Werror -D_FORTIFY_SOURCE=2 -fstack-protector-strong -Wl,-z,relro,-z,now \
+    /src/claude-sandbox.c -lseccomp -o /caipe-claude-sandbox
+
 FROM node:24-bookworm-slim AS cli
 WORKDIR /opt/claude-cli
 RUN npm install --omit=dev --save-exact @anthropic-ai/claude-code@2.1.317 \
@@ -15,6 +21,7 @@ WORKDIR /app
 COPY --from=cli /opt/claude-cli /opt/claude-cli
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
+COPY --from=isolation /caipe-claude-sandbox /usr/local/bin/caipe-claude-sandbox
 RUN ln -s /opt/claude-cli/node_modules/.bin/claude /usr/local/bin/claude \
     && claude --version \
     && mkdir -p /workspace && chown 65532:65532 /workspace
@@ -23,8 +30,9 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     HOME="/workspace" \
     PYTHONDONTWRITEBYTECODE="1" \
     HARNESS_ENGINE_CLAUDE_ACP_RUNTIME=claude_code_cli_acp \
+    HARNESS_ENGINE_CLAUDE_CLI_ISOLATION=landlock \
     HARNESS_ENGINE_CLAUDE_ACP_COMMAND='["python","/app/src/harness_engine/claude_cli_acp.py"]'
-RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends tini libseccomp2 && rm -rf /var/lib/apt/lists/*
 USER 65532:65532
 EXPOSE 8010
 ENTRYPOINT ["/usr/bin/tini", "-s", "--"]

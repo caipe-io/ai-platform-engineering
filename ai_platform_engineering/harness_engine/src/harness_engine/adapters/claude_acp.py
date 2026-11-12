@@ -18,6 +18,7 @@ from harness_engine.adapters.base import ExecutionUnconfirmedError
 from harness_engine.adapters.claude_sdk import ClaudeHarnessOptions, ClaudeSDKAdapter
 from harness_engine.claude_acp_process import managed_acp_process
 from harness_engine.claude_acp_tools import ClaudeACPToolBridge
+from harness_engine.claude_isolation import isolated_command
 from harness_engine.config import Settings
 from harness_engine.models import (
     AdapterEvaluation,
@@ -65,6 +66,8 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
         self._command = settings.claude_acp_command
         self._tools = settings.claude_acp_tools
         self._runtime = settings.claude_acp_runtime
+        self._isolate_cli = self._runtime == "claude_code_cli_acp" and settings.claude_cli_isolation == "landlock"
+        self._broker_port = settings.port
 
     @property
     def descriptor(self) -> HarnessDescriptor:
@@ -160,9 +163,10 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
         env["CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT"] = "900000"
         env["CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS"] = "0"
         client = ACPEventClient(tool_names)
+        command = await isolated_command(self._command, workspace, env, self._broker_port) if self._isolate_cli else self._command
         async with managed_acp_process(
             client,
-            self._command,
+            command,
             env=env,
             cwd=workspace,
             run_id=context.turn.run_id,
