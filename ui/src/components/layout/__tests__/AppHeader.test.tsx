@@ -220,6 +220,8 @@ jest.mock('@/lib/config', () => ({
     const configs: Record<string, unknown> = {
       appName: 'Test App',
       ssoEnabled: true,
+      get autonomousAgentsEnabled() { return mockAutonomousAgentsEnabled },
+      get agenticAppsEnabled() { return mockAgenticAppsEnabled },
       get envBadge() { return mockEnvBadge },
       get storageMode() { return mockStorageMode },
       get ragEnabled() { return mockRagEnabled },
