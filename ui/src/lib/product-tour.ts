@@ -1,3 +1,5 @@
+import { PRODUCT_TOURS, type ProductTourId } from "@/lib/product-tour-catalog";
+
 export const PRODUCT_TOUR_VERSION = 1;
 export const PRODUCT_TOUR_REQUEST_EVENT = "caipe:product-tour-request";
 
@@ -19,6 +21,7 @@ export interface ProductTourState {
 }
 
 export interface ProductTourPayload {
+  tour_id?: ProductTourId;
   auto_start: boolean;
   eligible: boolean;
   state: ProductTourState;
@@ -37,7 +40,7 @@ function timestamp(value: unknown): string | undefined {
     : undefined;
 }
 
-export function normalizeProductTourState(value: unknown): ProductTourState {
+export function normalizeProductTourState(value: unknown, tourId: ProductTourId = "workspace"): ProductTourState {
   const source = value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
@@ -48,7 +51,7 @@ export function normalizeProductTourState(value: unknown): ProductTourState {
       : "not_started";
   const rawStep = Number(source.current_step);
   const currentStep = Number.isInteger(rawStep)
-    ? Math.min(5, Math.max(1, rawStep))
+    ? Math.min(PRODUCT_TOURS[tourId].steps.length, Math.max(1, rawStep))
     : 1;
   const startedAt = timestamp(source.started_at);
   const updatedAt = timestamp(source.updated_at);
@@ -69,9 +72,9 @@ export function normalizeProductTourState(value: unknown): ProductTourState {
   };
 }
 
-export function requestProductTour(restart = false): void {
+export function requestProductTour(restart = false, tourId: ProductTourId = "workspace"): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(PRODUCT_TOUR_REQUEST_EVENT, {
-    detail: { restart },
+    detail: { restart, ...(tourId === "workspace" ? {} : { tourId }) },
   }));
 }

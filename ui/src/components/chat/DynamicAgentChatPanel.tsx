@@ -2422,7 +2422,7 @@ export function ChatPanel({
   );
 
   return (
-    <div className="h-full w-full flex flex-col bg-background relative">
+    <div data-tour="chat-response" className="h-full w-full flex flex-col bg-background relative">
       {showAgentHeader && <div
         className="flex min-h-14 shrink-0 flex-wrap items-center gap-3 bg-gradient-to-r from-primary/[0.06] via-background/70 to-background px-4 py-2"
         aria-label={`Chat: ${conversationTitle}`}

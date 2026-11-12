@@ -106,3 +106,21 @@ Minimize the guide to a **Resume tour** button, or close it whenever you like.
 Progress is saved to your account. Replay it from the header or Settings.
 Deployment details and optional navigation capabilities stay collapsed until
 you request them; setup keeps the next decision in focus.
+
+## Task tours
+
+The top-right **Tour** menu includes short guides for:
+
+- **Add a model:** connect its provider, register identifiers, and verify with chat.
+- **Add an MCP server:** configure the endpoint and authentication, then test a tool.
+- **Add an agent:** choose a model and audience, write instructions, attach tools, and try it.
+- **Chat with an agent:** select an agent, ask a question, inspect evidence, and follow up.
+- **Connect credentials:** authorize a connected app, check its health, or save a secret.
+
+Each task tour saves its own progress to your account and starts only when requested.
+Choosing an unfinished task resumes it; choosing a completed or skipped task starts
+it again. Use **Next** after performing each action. **Finish tour** records guide
+completion; it does not verify or create the resource. Model, MCP, and agent guides
+appear when the agent workspace is enabled and your account has access. Connected
+credentials guidance appears when account connections and persistent storage are enabled.
+The underlying screens enforce the permissions required for each action.

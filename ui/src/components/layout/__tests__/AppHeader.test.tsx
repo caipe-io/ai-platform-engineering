@@ -486,6 +486,30 @@ describe('AppHeader — application chrome', () => {
     expect(screen.getByRole('button', { name: /Workspace tour/ })).toBeInTheDocument();
   });
 
+
+  it('offers all five task tours to an eligible admin', () => {
+    mockIsAdmin = true;
+    render(<AppHeader />);
+    for (const title of ['Add a model', 'Add an MCP server', 'Add an agent', 'Chat with an agent', 'Connect credentials']) {
+      expect(screen.getByRole('button', { name: new RegExp(title) })).toBeInTheDocument();
+    }
+  });
+
+  it('keeps agent-creation guides out of a member menu without agent workspace access', () => {
+    render(<AppHeader />);
+    expect(screen.queryByRole('button', { name: /Add a model/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Chat with an agent/ })).toBeInTheDocument();
+  });
+
+  it('requests the selected task without restarting its saved progress', () => {
+    mockCanAccessDynamicAgents = true;
+    const request = jest.fn();
+    window.addEventListener('caipe:product-tour-request', request);
+    render(<AppHeader />);
+    fireEvent.click(screen.getByRole('button', { name: /Add an MCP server/ }));
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ detail: { restart: false, tourId: 'add-mcp' } }));
+    window.removeEventListener('caipe:product-tour-request', request);
+  });
   describe('Autonomous navigation', () => {
     it('hides Autonomous for a user without the capability', () => {
       render(<AppHeader />)

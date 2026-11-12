@@ -6,6 +6,7 @@ import {
 } from "@/lib/api-middleware";
 import { getServerConfig } from "@/lib/config";
 import { getCollection } from "@/lib/mongodb";
+import { PRODUCT_TOURS, isProductTourId, type ProductTourId } from "@/lib/product-tour-catalog";
 import {
   DEFAULT_PRODUCT_TOUR_STATE,
   normalizeProductTourState,
@@ -30,6 +31,7 @@ interface PlatformConfigDocument extends Document {
 
 interface ProductTourPatchBody {
   action?: unknown;
+  tour_id?: unknown;
   current_step?: unknown;
 }
 
@@ -50,27 +52,41 @@ async function getOrCreateUserSettings(userEmail: string): Promise<UserSettings>
   return doc;
 }
 
-function currentStep(value: unknown): number | undefined {
+function tourId(value: unknown): ProductTourId {
+  if (value === undefined || value === null) return "workspace";
+  if (!isProductTourId(value)) throw new ApiError("Unknown tour", 400, "INVALID_TOUR_ID");
+  return value;
+}
+
+function savedState(settings: UserSettings, id: ProductTourId): ProductTourState {
+  return normalizeProductTourState(id === "workspace"
+    ? settings.preferences?.product_tour
+    : settings.preferences?.task_tours?.[id], id);
+}
+
+function currentStep(value: unknown, id: ProductTourId): number | undefined {
   if (value === undefined) return undefined;
-  if (!Number.isInteger(value) || Number(value) < 1 || Number(value) > 5) {
-    throw new ApiError("current_step must be between 1 and 5", 400, "INVALID_TOUR_STEP");
+  if (!Number.isInteger(value) || Number(value) < 1 || Number(value) > PRODUCT_TOURS[id].steps.length) {
+    throw new ApiError(`current_step must be between 1 and ${PRODUCT_TOURS[id].steps.length}`, 400, "INVALID_TOUR_STEP");
   }
   return Number(value);
 }
 
 export const GET = withErrorHandler(async (request: NextRequest) => {
   return withAuth(request, async (_req, user) => {
+    const id = tourId(_req.nextUrl.searchParams.get("tour"));
     const platformConfig = await getCollection<PlatformConfigDocument>("platform_config");
     const [platform, settings] = await Promise.all([
-      platformConfig.findOne({ _id: SETUP_WIZARD_CONFIG_ID }),
+      id === "workspace" ? platformConfig.findOne({ _id: SETUP_WIZARD_CONFIG_ID }) : Promise.resolve(null),
       getOrCreateUserSettings(user.email),
     ]);
     const setupState = normalizeSetupWizardState(platform?.setup_wizard);
-    const state = normalizeProductTourState(settings.preferences?.product_tour);
-    const eligible = setupState.status === "completed";
+    const state = savedState(settings, id);
+    const eligible = id !== "workspace" || setupState.status === "completed";
 
     return successResponse({
-      auto_start: getServerConfig().setupWizardEnabled && eligible && (state.status === "not_started" || state.status === "in_progress"),
+      tour_id: id,
+      auto_start: id === "workspace" && getServerConfig().setupWizardEnabled && eligible && (state.status === "not_started" || state.status === "in_progress"),
       eligible,
       state,
     });
@@ -80,16 +96,17 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 export const PATCH = withErrorHandler(async (request: NextRequest) => {
   return withAuth(request, async (_req, user) => {
     const body = await request.json() as ProductTourPatchBody;
+    const id = tourId(body.tour_id);
     const action = body.action;
     if (action !== "start" && action !== "progress" && action !== "dismiss" && action !== "complete" && action !== "reset") {
       throw new ApiError("action must be start, progress, dismiss, complete, or reset", 400, "INVALID_TOUR_ACTION");
     }
 
+    const nextStep = currentStep(body.current_step, id);
     const settings = await getCollection<UserSettings>("user_settings");
     const existing = await getOrCreateUserSettings(user.email);
-    const previous = normalizeProductTourState(existing.preferences?.product_tour);
+    const previous = savedState(existing, id);
     const now = new Date().toISOString();
-    const nextStep = currentStep(body.current_step);
 
     let next: ProductTourState;
     if (action === "reset") {
@@ -109,7 +126,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
           : action === "dismiss"
             ? "dismissed"
             : "in_progress",
-        current_step: nextStep ?? previous.current_step,
+        current_step: action === "complete" ? PRODUCT_TOURS[id].steps.length : nextStep ?? previous.current_step,
         started_at: previous.started_at ?? now,
         updated_at: now,
         ...(action === "complete" ? { completed_at: now } : {}),
@@ -122,12 +139,12 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       { user_id: user.email },
       {
         $set: {
-          "preferences.product_tour": next,
+          [id === "workspace" ? "preferences.product_tour" : `preferences.task_tours.${id}`]: next,
           updated_at: new Date(now),
         },
       },
     );
 
-    return successResponse({ state: next });
+    return successResponse({ tour_id: id, state: next });
   });
 });

@@ -241,7 +241,7 @@ export function LLMProvidersTab() {
   const configuredSecretNames = new Set(secrets.map((secret) => secret.name));
 
   return (
-    <section className="space-y-6">
+    <section data-tour="model-providers" className="space-y-6">
       <WorkspacePageActions>
         <Button type="button" variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
           {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Settings className="mr-2 h-4 w-4" />}

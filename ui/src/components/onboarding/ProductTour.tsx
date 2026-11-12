@@ -1,5 +1,7 @@
 "use client";
 
+import { PRODUCT_TOURS, isProductTourId, type ProductTourId } from "@/lib/product-tour-catalog";
+import { TOUR_ICONS } from "./tour-icons";
 import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
 import {
@@ -21,12 +23,8 @@ import {
   X,
   ArrowUpRight,
   Loader2,
-  MessageSquare,
-  Settings,
-  Sparkles,
-  Zap,
 } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 interface ApiEnvelope<T> {
@@ -34,88 +32,6 @@ interface ApiEnvelope<T> {
   data: T;
   error?: string;
 }
-
-interface TourStep {
-  description: string;
-  eyebrow: string;
-  icon: typeof Compass;
-  points: string[];
-  title: string;
-  target: string;
-  href?: string;
-  action?: string;
-}
-
-const TOUR_STEPS: TourStep[] = [
-  {
-    eyebrow: "Welcome",
-    target: '[aria-label="Application navigation"]',
-    title: "Your workspace is ready",
-    description: "This quick tour shows the five places you will use most. It takes about a minute and is saved to your account.",
-    icon: Sparkles,
-    points: [
-      "Start work from Home",
-      "Collaborate with agents in Chat",
-      "Reuse skills and trusted knowledge",
-    ],
-  },
-  {
-    eyebrow: "Home",
-    target: '[aria-label="Application navigation"] a[href="/"]',
-    href: "/",
-    action: "Explore Home",
-    title: "Pick up where you left off",
-    description: "Home is your personal launchpad for recent conversations, suggested actions, and the work that matters now.",
-    icon: Compass,
-    points: [
-      "Resume recent conversations",
-      "Launch common workflows",
-      "Customize the widgets you see",
-    ],
-  },
-  {
-    eyebrow: "Chat",
-    target: '[aria-label="Application navigation"] a[href^="/chat"]',
-    href: "/chat",
-    action: "Open Chat",
-    title: "Work with the right agent",
-    description: "Start a conversation, choose an available agent, and keep follow-up questions in the same thread so context carries forward.",
-    icon: MessageSquare,
-    points: [
-      "Choose an agent for the task",
-      "Attach files and invoke tools",
-      "Review evidence before acting",
-    ],
-  },
-  {
-    eyebrow: "Skills & knowledge",
-    target: '[aria-label="Application navigation"] a[href="/skills"]',
-    href: "/skills",
-    action: "Browse skills",
-    title: "Reuse trusted building blocks",
-    description: "Skills capture repeatable playbooks. Knowledge bases ground answers in sources you are allowed to access.",
-    icon: Zap,
-    points: [
-      "Browse reusable skills",
-      "Search approved knowledge",
-      "Access remains permission-aware",
-    ],
-  },
-  {
-    eyebrow: "You are all set",
-    target: 'button[aria-label^="User menu"]',
-    href: "/settings/chat",
-    action: "Personalize your workspace",
-    title: "Make the workspace yours",
-    description: "Use Settings to choose default agents, tune conversation behavior, and replay this tour whenever you need it.",
-    icon: Settings,
-    points: [
-      "Set your preferred agents",
-      "Adjust appearance and notifications",
-      "Start with a real question in Chat",
-    ],
-  },
-];
 
 function errorMessage(payload: unknown, fallback: string): string {
   if (payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string") {
@@ -131,13 +47,13 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
-async function patchTour(action: string, currentStep?: number): Promise<ProductTourState> {
+async function patchTour(action: string, currentStep?: number, tourId: ProductTourId = "workspace"): Promise<ProductTourState> {
   const response = await requestJson<ApiEnvelope<{ state: ProductTourState }>>(
     "/api/onboarding/product-tour",
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, ...(currentStep ? { current_step: currentStep } : {}) }),
+      body: JSON.stringify({ action, ...(tourId === "workspace" ? {} : { tour_id: tourId }), ...(currentStep ? { current_step: currentStep } : {}) }),
     },
   );
   return response.data.state;
@@ -152,7 +68,9 @@ export function ProductTourDialog({
   onOpenChange: (open: boolean) => void;
   open: boolean;
 }): React.ReactElement {
-  const router = useRouter();
+  const tourId = initialPayload?.tour_id ?? "workspace";
+  const tour = PRODUCT_TOURS[tourId];
+  const steps = tour.steps;
   const pathname = usePathname();
   const panelRef = useRef<HTMLElement>(null);
   const [minimized, setMinimized] = useState(false);
@@ -170,7 +88,7 @@ export function ProductTourDialog({
     setStep(initialPayload?.state.current_step ?? 1);
     if (initialPayload?.state.status === "not_started") {
       setStarting(true);
-      startRequest.current = patchTour("start", initialPayload.state.current_step)
+      startRequest.current = patchTour("start", initialPayload.state.current_step, tourId)
         .then(() => undefined)
         .catch((reason) => {
           setError(reason instanceof Error ? reason.message : "Could not start the tour");
@@ -179,14 +97,14 @@ export function ProductTourDialog({
     } else {
       setStarting(false);
     }
-  }, [initialPayload, open]);
+  }, [initialPayload, open, tourId]);
 
   const move = async (nextStep: number) => {
     setSaving(true);
     setError(null);
     try {
       await startRequest.current;
-      await patchTour("progress", nextStep);
+      await patchTour("progress", nextStep, tourId);
       setStep(nextStep);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save tour progress");
@@ -200,7 +118,7 @@ export function ProductTourDialog({
     setError(null);
     try {
       await startRequest.current;
-      await patchTour("dismiss", step);
+      await patchTour("dismiss", step, tourId);
     } catch {
       setError("Tour closed, but dismissal could not be saved. It may appear again next time.");
     } finally {
@@ -214,9 +132,8 @@ export function ProductTourDialog({
     setError(null);
     try {
       await startRequest.current;
-      await patchTour("complete", TOUR_STEPS.length);
+      await patchTour("complete", steps.length, tourId);
       onOpenChange(false);
-      router.push("/chat");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not complete the tour");
     } finally {
@@ -224,8 +141,8 @@ export function ProductTourDialog({
     }
   };
 
-  const active = TOUR_STEPS[step - 1] ?? TOUR_STEPS[0];
-  const Icon = active.icon;
+  const active = steps[step - 1] ?? steps[0];
+  const Icon = TOUR_ICONS[active.icon];
 
   useEffect(() => {
     if (!open || minimized) return;
@@ -240,17 +157,20 @@ export function ProductTourDialog({
     update();
     const observer = new ResizeObserver(update);
     observer.observe(document.body);
+    const mutations = new MutationObserver(update);
+    mutations.observe(document.body, { childList: true, subtree: true });
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
     return () => {
       observer.disconnect();
+      mutations.disconnect();
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
   }, [active.target, minimized, open, pathname]);
 
   if (!open) return error ? <p role="status" className="fixed bottom-4 left-4 z-[80] max-w-sm rounded-xl border bg-card p-4 text-sm shadow-lg">{error}</p> : <></>;
-  if (minimized) return <Button className="fixed bottom-20 right-4 z-[80] rounded-full shadow-lg" onClick={() => setMinimized(false)}><Compass className="mr-2 h-4 w-4" />Resume tour · {step} of {TOUR_STEPS.length}</Button>;
+  if (minimized) return <Button className="fixed bottom-20 right-4 z-[80] rounded-full shadow-lg" onClick={() => setMinimized(false)}><Compass className="mr-2 h-4 w-4" />{tour.title} · Resume tour · {step} of {steps.length}</Button>;
 
   return (
     <>
@@ -267,7 +187,7 @@ export function ProductTourDialog({
       >
         <div className="flex items-center gap-3 border-b px-5 py-4">
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><Icon className="h-4 w-4" /></span>
-          <div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-primary">CAIPE guide</p><p className="mt-0.5 text-xs text-muted-foreground">{active.eyebrow} · {step} of {TOUR_STEPS.length}</p></div>
+          <div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-primary">{tour.title}</p><p className="mt-0.5 text-xs text-muted-foreground">{active.eyebrow} · {step} of {steps.length}</p></div>
           <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Minimize tour" onClick={() => setMinimized(true)}><Minus className="h-3.5 w-3.5" /></Button>
           <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Close tour" disabled={saving || starting} onClick={() => void dismiss()}><X className="h-3.5 w-3.5" /></Button>
         </div>
@@ -277,20 +197,21 @@ export function ProductTourDialog({
           <ul className="mt-4 space-y-2.5">
             {active.points.map((point) => <li key={point} className="flex items-start gap-2.5 text-xs leading-5"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />{point}</li>)}
           </ul>
+          {active.expected && <p className="mt-4 rounded-lg bg-primary/5 px-3 py-2 text-xs leading-5"><span className="font-medium text-primary">Look for: </span>{active.expected}</p>}
           {active.href && <GuardedNavigationLink href={active.href} className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">{active.action}<ArrowUpRight className="h-3.5 w-3.5" /></GuardedNavigationLink>}
           {error && <p role="alert" className="mt-3 text-xs text-destructive">{error}</p>}
         </div>
         <div className="border-t px-5 py-4">
-          <div className="mb-4 flex gap-1.5" aria-label={`Tour step ${step} of ${TOUR_STEPS.length}`}>
-            {TOUR_STEPS.map((item, index) => <span key={item.eyebrow} className={cn("h-1 flex-1 rounded-full transition-colors", index < step ? "bg-primary" : "bg-muted")} />)}
+          <div className="mb-4 flex gap-1.5" aria-label={`Tour step ${step} of ${steps.length}`}>
+            {steps.map((item, index) => <span key={item.eyebrow} className={cn("h-1 flex-1 rounded-full transition-colors", index < step ? "bg-primary" : "bg-muted")} />)}
           </div>
           <div className="flex items-center justify-between gap-2">
             <Button type="button" size="sm" variant="ghost" onClick={() => void dismiss()} disabled={saving || starting}>Skip tour</Button>
             <div className="flex gap-2">
               {step > 1 && <Button type="button" size="sm" variant="outline" onClick={() => void move(step - 1)} disabled={saving || starting}><ChevronLeft className="mr-1 h-3.5 w-3.5" />Back</Button>}
-              {step < TOUR_STEPS.length
+              {step < steps.length
                 ? <Button type="button" size="sm" onClick={() => void move(step + 1)} disabled={saving || starting}>{saving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}Next<ChevronRight className="ml-1 h-3.5 w-3.5" /></Button>
-                : <Button type="button" size="sm" onClick={() => void complete()} disabled={saving || starting}>{saving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}Start chatting</Button>}
+                : <Button type="button" size="sm" onClick={() => void complete()} disabled={saving || starting}>{saving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}Finish tour</Button>}
             </div>
           </div>
         </div>
@@ -302,30 +223,38 @@ export function ProductTourDialog({
 export function ProductTourGate(): React.ReactElement | null {
   const [payload, setPayload] = useState<ProductTourPayload | null>(null);
   const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestVersion = useRef(0);
 
-  const load = useCallback(async (restart = false) => {
+  const load = useCallback(async (restart = false, id: ProductTourId = "workspace") => {
+    const version = ++requestVersion.current;
+    setError(null);
     try {
-      if (restart) {
-        const reset = await patchTour("reset");
-        setPayload({ auto_start: true, eligible: true, state: reset });
-        setOpen(true);
-        return;
+      let next = restart
+        ? { tour_id: id, auto_start: false, eligible: true, state: await patchTour("reset", undefined, id) }
+        : (await requestJson<ApiEnvelope<ProductTourPayload>>(
+            id === "workspace" ? "/api/onboarding/product-tour" : `/api/onboarding/product-tour?tour=${id}`,
+          )).data;
+      if (requestVersion.current !== version) return;
+      if (!restart && (next.state.status === "completed" || next.state.status === "dismissed")) {
+        next = { ...next, state: await patchTour("reset", undefined, id) };
+        if (requestVersion.current !== version) return;
       }
-      const response = await requestJson<ApiEnvelope<ProductTourPayload>>("/api/onboarding/product-tour");
-      setPayload(response.data);
-      setOpen(response.data.auto_start);
-    } catch {
-      // Product guidance must never block access to the application.
+      setPayload({ ...next, tour_id: id });
+      setOpen(true);
+    } catch (reason) {
+      if (requestVersion.current === version) setError(reason instanceof Error ? reason.message : "Could not open the tour");
     }
   }, []);
 
   useEffect(() => {
     if (!getConfig("setupWizardEnabled")) return;
+    const version = ++requestVersion.current;
     let cancelled = false;
     void requestJson<ApiEnvelope<ProductTourPayload>>("/api/onboarding/product-tour")
       .then((response) => {
-        if (cancelled) return;
-        setPayload(response.data);
+        if (cancelled || requestVersion.current !== version) return;
+        setPayload({ ...response.data, tour_id: "workspace" });
         setOpen(response.data.auto_start);
       })
       .catch(() => {
@@ -336,15 +265,18 @@ export function ProductTourGate(): React.ReactElement | null {
 
   useEffect(() => {
     const handleRequest = (event: Event) => {
-      const restart = event instanceof CustomEvent && event.detail?.restart === true;
-      void load(restart);
+      const detail = event instanceof CustomEvent ? event.detail : undefined;
+      const id = detail?.tourId ?? "workspace";
+      if (isProductTourId(id)) void load(detail?.restart === true, id);
     };
     window.addEventListener(PRODUCT_TOUR_REQUEST_EVENT, handleRequest);
     return () => window.removeEventListener(PRODUCT_TOUR_REQUEST_EVENT, handleRequest);
   }, [load]);
 
-  if (!payload) return null;
-  return <ProductTourDialog initialPayload={payload} open={open} onOpenChange={setOpen} />;
+  return <>
+    {error && <p role="alert" className="fixed bottom-4 right-4 z-[80] max-w-sm rounded-xl border bg-card p-4 text-sm shadow-lg">{error}</p>}
+    {payload && <ProductTourDialog key={payload.tour_id ?? "workspace"} initialPayload={payload} open={open} onOpenChange={setOpen} />}
+  </>;
 }
 
 export function ProductTourSettings(): React.ReactElement {

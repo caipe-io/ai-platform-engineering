@@ -29,6 +29,8 @@ import { useAdminRole } from "@/hooks/use-admin-role";
 import { useKeycloakHealthSummary } from "@/hooks/use-keycloak-health-summary";
 import { useMigrationStatus } from "@/hooks/use-migration-status";
 import { useReleaseUpgradePrompt } from "@/hooks/use-release-upgrade-prompt";
+import { PRODUCT_TOURS, type ProductTourId } from "@/lib/product-tour-catalog";
+import { TOUR_ICONS } from "@/components/onboarding/tour-icons";
 import { requestProductTour } from "@/lib/product-tour";
 import { config } from "@/lib/config";
 import { pushWithNavigationProgress } from "@/lib/navigation-progress";
@@ -108,7 +110,7 @@ export function AppHeader() {
   const breadcrumbSlot = useHeaderBreadcrumbSlot();
   const fallbackBreadcrumbs = getApplicationBreadcrumbs(pathname);
   const { data: session } = useSession();
-  const { isAdmin } = useAdminRole();
+  const { isAdmin, canAccessDynamicAgents } = useAdminRole();
   const [tourMenuOpen, setTourMenuOpen] = React.useState(false);
   const {
     hasUnsavedChanges,
@@ -292,24 +294,34 @@ export function AppHeader() {
           <PopoverContent
             side="bottom"
             align="end"
-            className="w-72 p-2"
+            className="max-h-[min(36rem,calc(100dvh-5rem))] w-80 overflow-y-auto p-2"
             onOpenAutoFocus={(content) => content.querySelector<HTMLButtonElement>("button")?.focus()}
           >
             <p className="px-3 py-2 text-xs font-medium text-muted-foreground">Explore at your pace</p>
-            <button
-              type="button"
-              className="flex w-full items-start gap-3 rounded-lg p-3 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onClick={() => {
-                setTourMenuOpen(false);
-                requestProductTour(true);
-              }}
-            >
-              <Compass className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-              <span>
-                <span className="block text-sm font-medium">Workspace tour</span>
-                <span className="mt-0.5 block text-xs text-muted-foreground">Find your way around the workspace.</span>
-              </span>
-            </button>
+            {(Object.entries(PRODUCT_TOURS) as [ProductTourId, typeof PRODUCT_TOURS[ProductTourId]][])
+              .filter(([id, tour]) => {
+                if (tour.agentWorkspace) return config.dynamicAgentsEnabled && config.storageMode === "mongodb" && (isAdmin || canAccessDynamicAgents);
+                if (id === "credentials") return config.userConnectionsEnabled && config.storageMode === "mongodb";
+                return true;
+              })
+              .map(([id, tour]) => {
+                const Icon = TOUR_ICONS[tour.icon];
+                return <button
+                  key={id}
+                  type="button"
+                  className="flex w-full items-start gap-3 rounded-lg p-3 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => {
+                    setTourMenuOpen(false);
+                    requestProductTour(id === "workspace", id);
+                  }}
+                >
+                  <Icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center justify-between gap-2 text-sm font-medium">{tour.title}<span className="shrink-0 text-[10px] font-normal text-muted-foreground">{tour.steps.length} steps</span></span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">{tour.description}</span>
+                  </span>
+                </button>;
+              })}
             {isAdmin && (
               <GuardedNavigationLink
                 href="/admin/configuration/setup-wizard"

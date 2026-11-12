@@ -30,8 +30,8 @@ jest.mock("@/lib/mongodb", () => ({
   getCollection: (...args: unknown[]) => mockGetCollection(...args),
 }));
 
-function request(init?: RequestInit): NextRequest {
-  return new NextRequest("http://localhost:3000/api/onboarding/product-tour", init);
+function request(init?: RequestInit, query = ""): NextRequest {
+  return new NextRequest(`http://localhost:3000/api/onboarding/product-tour${query}`, init);
 }
 
 describe("product tour route", () => {
@@ -137,4 +137,51 @@ describe("product tour route", () => {
       },
     );
   });
+  it.each(["add-model", "add-mcp", "add-agent", "chat", "credentials"])("keeps %s on demand even after setup", async (id) => {
+    const { GET } = await import("../route");
+    const body = await (await GET(request(undefined, `?tour=${id}`))).json();
+    expect(body.data).toMatchObject({ tour_id: id, auto_start: false, state: { status: "not_started" } });
+  });
+
+  it("loads task progress independently of the original workspace tour", async () => {
+    userSettings.findOneAndUpdate.mockResolvedValue({
+      user_id: "user@example.com",
+      preferences: {
+        product_tour: { status: "completed", current_step: 5, run_count: 2 },
+        task_tours: { chat: { status: "in_progress", current_step: 3, run_count: 1 } },
+      },
+    });
+    const { GET } = await import("../route");
+    const body = await (await GET(request(undefined, "?tour=chat"))).json();
+    expect(body.data.state).toMatchObject({ status: "in_progress", current_step: 3, run_count: 1 });
+  });
+
+  it("updates only the selected tour and preserves other preferences", async () => {
+    const { PATCH } = await import("../route");
+    await PATCH(request({ method: "PATCH", body: JSON.stringify({ tour_id: "add-model", action: "progress", current_step: 3 }) }));
+    expect(userSettings.updateOne).toHaveBeenCalledWith(
+      { user_id: "user@example.com" },
+      { $set: { "preferences.task_tours.add-model": expect.objectContaining({ current_step: 3 }), updated_at: expect.any(Date) } },
+    );
+  });
+
+  it.each(["unknown", "__proto__", "constructor", "chat.status", ""])("rejects an invalid tour id: %s", async (id) => {
+    const { GET, PATCH } = await import("../route");
+    await expect(GET(request(undefined, `?tour=${id}`))).rejects.toMatchObject({ statusCode: 400 });
+    await expect(PATCH(request({ method: "PATCH", body: JSON.stringify({ tour_id: id, action: "reset" }) }))).rejects.toMatchObject({ statusCode: 400 });
+    expect(userSettings.updateOne).not.toHaveBeenCalled();
+  });
+
+  it("validates steps against the selected tour length", async () => {
+    const { PATCH } = await import("../route");
+    await expect(PATCH(request({ method: "PATCH", body: JSON.stringify({ tour_id: "chat", action: "progress", current_step: 5 }) }))).rejects.toMatchObject({ statusCode: 400 });
+    expect(userSettings.updateOne).not.toHaveBeenCalled();
+  });
+
+  it("completes a task tour at its final step", async () => {
+    const { PATCH } = await import("../route");
+    const body = await (await PATCH(request({ method: "PATCH", body: JSON.stringify({ tour_id: "chat", action: "complete" }) }))).json();
+    expect(body.data.state).toMatchObject({ status: "completed", current_step: 4 });
+  });
+
 });

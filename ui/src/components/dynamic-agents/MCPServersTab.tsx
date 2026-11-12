@@ -600,13 +600,13 @@ export function MCPServersTab({
               <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
               Refresh
             </Button>
-            <Button size="sm" onClick={() => setShowCatalog(true)}>
+            <Button data-tour="add-mcp" size="sm" onClick={() => setShowCatalog(true)}>
               <Plus className="h-4 w-4 mr-2" />
               Add Server
             </Button>
         </div>
       </WorkspacePageActions>
-      <Card className="rounded-none border-0 bg-transparent shadow-none">
+      <Card data-tour="mcp-servers" className="rounded-none border-0 bg-transparent shadow-none">
         <CardContent className="px-0 pt-0">
         {loading ? (
           <div className="flex items-center justify-center py-12">
