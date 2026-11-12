@@ -1,3 +1,4 @@
+import { getHarnessPresentation } from "@/lib/agent-presentation";
 import type { HarnessDescriptor } from "@/types/harness-engine";
 
 /** Integration maturity is separate from runtime configuration and access. */
@@ -7,8 +8,8 @@ export function harnessStatusLabel(id: string, certification?: HarnessDescriptor
 }
 
 export function harnessDisplayName(descriptor: Pick<HarnessDescriptor, "id" | "display_name">): string {
-  return ({ claude_agent_sdk: "Claude Agent SDK", claude_agent_sdk_remote: "Claude Agent SDK",
-    claude_code_cli_acp: "Claude Code", claude_code_acp: "Claude Agent SDK (Advanced ACP)" } as Record<string, string>)[descriptor.id] ?? descriptor.display_name;
+  const presentation = getHarnessPresentation(descriptor.id);
+  return descriptor.id.startsWith("claude_") && presentation.logoSrc ? presentation.label : descriptor.display_name;
 }
 
 /** Presentation groups never replace the runtime/profile IDs persisted in blueprints. */
