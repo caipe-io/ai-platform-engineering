@@ -1,3 +1,9 @@
+## 1.4.0-rc.5 (2026-11-12)
+
+### Fix
+
+- **harness**: accept private fsGroup workspaces for Claude isolation (#3383)
+
 ## 1.4.0-rc.4 (2026-11-12)
 
 ### Fix
