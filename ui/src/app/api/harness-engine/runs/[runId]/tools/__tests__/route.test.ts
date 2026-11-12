@@ -95,7 +95,7 @@ it("returns a confirmed credential rejection as an MCP tool error without retry 
   expect(list).not.toHaveBeenCalled();
 });
 
-it.each([[403, "MCP_TOOL_ACCESS_DENIED"], [502, "MCP_INIT_FAILED"], [503, "AGENT_CONTEXT_UNAVAILABLE"]])(
+it.each([[502, "MCP_INIT_FAILED"], [503, "AGENT_CONTEXT_UNAVAILABLE"]])(
   "keeps non-credential catalog failures fail-closed (HTTP %s)", async (status, code) => {
     list.mockRejectedValue(new ApiError("example failure", status as number, code as string));
     expect((await POST(request({ operation: "list" }), params)).status).toBe(status);
@@ -122,10 +122,47 @@ it("honors run ownership and conversation authorization denials", async () => {
   expect(list).not.toHaveBeenCalled();
 });
 
-it("rechecks current server invocation grants", async () => {
+it("permits text-only chat without server grants while keeping tool invocation denied", async () => {
   permitted.mockResolvedValue([]);
-  expect((await POST(request({ operation: "list" }), params)).status).toBe(403);
+  const response = await POST(request({ operation: "list" }), params);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ data: { tools: [{ tool_id: "example.lookup",
+    description: expect.stringContaining("not permitted for your account") }] } });
+  expect((await POST(request({ operation: "call", tool_id: "example.lookup", arguments: {} }), params)).status).toBe(403);
   expect(list).not.toHaveBeenCalled();
+  expect(call).not.toHaveBeenCalled();
+});
+
+it("keeps an accessible tool callable when another selected server is forbidden", async () => {
+  const forbidden = { ...server, _id: "restricted", name: "Restricted provider" };
+  proxy.mockImplementation(async () => Response.json({ data: { version: { blueprint: { id: run.agent_id, tools: {
+    bindings: [{ tool_id: "restricted.lookup" }, { tool_id: "example.lookup" }], approval_policy: "never",
+  } } } } }));
+  getCollection.mockImplementation(async (name: string) => name === "dynamic_agents"
+    ? { findOne: async () => ({ ...agent, allowed_tools: { example: ["lookup"], restricted: ["lookup"] } }) }
+    : { find: () => ({ toArray: async () => [server, forbidden] }) });
+  const response = await POST(request({ operation: "list" }), params);
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(body.data.tools[0].description).toContain("not permitted for your account");
+  expect(body.data.tools[1].description).toBe("Example lookup");
+  expect(list).toHaveBeenCalledTimes(1);
+  expect(list).toHaveBeenCalledWith(expect.objectContaining({ serverId: "example" }));
+  expect((await POST(request({ operation: "call", tool_id: "restricted.lookup", arguments: {} }), params)).status).toBe(403);
+  expect(call).not.toHaveBeenCalled();
+  expect((await POST(request({ operation: "call", tool_id: "example.lookup", arguments: {} }), params)).status).toBe(200);
+  expect(call).toHaveBeenCalledTimes(1);
+});
+
+it("describes upstream catalog denials without querying or invoking an alternate identity", async () => {
+  list.mockRejectedValue(new ApiError("private-upstream-detail", 403, "MCP_TOOL_ACCESS_DENIED"));
+  const response = await POST(request({ operation: "list" }), params);
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(body.data.tools[0].description).toContain("not permitted for your account");
+  expect(JSON.stringify(body)).not.toContain("private-upstream-detail");
+  expect(list).toHaveBeenCalledTimes(1);
+  expect(call).not.toHaveBeenCalled();
 });
 
 it("rejects a tool removed from the current agent policy", async () => {

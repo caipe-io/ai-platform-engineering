@@ -22,6 +22,10 @@ function connectionMessage(server: MCPServerConfig): string {
   return `Your connection to ${server.name} is unavailable. Connect or reconnect your own provider account in Settings > Connected apps, then start a new turn. This tool has not executed.`;
 }
 
+function permissionMessage(server: MCPServerConfig): string {
+  return `Access to ${server.name} is not permitted for your account. Ask the resource owner for access before using this tool. This tool has not executed.`;
+}
+
 /** Claude tool calls retain the user's identity and the real agent's current policy. */
 export const POST = withErrorHandler(async (
   request: NextRequest,
@@ -68,7 +72,7 @@ export const POST = withErrorHandler(async (
   const permitted = await filterResourcesByPermission(session, selected, {
     type: "mcp_server", action: "invoke", id: server => String(server._id),
   });
-  if (permitted.length !== selected.length) throw new ApiError("MCP server access denied", 403);
+  const permittedIds = new Set(permitted.map(server => String(server._id)));
   const connection = (binding: typeof bindings[number]) => ({
     request, session, agentId: run.agent_id, serverId: binding.serverId,
     server: { ...binding.server, source: "agentgateway" as const,
@@ -77,6 +81,7 @@ export const POST = withErrorHandler(async (
   if (body.operation === "call") {
     const binding = bindings.find(item => item.tool_id === body.tool_id);
     if (!binding) throw new ApiError("Tool is not in the pinned execution allowlist", 403);
+    if (!permittedIds.has(binding.serverId)) throw new ApiError("MCP server access denied", 403);
     if (!body.arguments || typeof body.arguments !== "object" || Array.isArray(body.arguments)) {
       throw new ApiError("Tool arguments must be an object", 400);
     }
@@ -93,14 +98,23 @@ export const POST = withErrorHandler(async (
     }
   }
   const schemas = new Map<string, Awaited<ReturnType<typeof listHttpMcpTools>>["tools"]>();
-  const unavailable = new Set<string>();
+  const unavailable = new Map<string, string>();
   for (const binding of bindings) {
     if (schemas.has(binding.serverId) || unavailable.has(binding.serverId)) continue;
+    if (!permittedIds.has(binding.serverId)) {
+      unavailable.set(binding.serverId, permissionMessage(binding.server));
+      continue;
+    }
     try {
       schemas.set(binding.serverId, (await listHttpMcpTools(connection(binding))).tools);
     } catch (error) {
-      if (!connectionAuthRequired(error)) throw error;
-      unavailable.add(binding.serverId);
+      if (connectionAuthRequired(error)) {
+        unavailable.set(binding.serverId, connectionMessage(binding.server));
+      } else if (error instanceof ApiError && error.statusCode === 403 && error.code === "MCP_TOOL_ACCESS_DENIED") {
+        unavailable.set(binding.serverId, permissionMessage(binding.server));
+      } else {
+        throw error;
+      }
     }
   }
   const tools = bindings.map(binding => {
@@ -108,7 +122,7 @@ export const POST = withErrorHandler(async (
       // Preserve the exact pinned tool IDs expected by the worker. These
       // entries disclose no provider schema or data and confer no access;
       // calls still pass every live policy and caller-credential check above.
-      return { tool_id: binding.tool_id, description: connectionMessage(binding.server),
+      return { tool_id: binding.tool_id, description: unavailable.get(binding.serverId)!,
         input_schema: { type: "object", properties: {}, additionalProperties: false } };
     }
     const schema = schemas.get(binding.serverId)?.find(tool => tool.name === binding.toolName || tool.namespaced_name === binding.toolName);
