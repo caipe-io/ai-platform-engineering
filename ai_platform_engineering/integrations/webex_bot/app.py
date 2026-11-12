@@ -7,6 +7,7 @@ import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional, Protocol
+from urllib.parse import urlencode
 
 from .utils.audit import log_webex_authz_decision
 from .utils.dm_authz_client import DmAgentAccessDecision, DmAuthzClient
@@ -683,6 +684,9 @@ async def handle_webex_message(
         linking_url: Optional[str] = None
         try:
             linking_url = await linker.linking_url(parsed.person_id)
+            if linking_url:
+                separator = "&" if "?" in linking_url else "?"
+                linking_url = f"{linking_url}{separator}{urlencode({'bot_id': parsed.bot_id})}"
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Webex linking URL mint failed (type=%s); continuing without URL",
