@@ -29,6 +29,7 @@ import { useAdminRole } from "@/hooks/use-admin-role";
 import { useKeycloakHealthSummary } from "@/hooks/use-keycloak-health-summary";
 import { useMigrationStatus } from "@/hooks/use-migration-status";
 import { useReleaseUpgradePrompt } from "@/hooks/use-release-upgrade-prompt";
+import { requestProductTour } from "@/lib/product-tour";
 import { config } from "@/lib/config";
 import { pushWithNavigationProgress } from "@/lib/navigation-progress";
 import { cn } from "@/lib/utils";
@@ -37,6 +38,7 @@ import { useUnsavedChangesStore } from "@/store/unsaved-changes-store";
 import {
 AlertTriangle,
 BookOpen,
+Compass,
 ChevronRight,
 MessageSquareText,
 } from "lucide-react";
@@ -278,6 +280,7 @@ export function AppHeader() {
 
       {/* Status & Actions */}
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" aria-label="Take a tour" onClick={() => requestProductTour(true)}><Compass className="h-4 w-4" /><span className="hidden sm:inline">Take a tour</span></Button>
         <div className="flex items-center gap-1.5">
           {noAuthConfigured && (
             <Popover>

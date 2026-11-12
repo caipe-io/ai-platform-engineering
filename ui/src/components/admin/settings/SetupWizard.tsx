@@ -2,7 +2,6 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -26,6 +25,8 @@ import { cn } from "@/lib/utils";
 import {
   Bot,
   CalendarClock,
+  Compass,
+  MessageSquare,
   Check,
   CheckCircle2,
   ChevronLeft,
@@ -802,8 +803,7 @@ export function SetupWizardDialog({
                   style={{ width: `${progress}%` }}
                 />
               </div>
-              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Start with one model and one agent. Add tools and automation whenever you’re ready.</p>
-              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Your place is saved when you leave. Return with <strong>Resume setup</strong> or Admin → Platform configuration → Setup Wizard.</p>
+              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Your place is saved. Extras can wait.</p>
             </div>
           </aside>
 
@@ -836,27 +836,22 @@ export function SetupWizardDialog({
 
                   {step === 1 && (
                     <div className="space-y-3">
-                      <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/15 via-background to-violet-500/10 p-6">
-                        <div className="pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-primary/15 blur-3xl animate-pulse-glow" />
-                        <div className="relative flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <p className="text-xs font-medium uppercase tracking-widest text-primary">Welcome to CAIPE</p>
-                            <p className="mt-2 text-2xl font-semibold tracking-tight">Your first agent starts here.</p>
-                            <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">An agent is an AI assistant with a job and, optionally, tools. We’ll help you create one and try a first conversation.</p>
-                          </div>
-                          {readinessChecks > 0 && (
-                            <div className="flex items-center gap-1.5 rounded-full border bg-background/70 px-2.5 py-1 text-[11px] font-medium">
-                              <span className={cn("h-2 w-2 rounded-full", healthyReadinessChecks === readinessChecks ? "animate-pulse bg-emerald-500" : "bg-amber-500")} />
-                              {healthyReadinessChecks}/{readinessChecks} checks ready
-                            </div>
-                          )}
+                      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary/10 via-transparent to-transparent px-5 py-8 sm:py-10">
+                        <div className="mb-6 flex items-center gap-3" aria-hidden>
+                          <span className="grid h-12 w-12 place-items-center rounded-2xl border border-primary/20 bg-primary/10 text-primary"><Sparkles className="h-6 w-6" /></span>
+                          <span className="w-8 border-t border-dashed border-primary/30" />
+                          <span className="grid h-16 w-16 place-items-center rounded-2xl border border-primary/20 bg-card text-primary shadow-lg shadow-primary/5"><Bot className="h-8 w-8" /></span>
+                          <span className="w-8 border-t border-dashed border-primary/30" />
+                          <span className="grid h-12 w-12 place-items-center rounded-2xl border border-primary/20 bg-primary/10 text-primary"><MessageSquare className="h-6 w-6" /></span>
                         </div>
+                        <p className="text-xs font-medium uppercase tracking-widest text-primary">Make something useful</p>
+                        <h3 className="mt-3 max-w-md text-3xl font-semibold tracking-tight">Your first agent starts<br className="hidden sm:block" /> with one small job.</h3>
+                        <p className="mt-4 max-w-md text-sm leading-7 text-muted-foreground">Choose an AI, give your agent instructions, then say hello. We’ll save your place as you go.</p>
+                        <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground"><span>01 · Choose its AI</span><span>02 · Give it a job</span><span>03 · Try a conversation</span></div>
                       </div>
-                      <div className="grid gap-3 sm:grid-cols-3">
-                        {[{ icon: Sparkles, title: "1. Choose its AI", text: "Use an existing connection or bring your provider." }, { icon: Bot, title: "2. Give it a job", text: "Choose starter instructions you can change later." }, { icon: Play, title: "3. Say hello", text: "Create the agent and check a real response." }].map((item) => (
-                          <div key={item.title} className="rounded-xl border bg-card/60 p-4"><item.icon className="mb-3 h-5 w-5 text-primary" /><p className="text-sm font-medium">{item.title}</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.text}</p></div>
-                        ))}
-                      </div>
+                      <details className="group rounded-xl border bg-muted/10 p-4">
+                        <summary className="flex cursor-pointer items-center justify-between text-sm font-medium marker:content-none">Platform readiness<span className="flex items-center gap-2 text-xs text-muted-foreground">{readinessChecks ? `${healthyReadinessChecks}/${readinessChecks} ready` : "View details"}<ChevronRight className="h-4 w-4 group-open:rotate-90" /></span></summary>
+                        <div className="mt-3 space-y-3">
                       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/10 p-4">
                         <p className="text-sm text-muted-foreground">
                           {!health ? "Platform health is unavailable. Check it before testing." : requiredHealthFailure ? "A required service needs attention before your first test." : "Review service status and deployment details in Platform Health."}
@@ -865,7 +860,7 @@ export function SetupWizardDialog({
                           <Link href="/admin/operations/health">Open Platform Health<ChevronRight className="ml-1 h-4 w-4" /></Link>
                         </Button>
                       </div>
-                      {migrationProbe && (
+                      {migrationProbe?.status === "healthy" && (
                         <div className={cn(
                           "flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4",
                           migrationProbe.status === "healthy"
@@ -888,7 +883,15 @@ export function SetupWizardDialog({
                           </Button>
                         </div>
                       )}
-                      <details open className="group animate-fade-in rounded-xl border bg-muted/10 p-3">
+                        </div>
+                      </details>
+                      {migrationProbe && migrationProbe.status !== "healthy" && (
+                        <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3">
+                          <div className="flex items-center gap-2 text-xs"><KeyRound className="h-4 w-4 text-amber-500" /><span>Keycloak &amp; RBAC migration</span></div>
+                          <Link className="text-xs font-medium text-primary hover:underline" href={migrationProbe.remediation?.href ?? "/admin/security/access-operations?operationsTab=migrations"}>Review migration</Link>
+                        </div>
+                      )}
+                      <details className="group animate-fade-in rounded-xl border bg-muted/10 p-3">
                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
                           <span className="flex items-center gap-2 text-sm font-semibold"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" /> Optional capabilities</span>
                           <span className="text-[11px] text-muted-foreground">Configure later</span>
@@ -1383,15 +1386,6 @@ function ModelProviderGuide({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-function InventoryTile({ label, value, delay = 0 }: { label: string; value: number; delay?: number }) {
-  return (
-    <div className="animate-fade-in rounded-lg border bg-card p-3 transition-transform duration-300 hover:-translate-y-0.5" style={{ animationDelay: `${delay}ms` }}>
-      <p className="text-2xl font-semibold">{value}</p>
-      <p className="text-xs text-muted-foreground">{label}</p>
-    </div>
-  );
-}
-
 function SummaryItem({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -1425,62 +1419,66 @@ export function SetupWizardSettings({ readOnly = false }: { readOnly?: boolean }
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-4">
-          <div>
-            <CardTitle className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-primary" /> Setup Wizard</CardTitle>
-            <CardDescription className="mt-1">Review platform readiness and create a first working agent.</CardDescription>
-          </div>
-          {payload && <Badge variant={payload.state.status === "completed" ? "default" : "secondary"}>{setupStatusLabel(payload.state.status)}</Badge>}
-        </CardHeader>
-        <CardContent>
-          {loading ? <CAIPESpinner message="Loading setup status..." /> : error ? (
-            <p className="text-sm text-destructive">{error}</p>
-          ) : payload ? (
-            <div className="space-y-5">
-              {!payload.enabled && (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300">
-                  Automatic setup is disabled by <code>SETUP_WIZARD_ENABLED=false</code>. An administrator can still run the wizard manually here.
-                </div>
-              )}
-              <dl className="grid gap-4 sm:grid-cols-3">
-                <SummaryItem label="Status" value={setupStatusLabel(payload.state.status)} />
-                <SummaryItem label="Starter agent" value={payload.state.created_agent_id ?? "Not created"} />
-                <SummaryItem label="Last completed" value={payload.state.completed_at ? new Date(payload.state.completed_at).toLocaleString() : "Never"} />
-              </dl>
-              <div className="flex flex-wrap gap-2">
-                <Button disabled={readOnly} onClick={() => {
-                  if (readOnly) return;
-                  setRestart(payload.state.status === "completed");
-                  setOpen(true);
-                }}>
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                  {payload.state.status === "not_started"
-                    ? "Start setup"
-                    : payload.state.status === "completed"
-                      ? "Run setup again"
-                      : "Resume setup"}
-                </Button>
-                <Button asChild variant="outline"><Link href="/admin/operations/health">View platform health</Link></Button>
-              </div>
+      <section className="relative isolate overflow-hidden rounded-3xl border border-primary/15 bg-gradient-to-br from-primary/[0.08] via-card to-card" aria-labelledby="setup-intro-title">
+        <div aria-hidden className="pointer-events-none absolute -right-24 -top-32 h-96 w-96 rounded-full bg-primary/10 blur-3xl" />
+        <div className="relative grid gap-10 p-6 sm:p-10 lg:grid-cols-[1.15fr_1fr] lg:items-center lg:gap-16">
+          <div className="max-w-xl">
+            <div className="mb-5 flex items-center gap-2 text-xs font-medium text-primary">
+              <Sparkles className="h-4 w-4" aria-hidden /> A little guidance. A working agent.
             </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
+            <h2 id="setup-intro-title" className="text-3xl font-semibold tracking-tight sm:text-4xl">From an idea to<br className="hidden sm:block" /> your first agent.</h2>
+            <p className="mt-4 max-w-md text-sm leading-7 text-muted-foreground">Choose its AI, give it a job, and try a conversation. We’ll guide you through each decision. Everything else can wait.</p>
+            {loading ? <div className="mt-6"><CAIPESpinner message="Loading setup status..." /></div> : error ? <p role="alert" className="mt-6 text-sm text-destructive">{error}</p> : payload && (
+              <div className="mt-7 space-y-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button size="lg" disabled={readOnly} onClick={() => {
+                    if (readOnly) return;
+                    setRestart(payload.state.status === "completed");
+                    setOpen(true);
+                  }}>
+                    {payload.state.status === "not_started" ? "Start setup" : payload.state.status === "completed" ? "Run setup again" : "Resume setup"}
+                    <ChevronRight className="ml-2 h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" onClick={() => requestProductTour(true)}><Compass className="mr-2 h-4 w-4" />Take a tour</Button>
+                </div>
+                <p className="flex items-center gap-2 text-xs text-muted-foreground"><span className="h-1.5 w-1.5 rounded-full bg-primary" />{setupStatusLabel(payload.state.status)} · Your progress is saved. Leave whenever you like.</p>
+              </div>
+            )}
+          </div>
+          <div className="relative mx-auto w-full max-w-md" aria-label="Your first agent journey">
+            <div className="absolute -inset-4 -z-10 rounded-full bg-primary/5 blur-2xl" aria-hidden />
+            <div className="overflow-hidden rounded-2xl border bg-background/80 shadow-xl shadow-black/5">
+              <div className="flex items-center gap-3 border-b px-5 py-4"><span className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10 text-primary"><Bot className="h-5 w-5" /></span><div><p className="text-sm font-medium">Your first agent</p><p className="text-xs text-muted-foreground">One job. Ready to help.</p></div></div>
+              <ol className="space-y-0 px-5 py-2">
+                {[{ icon: Sparkles, title: "Choose its AI", detail: "Pick a model you already have access to." }, { icon: Bot, title: "Give it a job", detail: "Start with a recipe or your own instructions." }, { icon: MessageSquare, title: "Start a conversation", detail: "Try it out and see a real response." }].map((item, index) => (
+                  <li key={item.title} className="relative flex gap-4 py-4">
+                    {index < 2 && <span aria-hidden className="absolute bottom-[-16px] left-4 top-12 border-l border-dashed border-primary/25" />}
+                    <span className="z-10 grid h-8 w-8 shrink-0 place-items-center rounded-full border bg-card text-primary"><item.icon className="h-4 w-4" /></span>
+                    <div><p className="text-sm font-medium">{item.title}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{item.detail}</p></div>
+                  </li>
+                ))}
+              </ol>
+              <div className="border-t bg-muted/15 px-5 py-3 text-xs text-muted-foreground">Tools, knowledge, and team channels are optional.</div>
+            </div>
+          </div>
+        </div>
+      </section>
       {payload && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Current configuration</CardTitle>
-            <CardDescription>Resources discovered by the setup wizard.</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <InventoryTile label="Models" value={payload.inventory.models} />
-            <InventoryTile label="Agents" value={payload.inventory.agents} />
-            <InventoryTile label="MCP servers" value={payload.inventory.mcp_servers} />
-            <InventoryTile label="Knowledge sources" value={payload.inventory.knowledge_sources} />
-          </CardContent>
-        </Card>
+        <details className="group rounded-xl border bg-card/40">
+          <summary className="flex cursor-pointer items-center justify-between gap-4 px-5 py-4 text-sm font-medium marker:content-none">
+            Deployment details<span className="flex items-center gap-2 text-xs font-normal text-muted-foreground">Configuration & saved progress<ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" /></span>
+          </summary>
+          <div className="space-y-5 border-t px-5 py-5">
+            {!payload.enabled && <p className="text-sm text-muted-foreground">Automatic guidance is turned off for this deployment. You can still start setup here.</p>}
+            <dl className="grid gap-4 sm:grid-cols-3">
+              <SummaryItem label="Status" value={setupStatusLabel(payload.state.status)} />
+              <SummaryItem label="Starter agent" value={payload.state.created_agent_id ?? "Not created"} />
+              <SummaryItem label="Last completed" value={payload.state.completed_at ? new Date(payload.state.completed_at).toLocaleString() : "Never"} />
+            </dl>
+            <p className="text-xs text-muted-foreground">{payload.inventory.models} models · {payload.inventory.agents} agents · {payload.inventory.mcp_servers} MCP servers · {payload.inventory.knowledge_sources} knowledge sources</p>
+            <Button asChild variant="outline" size="sm"><Link href="/admin/operations/health">View platform health<ChevronRight className="ml-2 h-4 w-4" /></Link></Button>
+          </div>
+        </details>
       )}
 
       <SetupWizardDialog
@@ -1591,7 +1589,7 @@ export function SetupWizardGate(): React.ReactElement | null {
     }
   };
 
-  if (!payload || checklistHidden || payload.state.status === "dismissed" || (!resumeAvailable && (payload.state.checklist_hidden || payload.state.status === "completed" || !payload.auto_start))) return null;
+  if (pathname === "/admin/configuration/setup-wizard" || !payload || checklistHidden || payload.state.status === "dismissed" || (!resumeAvailable && (payload.state.checklist_hidden || payload.state.status === "completed" || !payload.auto_start))) return null;
 
   const checklistItems: Array<{
     label: string;

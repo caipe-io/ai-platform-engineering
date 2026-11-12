@@ -9,6 +9,7 @@ const mockPush = jest.fn();
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
+  usePathname: () => "/",
 }));
 
 function response(data: unknown, status = 200): Promise<Response> {
@@ -109,10 +110,21 @@ describe("ProductTourGate", () => {
     expect(screen.getByRole("status")).toHaveTextContent("dismissal could not be saved");
   });
 
+  it("keeps the workspace usable and resumes a minimized tour", async () => {
+    render(<ProductTourGate />);
+    const panel = await screen.findByRole("dialog");
+    expect(panel).toHaveAttribute("aria-modal", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Minimize tour" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /resume tour/i }));
+    expect(await screen.findByRole("heading", { name: "Your workspace is ready" })).toBeInTheDocument();
+  });
+
   it("starts after setup, saves progress, and supports a persistent skip", async () => {
     render(<ProductTourGate />);
 
     expect(await screen.findByRole("heading", { name: "Your workspace is ready" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: /next/i })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     expect(await screen.findByRole("heading", { name: "Pick up where you left off" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /skip tour/i }));

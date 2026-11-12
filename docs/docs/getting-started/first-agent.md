@@ -82,3 +82,15 @@ For the standalone UI chart, use `config.SETUP_WIZARD_ENABLED: "false"`.
 For Docker Compose, set `SETUP_WIZARD_ENABLED=false` and recreate the UI container.
 For the installer, use `--no-setup-wizard` or `ENABLE_SETUP_WIZARD=false`.
 Manual setup in Admin and tour replay in Settings remain available.
+
+## Explore the workspace
+
+Choose **Take a tour** in the application header or on the Setup Wizard page.
+The guide highlights the navigation while you keep using the workspace. Use
+**Next** and **Back** to explore Home, Chat, Skills, and personal settings; links
+open the related workspace using the usual unsaved-change protection.
+
+Minimize the guide to a **Resume tour** button, or close it whenever you like.
+Progress is saved to your account. Replay it from the header or Settings.
+Deployment details and optional navigation capabilities stay collapsed until
+you request them; setup keeps the next decision in focus.

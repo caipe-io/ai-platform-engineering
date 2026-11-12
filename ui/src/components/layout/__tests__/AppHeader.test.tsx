@@ -464,6 +464,15 @@ describe('AppHeader — application chrome', () => {
     mockReleasePrompt.releaseMarkdown = null
   })
 
+  it('opens the saved product tour from the header', () => {
+    const request = jest.fn();
+    window.addEventListener('caipe:product-tour-request', request);
+    render(<AppHeader />);
+    fireEvent.click(screen.getByRole('button', { name: 'Take a tour' }));
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ detail: { restart: true } }));
+    window.removeEventListener('caipe:product-tour-request', request);
+  });
+
   describe('Autonomous navigation', () => {
     it('hides Autonomous for a user without the capability', () => {
       render(<AppHeader />)

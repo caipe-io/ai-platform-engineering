@@ -227,7 +227,7 @@ describe("SetupWizardSettings", () => {
 
     const resume = await screen.findByRole("button", { name: /resume setup/i });
     expect(resume).toBeEnabled();
-    expect(screen.getByText(/automatic setup is disabled/i)).toBeInTheDocument();
+    expect(screen.getByText(/automatic guidance is turned off/i)).toBeInTheDocument();
   });
 
   it("lets an administrator exit setup without marking it complete", async () => {
@@ -248,12 +248,15 @@ describe("SetupWizardSettings", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("shows optional capabilities expanded on the welcome screen", async () => {
+  it("reveals optional capabilities only when requested", async () => {
     render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
 
     expect(await screen.findByRole("heading", { name: "Try your agent" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Welcome" }));
-    expect(screen.getByText(/Choose what appears in your navigation/)).toBeInTheDocument();
+    const details = screen.getByText("Optional capabilities").closest("details")!;
+    expect(details.open).toBe(false);
+    fireEvent.click(screen.getByText("Optional capabilities"));
+    expect(details.open).toBe(true);
     expect(screen.getByRole("checkbox", { name: "Show Workflows in navigation" })).toBeInTheDocument();
   });
 
