@@ -1333,6 +1333,7 @@ export function ChatPanel({
 
   const recoveredRuns = useRef(new Map<string, string>());
   const discoveredRuns = useRef(new Map<string, string>());
+  const recoveryRetries = useRef(new Map<string, { runId: string; attempts: number; after: number }>());
   const recoveryMessageId = conversation?.messages?.at(-1)?.id;
   const recoveryMessageRole = conversation?.messages?.at(-1)?.role;
   const recoveryMessageFinal = conversation?.messages?.at(-1)?.isFinal;
@@ -1354,7 +1355,7 @@ export function ChatPanel({
         if (!response.ok) { watchEngine = false; return; }
         const { data } = await response.json();
         if (disposed) return;
-        watchEngine = data?.runtime === "harness_engine";
+        watchEngine = data?.runtime === "harness_engine" || data?.runtime === "unbound";
         if (data?.runtime === "harness_engine" && typeof data.harness_id === "string") {
           setObservedRuntime(current => current?.conversationId === activeConversationId && current.harnessId === data.harness_id
             ? current : { conversationId: activeConversationId, harnessId: data.harness_id });
@@ -1372,7 +1373,10 @@ export function ChatPanel({
         }
         const last = messages?.findLast(message => message.turnId === data.turn_id);
         if (!last || data.status === "waiting_for_input") return;
-        if (data.status !== "running" && last.role === "assistant" && last.isFinal) return;
+        const retry = recoveryRetries.current.get(activeConversationId);
+        const retrying = retry?.runId === data.run_id;
+        if (retrying && Date.now() < retry.after) return;
+        if (!retrying && data.status !== "running" && last.role === "assistant" && last.isFinal) return;
         if (recoveredRuns.current.get(activeConversationId) === data.run_id) return;
         // A popup and the full chat share this store. Only one subscriber rebuilds
         // the current turn; its command and checkpoints remain server-owned.
@@ -1387,7 +1391,7 @@ export function ChatPanel({
         const adapter = createStreamAdapter({ protocol: agentProtocol as "custom" | "agui" });
         const state: StreamLoopState = { accumulatedText: "", rawStreamContent: "", hitlFormRequested: false, hasError: false };
         clearStreamEvents(activeConversationId);
-        updateMessage(activeConversationId, assistantId, { isFinal: false, ...(observeOnly && { isReadOnlyReplay: true }),
+        updateMessage(activeConversationId, assistantId, { isFinal: false, error: undefined, ...(observeOnly && { isReadOnlyReplay: true }),
           ...(last.role === "user" && { timestamp: last.timestamp }) });
         setConversationStreaming(activeConversationId, { conversationId: activeConversationId, messageId: assistantId,
           client: { abort: () => adapter.abort() }, streamAdapter: adapter, readOnly: observeOnly,
@@ -1397,6 +1401,14 @@ export function ChatPanel({
         } catch (error) {
           state.hasError = true;
           state.errorMessage = error instanceof Error ? error.message : "Run recovery failed";
+        }
+        if (!state.serverCompleted && !state.hitlFormRequested) {
+          recoveredRuns.current.delete(activeConversationId);
+          const attempts = retrying ? retry.attempts + 1 : 1;
+          recoveryRetries.current.set(activeConversationId, { runId: data.run_id, attempts,
+            after: Date.now() + Math.min(30_000, 3000 * 2 ** Math.min(attempts - 1, 4)) });
+        } else {
+          recoveryRetries.current.delete(activeConversationId);
         }
         finalizeStreamLoop(activeConversationId, assistantId, state);
       } catch (error) {

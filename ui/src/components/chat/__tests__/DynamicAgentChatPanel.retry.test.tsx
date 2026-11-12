@@ -326,6 +326,47 @@ describe("shared Engine turn discovery", () => {
     } finally { view.unmount(); fetchMock.mockRestore(); }
   });
 
+  it("keeps polling an unbound read-only chat until its first run", async () => {
+    setConversation([]);
+    let latest: Record<string, unknown> = { runtime: "unbound", status: "idle", run_id: null };
+    const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async () => ({ ok: true, json: async () => ({ data: latest }) }) as Response);
+    mockChatState.loadMessagesFromServer.mockImplementationOnce(async () => {
+      mockConversation.messages.push(message("first-prompt", "user", "First shared prompt", { turnId: "first-turn" }));
+    });
+    const view = render(<ChatPanel agentId="example-agent" conversationId="chat-1" readOnly />);
+    try {
+      await act(async () => {});
+      latest = { runtime: "harness_engine", status: "running", run_id: "first-run", turn_id: "first-turn", is_run_owner: false };
+      await act(async () => { jest.advanceTimersByTime(3000); });
+      expect(mockRecoverRun).toHaveBeenCalledWith("first-run", expect.any(Object), "chat-1");
+      expect(mockConversation.messages.at(-1)).toMatchObject({ content: "Recovered final answer", isReadOnlyReplay: true });
+      expect(mockStreamMessage).not.toHaveBeenCalled();
+    } finally { view.unmount(); fetchMock.mockRestore(); }
+  });
+
+  it("retries a failed replay with backoff, including when the run finishes meanwhile", async () => {
+    setConversation([message("remote-prompt", "user", "Shared prompt", { turnId: "new-turn" })]);
+    let latest = { ...idle, status: "running", run_id: "new-run", turn_id: "new-turn", is_run_owner: false };
+    const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async () => ({ ok: true, json: async () => ({ data: latest }) }) as Response);
+    mockRecoverRun.mockRejectedValueOnce(new Error("Temporary disconnection")).mockRejectedValueOnce(new Error("Still disconnected"));
+    const view = render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+    try {
+      await act(async () => {});
+      expect(mockRecoverRun).toHaveBeenCalledTimes(1);
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      expect(mockRecoverRun).toHaveBeenCalledTimes(1);
+      await act(async () => { jest.advanceTimersByTime(3000); });
+      expect(mockRecoverRun).toHaveBeenCalledTimes(2);
+      latest = { ...latest, status: "idle" };
+      await act(async () => { jest.advanceTimersByTime(3000); });
+      expect(mockRecoverRun).toHaveBeenCalledTimes(2);
+      await act(async () => { jest.advanceTimersByTime(3000); });
+      expect(mockRecoverRun).toHaveBeenCalledTimes(3);
+      expect(mockConversation.messages.at(-1)).toMatchObject({ content: "Recovered final answer", turnStatus: "done", error: undefined });
+      expect(mockStreamMessage).not.toHaveBeenCalled();
+    } finally { view.unmount(); fetchMock.mockRestore(); }
+  });
+
   it("stops discovery after access is revoked and disposes its timer", async () => {
     let denied = false;
     const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async () => denied
