@@ -5,6 +5,10 @@ metadata:
   labels:
     {{- include "dynamic-agents.labels" . | nindent 4 }}
 data:
+  {{- if .Values.a2aDiscovery.enabled }}
+  REMOTE_A2A_DISCOVERY_NAMESPACES: {{ (.Values.a2aDiscovery.namespaces | default (list .Release.Namespace)) | toJson | quote }}
+  REMOTE_A2A_CLUSTER_DOMAIN: {{ .Values.a2aDiscovery.clusterDomain | quote }}
+  {{- end }}
   {{- /*
     Attachment blob-store keys are resolved (with global.storage.s3 fallback and
     auto->local/s3 backend resolution) by dynamic-agents.attachmentConfig below,
@@ -13,6 +17,7 @@ data:
     through normally.
   */ -}}
   {{- $attachmentManaged := list "ATTACHMENT_BACKEND" "ATTACHMENT_S3_BUCKET" "ATTACHMENT_S3_PREFIX" "ATTACHMENT_S3_REGION" "ATTACHMENT_S3_ENDPOINT_URL" -}}
+  {{- if .Values.a2aDiscovery.enabled }}{{ $attachmentManaged = concat $attachmentManaged (list "REMOTE_A2A_DISCOVERY_NAMESPACES" "REMOTE_A2A_CLUSTER_DOMAIN") }}{{ end }}
   {{- range $key, $value := .Values.config }}
   {{- /*
     Skip keys whose value is the empty string so the rendered ConfigMap

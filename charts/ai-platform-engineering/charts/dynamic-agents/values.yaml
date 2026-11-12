@@ -25,6 +25,12 @@ serviceAccount:
   annotations: {}
   name: ""
 
+# Opt-in, namespace-scoped read-only A2A Service discovery.
+a2aDiscovery:
+  enabled: false
+  namespaces: [] # Empty uses the release namespace when enabled.
+  clusterDomain: cluster.local
+
 # Pod annotations and labels
 podAnnotations: {}
 podLabels: {}

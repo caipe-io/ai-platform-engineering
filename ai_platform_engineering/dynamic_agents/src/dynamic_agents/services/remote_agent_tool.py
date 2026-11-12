@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from dynamic_agents.auth.token_context import current_user_token
 from dynamic_agents.models import RemoteAgentCredentialSource
-from dynamic_agents.services.a2a_destination import A2ADestinationPolicy
+from dynamic_agents.services.a2a_destination import A2ADestinationPolicy, agent_card_location
 from dynamic_agents.services.a2a_limits import (
     DEFAULT_MAX_OUTPUT_BYTES,
     DEFAULT_MAX_RESPONSE_BYTES,
@@ -124,6 +124,8 @@ async def resolve_remote_agent_auth_headers(
 ) -> dict[str, str]:
     """Resolve one caller, saved-secret, or connected-account header."""
     source = RemoteAgentCredentialSource.model_validate(credential_source or {})
+    if source.kind == "none":
+        return {}
     kind = source.kind
     header_name = source.name
     credential: str | None = None
@@ -212,8 +214,10 @@ class RemoteAgentTool(BaseTool):
                     httpx_client=http_client,
                 )
             )
+            base_url, card_path = agent_card_location(self.a2a_url)
             client = await factory.create_from_url(
-                self.a2a_url,
+                base_url,
+                **({"relative_card_path": card_path} if card_path else {}),
                 resolver_http_kwargs={"timeout": timeout},
             )
             try:

@@ -7,6 +7,7 @@ import socket
 import threading
 import time
 from contextlib import contextmanager
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -35,8 +36,31 @@ from langgraph.prebuilt import ToolNode
 from starlette.applications import Starlette
 
 from dynamic_agents.auth.token_context import current_user_token
+from dynamic_agents.routes import remote_agents
 from dynamic_agents.services.credential_exchange import CredentialExchangeClient
 from dynamic_agents.services.remote_agent_tool import RemoteAgentTool, create_remote_agent_tool
+
+
+@pytest.mark.parametrize("binding", ["JSONRPC", "HTTP+JSON"])
+@pytest.mark.parametrize("explicit_card", [False, True])
+async def test_public_card_discovery_and_execution_never_forward_caller_credentials(monkeypatch, binding, explicit_card):
+    with _sdk_agent_server(binding) as endpoint:
+        url = endpoint + ".well-known/agent-card.json" if explicit_card else endpoint
+        monkeypatch.setattr(remote_agents, "get_settings", lambda: SimpleNamespace(remote_a2a_allowed_http_origins=[endpoint],
+            remote_a2a_max_response_bytes=1024 * 1024, credential_api_url=None, credential_service_audience="example"))
+        token = current_user_token.set("must-not-forward-this-caller")
+        try:
+            card = await remote_agents.read_agent_card(remote_agents.RemoteAgentProbeRequest(endpoint=url,
+                credential_source={"kind": "none"}))
+            assert card.name == "Example Echo Agent"
+            assert card.agent_card["supportedInterfaces"][0]["protocolBinding"] == binding
+            tool = await create_remote_agent_tool(a2a_url=url, allowed_http_origins=[endpoint], credential_source={"kind": "none"})
+            assert await tool.ainvoke({"message": "hello"}) == "echo: hello"
+        finally:
+            current_user_token.reset(token)
+        assert len(_CaptureAuthorization.requests) >= 3
+        assert all("authorization" not in headers for headers in _CaptureAuthorization.requests)
+        assert "must-not-forward-this-caller" not in repr(_CaptureAuthorization.requests)
 
 
 class _CaptureAuthorization:

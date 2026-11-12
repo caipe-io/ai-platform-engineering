@@ -17,6 +17,7 @@ export function normalizeRemoteAgentCredentialSource(
   }
   const source = value as Record<string, unknown>;
   const kind = source.kind;
+  if (kind === "none") return { kind, target: "header", name: "Authorization" };
   const name = typeof source.name === "string" ? source.name.trim() : "Authorization";
   if (name.length > 256 || !HEADER_NAME_PATTERN.test(name) || (source.target !== undefined && source.target !== "header")) {
     throw new ApiError("A2A authentication header name is invalid", 400, "INVALID_REMOTE_AGENT_AUTH");

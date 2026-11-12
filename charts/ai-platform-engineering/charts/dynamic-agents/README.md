@@ -51,6 +51,9 @@ helm show values oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.1.0
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| a2aDiscovery.clusterDomain | string | `"cluster.local"` |  |
+| a2aDiscovery.enabled | bool | `false` |  |
+| a2aDiscovery.namespaces | list | `[]` |  |
 | affinity | object | `{}` |  |
 | agentContext.existingSecret.key | string | `"CAIPE_AGENT_CONTEXT_HMAC_SECRET"` |  |
 | agentContext.existingSecret.name | string | `""` |  |

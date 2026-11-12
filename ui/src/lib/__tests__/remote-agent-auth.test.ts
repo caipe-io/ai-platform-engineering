@@ -1,6 +1,9 @@
 import { normalizeRemoteAgentCredentialSource } from "../remote-agent-auth";
 
 describe("remote A2A authentication configuration", () => {
+  it("explicitly omits credentials for public agents", () => {
+    expect(normalizeRemoteAgentCredentialSource({ kind: "none", secret_ref: "not-used" })).toEqual({ kind: "none", target: "header", name: "Authorization" });
+  });
   it("preserves caller JWT forwarding for existing registry entries", () => {
     expect(normalizeRemoteAgentCredentialSource(undefined)).toEqual({
       kind: "caller_token", target: "header", name: "Authorization",
