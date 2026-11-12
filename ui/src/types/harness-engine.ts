@@ -57,6 +57,9 @@ export interface HarnessProfile {
   display_name: string;
   description: string;
   available: boolean;
+  model?: string | null;
+  default_max_turns?: number;
+  source?: "deployment" | "managed";
 }
 
 export interface HarnessDescriptor {

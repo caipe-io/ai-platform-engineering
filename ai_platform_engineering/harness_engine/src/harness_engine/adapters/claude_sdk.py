@@ -36,6 +36,7 @@ from harness_engine.models import (
     ExecutionMode,
     HarnessDescriptor,
     HarnessProfile,
+    RegisteredClaudeProfile,
     RunContext,
     TurnOutcome,
     ValidationIssue,
@@ -62,7 +63,9 @@ class ClaudeSDKAdapter:
         transcript_store: SessionStore | None = None,
         tool_broker: ClaudeToolBroker | None = None,
     ) -> None:
-        self._profiles = settings.claude_sdk_profiles()
+        self._deployment_profiles = settings.claude_sdk_profiles()
+        self._profiles = dict(self._deployment_profiles)
+        self._managed_profiles: dict[str, RegisteredClaudeProfile] = {}
         self._tool_broker = tool_broker or ClaudeToolBroker(settings)
         self._active: dict[str, asyncio.Task[Any]] = {}
         self._query = query_fn
@@ -76,6 +79,18 @@ class ClaudeSDKAdapter:
             "claude_agent_sdk", checkpoint_strategy="adapter_store"
         )
 
+    def set_registered_profiles(self, profiles: list[RegisteredClaudeProfile]) -> None:
+        self._managed_profiles = {p.profile_id: p for p in profiles if p.harness_id == "claude_agent_sdk" and p.base_profile_id in self._deployment_profiles and p.profile_id not in self._deployment_profiles}
+        self._profiles = {**self._deployment_profiles, **{
+            key: self._deployment_profiles[value.base_profile_id].model_copy(update={"model": value.model})
+            for key, value in self._managed_profiles.items()
+        }}
+
+    def execution_profile(self, context: RunContext) -> ClaudeSDKProfile:
+        profile = self._profile(context.binding.profile_id)
+        # The worker receives this policy only over its private authenticated API.
+        return profile.model_copy(update={"model": context.operator_model}) if context.operator_model else profile
+
     @property
     def session_manager(self) -> ProviderSessionManager:
         return self._session_manager
@@ -86,8 +101,11 @@ class ClaudeSDKAdapter:
             HarnessProfile(
                 id=alias,
                 harness_id="claude_agent_sdk",
-                display_name=alias.replace("-", " ").replace("_", " ").title(),
+                display_name=self._managed_profiles[alias].display_name if alias in self._managed_profiles else alias.replace("-", " ").replace("_", " ").title(),
                 description=profile.description or "Operator-managed Claude SDK policy",
+                model=profile.model,
+                default_max_turns=self._managed_profiles[alias].max_turns if alias in self._managed_profiles else 20,
+                source="managed" if alias in self._managed_profiles else "deployment",
             )
             for alias, profile in sorted(self._profiles.items())
         ]
@@ -171,7 +189,10 @@ class ClaudeSDKAdapter:
 
     def evaluate(self, blueprint: AgentBlueprint) -> AdapterEvaluation:
         try:
-            options = ClaudeHarnessOptions.model_validate(blueprint.harness.options)
+            managed = self._managed_profiles.get(blueprint.harness.profile_id)
+            options = ClaudeHarnessOptions.model_validate({
+                **({"max_turns": managed.max_turns} if managed else {}), **blueprint.harness.options,
+            })
         except ValidationError as exc:
             return AdapterEvaluation(
                 normalized_options={},
@@ -237,7 +258,7 @@ class ClaudeSDKAdapter:
             self._active.pop(context.turn.run_id, None)
 
     async def stream(self, context: RunContext) -> AsyncIterator[CanonicalEventDraft]:
-        profile = self._profile(context.binding.profile_id)
+        profile = self.execution_profile(context)
         options = ClaudeHarnessOptions.model_validate(context.blueprint.harness.options)
         # Tool permissions never imply access to another caller's local workspace.
         directory = hashlib.sha256(context.binding.binding_id.encode()).hexdigest()

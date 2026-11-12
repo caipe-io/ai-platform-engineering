@@ -28,11 +28,13 @@ from harness_engine.models import (
     CancelActiveRunRequest,
     ClearAgentSessionRequest,
     ConnectAgentCoreRequest,
+    CreateClaudeProfileRequest,
     CreateRunRequest,
     EventPage,
     ExecutionIdentity,
     LookupRunRequest,
     RegisteredAgentCoreProfile,
+    RegisteredClaudeProfile,
     RunRecord,
     SaveAgentRequest,
     ValidateAgentDraftRequest,
@@ -99,7 +101,11 @@ def create_app(
         DefaultPromptCompiler(),
     )
 
-    async def refresh_agentcore_profiles() -> None:
+    async def refresh_operator_profiles() -> None:
+        claude_profiles = await resolved_repository.list_claude_profiles()
+        for adapter in resolved_adapters:
+            if isinstance(adapter, (ClaudeSDKAdapter, RemoteClaudeSDKAdapter)):
+                adapter.set_registered_profiles(claude_profiles)
         profiles = await resolved_repository.list_agentcore_profiles()
         targets = {profile.profile_id: profile.target for profile in profiles}
         for adapter in resolved_adapters:
@@ -111,7 +117,7 @@ def create_app(
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         resolved_settings.require_private_token()
         await resolved_repository.initialize()
-        await refresh_agentcore_profiles()
+        await refresh_operator_profiles()
         yield
         await coordinator.shutdown()
         for adapter in resolved_adapters:
@@ -151,14 +157,63 @@ def create_app(
         # Event replay does not depend on refreshing the provider catalog.
         if request.url.path in {
             "/api/v1/harnesses", "/api/v1/agent-drafts/validate",
-            "/api/v1/runs", "/api/v1/admin/agentcore-connections",
+            "/api/v1/runs", "/api/v1/admin/agentcore-connections", "/api/v1/admin/operator-profiles",
         } or (request.method == "PUT" and request.url.path.startswith("/api/v1/agents/")):
             try:
-                await refresh_agentcore_profiles()
+                await refresh_operator_profiles()
             except (PyMongoError, ValueError) as exc:
-                logger.error("AgentCore connection registry could not be loaded (%s)", type(exc).__name__)
-                raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "AgentCore connections could not be loaded") from exc
+                logger.error("Operator profile catalog could not be loaded (%s)", type(exc).__name__)
+                raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Operator profiles could not be loaded") from exc
         return x_harness_engine_subject
+
+    @app.get("/api/v1/admin/operator-profiles")
+    async def operator_profiles(
+        subject: str = Depends(caller_subject),
+        x_harness_engine_admin: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        if x_harness_engine_admin != "true":
+            raise HTTPException(403, "Platform administrator required")
+        descriptors = []
+        for adapter in resolved_adapters:
+            if isinstance(adapter, (ClaudeSDKAdapter, RemoteClaudeSDKAdapter)):
+                descriptor = adapter.descriptor
+                if isinstance(adapter, RemoteClaudeSDKAdapter):
+                    models = await adapter.deployment_models(subject)
+                    descriptor = descriptor.model_copy(update={"profiles": [
+                        p.model_copy(update={"model": models[p.id]}) if p.id in models else p
+                        for p in descriptor.profiles
+                    ]})
+                descriptors.append(descriptor)
+        return {"success": True, "data": {
+            "profiles": await resolved_repository.list_claude_profiles(), "harnesses": descriptors,
+        }}
+
+    @app.post("/api/v1/admin/operator-profiles", status_code=201)
+    async def create_operator_profile(
+        body: CreateClaudeProfileRequest,
+        subject: str = Depends(caller_subject),
+        x_harness_engine_admin: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        if x_harness_engine_admin != "true":
+            raise HTTPException(403, "Platform administrator required")
+        try:
+            base = registry.profile(body.harness_id, body.base_profile_id)
+            existing = registry.profile(body.harness_id, body.profile_id)
+        except HarnessNotFoundError as exc:
+            raise HTTPException(400, "Claude runtime is unavailable") from exc
+        if not base or not base.available or base.source != "deployment":
+            raise HTTPException(400, "Select an available deployment-owned base profile")
+        if existing:
+            raise HTTPException(409, "Profile IDs are immutable; choose a new ID")
+        profile = RegisteredClaudeProfile(**body.model_dump(), created_by=subject)
+        try:
+            await resolved_repository.create_claude_profile(profile)
+        except RevisionConflictError as exc:
+            raise HTTPException(409, "Profile IDs are immutable; choose a new ID") from exc
+        except PyMongoError as exc:
+            raise HTTPException(503, "Profile could not be saved") from exc
+        await refresh_operator_profiles()
+        return {"success": True, "data": profile}
 
     @app.post("/api/v1/admin/agentcore-connections", status_code=status.HTTP_201_CREATED)
     async def connect_agentcore(
@@ -182,7 +237,7 @@ def create_app(
         except PyMongoError as exc:
             logger.error("AgentCore connection %s could not be saved (%s)", body.profile_id, type(exc).__name__)
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Connection could not be saved; retry with the same connection ID") from exc
-        await refresh_agentcore_profiles()
+        await refresh_operator_profiles()
         return {"success": True, "data": {"profile_id": profile.profile_id, "provisioning": "shared", "persistence": resolved_settings.storage_backend}}
 
     def ensure_owner(run: RunRecord | None, subject: str) -> RunRecord:

@@ -123,6 +123,10 @@ def create_worker_app(
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/api/v1/profiles")
+    async def profile_catalog(subject: str = Depends(caller)) -> dict[str, object]:
+        return {"profiles": local.descriptor.profiles}
+
     def prepare(context: RunContext, request: Request, subject: str) -> RunContext:
         if (
             context.binding.owner_subject != subject
@@ -203,6 +207,7 @@ def create_worker_app(
                         EXTENSION: {
                             "transport": "http-ndjson-v1",
                             "durableReplay": True,
+                            "operatorModel": True,
                             "runtime": config.claude_acp_runtime if config.claude_acp_command else "sdk",
                         }
                     },

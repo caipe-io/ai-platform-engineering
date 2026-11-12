@@ -24,6 +24,7 @@ from harness_engine.models import (
     ExecutionMode,
     HarnessDescriptor,
     HarnessProfile,
+    RegisteredClaudeProfile,
     RunContext,
     RunEvent,
     TurnOutcome,
@@ -53,6 +54,8 @@ class RemoteClaudeSDKAdapter:
             for key, value in settings.claude_worker_profiles().items()
             if (value.runtime == runtime if runtime else value.runtime != "claude_code_cli_acp")
         }
+        self._deployment_profiles = dict(self._profiles)
+        self._managed_profiles = {}
         self._harness_id = runtime or "claude_agent_sdk_remote"
         self._template = ClaudeSDKAdapter(settings.model_copy(update={"storage_backend": "memory"}))
         self._transport = transport
@@ -60,6 +63,33 @@ class RemoteClaudeSDKAdapter:
         self.session_manager = EventAssignedProviderSessionManager(
             self._harness_id, checkpoint_strategy="adapter_store"
         )
+
+    def set_registered_profiles(self, profiles: list[RegisteredClaudeProfile]) -> None:
+        self._managed_profiles = {p.profile_id: p for p in profiles if p.harness_id == self._harness_id and p.base_profile_id in self._deployment_profiles and p.profile_id not in self._deployment_profiles}
+        self._profiles = {**self._deployment_profiles, **{
+            key: self._deployment_profiles[value.base_profile_id] for key, value in self._managed_profiles.items()
+        }}
+
+    async def deployment_models(self, subject: str) -> dict[str, str]:
+        """Read only sanitized model metadata; old workers need not support discovery."""
+        models = {}
+        async with httpx.AsyncClient(transport=self._transport, timeout=5.0) as client:
+            for alias, profile in self._deployment_profiles.items():
+                try:
+                    response = await client.get(profile.url.rstrip("/") + "/api/v1/profiles", headers={
+                        "Authorization": f"Bearer {profile.token.get_secret_value()}",
+                        "X-Harness-Engine-Subject": subject,
+                    })
+                    if response.status_code != 200:
+                        continue
+                    data = response.json()
+                    for item in data.get("profiles", []):
+                        if item.get("id") == profile.profile_id and isinstance(item.get("model"), str):
+                            models[alias] = item["model"]
+                except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+                    # Discovery does not change execution or block profile administration.
+                    continue
+        return models
 
     @property
     def descriptor(self) -> HarnessDescriptor:
@@ -74,8 +104,11 @@ class RemoteClaudeSDKAdapter:
                     HarnessProfile(
                         id=alias,
                         harness_id=self._harness_id,
-                        display_name=alias,
-                        description=profile.description,
+                        display_name=self._managed_profiles[alias].display_name if alias in self._managed_profiles else alias,
+                        description=self._managed_profiles[alias].description if alias in self._managed_profiles else profile.description,
+                        model=self._managed_profiles[alias].model if alias in self._managed_profiles else None,
+                        default_max_turns=self._managed_profiles[alias].max_turns if alias in self._managed_profiles else 20,
+                        source="managed" if alias in self._managed_profiles else "deployment",
                     )
                     for alias, profile in sorted(self._profiles.items())
                 ],
@@ -100,6 +133,9 @@ class RemoteClaudeSDKAdapter:
         )
 
     def evaluate(self, blueprint: AgentBlueprint) -> AdapterEvaluation:
+        managed = self._managed_profiles.get(blueprint.harness.profile_id)
+        if managed:
+            blueprint = blueprint.model_copy(update={"harness": blueprint.harness.model_copy(update={"options": {"max_turns": managed.max_turns, **blueprint.harness.options}})})
         result = self._template.evaluate(blueprint)
         profile = self._profiles.get(blueprint.harness.profile_id)
         if blueprint.tools.bindings and profile is not None and not profile.tools_enabled:
@@ -168,8 +204,10 @@ class RemoteClaudeSDKAdapter:
         if context.identity is not None:
             headers["X-Harness-Caller-Token"] = context.identity.bearer.get_secret_value()
         # Only private operator configuration selects the host and worker profile.
+        managed = self._managed_profiles.get(context.binding.profile_id)
         forwarded = context.model_copy(
             update={
+                "operator_model": managed.model if managed else None,
                 "blueprint": context.blueprint.model_copy(
                     update={
                         "harness": context.blueprint.harness.model_copy(
@@ -208,10 +246,12 @@ class RemoteClaudeSDKAdapter:
                     raise ValueError("Worker does not support the durable ACP transport")
                 if initialized["_meta"][EXTENSION].get("runtime", "sdk") != profile.runtime:
                     raise ValueError("Worker runtime does not match its operator profile")
+                if managed and not initialized["_meta"][EXTENSION].get("operatorModel"):
+                    raise ValueError("Upgrade the worker before using managed operator profiles")
                 setup = {
                     "cwd": "/workspace",
                     "mcpServers": [],
-                    "_meta": {EXTENSION: {"context": forwarded.model_dump(mode="json")}},
+                    "_meta": {EXTENSION: {"context": forwarded.model_dump(mode="json", exclude={"operator_model"} if not managed else set())}},
                 }
                 method = "session/resume" if context.binding.provider_session_id else "session/new"
                 if method == "session/resume":
@@ -224,7 +264,7 @@ class RemoteClaudeSDKAdapter:
                     params = {
                         "sessionId": session_id,
                         "prompt": [{"type": "text", "text": context.turn.message}],
-                        "_meta": {EXTENSION: {"context": forwarded.model_dump(mode="json"), "after": cursor}},
+                        "_meta": {EXTENSION: {"context": forwarded.model_dump(mode="json", exclude={"operator_model"} if not managed else set()), "after": cursor}},
                     }
                     rpc = {"jsonrpc": "2.0", "id": run_id, "method": "session/prompt", "params": params}
                     try:
