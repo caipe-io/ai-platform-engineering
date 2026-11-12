@@ -8,6 +8,17 @@ Open **Admin → Platform configuration → Setup Wizard**. You need one reachab
 model and the agent runtime for your first conversation. Tools, knowledge bases,
 connected accounts, and automation can be added later.
 
+## When setup appears
+
+- Eligible admins see a setup checklist on a fresh installation (no conversations
+  or custom agents, and at most one user), or while saved setup is in progress.
+- The full wizard opens when the admin chooses to start or resume it.
+- Completed, dismissed, or hidden setup does not prompt automatically.
+- **Tour → Setup experience** in the top-right bar opens the setup page for
+  admins. Choose **Start setup**, **Resume setup**, or **Run setup again** there.
+- `SETUP_WIZARD_ENABLED=false` suppresses automatic onboarding. Manual setup
+  and workspace tour replay remain available.
+
 ## Complete basic setup
 
 1. **Welcome:** review the brief readiness summary. **Open Platform Health** for
@@ -85,7 +96,8 @@ Manual setup in Admin and tour replay in Settings remain available.
 
 ## Explore the workspace
 
-Choose **Take a tour** in the application header or on the Setup Wizard page.
+Choose **Tour → Workspace tour** in the top-right application header, or
+**Take a tour** on the Setup Wizard page.
 The guide highlights the navigation while you keep using the workspace. Use
 **Next** and **Back** to explore Home, Chat, Skills, and personal settings; links
 open the related workspace using the usual unsaved-change protection.

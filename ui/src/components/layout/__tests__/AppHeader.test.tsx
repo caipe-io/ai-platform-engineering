@@ -468,9 +468,22 @@ describe('AppHeader — application chrome', () => {
     const request = jest.fn();
     window.addEventListener('caipe:product-tour-request', request);
     render(<AppHeader />);
-    fireEvent.click(screen.getByRole('button', { name: 'Take a tour' }));
+    fireEvent.click(screen.getByRole('button', { name: /Workspace tour/ }));
     expect(request).toHaveBeenCalledWith(expect.objectContaining({ detail: { restart: true } }));
     window.removeEventListener('caipe:product-tour-request', request);
+  });
+
+  it('offers guided setup to admins from Tour', () => {
+    mockIsAdmin = true;
+    render(<AppHeader />);
+    expect(screen.getByRole('button', { name: 'Tour', exact: true })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Setup experience/ })).toHaveAttribute('href', '/admin/configuration/setup-wizard');
+  });
+
+  it('keeps platform setup out of the member tour choices', () => {
+    render(<AppHeader />);
+    expect(screen.queryByRole('link', { name: /Setup experience/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Workspace tour/ })).toBeInTheDocument();
   });
 
   describe('Autonomous navigation', () => {

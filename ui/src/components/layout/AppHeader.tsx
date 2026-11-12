@@ -6,7 +6,7 @@ import {
 } from "@/components/layout/ApplicationNavigation";
 import { ApplicationNavigationSearchTrigger } from "@/components/layout/ApplicationNavigationSearch";
 import { RunningChats } from "@/components/layout/RunningChats";
-import { isOnHeaderDialogEditor } from "@/components/layout/GuardedNavigationLink";
+import { GuardedNavigationLink, isOnHeaderDialogEditor } from "@/components/layout/GuardedNavigationLink";
 import { ReleaseUpgradeDialog } from "@/components/release/ReleaseUpgradeDialog";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { SettingsPanel } from "@/components/settings-panel";
@@ -39,6 +39,7 @@ import {
 AlertTriangle,
 BookOpen,
 Compass,
+Sparkles,
 ChevronRight,
 MessageSquareText,
 } from "lucide-react";
@@ -108,6 +109,7 @@ export function AppHeader() {
   const fallbackBreadcrumbs = getApplicationBreadcrumbs(pathname);
   const { data: session } = useSession();
   const { isAdmin } = useAdminRole();
+  const [tourMenuOpen, setTourMenuOpen] = React.useState(false);
   const {
     hasUnsavedChanges,
     pendingNavigationHref,
@@ -280,7 +282,49 @@ export function AppHeader() {
 
       {/* Status & Actions */}
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" aria-label="Take a tour" onClick={() => requestProductTour(true)}><Compass className="h-4 w-4" /><span className="hidden sm:inline">Take a tour</span></Button>
+        <Popover open={tourMenuOpen} onOpenChange={setTourMenuOpen}>
+          <PopoverTrigger asChild>
+            <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" aria-label="Tour">
+              <Compass className="h-4 w-4" />
+              <span className="hidden sm:inline">Tour</span>
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            side="bottom"
+            align="end"
+            className="w-72 p-2"
+            onOpenAutoFocus={(content) => content.querySelector<HTMLButtonElement>("button")?.focus()}
+          >
+            <p className="px-3 py-2 text-xs font-medium text-muted-foreground">Explore at your pace</p>
+            <button
+              type="button"
+              className="flex w-full items-start gap-3 rounded-lg p-3 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => {
+                setTourMenuOpen(false);
+                requestProductTour(true);
+              }}
+            >
+              <Compass className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              <span>
+                <span className="block text-sm font-medium">Workspace tour</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">Find your way around the workspace.</span>
+              </span>
+            </button>
+            {isAdmin && (
+              <GuardedNavigationLink
+                href="/admin/configuration/setup-wizard"
+                className="flex items-start gap-3 rounded-lg p-3 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => setTourMenuOpen(false)}
+              >
+                <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                <span>
+                  <span className="block text-sm font-medium">Setup experience</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">Start or resume guided platform setup.</span>
+                </span>
+              </GuardedNavigationLink>
+            )}
+          </PopoverContent>
+        </Popover>
         <div className="flex items-center gap-1.5">
           {noAuthConfigured && (
             <Popover>
