@@ -280,6 +280,35 @@ routes:
         status: 403
         reason: pdp_denied
 
+  - id: ui-bff-post-api-harness-engine-run-requests-lookup-openfga-agent-use
+    surface: ui_bff
+    method: POST
+    path: /api/harness-engine/run-requests/lookup
+    authorization_system: openfga
+    resource: agent
+    scope: use
+    relation: can_use
+    object_type: agent
+    migration_status: migrated
+    notes: Current agent use and conversation write before looking up the caller's existing delivery in the current conversation epoch; lookup never starts work.
+    expectations:
+      alice_admin:
+        status: 200
+      bob_chat_user:
+        status: 403
+        reason: pdp_denied
+      carol_kb_ingestor:
+        status: 403
+        reason: pdp_denied
+      dave_no_role:
+        status: 403
+        reason: pdp_denied
+      eve_dynamic_agent_user:
+        status: 200
+      frank_service_account:
+        status: 403
+        reason: pdp_denied
+
   - id: ui-bff-post-api-harness-engine-sessions-clear-openfga-agent-use
     surface: ui_bff
     method: POST
