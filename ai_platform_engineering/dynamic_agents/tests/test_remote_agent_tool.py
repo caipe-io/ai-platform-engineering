@@ -367,6 +367,20 @@ class _ToolCallingFakeModel(FakeMessagesListChatModel):
         return self
 
 
+@pytest.mark.parametrize("encoder_type", [CustomStreamEncoder, AGUIStreamEncoder])
+def test_subagent_content_and_tools_do_not_change_the_supervisor_answer(encoder_type) -> None:
+    encoder = encoder_type()
+    encoder._handle_messages((AIMessage(content="Plan"), {}), ())
+    tool_message = AIMessage(content="", tool_calls=[{"name": "task", "args": {}, "id": "parent-call"}])
+    encoder._handle_updates({"model": {"messages": [tool_message]}}, ())
+    encoder._handle_messages((AIMessage(content="Answer"), {}), ())
+    assert encoder._handle_messages((AIMessage(content="Child output"), {}), ("parent-call",))
+    encoder._handle_updates({"model": {"messages": [tool_message]}}, ("parent-call",))
+    encoder._handle_messages((AIMessage(content=" complete"), {}), ())
+    assert encoder.get_accumulated_content() == "Answer complete"
+    assert encoder.get_thinking_content() == "Plan"
+
+
 @pytest.mark.parametrize("binding", ["JSONRPC", "HTTP+JSON"])
 @pytest.mark.parametrize("nested", [False, True])
 async def test_native_task_delegates_and_streams_without_an_extra_model(binding: str, nested: bool) -> None:
@@ -394,7 +408,7 @@ async def test_native_task_delegates_and_streams_without_an_extra_model(binding:
         token = current_user_token.set("active-caller")
         try:
             async for chunk in graph.astream({"messages": [HumanMessage(content="Delegate the example task")]},
-                stream_mode=["custom", "updates", "tasks"], subgraphs=True):
+                stream_mode=["messages", "custom", "updates", "tasks"], subgraphs=True):
                 if chunk[1] == "updates" and isinstance(chunk[2], dict):
                     for update in chunk[2].values():
                         if isinstance(update, dict):
@@ -413,6 +427,7 @@ async def test_native_task_delegates_and_streams_without_an_extra_model(binding:
         assert all(item.get("authorization") == "Bearer active-caller" for item in _CaptureAuthorization.requests)
         assert any(isinstance(msg, ToolMessage) and msg.tool_call_id == "remote-call" and msg.content == "first second" for msg in messages)
         assert any(isinstance(msg, AIMessage) and msg.content == "Remote work complete." for msg in messages)
+        assert all(encoder.get_accumulated_content() == ("Parent complete." if nested else "Remote work complete.") for encoder in encoders)
 
 
 async def test_shared_subagent_resolves_each_caller_without_persisting_credentials() -> None:

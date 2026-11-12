@@ -201,13 +201,15 @@ class LangGraphStreamHelper:
             return {"type": "tool_output", "tool_call_id": namespace[-1], "result": data["result"]}, namespace[:-1]
         return data, namespace
 
-    def accumulate_content(self, content: str) -> None:
-        """Append a content chunk to the buffer."""
-        self._content_chunks.append(content)
+    def accumulate_content(self, content: str, namespace: tuple[str, ...] = ()) -> None:
+        """Keep the supervisor's answer separate from streamed subagent text."""
+        if not namespace:
+            self._content_chunks.append(content)
 
-    def reset_accumulated_content(self) -> None:
-        """Mark the current position as a tool boundary."""
-        self._last_tool_start_pos = len(self._content_chunks)
+    def reset_accumulated_content(self, namespace: tuple[str, ...] = ()) -> None:
+        """Only supervisor tool calls delimit its answer and thinking."""
+        if not namespace:
+            self._last_tool_start_pos = len(self._content_chunks)
 
     def get_accumulated_content(self) -> str:
         """Return content after the last tool call (the final answer)."""

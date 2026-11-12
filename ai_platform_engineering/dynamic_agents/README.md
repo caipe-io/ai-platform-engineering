@@ -532,6 +532,9 @@ dynamic_agents/
 
 ### Native remote subagents (opt-in)
 
+The runtime pins Deep Agents **0.7.37**. Dynamic Agents and the Deep Agents
+Harness Engine image resolve the same version through their lockfiles.
+
 - Set `features.remote_agents_as_subagents: true` on an agent configuration to register its selected A2A entries as LangChain `CompiledSubAgent` runnables. Set it separately on a configured local subagent to enable that subagent's remote delegation.
 - Existing configurations keep the named-tool path. The flag defaults to false and is omitted from legacy serialized settings; no migration or package upgrade is required.
 - The supervisor uses upstream `task(description, subagent_type="remote_<registry-id>")`. LangChain owns dispatch, isolated message state, tracing and result delivery; no extra model is created for the remote adapter.
