@@ -1,3 +1,23 @@
+.foundation {
+  padding: 4rem 1.5rem;
+  text-align: center;
+  background: var(--ifm-background-color);
+  color: var(--ifm-font-color-base);
+}
+
+.foundation p {
+  margin-bottom: 2rem;
+  font-size: 1.15rem;
+}
+
+.foundationLogo {
+  display: block;
+  width: 300px;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
 /* ── Hero ───────────────────────────────────────────────────────── */
 .hero {
   background: linear-gradient(150deg, #0f172a 0%, #0c4a6e 55%, #0e7490 100%);

@@ -296,7 +296,17 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} CAIPE.io OSS Contributors. Built with Docusaurus.`,
+      logo: {
+        alt: 'The Linux Foundation',
+        src: 'img/foundation/lf-stacked-white.svg',
+        href: 'https://www.linuxfoundation.org/',
+        width: 160,
+      },
+      copyright: `Copyright © ${new Date().getFullYear()} CAIPE a Series of LF Projects, LLC.<br />
+        For website terms of use, trademark policy and other project policies please see
+        <a href="https://lfprojects.org/policies/">lfprojects.org/policies/</a>.<br />
+        The Linux Foundation and The Linux Foundation logo design are registered trademarks of The Linux Foundation.
+        Linux is a registered trademark of Linus Torvalds.`,
     },
     prism: {
       theme: prismThemes.github,
