@@ -38,6 +38,29 @@ echo "$MONGODB_DATABASE"
 
 The UI and Dynamic Agents should point at the same database.
 
+## Index Initialization Conflicts
+
+The UI initializes indexes once per process:
+
+- Definitions for one collection are sent in a single `createIndexes` command.
+- At most eight collections initialize concurrently per process, including recovery.
+  Account for all UI replicas and other consumers when sizing database connections.
+- Conflicts with builds in other replicas are retried up to six attempts, with at
+  most 17 seconds of backoff per command. Other errors do not receive this retry.
+- A rejected batch falls back to sequential, idempotent requests for every index
+  in that collection. This retains duplicate-key cleanup and index-option conflict
+  handling without skipping unrelated definitions. Each fallback request has its
+  own bounded conflict retries.
+
+Batching avoids repeated background-build waits on OSS DocumentDB while retaining
+one active index-creation command per collection in each process. It does not
+change index names, keys, uniqueness or TTL options. Existing-index startup remains
+idempotent; no database engine is detected or special-cased.
+
+Exhausted retries and permanent failures are logged, and initialization continues
+with the remaining indexes. Check UI logs for failed index creation; once the
+cause is resolved, restart the UI process to repeat initialization.
+
 ## Auth Redirects Fail
 
 Verify:
