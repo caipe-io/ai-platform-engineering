@@ -39,6 +39,7 @@ npm run serve
 ## Foundation branding
 
 - The homepage uses the Sandbox statement from the [CNCF website guidelines](https://github.com/cncf/foundation/blob/main/policies-guidance/website-guidelines.md).
+- A CNCF Sandbox Project link appears in the hero alongside the OSS and GitHub Stars badges and opens CAIPE's landscape entry.
 - The shared footer carries the LF Projects copyright and policy link.
 - Official, unmodified logos are served locally from `static/img/foundation/`:
   - CNCF [color](https://github.com/cncf/artwork/blob/main/other/cncf/horizontal/color/cncf-color.svg) and [white](https://github.com/cncf/artwork/blob/main/other/cncf/horizontal/white/cncf-white.svg) variants for light and dark themes.

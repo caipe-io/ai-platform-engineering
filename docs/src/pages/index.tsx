@@ -298,6 +298,16 @@ function HeroSection({ onOpenTour }: { onOpenTour: () => void }) {
             <span className={styles.heroStatNumber}>⭐ {stars ?? '—'}</span>
             <span className={styles.heroStatLabel}>GitHub Stars</span>
           </a>
+          <a
+            href="https://landscape.cncf.io/?group=projects-and-products&view-mode=card&item=provisioning--automation-configuration--caipe#artificial-intelligence--machine-learning"
+            target="_blank"
+            rel="noopener noreferrer"
+            className={styles.heroStat}
+            style={{textDecoration: 'none'}}
+          >
+            <span className={styles.heroStatNumber}>CNCF</span>
+            <span className={styles.heroStatLabel}>Sandbox Project</span>
+          </a>
         </div>
       </div>
     </section>
