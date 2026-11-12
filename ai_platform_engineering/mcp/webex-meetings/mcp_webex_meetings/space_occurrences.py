@@ -371,8 +371,6 @@ async def _catalog(discovery: _Discovery, page_limit: int) -> AsyncIterator[str]
         )
         new_urls: list[str] = []
         for row in rows:
-            if "ONE_ON_ONE" in (row.get("tags") or []):
-                continue
             last_activity = _last_activity(row.get("lastReadableActivityDate"))
             if last_activity is not None and last_activity < discovery.lower:
                 continue

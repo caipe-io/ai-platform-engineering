@@ -31,7 +31,7 @@ the app so Webex can grant the expanded scope set.
 Mirrors Cisco's official Meetings MCP tool surface, plus local fallback helpers:
 
 - `webex_list_meetings` - list/search meetings with date filters
-- `webex_space_meeting_occurrences` - discover actual meetings shared in spaces, with optional series filtering
+- `webex_space_meeting_occurrences` - discover actual meeting recaps shared in group or one-to-one conversations, with optional series filtering
 - `webex_userhub_calendar` - User Hub invitations and the separate completed-meeting view
 - `webex_resolve_meeting_link` - resolve a Webex join/calendar link through `/v1/meetings` with secrets removed
 - `webex_get_meeting_status` - get a meeting + optional participants

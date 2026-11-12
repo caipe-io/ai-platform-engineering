@@ -94,6 +94,32 @@ async def test_share_does_not_invent_an_end_time_or_recording_availability() -> 
 
 
 @pytest.mark.asyncio
+async def test_manual_catalog_reads_recaps_shared_in_one_to_one_conversations() -> None:
+    activity_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal activity_calls
+        if request.url.path == "/u2c/api/v1/catalog":
+            return httpx.Response(200, json={"serviceLinks": {"conversation": "https://conv-primary.wbx2.com/conversation/api/v1"}})
+        if request.url.path.endswith("/conversations"):
+            return httpx.Response(200, json={"items": [
+                {"url": CONVERSATION, "tags": ["ONE_ON_ONE"], "lastReadableActivityDate": "2026-01-05T18:00:00Z"},
+                {"url": SECONDARY, "tags": ["ONE_ON_ONE"], "lastReadableActivityDate": "2026-01-01T18:00:00Z"},
+            ]})
+        assert str(request.url).startswith(CONVERSATION + "/activities")
+        activity_calls += 1
+        return httpx.Response(200, json={"items": [activity(summary=False)] if activity_calls == 1 else []})
+
+    result = await discover(handler)
+    assert result["complete"] is True
+    assert result["has_more"] is False
+    assert [item["id"] for item in result["items"]] == [ACTUAL]
+    assert activity_calls == 2
+    assert "private" not in str(result)
+    assert "encrypted" not in str(result)
+
+
+@pytest.mark.asyncio
 async def test_manual_catalog_follows_next_page_and_federation_then_reads_actual_occurrences() -> None:
     visited: list[str] = []
     activity_calls: set[str] = set()
