@@ -52,6 +52,37 @@ def test_invitation_uuid_is_never_promoted_to_an_actual_meeting() -> None:
         assert result["id"] == "calendar-invitation"
 
 
+def test_calendar_invitation_preserves_webex_identity_without_claiming_it_happened() -> None:
+    for suffix in ("", "_20261015T160000Z"):
+        result = _normalize_userhub_calendar_item({
+            "id": "calendar-invitation", "seriesId": "external-calendar-series",
+            "subject": "Previous title", "organizer": {"email": "delegate@example.com"},
+            "webex": {
+                "wbxIsPostMeeting": False, "wbxMeetingUuid": "A" * 32 + suffix,
+                "wbxHost": {"wbxHostEmail": "host@example.com"},
+                "wbxSiteUrl": "https://primary.webex.com", "wbxHasRecording": True,
+            },
+        })
+        assert result["meetingSeriesId"] == "a" * 32
+        assert result["seriesId"] == "external-calendar-series"
+        assert result["hostEmail"] == "host@example.com"
+        assert result["siteUrl"] == "https://primary.webex.com"
+        assert result["id"] == "calendar-invitation"
+        assert "meetingType" not in result
+        assert "state" not in result
+        assert "hasRecording" not in result
+        assert "hasTranscript" not in result
+
+
+def test_personal_room_uuid_is_not_a_public_meeting_series_id() -> None:
+    result = _normalize_userhub_calendar_item({
+        "id": "calendar-invitation",
+        "webex": {"wbxMeetingUuid": "a" * 32, "wbxPMRMeeting": True},
+    })
+    assert "meetingSeriesId" not in result
+    assert "meetingType" not in result
+
+
 def test_conflicting_post_meeting_ids_are_not_accepted_as_an_actual() -> None:
     result = _normalize_userhub_calendar_item({
         "id": "a" * 32 + "_I_1",

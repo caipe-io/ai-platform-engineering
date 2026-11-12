@@ -591,6 +591,20 @@ def _normalize_userhub_calendar_item(item: Any) -> dict[str, Any]:
         "originalStartTime": item.get("originalStartTime"),
     }
     webex = item.get("webex")
+    if isinstance(webex, dict):
+        native_uuid = webex.get("wbxMeetingUuid")
+        series_match = re.fullmatch(
+            r"(?P<series>[0-9a-fA-F]{32})(?:_I_\d+|_\d{8}T\d{6}Z)?", native_uuid,
+        ) if isinstance(native_uuid, str) else None
+        if series_match and webex.get("wbxPMRMeeting") is not True:
+            # Personal room UUIDs are room identities, not public series IDs.
+            # Preserve identity for association with a separately verified
+            # actual. A scheduled UUID does not prove that a meeting happened.
+            normalized["meetingSeriesId"] = series_match.group("series").lower()
+        if host_email := _organizer_email(webex.get("wbxHost")):
+            normalized["hostEmail"] = host_email
+        if isinstance(webex.get("wbxSiteUrl"), str):
+            normalized["siteUrl"] = _normalize_userhub_site_url(webex["wbxSiteUrl"])
     if isinstance(webex, dict) and webex.get("wbxIsPostMeeting") is True:
         actual_id = webex.get("wbxMeetingUuid") or item.get("id")
         # Invitation UUIDs can identify a series or scheduled occurrence. Only
@@ -608,8 +622,6 @@ def _normalize_userhub_calendar_item(item: Any) -> dict[str, Any]:
             })
             if isinstance(webex.get("wbxHasRecording"), bool):
                 normalized["hasRecording"] = webex["wbxHasRecording"]
-            if isinstance(webex.get("wbxSiteUrl"), str):
-                normalized["siteUrl"] = _normalize_userhub_site_url(webex["wbxSiteUrl"])
     return normalized
 
 
