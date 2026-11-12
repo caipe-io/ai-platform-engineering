@@ -119,15 +119,24 @@ export async function getHarnessGatewayStatus(body: Record<string, unknown>, aut
   } });
 }
 
-/** Read an existing Engine conversation without admitting or rebinding a run. */
+/** Read Engine status without admitting or rebinding a run, including before its first turn. */
 export async function getHarnessConversationStatus(
   auth: AuthResult, scope: HarnessConversationReadScope,
 ): Promise<Response | null> {
-  const binding = await (await getCollection<GatewayBinding>("harness_gateway_bindings")).findOne({
+  const bindings = await getCollection<GatewayBinding>("harness_gateway_bindings");
+  const binding = await bindings.findOne({
     agent_id: scope.agentId, conversation_id: scope.conversationId,
     $or: [{ runtime: "harness_engine" }, { runtime: { $exists: false }, harness_id: { $ne: DEFAULT_HARNESS_ID } }],
   });
-  if (!binding) return null;
+  if (!binding) {
+    // A shared reader must be able to wait for the first writer without agent
+    // use/write permission or creating a binding under the reader's identity.
+    if (isHarnessEngineConfigured() && !findAgenticAppAssistantStream(scope.agentId) &&
+        !await bindings.findOne({ agent_id: scope.agentId, conversation_id: scope.conversationId })) {
+      return NextResponse.json({ success: true, data: { runtime: "unbound", status: "idle", run_id: null, turn_id: null } });
+    }
+    return null;
+  }
   const config = getHarnessEngineConfig();
   if (config instanceof NextResponse) return config;
   const saved = await lookupHarnessSession(config, auth, scope.agentId, scope.conversationId, scope);

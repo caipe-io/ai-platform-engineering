@@ -146,6 +146,39 @@ describe('chat-store', () => {
     }));
   });
 
+  it.each([false, true])('reconciles a view-only replay with its persisted reply without duplicates (final=%s)', async isFinal => {
+    const id = `replay-merge-${isFinal}`;
+    const conv = makeConversation({ id, messages: [
+      makeMessage({ id: 'prompt-one', role: 'user', turnId: 'shared-turn' }),
+      makeMessage({ id: 'prompt-two', role: 'user', turnId: 'shared-turn' }),
+      makeMessage({ id: 'local-replay', role: 'assistant', turnId: 'shared-turn', content: 'Complete live answer', isFinal: true, isReadOnlyReplay: true }),
+    ] });
+    useChatStore.setState({ conversations: [conv] });
+    mockApiClient.getMessages.mockResolvedValue({ items: [{
+      message_id: 'persisted-answer', conversation_id: id, role: 'assistant',
+      content: isFinal ? 'Saved final answer' : 'Stale partial', created_at: '2026-09-01T00:00:00Z',
+      metadata: { turn_id: 'shared-turn', is_final: isFinal },
+    }], total: 1 });
+    await useChatStore.getState().loadMessagesFromServer(id, { force: true });
+    await useChatStore.getState().loadMessagesFromServer(id, { force: true });
+    const messages = useChatStore.getState().conversations[0].messages;
+    expect(messages.filter(m => m.role === 'user')).toHaveLength(2);
+    expect(messages.filter(m => m.role === 'assistant')).toEqual([expect.objectContaining({
+      id: 'persisted-answer', content: isFinal ? 'Saved final answer' : 'Complete live answer', isFinal: true,
+    })]);
+    expect(messages.find(m => m.id === 'persisted-answer')?.isReadOnlyReplay).toBe(isFinal ? undefined : true);
+  });
+
+  it('does not persist a completed view-only replay after its subscription ends', async () => {
+    const conv = makeConversation({ messages: [
+      makeMessage({ role: 'user', turnId: 'shared-turn' }),
+      makeMessage({ role: 'assistant', turnId: 'shared-turn', isFinal: true, isReadOnlyReplay: true }),
+    ] });
+    useChatStore.setState({ conversations: [conv] });
+    await useChatStore.getState().saveMessagesToServer(conv.id);
+    expect(mockApiClient.addMessage).not.toHaveBeenCalled();
+  });
+
   it('preserves an explicit title when the first user message arrives', async () => {
     const id = await useChatStore.getState().createConversation('example-agent', { title: 'Example assistant' });
     useChatStore.getState().addMessage(id, { role: 'user', content: 'First question' });

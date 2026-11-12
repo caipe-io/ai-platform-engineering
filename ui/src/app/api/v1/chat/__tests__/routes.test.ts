@@ -143,6 +143,32 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
     });
   });
 
+  it("lets a shared reader wait for the first binding without write or agent permission", async () => {
+    mockRequireAgentUsePermission.mockResolvedValue(NextResponse.json({ error: "No use permission" }, { status: 403 }));
+    const request = () => jsonRequest("/api/v1/chat/stream/status", { agent_id: "agent-1", conversation_id: "conv-1" });
+    const response = await statusPost(request());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ data: { runtime: "unbound", run_id: null } });
+    expect(mockRequireAgentUsePermission).not.toHaveBeenCalled();
+    expect(mockLookupHarnessSession).not.toHaveBeenCalled();
+    expect(mockProxyJSONRequest).not.toHaveBeenCalled();
+    expect(mockRequireConversationResourcePermission).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), "write");
+    mockFindGatewayBinding.mockResolvedValue({ runtime: "harness_engine" });
+    mockLookupHarnessSession.mockResolvedValue({ harness_id: "claude_code", active_run: {
+      run_id: "first-run", owner_subject: "other-owner", turn_id: "first-turn",
+    } });
+    expect(await (await statusPost(request())).json()).toMatchObject({ data: { runtime: "harness_engine", run_id: "first-run" } });
+  });
+
+  it.each(["native", "disabled"])("retains status authorization for %s execution", async runtime => {
+    if (runtime === "disabled") delete process.env.HARNESS_ENGINE_URL;
+    else mockFindGatewayBinding.mockResolvedValueOnce(null).mockResolvedValue({ runtime: "dynamic_agents", harness_id: "dynamic_agents" });
+    mockRequireAgentUsePermission.mockResolvedValue(NextResponse.json({ error: "No use permission" }, { status: 403 }));
+    const response = await statusPost(jsonRequest("/api/v1/chat/stream/status", { agent_id: "agent-1", conversation_id: "conv-1" }));
+    expect(response.status).toBe(403);
+    expect(mockRequireAgentUsePermission).toHaveBeenCalled();
+  });
+
   it.each([
     ["start", startPost], ["resume", resumePost], ["cancel", cancelPost],
     ["status", statusPost], ["invoke", invokePost],

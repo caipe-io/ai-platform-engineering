@@ -31,6 +31,9 @@ for publishing, Compose controls and network requirements.
   for caller-scoped BFF requests, including across a private worker connection.
 - A provider invocation belongs to Harness Engine, not to an SSE subscriber. Closing a browser or BFF connection only removes that subscription.
 - The chat UI subscribes through fetch-based SSE and reattaches with the admitted run ID and event cursor after a refresh or transport failure. It never reposts the prompt to recover a run.
+- Open Engine chats also check for newly admitted shared turns every three seconds
+  and on window focus. Observers load saved prompts and replay the admitted journal
+  read-only; completed turns are reconciled without duplicate assistant messages.
 - Only a server terminal event confirms completion. A closed connection or unfinished saved response must not mark pending tools or the turn as done.
 - The existing BFF `/api/v1/chat/*` routes form Harness Gateway. They read the
   BFF-owned `execution_harness_id`, preserve Dynamic Agents for missing/default
