@@ -109,6 +109,38 @@ test.describe("live-chat header navigation", () => {
     expect(observedIds).not.toContain(encodeURIComponent(legacyId));
   });
 
+  for (const interaction of ["keyboard", "pointer"] as const) {
+    test(`preserves ${interaction} focus when a live chat finishes`, async ({ page }) => {
+      await bootLiveChats(page);
+      let primaryFinished = false;
+      await page.route("**/api/v1/chat/stream/status", route => route.fulfill({ json: {
+        running: !(primaryFinished && route.request().postDataJSON().conversation_id === primaryId),
+        turnId: "example-turn",
+      } }));
+      await page.goto(`/chat/${primaryId}`);
+      const header = page.locator("header");
+      await expect(header.getByRole("button", { name: "Live Agent Chat (1). Choose a chat" })).toBeVisible({ timeout: 30_000 });
+      await page.getByTestId("conversation-history-scroll").getByTitle("Secondary investigation").click();
+      const trigger = header.getByRole("button", { name: "Live Agent Chat (2). Choose a chat" });
+      await expect(trigger).toBeVisible();
+      await trigger.focus();
+      await page.keyboard.press("Enter");
+      const menu = page.getByRole("region", { name: "Live Agent Chat" });
+      await expect(menu.getByRole("link", { name: "Open Primary investigation" })).toBeFocused();
+      if (interaction === "pointer") {
+        await menu.getByRole("heading", { name: "Live Agent Chat" }).click();
+        await expect(page.locator("body")).toBeFocused();
+      }
+
+      primaryFinished = true;
+      await expect(header.getByRole("button", { name: "Live Agent Chat (1). Choose a chat" })).toHaveAttribute("aria-expanded", "true", { timeout: 20_000 });
+      await expect(menu.getByRole("link", { name: "Open Primary investigation" })).toHaveCount(0);
+      await expect(interaction === "keyboard"
+        ? menu.getByRole("link", { name: "Open Secondary investigation" })
+        : page.locator("body")).toBeFocused();
+    });
+  }
+
   test("keeps the compact picker usable on mobile and respects reduced motion", async ({ page }) => {
     await bootLiveChats(page);
     await page.setViewportSize({ width: 390, height: 844 });

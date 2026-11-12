@@ -152,6 +152,75 @@ it("encodes conversation IDs and keeps long titles available without widening th
   expect(link.querySelector(".truncate")).not.toBeInTheDocument();
 });
 
+it.each(["example-primary", "example-secondary"])("focuses a remaining chat when the focused %s chat finishes", id => {
+  addChat("example-primary", "Primary chat");
+  addChat("example-secondary", "Secondary chat");
+  const { rerender } = render(<RunningChats />);
+  fireEvent.click(screen.getByRole("button", { name: "Live Agent Chat (2). Choose a chat" }));
+  const focused = screen.getByRole("link", { name: id === "example-primary" ? "Open Primary chat" : "Open Secondary chat" });
+  focused.focus();
+
+  mockState.streamingConversations.delete(id);
+  rerender(<RunningChats />);
+
+  expect(focused).not.toBeInTheDocument();
+  expect(screen.getByRole("link")).toHaveFocus();
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.getByRole("button", { name: "Live Agent Chat (1). Choose a chat" })).toHaveFocus();
+});
+
+it("keeps focus on a surviving chat when another chat finishes", () => {
+  addChat("example-primary", "Primary chat");
+  addChat("example-secondary", "Secondary chat");
+  const { rerender } = render(<RunningChats />);
+  fireEvent.click(screen.getByRole("button", { name: "Live Agent Chat (2). Choose a chat" }));
+  const secondary = screen.getByRole("link", { name: "Open Secondary chat" });
+  secondary.focus();
+
+  mockState.streamingConversations.delete("example-primary");
+  rerender(<RunningChats />);
+
+  expect(secondary).toHaveFocus();
+});
+
+it("does not move focus during title, status, or destination additions", () => {
+  addChat("example-primary", "Primary chat");
+  addChat("example-secondary", "Secondary chat");
+  const { rerender } = render(<RunningChats />);
+  fireEvent.click(screen.getByRole("button", { name: "Live Agent Chat (2). Choose a chat" }));
+  const secondary = screen.getByRole("link", { name: "Open Secondary chat" });
+  secondary.focus();
+
+  mockState.conversations[1].title = "Updated chat";
+  mockState.streamingConversations.delete("example-secondary");
+  mockState.externalActivity["example-secondary"] = { agentId: "example-agent", state: "saving" };
+  addChat("example-third", "Third chat");
+  rerender(<RunningChats />);
+
+  expect(secondary).toHaveFocus();
+  expect(secondary).toHaveAccessibleName("Open Updated chat");
+  expect(secondary).toHaveTextContent("Saving response…");
+});
+
+it("does not reclaim focus after pointer interaction inside the panel", () => {
+  addChat("example-primary", "Primary chat");
+  addChat("example-secondary", "Secondary chat");
+  const { rerender } = render(<RunningChats />);
+  fireEvent.click(screen.getByRole("button", { name: "Live Agent Chat (2). Choose a chat" }));
+  const primary = screen.getByRole("link", { name: "Open Primary chat" });
+  expect(primary).toHaveFocus();
+  // Clicking non-focusable panel text blurs the link without closing the panel.
+  fireEvent.mouseDown(screen.getByRole("heading", { name: "Live Agent Chat" }));
+  primary.blur();
+  fireEvent.click(screen.getByRole("heading", { name: "Live Agent Chat" }));
+
+  mockState.streamingConversations.delete("example-primary");
+  rerender(<RunningChats />);
+
+  expect(document.body).toHaveFocus();
+  expect(screen.getByRole("region", { name: "Live Agent Chat" })).toBeVisible();
+});
+
 it("does not show a live chat for an unconfirmed status check", () => {
   mockState.externalActivity = { "example-checking": { agentId: "example-agent", state: "checking" } };
   const { container } = render(<RunningChats />);

@@ -97,7 +97,7 @@ login session until that helper is migrated.
 - The top-right **Live Agent Chat** control counts every streaming chat, including the current chat. Its green dot pulses unless reduced motion is requested.
 - Every count uses the same compact **Live Agent Chat (N)** button. Selecting it opens a list of live chats with full, wrapping titles and a current-chat marker.
 - App-owned recovery observations are deduplicated against browser streams. Saving responses remain listed until recovery completes.
-- Opening the list focuses the first chat; Tab reaches other destinations and Enter opens them. Escape returns focus to the trigger.
+- Opening the list focuses the first chat; Tab reaches other destinations and Enter opens them. If the focused chat finishes, focus moves to a remaining chat. Escape returns focus to the trigger.
 - Ordinary navigation preserves the shared unsaved-editor guard; modified clicks retain native new-tab/window behavior. The list uses the shared `Popover` for navigation rather than a form selection control.
 
 ### Migrate an existing conversation

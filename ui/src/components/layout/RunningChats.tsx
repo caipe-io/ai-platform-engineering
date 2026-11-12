@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, type ReactNode } from "react";
+import { useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 
 import { GuardedNavigationLink } from "@/components/layout/GuardedNavigationLink";
@@ -56,6 +56,20 @@ function LiveChatsMenu({ destinations, pathname, label, indicator }: {
 }) {
   const panelId = useId();
   const [open, setOpen] = useState(false);
+  const listRef = useRef<HTMLUListElement>(null);
+  const needsFocusRecovery = useRef(false);
+  const onFocusedRemoval = useCallback(() => {
+    needsFocusRecovery.current = true;
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!needsFocusRecovery.current) return;
+    needsFocusRecovery.current = false;
+    if (open && document.activeElement === document.body) {
+      listRef.current?.querySelector<HTMLAnchorElement>("a[href]")?.focus({ preventScroll: true });
+    }
+  });
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -82,9 +96,9 @@ function LiveChatsMenu({ destinations, pathname, label, indicator }: {
             <h2 className="text-sm font-medium">Live Agent Chat</h2>
             <p className="text-xs text-muted-foreground">Open a chat to follow its progress.</p>
           </div>
-          <ul className="mt-1 max-h-72 overflow-y-auto">
+          <ul ref={listRef} className="mt-1 max-h-72 overflow-y-auto">
             {destinations.map(({ id, href, title, saving }) => (
-                <li key={id}>
+                <LiveChatItem key={id} onFocusedRemoval={onFocusedRemoval}>
                   <GuardedNavigationLink
                     href={href}
                     aria-label={`Open ${title}`}
@@ -98,11 +112,26 @@ function LiveChatsMenu({ destinations, pathname, label, indicator }: {
                       {saving ? "Saving response…" : "Streaming"}{pathname === href ? " · Current chat" : ""}
                     </span>
                   </GuardedNavigationLink>
-                </li>
+                </LiveChatItem>
             ))}
           </ul>
         </section>
       </PopoverContent>
     </Popover>
   );
+}
+
+function LiveChatItem({ children, onFocusedRemoval }: {
+  children: ReactNode;
+  onFocusedRemoval: () => void;
+}) {
+  const trackFocusedRemoval = useCallback((item: HTMLLIElement | null) => {
+    if (!item) return;
+    // Ref cleanup runs before removal, while the active element is still known.
+    return () => {
+      if (item.contains(document.activeElement)) onFocusedRemoval();
+    };
+  }, [onFocusedRemoval]);
+
+  return <li ref={trackFocusedRemoval}>{children}</li>;
 }
