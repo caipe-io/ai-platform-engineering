@@ -184,7 +184,7 @@ class LangGraphStreamHelper:
         first = namespace[0]
         if first in self._namespace_mapping:
             # Replace with correlated tool_call_id
-            correlated = (self._namespace_mapping[first],) + namespace[1:]
+            correlated = tuple(self._namespace_mapping.get(part, part) for part in namespace)
             logger.debug(f"[sse:correlate] {first} → {self._namespace_mapping[first]}")
             return correlated
         else:
@@ -194,13 +194,22 @@ class LangGraphStreamHelper:
             )
             return ()
 
-    def accumulate_content(self, content: str) -> None:
-        """Append a content chunk to the buffer."""
-        self._content_chunks.append(content)
+    @staticmethod
+    def normalize_remote_output(data: Any, namespace: tuple[str, ...]) -> tuple[Any, tuple[str, ...]]:
+        """Attach a compiled remote agent's progress to its enclosing task call."""
+        if isinstance(data, dict) and data.get("type") == "remote_agent_output" and namespace:
+            return {"type": "tool_output", "tool_call_id": namespace[-1], "result": data["result"]}, namespace[:-1]
+        return data, namespace
 
-    def reset_accumulated_content(self) -> None:
-        """Mark the current position as a tool boundary."""
-        self._last_tool_start_pos = len(self._content_chunks)
+    def accumulate_content(self, content: str, namespace: tuple[str, ...] = ()) -> None:
+        """Keep the supervisor's answer separate from streamed subagent text."""
+        if not namespace:
+            self._content_chunks.append(content)
+
+    def reset_accumulated_content(self, namespace: tuple[str, ...] = ()) -> None:
+        """Only supervisor tool calls delimit its answer and thinking."""
+        if not namespace:
+            self._last_tool_start_pos = len(self._content_chunks)
 
     def get_accumulated_content(self) -> str:
         """Return content after the last tool call (the final answer)."""

@@ -136,6 +136,7 @@ class AGUIStreamEncoder(StreamEncoder[FrameT]):
         namespace: tuple[str, ...],
     ) -> list[FrameT]:
         """Encode transport-neutral runtime signals as AG-UI custom events."""
+        data, namespace = self._helper.normalize_remote_output(data, namespace)
         if isinstance(data, dict) and data.get("type") == STRUCTURED_OUTPUT_EVENT:
             if isinstance(data.get("payload"), dict):
                 return self.on_structured_output(data["payload"], data.get("schema_id"))
@@ -345,7 +346,7 @@ class AGUIStreamEncoder(StreamEncoder[FrameT]):
         if not content:
             return []
 
-        self._helper.accumulate_content(content)
+        self._helper.accumulate_content(content, namespace)
 
         ns_key = _namespace_key(namespace)
         frames: list[FrameT] = []
@@ -463,7 +464,7 @@ class AGUIStreamEncoder(StreamEncoder[FrameT]):
                             continue
 
                         logger.debug(f"[sse:TOOL_CALL_START] {tool_name} id={tool_call_id[:8]}... ns={namespace}")
-                        self._helper.reset_accumulated_content()
+                        self._helper.reset_accumulated_content(namespace)
                         results.extend(self._emit_namespace_if_changed(namespace))
                         results.append(
                             self._frame(

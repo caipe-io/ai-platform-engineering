@@ -450,7 +450,7 @@ export function MiddlewarePicker({
   }, [lastAddedIndex]);
 
   const updateEntries = (newEntries: MiddlewareEntry[]) => {
-    onChange({ middleware: newEntries });
+    onChange({ ...value, middleware: newEntries });
   };
 
   const handleToggle = (index: number) => {
