@@ -110,13 +110,27 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.volumeMounts }}
+          {{- if or .Values.volumeMounts .Values.a2aDiscovery.enabled }}
           volumeMounts:
-            {{- toYaml . | nindent 12 }}
+            {{- with .Values.volumeMounts }}{{ toYaml . | nindent 12 }}{{ end }}
+            {{- if .Values.a2aDiscovery.enabled }}
+            - name: a2a-discovery-api
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+            {{- end }}
           {{- end }}
-      {{- with .Values.volumes }}
+      {{- if or .Values.volumes .Values.a2aDiscovery.enabled }}
       volumes:
-        {{- toYaml . | nindent 8 }}
+        {{- with .Values.volumes }}{{ toYaml . | nindent 8 }}{{ end }}
+        {{- if .Values.a2aDiscovery.enabled }}
+        - name: a2a-discovery-api
+          projected:
+            sources:
+              - serviceAccountToken: {path: token, expirationSeconds: 3600}
+              - configMap:
+                  name: kube-root-ca.crt
+                  items: [{key: ca.crt, path: ca.crt}]
+        {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
