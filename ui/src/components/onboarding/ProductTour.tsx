@@ -32,7 +32,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 interface ApiEnvelope<T> {
   success: boolean;
@@ -145,14 +145,20 @@ export function ProductTourDialog({
   const [step, setStep] = useState(initialPayload?.state.current_step ?? 1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const startRequest = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     if (!open) return;
+    setError(null);
     setStep(initialPayload?.state.current_step ?? 1);
     if (initialPayload?.state.status === "not_started") {
-      void patchTour("start", initialPayload.state.current_step).catch((reason) => {
-        setError(reason instanceof Error ? reason.message : "Could not start the tour");
-      });
+      setSaving(true);
+      startRequest.current = patchTour("start", initialPayload.state.current_step)
+        .then(() => undefined)
+        .catch((reason) => {
+          setError(reason instanceof Error ? reason.message : "Could not start the tour");
+        })
+        .finally(() => setSaving(false));
     }
   }, [initialPayload, open]);
 
@@ -160,6 +166,7 @@ export function ProductTourDialog({
     setSaving(true);
     setError(null);
     try {
+      await startRequest.current;
       await patchTour("progress", nextStep);
       setStep(nextStep);
     } catch (reason) {
@@ -173,12 +180,13 @@ export function ProductTourDialog({
     setSaving(true);
     setError(null);
     try {
+      await startRequest.current;
       await patchTour("dismiss", step);
-      onOpenChange(false);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not dismiss the tour");
+    } catch {
+      setError("Tour closed, but dismissal could not be saved. It may appear again next time.");
     } finally {
       setSaving(false);
+      onOpenChange(false);
     }
   };
 
@@ -186,6 +194,7 @@ export function ProductTourDialog({
     setSaving(true);
     setError(null);
     try {
+      await startRequest.current;
       await patchTour("complete", TOUR_STEPS.length);
       onOpenChange(false);
       router.push("/chat");
@@ -200,6 +209,8 @@ export function ProductTourDialog({
   const Icon = active.icon;
 
   return (
+    <>
+    {!open && error && <p role="status" className="fixed bottom-4 left-4 z-50 max-w-sm rounded-lg border bg-card p-3 text-sm shadow-lg">{error}</p>}
     <Dialog open={open} onOpenChange={(nextOpen) => {
       if (!nextOpen && !saving) void dismiss();
     }}>
@@ -272,6 +283,7 @@ export function ProductTourDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    </>
   );
 }
 

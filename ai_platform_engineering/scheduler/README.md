@@ -92,3 +92,10 @@ uses `SCHEDULER_BACKEND=local` instead: schedules remain in MongoDB and are
 dispatched by the scheduler process directly to the CAIPE chat API, so a local
 Kubernetes cluster is not required. Kubernetes deployments keep the default
 `SCHEDULER_BACKEND=kubernetes` CronJob implementation.
+
+The local backend uses a bounded worker pool so slow chat requests do not block
+schedule polling. `ONE_OFF_DISPATCH_CONCURRENCY` limits all local invocations;
+recurring runs for the same schedule do not overlap. Setting
+`ONE_OFF_DISPATCH_ENABLED=false` disables local one-off claiming while recurring
+schedules continue. One-off claims have at least a 600-second lease to cover the
+300-second invocation timeout without queuing claimed work.

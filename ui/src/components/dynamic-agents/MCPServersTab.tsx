@@ -203,6 +203,9 @@ export function MCPServersTab({
   const loadedSelectionIdRef = React.useRef<string | null>(null);
   const [isCreating, setIsCreating] = React.useState(false);
   const [showCatalog, setShowCatalog] = React.useState(openRemoteCatalog);
+  React.useEffect(() => {
+    if (openRemoteCatalog) setShowCatalog(true);
+  }, [openRemoteCatalog]);
   const [catalogInitialValues, setCatalogInitialValues] = React.useState<MCPServerInitialValues | null>(null);
   const [probeResults, setProbeResults] = React.useState<Record<string, ProbeResult>>({});
   const [testingServer, setTestingServer] = React.useState<MCPServerConfigWithPermissions | null>(null);

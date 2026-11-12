@@ -1,7 +1,7 @@
 "use client";
 
 import { getConfig } from "@/lib/config";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type PlatformFeatureKey = "workflows" | "schedules" | "autonomous_agents" | "apps";
 
@@ -59,13 +59,15 @@ function mergeFeatures(value: unknown, fallback: PlatformFeatures): PlatformFeat
 export function usePlatformFeatures(): PlatformFeatures {
   const [features, setFeatures] = useState<PlatformFeatures>(deploymentDefaults);
 
+  const requestSequence = useRef({ value: 0 });
   const load = useCallback(async () => {
+    const sequence = ++requestSequence.current.value;
     const fallback = deploymentDefaults();
     try {
       const response = await fetch("/api/platform/features", { cache: "no-store" });
       if (!response.ok) return;
       const payload = await response.json() as { data?: { features?: unknown } };
-      setFeatures(mergeFeatures(payload.data?.features, fallback));
+      if (sequence === requestSequence.current.value) setFeatures(mergeFeatures(payload.data?.features, fallback));
     } catch {
       // Deployment flags remain the safe fallback when the persisted preference
       // endpoint is unavailable during startup.
@@ -73,13 +75,17 @@ export function usePlatformFeatures(): PlatformFeatures {
   }, []);
 
   useEffect(() => {
+    const sequence = requestSequence.current;
     // Load the persisted admin preference after mounting; deployment defaults
     // are already available synchronously for the first render.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
     const listener = () => void load();
     window.addEventListener("caipe:platform-features-updated", listener);
-    return () => window.removeEventListener("caipe:platform-features-updated", listener);
+    return () => {
+      ++sequence.value;
+      window.removeEventListener("caipe:platform-features-updated", listener);
+    };
   }, [load]);
 
   return features;

@@ -393,6 +393,12 @@ export function SetupWizardDialog({
   const [leaving, setLeaving] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [contextSection, setContextSection] = useState("accounts");
+  const [catalogWarning, setCatalogWarning] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTestResult(null);
+    setTestConversationId(null);
+  }, [selection]);
 
   // Save the current draft before handing control to another workspace. Keeping
   // this on the dialog also covers links inside shared guidance components.
@@ -406,8 +412,8 @@ export function SetupWizardDialog({
     setError(null);
     try {
       const state = await patchState({ action: payload?.state.status === "completed" ? "complete" : "progress", current_step: step, selection });
-      const savedPayload = payload ? { ...payload, state } : null;
-      if (savedPayload) onStateChange?.(savedPayload);
+      const savedPayload = { ...payload, state };
+      onStateChange?.(savedPayload);
       window.dispatchEvent(new Event("caipe:platform-features-updated"));
       setLeaving(true);
       const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -468,22 +474,25 @@ export function SetupWizardDialog({
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setTestResult(null);
+    setTestConversationId(null);
     try {
       const [setupResponse, healthResponse, modelResponse, mcpResponse, connectionsResponse, connectorsResponse] = await Promise.all([
         jsonRequest<ApiEnvelope<SetupWizardPayload>>("/api/admin/setup-wizard"),
         healthRequest(),
         jsonRequest<ApiEnvelope<ListEnvelope<ModelOption>>>("/api/llm-models?page_size=100"),
-        jsonRequest<ApiEnvelope<ListEnvelope<MCPOption>>>("/api/mcp-servers?page_size=100"),
+        optionalJsonRequest<ApiEnvelope<ListEnvelope<MCPOption>>>("/api/mcp-servers?page_size=100"),
         optionalJsonRequest<ApiEnvelope<ProviderConnectionOption[]>>("/api/credentials/connections"),
         optionalJsonRequest<ApiEnvelope<OAuthConnectorOption[]>>("/api/credentials/oauth-connectors"),
       ]);
       const nextPayload = setupResponse.data;
       const nextModels = modelResponse.data.items ?? [];
-      const nextMcpServers = (mcpResponse.data.items ?? []).filter((server) => server.enabled !== false);
+      const nextMcpServers = (mcpResponse?.data.items ?? []).filter((server) => server.enabled !== false);
       setPayload(nextPayload);
       setHealth(healthResponse);
       setModels(nextModels);
       setMcpServers(nextMcpServers);
+      setCatalogWarning(mcpResponse ? null : "MCP tools could not be loaded. You can continue without tools, or retry by reopening setup.");
       setProviderConnections(connectionsResponse?.data ?? []);
       setOauthConnectors(connectorsResponse?.data ?? []);
       const saved = nextPayload.state.selection;
@@ -655,7 +664,10 @@ export function SetupWizardDialog({
           body: JSON.stringify(agent.body),
         });
         const createPayload = await createResponse.json().catch(() => null);
-        if (!createResponse.ok && createResponse.status !== 409) {
+        if (createResponse.status === 409) {
+          throw new Error("A starter agent with this name already exists. Review it in Custom Agents; it was not changed or tested with this setup selection.");
+        }
+        if (!createResponse.ok) {
           throw new Error(messageFromPayload(createPayload, "Could not create the starter agent"));
         }
         if (createResponse.ok && createPayload?.data?._id) agentId = createPayload.data._id;
@@ -682,11 +694,12 @@ export function SetupWizardDialog({
           agent_id: agentId,
         }),
       });
+      if (invokePayload.success === false) {
+        throw new Error(messageFromPayload(invokePayload, "The starter agent test failed"));
+      }
       const content = typeof invokePayload.content === "string"
         ? invokePayload.content
         : "The agent returned a successful response.";
-      setTestConversationId(conversationPayload.data.conversation._id);
-      setTestResult(content);
       await patchState({
         action: "complete",
         current_step: 5,
@@ -695,6 +708,8 @@ export function SetupWizardDialog({
         created_agent_id: agentId,
         smoke_test: { status: "passed", detail: content },
       });
+      setTestConversationId(conversationPayload.data.conversation._id);
+      setTestResult(content);
     } catch (testError) {
       const detail = testError instanceof Error ? testError.message : "Starter agent test failed";
       setError(detail);
@@ -811,7 +826,8 @@ export function SetupWizardDialog({
                 <div className="grid min-h-72 place-items-center"><CAIPESpinner message="Inspecting this deployment..." /></div>
               ) : (
                 <>
-                  {error && (
+                  {catalogWarning && <p role="status" className="text-sm text-amber-700 dark:text-amber-300">{catalogWarning}</p>}
+              {error && (
                     <div role="alert" className="mb-4 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
                       <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
                       <span>{error}</span>
@@ -1314,7 +1330,7 @@ export function SetupWizardDialog({
                   </Button>
                 )}
                 {step === 5 && testResult && (
-                  <Button type="button" onClick={closeCompleted}>Done</Button>
+                  <Button type="button" onClick={closeCompleted} disabled={runningTest || saving}>Done</Button>
                 )}
               </div>
             </DialogFooter>
@@ -1385,7 +1401,7 @@ function SummaryItem({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function SetupWizardSettings(): React.ReactElement {
+export function SetupWizardSettings({ readOnly = false }: { readOnly?: boolean }): React.ReactElement {
   const [payload, setPayload] = useState<SetupWizardPayload | null>(null);
   const [open, setOpen] = useState(false);
   const [restart, setRestart] = useState(false);
@@ -1433,7 +1449,8 @@ export function SetupWizardSettings(): React.ReactElement {
                 <SummaryItem label="Last completed" value={payload.state.completed_at ? new Date(payload.state.completed_at).toLocaleString() : "Never"} />
               </dl>
               <div className="flex flex-wrap gap-2">
-                <Button onClick={() => {
+                <Button disabled={readOnly} onClick={() => {
+                  if (readOnly) return;
                   setRestart(payload.state.status === "completed");
                   setOpen(true);
                 }}>
@@ -1467,7 +1484,7 @@ export function SetupWizardSettings(): React.ReactElement {
       )}
 
       <SetupWizardDialog
-        open={open}
+        open={open && !readOnly}
         restart={restart}
         initialPayload={payload}
         onOpenChange={(next) => {
@@ -1552,7 +1569,7 @@ export function SetupWizardGate(): React.ReactElement | null {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "reset" }),
       });
-      openWizard(true);
+      openWizard(false);
       refreshPayload();
     } catch {
       // The admin settings page remains available if reset fails.
@@ -1574,7 +1591,7 @@ export function SetupWizardGate(): React.ReactElement | null {
     }
   };
 
-  if (!payload || checklistHidden || payload.state.status === "dismissed" || (!resumeAvailable && (payload.state.checklist_hidden || payload.state.status === "completed"))) return null;
+  if (!payload || checklistHidden || payload.state.status === "dismissed" || (!resumeAvailable && (payload.state.checklist_hidden || payload.state.status === "completed" || !payload.auto_start))) return null;
 
   const checklistItems: Array<{
     label: string;

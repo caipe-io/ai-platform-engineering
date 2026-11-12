@@ -6,8 +6,9 @@ import hashlib
 import json
 import logging
 import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 import pytz
@@ -27,13 +28,16 @@ class LocalScheduleDispatcher:
   cron-runner pods.
   """
 
-  def __init__(self, *, store: ScheduleStore, settings: Settings):
+  def __init__(self, *, store: ScheduleStore, settings: Settings) -> None:
     self._store = store
     self._settings = settings
     self._stop = threading.Event()
     self._wake = threading.Event()
     self._thread: threading.Thread | None = None
     self._next_runs: dict[str, tuple[tuple[str, str], datetime]] = {}
+    self._workers = max(1, settings.one_off_dispatch_concurrency)
+    self._executor = ThreadPoolExecutor(max_workers=self._workers, thread_name_prefix="local-schedule")
+    self._futures: dict[str, Future[None]] = {}
 
   def start(self) -> None:
     if self._thread and self._thread.is_alive():
@@ -47,6 +51,7 @@ class LocalScheduleDispatcher:
     self._wake.set()
     if self._thread and self._thread.is_alive():
       self._thread.join(timeout=5)
+    self._executor.shutdown(wait=False, cancel_futures=True)
     log.info("Local schedule dispatcher stopped")
 
   def wake(self) -> None:
@@ -62,6 +67,15 @@ class LocalScheduleDispatcher:
       self._wake.clear()
 
   def dispatch_once(self) -> None:
+    if self._stop.is_set():
+      return
+    for key, future in list(self._futures.items()):
+      if future.done():
+        del self._futures[key]
+        try:
+          future.result()
+        except Exception:
+          log.exception("Local scheduled worker failed: %s", key)
     now = datetime.now(timezone.utc)
     for schedule in self._store.list():
       schedule_id = str(schedule.get("schedule_id") or "")
@@ -76,13 +90,25 @@ class LocalScheduleDispatcher:
           current = self._next_runs[schedule_id]
         if current[1] > now:
           continue
+        key = f"recurring:{schedule_id}"
+        if key in self._futures or len(self._futures) >= self._workers:
+          continue
         self._next_runs[schedule_id] = (signature, self._next_run(schedule, now))
-        self._fire(schedule)
+        self._submit(key, self._fire, schedule)
       except Exception:
         log.exception("Local schedule fire failed: %s", schedule_id)
 
-    for run in self._store.claim_due_one_off_runs(limit=20, claim_timeout_seconds=300):
-      self._fire_one_off(run)
+    available = self._workers - len(self._futures)
+    if self._settings.one_off_dispatch_enabled and available > 0:
+      for run in self._store.claim_due_one_off_runs(
+        limit=min(available, max(1, self._settings.one_off_dispatch_batch_size)),
+        claim_timeout_seconds=max(600, self._settings.one_off_claim_timeout_seconds),
+      ):
+        self._submit(f"one-off:{run['one_off_run_id']}", self._fire_one_off, run)
+
+  def _submit(self, key: str, callback: Callable[[dict[str, Any]], None], value: dict[str, Any]) -> None:
+    # Bound submitted work as well as running threads; claimed runs never queue.
+    self._futures[key] = self._executor.submit(callback, value)
 
   @staticmethod
   def _next_run(schedule: dict[str, Any], now: datetime) -> datetime:

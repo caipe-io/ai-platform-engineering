@@ -172,6 +172,14 @@ describe("admin setup wizard route", () => {
     });
   });
 
+  it("rejects a stale save after another admin changes setup", async () => {
+    platformConfig.findOne.mockResolvedValue({ setup_wizard: { status: "in_progress" } });
+    platformConfig.updateOne.mockResolvedValueOnce({ matchedCount: 0 });
+    const { PATCH } = await import("../route");
+    await expect(PATCH(request({ method: "PATCH", body: JSON.stringify({ action: "hide_checklist" }) })))
+      .rejects.toMatchObject({ statusCode: 409, code: "SETUP_CONFLICT" });
+  });
+
   it("persists completion and smoke-test evidence", async () => {
     platformConfig.findOne.mockResolvedValue({
       _id: "platform_settings",
@@ -198,14 +206,14 @@ describe("admin setup wizard route", () => {
       last_smoke_test: { status: "passed", detail: "Ready" },
     });
     expect(platformConfig.updateOne).toHaveBeenCalledWith(
-      { _id: "platform_settings" },
+      expect.objectContaining({ _id: "platform_settings", setup_wizard: expect.any(Object) }),
       expect.objectContaining({
         $set: expect.objectContaining({
           "setup_wizard": expect.objectContaining({ status: "completed" }),
           "updated_by": "admin@example.com",
         }),
       }),
-      { upsert: true },
+      { upsert: false },
     );
   });
 });

@@ -1686,7 +1686,7 @@ function AdminPage() {
 
               {tabGateValues.platform_settings && (
                 <TabsContent value="setup-wizard" className="space-y-4">
-                  <SetupWizardSettings />
+                  <SetupWizardSettings readOnly={isSimulationActive} />
                 </TabsContent>
               )}
 

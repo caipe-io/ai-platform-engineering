@@ -802,8 +802,8 @@ function buildPlatformComponents(
     return {
       id,
       label,
-      status: probe ? diagnosticStatus(probe.status) : fallback?.status ?? "disabled",
-      detail: probe?.detail ?? fallback?.detail ?? "Not detected in this deployment",
+      status: fallback?.status === "down" ? "down" : probe ? diagnosticStatus(probe.status) : fallback?.status ?? "disabled",
+      detail: fallback?.status === "down" ? fallback.detail : probe?.detail ?? fallback?.detail ?? "Not detected in this deployment",
       version: componentVersion(id),
     };
   };

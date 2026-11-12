@@ -123,6 +123,72 @@ describe("SetupWizardSettings", () => {
     jest.restoreAllMocks();
   });
 
+  it("disables setup changes during View as simulation", async () => {
+    render(<SetupWizardSettings readOnly />);
+    expect(await screen.findByRole("button", { name: /run setup again/i })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /run setup again/i }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect((global.fetch as jest.Mock).mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+  });
+
+  it("restarts from the checklist with exactly one reset request", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/admin/setup-wizard" && !init?.method) return response({ ...setupPayload, data: { ...setupPayload.data,
+        auto_start: true, state: { ...setupPayload.data.state, status: "in_progress", current_step: 1 },
+      } });
+      return originalFetch(input, init);
+    }) as jest.Mock;
+    render(<SetupWizardGate />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open setup checklist" }));
+    fireEvent.click(screen.getByRole("button", { name: /restart platform setup/i }));
+    await screen.findByRole("heading", { name: "Welcome" });
+    await waitFor(() => expect(screen.getByRole("button", { name: /get started/i })).toBeEnabled());
+    const resets = (global.fetch as jest.Mock).mock.calls.filter(([, init]) => init?.method === "PATCH" && JSON.parse(String(init.body)).action === "reset");
+    expect(resets).toHaveLength(1);
+  });
+
+  it("does not prompt an existing installation without saved setup", async () => {
+    global.fetch = jest.fn(() => response({ ...setupPayload, data: { ...setupPayload.data,
+      auto_start: false, fresh_install: false, state: { ...setupPayload.data.state, status: "not_started" },
+    } })) as jest.Mock;
+    render(<SetupWizardGate />);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /resume setup|setup checklist/i })).not.toBeInTheDocument();
+  });
+
+  it.each(["conflict", "invoke", "completion"])("does not claim successful setup after %s failure", async (failure) => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/dynamic-agents") return response({ success: true, data: { _id: "example-agent" } }, failure === "conflict" ? 409 : 201);
+      if (url === "/api/chat/conversations") return response({ success: true, data: { conversation: { _id: "example-chat" } } });
+      if (url === "/api/v1/chat/invoke") return response(failure === "invoke" ? { success: false, error: "Example invoke failed" } : { success: true, content: "Example reply" });
+      if (url === "/api/admin/setup-wizard" && init?.method === "PATCH" && JSON.parse(String(init.body)).action === "complete") return response({ error: "Example save failed" }, 500);
+      return originalFetch(input, init);
+    }) as jest.Mock;
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+    await screen.findByRole("heading", { name: "Try your agent" });
+    fireEvent.click(screen.getByRole("button", { name: /create agent and run test/i }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText("Your starter agent is working")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Done" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create agent and run test/i })).toBeEnabled();
+    if (failure === "conflict") expect((global.fetch as jest.Mock).mock.calls.some(([url]) => url === "/api/v1/chat/invoke")).toBe(false);
+  });
+
+  it("loads the selected model even when the optional MCP catalog fails", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith("/api/mcp-servers")) return response({ error: "Example unavailable" }, 503);
+      return originalFetch(input, init);
+    }) as jest.Mock;
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+    await screen.findByRole("heading", { name: "Try your agent" });
+    expect(await screen.findByText(/MCP tools could not be loaded/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create agent and run test/i })).toBeEnabled();
+  });
+
   it("shows saved completion status and allows an admin to rerun setup", async () => {
     render(<SetupWizardSettings />);
 
@@ -318,7 +384,7 @@ describe("SetupWizardSettings", () => {
       return response({ error: "Not found" }, 404);
     }) as jest.Mock;
 
-    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+    const view = render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
 
     expect(await screen.findByRole("heading", { name: "Welcome" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: /get started/i })).toBeEnabled());
@@ -340,6 +406,21 @@ describe("SetupWizardSettings", () => {
     );
     const agentCall = (global.fetch as jest.Mock).mock.calls.find(([url, init]) => url === "/api/dynamic-agents" && init?.method === "POST");
     expect(JSON.parse(agentCall[1].body).allowed_tools).toEqual({});
+    view.rerender(<SetupWizardDialog open={false} onOpenChange={jest.fn()} />);
+    view.rerender(<SetupWizardDialog open restart onOpenChange={jest.fn()} />);
+    await screen.findByRole("heading", { name: "Welcome" });
+    await waitFor(() => expect(screen.getByRole("button", { name: /get started/i })).toBeEnabled());
+    expect(screen.queryByText("Your starter agent is working")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /get started/i }));
+    await screen.findByRole("heading", { name: "Choose a model" });
+    fireEvent.click(screen.getByRole("button", { name: "Use this AI & continue" }));
+    await screen.findByRole("heading", { name: "Choose an agent" });
+    fireEvent.click(screen.getByRole("button", { name: /add optional context/i }));
+    await screen.findByRole("heading", { name: "Add context" });
+    fireEvent.click(screen.getByRole("button", { name: /skip this step/i }));
+    await screen.findByRole("heading", { name: "Try your agent" });
+    expect(screen.getByRole("button", { name: /create agent and run test/i })).toBeEnabled();
+
   });
 
   it("guides first-time users through credentials and remote MCP onboarding", async () => {

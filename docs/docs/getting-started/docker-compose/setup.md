@@ -32,7 +32,7 @@ OPENAI_API_KEY=<token>
 The checked-in example starts the default OSS stack:
 
 ```bash
-COMPOSE_PROFILES=mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor
+COMPOSE_PROFILES=mcp-servers,caipe-ui-prod,rbac,dynamic-agents,rag,caipe-mongodb,web_ingestor,autonomous-agents
 ```
 
 `mcp-servers` starts the packaged MCP server containers. Add credentials only
@@ -85,16 +85,10 @@ External Apps are enabled by default with an empty deployment-owned catalog.
 Add packages and installations to `config/agentic-apps.yaml`, or point
 `AGENTIC_APPS_CONFIG_FILE` at another catalog file, then restart the UI.
 
-Schedules are not available in the Docker Compose path. The scheduler creates
-Kubernetes CronJobs, so use the local KinD/Kubernetes path when scheduled runs
-are required:
-
-```bash
-./setup-caipe.sh --create-cluster --no-ingress --port-forward-mode
-```
-
-The installer enables the scheduler and External Apps by default in that path;
-use `ENABLE_SCHEDULER=false` or `--no-apps` for an intentional opt-out.
+Schedules run in Docker Compose through the local scheduler backend
+(`SCHEDULER_BACKEND=local`, part of the `dynamic-agents` profile). Kubernetes
+installs use the chart's CronJob backend. The installer enables the scheduler
+and External Apps by default; use `ENABLE_SCHEDULER=false` or `--no-apps` to opt out.
 
 ## Start
 

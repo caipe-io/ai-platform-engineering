@@ -2511,6 +2511,10 @@ _discover_gateway_embedding_model() {
 }
 
 choose_features() {
+  if [[ "$_RAG_FORCED" == off ]]; then
+    ENABLE_RAG=false
+    ENABLE_GRAPH_RAG=false
+  fi
   step "Feature selection"
 
   _choose_database_provider
@@ -2524,6 +2528,7 @@ choose_features() {
       if [[ "$EMBEDDINGS_PROVIDER" == "openai" && "$LLM_PROVIDER" != "openai" ]]; then
         _collect_openai_embeddings_key
       fi
+      _discover_gateway_embedding_model
     else
       log "RAG skipped (pass --rag to enable)"
     fi
@@ -2550,7 +2555,7 @@ choose_features() {
   # Always check the cluster — detect_deployed_features may have already set
   # ENABLE_RAG=true, but we still need to read embeddings config and confirm.
   local _rag_from_cluster=false
-  if kubectl get svc rag-server -n caipe &>/dev/null 2>&1; then
+  if [[ "$_RAG_FORCED" != off ]] && kubectl get svc rag-server -n caipe &>/dev/null 2>&1; then
     ENABLE_RAG=true
     _rag_from_cluster=true
     # Read embeddings config from live Helm values
@@ -4757,14 +4762,9 @@ JSON
 provision_rag_ingestor_client() {
   $ENABLE_RAG || return 0
 
-  # Use the public domain issuer when available; fall back to the in-cluster
-  # Keycloak service URL so the web-ingestor works on Kind without a domain.
-  local issuer_base
-  if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
-    issuer_base="$(_idp_public_url)"
-  else
-    issuer_base="http://caipe-keycloak.${CAIPE_NAMESPACE:-caipe}.svc.cluster.local:8080"
-  fi
+  # Match the issuer Keycloak advertises for the selected exposure mode.
+  local issuer
+  issuer="$(_browser_oidc_issuer)"
 
   local kcadm_user kcadm_pw="${KEYCLOAK_ADMIN_PASSWORD:-}"
   kcadm_user=$(kubectl get secret caipe-keycloak-admin -n caipe \
@@ -4797,7 +4797,6 @@ provision_rag_ingestor_client() {
   fi
 
   local client_id="caipe-web-ingestor"
-  local issuer="${issuer_base}/realms/caipe"
 
   # Check if client already exists
   local existing_uuid
@@ -4907,7 +4906,7 @@ JSON
 # that cause "Invalid parameter: redirect_uri" on login.
 update_keycloak_client_urls() {
   $ENABLE_RBAC_RUNTIME || return 0
-  [[ -n "${CAIPE_DOMAIN:-}" || ! $ENABLE_INGRESS ]] || return 0
+  [[ -n "${CAIPE_DOMAIN:-}" ]] || ! $ENABLE_INGRESS || return 0
 
   local kcadm_pw="${KEYCLOAK_ADMIN_PASSWORD:-}"
   if [[ -z "$kcadm_pw" ]]; then
@@ -4971,7 +4970,7 @@ update_keycloak_client_urls() {
 # BEARER_AUDIENCE_MISMATCH.
 provision_caipe_ui_audience_mapper() {
   $ENABLE_RBAC_RUNTIME || return 0
-  [[ -n "${CAIPE_DOMAIN:-}" || ! $ENABLE_INGRESS ]] || return 0
+  [[ -n "${CAIPE_DOMAIN:-}" ]] || ! $ENABLE_INGRESS || return 0
 
   local kcadm_user kcadm_pw="${KEYCLOAK_ADMIN_PASSWORD:-}"
   kcadm_user=$(kubectl get secret caipe-keycloak-admin -n caipe \
@@ -6824,6 +6823,9 @@ deploy_caipe() {
       --set "caipe-ui.config.OIDC_ISSUER=$(_browser_oidc_issuer)"
       --set "caipe-ui.config.OIDC_DISCOVERY_URL=$(_internal_oidc_issuer)"
       --set "openfga-authz-bridge.tokenValidation.issuer=$(_browser_oidc_issuer)"
+      --set "rag-stack.rag-server.env.OIDC_ISSUER=$(_browser_oidc_issuer)"
+      --set 'rag-stack.rag-server.env.OIDC_CLIENT_ID=caipe-ui'
+      --set 'rag-stack.rag-server.env.OIDC_GROUP_CLAIM=members\,groups'
     )
     if _local_admin_active; then
       helm_args+=(--set "caipe-ui.config.BOOTSTRAP_ADMIN_EMAILS=${LOCAL_ADMIN_EMAIL}")
@@ -6904,7 +6906,7 @@ deploy_caipe() {
     # Keycloak sets KC_HOSTNAME to the IdP URL (default https://<domain>), so tokens carry that as iss.
     # dynamic-agents must use the same issuer string; without it tokens fail validation
     # with "Invalid issuer" (internal http://keycloak:8080 vs external https://domain).
-    if [[ -z "$da_oidc_issuer" && -n "${CAIPE_DOMAIN:-}" ]]; then
+    if [[ -z "$da_oidc_issuer" ]] && $ENABLE_INGRESS && [[ -n "${CAIPE_DOMAIN:-}" ]]; then
       da_oidc_issuer="$(_idp_public_url)/realms/caipe"
     fi
     if [[ -z "$da_oidc_issuer" ]] && ! $ENABLE_INGRESS && ! _upstream_idp_configured; then
@@ -8814,7 +8816,7 @@ detect_deployed_features() {
   if helm status langfuse -n langfuse &>/dev/null; then
     ENABLE_TRACING=true
   fi
-  if kubectl get svc rag-server -n caipe &>/dev/null 2>&1; then
+  if [[ "$_RAG_FORCED" != off ]] && kubectl get svc rag-server -n caipe &>/dev/null 2>&1; then
     ENABLE_RAG=true
   fi
   if kubectl get pods -n caipe -l app.kubernetes.io/name=agent-ontology \
@@ -9154,8 +9156,8 @@ _load_caipe_config() {
   # zero-check: EMBEDDINGS_MODEL defaults to text-embedding-3-large so -z
   # always fails and the saved model is never restored.
   [[ -n "$_emodel"     && -z "${_EMBEDDINGS_MODEL_EXPLICIT:-}" ]] && EMBEDDINGS_MODEL="$_emodel"
-  [[ "$_rag"      == "true" ]] && ENABLE_RAG=true
-  [[ "$_grag"     == "true" ]] && ENABLE_GRAPH_RAG=true && ENABLE_RAG=true
+  [[ "$_rag" == "true" && "$_RAG_FORCED" != off ]] && ENABLE_RAG=true
+  [[ "$_grag" == "true" && "$_RAG_FORCED" != off ]] && ENABLE_GRAPH_RAG=true && ENABLE_RAG=true
   [[ "$_tracing"  == "true"  ]] && ENABLE_TRACING=true
   if ! $_ENABLE_SETUP_WIZARD_EXPLICIT; then
     [[ "$_setup_wizard" == "true"  ]] && ENABLE_SETUP_WIZARD=true
@@ -9390,8 +9392,8 @@ BANNER
     # feature ON; a "false"/unset value never disables something already turned
     # on via a CLI flag (e.g. --rag, --tracing). Explicit --slack-bot /
     # --no-slack-bot (and webex) always win over the env-file value.
-    if _env_true "$(_env_get "$ENV_FILE" ENABLE_RAG)"; then ENABLE_RAG=true; fi
-    if _env_true "$(_env_get "$ENV_FILE" ENABLE_GRAPH_RAG)"; then ENABLE_GRAPH_RAG=true; ENABLE_RAG=true; fi
+    if [[ "$_RAG_FORCED" != off ]] && _env_true "$(_env_get "$ENV_FILE" ENABLE_RAG)"; then ENABLE_RAG=true; fi
+    if [[ "$_RAG_FORCED" != off ]] && _env_true "$(_env_get "$ENV_FILE" ENABLE_GRAPH_RAG)"; then ENABLE_GRAPH_RAG=true; ENABLE_RAG=true; fi
     if _env_true "$(_env_get "$ENV_FILE" ENABLE_TRACING)"; then ENABLE_TRACING=true; fi
     # The slack/webex MCP agents (ENABLE_SLACK/ENABLE_WEBEX) and the chat-bot
     # surfaces share the same .env. docker-compose.dev.yaml runs the bot

@@ -18,7 +18,7 @@ import {
   type SetupWizardSelection,
   type SetupWizardState,
 } from "@/lib/setup-wizard";
-import type { Document } from "mongodb";
+import { MongoServerError, type Document } from "mongodb";
 import { NextRequest } from "next/server";
 
 interface PlatformConfigDocument extends Document {
@@ -253,18 +253,25 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       };
     }
 
-    await collection.updateOne(
-      { _id: SETUP_WIZARD_CONFIG_ID },
-      {
-        $set: {
-          setup_wizard: next,
-          updated_at: new Date(now),
-          updated_by: user.email,
+    // Compare the state we read so another admin's newer progress is never replaced.
+    try {
+      const result = await collection.updateOne(
+        { _id: SETUP_WIZARD_CONFIG_ID, setup_wizard: existing && "setup_wizard" in existing ? existing.setup_wizard : { $exists: false } },
+        {
+          $set: { setup_wizard: next, updated_at: new Date(now), updated_by: user.email },
+          $setOnInsert: { created_at: new Date(now) },
         },
-        $setOnInsert: { created_at: new Date(now) },
-      },
-      { upsert: true },
-    );
+        { upsert: !existing },
+      );
+      if (existing && result.matchedCount === 0) {
+        throw new ApiError("Setup changed in another session. Reload and try again.", 409, "SETUP_CONFLICT");
+      }
+    } catch (error) {
+      if (error instanceof MongoServerError && error.code === 11000) {
+        throw new ApiError("Setup changed in another session. Reload and try again.", 409, "SETUP_CONFLICT");
+      }
+      throw error;
+    }
 
     return successResponse({ state: next });
   });

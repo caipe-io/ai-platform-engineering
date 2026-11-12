@@ -76,6 +76,39 @@ describe("ProductTourGate", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("waits for the initial start save before accepting progress", async () => {
+    const originalFetch = global.fetch;
+    let finishStart!: (value: Response) => void;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PATCH" && JSON.parse(String(init.body)).action === "start") {
+        return new Promise<Response>((resolve) => { finishStart = resolve; });
+      }
+      return originalFetch(input, init);
+    }) as jest.Mock;
+    render(<ProductTourGate />);
+    const next = await screen.findByRole("button", { name: /next/i });
+    expect(next).toBeDisabled();
+    expect(screen.getByRole("button", { name: /skip tour/i })).toBeDisabled();
+    await act(async () => finishStart(await response({ success: true, data: { state: tourPayload().data.state } })));
+    await waitFor(() => expect(next).toBeEnabled());
+    fireEvent.click(next);
+    expect(await screen.findByRole("heading", { name: "Pick up where you left off" })).toBeInTheDocument();
+  });
+
+  it("closes locally and reports an unsaved dismissal when the API fails", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PATCH" && JSON.parse(String(init.body)).action === "dismiss") return response({ error: "Example unavailable" }, 503);
+      return originalFetch(input, init);
+    }) as jest.Mock;
+    render(<ProductTourGate />);
+    const skip = await screen.findByRole("button", { name: /skip tour/i });
+    await waitFor(() => expect(skip).toBeEnabled());
+    fireEvent.click(skip);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("status")).toHaveTextContent("dismissal could not be saved");
+  });
+
   it("starts after setup, saves progress, and supports a persistent skip", async () => {
     render(<ProductTourGate />);
 
