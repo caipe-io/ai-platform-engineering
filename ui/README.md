@@ -95,6 +95,7 @@ login session until that helper is migrated.
 ### Durable chat turns
 
 - In MongoDB mode, the chat saves all user bubbles and attachments in a turn before dispatching execution. A failed save prevents the run from starting and surfaces the error in the chat.
+- Authentication failures during that save use the existing sign-in or access-recovery flow. Pressing Stop while the save is pending cancels admission, so execution cannot start when the write finishes.
 - Engine execution and its canonical event log survive tab closure. Reopening the conversation uses the saved turn ID to find and replay the run, including a run that completed while the tab was closed.
 - Periodic saves remain best effort; unfinished assistant placeholders are omitted from the admission save.
 
