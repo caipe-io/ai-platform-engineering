@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+import stat
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -10,6 +11,26 @@ from harness_engine import claude_isolation, claude_worker
 from harness_engine.claude_isolation import check_isolation, isolated_command
 from harness_engine.config import Settings
 from harness_engine.repository import InMemoryRunRepository
+
+
+@pytest.mark.parametrize("mode", [0o700, 0o2700])
+def test_private_workspace_accepts_owner_only_setgid_directory(tmp_path: Path, mode: int) -> None:
+    workspace = tmp_path.resolve() / "session"
+    workspace.mkdir(mode=0o700)
+    workspace.chmod(mode)
+    claude_isolation.private_workspace(workspace)
+    assert stat.S_IMODE(workspace.stat().st_mode) == mode
+    assert (workspace / ".tmp").is_dir()
+    assert (workspace / ".claude").is_dir()
+
+
+@pytest.mark.parametrize("mode", [0o750, 0o770, 0o755, 0o2750, 0o2770, 0o1700, 0o4700])
+def test_private_workspace_still_rejects_other_permissions(tmp_path: Path, mode: int) -> None:
+    workspace = tmp_path.resolve() / "session"
+    workspace.mkdir(mode=0o700)
+    workspace.chmod(mode)
+    with pytest.raises(ValueError, match="mode 0700"):
+        claude_isolation.private_workspace(workspace)
 
 
 async def test_isolation_default_and_exact_launch_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

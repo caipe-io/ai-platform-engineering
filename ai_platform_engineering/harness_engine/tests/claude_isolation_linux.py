@@ -25,6 +25,8 @@ class IsolationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = tempfile.TemporaryDirectory(prefix="claude-isolation-test-")
         self.addCleanup(self.root.cleanup)
+        # Kubernetes fsGroup volumes propagate setgid to private workspaces.
+        os.chmod(self.root.name, 0o2700)
         self.a, self.b = (Path(self.root.name) / name for name in ("a", "b"))
         for workspace in (self.a, self.b):
             workspace.mkdir(mode=0o700)
