@@ -47,7 +47,7 @@ const CHANNELS = [
     title: 'Roadmap',
     description: 'See what the team is working on and upvote issues.',
     cta: 'View roadmap',
-    href: 'https://github.com/orgs/cnoe-io/projects/9',
+    href: 'https://github.com/orgs/caipe-io/projects/1',
     note: null,
     noteHref: null,
   },
