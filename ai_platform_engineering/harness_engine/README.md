@@ -327,6 +327,11 @@ disposable.
   the BFF under the original caller and real agent, then through AgentGateway.
   Every list/call rechecks current agent use, conversation write, enabled
   servers, pinned tools and current tool grants. MCP credentials stay in CAIPE.
+- A missing or expired caller provider connection does not abort an otherwise
+  authorized chat. The broker keeps that connection's pinned tool IDs with
+  connection-required descriptions until the caller reconnects. Authentication
+  failures return MCP tool errors without retries or another user's credentials;
+  tool-policy denials and unknown upstream failures still fail closed.
 - SDK MCP tools currently require `approval_policy: "never"`; Agent Builder
   explains this when tools are selected. Approval-dependent blueprints are
   rejected. Side-effecting tool calls are sent once and never retried after an

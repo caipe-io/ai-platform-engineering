@@ -7,7 +7,7 @@
 import crypto from "crypto";
 
 import { ApiError } from "@/lib/api-middleware";
-import { resolveMcpHeaderCredentials } from "@/lib/mcp-credential-headers";
+import { isMcpCredentialUnavailableError, resolveMcpHeaderCredentials } from "@/lib/mcp-credential-headers";
 import { writeOpenFgaTuples, type OpenFgaTupleKey } from "@/lib/rbac/openfga";
 import type { MCPServerConfig, MCPToolInfo } from "@/types/dynamic-agent";
 import type { NextRequest } from "next/server";
@@ -245,6 +245,9 @@ async function buildMcpRequestHeaders(input: {
       ...contextHeaders,
     };
   } catch (error) {
+    if (isMcpCredentialUnavailableError(error)) {
+      throw new ApiError("Connect or reconnect your provider account to use this MCP connection", 401, "MCP_CREDENTIAL_UNAVAILABLE");
+    }
     if (error instanceof Error && error.message === "MCP_AUTH_REQUIRED") {
       throw new ApiError(
         "A signed-in user token is required for AgentGateway-routed MCP servers",
@@ -290,6 +293,7 @@ export async function listHttpMcpTools(input: {
       },
       timeoutMs: 5_000,
     });
+    rejectMcpAuthorization(first.status);
     if (first.ok) {
       const tools = extractTools(first.payload);
       if (tools) return { tools, sessionId: first.sessionId };
@@ -310,6 +314,7 @@ export async function listHttpMcpTools(input: {
       },
       timeoutMs: 5_000,
     });
+    rejectMcpAuthorization(initialized.status);
     if (!initialized.ok || !initialized.sessionId) {
       throw new ApiError(`MCP initialize failed with HTTP ${initialized.status}`, 502, "MCP_INIT_FAILED");
     }
@@ -326,6 +331,7 @@ export async function listHttpMcpTools(input: {
       },
       timeoutMs: 5_000,
     });
+    rejectMcpAuthorization(listed.status);
     if (!listed.ok) {
       throw new ApiError(`MCP tools/list failed with HTTP ${listed.status}`, 502, "MCP_LIST_FAILED");
     }

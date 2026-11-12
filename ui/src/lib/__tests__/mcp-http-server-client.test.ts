@@ -1,10 +1,12 @@
 /** @jest-environment node */
 import { NextRequest } from "next/server";
-import { callHttpMcpTool } from "../mcp-http-server-client";
+import { callHttpMcpTool, listHttpMcpTools } from "../mcp-http-server-client";
+import { resolveMcpHeaderCredentials } from "@/lib/mcp-credential-headers";
 
 jest.mock("@/lib/api-middleware", () => ({ ApiError: jest.requireActual("@/lib/api-error").ApiError }));
 jest.mock("@/lib/mcp-credential-headers", () => ({
   resolveMcpHeaderCredentials: jest.fn(async () => ({ headers: { Authorization: "Bearer example-user-token" } })),
+  isMcpCredentialUnavailableError: (error: unknown) => error instanceof Error && error.message === "MCP_CREDENTIAL_UNAVAILABLE",
 }));
 jest.mock("@/lib/rbac/openfga", () => ({ writeOpenFgaTuples: jest.fn() }));
 
@@ -46,6 +48,12 @@ it.each([0, 1, 2].flatMap(stage => [401, 403].map(status => ({ stage, status }))
   },
 );
 
+it("reports a missing caller provider connection before making any upstream request", async () => {
+  jest.mocked(resolveMcpHeaderCredentials).mockRejectedValueOnce(new Error("MCP_CREDENTIAL_UNAVAILABLE"));
+  await expect(listHttpMcpTools(input)).rejects.toMatchObject({ statusCode: 401, code: "MCP_CREDENTIAL_UNAVAILABLE" });
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
 it("keeps an upstream failure ambiguous, sanitizes its body and never repeats the call", async () => {
   fetchMock.mockResolvedValueOnce(Response.json({ jsonrpc: "2.0", result: {} }))
     .mockResolvedValueOnce(new Response(null, { status: 202 }))
@@ -55,3 +63,19 @@ it("keeps an upstream failure ambiguous, sanitizes its body and never repeats th
   });
   expect(fetchMock).toHaveBeenCalledTimes(3);
 });
+
+it.each([0, 1, 2].flatMap(stage => [401, 403].map(status => ({ stage, status }))))(
+  "preserves catalog HTTP $status at stage $stage without retrying authentication",
+  async ({ stage, status }) => {
+    fetchMock.mockImplementation(async () => {
+      const step = fetchMock.mock.calls.length - 1;
+      if (step === stage) return Response.json({ error: "private-upstream-detail" }, { status });
+      if (step === 0) return new Response(null, { status: 422 });
+      return Response.json({ result: {} }, { headers: { "mcp-session-id": "example-session" } });
+    });
+    await expect(listHttpMcpTools(input)).rejects.toMatchObject({
+      statusCode: status, code: status === 403 ? "MCP_TOOL_ACCESS_DENIED" : "MCP_AUTH_REQUIRED",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(stage + 1);
+  },
+);
