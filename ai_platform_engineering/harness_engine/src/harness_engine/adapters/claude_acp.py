@@ -18,7 +18,7 @@ from harness_engine.adapters.base import ExecutionUnconfirmedError
 from harness_engine.adapters.claude_sdk import ClaudeHarnessOptions, ClaudeSDKAdapter
 from harness_engine.claude_acp_process import managed_acp_process
 from harness_engine.claude_acp_tools import ClaudeACPToolBridge
-from harness_engine.claude_isolation import isolated_command
+from harness_engine.claude_isolation import isolated_command, private_workspace
 from harness_engine.config import Settings
 from harness_engine.models import (
     AdapterEvaluation,
@@ -67,6 +67,7 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
         self._tools = settings.claude_acp_tools
         self._runtime = settings.claude_acp_runtime
         self._isolate_cli = self._runtime == "claude_code_cli_acp" and settings.claude_cli_isolation == "landlock"
+        self._artifacts_only = self._runtime == "claude_code_cli_acp" and settings.claude_cli_isolation == "artifacts"
         self._broker_port = settings.port
 
     @property
@@ -127,11 +128,15 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
         self, context: RunContext, mcp_servers: list[HttpMcpServer], tool_names: dict[str, str]
     ) -> AsyncIterator[CanonicalEventDraft]:
         profile = self.execution_profile(context)
-        if profile.research and (self._runtime != "claude_code_cli_acp" or not self._isolate_cli):
-            raise ValueError("Research profiles require the isolated Claude Code CLI worker")
+        if profile.research and not (self._isolate_cli or self._artifacts_only):
+            raise ValueError("Research profiles require isolated CLI or artifact-only execution")
+        if self._artifacts_only and (not profile.research or self._tools):
+            raise ValueError("Artifact-only execution requires research with no native tools")
         options = ClaudeHarnessOptions.model_validate(context.blueprint.harness.options)
         workspace = Path(profile.cwd) / hashlib.sha256(context.binding.binding_id.encode()).hexdigest()
         await asyncio.to_thread(workspace.mkdir, parents=True, exist_ok=True, mode=0o700)
+        if self._artifacts_only:
+            private_workspace(workspace)
         # Service and delegated caller tokens never enter the agent subprocess.
         provider_keys = {
             "PATH",
@@ -162,6 +167,9 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
         # Fixed installed source path, never a caller-supplied import path.
         env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2])
         env["CLAUDE_CONFIG_DIR"] = str(workspace / ".claude")
+        if self._artifacts_only:
+            env.update(HOME=str(workspace), TMPDIR=str(workspace / ".tmp"),
+                       TMP=str(workspace / ".tmp"), TEMP=str(workspace / ".tmp"))
         # Keep a tool in this turn until it returns. Claude's HTTP MCP client
         # otherwise times out at 60 seconds, before the broker's 16-minute limit.
         env["MCP_TOOL_TIMEOUT"] = "900000"
@@ -196,6 +204,7 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
                         "allowedTools": self._tools + list(tool_names),
                         "allowDangerouslySkipPermissions": False,
                         **({"research": profile.research.model_dump()} if profile.research else {}),
+                        **({"researchArtifactsOnly": True} if self._artifacts_only else {}),
                     }
                 },
             }

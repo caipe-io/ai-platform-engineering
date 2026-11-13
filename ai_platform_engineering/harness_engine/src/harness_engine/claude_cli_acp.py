@@ -108,12 +108,14 @@ class ClaudeCodeCLIAgent(Agent):
             self.research_policy = ClaudeResearchPolicy.model_validate(options["research"])
             if options["maxTurns"] < 6:
                 raise ValueError("Research requires at least six turns across three passes")
-            # The worker permits research only inside its OS-isolated CLI.
-            options["tools"] = list(dict.fromkeys(tools + ["Read", "Grep", "Glob"]))
-            options["allowedTools"] = list(dict.fromkeys(allowed + ["Read", "Grep", "Glob"]))
+            if options.get("researchArtifactsOnly") and tools:
+                raise ValueError("Artifact-only research cannot expose native tools")
+            native = [] if options.get("researchArtifactsOnly") else ["Read", "Grep", "Glob"]
+            options["tools"] = list(dict.fromkeys(tools + native))
+            options["allowedTools"] = list(dict.fromkeys(allowed + native))
             options["allowedTools"].append("mcp__research__read_artifact")
             servers["research"] = {"type": "stdio", "command": sys.executable,
-                                   "args": ["-m", "harness_engine.claude_research_artifacts", "--root", str(self.cwd)]}
+                                   "args": [str(Path(__file__).with_name("claude_research_artifacts.py")), "--root", str(self.cwd)]}
 
     async def new_session(self, cwd: str, mcp_servers: list[Any] | None = None, **kwargs: Any) -> NewSessionResponse:
         self.configure(cwd, mcp_servers, kwargs)

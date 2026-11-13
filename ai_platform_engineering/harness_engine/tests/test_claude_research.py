@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sys
 from pathlib import Path
 
 import pytest
 from acp.schema import TextContentBlock
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 from harness_engine.adapters.claude_acp import ClaudeACPAdapter
 from harness_engine.claude_cli_acp import ClaudeCodeCLIAgent
@@ -65,7 +69,7 @@ def test_decoded_pages_cover_long_json_lines_without_changing_literal_escapes(tm
     assert ledger.rejection(report())  # A changed hash invalidates prior receipts.
 
 
-@pytest.mark.parametrize("kind", ["outside", "sibling", "symlink", "config"])
+@pytest.mark.parametrize("kind", ["outside", "sibling", "symlink", "directory_symlink", "config"])
 def test_artifact_reader_rejects_non_artifacts_and_other_workspaces(tmp_path: Path, kind: str) -> None:
     own = tmp_path / "own"
     target = artifact(tmp_path / "other")
@@ -78,10 +82,14 @@ def test_artifact_reader_rejects_non_artifacts_and_other_workspaces(tmp_path: Pa
         path = own / ".claude" / "projects" / "mcp.json"
         path.parent.mkdir(parents=True)
         path.write_text("private")
-    else:
+    elif kind == "symlink":
         path = artifact(own)
         path.unlink()
         path.symlink_to(target)
+    else:
+        path = own / ".claude" / "projects" / "alias" / "session" / "tool-results" / target.name
+        path.parents[3].mkdir(parents=True)
+        path.parents[2].symlink_to(target.parents[2], target_is_directory=True)
     with pytest.raises(ValueError):
         read_artifact(own, str(path))
 
@@ -90,6 +98,43 @@ def test_artifact_reader_rejects_non_artifacts_and_other_workspaces(tmp_path: Pa
 def test_artifact_page_bounds(tmp_path: Path, offset: int, limit: int) -> None:
     with pytest.raises(ValueError):
         read_artifact(tmp_path, str(artifact(tmp_path)), offset, limit)
+
+
+def test_directory_swap_cannot_redirect_an_artifact_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "own"
+    path = artifact(root)
+    external = artifact(tmp_path / "other")
+    original_open = os.open
+    swapped = False
+
+    def racing_open(name: object, flags: int, *args: object, **kwargs: object) -> int:
+        nonlocal swapped
+        if name == "tool-results" and not swapped:
+            swapped = True
+            path.parent.rename(path.parent.with_name("original-output"))
+            path.parent.symlink_to(external.parent, target_is_directory=True)
+        return original_open(name, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", racing_open)
+    with pytest.raises(ValueError):
+        read_artifact(root, str(path))
+    assert swapped
+
+
+async def test_real_stdio_artifact_tool_enforces_scope_and_returns_page_receipts(tmp_path: Path) -> None:
+    path = artifact(tmp_path)
+    server = StdioServerParameters(command=sys.executable,
+                                   args=["-m", "harness_engine.claude_research_artifacts", "--root", str(tmp_path)],
+                                   env={"PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")})
+    async with stdio_client(server) as (reader, writer), ClientSession(reader, writer) as session:
+        await session.initialize()
+        assert [tool.name for tool in (await session.list_tools()).tools] == ["read_artifact"]
+        result = await session.call_tool("read_artifact", {"path": str(path)})
+        page = json.loads(result.content[0].text)
+        assert page["artifact_path"] == str(path) and page["next_offset"] > 0
+        assert len(page["text"]) < 12000
+        rejected = await session.call_tool("read_artifact", {"path": "/proc/self/environ"})
+        assert rejected.isError
 
 
 @pytest.mark.parametrize("failure", ["no_challenge", "changed_head", "wrong_head", "missing_file", "extra_file", "incomplete"])
@@ -158,6 +203,16 @@ async def test_research_configuration_exposes_only_read_search_and_artifact_tool
     assert set(agent.servers) == {"caipe", "research"}
 
 
+async def test_artifact_only_configuration_never_enables_native_filesystem_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    original, _, _ = await configured(tmp_path, monkeypatch)
+    agent = ClaudeCodeCLIAgent(original.command)
+    metadata = policy()
+    metadata["claudeCode"]["options"].update(maxTurns=12, research={}, researchArtifactsOnly=True)
+    await agent.new_session(str(tmp_path), servers(), **metadata)
+    assert agent.options["tools"] == []
+    assert agent.options["allowedTools"] == ["mcp__caipe__example_wait", "mcp__research__read_artifact"]
+
+
 async def test_deadline_drains_the_cli_and_releases_no_unverified_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     agent, client, session = await configured(tmp_path, monkeypatch)
     agent.research_policy = ClaudeResearchPolicy().model_copy(update={"max_seconds": 0.1})
@@ -202,3 +257,15 @@ async def test_research_requires_os_isolation_before_starting_a_process(settings
     with pytest.raises(ValueError, match="isolated"):
         async for _ in adapter._stream(context(), [], {}):
             pytest.fail("A research process was started without isolation")
+
+
+async def test_artifact_only_worker_rejects_native_tool_configuration(settings: Settings) -> None:
+    profiles = json.loads(settings.claude_sdk_profiles_json)
+    profiles["safe"]["research"] = {}
+    adapter = ClaudeACPAdapter(settings.model_copy(update={"claude_sdk_profiles_json": json.dumps(profiles),
+                                                          "claude_acp_runtime": "claude_code_cli_acp",
+                                                          "claude_cli_isolation": "artifacts",
+                                                          "claude_acp_tools": ["Read"]}))
+    with pytest.raises(ValueError, match="no native tools"):
+        async for _ in adapter._stream(context(), [], {}):
+            pytest.fail("Artifact-only mode allowed a native filesystem tool")

@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -24,17 +26,41 @@ def decoded(value: Any, depth: int = 0) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False)
 
 
-def read_artifact(root: Path, path: str, offset: int = 0, limit: int = 12000) -> dict[str, Any]:
-    if isinstance(offset, bool) or isinstance(limit, bool) or not 0 <= offset or not 1 <= limit <= 12000:
-        raise ValueError("Use a nonnegative character offset and a limit from 1 to 12000")
+def artifact_bytes(root: Path, path: str) -> tuple[Path, bytes]:
     candidate = Path(path)
     if not candidate.is_absolute():
         candidate = root / candidate
-    candidate = candidate.resolve(strict=True)
-    relative = candidate.relative_to((root / ".claude" / "projects").resolve())
-    if "tool-results" not in relative.parts or not candidate.is_file() or candidate.stat().st_size > 16 * 1024 * 1024:
-        raise ValueError("Only saved tool-result files up to 16 MiB are readable")
-    raw = candidate.read_bytes()
+    relative = candidate.relative_to(root)
+    if relative.parts[:2] != (".claude", "projects") or ".." in relative.parts or "tool-results" not in relative.parts[2:-1]:
+        raise ValueError("Only this workspace's saved tool-result files are readable")
+    # Walk anchored directory descriptors, refusing aliases at EVERY component.
+    # Resolution followed by a normal open would permit directory-swap races.
+    try:
+        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            for part in relative.parts[:-1]:
+                next_directory = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+                os.close(directory)
+                directory = next_directory
+            descriptor = os.open(relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            with os.fdopen(descriptor, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size > 16 * 1024 * 1024:
+                    raise ValueError("Only regular saved tool results up to 16 MiB are readable")
+                raw = stream.read(16 * 1024 * 1024 + 1)
+                if len(raw) > 16 * 1024 * 1024:
+                    raise ValueError("Saved output exceeds 16 MiB")
+        finally:
+            os.close(directory)
+    except OSError:
+        raise ValueError("Saved output is unavailable or contains a filesystem alias") from None
+    return candidate, raw
+
+
+def read_artifact(root: Path, path: str, offset: int = 0, limit: int = 12000) -> dict[str, Any]:
+    if isinstance(offset, bool) or isinstance(limit, bool) or not 0 <= offset or not 1 <= limit <= 12000:
+        raise ValueError("Use a nonnegative character offset and a limit from 1 to 12000")
+    candidate, raw = artifact_bytes(root, path)
     text = decoded(raw.decode("utf-8"))
     if offset > len(text):
         raise ValueError("Offset exceeds artifact length")

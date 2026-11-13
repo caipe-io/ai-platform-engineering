@@ -449,7 +449,7 @@ inside the remote worker; it does not introduce another browser session manager.
 
 #### Opt-in PR research profile
 
-An isolated `claude_code_cli_acp` worker can opt a local operator profile into
+A `claude_code_cli_acp` worker can opt a local operator profile into
 research through `HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON`:
 
 ```json
@@ -467,10 +467,18 @@ research through `HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON`:
   inventory, and a report accounting for that exact inventory and head. A PR
   URL in the task must match the inspected target. This profile handles one PR
   per run; it does not certify semantic correctness or exhaustive verification.
-- Native `Read`, `Grep`, and `Glob` operate inside existing Landlock isolation.
-  The read-only `research.read_artifact` MCP tool can access only this workspace's
+- With `HARNESS_ENGINE_CLAUDE_CLI_ISOLATION=landlock`, native `Read`, `Grep`, and
+  `Glob` operate inside existing OS isolation. On hosts without Landlock ABI 6,
+  an operator can instead select `artifacts`: this mode accepts only research
+  profiles with an empty native-tool allowlist and enables **only the scoped
+  artifact reader**, not native filesystem, shell, or edit tools. It is a tool
+  capability boundary inside the worker container, not a per-session OS sandbox.
+  Do not use it for untrusted executables or generic coding tools.
+- The read-only `research.read_artifact` MCP tool can access only this workspace's
   `.claude/projects/**/tool-results` files, up to 16 MiB. It decodes JSON content
   wrappers and returns bounded character pages, offsets, and a content hash.
+  Anchored directory descriptors refuse symlinks at every component, including
+  directory-swap races; this reader does not depend on Landlock for path safety.
   Saved large outputs must have contiguous, complete page receipts before a
   verified report can be released. JSON escaping is decoded, never blindly
   rewritten in source text.

@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from harness_engine.claude_research_artifacts import artifact_bytes
+
 
 class CoverageItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -75,6 +77,7 @@ class ResearchEvidence:
     files: set[str] = field(default_factory=set)
     targets: set[tuple[str, str, int]] = field(default_factory=set)
     diff_seen: bool = False
+    unavailable_artifact: bool = False
     expected_target: tuple[str, str, int] | None = None
     ranges: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
     artifact_hashes: dict[str, str] = field(default_factory=dict)
@@ -147,26 +150,34 @@ class ResearchEvidence:
             self.successful[self.phase] = self.successful.get(self.phase, 0) + 1
         if name == "mcp__research__read_artifact":
             self.artifact_receipt(content)
-        text = content if isinstance(content, str) else str(content)
+        text = content if isinstance(content, str) else ""
+        if isinstance(content, list) and len(content) == 1 and isinstance(content[0], dict):
+            text = content[0].get("text", "")
         method = args.get("method", "") if name.startswith("mcp__caipe__") else ""
         if method in {"get", "get_files", "get_diff"} and all(key in args for key in ("owner", "repo", "pullNumber")):
             self.targets.add((args["owner"], args["repo"], args["pullNumber"]))
             self.capture(content, method)
             self.diff_seen = self.diff_seen or method == "get_diff"
-        if "persisted-output" in text or "Output has been saved to" in text:
-            for path in re.findall(r"/[^\s\"'<>]+/tool-results/[^\s\"'<>]+", text):
+        if text.startswith("<persisted-output>") or (text.startswith("Error: result") and "Output has been saved to" in text):
+            paths = re.findall(r"/[^\s\"'<>]+/tool-results/[^\s\"'<>]+", text.split("Preview", 1)[0])
+            if not paths:
+                self.unavailable_artifact = True
+            for path in paths:
                 candidate = Path(path.rstrip(".,:;)"))
-                if candidate.resolve().is_relative_to(self.workspace):
-                    self.overflow.add(str(candidate.resolve()))
-                    # Inspect only bounded, workspace-local saved MCP metadata.
-                    # This is an execution receipt, not credit for a model Read.
-                    if method and candidate.is_file() and candidate.stat().st_size <= 16 * 1024 * 1024:
-                        self.capture(candidate.read_text(errors="replace"), method)
+                try:
+                    canonical, raw = artifact_bytes(self.workspace, str(candidate))
+                except ValueError:
+                    self.unavailable_artifact = True
+                    continue
+                self.overflow.add(str(canonical))
+                # A metadata receipt is not credit for a model's paged read.
+                if method:
+                    self.capture(raw.decode(errors="replace"), method)
 
     def rejection(self, report: ResearchReport) -> str | None:
         if any(not self.successful.get(phase) for phase in ("Investigate", "Challenge")):
             return "Investigation and challenge must each include successful source inspection."
-        if self.overflow - self.accessed:
+        if self.unavailable_artifact or self.overflow - self.accessed:
             return "Some saved large-output artifacts were not read; evidence coverage is incomplete."
         if len(self.targets) != 1 or len(self.heads) != 1 or not {"Investigate", "Challenge"} <= self.head_phases:
             return "A single unchanged PR head must be fetched in both investigation and challenge."
