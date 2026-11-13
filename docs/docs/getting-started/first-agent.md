@@ -31,6 +31,13 @@ connected accounts, and automation can be added later.
    For a different provider, open **Configure provider access** and configure
    its endpoint and authentication in the provider workspace,
    then register/select the model. A model name alone does not configure access.
+   OpenAI connections collect both **OpenAI Endpoint URL** and **API Key**.
+   Both values are encrypted in **Credentials → Saved Secrets**. Existing saved
+   values are preserved when you add missing details. Use **Share** on each
+   saved value to grant a team access, **Rotate** to replace it, or **Delete**
+   and confirm to remove it. Deleting a saved key does not revoke it at the
+   provider. Saving details does not verify the provider connection; test it
+   with a conversation.
    LiteLLM uses an OpenAI-compatible endpoint. For Bedrock on Kubernetes, prefer
    workload identity such as an IAM role for a service account or EKS Pod Identity.
 3. **Choose an agent:** pick SRE starter, Hello World, or a blank agent. Recipes

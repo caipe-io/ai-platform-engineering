@@ -2,9 +2,11 @@
 
 // assisted-by Codex Codex-sonnet-4-6
 
-import { AlertTriangle,CheckCircle2,KeyRound,Loader2,Settings } from "lucide-react";
+import { AlertTriangle,ArrowUpRight,CheckCircle2,KeyRound,Loader2,Settings,Share2,ShieldCheck,Trash2 } from "lucide-react";
 import React from "react";
 
+import { SecretProtectionBadge } from "@/components/credentials/SecretProtectionDetails";
+import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
 import { Button } from "@/components/ui/button";
 import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
 import { Card,CardContent,CardDescription,CardHeader,CardTitle } from "@/components/ui/card";
@@ -16,6 +18,9 @@ type ProviderField = {
   label: string;
   secretType: "api_key" | "custom";
   placeholder?: string;
+  required?: boolean;
+  inputType?: "url";
+  help?: string;
 };
 
 type ProviderDefinition = {
@@ -45,7 +50,10 @@ const PROVIDERS: ProviderDefinition[] = [
     name: "OpenAI",
     description: "GPT and OpenAI-compatible model providers.",
     aliases: ["openai"],
-    fields: [{ id: "api_key", label: "API Key", secretType: "api_key", placeholder: "sk-..." }],
+    fields: [
+      { id: "endpoint", label: "OpenAI Endpoint URL", secretType: "custom", inputType: "url", required: true, placeholder: "https://api.example.com/v1", help: "Use your provider’s base URL, including /v1 when required." },
+      { id: "api_key", label: "API Key", secretType: "api_key", required: true, placeholder: "Enter your API key" },
+    ],
   },
   {
     id: "anthropic-claude",
@@ -106,21 +114,42 @@ function ProviderCredentialDialog({
   provider,
   onClose,
   onSaved,
+  configuredFieldIds,
 }: {
   provider: ProviderDefinition;
   onClose: () => void;
   onSaved: () => void;
+  configuredFieldIds: string[];
 }) {
+  const [savedFieldIds, setSavedFieldIds] = React.useState(() => new Set(configuredFieldIds));
   const [values, setValues] = React.useState<Record<string, string>>({});
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   const handleSave = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setSaving(true);
     setError(null);
+    for (const field of provider.fields) {
+      if (savedFieldIds.has(field.id)) continue;
+      const value = values[field.id]?.trim();
+      if (field.required && !value) {
+        setError(`${field.label} is required.`);
+        return;
+      }
+      if (field.inputType === "url" && value) {
+        try {
+          const url = new URL(value);
+          if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("Invalid endpoint");
+        } catch {
+          setError(`${field.label} must be an HTTP or HTTPS URL without embedded credentials.`);
+          return;
+        }
+      }
+    }
+    setSaving(true);
     try {
       for (const field of provider.fields) {
+        if (savedFieldIds.has(field.id)) continue;
         const value = values[field.id]?.trim();
         if (!value) continue;
         await fetch("/api/credentials/secrets", {
@@ -138,6 +167,8 @@ function ProviderCredentialDialog({
             throw new Error(payload.error || `Could not save ${field.label}`);
           }
         });
+        setSavedFieldIds((current) => new Set(current).add(field.id));
+        setValues((current) => ({ ...current, [field.id]: "" }));
       }
       onSaved();
       onClose();
@@ -155,39 +186,54 @@ function ProviderCredentialDialog({
       aria-label={`Configure ${provider.name}`}
       className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
     >
-      <form onSubmit={handleSave} className="w-full max-w-2xl rounded-lg border border-border bg-card p-5 shadow-xl space-y-4">
+      <form onSubmit={handleSave} className="max-h-[calc(100dvh-2rem)] w-full max-w-2xl overflow-y-auto rounded-lg border border-border bg-card p-5 shadow-xl space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-medium">Connect {provider.name}</h2>
-            <p className="text-sm text-muted-foreground">
-              Values are saved as protected secrets. Existing secrets are left unchanged.
-            </p>
+            <p className="mt-1 text-sm text-muted-foreground">Save the endpoint and credentials your provider requires.</p>
           </div>
-          <button type="button" className="text-sm text-muted-foreground" onClick={onClose}>
+          <button type="button" className="text-sm text-muted-foreground" onClick={onClose} disabled={saving}>
             Close
           </button>
         </div>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-sm">
+          <div className="flex items-center gap-2 font-medium"><ShieldCheck className="h-4 w-4 text-primary" aria-hidden="true" />Saved securely in Saved Secrets</div>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">Your values are encrypted when saved. Full values stay hidden after saving, and existing values are preserved.</p>
+          <ul className="mt-3 space-y-2 text-xs text-muted-foreground">
+            <li className="flex items-start gap-2"><Share2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" /><span>Use <strong className="font-medium text-foreground">Share</strong> on a saved secret to grant a team access.</span></li>
+            <li className="flex items-start gap-2"><Trash2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" /><span>Use <strong className="font-medium text-foreground">Delete</strong> on a saved secret and confirm to remove it. This does not revoke the key at its provider.</span></li>
+          </ul>
+          <NavigationProgressLink href="/credentials/secrets" target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">Manage Saved Secrets<ArrowUpRight className="h-3 w-3" aria-hidden="true" /><span className="sr-only"> (opens in a new tab)</span></NavigationProgressLink>
+        </div>
+
+        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
 
         <div className="grid gap-4 md:grid-cols-2">
-          {provider.fields.map((field) => (
-            <label key={field.id} className="space-y-1 text-sm">
-              <Label htmlFor={`${provider.id}-${field.id}`}>{field.label}</Label>
+          {provider.fields.map((field) => {
+            const saved = savedFieldIds.has(field.id);
+            const helpId = `${provider.id}-${field.id}-help`;
+            return <div key={field.id} className="space-y-1 text-sm">
+              <Label htmlFor={`${provider.id}-${field.id}`}>{field.label}{field.required && !saved && <span className="ml-1 text-destructive" aria-hidden="true">*</span>}</Label>
               <Input
                 id={`${provider.id}-${field.id}`}
                 aria-label={field.label}
-                placeholder={field.placeholder}
-                type={field.secretType === "api_key" ? "password" : "text"}
+                aria-describedby={helpId}
+                placeholder={saved ? "Already saved" : field.placeholder}
+                type={field.inputType ?? (field.secretType === "api_key" ? "password" : "text")}
+                autoComplete="off"
+                required={field.required && !saved}
+                disabled={saving || saved}
                 value={values[field.id] ?? ""}
                 onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
               />
-            </label>
-          ))}
+              <p id={helpId} className="text-xs leading-5 text-muted-foreground">{saved ? "Already saved. Manage it in Saved Secrets to rotate, share, or delete it." : field.help ?? "Saved as a protected credential."}</p>
+            </div>;
+          })}
         </div>
 
         <div className="flex gap-2">
-          <Button type="submit" disabled={saving || Object.values(values).every((value) => !value.trim())}>
+          <Button type="submit" disabled={saving || provider.fields.every((field) => savedFieldIds.has(field.id) || !values[field.id]?.trim())}>
             {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Save Connection
           </Button>
@@ -205,6 +251,7 @@ export function LLMProvidersTab() {
   const [secrets, setSecrets] = React.useState<SecretMetadata[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [savedProvider, setSavedProvider] = React.useState<string | null>(null);
   const [editingProvider, setEditingProvider] = React.useState<ProviderDefinition | null>(null);
 
   const load = React.useCallback(async () => {
@@ -257,12 +304,13 @@ export function LLMProvidersTab() {
             </div>
           )}
 
+          {savedProvider && <p role="status" className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/20 bg-primary/5 p-3 text-sm"><ShieldCheck className="h-4 w-4 text-primary" aria-hidden="true" />{savedProvider} details saved. <NavigationProgressLink href="/credentials/secrets" className="font-medium text-primary hover:underline">Manage Saved Secrets</NavigationProgressLink></p>}
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {visibleProviders.map((provider) => {
               const configuredFields = provider.fields.filter((field) =>
                 configuredSecretNames.has(secretName(provider.id, field.id)),
               );
-              const configured = configuredFields.length > 0;
+              const configured = configuredFields.length === provider.fields.length;
               return (
                 <Card key={provider.id} className="border-border/70">
                   <CardHeader className="space-y-2">
@@ -271,21 +319,20 @@ export function LLMProvidersTab() {
                       {configured ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-1 text-xs text-emerald-600 dark:text-emerald-400">
                           <CheckCircle2 className="h-3.5 w-3.5" />
-                          Ready
+                          Saved
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
                           <KeyRound className="h-3.5 w-3.5" />
-                          Needs secret
+                          {configuredFields.length > 0 ? "Partly saved" : "Needs credentials"}
                         </span>
                       )}
                     </div>
                     <CardDescription>{provider.description}</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    <p className="text-xs text-muted-foreground">
-                      Saved as: {provider.fields.map((field) => secretName(provider.id, field.id)).join(", ")}
-                    </p>
+                    <p className="text-xs text-muted-foreground">{configuredFields.length} of {provider.fields.length} values saved in Saved Secrets.</p>
+                    {configuredFields.length > 0 && <SecretProtectionBadge />}
                     <Button
                       type="button"
                       variant="outline"
@@ -306,8 +353,9 @@ export function LLMProvidersTab() {
       {editingProvider && (
         <ProviderCredentialDialog
           provider={editingProvider}
-          onClose={() => setEditingProvider(null)}
-          onSaved={() => void load()}
+          onClose={() => { setEditingProvider(null); void load(); }}
+          configuredFieldIds={editingProvider.fields.filter((field) => configuredSecretNames.has(secretName(editingProvider.id, field.id))).map((field) => field.id)}
+          onSaved={() => setSavedProvider(editingProvider.name)}
         />
       )}
     </section>
