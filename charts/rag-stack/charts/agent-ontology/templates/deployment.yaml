@@ -74,8 +74,7 @@ spec:
             {{- end }}
           env:
             # Core Connection Settings
-            - name: REDIS_URL
-              value: {{ include "agent.redisUrl" . | quote }}
+            {{- include "agent.mongodbEnv" . | nindent 12 }}
             - name: NEO4J_ADDR
               value: {{ include "agent.neo4jAddr" . | quote }}
             - name: NEO4J_USERNAME
@@ -109,8 +108,10 @@ spec:
 
             {{- if .Values.env }}
             {{- range $key, $value := .Values.env }}
+            {{- if not (has $key (list "MONGODB_URI" "MONGODB_DATABASE" "MONGODB_TLS_CA_FILE" "RAG_WRITES_PAUSED")) }}
             - name: {{ $key }}
               value: {{ $value | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
           {{- with .Values.startupProbe }}
@@ -130,10 +131,12 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           volumeMounts:
+            {{- include "agent.mongodbMount" . | nindent 12 }}
             {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
       volumes:
+        {{- include "agent.mongodbVolume" . | nindent 8 }}
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

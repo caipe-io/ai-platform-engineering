@@ -1,10 +1,11 @@
 import os
 from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable
 from typing import List
 
 from agent_ontology.agent import OntologyAgent, RelationCandidateManager
 from common.graph_db.base import GraphDB
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
 from fastapi.responses import JSONResponse
 from common import constants, utils
 from common.graph_db.neo4j.graph_db import Neo4jDB
@@ -13,7 +14,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 import dotenv
 import uvicorn
-import redis.asyncio as redis
+from common.mongo_storage import MongoStorage
 
 # Load environment variables from .env file
 dotenv.load_dotenv()
@@ -38,7 +39,7 @@ logger.info("Initializing ontology graph database...")
 ontology_graph_db: GraphDB = Neo4jDB(tenant_label=constants.DEFAULT_SCHEMA_LABEL)
 
 logger.info("Initializing key-value store...")
-redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+redis_client = MongoStorage()
 
 logger.info("Initializing ontology agent...")
 logger.info("Config:\nMax concurrent processing: %s\nMax concurrent evaluation: %s\nCount change threshold ratio: %s\nMin count for eval: %s", MAX_CONCURRENT_PROCESSING, MAX_CONCURRENT_EVALUATION, COUNT_CHANGE_THRESHOLD_RATIO, MIN_COUNT_FOR_EVAL)
@@ -49,8 +50,9 @@ agent: OntologyAgent = OntologyAgent(
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-  logger.info("Setting up key-value store with ontology version")
-  if SYNC_INTERVAL == 0:
+  await redis_client.setup()
+  logger.info("Setting up MongoDB ontology storage")
+  if SYNC_INTERVAL == 0 or os.getenv("RAG_WRITES_PAUSED", "false").lower() == "true":
     logger.warning("Automatic heuristics processing and evaluation is disabled, heuristics will be updated only on demand (via REST endpoints)")
   else:
     logger.info("Running the ontology agent periodically every %s seconds ...", SYNC_INTERVAL)
@@ -75,6 +77,13 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Ontology Agent Admin Server", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def maintenance_gate(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+  if os.getenv("RAG_WRITES_PAUSED", "false").lower() == "true" and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+    return JSONResponse(status_code=503, content={"detail": "RAG writes are paused for maintenance"})
+  return await call_next(request)
 
 
 async def get_rc_manager_with_latest_ontology() -> RelationCandidateManager | None:
@@ -400,7 +409,7 @@ async def liveness():
 async def healthz():
   return {
     "status": "healthy",
-    "redis_ready": "true",
+    "mongodb_ready": "true",
     "graph_db_ready": "true",
     "ontology_graph_db_ready": "true",
     "is_processing": agent.is_processing,

@@ -9,7 +9,7 @@ from common.metadata_storage import MetadataStorage
 from common.models.rbac import UserContext
 import dotenv
 from langchain_core.messages.utils import count_tokens_approximately
-from redis.asyncio import Redis
+from common.mongo_storage import MongoStorage
 from common.constants import KV_ONTOLOGY_VERSION_ID_KEY, PROP_DELIMITER, ONTOLOGY_VERSION_ID_KEY, PRIMARY_ID_KEY
 from common.models.rag import valid_metadata_keys, MCPToolConfig, MCPBuiltinToolsConfig, ParallelSearch, StructuredEntity, StructuredEntityId
 import traceback
@@ -48,7 +48,7 @@ BUILTIN_MCP_TOOL_IDS = {
 
 
 class AgentTools:
-  def __init__(self, redis_client: Redis, vector_db_query_service: VectorDBQueryService, metadata_storage: MetadataStorage, data_graph_db: Optional[GraphDB] = None, ontology_graph_db: Optional[GraphDB] = None):
+  def __init__(self, redis_client: MongoStorage, vector_db_query_service: VectorDBQueryService, metadata_storage: MetadataStorage, data_graph_db: Optional[GraphDB] = None, ontology_graph_db: Optional[GraphDB] = None):
     self.redis_client = redis_client
     self.vector_db_query_service: VectorDBQueryService = vector_db_query_service
     self.metadata_storage: MetadataStorage = metadata_storage
@@ -566,7 +566,7 @@ class AgentTools:
       # Fetch the latest ontology id
       ontology_version_id = await self.redis_client.get(KV_ONTOLOGY_VERSION_ID_KEY)
       if ontology_version_id is None:
-        return "Error: Ontology version ID not found in Redis. The ontology may not be generated yet."
+        return "Error: Ontology version ID not found in MongoDB. The ontology may not be generated yet."
 
       # Build primary key for ontology entity
       primary_key_id = PROP_DELIMITER.join([entity_type, ontology_version_id])
@@ -930,7 +930,7 @@ class AgentTools:
       # Fetch the latest ontology id
       ontology_version_id = await self.redis_client.get(KV_ONTOLOGY_VERSION_ID_KEY)
       if ontology_version_id is None:
-        return "Error: Ontology version ID not found in Redis. The ontology may not be generated yet."
+        return "Error: Ontology version ID not found in MongoDB. The ontology may not be generated yet."
 
       # Check if both entity types exist in ontology
       all_entity_types = await self.ontology_graphdb.get_all_entity_types()

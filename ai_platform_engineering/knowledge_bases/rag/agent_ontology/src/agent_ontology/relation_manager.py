@@ -18,7 +18,7 @@ from common.models.ontology import (
 from common.models.rag import StructuredEntity
 from common.models.graph import Relation
 from common.graph_db.base import GraphDB
-import redis.asyncio as redis
+from common.mongo_storage import MongoStorage
 from agent_ontology.heuristics import DeepPropertyMatch
 
 
@@ -26,10 +26,10 @@ class RelationCandidateManager:
   """
   Manages relation candidates between entities.
   - Ontology DB: Stores relation structure and evaluation
-  - Redis: Stores heuristic data (counts, examples)
+  - MongoDB: Stores heuristic data (counts, examples)
   """
 
-  def __init__(self, graph_db: GraphDB, ontology_graph_db: GraphDB, ontology_version_id: str, client_name: str, redis_client: redis.Redis, heuristics_key_prefix: str = constants.REDIS_GRAPH_RELATION_HEURISTICS_PREFIX):
+  def __init__(self, graph_db: GraphDB, ontology_graph_db: GraphDB, ontology_version_id: str, client_name: str, redis_client: MongoStorage, heuristics_key_prefix: str = constants.REDIS_GRAPH_RELATION_HEURISTICS_PREFIX):
     self.data_graph_db = graph_db
     self.ontology_graph_db = ontology_graph_db
     self.logger = utils.get_logger("rc_manager")
@@ -115,7 +115,7 @@ class RelationCandidateManager:
 
   async def update_heuristics_batch(self, updates: List["DeepPropertyMatch"]):
     """
-    Takes a list of DeepPropertyMatch objects and batch updates heuristics in Redis as FkeyHeuristic.
+    Takes a list of DeepPropertyMatch objects and batch updates heuristics in MongoDB as FkeyHeuristic.
     Also ensures relation candidates exist in Ontology DB and updates the ontology graph.
 
     Note: Schema entity nodes should already exist in Ontology DB (created by heuristics.py).
@@ -165,8 +165,8 @@ class RelationCandidateManager:
       await self.ontology_graph_db.update_relation_batch(relations, batch_size=1000)
       self.logger.info(f"Successfully created {len(relations)} relation candidates in one batch")
 
-    # Then batch update heuristics in Redis using pipeline
-    self.logger.info(f"Batch updating {len(updates)} heuristics in Redis")
+    # Then batch update heuristics in MongoDB using pipeline
+    self.logger.info(f"Batch updating {len(updates)} heuristics in MongoDB")
     pipe = self.redis_client.pipeline()
 
     for dm in updates:
@@ -301,14 +301,14 @@ class RelationCandidateManager:
 
   async def fetch_candidate(self, relation_id: str) -> Optional[RelationCandidate]:
     """
-    Fetch a complete relation candidate (merges data from Ontology DB and Redis).
+    Fetch a complete relation candidate (merges data from Ontology DB and MongoDB).
 
     Returns:
         RelationCandidate with both heuristic and evaluation data, or None
     """
     self.logger.debug(f"Fetching candidate for relation_id={relation_id}")
 
-    # Fetch heuristic from Redis
+    # Fetch heuristic from MongoDB
     heuristic = await self.fetch_heuristic(relation_id)
 
     if not heuristic:
@@ -322,7 +322,7 @@ class RelationCandidateManager:
 
   async def fetch_all_candidates(self) -> dict[str, RelationCandidate]:
     """
-    Fetch all relation candidates (merges data from Ontology DB and Redis).
+    Fetch all relation candidates (merges data from Ontology DB and MongoDB).
 
     Returns:
         Dictionary mapping relation_id to RelationCandidate
@@ -383,13 +383,13 @@ class RelationCandidateManager:
     """
     Delete a relation candidate completely (from both Redis and Graph DB).
     This removes:
-    - Heuristic data from Redis
+    - Heuristic data from MongoDB
     - Relation structure/evaluation from Ontology DB
     - Applied relation from Data graph (if exists)
     """
     self.logger.debug(f"Deleting relation candidate {relation_id}")
 
-    # Delete from Redis (heuristics)
+    # Delete from MongoDB (heuristics)
     heuristic_key = self._heuristic_key(relation_id)
     examples_key = self._examples_key(relation_id)
     # Delete both keys
@@ -422,7 +422,7 @@ class RelationCandidateManager:
     deleted_data_rels = await self.data_graph_db.delete_relations_by_properties(properties={constants.RELATION_UPDATED_BY_KEY: self.client_name}, properties_negated={constants.ONTOLOGY_VERSION_ID_KEY: self.ontology_version_id})
     self.logger.debug(f"Deleted {deleted_data_rels} old relations from data graph")
 
-    # Delete old heuristics from Redis (where version does NOT match current)
+    # Delete old heuristics from MongoDB (where version does NOT match current)
     # Scan for all keys with the heuristics prefix
     deleted_heuristics_count = 0
     cursor = 0
@@ -455,10 +455,10 @@ class RelationCandidateManager:
       if cursor == 0:
         break
 
-    self.logger.info(f"Deleted {deleted_heuristics_count} old heuristic keys from Redis")
+    self.logger.info(f"Deleted {deleted_heuristics_count} old heuristic keys from MongoDB")
 
   # =========================================================================
-  # Heuristic Storage (Redis) - Internal
+  # Heuristic Storage (MongoDB) - Internal
   # =========================================================================
 
   def _heuristic_key(self, relation_id: str) -> str:
@@ -493,7 +493,7 @@ class RelationCandidateManager:
     await self.redis_client.hmset(key, metadata)  # type: ignore
 
   async def fetch_heuristic(self, relation_id: str) -> Optional[FkeyHeuristic]:
-    """Fetch heuristic data from Redis."""
+    """Fetch heuristic data from MongoDB."""
     self.logger.debug(f"Fetching heuristic for relation {relation_id}")
 
     # Pipeline for single round-trip
@@ -607,7 +607,7 @@ class RelationCandidateManager:
 
   async def fetch_heuristics_batch(self, relation_ids: List[str]) -> dict[str, Optional[FkeyHeuristic]]:
     """
-    Fetch heuristics for multiple relations in a single batch using Redis pipeline.
+    Fetch heuristics for multiple relations in a single batch using ordered MongoDB operations.
 
     Args:
         relation_ids: List of relation IDs to fetch heuristics for

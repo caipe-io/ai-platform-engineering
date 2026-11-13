@@ -164,25 +164,8 @@ Get llmSecrets.externalSecrets.secretStoreRef with global fallback
 {{- end -}}
 
 {{/*
-Get Redis URL combining host and port
+Shared RAG MongoDB persistence settings
 */}}
-{{- define "agent.redisUrl" -}}
-    {{- $host := "redis" -}}
-    {{- $port := "6379" -}}
-    {{- with .Values.global -}}
-        {{- with .rag -}}
-            {{- with .redis -}}
-                {{- if hasKey . "host" -}}
-                    {{- $host = .host -}}
-                {{- end -}}
-                {{- if hasKey . "port" -}}
-                    {{- $port = .port -}}
-                {{- end -}}
-            {{- end -}}
-        {{- end -}}
-    {{- end -}}
-    {{- printf "redis://%s:%s/0" $host ($port | toString) -}}
-{{- end -}}
 
 {{/*
 Get Neo4j address combining host and port
@@ -243,3 +226,43 @@ Get Neo4j password
 {{- .Values.global.image.tag | default .Chart.AppVersion -}}
 {{- end -}}
 
+
+{{- define "agent.mongodbEnv" -}}
+{{- $global := .Values.global | default dict -}}
+{{- $rag := $global.rag | default dict -}}
+{{- $mongo := $rag.mongodb | default dict -}}
+- name: RAG_WRITES_PAUSED
+  value: {{ $rag.writesPaused | default false | quote }}
+- name: MONGODB_URI
+  valueFrom:
+    secretKeyRef:
+      name: {{ tpl (required "global.rag.mongodb.existingSecret must identify the application MongoDB URI Secret" $mongo.existingSecret) . | quote }}
+      key: {{ $mongo.uriKey | default "MONGODB_URI" | quote }}
+- name: MONGODB_DATABASE
+  value: {{ $mongo.database | default "caipe" | quote }}
+{{- if $mongo.caConfigMap }}
+- name: MONGODB_TLS_CA_FILE
+  value: /etc/rag-mongodb-ca/ca.pem
+{{- end }}
+{{- end -}}
+
+{{- define "agent.mongodbMount" -}}
+{{- $mongo := ((.Values.global | default dict).rag | default dict).mongodb | default dict -}}
+{{- if $mongo.caConfigMap }}
+- name: rag-mongodb-ca
+  mountPath: /etc/rag-mongodb-ca
+  readOnly: true
+{{- end }}
+{{- end -}}
+
+{{- define "agent.mongodbVolume" -}}
+{{- $mongo := ((.Values.global | default dict).rag | default dict).mongodb | default dict -}}
+{{- if $mongo.caConfigMap }}
+- name: rag-mongodb-ca
+  configMap:
+    name: {{ tpl $mongo.caConfigMap . | quote }}
+    items:
+      - key: {{ $mongo.caKey | default "global-bundle.pem" | quote }}
+        path: ca.pem
+{{- end }}
+{{- end -}}

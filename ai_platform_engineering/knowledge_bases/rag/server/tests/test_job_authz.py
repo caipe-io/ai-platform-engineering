@@ -73,6 +73,8 @@ def _deny(status_code: int = 403, detail: str = "Access denied for this datasour
 INGESTOR_HEADERS = {
     "X-Ingestor-Type": "example",
     "X-Ingestor-Name": "primary",
+    "X-RAG-Claim-Token": "example-token",
+    "X-RAG-Datasource-ID": "primary-ds",
 }
 
 
@@ -89,7 +91,7 @@ def _configure_trusted_ingestor(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(restapi.app, raise_server_exceptions=False)
+    return TestClient(restapi.app, raise_server_exceptions=True)
 
 
 @pytest.fixture(autouse=True)
@@ -97,6 +99,7 @@ def _wire(monkeypatch: pytest.MonkeyPatch):
     restapi.app.dependency_overrides[require_authenticated_user] = lambda: _user(role=Role.INGESTONLY)
     jm = AsyncMock()
     monkeypatch.setattr(restapi, "jobmanager", jm, raising=False)
+    monkeypatch.setattr(restapi, "redis_client", AsyncMock(assert_claim=AsyncMock(return_value=None)), raising=False)
     monkeypatch.setattr(restapi, "metadata_storage", AsyncMock(), raising=False)
     yield jm
     restapi.app.dependency_overrides.clear()
@@ -360,3 +363,17 @@ def test_add_job_errors_404_before_authz_when_job_missing(client: TestClient, _w
 
     assert response.status_code == 404
     assert calls == []
+
+
+def test_worker_job_create_rejects_missing_claim(client, _wire, monkeypatch):
+    _configure_trusted_ingestor(monkeypatch)
+    response = client.post("/v1/job", params={"datasource_id": "primary-ds"}, headers={"X-Ingestor-Type": "example", "X-Ingestor-Name": "primary"})
+    assert response.status_code == 409
+    _wire.upsert_job.assert_not_awaited()
+
+
+def test_worker_job_create_rejects_claim_for_another_datasource(client, _wire, monkeypatch):
+    _configure_trusted_ingestor(monkeypatch)
+    response = client.post("/v1/job", params={"datasource_id": "primary-ds"}, headers={**INGESTOR_HEADERS, "X-RAG-Datasource-ID": "secondary-ds"})
+    assert response.status_code == 409
+    _wire.upsert_job.assert_not_awaited()
