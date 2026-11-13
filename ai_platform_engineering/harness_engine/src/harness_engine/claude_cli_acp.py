@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import signal
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -28,6 +30,10 @@ from acp.schema import (
     ToolCallProgress,
     ToolCallStart,
 )
+from pydantic import ValidationError
+
+from harness_engine.claude_research import PASSES, PassUsage, ResearchEvidence, ResearchReport
+from harness_engine.config import ClaudeResearchPolicy
 
 
 class ClaudeCodeCLIAgent(Agent):
@@ -46,6 +52,10 @@ class ClaudeCodeCLIAgent(Agent):
         self.options: dict[str, Any] = {}
         self.system_prompt = ""
         self.servers: dict[str, Any] = {}
+        self.research: ResearchEvidence | None = None
+        self.research_policy: ClaudeResearchPolicy | None = None
+        self.last_result: dict[str, Any] = {}
+        self.remaining_budget = 0.0
 
     def on_connect(self, conn: Client) -> None:
         self.client = conn
@@ -93,6 +103,16 @@ class ClaudeCodeCLIAgent(Agent):
         if not isinstance(self.system_prompt, str):
             raise ValueError("CLI instructions must be text")
         self.options, self.servers = options, servers
+        if options.get("research") is not None:
+            self.research_policy = ClaudeResearchPolicy.model_validate(options["research"])
+            if options["maxTurns"] < 6:
+                raise ValueError("Research requires at least six turns across three passes")
+            # The worker permits research only inside its OS-isolated CLI.
+            options["tools"] = list(dict.fromkeys(tools + ["Read", "Grep", "Glob"]))
+            options["allowedTools"] = list(dict.fromkeys(allowed + ["Read", "Grep", "Glob"]))
+            options["allowedTools"].append("mcp__research__read_artifact")
+            servers["research"] = {"type": "stdio", "command": sys.executable,
+                                   "args": ["-m", "harness_engine.claude_research_artifacts", "--root", str(self.cwd)]}
 
     async def new_session(self, cwd: str, mcp_servers: list[Any] | None = None, **kwargs: Any) -> NewSessionResponse:
         self.configure(cwd, mcp_servers, kwargs)
@@ -146,6 +166,8 @@ class ClaudeCodeCLIAgent(Agent):
 
     async def update(self, update: Any) -> None:
         assert self.client is not None and self.session_id is not None
+        if self.research and isinstance(update, AgentMessageChunk):
+            update = AgentThoughtChunk(session_update="agent_thought_chunk", content=update.content)
         await self.client.session_update(session_id=self.session_id, update=update)
 
     async def prompt(self, session_id: str, prompt: list[Any], **kwargs: Any) -> PromptResponse:
@@ -157,10 +179,73 @@ class ClaudeCodeCLIAgent(Agent):
         try:
             if self.cancelled:
                 return PromptResponse(stop_reason="cancelled")
+            if self.research_policy:
+                return await self.run_research(session_id, prompt)
             return await self.run_prompt(session_id, prompt)
         finally:
             self.prompting = False
             self.cancelled = False
+
+    async def run_research(self, session_id: str, prompt: list[Any]) -> PromptResponse:
+        assert self.research_policy and self.client
+        self.research = ResearchEvidence(self.cwd)
+        targets = re.findall(r"https://github\.com/([\w.-]+)/([\w.-]+)/pull/(\d+)", "\n".join(block.text for block in prompt))
+        if len(set(targets)) == 1:
+            owner, repo, number = targets[0]
+            self.research.expected_target = (owner, repo, int(number))
+        self.remaining_budget = self.research_policy.max_budget_usd
+        total_turns = self.options["maxTurns"]
+        remaining_turns = total_turns
+        reason = "The worker did not confirm all research passes."
+        try:
+            async with asyncio.timeout(self.research_policy.max_seconds):
+                for index, (phase, instructions) in enumerate(PASSES):
+                    self.research.phase = phase
+                    await self.update(AgentThoughtChunk(session_update="agent_thought_chunk", content=TextContentBlock(
+                        type="text", text=f"\nResearch pass {index + 1}/3: {phase}.\n",
+                    )))
+                    # Reserve at least two turns for each remaining pass.
+                    self.options["maxTurns"] = remaining_turns - 2 * (2 - index)
+                    if self.options["maxTurns"] < 2 or self.remaining_budget <= 0:
+                        reason = "The shared research turn or cost budget was exhausted."
+                        break
+                    message = [*prompt, TextContentBlock(type="text", text=instructions)] if index == 0 else [TextContentBlock(type="text", text=instructions)]
+                    response = await self.run_prompt(session_id, message)
+                    if response.stop_reason == "cancelled":
+                        return response
+                    usage = PassUsage.model_validate(self.last_result)
+                    if usage.num_turns > self.options["maxTurns"]:
+                        raise ValueError("CLI exceeded the assigned pass budget")
+                    remaining_turns -= usage.num_turns
+                    self.remaining_budget -= usage.total_cost_usd
+                else:
+                    report = ResearchReport.model_validate(self.last_result.get("structured_output"))
+                    reason = self.research.rejection(report)
+                    if reason is None:
+                        content = report.report_markdown + (
+                            f"\n\n---\nResearch execution: 3 passes; {total_turns - remaining_turns} model turns; "
+                            f"{sum(self.research.successful.values())} successful source inspections; "
+                            f"{len(self.research.accessed & self.research.overflow)}/{len(self.research.overflow)} saved outputs fully paged. "
+                            f"PR head: `{report.head_sha}`; changed files accounted for: "
+                            f"{len(self.research.files)}/{self.research.file_count}."
+                        )
+                        await self.client.session_update(session_id=session_id, update=AgentMessageChunk(
+                            session_update="agent_message_chunk", content=TextContentBlock(type="text", text=content),
+                        ))
+                        return PromptResponse(stop_reason="end_turn")
+        except TimeoutError:
+            reason = "The research deadline was reached before verification completed."
+        except (RequestError, ValidationError, KeyError, TypeError, ValueError):
+            reason = "A research pass failed or returned an invalid evidence report."
+        finally:
+            self.options["maxTurns"] = total_turns
+            self.research = None
+        await self.client.session_update(session_id=session_id, update=AgentMessageChunk(
+            session_update="agent_message_chunk", content=TextContentBlock(
+                type="text", text=f"Research incomplete: {reason} No verified final report was released.",
+            ),
+        ))
+        return PromptResponse(stop_reason="end_turn")
 
     async def run_prompt(self, session_id: str, prompt: list[Any]) -> PromptResponse:
         with TemporaryDirectory(prefix=".caipe-cli-turn-", dir=self.cwd) as directory:
@@ -179,6 +264,10 @@ class ClaudeCodeCLIAgent(Agent):
                 "--append-system-prompt-file", str(instructions), "--disable-slash-commands",
                 "--resume" if self.resume else "--session-id", session_id,
             ]
+            if self.research:
+                command += ["--effort", "high", "--max-budget-usd", str(self.remaining_budget)]
+                if self.research.phase == "Report":
+                    command += ["--json-schema", json.dumps(ResearchReport.model_json_schema())]
             # No SDK client or caller credential is used here. The child remains
             # in the outer worker's dedicated process group, which drains it.
             process = await asyncio.create_subprocess_exec(
@@ -227,6 +316,8 @@ class ClaudeCodeCLIAgent(Agent):
                                 ))
                             elif block["type"] == "tool_use" and block["id"] not in started:
                                 started.add(block["id"])
+                                if self.research:
+                                    self.research.calls[block["id"]] = (block["name"], block["input"])
                                 await self.update(ToolCallStart(
                                     session_update="tool_call", tool_call_id=block["id"], title=block["name"],
                                     status="in_progress", raw_input=block["input"],
@@ -236,6 +327,8 @@ class ClaudeCodeCLIAgent(Agent):
                         content = event.get("message", {}).get("content", [])
                         for block in content if isinstance(content, list) else []:
                             if block.get("type") == "tool_result" and block["tool_use_id"] in started:
+                                if self.research:
+                                    self.research.result(block["tool_use_id"], block.get("content"), bool(block.get("is_error")))
                                 await self.update(ToolCallProgress(
                                     session_update="tool_call_update", tool_call_id=block["tool_use_id"],
                                     status="failed" if block.get("is_error") else "completed", raw_output=block.get("content"),
@@ -248,6 +341,7 @@ class ClaudeCodeCLIAgent(Agent):
                 if exit_code or result is None or result.get("is_error") or result.get("subtype") != "success":
                     raise RequestError.internal_error({"message": "Claude Code CLI did not complete its turn"})
                 self.resume = True
+                self.last_result = result
                 return PromptResponse(stop_reason="end_turn")
             finally:
                 if process.returncode is None:
