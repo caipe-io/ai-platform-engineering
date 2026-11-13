@@ -1,16 +1,13 @@
 import Image from "next/image";
 import { Badge } from "@/components/ui/badge";
-import { getHarnessPresentation } from "@/lib/agent-presentation";
-import { getAgentFramework, AGENT_FRAMEWORKS, type AgentFramework } from "@/lib/agent-framework";
+import { AGENT_FRAMEWORKS, type AgentFramework } from "@/lib/agent-framework";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { AgentIdentity } from "./AgentIdentity";
+import type { AgentAvatarAgent } from "./AgentAvatar";
 
-export function AgentTechnologyIcon({ protocol, harnessId, framework, decorative = false }: { protocol: "a2a" | "acp"; harnessId?: string; framework?: string; decorative?: boolean }) {
-  const identity = harnessId ? getHarnessPresentation(harnessId) : getAgentFramework(framework);
-  return <div aria-hidden={decorative || undefined} className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border bg-muted/30">
-    {identity.logoSrc ? <Image src={identity.logoSrc} alt={identity.label} width={32} height={32} className="h-8 w-8 object-contain" />
-      : <ProtocolLogo protocol={protocol} large />}
-  </div>;
+export function AgentTechnologyIcon({ protocol, harnessId, framework, agent, decorative = false }: { protocol: "a2a" | "acp"; harnessId?: string; framework?: string; agent?: AgentAvatarAgent; decorative?: boolean }) {
+  return <AgentIdentity agent={agent} harnessId={harnessId} protocol={protocol} framework={framework} decorative={decorative} />;
 }
 
 function ProtocolLogo({ protocol, large = false }: { protocol: "a2a" | "acp"; large?: boolean }) {

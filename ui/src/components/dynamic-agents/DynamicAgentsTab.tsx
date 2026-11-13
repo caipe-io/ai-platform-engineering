@@ -5,14 +5,13 @@ import { getErrorMessage } from "@/lib/error-utils";
 // assisted-by Codex Codex-sonnet-4-6
 
 import { LastReviewBadge } from "@/components/ai-review";
-import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
 import { Card,CardContent } from "@/components/ui/card";
 import { toYaml } from "@/lib/yaml-serializer";
 import { useChatStore } from "@/store/chat-store";
-import type { DynamicAgentConfigWithPermissions } from "@/types/dynamic-agent";
+import { isConnectedAgent, type AgentCatalogEntry, type DynamicAgentConfigWithPermissions } from "@/types/dynamic-agent";
 import {
 Bot,
 AlertCircle,
@@ -36,7 +35,11 @@ import { useRouter } from "next/navigation";
 import React from "react";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { AgentAvatar } from "./AgentAvatar";
+import { AgentIdentity } from "./AgentIdentity";
+import { NativeAgentCatalogCard } from "./NativeAgentCatalogCard";
+import { RemoteAgentRegistry } from "./RemoteAgentRegistry";
+import { useAgentCatalogView } from "@/hooks/use-agent-catalog-view";
+import { LayoutGrid, List } from "lucide-react";
 import { AgentEditorSkeleton,AgentsListSkeleton } from "./AgentsLoadingSkeleton";
 import { DynamicAgentEditor } from "./DynamicAgentEditor";
 import type { AgentSetupStep } from "./deep-linking";
@@ -77,7 +80,7 @@ export function DynamicAgentsTab({
 }: DynamicAgentsTabProps = {}) {
   const router = useRouter();
   const createConversation = useChatStore((state) => state.createConversation);
-  const [agents, setAgents] = React.useState<DynamicAgentConfigWithPermissions[]>([]);
+  const [agents, setAgents] = React.useState<AgentCatalogEntry[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [editingAgent, setEditingAgent] = React.useState<DynamicAgentConfigWithPermissions | null>(null);
@@ -96,40 +99,52 @@ export function DynamicAgentsTab({
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(20);
   const [total, setTotal] = React.useState(0);
+  const [view, setView] = useAgentCatalogView();
+  const [source, setSource] = React.useState("all");
+  const [runtime, setRuntime] = React.useState("all");
+  const [registryError, setRegistryError] = React.useState<string | null>(null);
+  const requestRef = React.useRef(0);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   const fetchAgents = React.useCallback(async () => {
+    const request = ++requestRef.current;
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams({
+        catalog: "true",
+        source,
         page: page.toString(),
         page_size: pageSize.toString(),
       });
       if (search.trim()) params.set("search", search.trim());
+      if (runtime !== "all") params.set("runtime", runtime);
       const response = await fetch(`/api/dynamic-agents?${params}`);
       const data = await response.json();
+      if (request !== requestRef.current) return;
       if (data.success) {
         setAgents(
-          (data.data.items || []).map((agent: DynamicAgentConfigWithPermissions) => ({
+          (data.data.items || []).map((agent: AgentCatalogEntry) => isConnectedAgent(agent) ? agent : ({
             ...agent,
             permissions: agent.permissions ?? DEFAULT_ROW_PERMISSIONS,
           })),
         );
         setTotal(data.data.total ?? 0);
+        setRegistryError(data.data.registry_error || null);
       } else {
         setError(data.error || "Failed to fetch agents");
       }
     } catch (err) {
-      setError(getErrorMessage(err, "") || "Failed to fetch agents");
+      if (request === requestRef.current) setError(getErrorMessage(err, "") || "Failed to fetch agents");
     } finally {
-      setLoading(false);
+      if (request === requestRef.current) setLoading(false);
     }
-  }, [page, pageSize, search]);
+  }, [page, pageSize, search, source, runtime]);
 
   React.useEffect(() => {
-    fetchAgents();
+    void fetchAgents();
+    return () => { requestRef.current += 1; };
   }, [fetchAgents]);
 
   React.useEffect(() => {
@@ -414,7 +429,7 @@ export function DynamicAgentsTab({
   }
 
   return (
-    <>
+    <RemoteAgentRegistry onRegistryChange={() => void fetchAgents()} renderCatalog={remote => <>
       <WorkspacePageActions>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <div className="relative">
@@ -426,16 +441,23 @@ export function DynamicAgentsTab({
               className="h-9 w-48 pl-9"
             />
           </div>
-          <Button variant="outline" size="sm" onClick={fetchAgents} disabled={loading}>
+          <Button variant="outline" size="sm" onClick={() => { void fetchAgents(); remote.refresh(); }} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
+          {remote.toolbar}
           <Button size="sm" onClick={() => setIsCreating(true)}>
             <Plus className="mr-2 h-4 w-4" />
             New Agent
           </Button>
         </div>
       </WorkspacePageActions>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-1" role="group" aria-label="Agent source">{[["all", "All agents"], ["created", "Created in CAIPE"], ["connected", "Connected"]].map(([key, label]) => <Button key={key} type="button" variant={source === key ? "secondary" : "ghost"} size="sm" aria-pressed={source === key} onClick={() => { setSource(key); setPage(1); }}>{label}</Button>)}</div>
+        <Select aria-label="Filter runtime or connection" className="w-48" value={runtime} onChange={event => { setRuntime(event.target.value); setPage(1); }}><option value="all">All runtimes</option><optgroup label="Runtime"><option value="dynamic_agents">Deep Agents</option><option value="claude_agent_sdk">Claude Agent SDK</option><option value="claude_code_cli_acp">Claude Code</option><option value="agentcore">AgentCore</option><option value="google_adk">Google ADK</option><option value="app">App assistant</option></optgroup><optgroup label="Connection"><option value="a2a">A2A</option><option value="acp">ACP</option></optgroup></Select>
+        <div className="flex gap-1 rounded-lg border p-1" role="group" aria-label="Catalog view"><Button type="button" size="sm" variant={view === "grid" ? "secondary" : "ghost"} aria-pressed={view === "grid"} onClick={() => setView("grid")}><LayoutGrid className="mr-2 h-4 w-4" />Grid</Button><Button type="button" size="sm" variant={view === "list" ? "secondary" : "ghost"} aria-pressed={view === "list"} onClick={() => setView("list")}><List className="mr-2 h-4 w-4" />List</Button></div>
+      </div>
+      {registryError && <p role="alert" className="mb-3 text-sm text-destructive">{registryError}</p>}
       <Card className="rounded-none border-0 bg-transparent shadow-none">
         <CardContent className="px-0 pt-0">
         {loading ? (
@@ -474,13 +496,13 @@ export function DynamicAgentsTab({
         ) : (
           <div className="space-y-3">
             {/* Header */}
-            <div className="grid grid-cols-12 gap-4 pb-2 border-b text-xs font-medium text-muted-foreground px-2">
-              <div className="col-span-4">Name</div>
-              <div className="col-span-2">Visibility</div>
-              <div className="col-span-1">Tools</div>
-              <div className="col-span-1">Grade</div>
-              <div className="col-span-2">Status</div>
-              <div className="col-span-2 text-right">Actions</div>
+            <div className={`${view === "grid" ? "hidden" : "hidden md:grid"} grid-cols-12 gap-4 pb-2 border-b text-xs font-medium text-muted-foreground px-2`}>
+              <div className="md:col-span-4">Name</div>
+              <div className="md:col-span-2">Visibility</div>
+              <div className="md:col-span-1">Tools</div>
+              <div className="md:col-span-1">Grade</div>
+              <div className="md:col-span-2">Status</div>
+              <div className="md:col-span-2 text-right">Actions</div>
             </div>
 
             {/* Result count */}
@@ -493,61 +515,13 @@ export function DynamicAgentsTab({
             )}
 
             {/* Agent rows */}
+            <div className={view === "grid" ? "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3" : "space-y-2"} aria-label="Agent catalog">
             {agents.map((agent) => {
+              if (isConnectedAgent(agent)) return remote.renderAgent(agent, view);
               const canManage = agentCanManage(agent);
               const rowActionError = rowActionErrors[agent._id];
-              return (
-              <div key={agent._id} className="space-y-2">
-              <div
-                className="grid grid-cols-12 gap-4 py-3 px-2 rounded-lg hover:bg-muted/50 items-center cursor-pointer"
-                onClick={() => openAgent(agent)}
-              >
-                <div className="col-span-4 min-w-0">
-                    <div className="flex items-center gap-3">
-                      <AgentAvatar
-                        agent={agent}
-                        rounded="rounded-lg"
-                        size="h-9 w-9"
-                        iconSize="h-5 w-5"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <div className="truncate font-medium text-sm" title={agent.name}>{agent.name}</div>
-                          <AgentHarnessBadge
-                            harnessId={agent.execution_harness_id}
-                            presentation={agent.presentation}
-                          />
-                        </div>
-                        {agent.description && (
-                          <div className="text-xs text-muted-foreground truncate">
-                            {agent.description}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                </div>
-
-                <div className="col-span-2">
-                  <Badge
-                    variant="outline"
-                    className={`gap-1 ${getVisibilityColor(agent.visibility)}`}
-                  >
-                    {getVisibilityIcon(agent.visibility)}
-                    {agent.visibility}
-                  </Badge>
-                </div>
-
-                <div className="col-span-1">
-                  <span className="text-sm text-muted-foreground">
-                    {Object.keys(agent.allowed_tools || {}).length}
-                  </span>
-                </div>
-
-                <div className="col-span-1">
-                  <LastReviewBadge review={agent.last_review} />
-                </div>
-
-                <div className="col-span-2">
+              const status = (
+                <div className="md:col-span-2">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -578,8 +552,9 @@ export function DynamicAgentsTab({
                     )}
                   </button>
                 </div>
-
-                <div className="col-span-2 flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+);
+              const actions = (
+                <div className="md:col-span-2 flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -670,7 +645,54 @@ export function DynamicAgentsTab({
                       </Button>
                     )
                   )}
+                </div>);
+              if (view === "grid") return <NativeAgentCatalogCard key={`caipe:${agent._id}`} agent={agent} actions={actions} status={status} onOpen={() => openAgent(agent)} onChat={() => void handleStartChat(agent)} chatDisabled={!agent.enabled || agent.execution_readiness?.ready === false || startingChatAgentId !== null} error={rowActionError} onDismiss={() => clearRowActionError(agent._id)} />;
+              return (
+              <div key={agent._id} className="space-y-2">
+              <div
+                className="grid grid-cols-1 md:grid-cols-12 gap-4 py-3 px-2 rounded-lg hover:bg-muted/50 items-center cursor-pointer"
+                onClick={() => openAgent(agent)}
+              >
+                <div className="md:col-span-4 min-w-0">
+                    <div className="flex items-center gap-3">
+                      <AgentIdentity agent={agent} harnessId={agent.execution_harness_id} presentation={agent.presentation} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className="truncate font-medium text-sm" title={agent.name}>{agent.name}</div>
+
+                        </div>
+                        {agent.description && (
+                          <div className="text-xs text-muted-foreground truncate">
+                            {agent.description}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                 </div>
+
+                <div className="md:col-span-2">
+                  <Badge
+                    variant="outline"
+                    className={`gap-1 ${getVisibilityColor(agent.visibility)}`}
+                  >
+                    {getVisibilityIcon(agent.visibility)}
+                    {agent.visibility}
+                  </Badge>
+                </div>
+
+                <div className="md:col-span-1">
+                  <span className="text-sm text-muted-foreground">
+                    {Object.keys(agent.allowed_tools || {}).length}
+                  </span>
+                </div>
+
+                <div className="md:col-span-1">
+                  <LastReviewBadge review={agent.last_review} />
+                </div>
+
+                {status}
+
+                {actions}
               </div>
 
               {rowActionError && (
@@ -695,6 +717,7 @@ export function DynamicAgentsTab({
               </div>
             );
             })}
+            </div>
 
             {/* Pagination */}
             {total > pageSize && (
@@ -747,6 +770,7 @@ export function DynamicAgentsTab({
                 <div className="flex items-center gap-2">
                   <label className="text-sm text-muted-foreground whitespace-nowrap">Rows</label>
                   <Select
+                    aria-label="Rows per page"
                     value={pageSize}
                     onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
                     className="h-8 rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -762,6 +786,6 @@ export function DynamicAgentsTab({
         )}
         </CardContent>
       </Card>
-    </>
+    </>} />
   );
 }

@@ -149,7 +149,7 @@ describe("DynamicAgentsPage", () => {
 
     expect(screen.getByRole("heading", { level: 1,name: "Agents" })).toBeInTheDocument();
     expect(
-      screen.getByText("Build agents and choose the instructions, tools, and model they use."),
+      screen.getByText("Build, connect, and chat with your team’s agents."),
     ).toBeInTheDocument();
     const breadcrumb = screen.getByRole("navigation",{ name: "Breadcrumb" });
     expect(within(breadcrumb).getByRole("link",{ name: "Home" })).toHaveAttribute("href","/");
@@ -328,10 +328,11 @@ describe("DynamicAgentsPage", () => {
     expect(mockPush).toHaveBeenCalledWith("/dynamic-agents?tab=mcp-servers");
   });
 
-  it("opens the Remote Agents tab through its shareable URL", () => {
+  it("opens the unified Agents catalog through legacy Remote Agents URLs", () => {
     mockSearchParams = new URLSearchParams("tab=remote-agents");
     render(<DynamicAgentsPage />);
-    expect(screen.getByTestId("remote-agents-tab")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Remote Agents" })).toBeInTheDocument();
+    expect(screen.getByTestId("dynamic-agents-tab")).toBeInTheDocument();
+    expect(screen.queryByTestId("remote-agents-tab")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Agents" })).toBeInTheDocument();
   });
 });

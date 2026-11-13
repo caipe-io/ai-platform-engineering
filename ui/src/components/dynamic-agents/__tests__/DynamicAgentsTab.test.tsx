@@ -6,6 +6,11 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 const mockPush = jest.fn();
 const mockCreateConversation = jest.fn();
 
+jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { sub: "test-user" } }) }));
+jest.mock("../RemoteAgentRegistry", () => ({
+  RemoteAgentRegistry: ({ renderCatalog }: { renderCatalog: (controls: unknown) => React.ReactNode }) => renderCatalog({ toolbar: null, refresh: jest.fn(), renderAgent: jest.fn() }),
+}));
+
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
 }));
@@ -79,6 +84,7 @@ describe("DynamicAgentsTab search + pagination", () => {
   let fetchMock: jest.Mock;
 
   beforeEach(() => {
+    localStorage.setItem("caipe:agent-catalog-view:test-user", "list");
     jest.useFakeTimers();
     mockPush.mockReset();
     mockCreateConversation.mockReset();
@@ -132,7 +138,7 @@ describe("DynamicAgentsTab search + pagination", () => {
     });
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?page=1&page_size=20");
+      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=20");
     });
   });
 
@@ -174,7 +180,7 @@ describe("DynamicAgentsTab search + pagination", () => {
     });
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?page=1&page_size=20&search=ops");
+      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=20&search=ops");
     });
   });
 
@@ -198,7 +204,7 @@ describe("DynamicAgentsTab search + pagination", () => {
     fireEvent.click(screen.getByText("2"));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?page=2&page_size=20");
+      expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?catalog=true&source=all&page=2&page_size=20");
     });
 
     fetchMock.mockClear();
@@ -213,7 +219,7 @@ describe("DynamicAgentsTab search + pagination", () => {
     });
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?page=1&page_size=20&search=ops");
+      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=20&search=ops");
     });
   });
 
@@ -237,7 +243,7 @@ describe("DynamicAgentsTab search + pagination", () => {
     fireEvent.click(screen.getByText("2"));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?page=2&page_size=20");
+      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?catalog=true&source=all&page=2&page_size=20");
     });
   });
 
@@ -260,16 +266,16 @@ describe("DynamicAgentsTab search + pagination", () => {
     // Move to page 2 first so we can assert the reset-to-1 behavior.
     fireEvent.click(screen.getByText("2"));
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?page=2&page_size=20");
+      expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?catalog=true&source=all&page=2&page_size=20");
     });
-    const pageSizeSelect = await screen.findByRole("combobox");
+    const pageSizeSelect = await screen.findByRole("combobox", { name: "Rows per page" });
 
     fetchMock.mockClear();
 
     fireEvent.change(pageSizeSelect, { target: { value: "50" } });
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?page=1&page_size=50");
+      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=50");
     });
   });
 
@@ -304,7 +310,7 @@ describe("DynamicAgentsTab search + pagination", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenLastCalledWith(
-        "/api/dynamic-agents?page=1&page_size=20&search=zzz-no-match",
+        "/api/dynamic-agents?catalog=true&source=all&page=1&page_size=20&search=zzz-no-match",
       );
     });
 
@@ -320,7 +326,7 @@ describe("DynamicAgentsTab search + pagination", () => {
 
     expect(screen.getByPlaceholderText("Search by name or ID...")).toHaveValue("");
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?page=1&page_size=20");
+      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=20");
     });
     await screen.findByText("Ops Helper");
   });
@@ -474,6 +480,29 @@ describe("DynamicAgentsTab search + pagination", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Active", exact: true }));
     expect(await screen.findByText("Execution configuration is unavailable")).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+  });
+
+  it("switches to compact cards without refetching or losing agent management", async () => {
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Ops Helper");
+    const before = fetchMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Grid", exact: true }));
+    expect(screen.getByRole("article", { name: "Ops Helper" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Execution harness: LangChain Deep Agents" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(before);
+    fireEvent.click(screen.getByRole("button", { name: "Details for Ops Helper" }));
+    expect(screen.getByRole("dialog", { name: "Ops Helper" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete Ops Helper" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open agent" }));
+    expect(screen.getByTestId("dynamic-agent-editor")).toBeInTheDocument();
+  });
+
+  it("requests the connected source while preserving the chosen List view", async () => {
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Ops Helper");
+    fireEvent.click(screen.getByRole("button", { name: "Connected", exact: true }));
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?catalog=true&source=connected&page=1&page_size=20"));
+    expect(screen.getByRole("button", { name: "List", exact: true })).toHaveAttribute("aria-pressed", "true");
   });
 
 });

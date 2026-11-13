@@ -11,10 +11,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/toast";
 import type { AvailableSubagent, RemoteAgentCredentialSource, RemoteAgentRegistryEntry } from "@/types/dynamic-agent";
-import { Check, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { Check, Loader2, Plus, Search, Trash2, X } from "lucide-react";
 import React from "react";
 import { RemoteAgentDiscovery, type DiscoveredAgent } from "./RemoteAgentDiscovery";
 import { RemoteAgentSelection } from "./RemoteAgentSelection";
+import { RemoteAgentCatalogCard } from "./RemoteAgentCatalogCard";
 import { ConfiguredAcpAgentCard, isConfiguredAcpAgent } from "./ConfiguredAcpAgentCard";
 import { defaultRemoteAgentAuth, isRemoteAgentAuthConfigured, RemoteAgentAuthFields } from "./RemoteAgentAuthFields";
 
@@ -26,10 +27,16 @@ export interface RemoteAgentsPickerProps {
   disabled?: boolean;
 }
 
-export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPickerProps }) {
+export interface RemoteCatalogControls {
+  toolbar: React.ReactNode;
+  renderAgent: (item: RemoteAgentRegistryEntry, view: "grid" | "list") => React.ReactNode;
+  refresh: () => void;
+}
+
+export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange }: { selection?: RemoteAgentsPickerProps; renderCatalog?: (controls: RemoteCatalogControls) => React.ReactNode; onRegistryChange?: () => void }) {
   const { value = [], onChange = () => {}, disabled } = selection ?? {};
   const { toast } = useToast();
-  const includeAcp = !selection;
+  const includeAcp = !selection && !renderCatalog;
   const [acpAgents, setAcpAgents] = React.useState<AvailableSubagent[]>([]);
   const [acpLoading, setAcpLoading] = React.useState(includeAcp);
   const [acpError, setAcpError] = React.useState<string | null>(null);
@@ -149,6 +156,7 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
       setName(""); setEndpoint(""); setDescription(""); setTimeoutSeconds(120); setStreaming(false); setProbedCard(null);
       setCredentialSource(selection ? defaultRemoteAgentAuth() : { kind: "none", target: "header", name: "Authorization" });
       toast("Remote A2A agent added", "success");
+      onRegistryChange?.();
     } catch (error) {
       toast(`Could not add remote A2A agent: ${error instanceof Error ? error.message : "Request failed"}`, "error");
     } finally {
@@ -169,6 +177,7 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
       setItems((current) => current.filter((entry) => entry._id !== item._id));
       setDetailsId(null);
       onChange(value.filter((id) => id !== item._id));
+      onRegistryChange?.();
     } catch (error) {
       toast(`Could not remove remote A2A agent: ${error instanceof Error ? error.message : "Request failed"}`, "error");
     } finally {
@@ -193,6 +202,7 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
       setItems((current) => current.map((item) => item._id === editingId ? data.data : item).sort((a, b) => a.name.localeCompare(b.name)));
       setEditingId(null); setDetailsId(null); setChecks({});
       toast("Remote A2A agent updated", "success");
+      onRegistryChange?.();
     } catch (error) {
       toast(`Could not update remote A2A agent: ${error instanceof Error ? error.message : "Request failed"}`, "error");
     } finally {
@@ -216,8 +226,15 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
     setEditValues({ framework: item.framework || "unspecified", name: item.name, endpoint: item.endpoint || "", description: item.description || "", timeout_seconds: item.timeout_seconds || 120, streaming: item.streaming === true, credential_source: item.credential_source || defaultRemoteAgentAuth() });
   };
 
+  const renderAgent = (item: RemoteAgentRegistryEntry, view: "grid" | "list") => <RemoteAgentCatalogCard key={`a2a:${item._id}`} item={item} view={view} status={checks[item._id]} canManage={canManage} busy={saving || probing || loading || !!loadError}
+    onDetails={button => { cardTrigger.current = button; setDetailsId(item._id); }}
+    onTest={button => { cardTrigger.current = button; setDetailsId(item._id); void probeEndpoint(false, item); }}
+    onEdit={button => { cardTrigger.current = button; beginEdit(item); }} />;
+  const toolbar = canManage && <div className="flex gap-2"><Button type="button" variant="outline" ref={discoverTrigger} onClick={() => setDiscoverOpen(true)}><Search className="mr-2 h-4 w-4" />Discover agents</Button><Button type="button" variant="outline" ref={addTrigger} onClick={() => { setCardPreview(null); setAddOpen(true); }}><Plus className="mr-2 h-4 w-4" />Connect agent</Button></div>;
+
   return (
-    <div className="space-y-6">
+    <>
+      {renderCatalog ? renderCatalog({ toolbar, renderAgent, refresh: () => void loadItems() }) : <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-xl text-sm text-muted-foreground">Explore remote specialists, inspect their capabilities, and test a connection before adding them as subagents.</p>
         {canManage && <div className="flex gap-2">
@@ -237,26 +254,15 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="Remote agent catalog">
         {catalog.map(entry => {
           if (entry.source === "acp") return <ConfiguredAcpAgentCard key={entry.key} agent={entry.item} />;
-          const item = entry.item;
-          const check = checks[item._id];
-          return <article key={entry.key} aria-label={`${item.name} A2A agent`} className="flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-5 transition-colors hover:border-primary/40">
-            <div className="flex items-start gap-3"><AgentTechnologyIcon protocol="a2a" framework={item.framework} /><div className="min-w-0 flex-1"><h2 className="break-words font-semibold">{item.name}</h2><div className="mt-2 flex flex-wrap items-center gap-2"><AgentProtocolBadge protocol="a2a" /><span className="text-xs text-muted-foreground">{item.framework && item.framework !== "unspecified" ? getAgentFramework(item.framework).label : "Remote service"}</span></div></div></div>
-            <p className="line-clamp-3 text-sm text-muted-foreground">{item.description || "No description provided."}</p>
-            <div className="flex flex-wrap gap-1.5"><Badge variant="secondary">{item.streaming ? "Streaming enabled" : "Complete responses"}</Badge><Badge variant="outline">{item.timeout_seconds}s timeout</Badge>{agentCardSkills(check?.card).slice(0, 3).map((skill, index) => <Badge key={`skill-${index}`} variant="secondary">{skill.name}</Badge>)}{item.protocol_bindings?.map(binding => <Badge key={binding} variant="outline">{binding}</Badge>)}</div>
-            {check?.card && <p className="text-xs text-emerald-600 dark:text-emerald-400">Connection verified · {check.elapsed} ms</p>}
-            {check?.error && <p className="text-xs text-destructive">Connection failed</p>}
-            {!check && <p className="text-xs text-muted-foreground">Connection not tested</p>}
-            <div className="mt-auto flex flex-wrap gap-1.5 pt-2"><Button type="button" variant="outline" size="sm" aria-label={`Details for ${item.name}`} onClick={event => { cardTrigger.current = event.currentTarget; setDetailsId(item._id); }}>View details</Button>
-              {canManage && <Button type="button" size="sm" disabled={saving || probing} onClick={event => { cardTrigger.current = event.currentTarget; setDetailsId(item._id); void probeEndpoint(false, item); }}>Test connection</Button>}
-              {canManage && <Button type="button" variant="ghost" size="sm" disabled={saving || probing} className="px-1" aria-label={`Edit ${item.name}`} onClick={event => { cardTrigger.current = event.currentTarget; beginEdit(item); }}><Pencil className="h-4 w-4" /></Button>}
-            </div>
-          </article>;
+          return renderAgent(entry.item, "grid");
         })}
       </div>
       <p className="text-xs text-muted-foreground">{catalog.length} agent{catalog.length === 1 ? "" : "s"} shown · Add these specialists in Agent Builder → Advanced → Subagents.</p>
+      </div>}
+      {renderCatalog && loadError && <p role="alert" className="text-sm text-destructive">{loadError}</p>}
       <Dialog open={!!detail} onOpenChange={open => { if (!open && !probing && !saving) setDetailsId(null); }}>
         <DialogContent onCloseAutoFocus={event => { event.preventDefault(); if (!editingId) cardTrigger.current?.focus(); }} className="max-h-[85dvh] max-w-2xl overflow-y-auto">
-          <DialogHeader><DialogTitle className="flex items-center gap-3"><AgentTechnologyIcon decorative protocol="a2a" framework={detail?.framework} />{detail?.name}</DialogTitle><DialogDescription>{detail?.description || "Remote A2A agent details and connection test."}</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle className="flex items-center gap-3"><AgentTechnologyIcon decorative agent={detail} protocol="a2a" framework={detail?.framework} />{detail?.name}</DialogTitle><DialogDescription>{detail?.description || "Remote A2A agent details and connection test."}</DialogDescription></DialogHeader>
           {detail && <>
             <div className="flex flex-wrap gap-2"><AgentProtocolBadge protocol="a2a" version={detail.protocol_version} />{detail.framework && detail.framework !== "unspecified" && <Badge variant="secondary">{getAgentFramework(detail.framework).label}</Badge>}<Badge variant="secondary">{detail.streaming ? "Streaming enabled" : "Complete responses"}</Badge><Badge variant="outline">{detail.timeout_seconds}s timeout</Badge></div>
             {canManage && <dl className="space-y-2 text-sm"><dt className="font-medium">Agent URL</dt><dd className="break-all font-mono text-xs text-muted-foreground">{detail.endpoint}</dd><dt className="font-medium">Authentication</dt><dd className="text-muted-foreground">{detail.credential_source?.kind === "caller_token" ? "Your user identity" : detail.credential_source?.kind === "secret_ref" ? "Saved secret" : detail.credential_source?.kind === "provider_connection" ? "Connected credential" : "Public agent"}</dd></dl>}
@@ -345,6 +351,6 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
           {cardPreview && <AgentCardDetails card={cardPreview} />}
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }

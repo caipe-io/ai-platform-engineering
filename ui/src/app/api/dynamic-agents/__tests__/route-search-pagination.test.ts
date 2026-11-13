@@ -15,6 +15,9 @@ const mockRequireAgentPermission = jest.fn();
 const mockGetPlatformDefaultAgentId = jest.fn();
 const mockFilterAgentsByOwnershipScopeForSession = jest.fn();
 
+const mockReadRemoteRegistry = jest.fn();
+jest.mock("@/lib/remote-agent-registry.server", () => ({ readRemoteAgentRegistry: (...args: unknown[]) => mockReadRemoteRegistry(...args) }));
+
 jest.mock("@/lib/agent-mutation-lock", () => ({ withAgentMutationLock: async (_id: string, operation: () => Promise<unknown>) => operation() }));
 
 jest.mock("@/lib/api-middleware", () => {
@@ -138,6 +141,7 @@ describe("GET /api/dynamic-agents search + pagination", () => {
       can_discover: true,
     });
     mockGetPlatformDefaultAgentId.mockResolvedValue(null);
+    mockReadRemoteRegistry.mockResolvedValue({ items: [], can_manage_registry: false });
   });
 
   function mockFind(items: unknown[]) {
@@ -257,4 +261,61 @@ describe("GET /api/dynamic-agents search + pagination", () => {
     expect(page3Body.data.items[0]._id).toBe("agent-20");
     expect(page3Body.data.total).toBe(24);
   });
+  it("paginates a single authorized native/connected catalog without treating remote IDs as native permissions", async () => {
+    mockFind([{ _id: "shared-id", name: "Alpha", model: { id: "m", provider: "p" } }, { _id: "hidden", name: "Hidden" }]);
+    mockFilterResourcesByPermission.mockImplementation(async (_session, items) => items.filter((a: { _id: string }) => a._id !== "hidden"));
+    mockReadRemoteRegistry.mockResolvedValue({ items: [{ _id: "shared-id", name: "Beta", timeout_seconds: 120 }] });
+    const { GET } = await import("../route");
+    const first = await (await GET(request("/api/dynamic-agents?catalog=true&page_size=1&page=1"))).json();
+    const second = await (await GET(request("/api/dynamic-agents?catalog=true&page_size=1&page=2"))).json();
+    expect(first.data.total).toBe(2);
+    expect(first.data.items[0].name).toBe("Alpha");
+    expect(first.data.items[0]).not.toHaveProperty("catalog_source");
+    expect(second.data.items[0]).toMatchObject({ _id: "shared-id", name: "Beta", catalog_source: "a2a" });
+    expect(second.data.items[0]).not.toHaveProperty("permissions");
+    expect(mockResolveAgentListPermissions).toHaveBeenLastCalledWith(session, []);
+  });
+
+  it("does not query connected agents for the created-only filter", async () => {
+    mockFind([]);
+    const { GET } = await import("../route");
+    await GET(request("/api/dynamic-agents?catalog=true&source=created"));
+    expect(mockReadRemoteRegistry).not.toHaveBeenCalled();
+  });
+
+  it("sorts duplicate names with legacy Mongo ObjectIds before unified pagination", async () => {
+    mockFind([{ _id: new ObjectId("507f1f77bcf86cd799439012"), name: "Example", model: { id: "m", provider: "p" } }, { _id: new ObjectId("507f1f77bcf86cd799439011"), name: "Example", model: { id: "m", provider: "p" } }]);
+    const { GET } = await import("../route");
+    const response = await GET(request("/api/dynamic-agents?catalog=true"));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.data.items.map((a: { _id: string }) => a._id)).toEqual(["507f1f77bcf86cd799439011", "507f1f77bcf86cd799439012"]);
+  });
+
+  it("keeps authorized native results usable when the connected registry fails", async () => {
+    mockFind([{ _id: "example", name: "Example", model: { id: "m", provider: "p" } }]);
+    mockReadRemoteRegistry.mockRejectedValue(new Error("Registry unavailable"));
+    const { GET } = await import("../route");
+    const body = await (await GET(request("/api/dynamic-agents?catalog=true"))).json();
+    expect(body.data.items).toHaveLength(1);
+    expect(body.data.registry_error).toContain("Connected agents are temporarily unavailable");
+  });
+
+  it("filters connected entries by source and search before counting", async () => {
+    mockFind([{ _id: "native", name: "Example native", model: { id: "m", provider: "p" } }]);
+    mockReadRemoteRegistry.mockResolvedValue({ items: [{ _id: "one", name: "Example remote", timeout_seconds: 120 }, { _id: "two", name: "Unrelated", timeout_seconds: 120 }] });
+    const { GET } = await import("../route");
+    const body = await (await GET(request("/api/dynamic-agents?catalog=true&source=connected&search=example"))).json();
+    expect(body.data.total).toBe(1);
+    expect(body.data.items[0]._id).toBe("one");
+  });
+
+  it("matches Claude SDK runtimes across native and declared remote agents without guessing from model names", async () => {
+    mockFind([{ _id: "sdk", name: "SDK", execution_harness_id: "claude_agent_sdk_remote" }, { _id: "native", name: "Native", execution_harness_id: "dynamic_agents", model: { id: "claude-example", provider: "anthropic" } }]);
+    mockReadRemoteRegistry.mockResolvedValue({ items: [{ _id: "remote", name: "Remote", framework: "claude_agent_sdk", timeout_seconds: 120 }, { _id: "unknown", name: "Unknown", timeout_seconds: 120 }] });
+    const { GET } = await import("../route");
+    const body = await (await GET(request("/api/dynamic-agents?catalog=true&runtime=claude_agent_sdk"))).json();
+    expect(body.data.items.map((a: { _id: string }) => a._id).sort()).toEqual(["remote", "sdk"]);
+  });
+
 });

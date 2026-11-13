@@ -33,6 +33,15 @@ export interface AgentAvatarAgent {
   custom_theme_config?: CustomThemeConfig | null;
 }
 
+/** One theme resolver for avatars and their matching catalog header wash. */
+export function resolveAgentTheme(agent?: AgentAvatarAgent | null, agentId?: string | null) {
+  const identity = agentId ?? agent?._id ?? agent?.id;
+  return {
+    theme: (agent?.ui?.gradient_theme ?? agent?.gradient_theme) || (identity ? getDeterministicAgentThemeId(identity) : null),
+    custom: agent?.ui?.custom_theme_config ?? agent?.custom_theme_config,
+  };
+}
+
 export interface AgentAvatarProps {
   /** Agent object — component extracts theme from agent.ui (or legacy agent.gradient_theme) */
   agent?: AgentAvatarAgent | null;
@@ -89,11 +98,9 @@ export function AgentAvatar({
 
   // Resolve theme: explicit overrides > agent.ui > legacy top-level fields > null
   const explicitGradientTheme = gradientThemeOverride ?? agent?.ui?.gradient_theme ?? agent?.gradient_theme ?? null;
-  const resolvedCustomThemeConfig = customThemeConfigOverride ?? agent?.ui?.custom_theme_config ?? agent?.custom_theme_config ?? null;
-  const identity = agentId ?? agent?._id ?? agent?.id ?? null;
-  const resolvedGradientTheme = explicitGradientTheme || (
-    !useGlobalTheme && identity ? getDeterministicAgentThemeId(identity) : null
-  );
+  const theme = resolveAgentTheme(agent, agentId);
+  const resolvedCustomThemeConfig = customThemeConfigOverride ?? theme.custom;
+  const resolvedGradientTheme = explicitGradientTheme || (!useGlobalTheme ? theme.theme : null);
 
   const gradientStyle = !useGlobalTheme && resolvedGradientTheme
     ? getGradientStyle(resolvedGradientTheme, resolvedCustomThemeConfig)

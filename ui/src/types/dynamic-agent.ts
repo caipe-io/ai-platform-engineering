@@ -528,6 +528,13 @@ export interface DynamicAgentConfigWithPermissions extends DynamicAgentConfig {
   permissions: AgentRowPermissions;
 }
 
+/** Present only in the opt-in unified catalog; never a native agent configuration. */
+export interface ConnectedAgentCatalogEntry extends RemoteAgentRegistryEntry { catalog_source: "a2a" }
+export type AgentCatalogEntry = DynamicAgentConfigWithPermissions | ConnectedAgentCatalogEntry;
+export function isConnectedAgent(entry: AgentCatalogEntry): entry is ConnectedAgentCatalogEntry {
+  return "catalog_source" in entry && entry.catalog_source === "a2a";
+}
+
 export interface DynamicAgentConfigCreate {
   harness_save?: unknown;
   id: string; // Required: User-friendly slug ID derived from name

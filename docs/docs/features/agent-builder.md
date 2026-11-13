@@ -43,22 +43,33 @@ SDK negotiates JSON-RPC or HTTP+JSON from the Agent Card.
 
 :::
 
-## Remote agent catalog
+## Unified agent catalog
 
-Open **Agents → Remote Agents** to browse A2A and configured ACP specialists in
-one searchable grid. Official framework logos identify known runtimes; protocol
-badges identify A2A or ACP independently. For registered A2A services, admins can
-set an optional **Framework** display label (Claude Code, Claude Agent SDK,
-Google ADK, or Deep Agents). Unspecified frameworks retain the A2A protocol logo;
-the label never changes runtime execution, credentials, or tool permissions.
-Filter by protocol and open **View details** for connection
-settings and capabilities. Discovery, registration, and editing use separate dialogs.
+Open **Agents** for CAIPE-created assistants and connected A2A specialists.
+Configured ACP agents appear once, as their existing CAIPE configuration.
+Use **Grid** for compact cards with a soft gradient header or **List** for
+management rows. The browser remembers the view separately for each signed-in
+account. Source and runtime/connection filters apply before shared pagination.
+Existing `?tab=remote-agents` links open the unified catalog.
+
+The avatar retains the agent's saved gradient, with a stable per-agent fallback.
+Its small badge identifies the known harness first: Claude Agent SDK / Claude
+Code use Claude, Deep Agents uses Deep Agents, and AgentCore uses AgentCore.
+The model provider does not select this badge. An unknown remote harness uses
+the A2A icon; A2A/ACP connection labels remain separate. App-owned assistants
+retain their app identity. Chat headers, chat lists, cards and the subagent picker
+reuse the same badge resolver.
+
+For registered A2A services, admins can set optional **Framework** display
+metadata (Claude Code, Claude Agent SDK, Google ADK, Deep Agents, or AgentCore).
+That label never changes execution, credentials, or tool permissions.
+**Connect agent**, discovery, registration, and editing reuse the registry dialogs.
 
 - **A2A:** registry managers can run **Test connection** with the saved authentication.
   The result shows latency, advertised capabilities, skills, and the full Agent Card.
   This reads metadata; it does not execute an agent task. Results are local to the
-  current page and reset on refresh. Advertised skills become searchable after testing.
-- **ACP:** **Test chat** opens a new conversation using the existing agent and operator
+  current page and reset on refresh.
+- **CAIPE-created, including ACP:** **Chat** opens a new conversation using the existing agent and operator
   profile. Agents with known readiness problems stay disabled and explain what needs
   attention. Configuration readiness does not guarantee provider availability.
 - Select registered specialists in **Agent Builder → Advanced → Subagents** to delegate
@@ -156,9 +167,9 @@ and skills later without rebuilding the agent.
 
 ## Remote agents and subagents
 
-- **Agents → Remote Agents** lists registered A2A agents and configured Claude
-  Code / Claude Agent SDK ACP agents in one searchable catalog. Only enabled ACP
-  agents the caller can use are shown. Refresh reloads both sources independently.
+- **Agents** lists discoverable CAIPE agents and registered A2A entries in one
+  catalog. Disabled CAIPE agents remain manageable, with Chat disabled. A registry
+  outage shows an explicit warning while authorized CAIPE results stay usable.
 - ACP entries refer to existing CAIPE agents. **Chat** starts their normal
   conversation; **Open agent** opens their saved configuration with the usual
   permission checks. Operator profiles, native sessions, and credentials stay in
