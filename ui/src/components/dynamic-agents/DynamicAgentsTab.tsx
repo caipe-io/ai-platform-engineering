@@ -450,9 +450,9 @@ export function DynamicAgentsTab({
             Refresh
           </Button>
           {remote.toolbar}
-          <Button size="sm" className="h-10 sm:h-9" onClick={() => setIsCreating(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            New Agent
+          <Button size="sm" className="h-auto min-h-10 whitespace-normal px-2 py-2 text-xs leading-tight sm:h-9 sm:min-h-0 sm:whitespace-nowrap sm:px-3 sm:text-sm" onClick={() => setIsCreating(true)}>
+            <Plus className="mr-2 hidden h-4 w-4 sm:block" />
+            Create CAIPE Agent
           </Button>
         </div>
       </WorkspacePageActions>
@@ -498,7 +498,7 @@ export function DynamicAgentsTab({
                 </p>
                 <Button onClick={() => setIsCreating(true)}>
                   <Plus className="h-4 w-4 mr-2" />
-                  Create Agent
+                  Create CAIPE Agent
                 </Button>
               </>
             )}

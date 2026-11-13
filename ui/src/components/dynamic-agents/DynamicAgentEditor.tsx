@@ -1582,7 +1582,7 @@ export function DynamicAgentEditor({
     }
   };
 
-  // Each entry describes one reason the Create Agent / Save Changes button is
+  // Each entry describes one reason the Create CAIPE Agent / Save Changes button is
   // disabled. We render `blockers[0]` next to the button so the user always
   // sees WHY they can't submit and on which step to fix it — previously the
   // button just went `disabled` with no explanation, which the user reported
@@ -1716,7 +1716,7 @@ export function DynamicAgentEditor({
                   ? `Edit Agent - ${agent?.name}`
                   : isCloning
                     ? "Clone Agent"
-                    : "Create Agent"}
+                    : "Create CAIPE Agent"}
             </CardTitle>
             <CardDescription>
               {readOnly
@@ -3087,7 +3087,7 @@ export function DynamicAgentEditor({
             ) : isEditing ? (
               "Save Changes"
             ) : (
-              "Create Agent"
+              "Create CAIPE Agent"
             )}
           </Button>
         )}

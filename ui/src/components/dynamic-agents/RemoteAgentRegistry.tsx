@@ -230,7 +230,7 @@ export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange
     onDetails={button => { cardTrigger.current = button; setDetailsId(item._id); }}
     onTest={button => { cardTrigger.current = button; setDetailsId(item._id); void probeEndpoint(false, item); }}
     onEdit={button => { cardTrigger.current = button; beginEdit(item); }} />;
-  const toolbar = canManage && <div className="contents"><Button type="button" variant="outline" className="h-10 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm" ref={discoverTrigger} onClick={() => setDiscoverOpen(true)}><Search className="mr-2 hidden h-4 w-4 sm:block" />Discover agents</Button><Button type="button" variant="outline" className="h-10 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm" ref={addTrigger} onClick={() => { setCardPreview(null); setAddOpen(true); }}><Plus className="mr-2 hidden h-4 w-4 sm:block" />Connect agent</Button></div>;
+  const toolbar = canManage && <div className="contents"><Button type="button" variant="outline" className="h-10 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm" ref={discoverTrigger} onClick={() => setDiscoverOpen(true)}><Search className="mr-2 hidden h-4 w-4 sm:block" />Discover agents</Button><Button type="button" variant="outline" className="h-auto min-h-10 whitespace-normal px-2 py-2 text-xs leading-tight sm:h-9 sm:min-h-0 sm:whitespace-nowrap sm:px-3 sm:text-sm" ref={addTrigger} onClick={() => { setCardPreview(null); setAddOpen(true); }}><Plus className="mr-2 hidden h-4 w-4 sm:block" />Connect Remote Agent</Button></div>;
 
   return (
     <>
@@ -239,7 +239,7 @@ export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange
         <p className="max-w-xl text-sm text-muted-foreground">Explore remote specialists, inspect their capabilities, and test a connection before adding them as subagents.</p>
         {canManage && <div className="flex flex-wrap gap-2">
           <Button type="button" variant="outline" ref={discoverTrigger} onClick={() => setDiscoverOpen(true)}><Search className="mr-2 h-4 w-4" />Discover agents</Button>
-          <Button type="button" ref={addTrigger} onClick={() => { setCardPreview(null); setAddOpen(true); }}><Plus className="mr-2 h-4 w-4" />Add agent</Button>
+          <Button type="button" ref={addTrigger} onClick={() => { setCardPreview(null); setAddOpen(true); }}><Plus className="mr-2 h-4 w-4" />Connect Remote Agent</Button>
         </div>}
       </div>
       <div className="flex flex-wrap items-center gap-3">
@@ -317,7 +317,7 @@ export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange
         }} />}
       </DialogContent></Dialog>
       <Dialog open={addOpen} onOpenChange={open => { if (!open && !saving && !probing) setAddOpen(false); }}>
-        <DialogContent onCloseAutoFocus={event => { event.preventDefault(); addTrigger.current?.focus(); }} className="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] min-w-0 max-w-2xl overflow-y-auto p-4 [overflow-wrap:anywhere] sm:p-6"><DialogHeader><DialogTitle>Add a remote A2A agent</DialogTitle><DialogDescription>Read an Agent Card to fill in its details, then review and register it.</DialogDescription></DialogHeader>
+        <DialogContent onCloseAutoFocus={event => { event.preventDefault(); addTrigger.current?.focus(); }} className="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] min-w-0 max-w-2xl overflow-y-auto p-4 [overflow-wrap:anywhere] sm:p-6"><DialogHeader><DialogTitle>Connect Remote Agent</DialogTitle><DialogDescription>Read an Agent Card to fill in its details, then review and register it.</DialogDescription></DialogHeader>
           {canManage && !disabled && (        <div
           className="space-y-3"
           onKeyDown={(event) => {

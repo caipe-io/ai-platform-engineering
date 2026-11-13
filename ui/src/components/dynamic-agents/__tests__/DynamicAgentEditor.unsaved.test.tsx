@@ -412,7 +412,7 @@ describe("DynamicAgentEditor — unsaved-changes back-button guard", () => {
     fireEvent.change(await screen.findByTestId("codemirror-mock"), { target: { value: "Help ops." } });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
+      fireEvent.click(screen.getByRole("button", { name: "Create CAIPE Agent" }));
       await new Promise((r) => setTimeout(r, 50));
     });
 

@@ -298,7 +298,7 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     // @ts-expect-error test override
     global.fetch = saveFetch;
 
-    fireEvent.click(screen.getByRole("button", { name: /Create Agent/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Create CAIPE Agent/i }));
     await flushAsync();
 
     const writes = saveFetch.mock.calls.map(([url, init]) => [String(url), init?.method]);
