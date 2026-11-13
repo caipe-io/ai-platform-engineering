@@ -22,6 +22,7 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
+  CardFooter,
   CardTitle,
 } from "@/components/ui/card";
 import { ModelConnectionTest } from "./ModelConnectionTest";
@@ -538,7 +539,7 @@ export function LLMProvidersTab(): React.ReactElement {
       </WorkspacePageActions>
       <p
         role="note"
-        className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs leading-5 text-muted-foreground"
+        className="rounded-xl border border-border/60 bg-muted/30 p-3 text-xs leading-5 text-muted-foreground"
       >
         Named connections bind an endpoint and credentials to specific models.
         Test them here, then select the model in an agent. Existing models
@@ -554,8 +555,8 @@ export function LLMProvidersTab(): React.ReactElement {
         <div className="space-y-3">
           <h2 className="text-lg font-medium">Your model connections</h2>
           {connections.map((connection) => (
-            <Card key={connection._id}>
-              <CardHeader>
+            <Card key={connection._id} className="overflow-hidden">
+              <CardHeader className="px-6 py-4">
                 <CardTitle className="text-base">{connection.name}</CardTitle>
                 <CardDescription>
                   {connection.provider} ·{" "}
@@ -564,27 +565,32 @@ export function LLMProvidersTab(): React.ReactElement {
                     : "Protected saved credentials"}
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="px-6 pb-0">
                 {connectionModels
                   .filter((model) => model.connection_id === connection._id)
                   .map((model) => (
                     <div
                       key={model._id}
-                      className="flex flex-wrap items-start justify-between gap-3 border-t pt-3"
+                      className="flex min-w-0 flex-col items-start gap-3 border-t py-3 sm:flex-row sm:items-center sm:justify-between"
                     >
-                      <span className="font-mono text-sm">
+                      <span className="min-w-0 break-all font-mono text-sm">
                         {model.upstream_model_id}
                       </span>
-                      <ModelConnectionTest request={{ model_id: model._id }} />
+                      <ModelConnectionTest
+                        compact
+                        request={{ model_id: model._id }}
+                      />
                     </div>
                   ))}
+              </CardContent>
+              <CardFooter className="border-t px-6 py-3">
                 <NavigationProgressLink
                   href="/credentials/secrets"
-                  className="inline-block text-xs text-primary hover:underline"
+                  className="text-xs text-primary hover:underline"
                 >
                   Share, rotate, or delete credentials in Saved Secrets
                 </NavigationProgressLink>
-              </CardContent>
+              </CardFooter>
             </Card>
           ))}
         </div>
@@ -637,9 +643,12 @@ export function LLMProvidersTab(): React.ReactElement {
               );
               const complete = providerConnections.length > 0;
               return (
-                <Card key={provider.id} className="border-border/70">
+                <Card
+                  key={provider.id}
+                  className="flex h-full min-w-0 flex-col border-border/70"
+                >
                   <CardHeader className="space-y-2">
-                    <div className="flex items-start justify-between gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <CardTitle className="text-base">
                         {provider.name}
                       </CardTitle>
@@ -658,13 +667,14 @@ export function LLMProvidersTab(): React.ReactElement {
                     </div>
                     <CardDescription>{provider.description}</CardDescription>
                   </CardHeader>
-                  <CardContent className="space-y-3">
+                  <CardContent className="flex-1">
                     <p className="text-xs text-muted-foreground">
                       {complete
                         ? "Select these models in your agent or test them above."
                         : "Add credentials and one or more model IDs."}
                     </p>
-                    {complete && <SecretProtectionBadge />}
+                  </CardContent>
+                  <CardFooter className="mt-auto flex-wrap justify-between gap-3">
                     <Button
                       type="button"
                       variant="outline"
@@ -680,7 +690,8 @@ export function LLMProvidersTab(): React.ReactElement {
                     >
                       Add connection
                     </Button>
-                  </CardContent>
+                    {complete && <SecretProtectionBadge />}
+                  </CardFooter>
                 </Card>
               );
             })}

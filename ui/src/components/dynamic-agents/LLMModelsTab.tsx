@@ -554,96 +554,150 @@ export function LLMModelsTab({
               </Button>
             </div>
           ) : (
-            <div className="space-y-3">
-              {/* Header */}
-              <div className="grid grid-cols-12 gap-4 pb-2 border-b text-xs font-medium text-muted-foreground px-2">
-                <div className="col-span-3">Model ID</div>
-                <div className="col-span-3">Display Name</div>
-                <div className="col-span-2">Provider</div>
-                <div className="col-span-2">Description</div>
-                <div className="col-span-2 text-right">Actions</div>
-              </div>
-
-              {/* Model rows */}
-              {models.map((model) => (
-                <div
-                  key={model._id}
-                  className="grid grid-cols-12 gap-4 py-3 px-2 rounded-lg hover:bg-muted/50 items-center cursor-pointer"
-                  onClick={() => openModel(model)}
-                >
-                  <div className="col-span-3">
-                    <div className="flex items-center gap-3">
-                      <div className="h-9 w-9 rounded-lg bg-purple-500/10 flex items-center justify-center">
-                        <Cpu className="h-5 w-5 text-purple-500" />
-                      </div>
-                      <div>
-                        <div className="font-medium text-sm font-mono">
-                          {model.upstream_model_id ?? model.model_id}
+            <div className="w-full overflow-x-auto rounded-lg border border-border/60">
+              <table
+                className="w-full min-w-[1056px] table-fixed text-left text-sm"
+                aria-label="LLM models"
+              >
+                <colgroup>
+                  <col className="w-[29%]" />
+                  <col className="w-[22%]" />
+                  <col className="w-[14%]" />
+                  <col />
+                  <col className="w-72" />
+                </colgroup>
+                <thead className="border-b bg-muted/30 text-xs text-muted-foreground">
+                  <tr>
+                    <th scope="col" className="px-3 py-3 font-medium">
+                      Model ID
+                    </th>
+                    <th scope="col" className="px-3 py-3 font-medium">
+                      Display Name
+                    </th>
+                    <th scope="col" className="px-3 py-3 font-medium">
+                      Provider
+                    </th>
+                    <th scope="col" className="px-3 py-3 font-medium">
+                      Description
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-3 py-3 text-right font-medium"
+                    >
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/50">
+                  {models.map((model) => (
+                    <tr
+                      key={model._id}
+                      className="cursor-pointer hover:bg-muted/40"
+                      onClick={() => openModel(model)}
+                    >
+                      <td className="px-3 py-3 align-middle">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-purple-500/10">
+                            <Cpu className="h-4 w-4 text-purple-500" />
+                          </div>
+                          <div className="min-w-0">
+                            <button
+                              type="button"
+                              className="block max-w-full break-all text-left font-mono text-sm font-medium hover:underline focus-visible:underline"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openModel(model);
+                              }}
+                            >
+                              {model.upstream_model_id ?? model.model_id}
+                            </button>
+                            {model.connection_name && (
+                              <p
+                                className="mt-1 truncate text-xs text-muted-foreground"
+                                title={model.connection_name}
+                              >
+                                {model.connection_name}
+                              </p>
+                            )}
+                          </div>
                         </div>
-                        {model.connection_name && (
-                          <p className="text-xs text-muted-foreground">
-                            {model.connection_name}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="col-span-3">
-                    <span className="text-sm">{model.name}</span>
-                  </div>
-
-                  <div className="col-span-2">
-                    <Badge
-                      variant="outline"
-                      className={`gap-1 ${getProviderColor(model.provider)}`}
-                    >
-                      {model.provider}
-                    </Badge>
-                  </div>
-
-                  <div className="col-span-2">
-                    <span className="text-sm text-muted-foreground truncate block max-w-[200px]">
-                      {model.description || "—"}
-                    </span>
-                  </div>
-
-                  <div
-                    className="col-span-2 flex flex-wrap items-start justify-end gap-1"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <ModelConnectionTest request={{ model_id: model._id }} />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => handleExportYaml(model)}
-                      title="Export as YAML"
-                    >
-                      <Download className="h-4 w-4" />
-                    </Button>
-                    {model.config_driven && (
-                      <Badge
-                        variant="outline"
-                        className="gap-1 bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/30"
-                        title="Loaded from config.yaml - cannot be edited"
+                      </td>
+                      <td className="px-3 py-3 align-middle">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="min-w-0 truncate" title={model.name}>
+                            {model.name}
+                          </span>
+                          {model.config_driven && (
+                            <Badge
+                              variant="outline"
+                              className="shrink-0 text-xs text-muted-foreground"
+                              title="Managed by configuration"
+                            >
+                              Config
+                            </Badge>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 align-middle">
+                        <Badge
+                          variant="outline"
+                          className={`max-w-full ${getProviderColor(model.provider)}`}
+                          title={model.provider}
+                        >
+                          <span className="truncate">{model.provider}</span>
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-3 align-middle">
+                        <span
+                          className="block truncate text-muted-foreground"
+                          title={model.description || undefined}
+                        >
+                          {model.description || "—"}
+                        </span>
+                      </td>
+                      <td
+                        className="px-3 py-3 align-middle"
+                        onClick={(event) => event.stopPropagation()}
                       >
-                        Config
-                      </Badge>
-                    )}
-                    {!model.config_driven && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-destructive hover:text-destructive"
-                        onClick={() => handleDelete(model._id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ))}
+                        <div className="flex items-center justify-end gap-1">
+                          <ModelConnectionTest
+                            compact
+                            request={{ model_id: model._id }}
+                          />
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0"
+                            onClick={() => handleExportYaml(model)}
+                            title="Export as YAML"
+                          >
+                            <Download className="h-4 w-4" />
+                            <span className="sr-only">
+                              Export {model.name} as YAML
+                            </span>
+                          </Button>
+                          {!model.config_driven ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
+                              onClick={() => handleDelete(model._id)}
+                              aria-label={`Delete ${model.name}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          ) : (
+                            <span
+                              aria-hidden="true"
+                              className="h-8 w-8 shrink-0"
+                            />
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </CardContent>
