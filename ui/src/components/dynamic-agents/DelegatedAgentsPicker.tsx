@@ -31,7 +31,7 @@ export function DelegatedAgentsPicker({ agentId, value, onChange, remote, disabl
         const response = await fetch(url, { signal: controller.signal, credentials: "include", cache: "no-store" });
         const body = await response.json();
         if (!response.ok || !body.success) throw new Error(body.error || `Could not load ${source} agents`);
-        const items = source === "a2a" ? body.data?.items : agentId ? body.data?.agents : body.data;
+        const items = source === "a2a" ? body.data?.items : body.data?.agents;
         if (!Array.isArray(items)) throw new Error(`Invalid ${source} agent catalog`);
         const loaded: Choice[] = source === "a2a" ? items.map((item: RemoteAgentRegistryEntry) => ({
           key: `a2a:${item._id}`, id: item._id, source, name: item.name, description: item.description,
@@ -47,7 +47,7 @@ export function DelegatedAgentsPicker({ agentId, value, onChange, remote, disabl
       }
     }
     void Promise.all([
-      load("caipe", agentId ? `/api/dynamic-agents/available-subagents?id=${encodeURIComponent(agentId)}` : "/api/dynamic-agents/available"),
+      load("caipe", agentId ? `/api/dynamic-agents/available-subagents?id=${encodeURIComponent(agentId)}` : "/api/dynamic-agents/available-subagents?create=true"),
       load("a2a", "/api/remote-agents"),
     ]).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();

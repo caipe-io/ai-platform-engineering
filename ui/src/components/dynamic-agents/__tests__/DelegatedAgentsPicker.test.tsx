@@ -7,7 +7,7 @@ const a2a = { _id: "same-id", name: "Network specialist", description: "DNS chec
 function response(data: unknown, ok = true) { return { ok, json: async () => ({ success: ok, data, error: ok ? undefined : "Registry unavailable" }) }; }
 function props() { return { agentId: null, value: [], onChange: jest.fn(), parentVisibility: "team" as const, allowHarnessChildren: true,
   remote: { value: [], onChange: jest.fn(), timeoutValues: {}, onTimeoutChange: jest.fn() } }; }
-beforeEach(() => { global.fetch = jest.fn(async url => String(url).includes("remote-agents") ? response({ items: [a2a] }) : response([local])) as jest.Mock; });
+beforeEach(() => { global.fetch = jest.fn(async url => String(url).includes("remote-agents") ? response({ items: [a2a] }) : response({ agents: [local] })) as jest.Mock; });
 
 it("uses one picker and preserves distinct CAIPE and A2A references with matching IDs", async () => {
   const selection = props();
@@ -37,7 +37,7 @@ it("edits the child deadline and removes only parent references", async () => {
 });
 
 it("keeps saved references when the registry fails and leaves authorized CAIPE choices usable", async () => {
-  global.fetch = jest.fn(async url => String(url).includes("remote-agents") ? response(undefined, false) : response([local])) as jest.Mock;
+  global.fetch = jest.fn(async url => String(url).includes("remote-agents") ? response(undefined, false) : response({ agents: [local] })) as jest.Mock;
   const selection = props();
   render(<DelegatedAgentsPicker {...selection} remote={{ ...selection.remote, value: ["missing-remote"] }} />);
   await screen.findByRole("alert");
@@ -49,7 +49,7 @@ it("keeps saved references when the registry fails and leaves authorized CAIPE c
 });
 
 it("disables incompatible sharing", async () => {
-  global.fetch = jest.fn(async url => String(url).includes("remote-agents") ? response({ items: [] }) : response([{ ...local, visibility: "team" }])) as jest.Mock;
+  global.fetch = jest.fn(async url => String(url).includes("remote-agents") ? response({ items: [] }) : response({ agents: [{ ...local, visibility: "team" }] })) as jest.Mock;
   const selection = props();
   render(<DelegatedAgentsPicker {...selection} parentVisibility="global" />);
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Add subagent" })).not.toBeDisabled());
