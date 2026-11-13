@@ -212,7 +212,7 @@ describe("POST /api/mcp-servers/probe", () => {
     });
   });
 
-  it("runs a safe no-argument MCP tool after direct tools/list when one is available", async () => {
+  it.each([false, true])("only invokes the optional smoke-test tool when list_only is false (%s)", async (listOnly) => {
     mockGetCollection.mockResolvedValueOnce({
       findOne: jest.fn().mockResolvedValue({
         _id: "mcp-netutils",
@@ -249,11 +249,17 @@ describe("POST /api/mcp-servers/probe", () => {
     const { POST } = await import("../route");
 
     const response = await POST(
-      request("/api/mcp-servers/probe?id=mcp-netutils", { method: "POST" }),
+      request(`/api/mcp-servers/probe?id=mcp-netutils&list_only=${listOnly}`, { method: "POST" }),
     );
     const body = await response.json();
 
     expect(response.status).toBe(200);
+    if (listOnly) {
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(body.data.tools).toEqual([expect.objectContaining({ name: "version" })]);
+      expect(body.data.tool_test).toBeUndefined();
+      return;
+    }
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
       "http://mcp-netutils:8000/mcp",
