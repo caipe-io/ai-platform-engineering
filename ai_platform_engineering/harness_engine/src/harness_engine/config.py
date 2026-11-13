@@ -57,6 +57,16 @@ class AgentCoreRuntimeTarget(BaseModel):
         )
 
 
+class ClaudeResearchPolicy(BaseModel):
+    """Opt-in operator budget for the isolated CLI research workflow."""
+
+    model_config = {"extra": "forbid"}
+    max_seconds: int = Field(900, ge=10, le=7200, strict=True)
+    max_external_tool_calls: int = Field(100, ge=1, le=1000, strict=True)
+    max_budget_usd: float = Field(5.0, gt=0, le=1000)
+    max_report_repairs: int = Field(2, ge=0, le=5, strict=True)
+
+
 class ClaudeSDKProfile(BaseModel):
     """Operator-owned Claude model and workspace policy."""
 
@@ -64,6 +74,7 @@ class ClaudeSDKProfile(BaseModel):
     cwd: str = Field("/workspace", min_length=1, max_length=1024)
     permission_mode: str = Field("dontAsk", pattern=r"^(default|acceptEdits|plan|dontAsk)$")
     description: str = Field("", max_length=512)
+    research: ClaudeResearchPolicy | None = None
 
 
 class ClaudeWorkerProfile(BaseModel):
@@ -109,7 +120,7 @@ class Settings(BaseSettings):
     claude_acp_command: list[str] = Field(default_factory=list)
     claude_acp_runtime: Literal["claude_code_acp", "claude_code_cli_acp"] = "claude_code_acp"
     claude_acp_tools: list[str] = Field(default_factory=list)
-    claude_cli_isolation: Literal["landlock", "disabled"] = "landlock"
+    claude_cli_isolation: Literal["landlock", "artifacts", "disabled"] = "landlock"
     deep_agents_enabled: bool = False
 
     def require_private_token(self) -> None:
