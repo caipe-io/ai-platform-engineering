@@ -658,3 +658,36 @@ migration so they enforce the same `execution_thread_leases` ownership fence.
   tools, checkpoint persistence and event replay remain real.
 - These tests do not certify model quality or live Slack/Webex delivery. App-owned
   assistants retain their own declared stream and lifecycle.
+
+
+### Manage Claude operator profiles in Agent Builder
+
+Platform administrators can choose **Manage operator profiles** next to the
+operator profile picker for Claude SDK, remote SDK, SDK ACP, and CLI ACP agents.
+Creating a profile requires both `admin_ui:admin` and platform
+`system_config:admin`. Publication is audited by the BFF.
+
+- Choose an existing deployment-owned worker configuration.
+- Set a unique `managed-` profile ID, display name, execution model ID, and
+  default maximum turns (1–100). Use a model ID supported by the worker's
+  existing provider; publication does not probe model availability.
+- Select the new profile and save the agent. New conversations use that
+  configuration; existing conversations retain their pinned agent version.
+- To revise a profile, copy its settings and publish a new ID. Profiles are
+  immutable and cannot retarget an existing conversation.
+
+Profiles persist in `harness_claude_profiles` in the Engine database. Engine
+replicas refresh them before catalog, validation, publication, and run admission.
+Environment profiles remain the default; no migration or Helm change is required.
+Managed profiles inherit the base worker's credentials, endpoint, workspace,
+permission mode, native-tool allowlist, and isolation policy. Those settings
+cannot be changed in the editor. Agent authors may override the profile's turn
+**default**, within the same 1–100 bounds; this is not a mandatory minimum duration.
+
+Upgrade both the Engine/UI and workers before using managed remote profiles.
+Workers advertise support for the authenticated operator-model field; older
+workers still work with deployment profiles but reject managed profiles before
+execution. The Engine derives the model from the persisted admin profile, not
+from an agent author's draft or per-turn override. Worker model discovery is
+read-only and authenticated; unavailable or older workers may not display their
+base model. Model policy updates do not grant any additional MCP permissions.

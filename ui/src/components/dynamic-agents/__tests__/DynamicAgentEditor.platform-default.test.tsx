@@ -206,14 +206,14 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     });
 
     expect(screen.getByLabelText("Operator profile")).toHaveValue("safe");
-    expect(screen.getByText(/Profiles are managed by your administrator/)).toBeInTheDocument();
+    expect(screen.getByText(/Profiles set the model, permissions, and limits/)).toBeInTheDocument();
 
     fireEvent.focus(screen.getByRole("button", { name: "About operator profiles" }));
     expect(screen.getByRole("tooltip")).toHaveTextContent(
-      "An operator profile is an administrator-managed execution configuration",
+      "Choose an admin-managed setup for this agent.",
     );
     expect(screen.getByRole("tooltip")).toHaveTextContent(
-      "without exposing credentials or infrastructure identifiers",
+      "Credentials stay private.",
     );
     fireEvent.click(screen.getByRole("button", { name: /Advanced/i }));
     expect(screen.getByLabelText("Maximum turns")).toHaveValue("20");
@@ -369,10 +369,10 @@ it.each([["claude-acp", "claude_code_acp"], ["claude-cli-acp", "claude_code_cli_
   render(<DynamicAgentEditor agent={editAgent} onCancel={jest.fn()} onSave={jest.fn()} />);
   await flushAsync();
   fireEvent.change(screen.getByLabelText("Execution harness"), { target: { value: harnessId } });
-  expect(screen.getByRole("region", { name: "Claude configuration" })).toHaveTextContent("Responses continue when you refresh");
+  expect(screen.getByRole("region", { name: "Claude configuration" })).toHaveTextContent("Refreshing or reconnecting won't stop a running response");
   expect(screen.getByLabelText("Operator profile")).toHaveValue("safe");
-  fireEvent.click(screen.getByText("Access and authentication"));
-  expect(screen.getByText(/Tool access is checked for every call/)).toBeInTheDocument();
+  fireEvent.click(screen.getByText("Access and recovery"));
+  expect(screen.getByText(/Each tool call is checked against your access/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Tools/ })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("checkbox", { name: /existing conversations keep/i }));
   fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));

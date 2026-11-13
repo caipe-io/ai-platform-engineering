@@ -109,8 +109,8 @@ class RunCoordinator:
 
     def _launch(self, run: RunRecord, request: CreateRunRequest, version: AgentVersion,
                 binding: SessionBinding, identity: ExecutionIdentity | None,
-                prepared_prompt: RenderedPrompt | None = None) -> None:
-        task = asyncio.create_task(self._pump(run, request, version, binding, identity, prepared_prompt),
+                prepared_prompt: RenderedPrompt | None = None, operator_model: str | None = None) -> None:
+        task = asyncio.create_task(self._pump(run, request, version, binding, identity, prepared_prompt, operator_model),
                                    name=f"harness-run:{run.run_id}")
         self._tasks[run.run_id] = task
         self._run_bindings[run.run_id] = binding.binding_id
@@ -123,7 +123,7 @@ class RunCoordinator:
 
     async def start_context(self, context: RunContext) -> RunRecord:
         """Admit a trusted worker request using the same producer fence and pump."""
-        fingerprint = hashlib.sha256(context.model_dump_json().encode()).hexdigest()
+        fingerprint = hashlib.sha256(context.model_dump_json(exclude={"operator_model"} if context.operator_model is None else set()).encode()).hexdigest()
         prior = await self._repository.get_run(context.turn.run_id)
         if prior is not None:
             if prior.owner_subject != context.binding.owner_subject or prior.request_fingerprint != fingerprint:
@@ -147,7 +147,7 @@ class RunCoordinator:
                 blueprint=context.blueprint, config_fingerprint=fingerprint, catalog_revision="worker-context")
             request = CreateRunRequest(agent_id=binding.agent_id, conversation_id=binding.conversation_id,
                                        **context.turn.model_dump(exclude={"run_id", "traceparent"}))
-            self._launch(run, request, version, binding, context.identity, context.prompt)
+            self._launch(run, request, version, binding, context.identity, context.prompt, context.operator_model)
         return run
 
     async def _watch_cancellation(self, run: RunRecord, producer: asyncio.Task[None]) -> None:
@@ -173,6 +173,7 @@ class RunCoordinator:
         self, run: RunRecord, request: CreateRunRequest, version: AgentVersion, binding: SessionBinding,
         identity: ExecutionIdentity | None = None,
         prepared_prompt: RenderedPrompt | None = None,
+        operator_model: str | None = None,
     ) -> None:
         producer = asyncio.current_task()
         assert producer is not None
@@ -192,6 +193,7 @@ class RunCoordinator:
                     }
                 )
             context = RunContext(
+                operator_model=operator_model,
                 blueprint=version.blueprint,
                 binding=binding,
                 prompt=rendered_prompt,

@@ -36,6 +36,23 @@ class ConnectAgentCoreRequest(StrictModel):
         return self
 
 
+class CreateClaudeProfileRequest(StrictModel):
+    """An immutable model policy using an existing deployment-owned connection."""
+
+    profile_id: str = Field(..., pattern=r"^managed-[a-z0-9][a-z0-9-]{0,54}$")
+    harness_id: Literal["claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp", "claude_code_cli_acp"]
+    base_profile_id: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
+    display_name: str = Field(..., min_length=1, max_length=100)
+    description: str = Field("", max_length=512)
+    model: str = Field(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+    max_turns: int = Field(20, ge=1, le=100, strict=True)
+
+
+class RegisteredClaudeProfile(CreateClaudeProfileRequest):
+    created_by: str
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class RegisteredAgentCoreProfile(StrictModel):
     profile_id: str
     target: AgentCoreRuntimeTarget
@@ -71,6 +88,9 @@ class HarnessProfile(StrictModel):
     display_name: str
     description: str = ""
     available: bool = True
+    model: str | None = None
+    default_max_turns: int = 20
+    source: Literal["deployment", "managed"] = "deployment"
 
 
 class HarnessDescriptor(StrictModel):
@@ -465,6 +485,8 @@ class TurnOutcome(StrictModel):
 
 
 class RunContext(StrictModel):
+    # Set only by the authenticated control plane, never from an agent draft.
+    operator_model: str | None = Field(None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
     blueprint: AgentBlueprint
     binding: SessionBinding
     prompt: RenderedPrompt
