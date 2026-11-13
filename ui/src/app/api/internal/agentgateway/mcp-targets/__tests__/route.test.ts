@@ -66,7 +66,7 @@ describe("internal AgentGateway MCP targets API", () => {
             enabled: true,
             transport: "http",
             source: "manual",
-            endpoint: "http://mcp-manual-endpoint:8000/mcp",
+            endpoint: "http://mcp-manual-endpoint:8000/mcp/",
           },
           {
             _id: "gateway-loop",
@@ -131,6 +131,40 @@ describe("internal AgentGateway MCP targets API", () => {
         {
           id: "manual-endpoint-target",
           target_endpoint: "http://mcp-manual-endpoint:8000/mcp",
+          credential_sources: [],
+        },
+      ],
+    });
+  });
+
+  it("removes a trailing slash from AgentGateway upstream MCP endpoints", async () => {
+    mockGetCollection.mockResolvedValue({
+      find: jest.fn().mockReturnValue({
+        toArray: jest.fn().mockResolvedValue([
+          {
+            _id: "configured-target",
+            enabled: true,
+            transport: "http",
+            source: "agentgateway",
+            agentgateway_target_endpoint: "https://mcp.example.test/mcp/?tenant=primary",
+          },
+        ]),
+      }),
+    });
+    const { GET } = await import("../route");
+
+    const response = await GET(
+      request({
+        headers: { authorization: "Bearer bridge-token" },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      targets: [
+        {
+          id: "configured-target",
+          target_endpoint: "https://mcp.example.test/mcp?tenant=primary",
           credential_sources: [],
         },
       ],
