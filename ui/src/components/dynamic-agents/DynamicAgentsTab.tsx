@@ -515,7 +515,7 @@ export function DynamicAgentsTab({
             )}
 
             {/* Agent rows */}
-            <div className={view === "grid" ? "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3" : "space-y-2"} aria-label="Agent catalog">
+            <div className={view === "grid" ? "grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-3" : "space-y-2"} aria-label="Agent catalog">
             {agents.map((agent) => {
               if (isConnectedAgent(agent)) return remote.renderAgent(agent, view);
               const canManage = agentCanManage(agent);

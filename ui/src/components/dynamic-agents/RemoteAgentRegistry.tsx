@@ -251,7 +251,7 @@ export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange
       {acpError && <div role="alert" className="text-sm text-destructive">{acpError} <Button type="button" variant="outline" size="sm" onClick={() => void loadAcpAgents()}>Retry ACP agents</Button></div>}
       {(loading || acpLoading) && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading remote agents…</p>}
       {!catalog.length && !loading && !acpLoading && !loadError && !acpError && <div className="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">{search || protocol !== "all" ? "No matching remote agents." : "No A2A or configured ACP agents are available."}</div>}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="Remote agent catalog">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-3" aria-label="Remote agent catalog">
         {catalog.map(entry => {
           if (entry.source === "acp") return <ConfiguredAcpAgentCard key={entry.key} agent={entry.item} />;
           return renderAgent(entry.item, "grid");
