@@ -181,6 +181,11 @@ Only meeting metadata is returned, without chat content, participants or media
 credentials. Existing transcript checks still establish content availability.
 Partial discovery is reported explicitly when request, page or time limits apply.
 
+Titles prefer exact recording metadata. For untitled recaps, including summary-only
+meetings, discovery reads the exact parent series title once per series per request.
+It does not copy the series' next occurrence date or infer recording/transcript
+availability from that metadata. An inaccessible parent does not discard the recap.
+
 For interactive callers, `catalog_page_limit=1` reads one catalog page while
 eight bounded activity workers run concurrently. Discovery requests and recap
 metadata enrichment each use an eight-request cap. Pass `next_continuation` back as

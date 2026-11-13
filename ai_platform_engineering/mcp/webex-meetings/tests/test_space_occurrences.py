@@ -476,6 +476,8 @@ async def test_tool_only_marks_transcript_verified_after_exact_privilege_metadat
         return {"items": [{"id": ACTUAL}], "complete": True, "warnings": []}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/v1/meetings/{SERIES}":
+            return httpx.Response(403)
         assert request.url.path == mcp_server.RECORDING_PRIVILEGE_PATH
         assert request.url.params["meetingInstanceId"] == ACTUAL
         if privilege == "denied":
@@ -771,6 +773,8 @@ async def test_recap_metadata_enrichment_uses_eight_bounded_requests(monkeypatch
 
     async def handler(request: httpx.Request) -> httpx.Response:
         nonlocal active, maximum
+        if request.url.path == f"/v1/meetings/{SERIES}":
+            return httpx.Response(403)
         assert request.url.path == mcp_server.RECORDING_PRIVILEGE_PATH
         active += 1
         maximum = max(maximum, active)
@@ -794,3 +798,84 @@ async def test_recap_metadata_enrichment_uses_eight_bounded_requests(monkeypatch
     assert maximum == 8 and active == 0
     assert result["complete"] and len(result["items"]) == 12
     assert all("transcriptVerified" not in row for row in result["items"])
+
+
+@pytest.mark.parametrize("metadata", ["valid", "denied", "different-series", "wrong-type", "blank", "malformed"])
+@pytest.mark.asyncio
+async def test_summary_only_recaps_recover_only_the_exact_parent_title(
+    monkeypatch: pytest.MonkeyPatch, metadata: str,
+) -> None:
+    original = {
+        "id": ACTUAL, "meetingSeriesId": SERIES, "meetingType": "meeting",
+        "start": "2026-01-05T17:00:00Z", "end": "2026-01-05T18:00:00Z",
+        "source": "space_activity", "state": "ended",
+    }
+    requests: list[str] = []
+
+    async def occurrences(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"items": [dict(original)], "complete": True, "warnings": []}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        assert request.headers["Authorization"] == "Bearer example-user-token"
+        if request.url.path == mcp_server.RECORDING_PRIVILEGE_PATH:
+            return httpx.Response(200, json={"privileges": []})
+        assert request.url.path == f"/v1/meetings/{SERIES}"
+        if metadata == "denied":
+            return httpx.Response(403)
+        if metadata == "malformed":
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json={
+            "id": OTHER_SERIES if metadata == "different-series" else SERIES,
+            "meetingType": "meeting" if metadata == "wrong-type" else "meetingSeries",
+            "title": " " if metadata == "blank" else " Weekly forum ",
+            "start": "2026-01-12T17:00:00Z", "hasRecording": True,
+            "password": "example-secret", "hostKey": "example-secret",
+        })
+
+    client_class = httpx.AsyncClient
+    monkeypatch.setattr(mcp_server.httpx, "AsyncClient", lambda **kwargs: client_class(transport=httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr(mcp_server, "_bearer_from_request", lambda: "Bearer example-user-token")
+    monkeypatch.setattr(mcp_server, "list_space_meeting_occurrences", occurrences)
+    registry = ToolRegistry()
+    mcp_server.register_tools(registry)
+    result = await registry.tools["webex_space_meeting_occurrences"](mcp_server.SpaceMeetingOccurrences(
+        from_iso=LOWER.isoformat(), to_iso=UPPER.isoformat(), site_url="primary.webex.com",
+    ))
+    assert result["items"] == [{**original, **({"title": "Weekly forum"} if metadata == "valid" else {})}]
+    assert requests.count(f"/v1/meetings/{SERIES}") == 1
+    assert result["complete"] is True
+    assert "example-secret" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_parent_titles_are_reused_per_series_without_overwriting_recording_titles(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[str] = []
+
+    async def occurrences(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"items": [{"id": f"{SERIES}_I_{i}"} for i in range(4)], "complete": True, "warnings": []}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path == mcp_server.RECORDING_PRIVILEGE_PATH:
+            actual = request.url.params["meetingInstanceId"]
+            return httpx.Response(200, json={"privileges": [{
+                "meetingInstanceId": actual, "recordUUID": "recording", "recordName": "Original occurrence title",
+                "transcriptURL": "https://media.webex.com/transcript.vtt",
+            }] if actual.endswith("_0") else []})
+        assert request.url.path == f"/v1/meetings/{SERIES}"
+        return httpx.Response(200, json={"id": SERIES, "meetingType": "meetingSeries", "title": "Current series title"})
+
+    client_class = httpx.AsyncClient
+    monkeypatch.setattr(mcp_server.httpx, "AsyncClient", lambda **kwargs: client_class(transport=httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr(mcp_server, "_bearer_from_request", lambda: "Bearer example-user-token")
+    monkeypatch.setattr(mcp_server, "list_space_meeting_occurrences", occurrences)
+    registry = ToolRegistry()
+    mcp_server.register_tools(registry)
+    result = await registry.tools["webex_space_meeting_occurrences"](mcp_server.SpaceMeetingOccurrences(
+        from_iso=LOWER.isoformat(), to_iso=UPPER.isoformat(), site_url="primary.webex.com",
+    ))
+    assert requests.count(f"/v1/meetings/{SERIES}") == 1
+    assert result["items"][0] == {"id": f"{SERIES}_I_0", "title": "Original occurrence title", "hasRecording": True, "transcriptVerified": True}
+    assert [row["title"] for row in result["items"][1:]] == ["Current series title"] * 3
+    assert all("hasRecording" not in row and "transcriptVerified" not in row for row in result["items"][1:])

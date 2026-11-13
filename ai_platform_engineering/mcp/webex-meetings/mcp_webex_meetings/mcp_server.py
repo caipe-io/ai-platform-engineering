@@ -1243,9 +1243,43 @@ def register_tools(server) -> None:
                     item["hasRecording"] = True
                     item["transcriptVerified"] = True
 
+            async def fill_series_titles() -> None:
+                # A summary-only recap need not have a recording. Its exact
+                # parent series may remain readable when instance details are
+                # denied. Use only the title, never the next occurrence's date
+                # or its recording/transcript flags.
+                untitled: dict[str, list[dict[str, Any]]] = {}
+                for item in result["items"]:
+                    if isinstance(item.get("title"), str) and item["title"].strip():
+                        continue
+                    match = re.fullmatch(r"([a-f0-9]{32})_I_\d+", str(item.get("id", "")), re.IGNORECASE)
+                    if match is not None:
+                        untitled.setdefault(match[1], []).append(item)
+
+                async def fill(series: str, items: list[dict[str, Any]]) -> None:
+                    async with semaphore:
+                        try:
+                            response = await client.get(
+                                f"{WEBEX_API_BASE}/meetings/{series}",
+                                headers={"Authorization": bearer, "Accept": "application/json"},
+                            )
+                            response.raise_for_status()
+                            detail = response.json()
+                        except (httpx.HTTPError, ValueError):
+                            return
+                    if not isinstance(detail, dict) or detail.get("id") != series or detail.get("meetingType") != "meetingSeries":
+                        return
+                    title = detail.get("title")
+                    if isinstance(title, str) and title.strip():
+                        for item in items:
+                            item["title"] = title.strip()
+
+                await asyncio.gather(*(fill(series, items) for series, items in untitled.items()))
+
             try:
                 async with asyncio.timeout(30):
                     await asyncio.gather(*(enrich(item) for item in result["items"]))
+                    await fill_series_titles()
             except TimeoutError:
                 result["complete"] = False
                 result.setdefault("warnings", []).append("Some meeting titles could not be verified.")
