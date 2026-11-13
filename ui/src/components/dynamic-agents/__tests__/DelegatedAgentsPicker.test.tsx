@@ -64,3 +64,14 @@ it("keeps Harness children disabled against older backends", async () => {
   expect(await screen.findByRole("option", { name: /Coding specialist/ })).toBeDisabled();
   expect(screen.getByRole("option", { name: /Network specialist/ })).toBeEnabled();
 });
+
+it.each(["claude_code_acp", "claude_code_cli_acp"])("selects a configured %s agent with an ACP label and its saved reference", async runtime => {
+  global.fetch = jest.fn(async url => String(url).includes("remote-agents") ? response({ items: [] }) : response({ agents: [{ ...local, execution_harness_id: runtime }] })) as jest.Mock;
+  const selection = props();
+  render(<DelegatedAgentsPicker {...selection} />);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Add subagent" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("combobox", { name: "Add subagent" }));
+  fireEvent.click(await screen.findByRole("option", { name: /Coding specialist.*ACP/ }));
+  expect(selection.onChange).toHaveBeenCalledWith([expect.objectContaining({ agent_id: "same-id" })]);
+  expect(selection.remote.onChange).not.toHaveBeenCalled();
+});

@@ -11,7 +11,7 @@ import type { RemoteAgentsPickerProps } from "./RemoteAgentRegistry";
 type Choice = { key: string; id: string; source: "caipe" | "a2a"; name: string; description?: string; runtime: string; visibility?: VisibilityType; timeout?: number };
 const runtimes: Record<string, string> = {
   dynamic_agents: "Deep Agents", claude_agent_sdk: "Claude Agent SDK", claude_agent_sdk_remote: "Claude Agent SDK",
-  claude_code_acp: "Claude Agent SDK", claude_code_cli_acp: "Claude Code", agentcore: "AgentCore",
+  claude_code_acp: "Claude Agent SDK · ACP", claude_code_cli_acp: "Claude Code · ACP", agentcore: "AgentCore",
 };
 
 export function DelegatedAgentsPicker({ agentId, value, onChange, remote, disabled, parentVisibility, allowHarnessChildren = false }: {
@@ -66,7 +66,7 @@ export function DelegatedAgentsPicker({ agentId, value, onChange, remote, disabl
     else onChange([...value, { agent_id: item.id, name: item.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""), description: item.description || `Delegate to ${item.name}` }]);
   }
   return <section aria-label="Selected subagents" className="space-y-3">
-    <p className="text-sm text-muted-foreground">Choose CAIPE agents or registered A2A agents to delegate work. Each agent keeps its configured runtime and access checks.</p>
+    <p className="text-sm text-muted-foreground">Choose CAIPE agents, including configured ACP agents, or registered A2A agents to delegate work. Each agent keeps its configured runtime and access checks.</p>
     <div className="flex flex-wrap gap-2 items-center">
       <div className="flex-1 min-w-0"><SearchablePicker options={available} onSelect={add} getOptionKey={item => item.key}
         getOptionLabel={item => item.name} getSearchText={item => [item.name, item.description || "", runtimes[item.runtime] || item.runtime]}
