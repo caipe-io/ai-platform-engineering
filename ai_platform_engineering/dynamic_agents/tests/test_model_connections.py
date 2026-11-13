@@ -1,10 +1,12 @@
 """Exercise the shared connection path with local OpenAI-compatible endpoints."""
 
 import json
+from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import httpx
@@ -20,7 +22,7 @@ from dynamic_agents.services.runtime_cache import AgentRuntimeCache
 
 
 @contextmanager
-def endpoint(status: int = 200, redirect: str | None = None):
+def endpoint(status: int = 200, redirect: str | None = None) -> Iterator[tuple[str, list[tuple[str, str | None, dict[str, Any]]]]]:
     calls = []
 
     class Handler(BaseHTTPRequestHandler):
