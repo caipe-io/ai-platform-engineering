@@ -119,7 +119,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     let { model_id, provider } = body;
     const { name } = body;
     let connection: ModelConnection | null = null;
-    if (!validProviderModelId(model_id)) throw new ApiError("A valid model_id is required", 400);
+    if (!model_id || !name || (!provider && !body.connection_id)) throw new ApiError("model_id, name, and provider are required", 400);
+    if (!validProviderModelId(model_id)) throw new ApiError("model_id must start with alphanumeric and contain only alphanumeric, dots, slashes, hyphens, underscores, colons (512 characters maximum)", 400);
     if (body.connection_id) {
       if (typeof body.connection_id !== "string") throw new ApiError("Invalid connection ID", 400);
       await requireConnectionManager({ session, email: user.email });

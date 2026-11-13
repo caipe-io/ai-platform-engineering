@@ -447,5 +447,5 @@ attempt to roll back those access changes if admission or persistence fails.
 - Main, subagent, and middleware models resolve their own connections. Cached
   graphs recheck credential use/revisions per invocation; rotation rebuilds the
   graph and revocation blocks reuse. Legacy models keep environment defaults.
-- Deploy the UI and Dynamic Agents together. The provider UI checks the runtime
+- Deploy the UI, Dynamic Agents, and any Harness Engine Deep Agents image together. The provider UI checks the runtime
   capability marker and `CREDENTIAL_API_URL` configuration before enabling create.
