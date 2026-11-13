@@ -178,6 +178,24 @@ describe("/api/platform/health", () => {
     });
   });
 
+  it("marks the Dynamic Agents diagnostic down when healthz returns HTTP 200 with unhealthy status", async () => {
+    (global.fetch as jest.Mock) = jest.fn(async (url: string) => {
+      if (url === "http://dynamic-agents:8001/healthz") return jsonResponse({ status: "unhealthy" });
+      if (url.includes("/v1/audit/status")) return jsonResponse(healthyAuditServiceStatus);
+      return jsonResponse({});
+    });
+
+    const { GET } = await import("../route");
+    const response = await GET(new Request("http://localhost/api/platform/health?diagnostics=1") as never);
+    const body = await response.json();
+
+    expect(body.probes.find((probe: { id: string }) => probe.id === "dynamic-agents-runtime")).toMatchObject({
+      status: "down",
+      detail: "HTTP 200 (unhealthy status)",
+      remediation: { label: "Dynamic Agents" },
+    });
+  });
+
   it("includes enabled messaging integrations as degraded when their admin checks fail", async () => {
     process.env.SLACK_INTEGRATION_ENABLED = "true";
     process.env.WEBEX_INTEGRATION_ENABLED = "true";
