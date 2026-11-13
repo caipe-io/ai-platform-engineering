@@ -322,7 +322,7 @@ def handle_dm_message(
     # Wall-clock start for `_track_interaction(response_time_ms=...)` below.
     t0 = time.monotonic()
     _bind_obo_for_handler(context)
-    if event.get("bot_id"):
+    if utils.is_bot_sender(event):
       return
 
     channel_id = event.get("channel")

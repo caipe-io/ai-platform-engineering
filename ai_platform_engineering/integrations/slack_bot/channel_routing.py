@@ -266,7 +266,7 @@ def handle_mention(
     # handle_message_events do for bot-authored messages, so routing/filtering
     # and RBAC still see a real identity instead of `user_id=None`.
     mention_bot_id = event.get("bot_id")
-    is_bot = mention_bot_id is not None
+    is_bot = utils.is_bot_sender(event)
     if is_bot:
       bot_username, sender_bot_user_id = utils.get_bot_info_by_id(mention_bot_id)
       user_id = sender_bot_user_id or mention_bot_id
@@ -843,13 +843,13 @@ def handle_message_events(
 
   # Route DMs to dedicated handler
   channel_type = event.get("channel_type")
-  if channel_type == "im" and not event.get("bot_id"):
+  if channel_type == "im" and not utils.is_bot_sender(event):
     handle_dm_message(event, say, client, context)
     return
 
   channel_id = event.get("channel")
   bot_id = event.get("bot_id")
-  is_bot = bot_id is not None
+  is_bot = utils.is_bot_sender(event)
 
   channel_config = _configured_or_route_backed_channel(channel_id)
   if channel_config is None:
