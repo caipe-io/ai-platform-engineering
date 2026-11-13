@@ -22,6 +22,13 @@ const session = { sub: "test-user", accessToken: "caller-token" };
 const request = (body: unknown) => new NextRequest("http://example.test/api/harness-engine/runs/run-example/tools", { method: "POST", body: JSON.stringify(body) });
 const params = { params: Promise.resolve({ runId: "run-example" }) };
 
+it.each(["completed", "cancelled"])("blocks delegated tools after the parent is %s", async status => {
+  authorize.mockResolvedValue({ auth: { authenticatedUser: { session } }, config: {}, response: Response.json({ data: run }), delegationParent: { status } });
+  const response = await POST(request({ operation: "call", tool_id: "example.lookup", arguments: {} }), params);
+  expect(response.status).toBe(409);
+  expect(call).not.toHaveBeenCalled();
+});
+
 beforeEach(() => {
   jest.resetAllMocks();
   process.env.AGENT_GATEWAY_URL = "http://gateway.example.test:4000";
