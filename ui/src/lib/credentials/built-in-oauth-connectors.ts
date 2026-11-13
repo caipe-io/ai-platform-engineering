@@ -41,6 +41,7 @@ export const BUILT_IN_OAUTH_CONNECTORS: BuiltInOAuthConnectorDescriptor[] = [
       "read:confluence-content.summary",
       "read:confluence-space.summary",
       "read:confluence-user",
+      "readonly:content.attachment:confluence",
       "search:confluence",
       "write:confluence-content",
     ],
