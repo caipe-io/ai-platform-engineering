@@ -113,6 +113,12 @@ app_context_prompt:
 
 ## Running Locally
 
+Persistent runtimes ignore empty pending-checkpoint write batches. Compiled local
+subgraphs can emit these acknowledgements after a successful model response;
+the pinned MongoDB saver would otherwise submit an invalid empty bulk write and
+cause the task to retry. Nonempty writes, serialization, persistence, and database
+errors retain their upstream behavior. In-memory runtimes are unchanged.
+
 ### Prerequisites
 
 - Python 3.14

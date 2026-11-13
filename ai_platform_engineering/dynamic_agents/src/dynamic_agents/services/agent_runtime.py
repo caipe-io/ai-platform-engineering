@@ -33,7 +33,6 @@ from jinja2 import ChainableUndefined, TemplateSyntaxError
 from jinja2.sandbox import ImmutableSandboxedEnvironment, SecurityError
 from langchain.agents.middleware.pii import PIIMiddleware
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.checkpoint.mongodb.saver import MongoDBSaver
 from langgraph.config import get_stream_writer
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
@@ -94,6 +93,7 @@ from dynamic_agents.services.model_capabilities import (
     ModelCapabilities,
     get_model_capabilities,
 )
+from dynamic_agents.services.mongo_checkpoint import MongoDBSaver
 from dynamic_agents.services.remote_agent_subagent import create_remote_agent_subagent
 from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills, verify_skill_pins
