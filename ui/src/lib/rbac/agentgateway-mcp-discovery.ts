@@ -154,6 +154,12 @@ function routePathForRoute(route: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
+function targetIdForRoutePath(routePath: string | undefined): string | null {
+  if (!routePath) return null;
+  const match = /^\/mcp\/([^/]+)\/?$/.exec(routePath);
+  return match ? normalizeTargetId(match[1]) : null;
+}
+
 export function extractAgentGatewayMcpTargets(config: unknown): AgentGatewayMcpTarget[] {
   if (!isRecord(config)) return [];
 
@@ -165,11 +171,16 @@ export function extractAgentGatewayMcpTargets(config: unknown): AgentGatewayMcpT
       for (const route of asArray(listener.routes)) {
         if (!isRecord(route)) continue;
         const route_path = routePathForRoute(route);
+        // The config bridge can normalize an AgentGateway backend target name
+        // (for example, webex_meetings_pam -> webex-meetings-pam) while keeping
+        // the public route path unchanged. Mongo and agent configuration use
+        // the route ID, so prefer an exact /mcp/<id> path when one is present.
+        const routeTargetId = targetIdForRoutePath(route_path);
         for (const backend of asArray(route.backends)) {
           if (!isRecord(backend) || !isRecord(backend.mcp)) continue;
           for (const target of asArray(backend.mcp.targets)) {
             if (!isRecord(target) || !isRecord(target.mcp)) continue;
-            const id = normalizeTargetId(target.name);
+            const id = routeTargetId ?? normalizeTargetId(target.name);
             const targetEndpoint = typeof target.mcp.host === "string" ? target.mcp.host.trim() : "";
             if (!id || !targetEndpoint) continue;
             targets.push({ id, ...(route_path ? { route_path } : {}), target_endpoint: targetEndpoint });
