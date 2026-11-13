@@ -461,7 +461,7 @@ def rbac_global_middleware(
     # _route_to_agent anyway). The bot's Slack user ID and bot_id are recorded
     # so downstream logging and the allowlist check in _match_agents work as
     # normal.
-    if event.get("bot_id"):
+    if utils.is_bot_sender(event):
         # Resolve the bot's U-prefixed user ID via bots.info (mirrors the
         # pattern in _route_to_agent lines 1518-1519), falling back to the
         # raw bot_id only if the lookup fails.
