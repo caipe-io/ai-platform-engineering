@@ -1713,7 +1713,10 @@ export async function reconcileExistingAgentOpenFgaTuples(): Promise<number> {
       platformDefaultAgentId !== null && agentId === platformDefaultAgentId;
     await reconcileAgentRelationships({
       agentId,
-      previousAllowedTools: allowedTools,
+      // This is a repair sweep, not an edit diff. Treat the current grants as
+      // desired writes so reconcileTupleDiff can restore any missing agent
+      // caller tuple without duplicating tuples that already exist.
+      previousAllowedTools: {},
       nextAllowedTools: allowedTools,
       ownerSubject: agent.owner_subject ?? agent.owner_id,
       organizationId: orgId,
