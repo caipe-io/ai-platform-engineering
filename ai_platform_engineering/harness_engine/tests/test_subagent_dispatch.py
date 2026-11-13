@@ -198,7 +198,12 @@ async def test_child_uses_real_remote_acp_transport_and_subprocess(settings: Set
     runtime = "claude_code_cli_acp"
     executable = Path(settings.claude_sdk_profiles()["safe"].cwd).parent / "claude"
     fixture = Path(__file__).parent / "fixtures" / "claude_cli.py"
-    executable.write_text(f"#!{sys.executable}\n" + fixture.read_text().replace("from __future__ import annotations\n", "").replace('Path("cli-policy.json").write_text', 'policy["system_prompt"] = Path(args[args.index("--append-system-prompt-file") + 1]).read_text()\n    Path("cli-policy.json").write_text'))
+    script = fixture.read_text().replace("from __future__ import annotations\n", "")
+    script = script.replace(
+        'Path("cli-policy.json").write_text',
+        'policy["system_prompt"] = Path(args[args.index("--append-system-prompt-file") + 1]).read_text()\n    Path("cli-policy.json").write_text',
+    )
+    executable.write_text(f"#!{sys.executable}\n" + script)
     executable.chmod(0o700)
     monkeypatch.setenv("PATH", str(executable.parent) + os.pathsep + os.environ["PATH"])
     worker_config = settings.model_copy(update={
