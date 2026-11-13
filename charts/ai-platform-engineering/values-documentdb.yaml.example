@@ -1,5 +1,5 @@
-# Opt-in in-cluster DocumentDB persistence for CAIPE.
-# MongoDB remains the default provider in values.yaml.
+# In-cluster DocumentDB persistence for CAIPE.
+# DocumentDB is the default provider in values.yaml.
 
 tags:
   caipe-ui: true

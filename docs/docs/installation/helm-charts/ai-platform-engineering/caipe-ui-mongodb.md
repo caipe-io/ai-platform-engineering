@@ -100,7 +100,7 @@ helm show values oci://ghcr.io/caipe-io/charts/caipe-ui-mongodb --version 1.1.0
 | podLabels | object | `{}` |  |
 | podSecurityContext.fsGroup | int | `999` |  |
 | podSecurityContext.runAsNonRoot | bool | `true` |  |
-| provider | string | `"mongodb"` | Database engine to run: mongodb (default) or documentdb. DocumentDB is the MIT-licensed, PostgreSQL-backed project from https://github.com/documentdb/documentdb. Both providers expose the MongoDB wire protocol, so CAIPE consumers continue to use MONGODB_URI. |
+| provider | string | `"documentdb"` | Database engine to run: documentdb (default) or mongodb. DocumentDB is the MIT-licensed, PostgreSQL-backed project from https://github.com/documentdb/documentdb. Both providers expose the MongoDB wire protocol, so CAIPE consumers continue to use MONGODB_URI. |
 | readinessProbe.exec.command[0] | string | `"mongosh"` |  |
 | readinessProbe.exec.command[1] | string | `"--eval"` |  |
 | readinessProbe.exec.command[2] | string | `"db.adminCommand('ping')"` |  |
