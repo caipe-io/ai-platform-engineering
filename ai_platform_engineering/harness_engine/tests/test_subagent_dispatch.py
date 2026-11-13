@@ -23,15 +23,18 @@ from harness_engine.coordinator import RunCoordinator
 from harness_engine.models import (
     AgentBlueprint,
     CanonicalEventDraft,
+    CreateRunRequest,
     ExecutionIdentity,
     HarnessProfile,
     RenderedPrompt,
     RunContext,
+    RunRecord,
+    RunStatus,
     SessionBinding,
     TurnInput,
 )
 from harness_engine.registry import HarnessRegistry
-from harness_engine.repository import InMemoryRunRepository
+from harness_engine.repository import InMemoryRunRepository, RunAdmissionError
 from harness_engine.sessions import CAIPEAgentSessionManager, DeterministicProviderSessionManager
 from tests.conftest import FakeHarnessAdapter, blueprint
 
@@ -82,7 +85,7 @@ class ChildAdapter(FakeHarnessAdapter):
 
 
 def parent(subject: str = "caller-a") -> RunContext:
-    draft = blueprint()
+    draft = blueprint(harness_id="dynamic_agents", profile_id="existing")
     draft.update(id="agent-parent", delegation={"agents": ["agent-child"]})
     bp = AgentBlueprint.model_validate(draft)
     return RunContext(blueprint=bp, binding=SessionBinding(
@@ -98,6 +101,14 @@ async def setup(monkeypatch: pytest.MonkeyPatch, runtime: str = "claude_code_cli
         return None
     monkeypatch.setattr("harness_engine.subagent_dispatch.require_agent_use_permission", authorize)
     repo = InMemoryRunRepository()
+    await repo.save_agent(parent().blueprint, "parent-config", "test", None)
+    for subject in ["caller-a", "caller-b"]:
+        ctx = parent(subject)
+        await repo.create_session(ctx.binding)
+        await repo.admit_run(RunRecord(run_id=ctx.turn.run_id, owner_subject=subject, agent_id=ctx.blueprint.id,
+            agent_version=1, conversation_id=ctx.binding.conversation_id, binding_id=ctx.binding.binding_id,
+            harness_id="dynamic_agents", profile_id="existing"))
+        await repo.append_event(ctx.turn.run_id, "run.started", {}, RunStatus.RUNNING)
     adapter = ChildAdapter(runtime, delay)
     registry = HarnessRegistry([adapter])
     coordinator = RunCoordinator(repo, registry, CAIPEAgentSessionManager(repo, registry, b"example-secret"), DefaultPromptCompiler())
@@ -177,7 +188,7 @@ async def test_cancellation_reaches_child_and_drains_provider(monkeypatch: pytes
         with pytest.raises(asyncio.CancelledError):
             await task
     await asyncio.wait_for(adapter.finished.wait(), 3)
-    assert all(run.cancellation_requested for run in dispatcher.repository._runs.values())
+    assert all(run.cancellation_requested for run in dispatcher.repository._runs.values() if run.agent_id == "agent-child")
 
 
 async def test_unpublished_and_disabled_children_never_fall_back_to_a_model(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -232,8 +243,9 @@ async def test_child_uses_real_remote_acp_transport_and_subprocess(settings: Set
     assert any(chunk[1] == "custom" and chunk[2].get("event_type") == "tool.started" for chunk in chunks)
     assert any(chunk[1] == "custom" and chunk[2].get("event_type") == "tool.completed" for chunk in chunks)
     assert result["messages"][-1].text == "CLI answer"
-    run = next(iter(dispatcher.repository._runs.values()))
+    run = next(run for run in dispatcher.repository._runs.values() if run.agent_id == "agent-child")
     assert run.harness_id == runtime and run.profile_id == "remote" and run.agent_version == 2
+    assert run.parent_run_id == parent().turn.run_id
     assert run.provider_session_id is not None
     assert run.status.value == "completed"
     policy_files = list(Path(settings.claude_sdk_profiles()["safe"].cwd).glob("*/cli-policy.json"))
@@ -263,9 +275,9 @@ async def test_stop_during_admission_still_cancels_the_admitted_child(monkeypatc
         with pytest.raises(asyncio.CancelledError):
             await task
     async with asyncio.timeout(3):
-        while any(run.status.value not in {"cancelled", "failed", "completed"} for run in dispatcher.repository._runs.values()):
+        while any(run.status.value not in {"cancelled", "failed", "completed"} for run in dispatcher.repository._runs.values() if run.agent_id == "agent-child"):
             await asyncio.sleep(.01)
-    assert all(run.cancellation_requested for run in dispatcher.repository._runs.values())
+    assert all(run.cancellation_requested for run in dispatcher.repository._runs.values() if run.agent_id == "agent-child")
 
 
 async def test_deadline_requests_child_cancellation_without_model_retry(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -280,3 +292,14 @@ async def test_deadline_requests_child_cancellation_without_model_retry(monkeypa
     assert "do not automatically retry" in result["messages"][-1].text
     assert len(adapter.calls) == 1
     await asyncio.wait_for(adapter.finished.wait(), 3)
+
+
+async def test_child_admission_rejects_foreign_or_unselected_parent(monkeypatch: pytest.MonkeyPatch) -> None:
+    dispatcher, adapter = await setup(monkeypatch)
+    request = CreateRunRequest(agent_id="agent-child", conversation_id="private-child", message="lookup")
+    with pytest.raises(RunAdmissionError):
+        await dispatcher.coordinator.start_run(request, "other-caller", parent_run_id=parent().turn.run_id)
+    request.agent_id = "unselected-child"
+    with pytest.raises(RunAdmissionError):
+        await dispatcher.coordinator.start_run(request, "caller-a", parent_run_id=parent().turn.run_id)
+    assert not adapter.calls

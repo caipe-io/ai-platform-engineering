@@ -95,6 +95,7 @@ class HarnessSubagentDispatcher:
                     request.agent_version = version.version
                     admission = asyncio.create_task(self.coordinator.start_run(
                         request, parent.identity.subject, parent.turn.traceparent, parent.identity,
+                        parent_run_id=parent.turn.run_id,
                     ))
                     run = await asyncio.shield(admission)
                     writer({"type": "harness_subagent", "event_type": "subagent.started", "data": {

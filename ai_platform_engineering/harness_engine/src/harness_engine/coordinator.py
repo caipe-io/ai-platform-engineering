@@ -64,10 +64,20 @@ class RunCoordinator:
         owner_subject: str,
         traceparent: str | None = None,
         identity: ExecutionIdentity | None = None,
+        *, parent_run_id: str | None = None,
     ) -> RunRecord:
+        if parent_run_id:
+            parent = await self._repository.get_run(parent_run_id)
+            parent_version = await self._repository.get_agent_version(parent.agent_id, parent.agent_version) if parent else None
+            if (parent is None or parent.owner_subject != owner_subject or parent.harness_id != "dynamic_agents"
+                    or parent.parent_run_id or parent.status != RunStatus.RUNNING or parent.cancellation_requested
+                    or parent_version is None or request.agent_id not in parent_version.blueprint.delegation.agents):
+                raise RunAdmissionError("Child admission requires an active authorized parent and selected child")
         if request.client_request_id:
             existing = await self._repository.find_run_request(owner_subject, request.agent_id, request.conversation_id, request.client_request_id)
             if existing is not None:
+                if existing.parent_run_id != parent_run_id:
+                    raise RunAdmissionError("Request ID belongs to another delegation")
                 if request.agent_version is not None and request.agent_version != existing.agent_version:
                     raise RunAdmissionError("Request ID was already used with a different agent version")
                 fingerprint = hashlib.sha256(request.model_copy(update={"agent_version": existing.agent_version}).model_dump_json().encode()).hexdigest()
@@ -85,6 +95,7 @@ class RunCoordinator:
             validate_resume_response(binding.pending_interrupt, request.resume_data or {})
         run = RunRecord(
             run_id=f"run-{uuid4().hex}",
+            parent_run_id=parent_run_id,
             owner_subject=owner_subject,
             agent_id=request.agent_id,
             agent_version=version.version,
