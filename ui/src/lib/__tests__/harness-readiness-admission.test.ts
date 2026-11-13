@@ -1,6 +1,8 @@
 /** @jest-environment node */
 import { startHarnessGatewayRun } from "../harness-gateway";
 import { NextResponse } from "next/server";
+const mockConnection = jest.fn();
+jest.mock("@/lib/harness-mcp-readiness", () => ({ checkHarnessMcpReadiness: (...args: unknown[]) => mockConnection(...args) }));
 const mockFindAgent = jest.fn();
 const mockReadiness = jest.fn();
 const mockSession = jest.fn();
@@ -41,4 +43,14 @@ it("does not block session recovery controls with tool readiness", async () => {
   jest.spyOn(global, "fetch").mockResolvedValue(Response.json({ success: true, data: { run_id: "reconcile", status: "completed" } }));
   await startHarnessGatewayRun({ ...request, command: "reconcile" }, auth, "claude_code_cli_acp");
   expect(mockReadiness).not.toHaveBeenCalled();
+});
+
+it("rejects a live catalog failure before admitting a provider run", async () => {
+  mockReadiness.mockResolvedValue(new Map([["example", { ready: true }]]));
+  mockConnection.mockResolvedValue({ ready: false, code: "HARNESS_AGENT_NOT_READY", message: "MCP unavailable" });
+  const fetcher = jest.spyOn(global, "fetch").mockImplementation(async url => String(url).includes("run-requests")
+    ? Response.json({ success: true, data: null }) : Response.json({ success: true, data: { version: { blueprint: { tools: { bindings: [{ tool_id: "primary.lookup" }] } } } } }));
+  expect((await startHarnessGatewayRun(request, auth, "claude_code_cli_acp") as Response).status).toBe(409);
+  expect(mockConnection).toHaveBeenCalledWith("example", ["primary.lookup"], auth);
+  expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/api/v1/runs"))).toBe(false);
 });

@@ -156,7 +156,9 @@ and skills later without rebuilding the agent.
   reports **Agent configuration needs attention**, links to agent settings, and
   offers no blind retry. The error classification survives a chat reload.
   Existing request replay and recovery controls remain available. This checks
-  configuration metadata, not live provider connectivity; execution-time
+  configuration metadata and initializes permitted MCP catalogs through the
+  existing caller/agent gateway path. It never invokes tools. Credential and
+  permission denials retain the existing unavailable-tool behavior. Execution-time
   authorization checks remain authoritative.
 - Harness children require the Engine delegation capability. Older backends keep
   those choices disabled. ACP chat uses the configured worker directly; A2A

@@ -12,6 +12,7 @@ import {
   type HarnessConversationReadScope,
 } from "@/lib/harness-engine-proxy";
 import { getCollection } from "@/lib/mongodb";
+import { checkHarnessMcpReadiness } from "@/lib/harness-mcp-readiness";
 import { CLAUDE_TOOL_RUNTIMES, getHarnessToolReadiness } from "@/lib/harness-tool-readiness";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { stageHarnessAttachments } from "@/lib/harness-attachments";
@@ -330,6 +331,8 @@ export async function startHarnessGatewayRun(
       }
       const readiness = (await getHarnessToolReadiness([{ ...published, execution_harness_id: harnessId }], tools)).get(published._id);
       if (readiness && !readiness.ready) return NextResponse.json({ success: false, code: readiness.code, error: readiness.message }, { status: 409 });
+      const connection = await checkHarnessMcpReadiness(String(body.agent_id), tools ?? [], auth);
+      if (connection) return NextResponse.json({ success: false, code: connection.code, error: connection.message }, { status: 409 });
     }
   }
   const override = body.config_override;
