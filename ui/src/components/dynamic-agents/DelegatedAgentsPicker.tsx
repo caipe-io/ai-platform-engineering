@@ -8,7 +8,7 @@ import { SearchablePicker } from "@/components/ui/searchable-picker";
 import type { AvailableSubagent, DynamicAgentConfig, RemoteAgentRegistryEntry, SubAgentRef, VisibilityType } from "@/types/dynamic-agent";
 import type { RemoteAgentsPickerProps } from "./RemoteAgentRegistry";
 
-type Choice = { key: string; id: string; source: "caipe" | "a2a"; name: string; description?: string; runtime: string; visibility?: VisibilityType; timeout?: number };
+type Choice = { key: string; id: string; source: "caipe" | "a2a"; name: string; description?: string; runtime: string; visibility?: VisibilityType; timeout?: number; readiness?: string };
 const runtimes: Record<string, string> = {
   dynamic_agents: "Deep Agents", claude_agent_sdk: "Claude Agent SDK", claude_agent_sdk_remote: "Claude Agent SDK",
   claude_code_acp: "Claude Agent SDK · ACP", claude_code_cli_acp: "Claude Code · ACP", agentcore: "AgentCore",
@@ -39,6 +39,7 @@ export function DelegatedAgentsPicker({ agentId, value, onChange, remote, disabl
         })) : items.map((item: AvailableSubagent & DynamicAgentConfig) => {
           const id = item.id || item._id;
           return { key: `caipe:${id}`, id, source, name: item.name, description: item.description,
+            readiness: item.execution_readiness?.ready === false ? item.execution_readiness.message || "Agent configuration needs attention" : undefined,
             runtime: item.execution_harness_id || "dynamic_agents", visibility: item.visibility === "global" ? "global" : "team" };
         });
         if (!controller.signal.aborted) setChoices(previous => [...previous.filter(item => item.source !== source), ...loaded]);
@@ -59,7 +60,7 @@ export function DelegatedAgentsPicker({ agentId, value, onChange, remote, disabl
   ];
   const available = choices.filter(item => !errors[item.source] && item.id !== agentId && !selected.some(saved => saved.key === item.key));
   const incompatible = (item: Choice) => item.source === "caipe" && (
-    !runtimes[item.runtime] || item.runtime !== "dynamic_agents" && !allowHarnessChildren || parentVisibility === "global" && item.visibility !== "global"
+    Boolean(item.readiness) || !runtimes[item.runtime] || item.runtime !== "dynamic_agents" && !allowHarnessChildren || parentVisibility === "global" && item.visibility !== "global"
   );
   function add(item: Choice) {
     if (item.source === "a2a") remote.onChange([...new Set([...remote.value, item.id])]);
@@ -72,7 +73,7 @@ export function DelegatedAgentsPicker({ agentId, value, onChange, remote, disabl
         getOptionLabel={item => item.name} getSearchText={item => [item.name, item.description || "", runtimes[item.runtime] || item.runtime]}
         isOptionDisabled={incompatible} renderOption={item => <div>{item.name}<span className="ml-2 text-xs text-muted-foreground">{item.source === "a2a" ? "A2A" : `CAIPE · ${runtimes[item.runtime] || "Unavailable runtime"}`}</span>
           {item.description && <p className="text-xs text-muted-foreground">{item.description}</p>}
-          {incompatible(item) && <p className="text-xs text-muted-foreground">Runtime or sharing permissions are incompatible.</p>}</div>}
+          {incompatible(item) && <p className="text-xs text-muted-foreground">{item.readiness || "Runtime or sharing permissions are incompatible."}</p>}</div>}
         ariaLabel="Add subagent" placeholder="Add subagent…" searchPlaceholder="Search agents…" emptyLabel="No available agents"
         loading={loading} disabled={disabled || loading} /></div>
       <Button type="button" variant="outline" size="sm" disabled={disabled || loading} onClick={refresh}>Refresh agents</Button>
@@ -100,7 +101,7 @@ export function DelegatedAgentsPicker({ agentId, value, onChange, remote, disabl
             }
           }} /></div>}
         {!item && !loading && !errors[saved.source] && <p className="text-xs text-amber-600">This saved agent is unavailable. Its reference is retained.</p>}
-        {item && incompatible(item) && <p className="text-xs text-destructive">This agent has incompatible runtime or sharing permissions.</p>}
+        {item && incompatible(item) && <p className="text-xs text-destructive">{item.readiness || "This agent has incompatible runtime or sharing permissions."}</p>}
       </div>;
     })}
   </section>;

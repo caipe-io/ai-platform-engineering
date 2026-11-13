@@ -181,6 +181,7 @@ export const POST = withErrorHandler(async (
           latency_ms: body.metadata?.latency_ms,
           agent_name: agentName,
           is_final: body.metadata?.is_final,
+          ...(body.role === "assistant" && body.metadata?.execution_error_code === "HARNESS_AGENT_NOT_READY" && { execution_error_code: "HARNESS_AGENT_NOT_READY" as const }),
           ...(body.metadata?.turn_status && { turn_status: body.metadata.turn_status }),
           ...(body.metadata?.is_interrupted && { is_interrupted: body.metadata.is_interrupted }),
           ...(body.metadata?.task_id && { task_id: body.metadata.task_id }),

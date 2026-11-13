@@ -75,3 +75,13 @@ it.each(["claude_code_acp", "claude_code_cli_acp"])("selects a configured %s age
   expect(selection.onChange).toHaveBeenCalledWith([expect.objectContaining({ agent_id: "same-id" })]);
   expect(selection.remote.onChange).not.toHaveBeenCalled();
 });
+
+it("disables a broken child and explains its unavailable dependency", async () => {
+  const broken = { ...local, execution_readiness: { ready: false, message: "A selected MCP server is disabled." } };
+  global.fetch = jest.fn(async url => String(url).includes("remote-agents") ? response({ items: [] }) : response({ agents: [broken] })) as jest.Mock;
+  render(<DelegatedAgentsPicker {...props()} />);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Add subagent" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("combobox", { name: "Add subagent" }));
+  expect(await screen.findByRole("option", { name: /Coding specialist/ })).toBeDisabled();
+  expect(screen.getByText("A selected MCP server is disabled.")).toBeInTheDocument();
+});

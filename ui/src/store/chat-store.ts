@@ -271,6 +271,7 @@ function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
       autonomousMessageKind: msg.metadata?.kind,
       autonomousExecutionContextId: msg.metadata?.execution_context_id,
       turnStatus: msg.metadata?.turn_status as TurnStatus | undefined,
+      ...(msg.metadata?.execution_error_code === "HARNESS_AGENT_NOT_READY" && { error: "HARNESS_AGENT_NOT_READY" }),
       // A non-final message may still be streaming in another tab. Only a
       // persisted terminal status can confirm that its response was interrupted.
       isInterrupted: !hasHitlForm && (
@@ -1243,6 +1244,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
                 ...(msg.taskId && { task_id: msg.taskId }),
                 ...(msg.isInterrupted && { is_interrupted: msg.isInterrupted }),
                 ...(msg.turnStatus && { turn_status: msg.turnStatus }),
+                ...(msg.error === "HARNESS_AGENT_NOT_READY" && { execution_error_code: msg.error }),
                 // agent_name + latency_ms power the Insights "Favorite Agents"
                 // and response-time analytics. Set on the finalized assistant
                 // message by DynamicAgentChatPanel.finalizeStreamLoop.

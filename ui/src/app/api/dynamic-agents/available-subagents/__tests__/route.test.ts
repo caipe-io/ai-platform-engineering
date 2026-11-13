@@ -1,6 +1,7 @@
 /** @jest-environment node */
 import { NextRequest } from "next/server";
 
+jest.mock("@/lib/harness-tool-readiness", () => ({ getHarnessToolReadiness: async () => new Map() }));
 const mockAuth = jest.fn();
 const mockCollection = jest.fn();
 const mockPermission = jest.fn();
