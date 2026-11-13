@@ -68,6 +68,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     const available = usableCandidates
       .map((agent) => ({
         id: agent._id,
+        execution_harness_id: agent.execution_harness_id || "dynamic_agents",
         name: agent.name,
         description: agent.description,
         visibility: agent.visibility,

@@ -14,7 +14,7 @@ export function HarnessFeaturePanels({ descriptor, step, panels }: {
   let sections;
   try { sections = harnessBuilderSections(descriptor); }
   catch (error) { return <p role="alert">{error instanceof Error ? error.message : "Unsupported editor"}</p>; }
-  return <>{sections.filter(section => section.step === step).map(section => {
+  return <>{sections.filter(section => section.step === step && panels[section.renderer] !== null).map(section => {
     const supported = section.requires.every(capability => supportsHarnessCapability(descriptor, capability));
     return <div key={section.id}>
       {!supported && <p role="alert">{section.title} is unavailable for the selected harness.</p>}

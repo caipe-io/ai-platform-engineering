@@ -607,3 +607,16 @@ rewriting its instructions. Supporting references retain their relative paths.
 Legacy unpinned Hub entries without frontmatter retain generated discovery
 metadata; original imports and pinned Hub entries preserve their exact bytes.
 Upstream tool declarations do not grant runtime tools or execution permission.
+
+### Unified subagent selection
+
+Agent Builder's Advanced step has one **Subagents** section. **Add subagent**
+searches authorized CAIPE agents and the shared A2A registry, with runtime/source
+labels. Published Harness children keep their runtime; enable Harness Engine
+execution before using them. Discovery and credentials remain in Remote Agents,
+which opens separately so an unsaved builder draft is retained.
+
+Existing `subagents`, `allowed_remote_agents`, A2A timeout overrides and native
+A2A opt-in settings are preserved. Removing a selection changes only the parent
+reference. Catalog errors retain saved references and leave the other available
+catalog usable. Sharing constraints and server-side authorization still apply.

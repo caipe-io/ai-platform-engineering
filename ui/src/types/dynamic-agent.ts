@@ -347,6 +347,7 @@ export type ReasoningEffort = "low" | "medium" | "high" | "max";
  * When configured, the parent agent can delegate tasks to this subagent.
  */
 export interface SubAgentRef {
+  timeout_seconds?: number;
   agent_id: string; // MongoDB ObjectId of the subagent
   name: string; // Routing identifier (e.g., 'code-reviewer')
   description: string; // Description for LLM routing decisions
@@ -584,6 +585,7 @@ export interface DynamicAgentConfigUpdate {
  * Available agent for subagent selection (returned by available-subagents endpoint)
  */
 export interface AvailableSubagent {
+  execution_harness_id?: string;
   id: string;
   name: string;
   description?: string;
