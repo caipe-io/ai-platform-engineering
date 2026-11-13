@@ -46,7 +46,12 @@ SDK negotiates JSON-RPC or HTTP+JSON from the Agent Card.
 ## Remote agent catalog
 
 Open **Agents → Remote Agents** to browse A2A and configured ACP specialists in
-one searchable grid. Filter by protocol and open **View details** for connection
+one searchable grid. Official framework logos identify known runtimes; protocol
+badges identify A2A or ACP independently. For registered A2A services, admins can
+set an optional **Framework** display label (Claude Code, Claude Agent SDK,
+Google ADK, or Deep Agents). Unspecified frameworks retain the A2A protocol logo;
+the label never changes runtime execution, credentials, or tool permissions.
+Filter by protocol and open **View details** for connection
 settings and capabilities. Discovery, registration, and editing use separate dialogs.
 
 - **A2A:** registry managers can run **Test connection** with the saved authentication.

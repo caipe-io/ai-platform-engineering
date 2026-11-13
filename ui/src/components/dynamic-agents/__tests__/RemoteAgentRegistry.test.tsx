@@ -70,6 +70,7 @@ describe("RemoteAgentRegistry", () => {
     expect(await screen.findByDisplayValue("Example Agent")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Stream responses" })).not.toBeChecked();
     fireEvent.click(screen.getByRole("checkbox", { name: "Stream responses" }));
+    fireEvent.change(screen.getByLabelText("Framework"), { target: { value: "google_adk" } });
     fireEvent.click(screen.getByRole("button", { name: "Register agent" }));
 
     await waitFor(() => {
@@ -80,6 +81,7 @@ describe("RemoteAgentRegistry", () => {
     });
     const posted = fetchMock.mock.calls.find(([, init]) => init?.method === "POST" && JSON.parse(init.body as string).streaming === true);
     expect(posted).toBeDefined();
+    expect(JSON.parse(posted![1]!.body as string).framework).toBe("google_adk");
     expect(onParentSubmit).not.toHaveBeenCalled();
   });
   it.each(["secret_ref", "provider_connection"])("saves the selected %s authentication reference", async (kind) => {

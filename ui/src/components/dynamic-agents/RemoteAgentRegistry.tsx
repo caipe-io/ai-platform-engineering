@@ -4,12 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
+import { AgentTechnologyIcon, AgentProtocolBadge, AgentFrameworkField } from "./AgentTechnology";
+import { getAgentFramework, type AgentFramework } from "@/lib/agent-framework";
 import { AgentCardDetails, agentCardSkills } from "./AgentCardDetails";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/toast";
 import type { AvailableSubagent, RemoteAgentCredentialSource, RemoteAgentRegistryEntry } from "@/types/dynamic-agent";
-import { Check, Globe, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { Check, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import React from "react";
 import { RemoteAgentDiscovery, type DiscoveredAgent } from "./RemoteAgentDiscovery";
 import { RemoteAgentSelection } from "./RemoteAgentSelection";
@@ -45,6 +47,7 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const mutationPending = React.useRef(false);
+  const [framework, setFramework] = React.useState<AgentFramework>("unspecified");
   const [name, setName] = React.useState("");
   const [endpoint, setEndpoint] = React.useState("");
   const [description, setDescription] = React.useState("");
@@ -56,7 +59,7 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [probedCard, setProbedCard] = React.useState<{ protocol_version?: string; protocol_bindings?: string[]; supports_streaming?: boolean } | null>(null);
   const [editingId, setEditingId] = React.useState<string | null>(null);
-  const [editValues, setEditValues] = React.useState({ name: "", endpoint: "", description: "", timeout_seconds: 120, streaming: false, credential_source: defaultRemoteAgentAuth() });
+  const [editValues, setEditValues] = React.useState({ framework: "unspecified" as AgentFramework, name: "", endpoint: "", description: "", timeout_seconds: 120, streaming: false, credential_source: defaultRemoteAgentAuth() });
 
   const loadItems = React.useCallback(async () => {
     setLoading(true);
@@ -136,13 +139,13 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, endpoint, description, timeout_seconds: timeoutSeconds, streaming, credential_source: credentialSource, ...probedCard }),
+        body: JSON.stringify({ name, endpoint, description, framework, timeout_seconds: timeoutSeconds, streaming, credential_source: credentialSource, ...probedCard }),
       });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || "Failed to add remote agent");
       setItems((current) => [...current, data.data].sort((a, b) => a.name.localeCompare(b.name)));
       onChange([...new Set([...value, data.data._id])]);
-      setAddOpen(false); setCardPreview(null);
+      setAddOpen(false); setCardPreview(null); setFramework("unspecified");
       setName(""); setEndpoint(""); setDescription(""); setTimeoutSeconds(120); setStreaming(false); setProbedCard(null);
       setCredentialSource(selection ? defaultRemoteAgentAuth() : { kind: "none", target: "header", name: "Authorization" });
       toast("Remote A2A agent added", "success");
@@ -203,14 +206,14 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
   const catalog = [
     ...(!loading && !loadError ? items.map(item => ({ source: "a2a" as const, key: `a2a:${item._id}`, item })) : []),
     ...(!acpLoading && !acpError ? acpAgents.map(item => ({ source: "acp" as const, key: `acp:${item.id}`, item })) : []),
-  ].filter(entry => (protocol === "all" || entry.source === protocol) && [entry.item.name, entry.item.description, entry.source, ...(entry.source === "a2a" ? [...(entry.item.protocol_bindings || []), entry.item.streaming ? "streaming" : "complete responses", ...agentCardSkills(checks[entry.item._id]?.card).map(skill => `${skill.name} ${skill.description || ""}`)] : ["direct chat", "subagent delegation", "saved sessions"])].join(" ").toLowerCase().includes(search.toLowerCase().trim()))
+  ].filter(entry => (protocol === "all" || entry.source === protocol) && [entry.item.name, entry.item.description, entry.source, entry.source === "a2a" ? getAgentFramework(entry.item.framework).label : "", ...(entry.source === "a2a" ? [...(entry.item.protocol_bindings || []), entry.item.streaming ? "streaming" : "complete responses", ...agentCardSkills(checks[entry.item._id]?.card).map(skill => `${skill.name} ${skill.description || ""}`)] : ["direct chat", "subagent delegation", "saved sessions"])].join(" ").toLowerCase().includes(search.toLowerCase().trim()))
     .sort((left, right) => left.item.name.localeCompare(right.item.name));
 
   const detail = items.find(item => item._id === detailsId);
   const editing = items.find(item => item._id === editingId);
   const beginEdit = (item: RemoteAgentRegistryEntry) => {
     setDetailsId(null); setCardPreview(null); setEditingId(item._id);
-    setEditValues({ name: item.name, endpoint: item.endpoint || "", description: item.description || "", timeout_seconds: item.timeout_seconds || 120, streaming: item.streaming === true, credential_source: item.credential_source || defaultRemoteAgentAuth() });
+    setEditValues({ framework: item.framework || "unspecified", name: item.name, endpoint: item.endpoint || "", description: item.description || "", timeout_seconds: item.timeout_seconds || 120, streaming: item.streaming === true, credential_source: item.credential_source || defaultRemoteAgentAuth() });
   };
 
   return (
@@ -237,15 +240,15 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
           const item = entry.item;
           const check = checks[item._id];
           return <article key={entry.key} aria-label={`${item.name} A2A agent`} className="flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-5 transition-colors hover:border-primary/40">
-            <div className="flex items-start gap-3"><div className="rounded-lg bg-primary/10 p-2.5 text-primary"><Globe className="h-5 w-5" /></div><div className="min-w-0 flex-1"><h2 className="break-words font-semibold">{item.name}</h2><p className="mt-1 text-xs text-muted-foreground">A2A · Remote service</p></div></div>
+            <div className="flex items-start gap-3"><AgentTechnologyIcon protocol="a2a" framework={item.framework} /><div className="min-w-0 flex-1"><h2 className="break-words font-semibold">{item.name}</h2><div className="mt-2 flex flex-wrap items-center gap-2"><AgentProtocolBadge protocol="a2a" /><span className="text-xs text-muted-foreground">{item.framework && item.framework !== "unspecified" ? getAgentFramework(item.framework).label : "Remote service"}</span></div></div></div>
             <p className="line-clamp-3 text-sm text-muted-foreground">{item.description || "No description provided."}</p>
             <div className="flex flex-wrap gap-1.5"><Badge variant="secondary">{item.streaming ? "Streaming enabled" : "Complete responses"}</Badge><Badge variant="outline">{item.timeout_seconds}s timeout</Badge>{agentCardSkills(check?.card).slice(0, 3).map((skill, index) => <Badge key={`skill-${index}`} variant="secondary">{skill.name}</Badge>)}{item.protocol_bindings?.map(binding => <Badge key={binding} variant="outline">{binding}</Badge>)}</div>
             {check?.card && <p className="text-xs text-emerald-600 dark:text-emerald-400">Connection verified · {check.elapsed} ms</p>}
             {check?.error && <p className="text-xs text-destructive">Connection failed</p>}
             {!check && <p className="text-xs text-muted-foreground">Connection not tested</p>}
-            <div className="mt-auto flex flex-wrap gap-2 pt-2"><Button type="button" variant="outline" size="sm" aria-label={`Details for ${item.name}`} onClick={event => { cardTrigger.current = event.currentTarget; setDetailsId(item._id); }}>View details</Button>
+            <div className="mt-auto flex flex-wrap gap-1.5 pt-2"><Button type="button" variant="outline" size="sm" aria-label={`Details for ${item.name}`} onClick={event => { cardTrigger.current = event.currentTarget; setDetailsId(item._id); }}>View details</Button>
               {canManage && <Button type="button" size="sm" disabled={saving || probing} onClick={event => { cardTrigger.current = event.currentTarget; setDetailsId(item._id); void probeEndpoint(false, item); }}>Test connection</Button>}
-              {canManage && <Button type="button" variant="ghost" size="sm" disabled={saving || probing} aria-label={`Edit ${item.name}`} onClick={event => { cardTrigger.current = event.currentTarget; beginEdit(item); }}><Pencil className="h-4 w-4" /></Button>}
+              {canManage && <Button type="button" variant="ghost" size="sm" disabled={saving || probing} className="px-1" aria-label={`Edit ${item.name}`} onClick={event => { cardTrigger.current = event.currentTarget; beginEdit(item); }}><Pencil className="h-4 w-4" /></Button>}
             </div>
           </article>;
         })}
@@ -253,9 +256,9 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
       <p className="text-xs text-muted-foreground">{catalog.length} agent{catalog.length === 1 ? "" : "s"} shown · Add these specialists in Agent Builder → Advanced → Subagents.</p>
       <Dialog open={!!detail} onOpenChange={open => { if (!open && !probing && !saving) setDetailsId(null); }}>
         <DialogContent onCloseAutoFocus={event => { event.preventDefault(); if (!editingId) cardTrigger.current?.focus(); }} className="max-h-[85dvh] max-w-2xl overflow-y-auto">
-          <DialogHeader><DialogTitle>{detail?.name}</DialogTitle><DialogDescription>{detail?.description || "Remote A2A agent details and connection test."}</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle className="flex items-center gap-3"><AgentTechnologyIcon decorative protocol="a2a" framework={detail?.framework} />{detail?.name}</DialogTitle><DialogDescription>{detail?.description || "Remote A2A agent details and connection test."}</DialogDescription></DialogHeader>
           {detail && <>
-            <div className="flex flex-wrap gap-2"><Badge>A2A {detail.protocol_version}</Badge><Badge variant="secondary">{detail.streaming ? "Streaming enabled" : "Complete responses"}</Badge><Badge variant="outline">{detail.timeout_seconds}s timeout</Badge></div>
+            <div className="flex flex-wrap gap-2"><AgentProtocolBadge protocol="a2a" version={detail.protocol_version} />{detail.framework && detail.framework !== "unspecified" && <Badge variant="secondary">{getAgentFramework(detail.framework).label}</Badge>}<Badge variant="secondary">{detail.streaming ? "Streaming enabled" : "Complete responses"}</Badge><Badge variant="outline">{detail.timeout_seconds}s timeout</Badge></div>
             {canManage && <dl className="space-y-2 text-sm"><dt className="font-medium">Agent URL</dt><dd className="break-all font-mono text-xs text-muted-foreground">{detail.endpoint}</dd><dt className="font-medium">Authentication</dt><dd className="text-muted-foreground">{detail.credential_source?.kind === "caller_token" ? "Your user identity" : detail.credential_source?.kind === "secret_ref" ? "Saved secret" : detail.credential_source?.kind === "provider_connection" ? "Connected credential" : "Public agent"}</dd></dl>}
             <section className="space-y-3 rounded-lg border p-4"><h3 className="font-medium">Connection test</h3><p className="text-sm text-muted-foreground">Reads the Agent Card with the saved authentication. This checks connectivity and advertised capabilities; it does not run a task.</p>
               {canManage ? <Button type="button" disabled={probing || saving} onClick={() => void probeEndpoint(false, detail)}>{probing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}{probing ? "Testing…" : "Read Agent Card"}</Button> : <p className="text-sm text-muted-foreground">A registry manager can test this connection.</p>}
@@ -282,6 +285,7 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
                     <div className="space-y-1"><Label htmlFor={`edit-remote-agent-description-${editing._id}`}>Description</Label><Input disabled={disabled || saving || probing} id={`edit-remote-agent-description-${editing._id}`} value={editValues.description} onChange={(event) => setEditValues((current) => ({ ...current, description: event.target.value }))} /></div>
                     <div className="space-y-1"><Label htmlFor={`edit-remote-agent-timeout-${editing._id}`}>Default timeout (seconds)</Label><Input disabled={disabled || saving || probing} id={`edit-remote-agent-timeout-${editing._id}`} type="number" min={1} max={600} value={editValues.timeout_seconds} onChange={(event) => setEditValues((current) => ({ ...current, timeout_seconds: Number(event.target.value) }))} /></div>
                   </div>
+                  <AgentFrameworkField id="edit-remote-agent-framework" value={editValues.framework} disabled={saving || probing} onChange={framework => setEditValues(current => ({ ...current, framework }))} />
                   <label className="flex items-center gap-2 text-sm"><input id={`edit-remote-agent-streaming-${editing._id}`} type="checkbox" className="h-4 w-4 accent-primary" checked={editValues.streaming} disabled={disabled || saving} onChange={(event) => setEditValues((current) => ({ ...current, streaming: event.target.checked }))} />Stream responses</label>
                   <p className="text-xs text-muted-foreground">Show remote output as it arrives. Agents without streaming support return a complete response.</p>
                   <RemoteAgentAuthFields
@@ -301,7 +305,7 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
       </Dialog>
       <Dialog open={discoverOpen} onOpenChange={setDiscoverOpen}><DialogContent onCloseAutoFocus={event => { event.preventDefault(); if (!addOpen) discoverTrigger.current?.focus(); }} className="max-h-[85dvh] max-w-2xl overflow-y-auto"><DialogHeader><DialogTitle>Discover remote agents</DialogTitle><DialogDescription>Find public Agent Cards or configured Kubernetes Services.</DialogDescription></DialogHeader>
         {canManage && <RemoteAgentDiscovery disabled={saving || probing} onChoose={(agent: DiscoveredAgent) => {
-          setEndpoint(agent.endpoint); setName(agent.error ? "" : agent.name || ""); setDescription(agent.description || ""); setStreaming(agent.supports_streaming === true);
+          setFramework("unspecified"); setEndpoint(agent.endpoint); setName(agent.error ? "" : agent.name || ""); setDescription(agent.description || ""); setStreaming(agent.supports_streaming === true);
           setCredentialSource({ kind: "none", target: "header", name: "Authorization" });
           setProbedCard(agent.error ? null : { protocol_version: agent.protocol_version, protocol_bindings: agent.protocol_bindings, supports_streaming: agent.supports_streaming }); setCardPreview(null); setDiscoverOpen(false); setAddOpen(true);
         }} />}
@@ -323,6 +327,7 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
             <div className="space-y-1"><Label htmlFor="remote-agent-description">Description</Label><Input disabled={saving || probing} id="remote-agent-description" value={description} onChange={(event) => setDescription(event.target.value)} /></div>
             <div className="space-y-1"><Label htmlFor="remote-agent-timeout">Timeout (seconds, 1–600)</Label><Input disabled={saving || probing} id="remote-agent-timeout" type="number" min={1} max={600} value={timeoutSeconds} onChange={(event) => setTimeoutSeconds(Number(event.target.value))} /></div>
           </div>
+          <AgentFrameworkField id="new-remote-agent-framework" value={framework} onChange={setFramework} disabled={saving || probing} />
           <label className="flex items-center gap-2 text-sm"><input id="remote-agent-streaming" type="checkbox" className="h-4 w-4 accent-primary" checked={streaming} disabled={saving} onChange={(event) => setStreaming(event.target.checked)} />Stream responses</label>
           <p className="text-xs text-muted-foreground">Show remote output as it arrives. Agents without streaming support return a complete response.</p>
           <RemoteAgentAuthFields
