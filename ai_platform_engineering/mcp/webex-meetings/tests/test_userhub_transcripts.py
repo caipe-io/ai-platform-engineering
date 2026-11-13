@@ -451,21 +451,24 @@ async def test_title_time_lookup_bounds_detail_calls_and_reuses_instance_metadat
     assert len(metadata_calls) == 1
 
 
+@pytest.mark.parametrize("meeting_id", [None, "instance-1"])
 @pytest.mark.asyncio
-async def test_title_time_candidate_reads_run_in_bounded_parallel_workers() -> None:
+async def test_candidate_reads_run_in_bounded_parallel_workers(meeting_id: str | None) -> None:
     started = asyncio.Event()
     active = 0
     maximum = 0
     metadata_calls = 0
+    detail_calls = 0
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal active, maximum, metadata_calls
+        nonlocal active, maximum, metadata_calls, detail_calls
         if request.url.path == "/webappng/api/v1/recordings":
             return httpx.Response(200, json={"recordings": [
                 {"recordUUID": f"segment-{index}", "recordName": "Weekly Sync", "gmtCreateTime": "2026-01-05 13:00:00"}
                 for index in range(8)
             ]})
         if request.url.path.endswith("/stream"):
+            detail_calls += 1
             active += 1
             maximum = max(maximum, active)
             if active == 4:
@@ -484,12 +487,42 @@ async def test_title_time_candidate_reads_run_in_bounded_parallel_workers() -> N
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         items = await asyncio.wait_for(_userhub_transcripts_for_meeting(
             client, bearer="Bearer example-user-token", site_url="https://primary.webex.com",
-            meeting_id=None, meeting_title="Weekly Sync", meeting_start=datetime(2026, 1, 5, 13, tzinfo=timezone.utc),
+            meeting_id=meeting_id, meeting_title="Weekly Sync", meeting_start=datetime(2026, 1, 5, 13, tzinfo=timezone.utc),
             max_results=1, download=False,
         ), timeout=1)
     assert len(items) == 1
     assert maximum == 4 and active == 0
-    assert metadata_calls == 1
+    assert metadata_calls == (1 if meeting_id is None else 0)
+    assert detail_calls == (8 if meeting_id is None else 4)
+
+
+@pytest.mark.parametrize("max_results", [1, 2])
+@pytest.mark.asyncio
+async def test_exact_id_parallel_batch_preserves_satisfied_early_exit(max_results: int) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/webappng/api/v1/recordings":
+            return httpx.Response(200, json={"recordings": [
+                {"recordUUID": "readable", "recordName": "Weekly Sync"},
+                {"recordUUID": "unread", "recordName": "Weekly Sync"},
+            ]})
+        if request.url.path.endswith("/unread/stream"):
+            raise httpx.ReadTimeout("metadata timeout", request=request)
+        assert request.url.path.endswith("/readable/stream")
+        return httpx.Response(200, json={"meetingInstanceId": "instance-1", "downloadRecordingInfo": {
+            "downloadInfo": {"transcriptURL": "https://media.webex.com/transcript.txt"},
+        }})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        lookup = _userhub_transcripts_for_meeting(
+            client, bearer="Bearer example-user-token", site_url="https://primary.webex.com",
+            meeting_id="instance-1", meeting_title="Weekly Sync", meeting_start=None,
+            max_results=max_results, download=False,
+        )
+        if max_results == 1:
+            assert [item["id"] for item in await lookup] == ["readable"]
+        else:
+            with pytest.raises(RuntimeError, match="could not be verified"):
+                await lookup
 
 
 @pytest.mark.parametrize("download", [False, True])
@@ -514,7 +547,7 @@ async def test_library_download_block_is_not_advertised_or_bypassed(download: bo
         assert items == []
 
 
-@pytest.mark.parametrize("failure", ["network", "malformed"])
+@pytest.mark.parametrize("failure", ["network", "malformed", "rate_limited", "upstream_error"])
 @pytest.mark.asyncio
 async def test_unread_candidate_cannot_make_another_title_time_match_appear_unique(failure: str) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -526,6 +559,8 @@ async def test_unread_candidate_cannot_make_another_title_time_match_appear_uniq
         if request.url.path.endswith("/unread/stream"):
             if failure == "network":
                 raise httpx.ReadTimeout("private diagnostic", request=request)
+            if failure in {"rate_limited", "upstream_error"}:
+                return httpx.Response(429 if failure == "rate_limited" else 503)
             return httpx.Response(200, text="<html>not metadata</html>")
         assert request.url.path.endswith("/readable/stream")
         return httpx.Response(200, json={"meetingInstanceId": "instance-1", "downloadRecordingInfo": {
@@ -539,3 +574,67 @@ async def test_unread_candidate_cannot_make_another_title_time_match_appear_uniq
                 meeting_id=None, meeting_title="Weekly Sync", meeting_start=datetime(2026, 1, 5, 13, tzinfo=timezone.utc),
                 max_results=1, download=False,
             )
+
+
+@pytest.mark.parametrize("meeting_id", [None, "a" * 32 + "_I_123456789"])
+@pytest.mark.asyncio
+async def test_picker_date_range_reaches_keyword_and_renamed_recording_search(
+    monkeypatch: pytest.MonkeyPatch, meeting_id: str | None,
+) -> None:
+    from test_recording_transcripts import transcript_tool
+    from mcp_webex_meetings import mcp_server
+
+    actual = "a" * 32 + "_I_123456789"
+    searched: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/meetingTranscripts":
+            # A known occurrence stays an exact lookup, including when the
+            # recording was created later than the requested history anchor.
+            assert dict(request.url.params) == {"meetingId": actual, "max": "100"}
+            return httpx.Response(200, json={"items": []})
+        if request.url.path == "/v1/meetings/" + actual:
+            return httpx.Response(200, json={"id": actual, "meetingType": "meeting", "start": "2026-11-11T13:00:00Z"})
+        if request.url.path == mcp_server.RECORDING_PRIVILEGE_PATH:
+            return httpx.Response(200, json={"privileges": []})
+        if request.url.path == mcp_server.USERHUB_RECORDINGS_PATH:
+            assert request.url.params["startDate"] == "2026-11-08"
+            assert request.url.params["endDate"] == "2026-11-13"
+            keyword = request.url.params["keyword"]
+            searched.append(keyword)
+            return httpx.Response(200, json={"recordings": [] if keyword else [{
+                "recordUUID": "recent", "recordName": "Weekly Sync", "gmtCreateTime": "2026-11-11 13:02:00",
+            }]})
+        assert request.url.path.endswith("/recent/stream"), "Availability must not download transcript bodies"
+        return httpx.Response(200, json={"meetingInstanceId": actual, "downloadRecordingInfo": {
+            "downloadInfo": {"transcriptURL": "https://media.webex.com/transcript.txt"},
+        }})
+
+    result = await transcript_tool(monkeypatch, handler)(mcp_server.ListTranscripts(
+        meeting_id=meeting_id, meeting_title="Changed Title" if meeting_id else "Weekly Sync",
+        meeting_start="2026-11-11T13:00:00Z", from_iso="2026-11-09T15:00:00Z", to_iso="2026-11-12T15:00:00Z",
+        download=False, max_results=100,
+    ))
+    assert searched == ["Changed Title" if meeting_id else "Weekly Sync", ""]
+    assert [row["meetingId"] for row in result["items"]] == [actual]
+
+
+@pytest.mark.parametrize("bounds", [
+    {"from_iso": "not-a-date"}, {"to_iso": "2026-11-12T15:00:00"},
+    {"from_iso": "2026-11-12T15:00:00Z", "to_iso": "2026-11-09T15:00:00Z"},
+])
+@pytest.mark.asyncio
+async def test_invalid_picker_range_cannot_turn_into_unbounded_recording_search(
+    monkeypatch: pytest.MonkeyPatch, bounds: dict[str, str],
+) -> None:
+    from test_recording_transcripts import transcript_tool
+    from mcp.shared.exceptions import McpError
+    from mcp_webex_meetings import mcp_server
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        pytest.fail("Invalid bounds must fail before querying Webex")
+
+    with pytest.raises(McpError):
+        await transcript_tool(monkeypatch, handler)(mcp_server.ListTranscripts(
+            meeting_title="Weekly Sync", meeting_start="2026-11-11T13:00:00Z", **bounds,
+        ))
