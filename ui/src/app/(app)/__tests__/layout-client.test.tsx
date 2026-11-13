@@ -24,6 +24,14 @@ jest.mock("@/components/layout/ApplicationNavigationContext", () => ({
   }) => <>{children}</>,
 }));
 
+jest.mock("@/components/admin/settings/SetupWizard", () => ({
+  SetupWizardGate: () => null,
+}));
+
+jest.mock("@/components/onboarding/ProductTour", () => ({
+  ProductTourGate: () => null,
+}));
+
 jest.mock("@/hooks/use-user-init", () => ({
   useUserInit: jest.fn(),
 }));

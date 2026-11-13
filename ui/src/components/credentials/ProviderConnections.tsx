@@ -367,7 +367,7 @@ export function ProviderConnections() {
   }, [connectionRows, refreshConnection]);
 
   return (
-    <section className="space-y-4">
+    <section data-tour="connected-apps" className="space-y-4">
       <p className="text-xs text-muted-foreground/70">
         Adding additional apps requires admin permissions.
       </p>
@@ -471,7 +471,7 @@ export function ProviderConnections() {
                       </td>
                       <td className="px-4 py-5 align-middle">
                         <div className="flex items-center gap-2">
-                          <ConnectionStatusMark connection={connection} providerLabel={profileLabel} />
+                          <span data-tour="connection-health"><ConnectionStatusMark connection={connection} providerLabel={profileLabel} /></span>
                           {connection && supportsProfileCheck(connector.provider) && (
                             <button
                               type="button"
@@ -520,7 +520,7 @@ export function ProviderConnections() {
                           )}
                         </div>
                       </td>
-                      <td className="px-5 py-5 align-middle">
+                      <td data-tour="connection-actions" className="px-5 py-5 align-middle">
                         <div className="flex flex-col items-end gap-2">
                           <a
                             className={cx(

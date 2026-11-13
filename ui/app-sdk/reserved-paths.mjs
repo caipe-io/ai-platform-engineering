@@ -48,6 +48,7 @@ export const RESERVED_API_PATHS = [
   "/api/mcp-servers",
   "/api/native-extensions",
   "/api/notifications",
+  "/api/onboarding",
   "/api/platform",
   "/api/policies",
   "/api/publication-requests",

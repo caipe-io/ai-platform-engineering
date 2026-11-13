@@ -430,7 +430,7 @@ export function DynamicAgentsTab({
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
-          <Button size="sm" onClick={() => setIsCreating(true)}>
+          <Button data-tour="add-agent" size="sm" onClick={() => setIsCreating(true)}>
             <Plus className="mr-2 h-4 w-4" />
             New Agent
           </Button>

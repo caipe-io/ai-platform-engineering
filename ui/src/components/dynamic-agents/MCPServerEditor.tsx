@@ -981,7 +981,7 @@ export function MCPServerEditor({ server, readOnly, onSave, onCancel, initialVal
                     </Tooltip>
                   </TooltipProvider>
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <p data-tour="mcp-auth" className="text-xs text-muted-foreground">
                   Choose saved secrets or connected apps. Secret values stay on the server.
                 </p>
                 {usesAgentGatewayRouting(transport) ? (

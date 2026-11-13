@@ -2863,7 +2863,7 @@ export function DynamicAgentEditor({
                 {/* MCP Tools */}
                 <div className="space-y-4">
                   <div>
-                    <Label>MCP Tool Access</Label>
+                    <Label data-tour="agent-tools">MCP Tool Access</Label>
                     <p className="text-xs text-muted-foreground mb-4">
                       Select which MCP servers and tools this agent can use. If
                       no servers are selected, the agent will have no external

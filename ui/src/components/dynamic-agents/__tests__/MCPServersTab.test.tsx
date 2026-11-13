@@ -122,6 +122,14 @@ describe("MCPServersTab", () => {
     }) as unknown as typeof fetch;
   });
 
+  it("opens the remote catalog when requested on an already mounted tab", async () => {
+    const view = render(<MCPServersTab openRemoteCatalog={false} />);
+    await screen.findByText("Jira");
+    expect(screen.queryByRole("heading", { name: "Add MCP Server" })).not.toBeInTheDocument();
+    view.rerender(<MCPServersTab openRemoteCatalog />);
+    expect(await screen.findByRole("heading", { name: "Add MCP Server" })).toBeInTheDocument();
+  });
+
   it("does not expose the unsafe AgentGateway repair action", async () => {
     render(<MCPServersTab />);
 

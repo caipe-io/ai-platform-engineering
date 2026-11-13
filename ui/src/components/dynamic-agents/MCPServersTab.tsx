@@ -65,6 +65,7 @@ interface MCPServersTabProps {
   selectedServerId?: string | null;
   onSelectedServerChange?: (serverId: string | null) => void;
   onSelectedServerNameChange?: (serverName: string | null) => void;
+  openRemoteCatalog?: boolean;
 }
 
 interface ToolTestResult {
@@ -190,6 +191,7 @@ export function MCPServersTab({
   selectedServerId,
   onSelectedServerChange,
   onSelectedServerNameChange,
+  openRemoteCatalog = false,
 }: MCPServersTabProps = {}) {
   const [servers, setServers] = React.useState<MCPServerConfigWithPermissions[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -200,7 +202,10 @@ export function MCPServersTab({
   const selectionRequestRef = React.useRef(0);
   const loadedSelectionIdRef = React.useRef<string | null>(null);
   const [isCreating, setIsCreating] = React.useState(false);
-  const [showCatalog, setShowCatalog] = React.useState(false);
+  const [showCatalog, setShowCatalog] = React.useState(openRemoteCatalog);
+  React.useEffect(() => {
+    if (openRemoteCatalog) setShowCatalog(true);
+  }, [openRemoteCatalog]);
   const [catalogInitialValues, setCatalogInitialValues] = React.useState<MCPServerInitialValues | null>(null);
   const [probeResults, setProbeResults] = React.useState<Record<string, ProbeResult>>({});
   const [testingServer, setTestingServer] = React.useState<MCPServerConfigWithPermissions | null>(null);
@@ -595,13 +600,13 @@ export function MCPServersTab({
               <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
               Refresh
             </Button>
-            <Button size="sm" onClick={() => setShowCatalog(true)}>
+            <Button data-tour="add-mcp" size="sm" onClick={() => setShowCatalog(true)}>
               <Plus className="h-4 w-4 mr-2" />
               Add Server
             </Button>
         </div>
       </WorkspacePageActions>
-      <Card className="rounded-none border-0 bg-transparent shadow-none">
+      <Card data-tour="mcp-servers" className="rounded-none border-0 bg-transparent shadow-none">
         <CardContent className="px-0 pt-0">
         {loading ? (
           <div className="flex items-center justify-center py-12">

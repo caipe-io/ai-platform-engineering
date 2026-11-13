@@ -27,8 +27,9 @@ Env vars consumed:
 - ``KEYCLOAK_DA_CLIENT_ID``: client id for the dynamic-agents service
   (defaults to ``dynamic-agents`` to match Helm + compose).
 - ``KEYCLOAK_DA_CLIENT_SECRET``: client secret for the same.
-- ``OIDC_ISSUER`` (or ``OIDC_DISCOVERY_URL``): used to resolve the
-  token endpoint.
+- ``OIDC_DISCOVERY_URL`` (or ``OIDC_ISSUER``): used to resolve the
+  server-side token endpoint. The discovery URL is preferred so a
+  browser-facing issuer can differ from the in-cluster Keycloak URL.
 
 If any of these are missing, ``impersonate_user`` returns ``None`` and
 logs one WARNING per process startup; callers MUST treat ``None`` as
@@ -72,9 +73,6 @@ _obo_cache: dict[_CacheKey, _CacheEntry] = {}
 
 def _resolve_token_endpoint() -> Optional[str]:
     """Resolve the Keycloak token endpoint from issuer or discovery URL."""
-    issuer = os.environ.get("OIDC_ISSUER", "").strip()
-    if issuer:
-        return f"{issuer.rstrip('/')}/protocol/openid-connect/token"
     discovery = os.environ.get("OIDC_DISCOVERY_URL", "").strip()
     if discovery:
         # Allow either a bare issuer base or the full well-known URL
@@ -83,6 +81,9 @@ def _resolve_token_endpoint() -> Optional[str]:
         else:
             base = discovery.rstrip("/")
         return f"{base}/protocol/openid-connect/token"
+    issuer = os.environ.get("OIDC_ISSUER", "").strip()
+    if issuer:
+        return f"{issuer.rstrip('/')}/protocol/openid-connect/token"
     return None
 
 

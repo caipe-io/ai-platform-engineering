@@ -14,6 +14,7 @@ import { AsyncStatsCard } from "@/components/admin/insights/AsyncStatsCard";
 import { AppUsageCard } from "@/components/admin/insights/AppUsageCard";
 import { AutonomousTeamAccessPanel } from "@/components/admin/autonomous/AutonomousTeamAccessPanel";
 import { ReviewConfigsTab } from "@/components/admin/settings/ReviewConfigsTab";
+import { SetupWizardSettings } from "@/components/admin/settings/SetupWizard";
 import {
   AdminNavigation,
   adminDestinationHref,
@@ -1681,6 +1682,12 @@ function AdminPage() {
                     This account has no Admin areas or connected Slack/Webex resources available.
                   </p>
                 </div>
+              )}
+
+              {tabGateValues.platform_settings && (
+                <TabsContent value="setup-wizard" className="space-y-4">
+                  <SetupWizardSettings readOnly={isSimulationActive} />
+                </TabsContent>
               )}
 
               {tabGateValues.platform_settings && (

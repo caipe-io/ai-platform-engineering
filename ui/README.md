@@ -416,3 +416,21 @@ saves reject concurrent revision or reference changes with 409; reload before
 retrying. Workflow step-agent validation runs before persistence or workflow access
 reconciliation. Dynamic-agent saves reconcile access before skill admission and
 attempt to roll back those access changes if admission or persistence fails.
+
+## Model provider credential choices
+
+- `GET/PATCH /api/credentials/llm-providers` reads and writes the authenticated
+  account's `user_settings.preferences.llm_provider_secrets` reference map.
+- Each field stores a saved-secret ID. PATCH requires metadata access and
+  `secret_ref#use`; it rejects unknown providers, fields, and incompatible types.
+- `SavedSecretPicker` wraps the shared searchable picker. New values go through
+  `POST /api/credentials/secrets`; neither selecting nor binding a secret retrieves
+  its plaintext into the browser.
+- Unique legacy `llm:<provider>:<field>` entries initialize selections. Duplicate
+  names require an explicit selection; existing reference choices take precedence.
+- `ui/src/lib/llm-provider-credentials.ts` owns provider fields and compatibility.
+  Provider cards are independent of registered models. Bedrock supports inherited
+  IAM or saved access-key references; Vertex AI explains deployment ADC.
+- Saved choices are not yet consumed by model execution. Runtime connection
+  wiring and testing remain tracked in
+  [#2231](https://github.com/caipe-io/ai-platform-engineering/issues/2231).

@@ -42,6 +42,7 @@ import { useAutonomousCapability } from "@/hooks/use-autonomous-capability";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { useKbTabGates } from "@/hooks/use-kb-tab-gates";
 import { useAdminTabGates } from "@/hooks/useAdminTabGates";
+import { usePlatformFeatures } from "@/hooks/use-platform-features";
 import { KNOWLEDGE_NAV_ITEMS } from "@/components/rag/KnowledgeSidebar";
 import { PERSONAL_SETTINGS_ROUTES } from "@/components/settings/settings-routes";
 import { BrandLogo } from "@/components/brand/BrandLogo";
@@ -182,6 +183,7 @@ function ApplicationNavigationContents({
   const navigationApps = sessionStatus === "authenticated" && navigationCatalog?.identity === identity ? navigationCatalog.apps : [];
   const { isAdmin } = useAdminRole();
   const { canUseAutonomous } = useAutonomousCapability();
+  const platformFeatures = usePlatformFeatures();
   const { gates: adminGates,loading: adminGatesLoading } = useAdminTabGates();
   const {
     gates: knowledgeGates,
@@ -275,7 +277,7 @@ function ApplicationNavigationContents({
       icon: FolderKanban,
     },
     { key: "skills",href: "/skills",label: "Skills",icon: Zap },
-    config.workflowsEnabled && {
+    platformFeatures.workflows.enabled && {
       key: "workflows",
       href: "/workflows",
       label: "Workflows",
@@ -296,13 +298,13 @@ function ApplicationNavigationContents({
       label: "Agents",
       icon: Bot,
     },
-    config.autonomousAgentsEnabled && canUseAutonomous && {
+    platformFeatures.autonomous_agents.enabled && canUseAutonomous && {
       key: "autonomous",
       href: "/autonomous",
       label: "Autonomous",
       icon: Sparkles,
     },
-    config.agenticAppsEnabled && {
+    platformFeatures.apps.enabled && {
       key: "apps",
       href: "/apps",
       label: "Apps",
@@ -310,7 +312,7 @@ function ApplicationNavigationContents({
     },
     storageMode === "mongodb"
       && config.dynamicAgentsEnabled
-      && config.schedulerEnabled
+      && platformFeatures.schedules.enabled
       && (!config.schedulerAdminOnly || isAdmin) && {
         key: "schedules",
         href: "/schedules",
