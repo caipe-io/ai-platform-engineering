@@ -2,6 +2,7 @@ import type { AgenticAppManifest, AgenticAppAuthMode, AgenticAppPolicyAction } f
 
 export type { AgenticAppManifest, AgenticAppUiProfile, AgenticAppAuthMode, AgenticAppPolicyAction } from "../../app-sdk/agentic-app-manifest.mjs";
 export type AgenticAppRuntimeKind = "proxied-next-zone";
+export type AgenticAppCasAction = "read" | "use" | "write" | "approve" | "manage";
 
 export const DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
 export const MAX_AGENTIC_APP_REQUEST_BODY_BYTES = 64 * 1024 * 1024;
@@ -22,6 +23,11 @@ export interface LegacyAgenticAppManifest {
     preserveMountPath?: boolean;
     chrome?: "iframe";
     maxRequestBodyBytes?: number;
+  };
+  /** Optional CAS contract for deployments that authorize app access in OpenFGA. */
+  authorization?: {
+    resourceType: "agentic_app";
+    launchAction: "use";
   };
   surfaces: {
     showInHub: boolean;

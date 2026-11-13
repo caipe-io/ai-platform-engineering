@@ -50,6 +50,7 @@ export const UNIVERSAL_REBAC_RESOURCE_TYPE_NAMES = [
   "webex_workspace",
   "webex_space",
   "agent",
+  "agentic_app",
   "llm_model",
   "mcp_gateway",
   "mcp_server",

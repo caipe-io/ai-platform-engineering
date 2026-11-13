@@ -11,6 +11,7 @@ import {
 } from "@/lib/agentic-apps/config";
 import { deriveAgenticAppSubjectId } from "@/lib/agentic-apps/identity";
 import { buildPublicAgenticApp } from "@/lib/agentic-apps/public-app";
+import { evaluateAgenticAppCasCompatibility } from "@/lib/agentic-apps/cas-compat";
 
 /** Authorized lookup is independent of public catalog visibility. */
 export async function GET(
@@ -31,7 +32,8 @@ export async function GET(
     throw error;
   }
   const session = auth.session as Record<string, unknown>;
-  if (!deriveAgenticAppSubjectId(session))
+  const subjectId = deriveAgenticAppSubjectId(session);
+  if (!subjectId)
     return Response.json({ error: "stable_subject_required" }, { status: 401 });
   const { appId } = await context.params;
   const app = getConfiguredAgenticApp(appId);
@@ -50,6 +52,15 @@ export async function GET(
     )
   ) {
     return Response.json({ error: "app_unauthorized" }, { status: 403 });
+  }
+  if (app.manifest.authorization) {
+    const decision = await evaluateAgenticAppCasCompatibility({
+      appId, subjectId, localEffect: "allow", correlationId: crypto.randomUUID(), action: "use",
+    });
+    if (decision.effectiveEffect !== "allow") return Response.json(
+      { error: decision.casReason === "AUTHZ_UNAVAILABLE" ? "authorization_unavailable" : "app_unauthorized" },
+      { status: decision.casReason === "AUTHZ_UNAVAILABLE" ? 503 : 403 },
+    );
   }
   return Response.json(
     { item: buildPublicAgenticApp(app, true) },

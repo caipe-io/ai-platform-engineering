@@ -43,6 +43,7 @@ const AUTH_MODES = new Set<AgenticAppAuthMode>([
   "app-scoped-token",
   "forward-user-access-token",
 ]);
+const CAS_ACTIONS = new Set(["read", "use", "write", "approve", "manage"]);
 
 type RawPackage = {
   package_id?: unknown;
@@ -418,7 +419,10 @@ export function getConfiguredAgenticApp(
 function parseManifest(value: unknown, path: string): AgenticAppManifest {
   const raw = asRecord(value, path);
   if (raw.apiVersion === "2.0") return validateAgenticAppManifest(raw);
-  return normalizeLegacyAgenticAppManifest(parseLegacyManifest(value, path));
+  const legacy = parseLegacyManifest(value, path);
+  if (!legacy.authorization && legacy.access.policyActions.some((policy) => policy.casAction))
+    throw new Error(`${path}: casAction requires application authorization`);
+  return normalizeLegacyAgenticAppManifest(legacy);
 }
 
 function parseLegacyManifest(
@@ -515,6 +519,20 @@ function parseLegacyManifest(
     raw.health === undefined
       ? undefined
       : asRecord(raw.health, `${path}.health`);
+  const authorizationRaw = raw.authorization === undefined
+    ? undefined
+    : asRecord(raw.authorization, `${path}.authorization`);
+  if (
+    authorizationRaw
+    && (
+      authorizationRaw.resourceType !== "agentic_app"
+      || authorizationRaw.launchAction !== "use"
+    )
+  ) {
+    throw new Error(
+      `${path}.authorization must declare resourceType "agentic_app" and launchAction "use"`,
+    );
+  }
 
   return {
     id,
@@ -555,6 +573,9 @@ function parseLegacyManifest(
           }
         : {}),
     },
+    ...(authorizationRaw
+      ? { authorization: { resourceType: "agentic_app" as const, launchAction: "use" as const } }
+      : {}),
     surfaces: {
       showInHub: optionalBoolean(
         surfacesRaw.showInHub,
@@ -666,6 +687,7 @@ function parsePolicyAction(
       "requiredScopes",
       "method",
       "path",
+      "casAction",
     ],
     path,
   );
@@ -680,6 +702,9 @@ function parsePolicyAction(
     throw new Error(
       `${path}.method and ${path}.path must be declared together`,
     );
+  }
+  if (raw.casAction !== undefined && !CAS_ACTIONS.has(String(raw.casAction))) {
+    throw new Error(`${path}.casAction is invalid`);
   }
   const defaultEffect = raw.defaultEffect ?? "deny";
   if (defaultEffect !== "allow" && defaultEffect !== "deny") {
@@ -705,6 +730,9 @@ function parsePolicyAction(
     ...(method ? { method: method as AgenticAppPolicyAction["method"] } : {}),
     ...(raw.path !== undefined
       ? { path: requiredAbsolutePath(raw.path, `${path}.path`) }
+      : {}),
+    ...(raw.casAction !== undefined
+      ? { casAction: raw.casAction as AgenticAppPolicyAction["casAction"] }
       : {}),
   };
 }

@@ -106,11 +106,17 @@ export function validateAgenticAppManifest(value) {
       "requestedPermissions",
       "health",
       "catalog",
+      "authorization",
     ],
     "manifest",
   );
   if (app.apiVersion !== "2.0")
     throw new Error("manifest.apiVersion must be 2.0");
+  if (app.authorization !== undefined) {
+    record(app.authorization, ["resourceType", "launchAction"], "authorization");
+    if (app.authorization.resourceType !== "agentic_app" || app.authorization.launchAction !== "use")
+      throw new Error("authorization must declare agentic_app/use");
+  }
   identifier(app.id, "manifest.id");
   const version =
     typeof app.version === "string" ? app.version.match(VERSION) : null;
@@ -337,10 +343,14 @@ export function validateAgenticAppManifest(value) {
         "requiredScopes",
         "method",
         "path",
+        "casAction",
       ],
       "policy",
     );
     string(policy.action, "policy.action");
+    if (policy.casAction !== undefined && (
+      !app.authorization || !["read", "use", "write", "approve", "manage"].includes(policy.casAction)
+    )) throw new Error("casAction requires valid application authorization");
     const key = policy.method
       ? `${policy.method}:${policy.path}`
       : policy.action;

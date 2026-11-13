@@ -64,6 +64,10 @@ describe("External Apps deployment config", () => {
             id: "example-app",
             auth: { mode: "app-scoped-token" },
             runtime: expect.objectContaining({ maxRequestBodyBytes: 67108864 }),
+            authorization: {
+              resourceType: "agentic_app",
+              launchAction: "use",
+            },
             access: expect.objectContaining({ tokenScopes: ["example-app:read"] }),
           }),
           installation: expect.objectContaining({
@@ -325,6 +329,9 @@ function validConfig(): string {
           mountPath: /apps/example-app
           chrome: iframe
           maxRequestBodyBytes: 67108864
+        authorization:
+          resourceType: agentic_app
+          launchAction: use
         surfaces:
           showInHub: true
           navOrder: 50
@@ -334,6 +341,7 @@ function validConfig(): string {
           policyActions:
             - action: proxy:GET
               defaultEffect: allow
+              casAction: read
         health:
           endpoint: /health
   installations:
