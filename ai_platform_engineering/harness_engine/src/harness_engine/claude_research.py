@@ -82,6 +82,7 @@ class ResearchEvidence:
     ranges: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
     artifact_hashes: dict[str, str] = field(default_factory=dict)
     artifact_totals: dict[str, int] = field(default_factory=dict)
+    pr_tools: set[str] = field(default_factory=set)
 
     def handoff(self) -> str:
         unread = []
@@ -163,7 +164,7 @@ class ResearchEvidence:
         text = content if isinstance(content, str) else ""
         if isinstance(content, list) and len(content) == 1 and isinstance(content[0], dict):
             text = content[0].get("text", "")
-        method = args.get("method", "") if name.startswith("mcp__caipe__") else ""
+        method = args.get("method", "") if name in self.pr_tools else ""
         if method in {"get", "get_files", "get_diff"} and all(key in args for key in ("owner", "repo", "pullNumber")):
             self.targets.add((args["owner"], args["repo"], args["pullNumber"]))
             self.capture(content, method)

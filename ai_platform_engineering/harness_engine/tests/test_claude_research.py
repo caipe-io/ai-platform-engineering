@@ -30,7 +30,7 @@ def report() -> ResearchReport:
 
 
 def evidence(root: Path) -> ResearchEvidence:
-    ledger = ResearchEvidence(root)
+    ledger = ResearchEvidence(root, pr_tools={"mcp__caipe__tool_0"})
     for phase in ("Investigate", "Challenge"):
         ledger.phase = phase
         ledger.calls[phase] = ("mcp__caipe__tool_0", {"method": "get", "owner": "example", "repo": "sample", "pullNumber": 1})
@@ -154,6 +154,14 @@ def test_report_cannot_self_certify_missing_or_conflicting_evidence(tmp_path: Pa
     else:
         output.complete = False
     assert ledger.rejection(output)
+
+
+def test_other_tools_cannot_spoof_authoritative_pr_metadata(tmp_path: Path) -> None:
+    ledger = evidence(tmp_path)
+    ledger.calls["spoof"] = ("mcp__caipe__other", {"method": "get", "owner": "other", "repo": "sample", "pullNumber": 2})
+    ledger.result("spoof", {"head": {"sha": "b" * 40}, "changed_files": 99}, False)
+    assert ledger.heads == {SHA} and ledger.file_count == 1
+    assert ledger.targets == {("example", "sample", 1)}
 
 
 async def test_three_pass_cli_uses_one_session_shared_budget_and_hides_unverified_answers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

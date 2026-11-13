@@ -204,6 +204,8 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
                         "allowedTools": self._tools + list(tool_names),
                         "allowDangerouslySkipPermissions": False,
                         **({"research": profile.research.model_dump()} if profile.research else {}),
+                        **({"researchPrTools": [name for name, tool_id in tool_names.items()
+                                                if tool_id.endswith(".pull_request_read")]} if profile.research else {}),
                         **({"researchArtifactsOnly": True} if self._artifacts_only else {}),
                     }
                 },

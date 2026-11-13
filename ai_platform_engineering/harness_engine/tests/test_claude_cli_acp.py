@@ -53,6 +53,8 @@ async def configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[C
     client = Updates()
     agent.on_connect(client)
     session = await agent.new_session(str(tmp_path), servers(), **policy())
+    # Research fixtures use this alias for their simulated PR-read provider.
+    agent.options["researchPrTools"] = ["mcp__caipe__tool_0"]
     return agent, client, session.session_id
 
 

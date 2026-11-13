@@ -106,6 +106,10 @@ class ClaudeCodeCLIAgent(Agent):
             raise ValueError("CLI instructions must be text")
         self.options, self.servers = options, servers
         if options.get("research") is not None:
+            if not isinstance(options.get("researchPrTools", []), list) or any(
+                name not in allowed for name in options.get("researchPrTools", [])
+            ):
+                raise ValueError("Research PR tools must belong to the worker's broker allowlist")
             self.research_policy = ClaudeResearchPolicy.model_validate(options["research"])
             if options["maxTurns"] < 6:
                 raise ValueError("Research requires at least six turns across three passes")
@@ -192,7 +196,7 @@ class ClaudeCodeCLIAgent(Agent):
 
     async def run_research(self, session_id: str, prompt: list[Any]) -> PromptResponse:
         assert self.research_policy and self.client
-        self.research = ResearchEvidence(self.cwd)
+        self.research = ResearchEvidence(self.cwd, pr_tools=set(self.options.get("researchPrTools", [])))
         targets = re.findall(r"https://github\.com/([\w.-]+)/([\w.-]+)/pull/(\d+)", "\n".join(block.text for block in prompt))
         if len(set(targets)) == 1:
             owner, repo, number = targets[0]
