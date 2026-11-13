@@ -26,6 +26,9 @@
 {{- if and (hasKey $connector "pkce") (not (kindIs "bool" $connector.pkce)) -}}
 {{- fail (printf "caipe-ui.oauthConnectors[%d].pkce must be a boolean" $index) -}}
 {{- end -}}
+{{- if and (hasKey $connector "tokenEndpointAuthMethod") (not (has $connector.tokenEndpointAuthMethod (list "client_secret_post" "client_secret_basic"))) -}}
+{{- fail (printf "caipe-ui.oauthConnectors[%d].tokenEndpointAuthMethod must be client_secret_post or client_secret_basic" $index) -}}
+{{- end -}}
 {{- $pkce := $connector.pkce | default false -}}
 {{- if and (not $connector.clientId) (not $connector.clientIdEnv) -}}
 {{- fail (printf "caipe-ui.oauthConnectors[%d] requires clientId or clientIdEnv" $index) -}}

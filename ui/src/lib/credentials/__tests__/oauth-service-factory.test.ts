@@ -51,6 +51,25 @@ describe("exchangeOAuthToken", () => {
     );
   });
 
+  it("sends percent-encoded HTTP Basic client credentials when requested", async () => {
+    const fetchMock = jest.fn(async () => tokenResponse(JSON.stringify({ access_token: "access-token" })));
+    global.fetch = fetchMock as typeof fetch;
+
+    await exchangeOAuthToken(
+      "https://identity.example.com/oauth2/token",
+      { grant_type: "refresh_token", refresh_token: "refresh-1" },
+      { basicAuth: { clientId: "client id", clientSecret: "s3cr:et" } },
+    );
+
+    const credentials = Buffer.from("client%20id:s3cr%3Aet").toString("base64");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://identity.example.com/oauth2/token",
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: `Basic ${credentials}` }),
+      }),
+    );
+  });
+
   it("parses form-encoded token responses when a provider ignores the Accept header", async () => {
     global.fetch = jest.fn(async () =>
       tokenResponse("access_token=access-token&expires_in=3600", "application/x-www-form-urlencoded"),

@@ -224,6 +224,14 @@ function buildConfiguredOAuthConnectorBootstrapInputs(env: Env): CreateConnector
       throw new Error(`OAuth connector at index ${index} has an invalid pkce value`);
     }
     const pkce = pkceValue === true;
+    const authMethod = connector.tokenEndpointAuthMethod;
+    if (
+      authMethod !== undefined
+      && authMethod !== "client_secret_post"
+      && authMethod !== "client_secret_basic"
+    ) {
+      throw new Error(`OAuth connector at index ${index} has an invalid tokenEndpointAuthMethod`);
+    }
     const clientSecretEnv = configuredString(connector, "clientSecretEnv", index);
     let clientSecret: string | undefined;
     if (!pkce) {
@@ -250,6 +258,7 @@ function buildConfiguredOAuthConnectorBootstrapInputs(env: Env): CreateConnector
       scopes: configuredScopes(connector, index),
       redirectUri: normalizeRedirectUri(provider, redirectUri, env),
       ...(pkce ? { pkce: true } : {}),
+      ...(authMethod === "client_secret_basic" ? { tokenEndpointAuthMethod: authMethod } : {}),
     };
   });
 }
