@@ -186,7 +186,7 @@ describe("ProductTourGate", () => {
     );
   });
   it.each([
-    ["add-model", "Connect the model provider"],
+    ["add-model", "Save provider details"],
     ["add-mcp", "Start a server connection"],
     ["add-agent", "Create an agent for one purpose"],
     ["chat", "Choose who you want to work with"],

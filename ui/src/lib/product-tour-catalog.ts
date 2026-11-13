@@ -118,24 +118,24 @@ export const PRODUCT_TOURS: Record<ProductTourId, ProductTourDefinition> = {
   },
   "add-model": {
     title: "Add a model",
-    description: "Connect a provider and register its model.",
+    description: "Save provider details and register a model.",
     icon: "model",
     agentWorkspace: true,
     steps: [
       {
         eyebrow: "Provider access",
         icon: "credentials",
-        title: "Connect the model provider",
-        target: '[data-tour="model-providers"]',
+        title: "Save provider details",
+        target: '[data-tour="model-providers"] button[aria-label^="Connect"]',
         href: "/dynamic-agents?tab=model-providers",
         action: "Open Model Providers",
         description:
-          "Choose the provider your model uses and configure its connection.",
+          "Choose your provider and select saved credentials or save new encrypted values.",
         points: [
-          "Use the endpoint and authentication supplied by your administrator.",
-          "A registered model still needs a reachable provider.",
+          "Saved choices are not yet applied to model requests.",
+          "Use a provider already configured in this deployment.",
         ],
-        expected: "The provider connection is saved.",
+        expected: "Your credential references are saved to your account.",
       },
       {
         eyebrow: "Model catalog",

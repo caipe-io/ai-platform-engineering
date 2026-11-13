@@ -31,13 +31,7 @@ connected accounts, and automation can be added later.
    For a different provider, open **Configure provider access** and configure
    its endpoint and authentication in the provider workspace,
    then register/select the model. A model name alone does not configure access.
-   OpenAI connections collect both **OpenAI Endpoint URL** and **API Key**.
-   Both values are encrypted in **Credentials → Saved Secrets**. Existing saved
-   values are preserved when you add missing details. Use **Share** on each
-   saved value to grant a team access, **Rotate** to replace it, or **Delete**
-   and confirm to remove it. Deleting a saved key does not revoke it at the
-   provider. Saving details does not verify the provider connection; test it
-   with a conversation.
+   See [Provider credentials](#provider-credentials) for saved-secret selection.
    LiteLLM uses an OpenAI-compatible endpoint. For Bedrock on Kubernetes, prefer
    workload identity such as an IAM role for a service account or EKS Pod Identity.
 3. **Choose an agent:** pick SRE starter, Hello World, or a blank agent. Recipes
@@ -47,6 +41,32 @@ connected accounts, and automation can be added later.
 5. **Try your agent:** review the selection and run the test. Success means the
    agent returned a response. If it fails, check provider access and platform
    health, then retry. **Test later** saves your place without claiming success.
+
+## Provider credentials
+
+**Model Providers** shows all supported providers, even before a model is registered.
+
+- Choose **Choose a saved secret** for a searchable list of permitted secrets.
+  Saving keeps the reference; it does not copy or reveal the value.
+- Choose **Enter a new value** to create an encrypted entry in
+  **Credentials → Saved Secrets**. Empty lists default to this option.
+- Use **Share** on a saved secret to grant team access, **Rotate** to replace its
+  value, or **Delete** and confirm to remove it. Deleting a saved key does not
+  revoke it at the provider.
+
+| Provider | Configuration choices |
+| --- | --- |
+| OpenAI / Compatible | Any OpenAI-compatible API base URL and API key |
+| Anthropic Claude, Google Gemini, Groq | API key |
+| Azure OpenAI | Endpoint, API version, and API key |
+| AWS Bedrock | Deployment IAM, or access key ID, secret access key, region, and optional session token |
+| Vertex AI | Deployment Application Default Credentials |
+
+**Current limitation:** saved provider choices are not yet applied to model
+execution. The runtime uses deployment credentials. End-to-end connection
+configuration and testing remain tracked in
+[#2231](https://github.com/caipe-io/ai-platform-engineering/issues/2231).
+Use a provider already configured in the deployment for the conversation test.
 
 ## Leave and return
 
