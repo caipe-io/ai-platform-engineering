@@ -17,13 +17,6 @@ jest.mock("@/components/ui/button", () => ({
   },
 }));
 
-jest.mock("@/components/ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  TooltipContent: ({ children }: { children: React.ReactNode }) => <div role="tooltip">{children}</div>,
-  TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-}));
-
 const mockToast = jest.fn();
 jest.mock("@/components/ui/toast", () => ({
   useToast: () => ({ toast: mockToast }),
@@ -102,7 +95,7 @@ describe("NewChatButton", () => {
     expect(mockFetch).toHaveBeenCalledWith("/api/dynamic-agents/agents/agent-default");
   });
 
-  it("labels the collapsed action and reveals its default agent on hover", async () => {
+  it.each(["hover", "focus"])("labels the collapsed action and reveals its default agent on %s", async (interaction) => {
     mockResolveUsableChatAgent.mockResolvedValue({
       id: "agent-default",
       name: "Platform Helper",
@@ -121,7 +114,9 @@ describe("NewChatButton", () => {
     const button = await screen.findByRole("button", {
       name: "New chat with Platform Helper",
     });
-    fireEvent.mouseEnter(button);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    if (interaction === "hover") fireEvent.mouseEnter(button);
+    else fireEvent.focus(button);
 
     const tooltip = (await screen.findByText("New chat")).closest('[role="tooltip"]');
     expect(tooltip).toHaveTextContent("New chat");
