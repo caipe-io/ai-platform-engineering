@@ -265,7 +265,7 @@ export const GET = withErrorHandler(
       }
 
       // Tools — member-level `tool#caller` grants (per-server `<server>/*`
-      // prefixes from the write path). The `tool:*` wildcard-intent sentinel is
+      // prefixes from the write path). The `tool:__all_mcp_servers_intent__` wildcard-intent sentinel is
       // surfaced as a single "All MCP tools" item, not a literal `*` tool.
       for (const toolId of toolsBySlug.get(slug) ?? []) {
         if (toolId === TEAM_TOOL_WILDCARD_SENTINEL_ID) {

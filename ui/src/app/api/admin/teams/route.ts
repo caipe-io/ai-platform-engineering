@@ -240,7 +240,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const teamsWithCounts = pageTeams.map((team) => {
     const slug = typeof team.slug === 'string' ? team.slug : '';
     const fgaCounts = slug ? resourceCounts.get(slug) : undefined;
-    // The `tool:*` sentinel means "all MCP servers"; surface it as a wildcard
+    // The `tool:__all_mcp_servers_intent__` sentinel means "all MCP servers"; surface it as a wildcard
     // flag and exclude it from the explicit per-server tool count.
     const toolIds = fgaCounts?.tools ?? [];
     const toolWildcard = toolIds.includes(TEAM_TOOL_WILDCARD_SENTINEL_ID);

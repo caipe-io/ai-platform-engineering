@@ -238,8 +238,7 @@ export const GET = withErrorHandler(
           cache.listTeamResourceObjectIds({ teamSlug: slug, type: "skill", relation: "user" }),
         ]);
 
-      // The `tool:*` sentinel (stripped to `*`) records wildcard intent — it is
-      // not a real per-server grant, so keep it out of the editable tools list.
+      // The concrete intent marker is metadata, not an editable tool grant.
       const sentinelId = TEAM_TOOL_WILDCARD_SENTINEL_OBJECT.slice("tool:".length);
       const hasWildcardSentinel = grantedToolsRaw.includes(sentinelId);
       const grantedTools = grantedToolsRaw.filter((id) => id !== sentinelId);
@@ -389,9 +388,7 @@ export const PUT = withErrorHandler(
         cache.listTeamResourceObjectIds({ teamSlug: slug, type: "tool", relation: "caller" }),
       ]);
 
-      // The `tool:*` sentinel (stripped to `*`) is wildcard intent, not a real
-      // per-server grant — exclude it from the per-server tool diff and track it
-      // separately so it isn't mistaken for a tool the admin deselected.
+      // Track the intent marker separately from per-server grant changes.
       const sentinelId = TEAM_TOOL_WILDCARD_SENTINEL_OBJECT.slice("tool:".length);
       const prevWildcardSentinel = prevToolsRaw.includes(sentinelId);
       const prevTools = prevToolsRaw.filter((id) => id !== sentinelId);
@@ -426,7 +423,7 @@ export const PUT = withErrorHandler(
       };
       const openFgaTupleDiff = buildTeamResourceTupleDiff(tupleDiffInput);
 
-      // Persist wildcard INTENT via the `tool:*` sentinel so the MCP-server
+      // Persist wildcard intent via a concrete marker so the MCP-server
       // reconciler can auto-grant servers added later. The per-server grants are
       // already expanded into `nextTools` above; the sentinel only flips when the
       // wildcard checkbox changes, so flipping it off doesn't strip the explicit
