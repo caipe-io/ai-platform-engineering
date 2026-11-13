@@ -371,6 +371,30 @@ export function ChatPanel({
     isAutonomousHistory && !panelReadOnly ? conversation?.task_id : undefined,
   );
 
+  const [connectedModelDisplay, setConnectedModelDisplay] = useState<{ id: string; name: string } | null>(null);
+  const configuredModelId = agent?.model?.id ?? "";
+  const hasNamedConnection = /^[0-9a-fA-F-]{36}-[0-9a-f]{16}$/.test(configuredModelId);
+  const composerModelLabel = hasNamedConnection
+    ? connectedModelDisplay?.id === configuredModelId ? connectedModelDisplay.name : "Connected model"
+    : configuredModelId || "Model";
+
+  useEffect(() => {
+    if (!hasNamedConnection) return;
+    const controller = new AbortController();
+    void fetch(`/api/llm-models?id=${encodeURIComponent(configuredModelId)}`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Model metadata returned ${response.status}`);
+        const payload = await response.json();
+        if (!controller.signal.aborted && typeof payload.data?.name === "string") {
+          setConnectedModelDisplay({ id: configuredModelId, name: payload.data.name });
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) console.warn("Connected model display metadata is unavailable");
+      });
+    return () => controller.abort();
+  }, [configuredModelId, hasNamedConnection]);
+
   const configuredReasoningEffort = agent?.model?.reasoning_effort ?? "medium";
   const requestReasoningEffort = supportedReasoningEfforts?.includes(reasoningEffort)
     ? reasoningEffort
@@ -3143,10 +3167,10 @@ export function ChatPanel({
               <div className="relative z-20 flex min-h-9 items-center justify-end gap-2">
                 <span
                   className="flex min-w-0 max-w-56 items-center gap-1 whitespace-nowrap text-xs text-muted-foreground max-sm:max-w-40"
-                  title={`${agent?.model?.id || "Model"} · ${reasoningEffort}`}
+                  title={`${composerModelLabel} · ${reasoningEffort}`}
                   data-testid="composer-model-effort"
                 >
-                  <span className="truncate">{agent?.model?.id || "Model"}</span>
+                  <span className="truncate">{composerModelLabel}</span>
                   <span aria-hidden="true">·</span>
                   <span
                     className={cn("text-foreground/80", reasoningEffort === "max" && "font-bold")}
