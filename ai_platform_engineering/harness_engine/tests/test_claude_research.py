@@ -191,6 +191,17 @@ async def test_investigation_turn_cap_preserves_budget_for_challenge_and_report(
     assert len(messages) == 1 and "Research execution: 3 passes; 10 model turns" in messages[0]
 
 
+async def test_report_budget_failure_explains_the_limit_and_preserves_safe_usage_receipts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, client, session = await configured(tmp_path, monkeypatch)
+    agent.research_policy = ClaudeResearchPolicy()
+    agent.options["maxTurns"] = 12
+    await agent.prompt(session, [TextContentBlock(type="text", text="research-cost-cap")])
+    messages = [event.content.text for event in client.events if event.session_update == "agent_message_chunk"]
+    assert len(messages) == 1 and "Report reached its CLI-reported cost allowance" in messages[0]
+    usage = [event.content.text for event in client.events if event.session_update == "agent_thought_chunk" and "Research usage:" in event.content.text]
+    assert len(usage) == 3 and '"stop": "error_max_budget_usd"' in usage[-1]
+
+
 async def test_research_configuration_exposes_only_read_search_and_artifact_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     original, _, _ = await configured(tmp_path, monkeypatch)
     agent = ClaudeCodeCLIAgent(original.command)

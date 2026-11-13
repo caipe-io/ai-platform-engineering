@@ -244,7 +244,12 @@ class ClaudeCodeCLIAgent(Agent):
         except TimeoutError:
             reason = "The research deadline was reached before verification completed."
         except (RequestError, ValidationError, KeyError, TypeError, ValueError):
-            reason = "A research pass failed or returned an invalid evidence report."
+            phase = self.research.phase
+            reason = {
+                "error_max_turns": f"{phase} reached its assigned turn allowance.",
+                "error_max_budget_usd": f"{phase} reached its CLI-reported cost allowance.",
+                "error_max_structured_output_retries": f"{phase} could not produce a valid structured report.",
+            }.get(self.last_result.get("subtype"), f"{phase} failed or returned an invalid evidence report.")
         finally:
             self.options["maxTurns"] = total_turns
             self.research = None
@@ -256,6 +261,7 @@ class ClaudeCodeCLIAgent(Agent):
         return PromptResponse(stop_reason="end_turn")
 
     async def run_prompt(self, session_id: str, prompt: list[Any]) -> PromptResponse:
+        self.last_result = {}
         with TemporaryDirectory(prefix=".caipe-cli-turn-", dir=self.cwd) as directory:
             folder = Path(directory)
             mcp_file, instructions = folder / "mcp.json", folder / "instructions.txt"
@@ -346,6 +352,22 @@ class ClaudeCodeCLIAgent(Agent):
                 exit_code = await process.wait()
                 if self.cancelled:
                     return PromptResponse(stop_reason="cancelled")
+                self.last_result = result or {}
+                if self.research and result:
+                    try:
+                        usage = PassUsage.model_validate(result)
+                    except ValidationError:
+                        pass
+                    else:
+                        await self.update(AgentThoughtChunk(session_update="agent_thought_chunk", content=TextContentBlock(
+                            type="text", text="\nResearch usage: " + json.dumps({
+                                "phase": self.research.phase, "model_turns": usage.num_turns,
+                                "cli_reported_cost_usd": usage.total_cost_usd,
+                                "stop": result.get("subtype") if result.get("subtype") in {
+                                    "success", "error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries",
+                                } else "unconfirmed",
+                            }) + "\n",
+                        )))
                 capped_pass = self.research and self.research.phase != "Report" and result and result.get("subtype") in {"error_max_turns", "error_max_budget_usd"}
                 if not capped_pass and (exit_code or result is None or result.get("is_error") or result.get("subtype") != "success"):
                     raise RequestError.internal_error({"message": "Claude Code CLI did not complete its turn"})

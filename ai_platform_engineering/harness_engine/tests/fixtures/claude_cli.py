@@ -65,8 +65,11 @@ def main() -> None:
                   "checks": ["Test source inspected, not executed."], "limitations": ["No test execution."],
                   "report_markdown": "Source-backed review with references and explicit limitations. " * 3}
         emit({"type": "stream_event", "session_id": session, "event": {"delta": {"type": "text_delta", "text": "Unverified draft"}}})
+        if prompt.startswith("research-cost-cap"):
+            Path("cost-cap").touch()
         capped = prompt.startswith("research-capped")
-        emit({"type": "result", "subtype": "error_max_turns" if capped else "success", "is_error": capped, "session_id": session,
+        cost_capped = "--json-schema" in args and Path("cost-cap").exists()
+        emit({"type": "result", "subtype": "error_max_budget_usd" if cost_capped else "error_max_turns" if capped else "success", "is_error": capped or cost_capped, "session_id": session,
               "num_turns": int(args[args.index("--max-turns") + 1]) if capped else 2,
               "total_cost_usd": 0.1, "structured_output": output})
         return
