@@ -609,3 +609,24 @@ migration so they enforce the same `execution_thread_leases` ownership fence.
   tools, checkpoint persistence and event replay remain real.
 - These tests do not certify model quality or live Slack/Webex delivery. App-owned
   assistants retain their own declared stream and lifecycle.
+
+### Harness-owned subagents
+
+Deep Agents supervisors can select published Claude SDK, remote SDK, SDK ACP,
+Claude Code CLI ACP and AgentCore agents as compiled subagents. Harness Engine
+admits an independent child run using the child's published version, prompt,
+operator profile and session manager. No extra model or new worker is needed.
+This requires Engine execution; the compatibility service rejects these
+references instead of reconstructing a different model.
+
+- Caller agent-use authorization is checked at graph construction and each invocation.
+- Cached graphs resolve caller identity at invocation; credentials never enter graph state.
+- Each delegated task has a separate, deterministic conversation/request identity.
+- Child text and tool start/result events stream inside the delegated task; only
+  its final report returns to the supervisor. Child events remain in the Engine journal.
+- `SubAgentRef.timeout_seconds` defaults to 120 (1–600). Stop/deadline requests
+  child cancellation through the existing adapter; uncertain workers keep their reservations.
+- Existing Deep Agents children and A2A settings keep their current execution paths.
+- ACP interactive permissions remain declined. A paused child is reported to the
+  supervisor as requiring attention; parent-driven child approval/resume and
+  automatic recovery of a failed parent are not implemented by this bridge.

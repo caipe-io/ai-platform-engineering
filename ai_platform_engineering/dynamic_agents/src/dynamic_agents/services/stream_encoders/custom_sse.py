@@ -29,6 +29,7 @@ from dynamic_agents.services.stream_encoders.langgraph_helpers import (
     truncate_tool_result,
 )
 from dynamic_agents.services.structured_response import STRUCTURED_OUTPUT_EVENT
+from dynamic_agents.services.subagent_dispatch import child_tool_update
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,9 @@ class CustomStreamEncoder(StreamEncoder[FrameT]):
     ) -> list[FrameT]:
         """Encode transport-neutral runtime signals in the custom protocol."""
         data, namespace = self._helper.normalize_remote_output(data, namespace)
+        if isinstance(data, dict) and data.get("type") == "harness_subagent":
+            update = child_tool_update(data)
+            return self._handle_updates(update, namespace) if update else [self._frame("subagent_event", data)]
         if isinstance(data, dict) and data.get("type") == STRUCTURED_OUTPUT_EVENT:
             if isinstance(data.get("payload"), dict):
                 return self.on_structured_output(data["payload"], data.get("schema_id"))

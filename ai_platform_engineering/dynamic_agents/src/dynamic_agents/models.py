@@ -279,6 +279,7 @@ class SubAgentRef(BaseModel):
     """
 
     agent_id: str = Field(..., description="MongoDB ObjectId of the subagent")
+    timeout_seconds: int = Field(120, ge=1, le=600, description="Deadline for a Harness-owned child run")
     name: str = Field(..., description="Routing identifier (e.g., 'code-reviewer')")
     description: str = Field(
         ...,
@@ -701,6 +702,7 @@ class DynamicAgentConfig(DynamicAgentConfigBase):
     """Full dynamic agent config as stored in MongoDB."""
 
     id: str = Field(..., alias="_id", description="Unique ID")
+    execution_harness_id: str | None = Field(None, description="Published execution runtime; absent means Deep Agents")
     owner_id: str = Field(..., description="Creator's email")
     is_system: bool = Field(False, description="System-provided agent (non-deletable)")
     config_driven: bool = Field(False, description="Whether this agent was loaded from config.yaml")

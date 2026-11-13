@@ -85,6 +85,7 @@ def test_resolved_subagent_includes_its_request_user_input_interrupt(
     runtime._subagent_models = {}
     runtime._mongo_service = MagicMock()
     runtime._mongo_service.get_agent.return_value = child_config
+    runtime._mongo_service.get_agent_execution.return_value = {"enabled": True, "execution_harness_id": "dynamic_agents"}
 
     request_input_tool = MagicMock()
     request_input_tool.name = "request_user_input"

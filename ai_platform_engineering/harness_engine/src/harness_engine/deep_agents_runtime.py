@@ -20,6 +20,7 @@ from dynamic_agents.services.mongo import MongoDBService, _strip_nulls
 from dynamic_agents.services.runtime_cache import AgentRuntimeCache
 
 from harness_engine.models import AgentBlueprint, CanonicalEventDraft, RunContext, TurnOutcome, utc_now
+from harness_engine.subagent_dispatch import HarnessSubagentDispatcher
 
 
 class DeepAgentsRuntime:
@@ -31,6 +32,7 @@ class DeepAgentsRuntime:
         self.active: dict[str, tuple[Any, asyncio.Event]] = {}
         self._ready = False
         self._lock = asyncio.Lock()
+        self.subagent_dispatcher: HarnessSubagentDispatcher | None = None
 
     async def initialize(self) -> None:
         async with self._lock:
@@ -40,6 +42,9 @@ class DeepAgentsRuntime:
                 raise RuntimeError("Deep Agents configuration database is unavailable")
             self.cache.start()
             self._ready = True
+
+    def configure_subagent_dispatch(self, coordinator: Any, repository: Any) -> None:
+        self.subagent_dispatcher = HarnessSubagentDispatcher(coordinator, repository, self.mongo)
 
     async def close(self) -> None:
         await self.cache.stop()
@@ -125,6 +130,10 @@ class DeepAgentsRuntime:
         bearer = identity.bearer.get_secret_value()
         token_scope = current_user_token.set(bearer)
         trace_scope = current_traceparent.set(context.turn.traceparent)
+        dispatcher = getattr(self, "subagent_dispatcher", None)
+        delegation_scope = dispatcher.scope(context) if dispatcher else None
+        if delegation_scope is not None:
+            delegation_scope.__enter__()
         cancellation_event = asyncio.Event()
         self.active[context.turn.run_id] = (None, cancellation_event)
         try:
@@ -157,8 +166,10 @@ class DeepAgentsRuntime:
             for child in config.subagents:
                 await require_agent_use_permission(child.agent_id, delegated_user_sub=identity.subject)
                 child_record = await asyncio.to_thread(self.mongo._db.dynamic_agents.find_one, {"_id": child.agent_id})
-                if not child_record or (child_record.get("execution_harness_id") or "dynamic_agents") != "dynamic_agents":
-                    raise PermissionError("Native subagents require an authorized Deep Agents configuration")
+                if not child_record or child_record.get("enabled") is False:
+                    raise PermissionError("Subagent configuration is unavailable")
+                if (child_record.get("execution_harness_id") or "dynamic_agents") != "dynamic_agents" and dispatcher is None:
+                    raise PermissionError("Harness subagent dispatch is not configured")
             user = UserContext(
                 **{
                     **identity.user_context,
@@ -275,6 +286,8 @@ class DeepAgentsRuntime:
                                         status=event.status, interrupt=event.interrupt, result=event.result
                                     )
         finally:
+            if delegation_scope is not None:
+                delegation_scope.__exit__(None, None, None)
             self.active.pop(context.turn.run_id, None)
             current_user_token.reset(token_scope)
             current_traceparent.reset(trace_scope)
