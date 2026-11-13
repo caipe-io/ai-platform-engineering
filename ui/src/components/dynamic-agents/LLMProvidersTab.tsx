@@ -271,31 +271,44 @@ function ProviderCredentialDialog({
             Your values are encrypted when saved. Full values stay hidden after
             saving, and existing values are preserved.
           </p>
-          <ul className="mt-3 space-y-2 text-xs text-muted-foreground">
-            <li className="flex items-start gap-2">
-              <Share2
-                className="mt-0.5 h-3.5 w-3.5 shrink-0"
-                aria-hidden="true"
-              />
-              <span>
+          <details className="mt-3 text-xs text-muted-foreground">
+            <summary className="cursor-pointer">
+              Share, rotate, or delete credentials
+            </summary>
+            <ul className="mt-3 space-y-2">
+              <li className="flex items-start gap-2">
+                <Share2
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                  aria-hidden="true"
+                />
+                <span>
+                  Use{" "}
+                  <strong className="font-medium text-foreground">Share</strong>{" "}
+                  on a saved secret to grant a team access.
+                </span>
+              </li>
+              <li className="flex items-start gap-2">
+                <Trash2
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                  aria-hidden="true"
+                />
+                <span>
+                  Use{" "}
+                  <strong className="font-medium text-foreground">
+                    Delete
+                  </strong>{" "}
+                  on a saved secret and confirm to remove it. This does not
+                  revoke the key at its provider.
+                </span>
+              </li>
+              <li>
                 Use{" "}
-                <strong className="font-medium text-foreground">Share</strong>{" "}
-                on a saved secret to grant a team access.
-              </span>
-            </li>
-            <li className="flex items-start gap-2">
-              <Trash2
-                className="mt-0.5 h-3.5 w-3.5 shrink-0"
-                aria-hidden="true"
-              />
-              <span>
-                Use{" "}
-                <strong className="font-medium text-foreground">Delete</strong>{" "}
-                on a saved secret and confirm to remove it. This does not revoke
-                the key at its provider.
-              </span>
-            </li>
-          </ul>
+                <strong className="font-medium text-foreground">Rotate</strong>{" "}
+                to replace a value. Agents use the updated value on their next
+                invocation.
+              </li>
+            </ul>
+          </details>
           <NavigationProgressLink
             href="/credentials/secrets"
             target="_blank"
@@ -616,26 +629,13 @@ export function LLMProvidersTab(): React.ReactElement {
           )}
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {LLM_PROVIDERS.map((provider) => {
-              const fields = bindings[provider.id] ?? {};
-              const selected = provider.fields.filter((field) =>
-                secrets.some((secret) => secret.id === fields[field.id]),
+              const providerConnections = connections.filter(
+                (connection) =>
+                  connection.provider === provider.id ||
+                  (provider.id === "openai" &&
+                    connection.provider === "openai-compatible"),
               );
-              const deployment =
-                Boolean(provider.deploymentHelp) ||
-                (provider.id === "aws-bedrock" &&
-                  Object.hasOwn(bindings, provider.id) &&
-                  Object.keys(fields).length === 0);
-              const required =
-                provider.id === "aws-bedrock"
-                  ? ["access_key_id", "secret_access_key", "region"]
-                  : provider.fields
-                      .filter((field) => field.required)
-                      .map((field) => field.id);
-              const complete =
-                selected.length > 0 &&
-                required.every((id) =>
-                  selected.some((field) => field.id === id),
-                );
+              const complete = providerConnections.length > 0;
               return (
                 <Card key={provider.id} className="border-border/70">
                   <CardHeader className="space-y-2">
@@ -644,33 +644,27 @@ export function LLMProvidersTab(): React.ReactElement {
                         {provider.name}
                       </CardTitle>
                       <span
-                        className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs ${complete || deployment ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-amber-500/10 text-amber-600 dark:text-amber-400"}`}
+                        className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs ${complete ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-amber-500/10 text-amber-600 dark:text-amber-400"}`}
                       >
-                        {complete || deployment ? (
+                        {complete ? (
                           <CheckCircle2 className="h-3.5 w-3.5" />
                         ) : (
                           <KeyRound className="h-3.5 w-3.5" />
                         )}
-                        {deployment
-                          ? provider.deploymentHelp
-                            ? "Deployment identity"
-                            : "Deployment IAM"
-                          : complete
-                            ? "Saved"
-                            : selected.length
-                              ? "Partly saved"
-                              : "Needs credentials"}
+                        {complete
+                          ? `${providerConnections.length} connection${providerConnections.length === 1 ? "" : "s"}`
+                          : "Ready to connect"}
                       </span>
                     </div>
                     <CardDescription>{provider.description}</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <p className="text-xs text-muted-foreground">
-                      {deployment
-                        ? "Using deployment credentials."
-                        : `${selected.length} of ${provider.fields.length} saved-secret references selected.`}
+                      {complete
+                        ? "Select these models in your agent or test them above."
+                        : "Add credentials and one or more model IDs."}
                     </p>
-                    {selected.length > 0 && <SecretProtectionBadge />}
+                    {complete && <SecretProtectionBadge />}
                     <Button
                       type="button"
                       variant="outline"
@@ -681,16 +675,10 @@ export function LLMProvidersTab(): React.ReactElement {
                         !canManage ||
                         !runtimeSupported
                       }
-                      aria-label={
-                        provider.deploymentHelp
-                          ? `View ${provider.name} requirements`
-                          : `Connect ${provider.name}`
-                      }
+                      aria-label={`Connect ${provider.name}`}
                       onClick={() => setEditingProvider(provider)}
                     >
-                      {provider.deploymentHelp
-                        ? "View requirements"
-                        : "Add connection"}
+                      Add connection
                     </Button>
                   </CardContent>
                 </Card>
