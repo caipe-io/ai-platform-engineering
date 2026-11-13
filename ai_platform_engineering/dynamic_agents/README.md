@@ -517,6 +517,8 @@ dynamic_agents/
 
 ### Remote Agents registry and discovery
 
+Agent Builder uses **Advanced → Remote A2A Agents → Add from registry** to select registered agents and override their timeout. Discovery, registration, credentials, and shared connection edits stay in **Agents → Remote Agents**. Open that tab from the builder without losing its draft, then use **Refresh registry** to see newly registered entries. Removing a selection only removes the parent reference.
+
 - Open **Agents > Remote Agents** to register, edit and remove A2A endpoints.
   Agent builders use the same registry under **Advanced > Remote A2A Agents**.
 - Enter an agent base URL or a JSON Agent Card URL. **Discover Agent Card**

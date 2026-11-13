@@ -8,6 +8,7 @@ import type { RemoteAgentCredentialSource, RemoteAgentRegistryEntry } from "@/ty
 import { Check, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 import React from "react";
 import { RemoteAgentDiscovery, type DiscoveredAgent } from "./RemoteAgentDiscovery";
+import { RemoteAgentSelection } from "./RemoteAgentSelection";
 import { defaultRemoteAgentAuth, isRemoteAgentAuthConfigured, RemoteAgentAuthFields } from "./RemoteAgentAuthFields";
 
 export interface RemoteAgentsPickerProps {
@@ -161,6 +162,8 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
       setSaving(false);
     }
   };
+
+  if (selection) return <RemoteAgentSelection selection={selection} items={items} loading={loading} error={loadError} onRefresh={() => void loadItems()} />;
 
   return (
     <div className="space-y-4">

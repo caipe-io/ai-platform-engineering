@@ -373,7 +373,7 @@ function AdvancedStep({
       </CollapsibleSection>),
     "remote-agents": (<CollapsibleSection
         title="Remote A2A Agents"
-        description="Call agents registered with the A2A protocol"
+        description="Add discovered agents from the Remote Agents registry"
         badge={`${remoteAgentCount} selected`}
         defaultExpanded
       >
