@@ -49,10 +49,10 @@ class HarnessSubagentDispatcher:
         if ref.agent_id not in parent.blueprint.delegation.agents:
             raise PermissionError("Subagent is not selected by the published parent")
         await require_agent_use_permission(ref.agent_id, delegated_user_sub=parent.identity.subject)
-        child = await asyncio.to_thread(self.mongo.get_agent, ref.agent_id)
-        if child is None or not child.enabled or child.execution_harness_id not in SUPPORTED_CHILD_HARNESSES:
+        child = await asyncio.to_thread(self.mongo.get_agent_execution, ref.agent_id)
+        if child is None or child.get("enabled") is False or child.get("execution_harness_id") not in SUPPORTED_CHILD_HARNESSES:
             raise PermissionError("Subagent runtime is unavailable")
-        return parent, child.execution_harness_id
+        return parent, child["execution_harness_id"]
 
     async def build(self, ref: SubAgentRef) -> dict[str, Any]:
         await self._authorize(ref)

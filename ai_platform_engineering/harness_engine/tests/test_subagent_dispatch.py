@@ -104,7 +104,7 @@ async def setup(monkeypatch: pytest.MonkeyPatch, runtime: str = "claude_code_cli
     bp = blueprint(harness_id=runtime)
     bp.update(id="agent-child", prompt={"system": "Child policy"})
     await repo.save_agent(AgentBlueprint.model_validate(bp), "child-config", "test", None)
-    mongo = SimpleNamespace(get_agent=lambda _: SimpleNamespace(enabled=True, execution_harness_id=runtime))
+    mongo = SimpleNamespace(get_agent_execution=lambda _: {"enabled": True, "execution_harness_id": runtime})
     return HarnessSubagentDispatcher(coordinator, repo, mongo), adapter
 
 
@@ -187,7 +187,7 @@ async def test_unpublished_and_disabled_children_never_fall_back_to_a_model(monk
         dispatcher.repository._agents.clear()
         result = await graph.ainvoke({"messages": [HumanMessage(content="lookup")]}, {"configurable": {"thread_id": "unpublished"}})
         assert "ERROR:" in result["messages"][-1].text
-        dispatcher.mongo.get_agent = lambda _: SimpleNamespace(enabled=False, execution_harness_id="claude_code_cli_acp")
+        dispatcher.mongo.get_agent_execution = lambda _: {"enabled": False, "execution_harness_id": "claude_code_cli_acp"}
         with pytest.raises(PermissionError):
             await dispatcher.build(SubAgentRef(agent_id="agent-child", name="child", description="Child"))
     assert not adapter.calls

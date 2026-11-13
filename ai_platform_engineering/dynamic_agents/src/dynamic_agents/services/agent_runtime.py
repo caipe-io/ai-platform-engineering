@@ -1573,7 +1573,18 @@ class AgentRuntime:
                 )
                 continue
 
-            # Load subagent config from MongoDB
+            execution = self._mongo_service.get_agent_execution(ref.agent_id)
+            if execution and execution.get("enabled") is False:
+                continue
+            if execution and execution.get("execution_harness_id") not in (None, "dynamic_agents"):
+                factory = subagent_factory.get()
+                if factory is None:
+                    raise ValueError("Harness-owned subagents require Harness Engine execution")
+                subagents.append(await factory(ref))
+                continue
+
+            # Native children require a Deep Agents configuration; provider-owned
+            # children above need not have a LangChain model at all.
             subagent_config = self._mongo_service.get_agent(ref.agent_id)
             if not subagent_config:
                 logger.warning(f"Agent '{self.config.name}': Subagent '{ref.name}' not found (agent_id={ref.agent_id})")
@@ -1581,13 +1592,6 @@ class AgentRuntime:
 
             if not subagent_config.enabled:
                 logger.warning(f"Agent '{self.config.name}': Subagent '{ref.name}' is disabled, skipping")
-                continue
-
-            if getattr(subagent_config, "execution_harness_id", None) not in (None, "dynamic_agents"):
-                factory = subagent_factory.get()
-                if factory is None:
-                    raise ValueError("Harness-owned subagents require Harness Engine execution")
-                subagents.append(await factory(ref))
                 continue
 
             # Build MCP tools for subagent
