@@ -81,13 +81,22 @@ class ResearchEvidence:
     expected_target: tuple[str, str, int] | None = None
     ranges: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
     artifact_hashes: dict[str, str] = field(default_factory=dict)
+    artifact_totals: dict[str, int] = field(default_factory=dict)
 
     def handoff(self) -> str:
+        unread = []
+        for path in sorted(self.overflow - self.accessed):
+            cursor = 0
+            for start, end in sorted(self.ranges.get(path, [])):
+                if start > cursor:
+                    break
+                cursor = max(cursor, end)
+            unread.append({"path": path, "next_unread_offset": cursor,
+                           "total_chars": self.artifact_totals.get(path)})
         return json.dumps({"observed_heads": sorted(self.heads), "head_checked_in": sorted(self.head_phases),
                            "expected_file_count": self.file_count, "listed_files": sorted(self.files),
                            "diff_fetched": self.diff_seen,
-                           "unread_artifacts": [{"path": path, "read_ranges": self.ranges.get(path, [])}
-                                                for path in sorted(self.overflow - self.accessed)]})
+                           "unread_artifacts": unread})
 
     def capture(self, value: Any, method: str, depth: int = 0) -> None:
         if depth > 6:
@@ -130,6 +139,7 @@ class ResearchEvidence:
                     self.accessed.discard(path)
                     self.ranges[path] = []
                 self.artifact_hashes[path] = digest
+                self.artifact_totals[path] = content["total_chars"]
                 self.ranges.setdefault(path, []).append((content["offset"], content["end_offset"]))
                 end = 0
                 for start, stop in sorted(self.ranges[path]):

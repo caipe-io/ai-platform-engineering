@@ -202,6 +202,29 @@ async def test_report_budget_failure_explains_the_limit_and_preserves_safe_usage
     assert len(usage) == 3 and '"stop": "error_max_budget_usd"' in usage[-1]
 
 
+async def test_premature_complete_report_is_repaired_until_actual_artifact_receipt_arrives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, client, session = await configured(tmp_path, monkeypatch)
+    agent.research_policy = ClaudeResearchPolicy()
+    agent.options["maxTurns"] = 12
+    await agent.prompt(session, [TextContentBlock(type="text", text="research-repair")])
+    messages = [event.content.text for event in client.events if event.session_update == "agent_message_chunk"]
+    assert len(messages) == 1 and "1/1 saved outputs fully paged" in messages[0]
+    assert "report attempts: 2" in messages[0] and "8 model turns" in messages[0]
+    calls = (tmp_path / "research-calls.jsonl").read_text().splitlines()
+    assert len(calls) == 4
+
+
+@pytest.mark.parametrize("denied", [False, True])
+async def test_formatter_input_requires_successful_native_ack_before_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, denied: bool) -> None:
+    agent, client, session = await configured(tmp_path, monkeypatch)
+    agent.research_policy = ClaudeResearchPolicy()
+    agent.options["maxTurns"] = 12
+    await agent.prompt(session, [TextContentBlock(type="text", text="research-fallback" + ("-denied" if denied else ""))])
+    messages = [event.content.text for event in client.events if event.session_update == "agent_message_chunk"]
+    assert len(messages) == 1
+    assert messages[0].startswith("Research incomplete:") is denied
+
+
 async def test_research_configuration_exposes_only_read_search_and_artifact_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     original, _, _ = await configured(tmp_path, monkeypatch)
     agent = ClaudeCodeCLIAgent(original.command)

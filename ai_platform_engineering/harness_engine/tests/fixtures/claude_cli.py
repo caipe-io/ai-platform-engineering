@@ -7,6 +7,7 @@ import os
 import signal
 import sys
 import time
+from hashlib import sha256
 from pathlib import Path
 
 
@@ -46,11 +47,12 @@ def main() -> None:
         emit({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session})
         return
     if "--effort" in args:
-        def tool(call: str, arguments: dict, output: object) -> None:
+        def tool(call: str, arguments: dict, output: object, name: str = "mcp__caipe__tool_0", failed: bool = False) -> None:
             emit({"type": "assistant", "session_id": session, "message": {"content": [
-                {"type": "tool_use", "id": call, "name": "mcp__caipe__tool_0", "input": arguments}]}})
+                {"type": "tool_use", "id": call, "name": name, "input": arguments}]}})
             emit({"type": "user", "session_id": session, "message": {"content": [
-                {"type": "tool_result", "tool_use_id": call, "content": [{"type": "text", "text": json.dumps(output)}]}]}})
+                {"type": "tool_result", "tool_use_id": call, "is_error": failed,
+                 "content": [{"type": "text", "text": json.dumps(output)}]}]}})
 
         # Preserve whether the original task withheld evidence across resumes.
         if "no-evidence" in prompt:
@@ -64,6 +66,31 @@ def main() -> None:
                   "coverage": [{"path": "example.py", "status": "reviewed", "evidence": "Pinned source inspected."}],
                   "checks": ["Test source inspected, not executed."], "limitations": ["No test execution."],
                   "report_markdown": "Source-backed review with references and explicit limitations. " * 3}
+        if prompt.startswith("research-repair"):
+            saved = native.parent / "tool-results" / "pending.json"
+            saved.parent.mkdir(exist_ok=True)
+            saved.write_text(json.dumps("pending evidence"))
+            Path("pending-artifact").write_text(str(saved))
+            # A genuine native overflow wrapper is a string, not JSON-quoted text.
+            emit({"type": "assistant", "session_id": session, "message": {"content": [
+                {"type": "tool_use", "id": "overflow", "name": "mcp__caipe__tool_0", "input": {}}]}})
+            emit({"type": "user", "session_id": session, "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "overflow", "content": f"<persisted-output>\nFull output saved to: {saved}\nPreview"}]}})
+        if "--json-schema" in args and Path("pending-artifact").exists():
+            attempted = Path("report-attempted")
+            if attempted.exists():
+                saved = Path(Path("pending-artifact").read_text())
+                raw = saved.read_bytes()
+                text = json.loads(raw)
+                tool("receipt", {"path": str(saved)}, {"artifact_path": str(saved), "sha256": sha256(raw).hexdigest(),
+                     "offset": 0, "end_offset": len(text), "next_offset": None, "total_chars": len(text), "text": text},
+                     name="mcp__research__read_artifact")
+            attempted.touch()
+        if prompt.startswith("research-fallback"):
+            Path("formatter-fallback").write_text("denied" if "denied" in prompt else "accepted")
+        fallback = "--json-schema" in args and Path("formatter-fallback").exists()
+        if fallback:
+            tool("formatter", output, "collected", name="StructuredOutput", failed=Path("formatter-fallback").read_text()=="denied")
         emit({"type": "stream_event", "session_id": session, "event": {"delta": {"type": "text_delta", "text": "Unverified draft"}}})
         if prompt.startswith("research-cost-cap"):
             Path("cost-cap").touch()
@@ -71,7 +98,7 @@ def main() -> None:
         cost_capped = "--json-schema" in args and Path("cost-cap").exists()
         emit({"type": "result", "subtype": "error_max_budget_usd" if cost_capped else "error_max_turns" if capped else "success", "is_error": capped or cost_capped, "session_id": session,
               "num_turns": int(args[args.index("--max-turns") + 1]) if capped else 2,
-              "total_cost_usd": 0.1, "structured_output": output})
+              "total_cost_usd": 0.1, "structured_output": None if fallback else output})
         return
     emit({"type": "stream_event", "session_id": session, "event": {"delta": {"type": "text_delta", "text": "CLI answer"}}})
     emit({"type": "assistant", "session_id": session, "message": {"content": [

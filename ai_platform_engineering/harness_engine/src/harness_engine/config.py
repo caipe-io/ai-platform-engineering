@@ -64,6 +64,7 @@ class ClaudeResearchPolicy(BaseModel):
     max_seconds: int = Field(900, ge=10, le=7200, strict=True)
     max_external_tool_calls: int = Field(100, ge=1, le=1000, strict=True)
     max_budget_usd: float = Field(5.0, gt=0, le=1000)
+    max_report_repairs: int = Field(2, ge=0, le=5, strict=True)
 
 
 class ClaudeSDKProfile(BaseModel):

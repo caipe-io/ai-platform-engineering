@@ -462,6 +462,11 @@ research through `HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON`:
 - The worker performs **Investigate → Challenge → Report** in one native session.
   Intermediate answers are thought/progress events; only the gated final report
   becomes an assistant answer. Each later pass resumes the same session.
+  A rejected report receives the exact missing evidence and next unread offsets,
+  with up to `max_report_repairs` corrective attempts (default two) inside the
+  same shared turn, cost, and time budgets. A model's `complete=true` is not
+  sufficient to publish. Confirmed native formatter output is validated even
+  when the CLI result envelope omits its structured-output field.
 - The gate requires successful source inspection in both initial passes, the
   same PR head fetched in both passes, a fetched diff, a complete changed-file
   inventory, and a report accounting for that exact inventory and head. A PR
@@ -489,6 +494,9 @@ research through `HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON`:
 - Budget, evidence, or structured-report failures produce **Research incomplete**,
   never a verified final report. Cancellation stops later passes. Ordinary CLI
   chats keep their single-pass behavior and default tool allowlist.
+  Phase usage receipts retain only the phase, model turns, CLI-reported cost,
+  and a whitelisted stop classification; provider error bodies and credentials
+  are not exposed. Turn/cost/schema limits have distinct incomplete notices.
 - Give a review agent only its needed read tools. The profile does not add shell,
   edit, or repository-write tools. Tests can be inspected; execution requires a
   separately authorized tool and must not be inferred from reading test code.
