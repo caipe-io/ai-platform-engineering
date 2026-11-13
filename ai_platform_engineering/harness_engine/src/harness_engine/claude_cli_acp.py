@@ -204,6 +204,7 @@ class ClaudeCodeCLIAgent(Agent):
         self.remaining_budget = self.research_policy.max_budget_usd
         total_turns = self.options["maxTurns"]
         remaining_turns = total_turns
+        charged_cost = 0.0
         reason = "The worker did not confirm all research passes."
         try:
             async with asyncio.timeout(self.research_policy.max_seconds):
@@ -230,7 +231,14 @@ class ClaudeCodeCLIAgent(Agent):
                     if usage.num_turns > self.options["maxTurns"]:
                         raise ValueError("CLI exceeded the assigned pass budget")
                     remaining_turns -= usage.num_turns
-                    self.remaining_budget -= usage.total_cost_usd
+                    # Pinned CLI versions restore session totals on --resume.
+                    # Charge the high-water total once, conservatively including
+                    # any spend restored from an earlier chat turn.
+                    charged_cost = max(charged_cost, usage.total_cost_usd)
+                    self.remaining_budget = self.research_policy.max_budget_usd - charged_cost
+                    if self.remaining_budget <= 0:
+                        reason = "The shared research cost budget was exhausted."
+                        break
                 else:
                     for attempt in range(self.research_policy.max_report_repairs + 1):
                         raw_report = self.last_result.get("structured_output") or self.structured_report
@@ -265,7 +273,11 @@ class ClaudeCodeCLIAgent(Agent):
                         if usage.num_turns > remaining_turns:
                             raise ValueError("CLI exceeded the remaining research budget")
                         remaining_turns -= usage.num_turns
-                        self.remaining_budget -= usage.total_cost_usd
+                        charged_cost = max(charged_cost, usage.total_cost_usd)
+                        self.remaining_budget = self.research_policy.max_budget_usd - charged_cost
+                        if self.remaining_budget <= 0:
+                            reason = "The shared research cost budget was exhausted."
+                            break
         except TimeoutError:
             reason = "The research deadline was reached before verification completed."
         except (RequestError, ValidationError, KeyError, TypeError, ValueError):

@@ -173,12 +173,36 @@ async def test_three_pass_cli_uses_one_session_shared_budget_and_hides_unverifie
     calls = [json.loads(line) for line in (tmp_path / "research-calls.jsonl").read_text().splitlines()]
     assert len(calls) == 3
     assert "--session-id" in calls[0] and all("--resume" in call for call in calls[1:])
-    assert [float(call[call.index("--max-budget-usd") + 1]) for call in calls] == pytest.approx([2.5, 1.5, 4.8])
+    assert [float(call[call.index("--max-budget-usd") + 1]) for call in calls] == pytest.approx([2.5, 1.5, 4.9])
     assert "--json-schema" in calls[-1] and "--json-schema" not in calls[0]
     messages = [event.content.text for event in client.events if event.session_update == "agent_message_chunk"]
     assert len(messages) == 1 and "Research execution: 3 passes; 6 model turns" in messages[0]
     assert not any("CLI answer" in message for message in messages)
     assert agent.options["maxTurns"] == 12
+
+
+@pytest.mark.parametrize("costs, released", [([4.0, 4.2, 4.4], True), ([4.0, 4.2, 5.1], False)])
+async def test_restored_session_cost_is_charged_once_and_final_overrun_is_withheld(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, costs: list[float], released: bool) -> None:
+    agent, client, session = await configured(tmp_path, monkeypatch)
+    agent.research_policy = ClaudeResearchPolicy()
+    agent.options["maxTurns"] = 12
+    original = agent.run_prompt
+    allowances = []
+
+    async def run_prompt(*args):
+        allowances.append(agent.pass_budget)
+        response = await original(*args)
+        agent.last_result["total_cost_usd"] = costs[len(allowances) - 1]
+        return response
+
+    monkeypatch.setattr(agent, "run_prompt", run_prompt)
+    await agent.prompt(session, [TextContentBlock(type="text", text="research example")])
+    assert allowances == pytest.approx([2.5, 1.0, 0.8])
+    messages = [event.content.text for event in client.events if event.session_update == "agent_message_chunk"]
+    assert len(messages) == 1
+    assert ("Research execution:" in messages[0]) is released
+    if not released:
+        assert "cost budget was exhausted" in messages[0]
 
 
 async def test_failed_verification_releases_only_an_incomplete_notice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

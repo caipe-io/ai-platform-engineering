@@ -491,6 +491,9 @@ research through `HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON`:
   passes. MCP dispatch is capped before broker invocation. A deadline terminates
   the CLI; already dispatched operations retain the existing drain semantics.
   The cost setting is a CLI budget, not a billing guarantee.
+  Resumed CLI results include prior session spend: use the highest reported
+  total, never sum pass totals. Earlier chat spend counts conservatively toward
+  the research allowance. A result at or above that allowance is withheld.
 - Budget, evidence, or structured-report failures produce **Research incomplete**,
   never a verified final report. Cancellation stops later passes. Ordinary CLI
   chats keep their single-pass behavior and default tool allowlist.
