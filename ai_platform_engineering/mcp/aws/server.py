@@ -10,14 +10,14 @@ operations. Exposes read-only AWS CLI execute logic as MCP tools.
 """
 
 import asyncio
-import functools
 import json
 import logging
 import os
 import re
 import shlex
+import signal
 import tempfile
-from typing import Optional
+from typing import BinaryIO, Optional
 
 from dotenv import load_dotenv
 from fastmcp import FastMCP
@@ -52,6 +52,7 @@ BLOCKED_COMMAND_PATTERNS = [
 AWS_CLI_TIMEOUT = int(os.getenv("AWS_CLI_MAX_EXECUTION_TIME", "30"))
 KUBECTL_TIMEOUT = int(os.getenv("KUBECTL_MAX_EXECUTION_TIME", "45"))
 JQ_TIMEOUT = 10
+PROCESS_CLEANUP_TIMEOUT = 2
 
 RESTRICT_KUBECTL_SECRETS = os.getenv("RESTRICT_KUBECTL_SECRETS", "true").lower() == "true"
 RESTRICT_KUBECTL_PROXY = os.getenv("RESTRICT_KUBECTL_PROXY", "true").lower() == "true"
@@ -60,7 +61,8 @@ RESTRICT_KUBECTL_ATTACH = os.getenv("RESTRICT_KUBECTL_ATTACH", "false").lower() 
 RESTRICT_KUBECTL_CP = os.getenv("RESTRICT_KUBECTL_CP", "false").lower() == "true"
 RESTRICT_KUBECTL_PORT_FORWARD = os.getenv("RESTRICT_KUBECTL_PORT_FORWARD", "false").lower() == "true"
 
-MAX_OUTPUT_SIZE = int(os.getenv("AWS_CLI_MAX_OUTPUT_SIZE", "20000"))
+MAX_OUTPUT_SIZE = max(0, int(os.getenv("AWS_CLI_MAX_OUTPUT_SIZE", "20000")))
+MAX_CAPTURE_SIZE = max(1, int(os.getenv("AWS_CLI_MAX_CAPTURE_SIZE", "16777216")))
 MAX_CONCURRENT_AWS_CALLS = int(os.getenv("MAX_CONCURRENT_AWS_CALLS", "10"))
 MAX_CONCURRENT_KUBECTL_CALLS = int(os.getenv("MAX_CONCURRENT_KUBECTL_CALLS", "5"))
 
@@ -68,6 +70,11 @@ _aws_cli_semaphore: asyncio.Semaphore
 _kubectl_semaphore: asyncio.Semaphore
 
 logger = logging.getLogger(__name__)
+
+
+class CaptureLimitExceeded(RuntimeError):
+    """A subprocess exceeded its per-stream capture budget."""
+
 
 _SUPPORTED_CREDENTIAL_SOURCES = {
     "Environment",
@@ -115,8 +122,8 @@ def _single_line_env(name: str) -> str:
     return value
 
 
-def _setup_aws_profiles() -> list[dict]:
-    """Read AWS_ACCOUNT_LIST and write ~/.aws/config with assume-role profiles."""
+def _parse_aws_accounts() -> list[dict[str, str]]:
+    """Read account selectors without modifying the AWS configuration file."""
     aws_account_list = os.getenv("AWS_ACCOUNT_LIST", "")
     if not aws_account_list:
         return []
@@ -132,6 +139,12 @@ def _setup_aws_profiles() -> list[dict]:
         else:
             accounts.append({"name": entry, "id": entry})
 
+    return accounts
+
+
+def _setup_aws_profiles() -> list[dict]:
+    """Read AWS_ACCOUNT_LIST and write ~/.aws/config with assume-role profiles."""
+    accounts = _parse_aws_accounts()
     if not accounts:
         return []
 
@@ -189,22 +202,59 @@ def _setup_aws_profiles() -> list[dict]:
     return accounts
 
 
-@functools.lru_cache(maxsize=None)
 def _get_configured_profiles() -> list[str]:
-    """Return profile names from AWS_ACCOUNT_LIST. Cached after first call."""
-    return [a["name"] for a in _setup_aws_profiles()]
+    """Read profile names using the same current configuration as discovery."""
+    return [a["name"] for a in _parse_aws_accounts()]
+
+
+def list_aws_accounts() -> dict:
+    """List account names and IDs configured for account-scoped AWS tools.
+
+    Use the account name as `profile`. For all accounts, call the tool once per
+    profile. An empty list means the server uses its default credential chain.
+    """
+    return {"accounts": _parse_aws_accounts()}
+
+
+def _resolve_account_profile(
+    profile: Optional[str], account: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Reject ambiguous or unknown selectors before invoking either CLI."""
+    profile = (profile or "").strip()
+    account = (account or "").strip()
+    if profile and account and profile != account:
+        return None, "profile and account must select the same account."
+    profiles = _get_configured_profiles()
+    if not profiles:
+        return None, None
+    selected = profile or account
+    if selected not in profiles:
+        return None, f"Select a valid profile. Available profiles: {', '.join(profiles)}"
+    return selected, None
 
 
 # ---------------------------------------------------------------------------
 # AWS CLI tool
 # ---------------------------------------------------------------------------
 
+def _parse_aws_command(command: str) -> list[str]:
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    parts = list(lexer)
+    if any(part and all(char in ";&|<>" for char in part) for part in parts):
+        raise ValueError("Command contains a shell operator. Use --query or jq_filter for filtering.")
+    if any(part == "--profile" or part.startswith("--profile=") for part in parts):
+        raise ValueError("Select the account using the profile argument, not a command flag.")
+    return parts
+
+
 def _validate_aws_command(command: str) -> tuple[bool, str]:
     command = command.strip()
-    for char in [";", "|", "&", "`", "$", "<", ">", "\\"]:
-        if char in command:
-            return False, f"Command contains shell character '{char}'. Use --query for filtering."
-    parts = command.split()
+    try:
+        parts = _parse_aws_command(command)
+    except ValueError as exc:
+        return False, str(exc)
     if not parts:
         return False, "Empty command provided."
     for pattern in BLOCKED_COMMAND_PATTERNS:
@@ -227,10 +277,11 @@ def _validate_aws_command(command: str) -> tuple[bool, str]:
 
 async def aws_cli_execute(
     command: str,
-    profile: str,
+    profile: Optional[str] = None,
     region: Optional[str] = None,
     output_format: Optional[str] = "json",
     jq_filter: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> str:
     """
     Execute an AWS CLI read-only command against a specific AWS account.
@@ -243,16 +294,18 @@ async def aws_cli_execute(
         command: AWS CLI command without the 'aws' prefix.
             Examples: 'ec2 describe-instances', 's3 ls', 'iam list-roles',
             'eks list-clusters --region us-west-2'.
-        profile: AWS profile name for the target account. REQUIRED — when the
-            user asks for 'all accounts', make separate calls with each profile.
-            If AWS_ACCOUNT_LIST is not configured, pass an empty string to use
-            environment-variable credentials directly.
+        profile: Configured account name returned by list_aws_accounts. Required
+            (or supply account) when AWS_ACCOUNT_LIST contains accounts. For
+            'all accounts', make separate calls with each configured profile.
+            Without configured accounts, omit profile and account to use the
+            server's default credential chain.
         region: AWS region override. Defaults to AWS_REGION / AWS_DEFAULT_REGION
             environment variable, or 'us-west-2' if neither is set.
         output_format: CLI output format — json (default), text, table, or yaml.
         jq_filter: Optional jq expression applied to JSON output. Useful for
             extracting specific fields, e.g.
             '.Reservations[].Instances[] | {ID: .InstanceId, State: .State.Name}'.
+        account: Legacy alias for profile. If both are set, they must match.
     """
     is_valid, error_msg = _validate_aws_command(command)
     if not is_valid:
@@ -262,45 +315,39 @@ async def aws_cli_execute(
     aws_region = region or os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-west-2"))
     output_fmt = "json" if jq_filter else (output_format if output_format in ["json", "text", "table", "yaml"] else "json")
 
-    configured_profiles = _get_configured_profiles()
-    profile_prefix = f"--profile {profile} " if (configured_profiles and profile) else ""
-
-    if "--region" in command:
-        full_command = f"aws {profile_prefix}{command} --output {output_fmt}"
-    else:
-        full_command = f"aws {profile_prefix}{command} --region {aws_region} --output {output_fmt}"
+    selected_profile, profile_error = _resolve_account_profile(profile, account)
+    if profile_error:
+        return f"❌ {profile_error}"
+    command_parts = _parse_aws_command(command)
+    full_command = ["aws"]
+    if selected_profile:
+        full_command.extend(["--profile", selected_profile])
+    full_command.extend(command_parts)
+    if not any(part == "--region" or part.startswith("--region=") for part in command_parts):
+        full_command.extend(["--region", aws_region])
+    full_command.extend(["--output", output_fmt])
 
     logger.info("Executing AWS CLI: %s", full_command)
 
     async with _aws_cli_semaphore:
         try:
-            process = await asyncio.create_subprocess_shell(
-                full_command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env={**os.environ},
-            )
-            try:
-                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=AWS_CLI_TIMEOUT)
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
-                return f"❌ Command timed out after {AWS_CLI_TIMEOUT} seconds."
+            with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+                process = await asyncio.create_subprocess_exec(
+                    *full_command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env={**os.environ},
+                    start_new_session=os.name == "posix",
+                )
+                try:
+                    await _wait_for_process(process, AWS_CLI_TIMEOUT, stdout, stderr, process_group=os.name == "posix")
+                except TimeoutError:
+                    return f"❌ Command timed out after {AWS_CLI_TIMEOUT} seconds."
+                if process.returncode != 0:
+                    return f"❌ Command failed (exit {process.returncode}):\n{_read_captured_output(stderr) or _read_captured_output(stdout)}"
+                if jq_filter and stdout.tell():
+                    return await _apply_jq(stdout, jq_filter)
+                return _read_captured_output(stdout) or "✅ Command completed (no output)."
 
-            stdout_str = stdout.decode("utf-8", errors="replace")
-            stderr_str = stderr.decode("utf-8", errors="replace")
-
-            if process.returncode != 0:
-                return f"❌ Command failed (exit {process.returncode}):\n{stderr_str or stdout_str}"
-
-            if jq_filter and stdout_str:
-                stdout_str = await _apply_jq(stdout_str, jq_filter)
-
-            if len(stdout_str) > MAX_OUTPUT_SIZE:
-                stdout_str = stdout_str[:MAX_OUTPUT_SIZE] + f"\n\n... [Truncated. Total: {len(stdout_str)} chars]"
-
-            return stdout_str or "✅ Command completed (no output)."
-
+        except CaptureLimitExceeded as exc:
+            return f"❌ {exc}"
         except FileNotFoundError:
             return "❌ AWS CLI not found. Ensure it is installed in the container."
         except Exception as exc:
@@ -308,33 +355,85 @@ async def aws_cli_execute(
             return f"❌ Error: {exc}"
 
 
-async def _apply_jq(data: str, jq_filter: str) -> str:
-    """Apply a jq filter to JSON data, returning the filtered result or a warning."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as fh:
-        fh.write(data)
-        tmp = fh.name
+async def _drain_capture(reader: asyncio.StreamReader, capture: BinaryIO, stream: str) -> None:
+    """Spool complete chunks to disk without exceeding the capture budget."""
+    total = 0
+    while chunk := await reader.read(65536):
+        total += len(chunk)
+        if total > MAX_CAPTURE_SIZE:
+            raise CaptureLimitExceeded(f"{stream} exceeded AWS_CLI_MAX_CAPTURE_SIZE ({MAX_CAPTURE_SIZE} bytes).")
+        capture.write(chunk)
 
+
+async def _wait_for_process(
+    process: asyncio.subprocess.Process, timeout: float,
+    stdout: BinaryIO | None = None, stderr: BinaryIO | None = None,
+    *, process_group: bool = False,
+) -> None:
+    """Drain both pipes while waiting; kill and reap on failure or cancellation."""
+    tasks = [asyncio.create_task(process.wait())]
+    if stdout is not None and stderr is not None:
+        assert process.stdout is not None and process.stderr is not None
+        tasks.extend([
+            asyncio.create_task(_drain_capture(process.stdout, stdout, "stdout")),
+            asyncio.create_task(_drain_capture(process.stderr, stderr, "stderr")),
+        ])
     try:
-        safe_filter = jq_filter.replace("'", "'\"'\"'")
-        proc = await asyncio.create_subprocess_shell(
-            f"jq '{safe_filter}' {tmp}",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        jq_out, jq_err = await asyncio.wait_for(proc.communicate(), timeout=JQ_TIMEOUT)
-        if proc.returncode == 0:
-            return jq_out.decode("utf-8", errors="replace")
-        err = jq_err.decode("utf-8", errors="replace")
-        logger.warning("jq filter failed: %s", err)
-        return f"⚠️ jq filter failed ({err}), showing raw output:\n\n{data}"
-    except Exception as exc:
-        logger.warning("jq processing error: %s", exc)
-        return f"⚠️ jq processing failed ({exc}), showing raw output:\n\n{data}"
-    finally:
+        await asyncio.wait_for(asyncio.gather(*tasks), timeout=timeout)
+    except (Exception, asyncio.CancelledError):
+        if process_group:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # The session and its descendants have already exited.
+        elif process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass  # The process may have exited between the check and kill.
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        # A descendant that escaped the process group can still hold a pipe.
+        # Limit cleanup so a failed request cannot retain its semaphore slot.
         try:
-            os.unlink(tmp)
-        except Exception:
-            pass
+            await asyncio.wait_for(process.communicate(), timeout=PROCESS_CLEANUP_TIMEOUT)
+        except TimeoutError:
+            logger.warning("Subprocess pipe cleanup exceeded %s seconds", PROCESS_CLEANUP_TIMEOUT)
+        raise
+
+
+def _read_captured_output(capture: BinaryIO) -> str:
+    """Bound the in-memory read; subprocess output itself is captured on disk."""
+    total = capture.seek(0, os.SEEK_END)
+    capture.seek(0)
+    output = capture.read(MAX_OUTPUT_SIZE).decode("utf-8", errors="replace")
+    if total > MAX_OUTPUT_SIZE:
+        output += f"\n\n... [Truncated. Total: {total} bytes]"
+    return output
+
+
+async def _apply_jq(data: BinaryIO, jq_filter: str) -> str:
+    """Filter the full capture without buffering it or invoking a shell."""
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        try:
+            data.seek(0)
+            proc = await asyncio.create_subprocess_exec(
+                "jq", jq_filter, stdin=data, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                start_new_session=os.name == "posix",
+            )
+            await _wait_for_process(proc, JQ_TIMEOUT, stdout, stderr, process_group=os.name == "posix")
+            if proc.returncode == 0:
+                return _read_captured_output(stdout)
+            stderr_text = _read_captured_output(stderr)
+            logger.warning("jq filter exited with status %s: %s", proc.returncode, stderr_text)
+            return f"⚠️ jq filter failed ({stderr_text}), showing raw output:\n\n{_read_captured_output(data)}"
+        except CaptureLimitExceeded as exc:
+            logger.warning("jq capture failed: %s", exc)
+            return f"❌ jq {exc}"
+        except (OSError, TimeoutError) as exc:
+            logger.warning("jq processing failed: %s", exc)
+            return f"⚠️ jq processing failed ({exc}), showing raw output:\n\n{_read_captured_output(data)}"
 
 
 # ---------------------------------------------------------------------------
@@ -446,8 +545,9 @@ def _sanitize_kubectl_output(output: str) -> str:
 async def eks_kubectl_execute(
     cluster_name: str,
     kubectl_command: str,
-    profile: str,
+    profile: Optional[str] = None,
     region: Optional[str] = None,
+    account: Optional[str] = None,
 ) -> str:
     """
     Execute a kubectl command against an Amazon EKS cluster.
@@ -462,28 +562,35 @@ async def eks_kubectl_execute(
       - exec / attach / cp / port-forward — default: false (opt-in)
 
     Args:
-        cluster_name: EKS cluster name, e.g. 'eks-gitops-1'.
+        cluster_name: EKS cluster name, e.g. 'example-cluster'.
         kubectl_command: kubectl subcommand without the 'kubectl' prefix.
             Examples: 'get nodes', 'get pods -n kube-system --all-namespaces',
             'describe node <name>', 'logs <pod> -n <ns> --tail 100',
             'top nodes', 'get events --sort-by=.lastTimestamp'.
-        profile: AWS profile name for the account containing the cluster.
-            Pass an empty string to use environment-variable credentials.
+        profile: Configured account name returned by list_aws_accounts for the
+            account containing the cluster. Required (or supply account) when
+            AWS_ACCOUNT_LIST contains accounts. Without configured accounts,
+            omit profile and account to use the server's default credential chain.
         region: AWS region where the cluster resides. Defaults to the profile
             default or AWS_REGION / AWS_DEFAULT_REGION env var.
+        account: Legacy alias for profile. If both are set, they must match.
     """
     is_valid, error_msg = _validate_kubectl_command(kubectl_command)
     if not is_valid:
         return f"❌ Command blocked: {error_msg}"
 
-    logger.info("EKS kubectl: cluster=%s profile=%s command='%s'", cluster_name, profile, kubectl_command)
+    selected_profile, profile_error = _resolve_account_profile(profile, account)
+    if profile_error:
+        return f"❌ {profile_error}"
+
+    logger.info("EKS kubectl: cluster=%s profile=%s command='%s'", cluster_name, selected_profile, kubectl_command)
 
     async with _kubectl_semaphore:
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, _run_kubectl, cluster_name, kubectl_command, profile, region)
+        return await loop.run_in_executor(None, _run_kubectl, cluster_name, kubectl_command, selected_profile, region)
 
 
-def _run_kubectl(cluster_name: str, kubectl_command: str, profile: str, region: Optional[str]) -> str:
+def _run_kubectl(cluster_name: str, kubectl_command: str, profile: Optional[str], region: Optional[str]) -> str:
     """Synchronous kubectl execution (run in executor to avoid blocking the event loop)."""
     import subprocess
 
@@ -571,6 +678,7 @@ def main():
         logger.info("Configured AWS profiles: %s", [a["name"] for a in accounts])
 
     mcp = FastMCP(f"{SERVER_NAME} MCP Server")
+    mcp.tool()(list_aws_accounts)
     mcp.tool()(aws_cli_execute)
     mcp.tool()(eks_kubectl_execute)
 
