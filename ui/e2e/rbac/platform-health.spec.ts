@@ -237,11 +237,7 @@ test.describe("Platform Health page", () => {
     await expect(page.getByText("System Status: Healthy")).toBeVisible();
     await expect(page.getByText("Chat Runtime", { exact: true })).toBeVisible();
     await expect(page.getByText("Audit Service")).toBeVisible();
-    await expect(
-      page
-        .getByRole("navigation",{ name: "Admin sections" })
-        .getByRole("link",{ exact: true,name: "Health" }),
-    ).toHaveAttribute("aria-current","page");
+    await expect(page.getByRole("heading", { name: "Health", exact: true })).toBeVisible();
   });
 
   test("audit-service capability degradation is visible but non-blocking", async ({ page }) => {
@@ -335,11 +331,7 @@ test.describe("Platform Health page", () => {
     await page.goto("/admin/operations/health");
     await dismissReleaseUpgradeDialog(page);
 
-    await expect(
-      page
-        .getByRole("navigation",{ name: "Admin sections" })
-        .getByRole("link",{ exact: true,name: "Health" }),
-    ).toHaveAttribute("aria-current","page");
+    await expect(page.getByRole("heading", { name: "Health", exact: true })).toBeVisible();
     await expect(page.getByText("Platform Capabilities", { exact: true })).toBeVisible();
     await expect(page.getByText("Chat Runtime", { exact: true })).toBeVisible();
     await expect(page.getByText("Checks the runtime health endpoint used by the chat experience.")).toBeVisible();
@@ -352,5 +344,49 @@ test.describe("Platform Health page", () => {
     await expect(page.getByText("Slack Integration")).toHaveCount(0);
     await expect(page.getByText("Webex Integration")).toHaveCount(0);
     await expect(page.getByText("All dependency checks are passing.")).toHaveCount(0);
+  });
+
+  test("authentication diagnostics show the completed migration actor and time", async ({ page }) => {
+    const probes: DiagnosticProbe[] = [
+      ...HEALTHY_PROBES,
+      {
+        id: "keycloak-bootstrap",
+        label: "Keycloak Bootstrap",
+        group: "bootstrap",
+        status: "healthy",
+        detail: "completed by example-ui-0 · 07:31 UTC",
+        target: "example",
+        latency_ms: null,
+      },
+    ];
+    await setupWithHealth(page, healthResponse(HEALTHY_CAPABILITIES, probes));
+    await page.goto("/admin/operations/health");
+    await dismissReleaseUpgradeDialog(page);
+    await page.getByRole("button", { name: /inspect authentication health details/i }).click();
+
+    await expect(page.getByText("Keycloak Bootstrap", { exact: true })).toBeVisible();
+    await expect(page.getByText("completed by example-ui-0 · 07:31 UTC")).toBeVisible();
+  });
+
+  test("authentication diagnostics show an in-progress migration", async ({ page }) => {
+    const probes: DiagnosticProbe[] = [
+      ...HEALTHY_PROBES,
+      {
+        id: "keycloak-bootstrap",
+        label: "Keycloak Bootstrap",
+        group: "bootstrap",
+        status: "warning",
+        detail: "running on example-ui-1 since 07:28 UTC",
+        target: "example",
+        latency_ms: null,
+      },
+    ];
+    await setupWithHealth(page, healthResponse(HEALTHY_CAPABILITIES, probes));
+    await page.goto("/admin/operations/health");
+    await dismissReleaseUpgradeDialog(page);
+    await page.getByRole("button", { name: /inspect authentication health details/i }).click();
+
+    await expect(page.getByText("Keycloak Bootstrap", { exact: true })).toBeVisible();
+    await expect(page.getByText("running on example-ui-1 since 07:28 UTC")).toBeVisible();
   });
 });

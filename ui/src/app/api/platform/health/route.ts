@@ -431,6 +431,12 @@ async function probeOpenFgaBootstrap(openfgaUrl: string): Promise<DiagnosticProb
   }
 }
 
+function formatUtcHHMM(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")} UTC`;
+}
+
 async function probeKeycloakBootstrap(): Promise<DiagnosticProbeResult> {
   const remediation = {
     label: "Keycloak Health",
@@ -441,6 +447,8 @@ async function probeKeycloakBootstrap(): Promise<DiagnosticProbeResult> {
     const { getKeycloakMigrationHealth } = await import("@/lib/rbac/keycloak-migration-health");
     const health = await getKeycloakMigrationHealth({ actor: "platform-health" });
     const failingInvariants = health.keycloak_invariants?.summary.failing ?? 0;
+    const lastRun = health.migration.last_run;
+
     if (!health.keycloak.reachable || health.keycloak.status !== "reachable") {
       return {
         id: "keycloak-bootstrap",
@@ -453,6 +461,23 @@ async function probeKeycloakBootstrap(): Promise<DiagnosticProbeResult> {
         remediation,
       };
     }
+
+    // Surface mid-migration state so multi-replica races are visible in the UI.
+    if (lastRun?.status === "running") {
+      const since = lastRun.locked_at ? ` since ${formatUtcHHMM(lastRun.locked_at)}` : "";
+      const pod = lastRun.actor ?? "unknown pod";
+      return {
+        id: "keycloak-bootstrap",
+        label: "Keycloak Bootstrap",
+        group: "bootstrap",
+        status: "warning",
+        detail: `running on ${pod}${since}`,
+        target: health.keycloak.realm,
+        latency_ms: null,
+        remediation,
+      };
+    }
+
     if (health.schema_area.status !== "current" || failingInvariants > 0) {
       return {
         id: "keycloak-bootstrap",
@@ -468,12 +493,18 @@ async function probeKeycloakBootstrap(): Promise<DiagnosticProbeResult> {
         remediation,
       };
     }
+
+    const completedDetail =
+      lastRun?.status === "completed" && lastRun.actor && lastRun.completed_at
+        ? `completed by ${lastRun.actor} · ${formatUtcHHMM(lastRun.completed_at)}`
+        : "Realm and reconciliation ready";
+
     return {
       id: "keycloak-bootstrap",
       label: "Keycloak Bootstrap",
       group: "bootstrap",
       status: "healthy",
-      detail: "Realm and reconciliation ready",
+      detail: completedDetail,
       target: health.keycloak.realm,
       latency_ms: null,
     };

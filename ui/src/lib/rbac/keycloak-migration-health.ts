@@ -43,6 +43,7 @@ interface SchemaMigrationRunDoc {
   completed_at?: string;
   updated_at?: string;
   updated_by?: string;
+  locked_at?: string;
 }
 
 export interface KeycloakMigrationHealth {
@@ -61,6 +62,7 @@ export interface KeycloakMigrationHealth {
       status: MigrationStatus | "skipped";
       actor?: string;
       completed_at?: string;
+      locked_at?: string;
       updated_at?: string;
       applied_counts: Record<string, number>;
       planned_counts: Record<string, number>;
@@ -218,6 +220,7 @@ export async function getKeycloakMigrationHealth(input: {
             status: run.status ?? "not_started",
             actor: run.updated_by,
             completed_at: run.completed_at,
+            locked_at: run.locked_at,
             updated_at: run.updated_at,
             applied_counts: run.applied_counts ?? {},
             planned_counts: run.planned_counts ?? {},
