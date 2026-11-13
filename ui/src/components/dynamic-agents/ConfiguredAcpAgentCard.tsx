@@ -42,7 +42,7 @@ export function ConfiguredAcpAgentCard({ agent }: { agent: AvailableSubagent }) 
   }
   const runtime = getHarnessPresentation(agent.execution_harness_id);
   const readiness = agent.execution_readiness;
-  return <AgentCatalogCard name={agent.name} ariaLabel={`${agent.name} ACP agent`} agent={agent} identity={<AgentTechnologyIcon agent={agent} protocol="acp" harnessId={agent.execution_harness_id} />} subtitle={runtime.label} footer={null}>
+  return <AgentCatalogCard name={agent.name} ariaLabel={`${agent.name} ACP agent`} agent={agent} identity={<AgentTechnologyIcon agent={agent} protocol="acp" harnessId={agent.execution_harness_id} />} subtitle={runtime.label} onActivate={() => router.push(`/dynamic-agents?tab=agents&agent=${encodeURIComponent(agent.id)}`)} footer={null}>
     <p className="line-clamp-3 text-sm text-muted-foreground">{agent.description || "No description provided."}</p>
     <div className="flex flex-wrap gap-1.5"><Badge variant="secondary">Direct chat</Badge><Badge variant="outline">Subagent delegation</Badge><Badge variant="outline">Saved sessions</Badge></div>
     <p className={`text-xs ${readiness?.ready === false ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}>{readiness?.ready === false ? "Needs attention" : readiness?.ready ? "Configuration ready" : "Readiness not checked"}</p>

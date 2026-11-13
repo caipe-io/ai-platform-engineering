@@ -543,6 +543,35 @@ describe("DynamicAgentsTab search + pagination", () => {
     expect(screen.getByText("Ops Helper")).toBeInTheDocument();
   });
 
+  it.each(["Open Ops Helper", "Edit Ops Helper"])("opens the builder directly with %s", async (name) => {
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Ops Helper");
+    fireEvent.click(screen.getByRole("button", { name: "Grid", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name, exact: true }));
+    expect(screen.getByTestId("dynamic-agent-editor")).toHaveAttribute("data-agent-id", "agent-1");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("keeps grid Chat separate from opening the builder", async () => {
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Ops Helper");
+    fireEvent.click(screen.getByRole("button", { name: "Grid", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Chat with Ops Helper", exact: true }));
+    await waitFor(() => expect(mockCreateConversation).toHaveBeenCalledWith("agent-1"));
+    expect(screen.queryByTestId("dynamic-agent-editor")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("keeps disabled grid Chat from opening the builder", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ success: true, data: { items: [makeAgent({ enabled: false })], total: 1 } }));
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Ops Helper");
+    fireEvent.click(screen.getByRole("button", { name: "Grid", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Chat with Ops Helper", exact: true }));
+    expect(mockCreateConversation).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("dynamic-agent-editor")).not.toBeInTheDocument();
+  });
+
   it("requests the connected source while preserving the chosen List view", async () => {
     render(<DynamicAgentsTab />);
     await screen.findByText("Ops Helper");

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, type ReactNode } from "react";
+import { Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -19,9 +20,10 @@ export function NativeAgentCatalogCard({ agent, actions, status, onOpen, onChat,
   const trigger = useRef<HTMLButtonElement>(null);
   const identity = (decorative = false) => <AgentIdentity agent={agent} harnessId={agent.execution_harness_id} presentation={agent.presentation} decorative={decorative} />;
   const runtime = getAgentPresentation(agent.execution_harness_id, agent.presentation).label.replace(/^Execution harness: /, "");
+  const canEdit = !agent.config_driven && agent.permissions?.can_write === true;
   const subagents = (agent.subagents?.length || 0) + (agent.allowed_remote_agents?.length || 0);
   return <>
-    <AgentCatalogCard name={agent.name} agent={agent} identity={identity()} subtitle={`${agent.visibility} · Created in CAIPE`} footer={<><Button ref={trigger} type="button" variant="outline" size="sm" className="h-8 px-2.5 text-xs" onClick={() => setDetails(true)} aria-label={`Details for ${agent.name}`}>View details</Button><Button type="button" size="sm" className="h-8 px-2.5 text-xs" onClick={onChat} disabled={chatDisabled} aria-label={`Chat with ${agent.name}`}>Chat</Button></>}>
+    <AgentCatalogCard name={agent.name} agent={agent} identity={identity()} subtitle={`${agent.visibility} · Created in CAIPE`} onActivate={onOpen} footer={<><div className="flex items-center gap-1"><Button type="button" variant="outline" size="sm" className="h-8 px-2.5 text-xs" onClick={onOpen} aria-label={`${canEdit ? "Edit" : "View"} ${agent.name}`}>{canEdit ? "Edit agent" : "View agent"}</Button><Button ref={trigger} type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => setDetails(true)} aria-label={`Details for ${agent.name}`} title="View details"><Info className="h-4 w-4" /></Button></div><Button type="button" size="sm" className="h-8 px-2.5 text-xs" onClick={onChat} disabled={chatDisabled} aria-label={`Chat with ${agent.name}`}>Chat</Button></>}>
       <p className="line-clamp-2 text-xs text-muted-foreground">{agent.description || "No description provided."}</p>
       <div className="flex min-w-0 items-center gap-2"><p className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={runtime}>{runtime}</p>{["claude_code_acp", "claude_code_cli_acp"].includes(agent.execution_harness_id || "") && <AgentProtocolBadge protocol="acp" />}</div>
       <div className="flex flex-wrap items-center gap-1.5"><Badge variant="outline">{Object.keys(agent.allowed_tools || {}).length} MCP server{Object.keys(agent.allowed_tools || {}).length === 1 ? "" : "s"}</Badge>{subagents > 0 && <Badge variant="outline">{subagents} specialists</Badge>}{agent.skills?.length > 0 && <Badge variant="outline">{agent.skills.length} skills</Badge>}{agent.config_driven && <Badge variant="outline">Config</Badge>}<LastReviewBadge review={agent.last_review} />{status}</div>
