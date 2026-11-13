@@ -128,6 +128,9 @@ cd ai_platform_engineering/dynamic_agents
 # Create virtual environment and install dependencies
 uv sync
 
+# Include the AGNTCY SDK when testing self-registration
+uv sync --extra directory
+
 # Or with pip
 pip install -e .
 ```

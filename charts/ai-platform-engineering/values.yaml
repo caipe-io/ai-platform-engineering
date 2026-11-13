@@ -1489,6 +1489,20 @@ schedulerMcp:
     audience: "caipe-platform"
   resources: {}
 
+######### AGNTCY Directory configuration #########
+# Agent discovery and registry service. Disabled by default.
+directory:
+  enabled: false
+  image:
+    repository: "ghcr.io/agntcy/dir/api-server"
+    tag: "latest"
+    pullPolicy: "IfNotPresent"
+  service:
+    port: 8888
+  config:
+    DIR_API_LISTEN_ADDR: "0.0.0.0:8888"
+    DIR_API_LOG_LEVEL: "info"
+
 ######### Slack Bot Integration configuration #########
 # The Slack bot is a client integration (not an agent) that connects to the
 # CAIPE UI BFF (dynamic agents) over SSE, bringing AI assistance into Slack channels.

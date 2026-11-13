@@ -236,6 +236,16 @@ config:
   # replay path to be affordable on Bedrock (no Files API there). Deploy values
   # set this to "true"; kept "false" here so local/dev doesn't force Converse.
   AWS_BEDROCK_ENABLE_PROMPT_CACHE: "false"
+  # Optional AGNTCY Directory integration. Both features default off.
+  DIRECTORY_ENABLED: "false"
+  DIRECTORY_BASE_URL: "http://dir-apiserver:8888"
+  DIRECTORY_LABEL_FILTER: ""
+  DIRECTORY_SYNC_INTERVAL: "300"
+  DIRECTORY_SELF_REGISTER: "false"
+  DIRECTORY_SERVER_ADDRESS: "dir-apiserver:8888"
+  DIRECTORY_REGISTER_LABELS: ""
+  DIRECTORY_REGISTER_INTERVAL: "300"
+  DIRECTORY_REGISTER_PUBLISH: "true"
 
 agentContext:
   # Secret shared with openfga-authz-bridge for signed agent_id context headers.

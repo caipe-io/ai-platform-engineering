@@ -148,7 +148,7 @@ class MCPServerConfig(MCPServerConfigBase):
 
     id: str = Field(..., alias="_id", description="Unique slug ID")
     config_driven: bool = Field(False, description="Whether this server was loaded from config.yaml")
-    source: Literal["manual", "config", "agentgateway"] | None = Field(
+    source: Literal["manual", "config", "agentgateway", "directory"] | None = Field(
         None,
         description="Where this MCP server record came from.",
     )

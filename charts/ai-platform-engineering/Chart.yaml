@@ -234,3 +234,7 @@ dependencies:
   - name: agentgateway
     version: 1.4.0-rc.5 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     condition: agentgateway.enabled
+  # AGNTCY Directory — agent discovery and registry
+  - name: directory
+    version: 0.5.31 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    condition: directory.enabled
