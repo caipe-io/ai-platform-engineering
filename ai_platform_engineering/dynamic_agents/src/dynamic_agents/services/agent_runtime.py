@@ -105,6 +105,7 @@ from dynamic_agents.services.structured_response import (
     create_submit_structured_response_tool,
     extract_response_format,
 )
+from dynamic_agents.services.subagent_dispatch import subagent_factory
 from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryMiddleware
 from dynamic_agents.services.tracing import TracingManager
 
@@ -1580,6 +1581,13 @@ class AgentRuntime:
 
             if not subagent_config.enabled:
                 logger.warning(f"Agent '{self.config.name}': Subagent '{ref.name}' is disabled, skipping")
+                continue
+
+            if getattr(subagent_config, "execution_harness_id", None) not in (None, "dynamic_agents"):
+                factory = subagent_factory.get()
+                if factory is None:
+                    raise ValueError("Harness-owned subagents require Harness Engine execution")
+                subagents.append(await factory(ref))
                 continue
 
             # Build MCP tools for subagent
