@@ -74,7 +74,7 @@ from dynamic_agents.services.builtin_tools import (
 )
 from dynamic_agents.services.credential_exchange import CredentialExchangeClient
 from dynamic_agents.services.gridfs_store import MongoDBGridFSStore
-from dynamic_agents.services.llm_clients import get_llm
+from dynamic_agents.services.llm_clients import close_model_transports, get_llm
 from dynamic_agents.services.mcp_client import (
     McpCredentialUnavailableError,
     build_mcp_connections,
@@ -1754,10 +1754,7 @@ class AgentRuntime:
         """
         owned_models = [*self._connection_models, *(model for plan in self._middleware_model_plans for model in plan.instances)]
         for model in owned_models:
-            if client := getattr(model, "http_client", None):
-                client.close()
-            if client := getattr(model, "http_async_client", None):
-                await client.aclose()
+            await close_model_transports(model)
         self._connection_models.clear()
         self._middleware_model_plans.clear()
 

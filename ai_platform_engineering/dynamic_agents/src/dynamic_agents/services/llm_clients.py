@@ -227,10 +227,12 @@ def get_llm(
         # Anthropic accepts only its default temperature while thinking is enabled.
         kwargs["temperature"] = 1.0
 
+    owned_transports = None
     if provider_options and any(key in provider_options for key in ("base_url", "azure_endpoint", "api_key")):
         # SDK defaults may follow redirects. Credential-bearing custom endpoints must not.
         kwargs["http_client"] = httpx.Client(follow_redirects=False, timeout=30.0)
         kwargs["http_async_client"] = httpx.AsyncClient(follow_redirects=False, timeout=30.0)
+        owned_transports = (kwargs["http_client"], kwargs["http_async_client"])
 
     if SHARE_CLIENTS:
         p = resolved_provider.lower().replace("-", "_")
@@ -266,6 +268,8 @@ def get_llm(
             f"Cannot initialize LLM (provider={resolved_provider!r}, "
             f"model={resolved_model!r}): {exc}"
         ) from exc
+    if owned_transports:
+        object.__setattr__(llm, "_caipe_owned_transports", owned_transports)
     logger.info(
         "[llm] Instantiated %s (provider=%s, model=%s, shared_clients=%s)",
         type(llm).__name__,
@@ -274,6 +278,14 @@ def get_llm(
         SHARE_CLIENTS,
     )
     return llm
+
+
+async def close_model_transports(model: BaseChatModel) -> None:
+    """Release only transports owned by this model, preserving deployment pools."""
+    if transports := getattr(model, "_caipe_owned_transports", None):
+        transports[0].close()
+        await transports[1].aclose()
+        object.__setattr__(model, "_caipe_owned_transports", None)
 
 
 def close_all() -> None:

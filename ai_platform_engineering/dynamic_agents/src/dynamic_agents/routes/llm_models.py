@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from dynamic_agents.auth.auth import get_user_context
 from dynamic_agents.config import get_settings
 from dynamic_agents.models import UserContext
-from dynamic_agents.services.llm_clients import LLMConfigError
+from dynamic_agents.services.llm_clients import LLMConfigError, close_model_transports
 from dynamic_agents.services.model_connections import ResolvedModel, resolve_model
 
 router = APIRouter(prefix="/llm-models", tags=["llm-models"])
@@ -40,7 +40,7 @@ def diagnostic(error: Exception, plan: ResolvedModel | None) -> dict[str, Any]:
         category = "tls"
     elif isinstance(error, httpx.RequestError) or "connection" in type(error).__name__.lower():
         category = "connection"
-    elif isinstance(error, LLMConfigError):
+    elif isinstance(error, LLMConfigError) and status not in (401, 403):
         category = "configuration"
     message = str(error)
     for value in sorted((str(value) for value in (plan.parameters.values() if plan else [])), key=len, reverse=True):
@@ -50,6 +50,7 @@ def diagnostic(error: Exception, plan: ResolvedModel | None) -> dict[str, Any]:
     message = re.sub(r"https?://[^\s\"'<>]+", "[endpoint]", message)
     message = re.sub(r"(?i)(bearer\s+|(?:api[_ -]?key|authorization|token|secret)[\"'\s:=]+)[^\s,\"'}]+", r"\1[redacted]", message)
     message = re.sub(r"\bsk-[A-Za-z0-9_-]+", "[redacted]", message)
+    message = re.sub(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b", "[redacted]", message)
     return {"success": False, "category": category, "message": message[:1200] or "Provider rejected the connection.", **({"status_code": status} if isinstance(status, int) else {})}
 
 
@@ -75,12 +76,7 @@ async def test_model(request: ModelTestRequest, user: UserContext = Depends(get_
         result = diagnostic(error, plan)
     finally:
         # Per-connection transports are owned by this short-lived model, never the shared deployment pool.
-        if model is not None and plan and plan.parameters:
-            client = getattr(model, "http_client", None)
-            async_client = getattr(model, "http_async_client", None)
-            if client is not None:
-                client.close()
-            if async_client is not None:
-                await async_client.aclose()
+        if model is not None:
+            await close_model_transports(model)
     result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
     return result

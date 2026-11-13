@@ -150,3 +150,23 @@ async def test_cache_does_not_return_graph_after_credential_revocation() -> None
 @pytest.mark.parametrize(("error", "category"), [(TimeoutError("deadline"), "timeout"), (httpx.ConnectError("DNS failed"), "connection"), (ValueError("certificate verify failed"), "tls")])
 def test_network_diagnostics(error: Exception, category: str) -> None:
     assert diagnostic(error, None)["category"] == category
+
+async def test_model_cleanup_preserves_shared_deployment_transports() -> None:
+    from dynamic_agents.services.llm_clients import close_model_transports
+
+    shared = SimpleNamespace(http_client=Mock(), http_async_client=AsyncMock())
+    await close_model_transports(shared)
+    shared.http_client.close.assert_not_called()
+    shared.http_async_client.aclose.assert_not_called()
+    owned = SimpleNamespace(_caipe_owned_transports=(Mock(), AsyncMock()))
+    clients = owned._caipe_owned_transports
+    await close_model_transports(owned)
+    clients[0].close.assert_called_once()
+    clients[1].aclose.assert_awaited_once()
+
+
+async def test_removed_registered_connection_never_falls_back_to_environment() -> None:
+    registry_id = "00000000-0000-4000-8000-000000000001-0123456789abcdef"
+    mongo = SimpleNamespace(get_llm_model=Mock(return_value=None))
+    with pytest.raises(model_connections.LLMConfigError, match="removed"):
+        await model_connections.resolve_registered_model(SimpleNamespace(), None, mongo, registry_id)
