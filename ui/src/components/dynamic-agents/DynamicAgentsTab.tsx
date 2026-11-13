@@ -730,12 +730,12 @@ export function DynamicAgentsTab({
             </div>
 
             {/* Pagination */}
-            {total > pageSize && (
+            {total > 0 && (
               <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
                 <span className="text-sm text-muted-foreground whitespace-nowrap">
                   Showing {Math.min((page - 1) * pageSize + 1, total)}–{Math.min(page * pageSize, total)} of {total}
                 </span>
-                <div className="flex flex-wrap items-center gap-1">
+                {totalPages > 1 && <div className="flex flex-wrap items-center gap-1">
                   <Button
                     variant="outline"
                     size="icon"
@@ -776,14 +776,14 @@ export function DynamicAgentsTab({
                   >
                     <ChevronRight className="h-4 w-4" />
                   </Button>
-                </div>
+                </div>}
                 <div className="flex items-center gap-2">
-                  <label className="text-sm text-muted-foreground whitespace-nowrap">Rows</label>
+                  <label htmlFor="agent-catalog-page-size" className="text-sm text-muted-foreground whitespace-nowrap">Agents per page</label>
                   <Select
-                    aria-label="Rows per page"
+                    id="agent-catalog-page-size"
                     value={pageSize}
                     onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-                    className="h-8 rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="h-9 w-20 shrink-0 px-2 py-1"
                   >
                     {[10, 20, 50, 100].map((size) => (
                       <option key={size} value={size}>{size}</option>

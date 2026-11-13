@@ -261,7 +261,7 @@ export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange
       </div>}
       {renderCatalog && loadError && <p role="alert" className="text-sm text-destructive">{loadError}</p>}
       <Dialog open={!!detail} onOpenChange={open => { if (!open && !probing && !saving) setDetailsId(null); }}>
-        <DialogContent onCloseAutoFocus={event => { event.preventDefault(); if (!editingId) cardTrigger.current?.focus(); }} className="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] min-w-0 max-w-2xl overflow-y-auto p-4 [overflow-wrap:anywhere] sm:p-6">
+        <DialogContent onCloseAutoFocus={event => { event.preventDefault(); if (!editingId) cardTrigger.current?.focus(); }} className="max-h-[calc(100dvh-2rem)] w-[min(42rem,calc(100%-2rem))] min-w-0 max-w-2xl overflow-y-auto p-4 [overflow-wrap:anywhere] sm:p-6">
           <DialogHeader><DialogTitle className="flex min-w-0 items-center gap-3 pr-6 text-left leading-snug"><AgentTechnologyIcon decorative agent={detail} protocol="a2a" framework={detail?.framework} />{detail?.name}</DialogTitle><DialogDescription>{detail?.description || "Remote A2A agent details and connection test."}</DialogDescription></DialogHeader>
           {detail && <>
             <div className="flex flex-wrap gap-2"><AgentProtocolBadge protocol="a2a" version={detail.protocol_version} />{detail.framework && detail.framework !== "unspecified" && <Badge variant="secondary">{getAgentFramework(detail.framework).label}</Badge>}<Badge variant="secondary">{detail.streaming ? "Streaming enabled" : "Complete responses"}</Badge><Badge variant="outline">{detail.timeout_seconds}s timeout</Badge></div>
@@ -275,7 +275,7 @@ export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange
         </DialogContent>
       </Dialog>
       <Dialog open={!!editing} onOpenChange={open => { if (!open && !saving && !probing) setEditingId(null); }}>
-        <DialogContent onCloseAutoFocus={event => { event.preventDefault(); cardTrigger.current?.focus(); }} className="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] min-w-0 max-w-2xl overflow-y-auto p-4 [overflow-wrap:anywhere] sm:p-6"><DialogHeader><DialogTitle>Edit {editing?.name}</DialogTitle><DialogDescription>Update the saved connection and authentication.</DialogDescription></DialogHeader>
+        <DialogContent onCloseAutoFocus={event => { event.preventDefault(); cardTrigger.current?.focus(); }} className="max-h-[calc(100dvh-2rem)] w-[min(42rem,calc(100%-2rem))] min-w-0 max-w-2xl overflow-y-auto p-4 [overflow-wrap:anywhere] sm:p-6"><DialogHeader><DialogTitle>Edit {editing?.name}</DialogTitle><DialogDescription>Update the saved connection and authentication.</DialogDescription></DialogHeader>
           {editing && <div
                   className="space-y-3"
                   onKeyDown={(event) => {
@@ -309,7 +309,7 @@ export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange
           {cardPreview && <AgentCardDetails card={cardPreview} />}
         </DialogContent>
       </Dialog>
-      <Dialog open={discoverOpen} onOpenChange={setDiscoverOpen}><DialogContent onCloseAutoFocus={event => { event.preventDefault(); if (!addOpen) discoverTrigger.current?.focus(); }} className="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] min-w-0 max-w-2xl overflow-y-auto p-4 [overflow-wrap:anywhere] sm:p-6"><DialogHeader><DialogTitle>Discover remote agents</DialogTitle><DialogDescription>Find public Agent Cards or configured Kubernetes Services.</DialogDescription></DialogHeader>
+      <Dialog open={discoverOpen} onOpenChange={setDiscoverOpen}><DialogContent onCloseAutoFocus={event => { event.preventDefault(); if (!addOpen) discoverTrigger.current?.focus(); }} className="max-h-[calc(100dvh-2rem)] w-[min(42rem,calc(100%-2rem))] min-w-0 max-w-2xl overflow-y-auto p-4 [overflow-wrap:anywhere] sm:p-6"><DialogHeader><DialogTitle>Discover remote agents</DialogTitle><DialogDescription>Find public Agent Cards or configured Kubernetes Services.</DialogDescription></DialogHeader>
         {canManage && <RemoteAgentDiscovery disabled={saving || probing} onChoose={(agent: DiscoveredAgent) => {
           setFramework("unspecified"); setEndpoint(agent.endpoint); setName(agent.error ? "" : agent.name || ""); setDescription(agent.description || ""); setStreaming(agent.supports_streaming === true);
           setCredentialSource({ kind: "none", target: "header", name: "Authorization" });
@@ -317,7 +317,7 @@ export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange
         }} />}
       </DialogContent></Dialog>
       <Dialog open={addOpen} onOpenChange={open => { if (!open && !saving && !probing) setAddOpen(false); }}>
-        <DialogContent onCloseAutoFocus={event => { event.preventDefault(); addTrigger.current?.focus(); }} className="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] min-w-0 max-w-2xl overflow-y-auto p-4 [overflow-wrap:anywhere] sm:p-6"><DialogHeader><DialogTitle>Connect Remote Agent</DialogTitle><DialogDescription>Read an Agent Card to fill in its details, then review and register it.</DialogDescription></DialogHeader>
+        <DialogContent onCloseAutoFocus={event => { event.preventDefault(); addTrigger.current?.focus(); }} className="max-h-[calc(100dvh-2rem)] w-[min(42rem,calc(100%-2rem))] min-w-0 max-w-2xl overflow-y-auto p-4 [overflow-wrap:anywhere] sm:p-6"><DialogHeader><DialogTitle>Connect Remote Agent</DialogTitle><DialogDescription>Read an Agent Card to fill in its details, then review and register it.</DialogDescription></DialogHeader>
           {canManage && !disabled && (        <div
           className="space-y-3"
           onKeyDown={(event) => {

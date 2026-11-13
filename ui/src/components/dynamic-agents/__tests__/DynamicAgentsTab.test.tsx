@@ -269,7 +269,7 @@ describe("DynamicAgentsTab search + pagination", () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?catalog=true&source=all&page=2&page_size=20");
     });
-    const pageSizeSelect = await screen.findByRole("combobox", { name: "Rows per page" });
+    const pageSizeSelect = await screen.findByRole("combobox", { name: "Agents per page" });
 
     fetchMock.mockClear();
 
@@ -278,6 +278,19 @@ describe("DynamicAgentsTab search + pagination", () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=50");
     });
+  });
+
+  it("keeps the page-size selector available when all agents fit on one page", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ success: true, data: { items: [makeAgent()], total: 46 } }));
+    render(<DynamicAgentsTab />);
+    const pageSizeSelect = await screen.findByRole("combobox", { name: "Agents per page" });
+    fireEvent.change(pageSizeSelect, { target: { value: "50" } });
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=50"));
+    const updated = await screen.findByRole("combobox", { name: "Agents per page" });
+    expect(updated).toHaveValue("50");
+    expect(screen.queryByRole("button", { name: "2", exact: true })).not.toBeInTheDocument();
+    fireEvent.change(updated, { target: { value: "10" } });
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=10"));
   });
 
   it("shows the no-results empty state for a search term, and Clear search resets search + refetches", async () => {
