@@ -202,6 +202,7 @@ async def test_child_uses_real_remote_acp_transport_and_subprocess(settings: Set
     executable.chmod(0o700)
     monkeypatch.setenv("PATH", str(executable.parent) + os.pathsep + os.environ["PATH"])
     worker_config = settings.model_copy(update={
+        "claude_cli_isolation": "disabled",  # Deterministic local CLI fixture; kernel isolation has separate Linux coverage.
         "claude_acp_command": [sys.executable, str(Path(__file__).parents[1] / "src/harness_engine/claude_cli_acp.py")],
         "claude_acp_runtime": runtime,
     })
