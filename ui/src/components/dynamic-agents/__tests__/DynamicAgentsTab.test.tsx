@@ -84,6 +84,7 @@ describe("DynamicAgentsTab search + pagination", () => {
   let fetchMock: jest.Mock;
 
   beforeEach(() => {
+    localStorage.clear();
     localStorage.setItem("caipe:agent-catalog-view:test-user", "list");
     jest.useFakeTimers();
     mockPush.mockReset();
@@ -495,6 +496,24 @@ describe("DynamicAgentsTab search + pagination", () => {
     expect(screen.getByRole("button", { name: "Delete Ops Helper" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open agent" }));
     expect(screen.getByTestId("dynamic-agent-editor")).toBeInTheDocument();
+  });
+
+  it("resizes cards without refetching and retains the choice when switching views", async () => {
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Ops Helper");
+    fireEvent.click(screen.getByRole("button", { name: "Grid", exact: true }));
+    const before = fetchMock.mock.calls.length;
+    const slider = screen.getByRole("slider", { name: "Card size" });
+    expect(slider).toHaveAttribute("aria-valuetext", "Balanced");
+    fireEvent.change(slider, { target: { value: "2" } });
+    expect(slider).toHaveAttribute("aria-valuetext", "Comfortable");
+    expect(localStorage.getItem("caipe:agent-catalog-card-size:test-user")).toBe("comfortable");
+    fireEvent.click(screen.getByRole("button", { name: "List", exact: true }));
+    expect(screen.queryByRole("slider", { name: "Card size" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Grid", exact: true }));
+    expect(screen.getByRole("slider", { name: "Card size" })).toHaveAttribute("aria-valuetext", "Comfortable");
+    expect(fetchMock).toHaveBeenCalledTimes(before);
+    expect(screen.getByRole("button", { name: "Chat with Ops Helper" })).toBeEnabled();
   });
 
   it("requests the connected source while preserving the chosen List view", async () => {

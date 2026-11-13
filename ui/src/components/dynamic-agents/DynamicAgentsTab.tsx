@@ -38,7 +38,7 @@ import { Select } from "@/components/ui/select";
 import { AgentIdentity } from "./AgentIdentity";
 import { NativeAgentCatalogCard } from "./NativeAgentCatalogCard";
 import { RemoteAgentRegistry } from "./RemoteAgentRegistry";
-import { useAgentCatalogView } from "@/hooks/use-agent-catalog-view";
+import { AGENT_CARD_SIZES, useAgentCatalogCardSize, useAgentCatalogView } from "@/hooks/use-agent-catalog-view";
 import { LayoutGrid, List } from "lucide-react";
 import { AgentEditorSkeleton,AgentsListSkeleton } from "./AgentsLoadingSkeleton";
 import { DynamicAgentEditor } from "./DynamicAgentEditor";
@@ -100,6 +100,9 @@ export function DynamicAgentsTab({
   const [pageSize, setPageSize] = React.useState(20);
   const [total, setTotal] = React.useState(0);
   const [view, setView] = useAgentCatalogView();
+  const [cardSize, setCardSize] = useAgentCatalogCardSize();
+  const cardSizeIndex = AGENT_CARD_SIZES.findIndex(size => size.id === cardSize);
+  const cardSizeOption = AGENT_CARD_SIZES[cardSizeIndex];
   const [source, setSource] = React.useState("all");
   const [runtime, setRuntime] = React.useState("all");
   const [registryError, setRegistryError] = React.useState<string | null>(null);
@@ -431,36 +434,41 @@ export function DynamicAgentsTab({
   return (
     <RemoteAgentRegistry onRegistryChange={() => void fetchAgents()} renderCatalog={remote => <>
       <WorkspacePageActions>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <div className="relative">
+        <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
+          <div className="relative col-span-2 min-w-0 sm:flex-1 xl:flex-none">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Search by name or ID..."
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              className="h-9 w-48 pl-9"
+              aria-label="Search agents"
+              className="h-9 w-full pl-9 sm:min-w-48 xl:w-48"
             />
           </div>
-          <Button variant="outline" size="sm" onClick={() => { void fetchAgents(); remote.refresh(); }} disabled={loading}>
+          <Button variant="outline" size="sm" className="h-10 sm:h-9" onClick={() => { void fetchAgents(); remote.refresh(); }} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
           {remote.toolbar}
-          <Button size="sm" onClick={() => setIsCreating(true)}>
+          <Button size="sm" className="h-10 sm:h-9" onClick={() => setIsCreating(true)}>
             <Plus className="mr-2 h-4 w-4" />
             New Agent
           </Button>
         </div>
       </WorkspacePageActions>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-1" role="group" aria-label="Agent source">{[["all", "All agents"], ["created", "Created in CAIPE"], ["connected", "Connected"]].map(([key, label]) => <Button key={key} type="button" variant={source === key ? "secondary" : "ghost"} size="sm" aria-pressed={source === key} onClick={() => { setSource(key); setPage(1); }}>{label}</Button>)}</div>
-        <div className="flex flex-wrap items-center gap-3 sm:ml-auto">
-          <Select aria-label="Filter runtime or connection" className="w-48" value={runtime} onChange={event => { setRuntime(event.target.value); setPage(1); }}><option value="all">All runtimes</option><optgroup label="Runtime"><option value="dynamic_agents">Deep Agents</option><option value="claude_agent_sdk">Claude Agent SDK</option><option value="claude_code_cli_acp">Claude Code</option><option value="agentcore">AgentCore</option><option value="google_adk">Google ADK</option><option value="app">App assistant</option></optgroup><optgroup label="Connection"><option value="a2a">A2A</option><option value="acp">ACP</option></optgroup></Select>
-        <div className="flex gap-1 rounded-lg border p-1" role="group" aria-label="Catalog view"><Button type="button" size="sm" variant={view === "grid" ? "secondary" : "ghost"} aria-pressed={view === "grid"} onClick={() => setView("grid")}><LayoutGrid className="mr-2 h-4 w-4" />Grid</Button><Button type="button" size="sm" variant={view === "list" ? "secondary" : "ghost"} aria-pressed={view === "list"} onClick={() => setView("list")}><List className="mr-2 h-4 w-4" />List</Button></div>
+        <div className="grid w-full grid-cols-3 gap-1 sm:flex sm:w-auto" role="group" aria-label="Agent source">{[["all", "All agents"], ["created", "Created in CAIPE"], ["connected", "Connected"]].map(([key, label]) => <Button key={key} type="button" className="h-auto min-h-9 min-w-0 whitespace-normal px-2 py-2 text-xs leading-tight sm:whitespace-nowrap sm:px-3 sm:text-sm" variant={source === key ? "secondary" : "ghost"} size="sm" aria-pressed={source === key} onClick={() => { setSource(key); setPage(1); }}>{label}</Button>)}</div>
+        <div className="grid w-full min-w-0 grid-cols-1 items-center gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_auto] sm:ml-auto sm:w-auto sm:flex sm:flex-wrap">
+          <Select aria-label="Filter runtime or connection" className="w-full min-w-0 sm:w-48" value={runtime} onChange={event => { setRuntime(event.target.value); setPage(1); }}><option value="all">All runtimes</option><optgroup label="Runtime"><option value="dynamic_agents">Deep Agents</option><option value="claude_agent_sdk">Claude Agent SDK</option><option value="claude_code_cli_acp">Claude Code</option><option value="agentcore">AgentCore</option><option value="google_adk">Google ADK</option><option value="app">App assistant</option></optgroup><optgroup label="Connection"><option value="a2a">A2A</option><option value="acp">ACP</option></optgroup></Select>
+          <div className="flex shrink-0 gap-1 rounded-lg border p-1 [&>button]:flex-1" role="group" aria-label="Catalog view"><Button type="button" size="sm" variant={view === "grid" ? "secondary" : "ghost"} aria-pressed={view === "grid"} onClick={() => setView("grid")}><LayoutGrid className="mr-2 h-4 w-4" />Grid</Button><Button type="button" size="sm" variant={view === "list" ? "secondary" : "ghost"} aria-pressed={view === "list"} onClick={() => setView("list")}><List className="mr-2 h-4 w-4" />List</Button></div>
+          {view === "grid" && <label className="col-span-full flex h-10 min-w-0 items-center gap-3 rounded-lg border px-3 sm:w-56">
+            <span className="shrink-0 text-xs">Card size<span aria-hidden="true" className="block text-[10px] text-muted-foreground">{cardSizeOption.label}</span></span>
+            <input type="range" aria-label="Card size" aria-valuetext={cardSizeOption.label} min={0} max={AGENT_CARD_SIZES.length - 1} step={1} value={cardSizeIndex} onChange={event => setCardSize(AGENT_CARD_SIZES[Number(event.target.value)].id)} className="h-8 min-w-0 flex-1 cursor-pointer accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" />
+          </label>}
         </div>
       </div>
       {registryError && <p role="alert" className="mb-3 text-sm text-destructive">{registryError}</p>}
-      <Card className="rounded-none border-0 bg-transparent shadow-none">
+      <Card className="@container/catalog min-w-0 rounded-none border-0 bg-transparent shadow-none">
         <CardContent className="px-0 pt-0">
         {loading ? (
           <AgentsListSkeleton />
@@ -498,13 +506,13 @@ export function DynamicAgentsTab({
         ) : (
           <div className="space-y-3">
             {/* Header */}
-            <div className={`${view === "grid" ? "hidden" : "hidden md:grid"} grid-cols-12 gap-4 pb-2 border-b text-xs font-medium text-muted-foreground px-2`}>
-              <div className="md:col-span-4">Name</div>
-              <div className="md:col-span-2">Visibility</div>
-              <div className="md:col-span-1">Tools</div>
-              <div className="md:col-span-1">Grade</div>
-              <div className="md:col-span-2">Status</div>
-              <div className="md:col-span-2 text-right">Actions</div>
+            <div className={`${view === "grid" ? "hidden" : "hidden @[64rem]/catalog:grid"} grid-cols-12 gap-4 pb-2 border-b text-xs font-medium text-muted-foreground px-2`}>
+              <div className="@[64rem]/catalog:col-span-4">Name</div>
+              <div className="@[64rem]/catalog:col-span-2">Visibility</div>
+              <div className="@[64rem]/catalog:col-span-1">Tools</div>
+              <div className="@[64rem]/catalog:col-span-1">Grade</div>
+              <div className="@[64rem]/catalog:col-span-2">Status</div>
+              <div className="@[64rem]/catalog:col-span-2 text-right">Actions</div>
             </div>
 
             {/* Result count */}
@@ -517,13 +525,13 @@ export function DynamicAgentsTab({
             )}
 
             {/* Agent rows */}
-            <div className={view === "grid" ? "grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-3" : "space-y-2"} aria-label="Agent catalog">
+            <div className={view === "grid" ? "grid gap-3" : "space-y-2"} style={view === "grid" ? { gridTemplateColumns: `repeat(auto-fill,minmax(min(100%,${cardSizeOption.minWidth}px),1fr))` } : undefined} aria-label="Agent catalog">
             {agents.map((agent) => {
               if (isConnectedAgent(agent)) return remote.renderAgent(agent, view);
               const canManage = agentCanManage(agent);
               const rowActionError = rowActionErrors[agent._id];
               const status = (
-                <div className="md:col-span-2">
+                <div className="@[64rem]/catalog:col-span-2">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -556,7 +564,7 @@ export function DynamicAgentsTab({
                 </div>
 );
               const actions = (
-                <div className="md:col-span-2 flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                <div className="col-span-2 flex min-w-0 flex-wrap items-center justify-start gap-1 @[64rem]/catalog:justify-end" onClick={(e) => e.stopPropagation()}>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -601,7 +609,7 @@ export function DynamicAgentsTab({
                   )}
                   {!agent.is_system && !agent.config_driven && canManage && (
                     pendingDeleteAgentId === agent._id ? (
-                      <div className="flex items-center gap-1 rounded-full border border-destructive/20 bg-destructive/10 px-2 py-1">
+                      <div className="flex flex-wrap items-center gap-1 rounded-full border border-destructive/20 bg-destructive/10 px-2 py-1">
                         <span className="max-w-[7rem] truncate text-xs font-medium text-destructive">
                           Delete {agent.name}?
                         </span>
@@ -652,10 +660,10 @@ export function DynamicAgentsTab({
               return (
               <div key={agent._id} className="space-y-2">
               <div
-                className="grid grid-cols-1 md:grid-cols-12 gap-4 py-3 px-2 rounded-lg hover:bg-muted/50 items-center cursor-pointer"
+                className="grid min-w-0 grid-cols-2 items-center gap-3 rounded-lg border p-3 hover:bg-muted/50 cursor-pointer @[64rem]/catalog:grid-cols-12 @[64rem]/catalog:gap-4 @[64rem]/catalog:border-0 @[64rem]/catalog:px-2"
                 onClick={() => openAgent(agent)}
               >
-                <div className="md:col-span-4 min-w-0">
+                <div className="col-span-2 min-w-0 @[64rem]/catalog:col-span-4">
                     <div className="flex items-center gap-3">
                       <AgentIdentity agent={agent} harnessId={agent.execution_harness_id} presentation={agent.presentation} />
                       <div className="min-w-0 flex-1">
@@ -672,7 +680,7 @@ export function DynamicAgentsTab({
                     </div>
                 </div>
 
-                <div className="md:col-span-2">
+                <div className="@[64rem]/catalog:col-span-2">
                   <Badge
                     variant="outline"
                     className={`gap-1 ${getVisibilityColor(agent.visibility)}`}
@@ -682,14 +690,14 @@ export function DynamicAgentsTab({
                   </Badge>
                 </div>
 
-                <div className="md:col-span-1">
+                <div className="@[64rem]/catalog:col-span-1">
                   <span className="text-sm text-muted-foreground">
-                    {Object.keys(agent.allowed_tools || {}).length}
+                    <span className="@[64rem]/catalog:hidden">MCP servers: </span>{Object.keys(agent.allowed_tools || {}).length}
                   </span>
                 </div>
 
-                <div className="md:col-span-1">
-                  <LastReviewBadge review={agent.last_review} />
+                <div className="@[64rem]/catalog:col-span-1">
+                  <span className="mr-1 text-xs text-muted-foreground @[64rem]/catalog:hidden">Review:</span><LastReviewBadge review={agent.last_review} />{!agent.last_review && <span className="text-xs text-muted-foreground">—</span>}
                 </div>
 
                 {status}
@@ -698,11 +706,11 @@ export function DynamicAgentsTab({
               </div>
 
               {rowActionError && (
-                <div className="ml-12 pl-4 border-l-2 border-destructive/30">
+                <div className="min-w-0 border-l-2 border-destructive/30 pl-3 sm:ml-12 sm:pl-4">
                   <div className="flex items-start gap-2 rounded-lg bg-destructive/10 border border-destructive/30 p-3">
                     <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
-                    <div className="flex flex-1 items-start justify-between gap-3">
-                      <p className="text-sm text-destructive">{rowActionError}</p>
+                    <div className="flex min-w-0 flex-1 flex-wrap items-start justify-between gap-3">
+                      <p className="min-w-0 text-sm text-destructive [overflow-wrap:anywhere]">{rowActionError}</p>
                       <Button
                         type="button"
                         variant="ghost"
@@ -723,11 +731,11 @@ export function DynamicAgentsTab({
 
             {/* Pagination */}
             {total > pageSize && (
-              <div className="flex items-center justify-between pt-4 gap-4 border-t">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
                 <span className="text-sm text-muted-foreground whitespace-nowrap">
                   Showing {Math.min((page - 1) * pageSize + 1, total)}–{Math.min(page * pageSize, total)} of {total}
                 </span>
-                <div className="flex items-center gap-1">
+                <div className="flex flex-wrap items-center gap-1">
                   <Button
                     variant="outline"
                     size="icon"

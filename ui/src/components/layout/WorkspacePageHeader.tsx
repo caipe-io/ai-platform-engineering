@@ -18,6 +18,7 @@ const BREADCRUMB_TONES = {
 
 interface WorkspacePageHeaderProps {
   actions?: React.ReactNode;
+  actionsClassName?: string;
   breadcrumbs: WorkspaceBreadcrumbItem[];
   className?: string;
   description: string;
@@ -98,6 +99,7 @@ export function WorkspacePageHeader({
   actions,
   breadcrumbs,
   className,
+  actionsClassName,
   description,
   title,
   titleId,
@@ -115,7 +117,7 @@ export function WorkspacePageHeader({
         </div>
         {actions || actionsRef ? (
           <div
-            className="flex flex-wrap items-center gap-2"
+            className={cn("flex min-w-0 max-w-full flex-wrap items-center gap-2", actionsClassName)}
             ref={actionsRef}
           >
             {actions}

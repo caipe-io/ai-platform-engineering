@@ -197,6 +197,7 @@ function DynamicAgentsPageContent() {
                 ? [{ label: selectedResourceName, href: currentHref }]
                 : []),
             ]}
+            actionsClassName={activeTab === "agents" ? "w-full xl:w-auto" : undefined}
             description={activeDescription}
             title={activeNavigationItem.label}
           />
