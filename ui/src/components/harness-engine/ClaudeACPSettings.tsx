@@ -13,18 +13,18 @@ export function ClaudeACPSettings({ descriptor, profileId }: { descriptor: Harne
       <h3 className="text-sm font-semibold">{descriptor.display_name}</h3>
       <Badge variant="outline">Experimental</Badge>
     </div>
-    <p className="text-sm text-muted-foreground">Use Claude in this app with your organization&apos;s model access. Responses continue when you refresh or reconnect.</p>
-    <p className="text-xs text-muted-foreground">{descriptor.id === "claude_code_cli_acp" ? "Runs the Claude Code CLI directly over ACP." : "Runs the Claude Agent SDK through its ACP adapter."} Existing conversations keep their saved runtime.</p>
+    <p className="text-sm text-muted-foreground">Run Claude with your organization&apos;s model access. Refreshing or reconnecting won&apos;t stop a running response.</p>
     {profile?.description && <p className="text-sm">{profile.description}</p>}
     <dl className="grid gap-3 text-xs sm:grid-cols-3">
       <div><dt className="flex items-center gap-1.5 font-medium"><Radio className="h-3.5 w-3.5" aria-hidden="true" />Session</dt><dd className="mt-1 text-muted-foreground">Saved with this conversation</dd></div>
-      <div><dt className="flex items-center gap-1.5 font-medium"><Folder className="h-3.5 w-3.5" aria-hidden="true" />Workspace</dt><dd className="mt-1 text-muted-foreground">Stored on the configured worker</dd></div>
-      <div><dt className="flex items-center gap-1.5 font-medium"><ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />MCP tools</dt><dd className="mt-1 text-muted-foreground">{toolsAvailable ? "Choose individual tools in the Tools step" : "Not enabled for this worker"}</dd></div>
+      <div><dt className="flex items-center gap-1.5 font-medium"><Folder className="h-3.5 w-3.5" aria-hidden="true" />Workspace</dt><dd className="mt-1 text-muted-foreground">Files stay on the server</dd></div>
+      <div><dt className="flex items-center gap-1.5 font-medium"><ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />MCP tools</dt><dd className="mt-1 text-muted-foreground">{toolsAvailable ? "Choose tools in the Tools step" : "Not available with this profile"}</dd></div>
     </dl>
     <details className="text-xs text-muted-foreground">
-      <summary className="cursor-pointer font-medium text-foreground">Access and authentication</summary>
-      <p className="mt-2">Your app sign-in and the agent&apos;s sharing rules apply. Tool access is checked for every call. Your administrator configures model access and workspace tools.</p>
-      <p className="mt-2">Refresh recovery does not recover an in-flight process after a worker failure. Continuing a session after replacement requires its saved workspace.</p>
+      <summary className="cursor-pointer font-medium text-foreground">Access and recovery</summary>
+      <p className="mt-2">Your sign-in and sharing permissions apply. Each tool call is checked against your access.</p>
+      <p className="mt-2">If the worker stops, the current response is interrupted. Continuing the session requires its saved workspace.</p>
+      <p className="mt-2">Profile changes apply to new chats. Existing chats keep their saved settings.</p>
     </details>
   </section>;
 }

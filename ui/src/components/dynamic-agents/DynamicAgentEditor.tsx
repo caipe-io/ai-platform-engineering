@@ -1864,10 +1864,9 @@ export function DynamicAgentEditor({
                                 sideOffset={6}
                                 className="max-w-xs whitespace-normal px-3 py-2 text-left text-xs font-normal leading-relaxed"
                               >
-                                An operator profile is an administrator-managed execution
-                                configuration. It selects approved provider resources,
-                                security settings, and limits without exposing credentials or
-                                infrastructure identifiers to agent authors.
+                                Choose an admin-managed setup for this agent.
+                                It sets the model, permissions, and usage limits.
+                                Credentials stay private.
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
@@ -1898,8 +1897,7 @@ export function DynamicAgentEditor({
                           ))}
                         </Select>
                         <p className="text-xs text-muted-foreground">
-                          Profiles are managed by your administrator and define
-                          the execution model, security settings, and limits.
+                          Profiles set the model, permissions, and limits. Admins manage them.
                         </p>
                         {selectedHarness.profiles.find(p => p.id === harnessProfileId)?.model && <p className="text-sm">Execution model: <code>{selectedHarness.profiles.find(p => p.id === harnessProfileId)?.model}</code></p>}
                         {connectionConfigured === true && harnessId.startsWith("claude_") && !readOnly && <Button type="button" variant="outline" onClick={() => setOperatorProfilesOpen(true)} disabled={loading}>Manage operator profiles</Button>}
