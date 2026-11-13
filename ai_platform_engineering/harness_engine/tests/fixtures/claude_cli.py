@@ -65,8 +65,10 @@ def main() -> None:
                   "checks": ["Test source inspected, not executed."], "limitations": ["No test execution."],
                   "report_markdown": "Source-backed review with references and explicit limitations. " * 3}
         emit({"type": "stream_event", "session_id": session, "event": {"delta": {"type": "text_delta", "text": "Unverified draft"}}})
-        emit({"type": "result", "subtype": "success", "is_error": False, "session_id": session,
-              "num_turns": 2, "total_cost_usd": 0.1, "structured_output": output})
+        capped = prompt.startswith("research-capped")
+        emit({"type": "result", "subtype": "error_max_turns" if capped else "success", "is_error": capped, "session_id": session,
+              "num_turns": int(args[args.index("--max-turns") + 1]) if capped else 2,
+              "total_cost_usd": 0.1, "structured_output": output})
         return
     emit({"type": "stream_event", "session_id": session, "event": {"delta": {"type": "text_delta", "text": "CLI answer"}}})
     emit({"type": "assistant", "session_id": session, "message": {"content": [

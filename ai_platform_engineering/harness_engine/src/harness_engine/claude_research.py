@@ -79,6 +79,13 @@ class ResearchEvidence:
     ranges: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
     artifact_hashes: dict[str, str] = field(default_factory=dict)
 
+    def handoff(self) -> str:
+        return json.dumps({"observed_heads": sorted(self.heads), "head_checked_in": sorted(self.head_phases),
+                           "expected_file_count": self.file_count, "listed_files": sorted(self.files),
+                           "diff_fetched": self.diff_seen,
+                           "unread_artifacts": [{"path": path, "read_ranges": self.ranges.get(path, [])}
+                                                for path in sorted(self.overflow - self.accessed)]})
+
     def capture(self, value: Any, method: str, depth: int = 0) -> None:
         if depth > 6:
             return

@@ -120,7 +120,7 @@ async def test_three_pass_cli_uses_one_session_shared_budget_and_hides_unverifie
     calls = [json.loads(line) for line in (tmp_path / "research-calls.jsonl").read_text().splitlines()]
     assert len(calls) == 3
     assert "--session-id" in calls[0] and all("--resume" in call for call in calls[1:])
-    assert [float(call[call.index("--max-budget-usd") + 1]) for call in calls] == pytest.approx([5, 4.9, 4.8])
+    assert [float(call[call.index("--max-budget-usd") + 1]) for call in calls] == pytest.approx([2.5, 1.5, 4.8])
     assert "--json-schema" in calls[-1] and "--json-schema" not in calls[0]
     messages = [event.content.text for event in client.events if event.session_update == "agent_message_chunk"]
     assert len(messages) == 1 and "Research execution: 3 passes; 6 model turns" in messages[0]
@@ -131,9 +131,19 @@ async def test_three_pass_cli_uses_one_session_shared_budget_and_hides_unverifie
 async def test_failed_verification_releases_only_an_incomplete_notice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     agent, client, session = await configured(tmp_path, monkeypatch)
     agent.research_policy = ClaudeResearchPolicy()
+    agent.options["maxTurns"] = 12
     await agent.prompt(session, [TextContentBlock(type="text", text="research no-evidence")])
     messages = [event.content.text for event in client.events if event.session_update == "agent_message_chunk"]
     assert len(messages) == 1 and messages[0].startswith("Research incomplete:")
+
+
+async def test_investigation_turn_cap_preserves_budget_for_challenge_and_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, client, session = await configured(tmp_path, monkeypatch)
+    agent.research_policy = ClaudeResearchPolicy()
+    agent.options["maxTurns"] = 12
+    await agent.prompt(session, [TextContentBlock(type="text", text="research-capped")])
+    messages = [event.content.text for event in client.events if event.session_update == "agent_message_chunk"]
+    assert len(messages) == 1 and "Research execution: 3 passes; 10 model turns" in messages[0]
 
 
 async def test_research_configuration_exposes_only_read_search_and_artifact_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
