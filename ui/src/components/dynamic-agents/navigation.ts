@@ -51,7 +51,7 @@ export function buildDynamicAgentNavigationGroups({
         id: "remote-agents",
         label: "Remote Agents",
         icon: Globe,
-        description: "Register and discover A2A agents",
+        description: "Browse A2A and configured ACP agents",
         ...destinationForTab("remote-agents"),
       },
       {

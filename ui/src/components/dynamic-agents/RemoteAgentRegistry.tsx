@@ -195,10 +195,7 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
 
   return (
     <div className="space-y-4">
-      <div>
-        <Label>Remote Agents</Label>
-        <p className="mt-1 text-xs text-muted-foreground">Registered A2A agents and configured ACP agents are available in Agent Builder under Subagents. ACP agents keep their saved operator profiles, sessions, and access checks.</p>
-      </div>
+      <p className="text-xs text-muted-foreground">Choose registered A2A agents or configured ACP agents in Agent Builder under Subagents. Each agent keeps its saved configuration and access checks.</p>
       <div className="flex gap-2">
         <Input aria-label="Search remote agents" placeholder="Search by name, A2A, or ACP…" value={search} onChange={event => setSearch(event.target.value)} />
         <Button type="button" variant="outline" size="sm" disabled={loading || acpLoading} onClick={() => { void loadItems(); void loadAcpAgents(); }}>Refresh agents</Button>
