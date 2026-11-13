@@ -194,7 +194,7 @@ describe("DynamicAgentEditor — unsaved-changes back-button guard", () => {
     expect(useUnsavedChangesStore.getState().hasUnsavedChanges).toBe(false);
 
     // Back button is the first ghost icon button (the ArrowLeft in the header).
-    const backButton = screen.getAllByRole("button")[0];
+    const backButton = screen.getByRole("button", { name: "Back to Agents", exact: true });
     fireEvent.click(backButton);
 
     expect(onCancel).toHaveBeenCalledTimes(1);
@@ -218,7 +218,7 @@ describe("DynamicAgentEditor — unsaved-changes back-button guard", () => {
       expect(useUnsavedChangesStore.getState().hasUnsavedChanges).toBe(true)
     );
 
-    const backButton = screen.getAllByRole("button")[0];
+    const backButton = screen.getByRole("button", { name: "Back to Agents", exact: true });
     fireEvent.click(backButton);
 
     expect(screen.getByText("Keep editing")).toBeInTheDocument();
@@ -239,7 +239,7 @@ describe("DynamicAgentEditor — unsaved-changes back-button guard", () => {
       expect(useUnsavedChangesStore.getState().hasUnsavedChanges).toBe(true)
     );
 
-    fireEvent.click(screen.getAllByRole("button")[0]); // back arrow → opens dialog
+    fireEvent.click(screen.getByRole("button", { name: "Back to Agents", exact: true })); // back arrow → opens dialog
     fireEvent.click(screen.getByText("Keep editing"));
 
     expect(screen.queryByText("Keep editing")).not.toBeInTheDocument();
@@ -261,7 +261,7 @@ describe("DynamicAgentEditor — unsaved-changes back-button guard", () => {
       expect(useUnsavedChangesStore.getState().hasUnsavedChanges).toBe(true)
     );
 
-    fireEvent.click(screen.getAllByRole("button")[0]); // back arrow → opens dialog
+    fireEvent.click(screen.getByRole("button", { name: "Back to Agents", exact: true })); // back arrow → opens dialog
     fireEvent.click(screen.getByText("Discard changes"));
 
     expect(onCancel).toHaveBeenCalledTimes(1);
@@ -294,7 +294,7 @@ describe("DynamicAgentEditor — unsaved-changes back-button guard", () => {
     expect(useUnsavedChangesStore.getState().hasUnsavedChanges).toBe(false);
 
     // Back arrow goes straight to onCancel because dirty stays false.
-    fireEvent.click(screen.getAllByRole("button")[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Back to Agents", exact: true }));
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("Keep editing")).not.toBeInTheDocument();
   });
@@ -369,7 +369,7 @@ describe("DynamicAgentEditor — unsaved-changes back-button guard", () => {
     expect(useUnsavedChangesStore.getState().hasUnsavedChanges).toBe(true);
 
     // Back-click should still open the dialog.
-    fireEvent.click(screen.getAllByRole("button")[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Back to Agents", exact: true }));
     expect(screen.getByText("Keep editing")).toBeInTheDocument();
     expect(onCancel).not.toHaveBeenCalled();
   });

@@ -64,6 +64,8 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 interface DynamicAgentsTabProps {
+  creating?: boolean;
+  onCreateAgent?: () => void;
   selectedAgentId?: string | null;
   initialStep?: AgentSetupStep;
   onSelectedAgentChange?: (agentId: string | null) => void;
@@ -72,6 +74,8 @@ interface DynamicAgentsTabProps {
 }
 
 export function DynamicAgentsTab({
+  creating,
+  onCreateAgent,
   selectedAgentId,
   initialStep,
   onSelectedAgentChange,
@@ -88,7 +92,9 @@ export function DynamicAgentsTab({
   const [selectionError, setSelectionError] = React.useState<string | null>(null);
   const selectionRequestRef = React.useRef(0);
   const loadedSelectionIdRef = React.useRef<string | null>(null);
-  const [isCreating, setIsCreating] = React.useState(false);
+  const [localCreating, setIsCreating] = React.useState(false);
+  const isCreating = creating ?? localCreating;
+  const startCreating = () => { if (onCreateAgent) onCreateAgent(); else setIsCreating(true); };
   const [cloningAgent, setCloningAgent] = React.useState<DynamicAgentConfigWithPermissions | null>(null);
   const [pendingDeleteAgentId, setPendingDeleteAgentId] = React.useState<string | null>(null);
   const [deletingAgentId, setDeletingAgentId] = React.useState<string | null>(null);
@@ -450,7 +456,7 @@ export function DynamicAgentsTab({
             Refresh
           </Button>
           {remote.toolbar}
-          <Button size="sm" className="h-auto min-h-10 whitespace-normal px-2 py-2 text-xs leading-tight sm:h-9 sm:min-h-0 sm:whitespace-nowrap sm:px-3 sm:text-sm" onClick={() => setIsCreating(true)}>
+          <Button size="sm" className="h-auto min-h-10 whitespace-normal px-2 py-2 text-xs leading-tight sm:h-9 sm:min-h-0 sm:whitespace-nowrap sm:px-3 sm:text-sm" onClick={startCreating}>
             <Plus className="mr-2 hidden h-4 w-4 sm:block" />
             Create CAIPE Agent
           </Button>
@@ -496,7 +502,7 @@ export function DynamicAgentsTab({
                 <p className="text-muted-foreground mb-4">
                   Create an agent when you are ready to give your team a tailored assistant.
                 </p>
-                <Button onClick={() => setIsCreating(true)}>
+                <Button onClick={startCreating}>
                   <Plus className="h-4 w-4 mr-2" />
                   Create CAIPE Agent
                 </Button>

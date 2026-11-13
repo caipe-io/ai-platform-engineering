@@ -8,6 +8,7 @@ let mockAdminTabGates = { audit_logs: false, dynamic_agent_conversations: false 
 let mockSearchParams = new URLSearchParams();
 const mockPush = jest.fn();
 const mockReplace = jest.fn();
+const mockBack = jest.fn();
 
 jest.mock("@/hooks/use-admin-role", () => ({
   useAdminRole: () => ({ isAdmin: mockIsAdmin, loading: false }),
@@ -18,7 +19,7 @@ jest.mock("@/hooks/useAdminTabGates", () => ({
 }));
 
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: mockPush, replace: mockReplace }),
+  useRouter: () => ({ push: mockPush, replace: mockReplace, back: mockBack }),
   usePathname: () => "/dynamic-agents",
   useSearchParams: () => mockSearchParams,
 }));
@@ -30,12 +31,16 @@ jest.mock("@/components/auth-guard", () => ({
 jest.mock("@/components/dynamic-agents/DynamicAgentsTab", () => ({
   DynamicAgentsTab: function DynamicAgentsTabMock({
     selectedAgentId,
+    creating,
+    onCreateAgent,
     initialStep,
     onSelectedAgentChange,
     onSelectedAgentNameChange,
     onStepChange,
   }: {
     selectedAgentId?: string | null;
+    creating?: boolean;
+    onCreateAgent?: () => void;
     initialStep?: string;
     onSelectedAgentChange?: (id: string | null) => void;
     onSelectedAgentNameChange?: (name: string | null) => void;
@@ -49,9 +54,12 @@ jest.mock("@/components/dynamic-agents/DynamicAgentsTab", () => ({
       <div
         data-testid="dynamic-agents-tab"
         data-selected-id={selectedAgentId ?? ""}
+        data-creating={String(Boolean(creating))}
         data-step={initialStep ?? ""}
       >
         DynamicAgentsTab
+        <button type="button" onClick={onCreateAgent}>Create CAIPE Agent</button>
+        <button type="button" onClick={() => onSelectedAgentChange?.(null)}>Close builder</button>
         <button type="button" onClick={() => onStepChange?.("tools")}>
           Open tools step
         </button>
@@ -142,6 +150,41 @@ describe("DynamicAgentsPage", () => {
     mockSearchParams = new URLSearchParams();
     mockPush.mockClear();
     mockReplace.mockClear();
+    mockBack.mockClear();
+  });
+
+  it("adds creation to history and returns to the catalog when closing it", () => {
+    mockSearchParams = new URLSearchParams("tab=agents");
+    const { rerender } = render(<DynamicAgentsPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Create CAIPE Agent" }));
+    expect(mockPush).toHaveBeenLastCalledWith("/dynamic-agents?tab=agents&create=true&step=basic");
+    mockSearchParams = new URLSearchParams("tab=agents&create=true&step=basic");
+    rerender(<DynamicAgentsPage />);
+    expect(screen.getByTestId("dynamic-agents-tab")).toHaveAttribute("data-creating", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Close builder" }));
+    expect(mockBack).toHaveBeenCalledTimes(1);
+    mockSearchParams = new URLSearchParams("tab=agents");
+    rerender(<DynamicAgentsPage />);
+    expect(screen.getByTestId("dynamic-agents-tab")).toHaveAttribute("data-creating", "false");
+  });
+
+  it("closes a direct creation link to Agents instead of an unrelated history entry", () => {
+    mockSearchParams = new URLSearchParams("tab=agents&create=true&step=basic");
+    render(<DynamicAgentsPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Close builder" }));
+    expect(mockBack).not.toHaveBeenCalled();
+    expect(mockReplace).toHaveBeenLastCalledWith("/dynamic-agents?tab=agents");
+  });
+
+  it("replaces creation steps without adding extra history entries", () => {
+    mockSearchParams = new URLSearchParams("tab=agents&create=true&step=basic");
+    render(<DynamicAgentsPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Open tools step" }));
+    expect(mockReplace).toHaveBeenLastCalledWith("/dynamic-agents?tab=agents&create=true&step=tools");
+    expect(mockPush).not.toHaveBeenCalled();
+    const navigation = screen.getByRole("navigation", { name: "Agent sections" });
+    fireEvent.click(within(navigation).getByRole("button", { name: /MCP Servers/ }));
+    expect(mockPush).toHaveBeenLastCalledWith("/dynamic-agents?tab=mcp-servers");
   });
 
   it("renders the OpenFGA-filtered Agents surface for non-admin users", () => {

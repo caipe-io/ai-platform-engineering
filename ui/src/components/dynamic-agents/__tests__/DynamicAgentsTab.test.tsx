@@ -529,6 +529,20 @@ describe("DynamicAgentsTab search + pagination", () => {
     expect(screen.getByRole("button", { name: "Chat with Ops Helper" })).toBeEnabled();
   });
 
+  it("uses routed creation state so browser Back closes the new-agent builder", async () => {
+    const onCreateAgent = jest.fn();
+    const { rerender } = render(<DynamicAgentsTab creating={false} onCreateAgent={onCreateAgent} />);
+    await screen.findByText("Ops Helper");
+    fireEvent.click(screen.getByRole("button", { name: "Create CAIPE Agent", exact: true }));
+    expect(onCreateAgent).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("dynamic-agent-editor")).not.toBeInTheDocument();
+    rerender(<DynamicAgentsTab creating onCreateAgent={onCreateAgent} />);
+    expect(screen.getByTestId("dynamic-agent-editor")).toBeInTheDocument();
+    rerender(<DynamicAgentsTab creating={false} onCreateAgent={onCreateAgent} />);
+    expect(screen.queryByTestId("dynamic-agent-editor")).not.toBeInTheDocument();
+    expect(screen.getByText("Ops Helper")).toBeInTheDocument();
+  });
+
   it("requests the connected source while preserving the chosen List view", async () => {
     render(<DynamicAgentsTab />);
     await screen.findByText("Ops Helper");

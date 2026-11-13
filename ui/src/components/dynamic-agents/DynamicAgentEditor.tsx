@@ -1705,7 +1705,7 @@ export function DynamicAgentEditor({
     <Card>
       <CardHeader className="pb-2">
         <div className="flex items-start gap-3 sm:gap-4">
-          <Button variant="ghost" size="icon" onClick={handleBackClick}>
+          <Button type="button" variant="ghost" size="icon" aria-label="Back to Agents" onClick={handleBackClick}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="min-w-0 flex-1">
