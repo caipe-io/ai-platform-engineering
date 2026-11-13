@@ -183,6 +183,7 @@ services:
       - "443:443"
     volumes:
       - ./deploy/caipe-oss-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${CAIPE_MAINTENANCE_DIR:-./.caipe-maintenance}:/run/caipe-maintenance:ro
       - /home/ubuntu/certs:/etc/nginx/certs:ro
     depends_on:
       caipe-ui:
