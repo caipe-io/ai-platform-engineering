@@ -17,6 +17,7 @@ from functools import lru_cache
 from threading import Lock
 from typing import Any
 
+import httpx
 from langchain_core.language_models import BaseChatModel
 from llm_wrapper.build import LLMConfigError as WrapperConfigError
 
@@ -57,8 +58,6 @@ def _cached_bedrock_clients(region: str) -> tuple[Any, Any]:
 
 
 def _create_httpx_client(endpoint: str) -> Any:
-    import httpx
-
     client = httpx.Client(timeout=httpx.Timeout(300.0, connect=60.0))
     logger.info("Created httpx client (endpoint=%s, shared=%s)", endpoint, SHARE_CLIENTS)
     return client
@@ -182,6 +181,7 @@ def get_llm(
     reasoning_effort: ReasoningEffort | None = None,
     *,
     streaming: bool | None = None,
+    provider_options: dict[str, Any] | None = None,
 ) -> BaseChatModel:
     """Get a LangChain chat model for the given provider and model.
 
@@ -203,7 +203,7 @@ def get_llm(
 
     resolved_provider, resolved_model = _resolve_llm_defaults(provider, model_id)
 
-    kwargs: dict[str, Any] = {}
+    kwargs: dict[str, Any] = dict(provider_options or {})
     if streaming is not None:
         kwargs["disable_streaming"] = not streaming
     model_supports_effort = (
@@ -227,16 +227,21 @@ def get_llm(
         # Anthropic accepts only its default temperature while thinking is enabled.
         kwargs["temperature"] = 1.0
 
+    if provider_options and any(key in provider_options for key in ("base_url", "azure_endpoint", "api_key")):
+        # SDK defaults may follow redirects. Credential-bearing custom endpoints must not.
+        kwargs["http_client"] = httpx.Client(follow_redirects=False, timeout=30.0)
+        kwargs["http_async_client"] = httpx.AsyncClient(follow_redirects=False, timeout=30.0)
+
     if SHARE_CLIENTS:
         p = resolved_provider.lower().replace("-", "_")
-        if "bedrock" in p or "aws" in p:
+        if ("bedrock" in p or "aws" in p) and not provider_options:
             rt, ctrl = _get_bedrock_clients()
             kwargs["client"] = rt
             kwargs["bedrock_client"] = ctrl
-        elif "azure" in p:
+        elif "azure" in p and "http_client" not in kwargs:
             endpoint = os.getenv("AZURE_OPENAI_ENDPOINT") or os.getenv("OPENAI_ENDPOINT", "https://api.openai.com/v1")
             kwargs["http_client"] = _get_httpx_client(endpoint)
-        elif "openai" in p:
+        elif "openai" in p and "http_client" not in kwargs:
             endpoint = os.getenv("OPENAI_ENDPOINT", "https://api.openai.com/v1")
             kwargs["http_client"] = _get_httpx_client(endpoint)
         # google-gemini / google-vertex-ai: no shared client needed
@@ -247,12 +252,16 @@ def get_llm(
                 kwargs["reasoning_effort"] = reasoning_effort
             llm = build_chat_model(resolved_provider, resolved_model, **kwargs)
     except WrapperConfigError as exc:
+        if provider_options:
+            raise LLMConfigError("The saved model connection could not be initialized; use Test Connection for diagnostics.") from None
         # Re-raise as this module's LLMConfigError so the SSE chat wrapper can
         # translate it into an actionable user message. Both are ValueError
         # subclasses; the wrapper's is caught first because it already carries
         # provider and model context.
         raise LLMConfigError(str(exc)) from exc
     except ValueError as exc:
+        if provider_options:
+            raise LLMConfigError("The saved model connection could not be initialized; use Test Connection for diagnostics.") from None
         raise LLMConfigError(
             f"Cannot initialize LLM (provider={resolved_provider!r}, "
             f"model={resolved_model!r}): {exc}"

@@ -39,7 +39,7 @@ def _cached_runtime(context: ClientContext | None) -> SimpleNamespace:
     return SimpleNamespace(
         _client_context=context.model_copy(deep=True) if context else None,
         _is_streaming=False, is_stale=Mock(return_value=False), idle_seconds=0,
-        touch=Mock(), cleanup=AsyncMock(),
+        touch=Mock(), cleanup=AsyncMock(), model_credentials_current=AsyncMock(return_value=True),
     )
 
 

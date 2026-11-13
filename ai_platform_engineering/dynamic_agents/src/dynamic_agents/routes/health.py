@@ -14,7 +14,7 @@ router = APIRouter(tags=["health"])
 @router.get("/health")
 async def liveness() -> dict:
     """Liveness probe — process health only, no dependency checks."""
-    return {"status": "ok"}
+    return {"status": "ok", "saved_model_connections": 1, "credential_api_configured": bool(get_settings().credential_api_url)}
 
 
 @router.get("/healthz")

@@ -95,6 +95,12 @@ class MongoDBService:
         self._client: MongoClient | None = None
         self._db: Database | None = None
 
+    def get_llm_model(self, model_id: str) -> dict | None:
+        """Read registry metadata only; secret material lives behind the credential API."""
+        if self._db is None:
+            raise RuntimeError("Model registry is unavailable")
+        return self._db["llm_models"].find_one({"_id": model_id})
+
     def connect(self) -> bool:
         """Connect to MongoDB. Returns True if successful."""
         try:

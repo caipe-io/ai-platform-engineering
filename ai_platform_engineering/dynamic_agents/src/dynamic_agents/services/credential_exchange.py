@@ -34,6 +34,10 @@ class CredentialExchangeClient:
             "x-caipe-credential-audience": self._audience,
         }
 
+    async def resolve_llm_model(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Resolve an authorized, model-scoped configuration; never return it to a browser."""
+        return await self._post("/llm-model", payload)
+
     async def retrieve_secret(self, secret_ref: str, *, intended_use: str) -> str:
         """Retrieve a BYO secret by reference for MCP/runtime use."""
 

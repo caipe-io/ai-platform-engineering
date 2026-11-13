@@ -47,6 +47,7 @@ from dynamic_agents.models import (
     AgentContext,
     ClientContext,
     DynamicAgentConfig,
+    FeaturesConfig,
     InputFile,
     InterruptConfig,
     MCPServerConfig,
@@ -94,6 +95,7 @@ from dynamic_agents.services.model_capabilities import (
     ModelCapabilities,
     get_model_capabilities,
 )
+from dynamic_agents.services.model_connections import ResolvedModel, resolve_registered_model
 from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills, verify_skill_pins
 from dynamic_agents.services.skills_backend import ReadOnlySkillsBackend
@@ -732,6 +734,10 @@ class AgentRuntime:
         # Track config timestamps for cache invalidation
         self._config_updated_at: datetime = config.updated_at
         self._subagent_models: dict[str, ModelConfig] = {}
+        self._model_connection_revisions: dict[str, str] = {}
+        self._connection_models: list[Any] = []
+        self._middleware_model_plans: list[ResolvedModel] = []
+        self._resolved_model_id = config.model.id
         self._mcp_servers_updated_at: datetime = max(
             (s.updated_at for s in mcp_servers), default=datetime.min.replace(tzinfo=timezone.utc)
         )
@@ -843,6 +849,32 @@ class AgentRuntime:
             )
             ttl = max_ttl
         return ttl
+
+    async def _resolve_model_connection(self, model_id: str) -> ResolvedModel | None:
+        plan = await resolve_registered_model(self.settings, self._user, self._mongo_service, model_id)
+        if plan is not None:
+            self._model_connection_revisions[model_id] = plan.revision
+        return plan
+
+    async def model_credentials_current(self, user: UserContext | None) -> bool:
+        """Recheck use authorization and rotations before reusing a cached graph."""
+        for model_id, revision in self._model_connection_revisions.items():
+            plan = await resolve_registered_model(self.settings, user, self._mongo_service, model_id, metadata_only=True)
+            if plan is None or plan.revision != revision:
+                return False
+        return True
+
+    async def _middleware_connection_models(self, features: FeaturesConfig | None) -> dict[str, ResolvedModel]:
+        models = {}
+        for entry in (features.middleware or []) if features else []:
+            if not entry.enabled or not entry.params.get("model_id"):
+                continue
+            model_id = entry.params["model_id"]
+            plan = await self._resolve_model_connection(model_id)
+            if plan is not None:
+                models[model_id] = plan
+                self._middleware_model_plans.append(plan)
+        return models
 
     def _credential_exchange_client(self) -> CredentialExchangeClient | None:
         """Create a credential API client when impersonation token resolution is configured."""
@@ -1017,12 +1049,17 @@ class AgentRuntime:
             f"[llm] Instantiating LLM for agent '{self.config.name}': "
             f"provider={self.config.model.provider}, model={self.config.model.id}"
         )
+        model_plan = await self._resolve_model_connection(self.config.model.id)
         llm = get_llm(
-            self.config.model.provider,
-            self.config.model.id,
+            model_plan.provider if model_plan else self.config.model.provider,
+            model_plan.model_id if model_plan else self.config.model.id,
             self.config.model.reasoning_effort,
             streaming=self.config.model.streaming,
+            **({"provider_options": model_plan.parameters} if model_plan else {}),
         )
+        self._resolved_model_id = model_plan.model_id if model_plan else self.config.model.id
+        if model_plan:
+            self._connection_models.append(llm)
         logger.info(f"[llm] LLM instantiated for agent '{self.config.name}': type={type(llm).__name__}")
 
         # ─────────────────────────────────────────────────────────────────
@@ -1171,9 +1208,10 @@ class AgentRuntime:
         middleware_stack = build_middleware(
             self.config.features,
             self._session_id,
+            resolved_models=await self._middleware_connection_models(self.config.features),
             agent_name=self.config.name,
-            model_id=self.config.model.id,
-            model_provider=self.config.model.provider,
+            model_id=self._resolved_model_id,
+            model_provider=model_plan.provider if model_plan else self.config.model.provider,
             attachment_store=self._get_attachment_store(),
             model_streaming=self.config.model.streaming,
             enable_prompt_cache=self._prompt_cache_enabled(),
@@ -1579,12 +1617,17 @@ class AgentRuntime:
 
             # Instantiate subagent LLM (uses its own configured model)
             self._subagent_models[ref.agent_id] = subagent_config.model.model_copy(deep=True)
+            subagent_plan = await self._resolve_model_connection(subagent_config.model.id)
             subagent_llm = get_llm(
-                subagent_config.model.provider,
-                subagent_config.model.id,
+                subagent_plan.provider if subagent_plan else subagent_config.model.provider,
+                subagent_plan.model_id if subagent_plan else subagent_config.model.id,
                 subagent_config.model.reasoning_effort,
                 streaming=subagent_config.model.streaming,
+                **({"provider_options": subagent_plan.parameters} if subagent_plan else {}),
             )
+
+            if subagent_plan:
+                self._connection_models.append(subagent_llm)
 
             # Create SubAgent dict in deepagents format
             # Use agent_id as the name - this ensures namespace[0] from LangGraph
@@ -1599,8 +1642,9 @@ class AgentRuntime:
                 "middleware": build_middleware(
                     subagent_config.features,
                     self._session_id,
+                    resolved_models=await self._middleware_connection_models(subagent_config.features),
                     agent_name=subagent_config.name,
-                    model_id=subagent_config.model.id,
+                    model_id=subagent_plan.model_id if subagent_plan else subagent_config.model.id,
                     model_provider=subagent_config.model.provider,
                     attachment_store=self._get_attachment_store(),
                     model_streaming=subagent_config.model.streaming,
@@ -1708,6 +1752,15 @@ class AgentRuntime:
         Releases MCP client, checkpointer, graph, and MongoClient (if owned).
         After cleanup, this runtime instance should not be reused.
         """
+        owned_models = [*self._connection_models, *(model for plan in self._middleware_model_plans for model in plan.instances)]
+        for model in owned_models:
+            if client := getattr(model, "http_client", None):
+                client.close()
+            if client := getattr(model, "http_async_client", None):
+                await client.aclose()
+        self._connection_models.clear()
+        self._middleware_model_plans.clear()
+
         # 1. Checkpointer — do NOT call .close() as it closes the underlying
         #    MongoClient (which may be shared). Just release the reference.
         self._checkpointer = None
@@ -2102,7 +2155,7 @@ class AgentRuntime:
         #      some channels (Slack) suppress the user warning to avoid noise,
         #      which would otherwise leave the model answering blind (silent
         #      failure). See _skipped_files_notice.
-        model_id = self.config.model.id
+        model_id = self._resolved_model_id
         max_file_bytes = self.settings.max_input_file_bytes
         max_turn_bytes = self.settings.max_input_turn_bytes
         user_content, skipped_files = _build_user_content(

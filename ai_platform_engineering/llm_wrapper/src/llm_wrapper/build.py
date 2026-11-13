@@ -191,7 +191,7 @@ def build_chat_model(
         kwargs.setdefault("disable_streaming", True)
 
     if canonical == OPENAI_COMPATIBLE:
-        base_url = os.getenv("OPENAI_COMPATIBLE_BASE_URL")
+        base_url = kwargs.get("base_url") or os.getenv("OPENAI_COMPATIBLE_BASE_URL")
         if not base_url:
             raise LLMConfigError(
                 "OPENAI_COMPATIBLE_BASE_URL is required for the "

@@ -23,6 +23,8 @@ import {
 filterResourcesByPermission,
 requireResourcePermission,
 } from "@/lib/rbac/resource-authz";
+import { publishedModels, modelRegistryId, requireConnectionManager } from "@/lib/server/model-connections";
+import { validProviderModelId, type ModelConnection } from "@/lib/model-connections";
 import type { LLMModelConfig } from "@/types/dynamic-agent";
 import { NextRequest } from "next/server";
 
@@ -73,7 +75,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       const model = await collection.findOne({ _id: requestedId });
       if (!model) throw new ApiError("Model not found", 404);
 
-      const visibleItems = await filterResourcesByPermission(session, [model], {
+      const visibleItems = await filterResourcesByPermission(session, await publishedModels([model]), {
         type: "llm_model",
         action: "read",
         id: (item) => String(item._id),
@@ -91,7 +93,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       .skip((page - 1) * pageSize)
       .limit(pageSize)
       .toArray();
-    const visibleItems = await filterResourcesByPermission(session, items, {
+    const visibleItems = await filterResourcesByPermission(session, await publishedModels(items), {
       type: "llm_model",
       action: "read",
       id: (model) => String(model._id),
@@ -114,7 +116,18 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const ownerSubject = requireStableSubject(session);
 
     const body = await request.json();
-    const { model_id, name, provider } = body;
+    let { model_id, provider } = body;
+    const { name } = body;
+    let connection: ModelConnection | null = null;
+    if (!validProviderModelId(model_id)) throw new ApiError("A valid model_id is required", 400);
+    if (body.connection_id) {
+      if (typeof body.connection_id !== "string") throw new ApiError("Invalid connection ID", 400);
+      await requireConnectionManager({ session, email: user.email });
+      const connections = await getCollection<ModelConnection>("llm_model_connections");
+      connection = await connections.findOne({ _id: body.connection_id, state: "ready" });
+      if (!connection || connection.owner_subject !== ownerSubject) throw new ApiError("Connection not available for model registration", 403);
+      model_id = modelRegistryId(connection._id, body.model_id); provider = connection.provider;
+    }
 
     if (!model_id || !name || !provider) {
       throw new ApiError("model_id, name, and provider are required", 400);
@@ -143,6 +156,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       name,
       provider,
       description: body.description ?? "",
+      ...(connection ? { connection_id: connection._id, connection_name: connection.name, upstream_model_id: body.model_id } : {}),
       config_driven: false,
       owner_id: user.email,
       owner_subject: ownerSubject,
@@ -179,6 +193,7 @@ export const PUT = withErrorHandler(async (request: NextRequest) => {
     await requireResourcePermission(session, { type: "llm_model", id, action: "write" });
 
     const body = await request.json();
+    if (existing.connection_id && body.provider && body.provider !== existing.provider) throw new ApiError("The provider is fixed by this model’s connection", 400);
     const updates = pickMutableFields(body);
 
     if (Object.keys(updates).length === 0) {
