@@ -1027,8 +1027,8 @@ export function DynamicAgentEditor({
 
   // Local state for the in-app "you have unsaved changes" confirmation when the
   // user clicks the back arrow. We don't route this through the global store's
-  // pendingNavigationHref because closing the editor isn't an href navigation —
-  // it's a parent-state flip controlled by the onCancel prop.
+  // pendingNavigationHref: the parent owns the exit destination through onCancel,
+  // including routed creation and embedded editor state.
   const [pendingClose, setPendingClose] = React.useState(false);
 
   // Snapshot sentinel: flips once after the async models endpoint resolves and

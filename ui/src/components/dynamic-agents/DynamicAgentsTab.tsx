@@ -441,7 +441,7 @@ export function DynamicAgentsTab({
     <RemoteAgentRegistry onRegistryChange={() => void fetchAgents()} renderCatalog={remote => <>
       <WorkspacePageActions>
         <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
-          <div className="relative col-span-2 min-w-0 sm:flex-1 xl:flex-none">
+          <div className="relative col-span-2 min-w-0 sm:min-w-48 sm:flex-1 xl:flex-none">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Search by name or ID..."
