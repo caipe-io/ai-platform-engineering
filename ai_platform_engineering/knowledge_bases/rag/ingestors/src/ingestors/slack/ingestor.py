@@ -356,29 +356,35 @@ async def process_channel_ingestion(
       raise_on_error=True,
     )
 
-    datasource_info.last_updated = int(time.time())
-    if datasource_info.metadata is None:
-      datasource_info.metadata = {}
-    datasource_info.metadata.update(
-      {
-        "channel_id": ingest_request.channel_id,
-        "channel_name": channel_name,
-        "last_ts": newest_ts,
-        "workspace_url": workspace_url,
-        "lookback_days": ingest_request.lookback_days,
-        "synced_lookback_days": ingest_request.lookback_days,
-        "include_bots": ingest_request.include_bots,
-      }
-    )
-    await client.upsert_datasource(datasource_info)
+    # Persist the checkpoint only once the fetched messages are in the index (or there
+    # is nothing to index). Advancing last_ts before ingest_documents succeeds would make
+    # the next reload skip the messages from a failed run.
+    async def persist_checkpoint() -> None:
+      datasource_info.last_updated = int(time.time())
+      if datasource_info.metadata is None:
+        datasource_info.metadata = {}
+      datasource_info.metadata.update(
+        {
+          "channel_id": ingest_request.channel_id,
+          "channel_name": channel_name,
+          "last_ts": newest_ts,
+          "workspace_url": workspace_url,
+          "lookback_days": ingest_request.lookback_days,
+          "synced_lookback_days": ingest_request.lookback_days,
+          "include_bots": ingest_request.include_bots,
+        }
+      )
+      await client.upsert_datasource(datasource_info)
 
     if not messages:
+      await persist_checkpoint()
       await job_manager.upsert_job(job_id=job_id, status=JobStatus.COMPLETED, message=f"No messages found for #{channel_name}")
       return
 
     documents = syncer.group_messages_by_thread(messages, ingest_request.channel_id, channel_name, ingest_request.include_bots, datasource_id, client.ingestor_id or "", ingest_request.lookback_days)
 
     if not documents:
+      await persist_checkpoint()
       await job_manager.upsert_job(job_id=job_id, status=JobStatus.COMPLETED, message=f"No documents created for #{channel_name}")
       return
 
@@ -386,6 +392,7 @@ async def process_channel_ingestion(
 
     fresh_until = get_fresh_until(datasource_info.reload_interval)
     await client.ingest_documents(job_id=job_id, datasource_id=datasource_id, documents=documents, fresh_until=fresh_until)
+    await persist_checkpoint()
 
     await job_manager.upsert_job(job_id=job_id, status=JobStatus.COMPLETED, message=f"Successfully ingested {len(documents)} documents from #{channel_name}")
     logger.info(f"✓ Successfully ingested {len(documents)} documents from #{channel_name}")
@@ -452,15 +459,20 @@ async def reload_datasource(
       raise_on_error=job_id is not None,
     )
 
-    datasource_info.last_updated = int(time.time())
-    datasource_info.metadata = {
-      **metadata,
-      "last_ts": newest_ts if newest_ts else last_ts,
-      "synced_lookback_days": lookback_days,
-    }
-    await client.upsert_datasource(datasource_info)
+    # Persist the checkpoint only once the fetched messages are in the index (or there
+    # is nothing to index). Advancing last_ts before ingest_documents succeeds would make
+    # the next reload skip the messages from a failed run.
+    async def persist_checkpoint() -> None:
+      datasource_info.last_updated = int(time.time())
+      datasource_info.metadata = {
+        **metadata,
+        "last_ts": newest_ts if newest_ts else last_ts,
+        "synced_lookback_days": lookback_days,
+      }
+      await client.upsert_datasource(datasource_info)
 
     if not messages:
+      await persist_checkpoint()
       logger.info(f"No new messages for #{channel_name} during reload")
       if job_id is not None:
         await job_manager.upsert_job(
@@ -473,6 +485,7 @@ async def reload_datasource(
     documents = syncer.group_messages_by_thread(messages, channel_id, channel_name, include_bots, datasource_info.datasource_id, client.ingestor_id or "", lookback_days)
 
     if not documents:
+      await persist_checkpoint()
       logger.info(f"No documents created for #{channel_name} during reload")
       if job_id is not None:
         await job_manager.upsert_job(
@@ -494,6 +507,7 @@ async def reload_datasource(
 
     fresh_until = get_fresh_until(datasource_info.reload_interval)
     await client.ingest_documents(job_id=job_id, datasource_id=datasource_info.datasource_id, documents=documents, fresh_until=fresh_until)
+    await persist_checkpoint()
     await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully reloaded {len(documents)} documents from #{channel_name}")
     logger.info(f"✓ Successfully reloaded {len(documents)} documents from #{channel_name}")
 
@@ -502,6 +516,10 @@ async def reload_datasource(
     logger.error(traceback.format_exc())
     if job_id:
       await job_manager.add_error_msg(job_id, str(e))
+      # A periodic reload creates its own job, and no caller marks it failed. Left
+      # IN_PROGRESS, it would make every later periodic reload skip this datasource,
+      # so the messages kept un-checkpointed above would never be retried.
+      await job_manager.upsert_job(job_id, status=JobStatus.FAILED, message=f"Error reloading {datasource_info.datasource_id}: {e}")
     raise
 
 
