@@ -86,6 +86,40 @@ export function NotificationDeliverySettings({
     end: "07:00",
     timeZone: "UTC",
   });
+  const [deliveries, setDeliveries] = useState<
+    Array<{
+      id: string;
+      sourceLabel: string;
+      eventType: string;
+      channel: NotificationChannel;
+      status: string;
+      attempts: number;
+      lastError?: string;
+      browserDisplayedAt?: string;
+    }>
+  >([]);
+  const [loadingDeliveries, setLoadingDeliveries] = useState(false);
+  const [deliveriesLoaded, setDeliveriesLoaded] = useState(false);
+
+  const refreshDeliveries = useCallback(async () => {
+    setLoadingDeliveries(true);
+    setError(null);
+    try {
+      const result = await jsonRequest("/api/notifications/deliveries");
+      if (!Array.isArray(result?.deliveries)) throw new Error("Unexpected delivery status response");
+      setDeliveries(result.deliveries);
+      setDeliveriesLoaded(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load delivery status");
+    } finally {
+      setLoadingDeliveries(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (section === "status") void refreshDeliveries();
+  }, [section, refreshDeliveries]);
+
   const sourceIds = view?.sources.map((source) => source.id).join(",") ?? "";
   useEffect(() => {
     onSectionsLoaded?.([
@@ -467,6 +501,63 @@ export function NotificationDeliverySettings({
           </div>
         </SettingsCard>
       ))}
+      {(section === "all" || section === "status") && <SettingsCard
+        title="Delivery status"
+        collapsibleLabel="Delivery status"
+        expanded={expanded("delivery:status")}
+        onExpandedChange={(open) => changeSection("delivery:status", open)}
+        description="Each channel retries independently. Provider acceptance does not confirm that a person read the notification."
+      >
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={loadingDeliveries}
+          onClick={() => void refreshDeliveries()}
+        >
+          {loadingDeliveries ? "Refreshing delivery status…" : "Refresh delivery status"}
+        </Button>
+        {deliveriesLoaded && deliveries.length === 0 && <p className="mt-3 text-sm text-muted-foreground">No recent deliveries.</p>}
+        <ul className="mt-3 space-y-2">
+          {deliveries.map((delivery) => (
+            <li
+              key={delivery.id}
+              className="flex items-center gap-3 border-b py-2 text-xs"
+            >
+              <span className="flex-1">
+                {delivery.sourceLabel} · {delivery.eventType} ·{" "}
+                {LABELS[delivery.channel]}
+                <span className="block text-muted-foreground">
+                  {delivery.status} · {delivery.attempts} attempts
+                  {delivery.browserDisplayedAt ? " · Shown by browser" : ""}
+                  {delivery.channel === "web_push" &&
+                  delivery.status === "delivered" &&
+                  !delivery.browserDisplayedAt
+                    ? " · Browser display not confirmed"
+                    : ""}
+                  {delivery.lastError ? ` · ${delivery.lastError}` : ""}
+                </span>
+              </span>
+              {delivery.status === "failed" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    void jsonRequest(
+                      `/api/notifications/deliveries/${delivery.id}/retry`,
+                      {},
+                      "POST",
+                    )
+                      .then(refreshDeliveries)
+                      .catch((reason) => setError(reason.message));
+                  }}
+                >
+                  Retry
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </SettingsCard>}
     </div>
   );
 }
