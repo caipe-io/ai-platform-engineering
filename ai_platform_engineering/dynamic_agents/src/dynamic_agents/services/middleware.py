@@ -550,7 +550,7 @@ def _build_llm_tool_selector(params: dict[str, Any]) -> LLMToolSelectorMiddlewar
     model_id = params.get("model_id")
     model_provider = params.get("model_provider")
     if model_id and model_provider:
-        kwargs["model"] = _instantiate_model(model_id, model_provider, params.get("model_streaming"))
+        kwargs["model"] = params["resolved_model"].instantiate(streaming=params.get("model_streaming")) if params.get("resolved_model") else _instantiate_model(model_id, model_provider, params.get("model_streaming"))
 
     return LLMToolSelectorMiddleware(**kwargs)
 
@@ -567,7 +567,7 @@ def _build_model_fallback(params: dict[str, Any]) -> ModelFallbackMiddleware | N
         logger.warning("model_fallback enabled but no model_id/model_provider configured, skipping")
         return None
 
-    fallback_model = _instantiate_model(model_id, model_provider, params.get("model_streaming"))
+    fallback_model = params["resolved_model"].instantiate(streaming=params.get("model_streaming")) if params.get("resolved_model") else _instantiate_model(model_id, model_provider, params.get("model_streaming"))
     return ModelFallbackMiddleware(fallback_model)
 
 
@@ -672,6 +672,7 @@ def build_middleware(
     attachment_store: Any | None = None,
     enable_prompt_cache: bool = False,
     model_streaming: bool | None = None,
+    resolved_models: dict[str, Any] | None = None,
 ) -> list[AgentMiddleware]:
     """Build the middleware stack from an agent's features config.
 
@@ -732,6 +733,9 @@ def build_middleware(
         if spec.model_params and model_streaming is not None:
             params["model_streaming"] = model_streaming
 
+        if resolved_models and params.get("model_id") in resolved_models:
+            params["resolved_model"] = resolved_models[params["model_id"]]
+
         # Special-case construction for middleware with non-trivial init
         builder = _SPECIAL_BUILDERS.get(entry.type)
         if builder is not None:
@@ -742,7 +746,7 @@ def build_middleware(
             instance = spec.cls(**params)
 
         result.append(instance)
-        logger.debug("Middleware '%s' added with params: %s", entry.type, params)
+        logger.debug("Middleware '%s' added", entry.type)
 
     # Rehydrate attachment references into inline bytes just before the model
     # call. Placed before ToolResultInvariant so the final pre-model messages

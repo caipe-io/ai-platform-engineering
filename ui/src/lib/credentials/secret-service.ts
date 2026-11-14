@@ -480,6 +480,13 @@ export class SecretService {
     await this.secretRefsCollection.deleteOne({ id: secretId });
   }
 
+  /** Runtime cache validation needs use permission, not permission to inspect metadata. */
+  async getSecretRevisionForUse(input: SecretByIdInput): Promise<string> {
+    await this.authorize(input.session, { type: "secret_ref", id: input.secretId, action: "use" });
+    const doc = await this.getSecretRef(input.secretId);
+    return doc.updatedAt.toISOString();
+  }
+
   async getSecretMetadata(input: SecretByIdInput): Promise<SecretMetadata> {
     const doc = await this.getSecretRef(input.secretId);
     await this.authorize(input.session, { type: "secret_ref", id: input.secretId, action: "read-metadata" });

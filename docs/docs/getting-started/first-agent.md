@@ -62,11 +62,21 @@ connected accounts, and automation can be added later.
 | AWS Bedrock | Deployment IAM, or access key ID, secret access key, region, and optional session token |
 | Vertex AI | Deployment Application Default Credentials |
 
-**Current limitation:** saved provider choices are not yet applied to model
-execution. The runtime uses deployment credentials. End-to-end connection
-configuration and testing remain tracked in
-[#2231](https://github.com/caipe-io/ai-platform-engineering/issues/2231).
-Use a provider already configured in the deployment for the conversation test.
+Give the connection a name and enter one or more provider model IDs. **Save Connection**
+encrypts new values in Saved Secrets and registers the models together. Existing
+saved values are reused unchanged. Multiple endpoints can offer the same model ID.
+
+Use **Test Connection** before saving, on a saved connection, or on a model row.
+It runs a short completion with the same provider configuration used by agent chat.
+Expand the result for authentication, network, timeout, rate-limit, or model errors.
+A successful check does not guarantee that every tool or modality is supported.
+
+Select the registered model in your agent. Team members need model read access
+and use access to each saved credential. Share credentials from Saved Secrets;
+rotations take effect on the next invocation and revoked access fails closed.
+Publishing a new endpoint/key pairing requires platform configuration access and
+management access to the referenced secrets. Existing deployment-managed models
+continue using their environment settings.
 
 ## Leave and return
 

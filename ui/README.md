@@ -431,6 +431,21 @@ attempt to roll back those access changes if admission or persistence fails.
 - `ui/src/lib/llm-provider-credentials.ts` owns provider fields and compatibility.
   Provider cards are independent of registered models. Bedrock supports inherited
   IAM or saved access-key references; Vertex AI explains deployment ADC.
-- Saved choices are not yet consumed by model execution. Runtime connection
-  wiring and testing remain tracked in
-  [#2231](https://github.com/caipe-io/ai-platform-engineering/issues/2231).
+- Named connections use `POST /api/llm-models/connections`: name, provider,
+  authentication mode, secret refs/new values, and one or more upstream model IDs.
+  New values are encrypted server-side. Only IDs enter connection/model records.
+- Models retain unique registry IDs; `upstream_model_id` identifies the native
+  provider model. Two endpoints can expose the same upstream ID.
+- Publishing requires `system_config:platform_settings#manage` and `secret_ref#manage`
+  for reused values. Models are published as a group using a ready-state switch,
+  including on standalone MongoDB. Failed operations roll back newly created
+  resources and preserve reused secrets. UUID operation IDs make exact retries safe.
+- `POST /api/llm-models/test` uses Dynamic Agents’ native factory and the same
+  `/api/credentials/llm-model` server-only resolver as agent execution. Browser
+  requests receive redacted diagnostics, never retrieved keys. Endpoint redirects
+  are disabled for credential-bearing OpenAI-compatible requests.
+- Main, subagent, and middleware models resolve their own connections. Cached
+  graphs recheck credential use/revisions per invocation; rotation rebuilds the
+  graph and revocation blocks reuse. Legacy models keep environment defaults.
+- Deploy the UI, Dynamic Agents, and any Harness Engine Deep Agents image together. The provider UI checks the runtime
+  capability marker and `CREDENTIAL_API_URL` configuration before enabling create.

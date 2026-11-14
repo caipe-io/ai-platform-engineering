@@ -283,7 +283,7 @@ export function AppHeader() {
       </div>
 
       {/* Status & Actions */}
-      <div className="ml-auto flex shrink-0 items-center gap-1.5">
+      <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5">
         <Popover open={tourMenuOpen} onOpenChange={setTourMenuOpen}>
           <PopoverTrigger asChild>
             <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" aria-label="Tour">
@@ -488,7 +488,7 @@ export function AppHeader() {
         </div>
 
         {/* Personalization, Links & User */}
-        <div className="flex items-center gap-1">
+        <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1">
           {config.envBadge ? (
             <span
               className="mr-1 inline-flex shrink-0 items-center rounded-full border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400"

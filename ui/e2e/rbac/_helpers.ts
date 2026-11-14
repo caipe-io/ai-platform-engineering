@@ -4,6 +4,7 @@
  */
 
 import { encodeTestSession } from "./_session-cookie";
+import { INACTIVE_ONBOARDING_RESPONSES } from "./_mocked-rbac";
 import { expect, type Locator, type Page } from "@playwright/test";
 import type { RbacEnv } from "./_env";
 
@@ -115,6 +116,9 @@ export async function installChatBootMocks(
   env: RbacEnv,
   options: ChatBootMocksOptions = {},
 ): Promise<void> {
+  for (const [path, response] of Object.entries(INACTIVE_ONBOARDING_RESPONSES)) {
+    await page.route(`**${path}**`, (route) => route.fulfill({ json: response }));
+  }
   const conversationId = options.conversationId ?? "rbac-e2e-conversation";
   const ownerEmail = options.ownerEmail ?? env.user.email;
   const conversation = chatConversationFixture(conversationId, ownerEmail, options.agentId, {

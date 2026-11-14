@@ -43,7 +43,11 @@ function errorMessage(payload: unknown, fallback: string): string {
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
   const payload = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(errorMessage(payload, `Request failed (${response.status})`));
+  if (!response.ok || payload?.success !== true || !payload.data?.state) {
+    throw new Error(errorMessage(payload, response.ok
+      ? "Tour progress is unavailable"
+      : `Request failed (${response.status})`));
+  }
   return payload as T;
 }
 
