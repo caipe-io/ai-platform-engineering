@@ -14,6 +14,8 @@ import { filterResourcesByPermission,requireAgentPermission } from "@/lib/rbac/r
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { NextRequest } from "next/server";
 
+import { getHarnessToolReadiness } from "@/lib/harness-tool-readiness";
+
 const COLLECTION_NAME = "dynamic_agents";
 
 /**
@@ -71,9 +73,11 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       id: (agent) => String(agent._id),
     });
 
+    const readiness = await getHarnessToolReadiness(usableCandidates);
     const available = usableCandidates
       .map((agent) => ({
         id: agent._id,
+        ...(readiness.has(agent._id) && { execution_readiness: readiness.get(agent._id) }),
         execution_harness_id: agent.execution_harness_id || "dynamic_agents",
         name: agent.name,
         description: agent.description,

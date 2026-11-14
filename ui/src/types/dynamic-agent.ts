@@ -437,7 +437,14 @@ export interface AgentPresentation {
   available: boolean;
 }
 
+export interface AgentExecutionReadiness {
+  ready: boolean;
+  code?: "HARNESS_AGENT_NOT_READY";
+  message?: string;
+}
+
 export interface DynamicAgentConfig {
+  execution_readiness?: AgentExecutionReadiness;
   /** Deployment-owned, opt-in model-input projection. Not a permission grant. */
   app_context_prompt?: { app_ids: string[]; fields: string[]; max_bytes?: number };
   _id: string;
@@ -585,6 +592,7 @@ export interface DynamicAgentConfigUpdate {
  * Available agent for subagent selection (returned by available-subagents endpoint)
  */
 export interface AvailableSubagent {
+  execution_readiness?: AgentExecutionReadiness;
   execution_harness_id?: string;
   id: string;
   name: string;

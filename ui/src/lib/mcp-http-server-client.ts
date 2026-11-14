@@ -159,13 +159,14 @@ async function mcpJsonRpc(input: {
   headers: Record<string, string>;
   sessionId?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<{ ok: boolean; status: number; payload: unknown; sessionId?: string }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? 15_000);
   try {
     const response = await fetch(input.endpoint, {
       method: "POST",
-      signal: controller.signal,
+      signal: input.signal ? AbortSignal.any([controller.signal, input.signal]) : controller.signal,
       headers: {
         accept: "application/json, text/event-stream;q=0.9, */*;q=0.1",
         "content-type": "application/json",
@@ -268,6 +269,7 @@ export async function listHttpMcpTools(input: {
   server: MCPServerConfig & { endpoint: string };
   serverId: string;
   agentId?: string;
+  signal?: AbortSignal;
 }): Promise<{ tools: MCPToolInfo[]; sessionId?: string }> {
   const viaAgentGateway = isAgentGatewayEndpoint(input.server);
   const diagnosticAgent = diagnosticAgentId(input.serverId, input.session);
@@ -295,6 +297,7 @@ export async function listHttpMcpTools(input: {
         params: {},
       },
       timeoutMs: 5_000,
+      signal: input.signal,
     });
     rejectMcpAuthorization(first.status);
     if (first.ok) {
@@ -316,6 +319,7 @@ export async function listHttpMcpTools(input: {
         },
       },
       timeoutMs: 5_000,
+      signal: input.signal,
     });
     rejectMcpAuthorization(initialized.status);
     if (!initialized.ok || !initialized.sessionId) {
@@ -333,6 +337,7 @@ export async function listHttpMcpTools(input: {
         params: {},
       },
       timeoutMs: 5_000,
+      signal: input.signal,
     });
     rejectMcpAuthorization(listed.status);
     if (!listed.ok) {

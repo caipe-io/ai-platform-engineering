@@ -12,6 +12,9 @@ import {
   type HarnessConversationReadScope,
 } from "@/lib/harness-engine-proxy";
 import { getCollection } from "@/lib/mongodb";
+import { checkHarnessMcpReadiness } from "@/lib/harness-mcp-readiness";
+import { CLAUDE_TOOL_RUNTIMES, getHarnessToolReadiness } from "@/lib/harness-tool-readiness";
+import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { stageHarnessAttachments } from "@/lib/harness-attachments";
 import type { HarnessRun, HarnessRunEvent } from "@/types/harness-engine";
 
@@ -297,12 +300,40 @@ export async function startHarnessGatewayRun(
     }
     resume = { command: "resume", resume_data: response, interrupt_id: pending.interrupt_id, resumes_run_id: pending.run_id };
   }
-  const published = await (await getCollection<{ _id: string; execution_blueprint_version?: number }>("dynamic_agents")).findOne({ _id: String(body.agent_id) });
+  const published = await (await getCollection<DynamicAgentConfig>("dynamic_agents")).findOne({ _id: String(body.agent_id) });
   let selectedVersion = published?.execution_blueprint_version;
   if (selectedVersion) {
     const saved = await lookupHarnessSession(config, auth, String(body.agent_id), String(body.conversation_id));
     if (saved instanceof NextResponse) return saved;
     selectedVersion = saved.harness_id ? saved.agent_version ?? selectedVersion : selectedVersion;
+  }
+  if (published && CLAUDE_TOOL_RUNTIMES.has(harnessId) && !["rewind", "reconcile"].includes(String(body.command))) {
+    // Replays must still reach Engine's idempotency/fingerprint validation even
+    // when a dependency has since been disabled. Never dispatch a replacement.
+    let replay = false;
+    if (body.client_request_id) {
+      const known = await engineRequest(config, auth, "/api/v1/run-requests/lookup", { method: "POST", body: JSON.stringify({
+        agent_id: body.agent_id, conversation_id: body.conversation_id, client_request_id: body.client_request_id,
+      }) });
+      if (known instanceof NextResponse) return known;
+      if (!known.ok) return new NextResponse(known.body, { status: known.status, headers: known.headers });
+      replay = Boolean((await readEnvelope<HarnessRun>(known)).data?.run_id);
+    }
+    if (!replay) {
+      let tools: string[] | undefined;
+      if (selectedVersion) {
+        const saved = await engineRequest(config, auth, `/api/v1/agents/${encodeURIComponent(String(body.agent_id))}?version=${selectedVersion}`, { method: "GET" });
+        if (saved instanceof NextResponse) return saved;
+        const version = await readEnvelope<{ version?: { blueprint?: { tools?: { bindings?: Array<{ tool_id: string }> } } } }>(saved);
+        const bindings = version.data?.version?.blueprint?.tools?.bindings;
+        if (!saved.ok || !version.success || !Array.isArray(bindings)) return NextResponse.json({ error: "Saved agent configuration is unavailable. Nothing was executed." }, { status: 503 });
+        tools = bindings.map(binding => binding.tool_id);
+      }
+      const readiness = (await getHarnessToolReadiness([{ ...published, execution_harness_id: harnessId }], tools)).get(published._id);
+      if (readiness && !readiness.ready) return NextResponse.json({ success: false, code: readiness.code, error: readiness.message }, { status: 409 });
+      const connection = await checkHarnessMcpReadiness(String(body.agent_id), tools ?? [], auth);
+      if (connection) return NextResponse.json({ success: false, code: connection.code, error: connection.message }, { status: 409 });
+    }
   }
   const override = body.config_override;
   if (override !== undefined && (!override || typeof override !== "object" || Array.isArray(override) ||

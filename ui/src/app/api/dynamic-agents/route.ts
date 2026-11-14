@@ -18,6 +18,7 @@ import {
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
 import { withAgentMutationLock } from "@/lib/agent-mutation-lock";
+import { getHarnessToolReadiness } from "@/lib/harness-tool-readiness";
 import { prepareAgentExecution } from "@/lib/harness-agent-publication";
 import {
   getHarnessEngineConfig,
@@ -713,9 +714,11 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     pageItems.map((agent) => String(agent._id)),
   );
 
+  const readiness = await getHarnessToolReadiness(pageItems);
   const items: DynamicAgentConfigWithPermissions[] = pageItems.map((agent) => ({
     ...(agent as DynamicAgentConfig),
     permissions: agentRowPermissionsOrDefault(rows, String(agent._id)),
+    ...(readiness.has(String(agent._id)) && { execution_readiness: readiness.get(String(agent._id)) }),
   }));
 
   return paginatedResponse(items, projectedItems.length, page, pageSize);

@@ -125,3 +125,11 @@ it("removes revoked ACP choices after refresh without modifying any agent", asyn
   await screen.findByText("No A2A or configured ACP agents are available.");
   expect(screen.queryByRole("button", { name: "Chat with Code specialist" })).not.toBeInTheDocument();
 });
+
+it("shows dependency problems and disables Chat without changing the agent", async () => {
+  global.fetch = catalogFetch([{ ...acpAgents[0], execution_readiness: { ready: false, code: "HARNESS_AGENT_NOT_READY", message: "A selected MCP server is disabled." } }] as typeof acpAgents) as typeof fetch;
+  render(<RemoteAgentsTab />);
+  expect(await screen.findByRole("button", { name: "Chat with Code specialist" })).toBeDisabled();
+  expect(await screen.findByRole("status")).toHaveTextContent("Needs attention");
+  expect(mockCreateConversation).not.toHaveBeenCalled();
+});

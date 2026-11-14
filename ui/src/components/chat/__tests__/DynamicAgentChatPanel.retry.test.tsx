@@ -765,3 +765,13 @@ describe("retry is unavailable when it would be unsafe", () => {
     expectNoRetry();
   });
 });
+
+it("shows a configuration action instead of Retry for a rejected admission", () => {
+  setConversation([message("user", "user", "what is your harness?"), message("assistant", "assistant", "MCP server disabled. Nothing was executed.", { isFinal: true, turnStatus: "interrupted", error: "HARNESS_AGENT_NOT_READY" })]);
+  render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+  expect(screen.getByText("Agent configuration needs attention")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open agent settings" })).toHaveAttribute("href", "/dynamic-agents?tab=agents&agent=example-agent");
+  expect(screen.queryByRole("button", { name: "Retry", exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Regenerate response" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Response was interrupted")).not.toBeInTheDocument();
+});

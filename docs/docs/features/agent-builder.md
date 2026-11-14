@@ -147,6 +147,19 @@ and skills later without rebuilding the agent.
 - **Advanced → Subagents** provides one picker for local Deep Agents, configured
   Harness children (including ACP), and registered A2A agents. Removing a selection
   removes the parent's reference, not the remote agent or its credentials.
+- Claude SDK and ACP entries with a selected MCP server that is disabled or
+  missing show **Needs attention**. Chat and new subagent selections are disabled;
+  saved references remain visible. The owner can open the agent and repair its
+  tool configuration without granting new access.
+- Before a new Claude run, Gateway checks the conversation's pinned tool set
+  against current server availability and agent grants. A rejected admission
+  reports **Agent configuration needs attention**, links to agent settings, and
+  offers no blind retry. The error classification survives a chat reload.
+  Existing request replay and recovery controls remain available. This checks
+  configuration metadata and initializes permitted MCP catalogs through the
+  existing caller/agent gateway path. It never invokes tools. Credential and
+  permission denials retain the existing unavailable-tool behavior. Execution-time
+  authorization checks remain authoritative.
 - Harness children require the Engine delegation capability. Older backends keep
   those choices disabled. ACP chat uses the configured worker directly; A2A
   delegation currently runs through a Deep Agents supervisor.
