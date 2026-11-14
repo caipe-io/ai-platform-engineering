@@ -4,11 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/toast";
-import type { RemoteAgentCredentialSource, RemoteAgentRegistryEntry } from "@/types/dynamic-agent";
+import type { AvailableSubagent, RemoteAgentCredentialSource, RemoteAgentRegistryEntry } from "@/types/dynamic-agent";
 import { Check, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 import React from "react";
 import { RemoteAgentDiscovery, type DiscoveredAgent } from "./RemoteAgentDiscovery";
 import { RemoteAgentSelection } from "./RemoteAgentSelection";
+import { ConfiguredAcpAgentCard, isConfiguredAcpAgent } from "./ConfiguredAcpAgentCard";
 import { defaultRemoteAgentAuth, isRemoteAgentAuthConfigured, RemoteAgentAuthFields } from "./RemoteAgentAuthFields";
 
 export interface RemoteAgentsPickerProps {
@@ -22,6 +23,11 @@ export interface RemoteAgentsPickerProps {
 export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPickerProps }) {
   const { value = [], onChange = () => {}, timeoutValues = {}, onTimeoutChange = () => {}, disabled } = selection ?? {};
   const { toast } = useToast();
+  const includeAcp = !selection;
+  const [acpAgents, setAcpAgents] = React.useState<AvailableSubagent[]>([]);
+  const [acpLoading, setAcpLoading] = React.useState(includeAcp);
+  const [acpError, setAcpError] = React.useState<string | null>(null);
+  const [search, setSearch] = React.useState("");
   const [items, setItems] = React.useState<RemoteAgentRegistryEntry[]>([]);
   const [canManage, setCanManage] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
@@ -57,7 +63,23 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
     }
   }, [toast]);
 
-  React.useEffect(() => { void loadItems(); }, [loadItems]);
+  const loadAcpAgents = React.useCallback(async () => {
+    if (!includeAcp) return;
+    setAcpLoading(true);
+    setAcpError(null);
+    try {
+      const response = await fetch("/api/dynamic-agents/available-subagents?create=true", { credentials: "include", cache: "no-store" });
+      const body = await response.json();
+      if (!response.ok || !body.success || !Array.isArray(body.data?.agents)) throw new Error("Could not load configured ACP agents");
+      setAcpAgents(body.data.agents.filter(isConfiguredAcpAgent));
+    } catch {
+      setAcpError("Could not load configured ACP agents. Saved agents and their permissions have not changed.");
+    } finally {
+      setAcpLoading(false);
+    }
+  }, [includeAcp]);
+
+  React.useEffect(() => { void loadItems(); void loadAcpAgents(); }, [loadItems, loadAcpAgents]);
 
   const toggle = (id: string) => {
     if (disabled) return;
@@ -165,8 +187,21 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
 
   if (selection) return <RemoteAgentSelection selection={selection} items={items} loading={loading} error={loadError} onRefresh={() => void loadItems()} />;
 
+  const catalog = [
+    ...(!loading && !loadError ? items.map(item => ({ source: "a2a" as const, key: `a2a:${item._id}`, item })) : []),
+    ...(!acpLoading && !acpError ? acpAgents.map(item => ({ source: "acp" as const, key: `acp:${item.id}`, item })) : []),
+  ].filter(entry => [entry.item.name, entry.item.description, entry.source].join(" ").toLowerCase().includes(search.toLowerCase().trim()))
+    .sort((left, right) => left.item.name.localeCompare(right.item.name));
+
   return (
     <div className="space-y-4">
+      <p className="text-xs text-muted-foreground">Choose registered A2A agents or configured ACP agents in Agent Builder under Subagents. Each agent keeps its saved configuration and access checks.</p>
+      <div className="flex gap-2">
+        <Input aria-label="Search remote agents" placeholder="Search by name, A2A, or ACP…" value={search} onChange={event => setSearch(event.target.value)} />
+        <Button type="button" variant="outline" size="sm" disabled={loading || acpLoading} onClick={() => { void loadItems(); void loadAcpAgents(); }}>Refresh agents</Button>
+      </div>
+      {acpError && <div role="alert" className="text-sm text-destructive">{acpError} <Button type="button" variant="outline" size="sm" onClick={() => void loadAcpAgents()}>Retry ACP agents</Button></div>}
+      {acpLoading && <p role="status" className="text-sm text-muted-foreground">Loading configured ACP agents…</p>}
       {!selection && canManage && <RemoteAgentDiscovery disabled={saving || probing} onChoose={(agent: DiscoveredAgent) => {
         setEndpoint(agent.endpoint); setName(agent.error ? "" : agent.name || "");
         setDescription(agent.description || ""); setStreaming(agent.supports_streaming === true);
@@ -175,20 +210,17 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
       }} />}
       {loadError && <div role="alert" className="text-sm text-destructive">{loadError} <Button type="button" variant="outline" size="sm" onClick={() => void loadItems()}>Retry</Button></div>}
       {cardPreview && <details className="rounded-lg border p-3" open><summary className="cursor-pointer text-sm font-medium">Agent Card</summary><pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(cardPreview, null, 2)}</pre></details>}
-      <div>
-        <Label>Remote A2A Agents</Label>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {selection ? "Choose registered agents this agent can call. Each endpoint uses its configured authentication header." : "Manage the registry used by all agent builders. Registration does not grant access to a remote agent."}
-        </p>
-      </div>
-      {loading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading remote agents…</div> : loadError ? null : items.length === 0 ? <p className="text-sm text-muted-foreground">No remote A2A agents are registered.</p> : (
-        <div className="space-y-3">
-          {items.map((item) => (
-            <div key={item._id} className="rounded-lg border p-3">
+      {loading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading registered A2A agents…</div>}
+      {!catalog.length && !loading && !acpLoading && !loadError && !acpError && <p className="text-sm text-muted-foreground">{search ? "No matching remote agents." : "No A2A or configured ACP agents are available."}</p>}
+      <div className="space-y-3" aria-label="Remote agent catalog">
+          {catalog.map(entry => {
+            if (entry.source === "acp") return <ConfiguredAcpAgentCard key={entry.key} agent={entry.item} />;
+            const item = entry.item;
+            return <div key={entry.key} className="rounded-lg border p-3">
               <div className="flex items-start gap-3">
                 {selection && <input aria-label={`Allow ${item.name}`} type="checkbox" className="mt-1 h-4 w-4 accent-primary" checked={value.includes(item._id)} disabled={disabled} onChange={() => toggle(item._id)} />}
                 <div className="min-w-0 flex-1">
-                  <div className="font-medium">{item.name}</div>
+                  <div className="font-medium">{item.name}<span className="ml-2 text-xs text-muted-foreground">A2A</span></div>
                   {item.streaming && <span className="text-xs text-muted-foreground">Streaming enabled</span>}
                   {item.description && <p className="text-xs text-muted-foreground">{item.description}</p>}
                   {canManage && item.endpoint && <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{item.endpoint}</p>}
@@ -233,10 +265,9 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
                   </div>
                 </div>
               )}
-            </div>
-          ))}
+            </div>;
+          })}
         </div>
-      )}
       {canManage && !disabled && (
         <div
           className="space-y-3 rounded-lg border border-dashed p-4"

@@ -87,9 +87,8 @@ import { DatasourcePicker } from "./DatasourcePicker";
 import { InterruptConfigPicker } from "./InterruptConfigPicker";
 import { MiddlewarePicker } from "./MiddlewarePicker";
 import { SkillsSelector } from "./SkillsSelector";
-import { SubagentPicker } from "./SubagentPicker";
+import { DelegatedAgentsPicker } from "./DelegatedAgentsPicker";
 import { WorkflowToolsPicker } from "./WorkflowToolsPicker";
-import { RemoteAgentsPicker } from "./RemoteAgentsPicker";
 import type { AgentSetupStep } from "./deep-linking";
 
 // Lazy-load CodeMirror to avoid SSR issues
@@ -354,44 +353,19 @@ function AdvancedStep({
     "schema-form": schemaPanel,
     "agent-delegation": (<CollapsibleSection
         title="Subagents"
-        description="Delegate tasks to other agents"
-        badge={`${subagents.length} subagent${subagents.length !== 1 ? "s" : ""}`}
-        defaultExpanded={false}
-      >
-        <p className="text-xs text-muted-foreground mb-2">
-          <span className="font-medium">Note:</span> Subagents cannot be nested.
-          The agents you add here will not have access to their own subagents
-          when invoked.
-        </p>
-        <SubagentPicker
-          agentId={agent?._id || null}
-          value={subagents}
-          onChange={setSubagents}
-          disabled={loading}
-          parentVisibility={visibility}
-        />
-      </CollapsibleSection>),
-    "remote-agents": (<CollapsibleSection
-        title="Remote A2A Agents"
-        description="Add discovered agents from the Remote Agents registry"
-        badge={`${remoteAgentCount} selected`}
+        description="Delegate work to CAIPE agents and registered A2A agents"
+        badge={`${subagents.length + remoteAgentCount} selected`}
         defaultExpanded
       >
-        <RemoteAgentsPicker
-          value={allowedRemoteAgents}
-          onChange={(ids) => {
-          setAllowedRemoteAgents(ids);
-          setRemoteAgentTimeouts((current) => Object.fromEntries(
-            Object.entries(current).filter(([id]) => ids.includes(id)),
-          ));
-        }}
-          timeoutValues={remoteAgentTimeouts}
-          onTimeoutChange={(id, seconds) =>
-            setRemoteAgentTimeouts((current) => ({ ...current, [id]: seconds }))
-          }
-          disabled={loading}
-        />
+        <DelegatedAgentsPicker agentId={agent?._id || null} value={subagents} onChange={setSubagents}
+          allowHarnessChildren={supportsHarnessCapability(descriptor, "multi_agent.harness_delegation")}
+          parentVisibility={visibility} disabled={loading}
+          remote={{ value: allowedRemoteAgents, onChange: (ids) => {
+            setAllowedRemoteAgents(ids);
+            setRemoteAgentTimeouts(current => Object.fromEntries(Object.entries(current).filter(([id]) => ids.includes(id))));
+          }, timeoutValues: remoteAgentTimeouts, onTimeoutChange: (id, seconds) => setRemoteAgentTimeouts(current => ({ ...current, [id]: seconds })) }} />
       </CollapsibleSection>),
+    "remote-agents": null,
     "tool-approvals": (<CollapsibleSection
         title="Human Approval"
         description="Require approval before executing specific tools"
@@ -3077,7 +3051,7 @@ export function DynamicAgentEditor({
             <>
               {builtinTools?.fetch_url?.enabled ? "1 built-in, " : ""}
               {Object.keys(allowedTools).length} MCP server(s),{" "}
-              {subagents.length} subagent(s)
+              {subagents.length + allowedRemoteAgents.length} subagent(s)
             </>
           ) : (
             <>{selectedHarness ? harnessDisplayName(selectedHarness) : harnessId} · {selectedHarness?.profiles.find((profile) => profile.id === harnessProfileId)?.display_name || "Select an operator profile"}</>

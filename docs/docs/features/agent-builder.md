@@ -114,7 +114,7 @@ Agent Builder guides you through six steps:
 | **Tools** | Registered MCP tools and CAIPE built-in tools |
 | **Knowledge** | Individual data sources and reusable collections |
 | **Skills** | Reusable instructions and packaged capabilities |
-| **Advanced** | Subagents, remote A2A agents, human approval rules, middleware, and workflow access |
+| **Advanced** | Subagents (CAIPE, configured ACP, and registered A2A agents), human approval rules, middleware, and workflow access |
 
 After you save an agent, you can test it in chat without redeploying the runtime.
 You can also clone it, enable or disable it, and export it as YAML.
@@ -132,6 +132,24 @@ You can also clone it, enable or disable it, and export it as YAML.
 
 Start with the smallest useful capability set. You can add tools, knowledge,
 and skills later without rebuilding the agent.
+
+## Remote agents and subagents
+
+- **Agents → Remote Agents** lists registered A2A agents and configured Claude
+  Code / Claude Agent SDK ACP agents in one searchable catalog. Only enabled ACP
+  agents the caller can use are shown. Refresh reloads both sources independently.
+- ACP entries refer to existing CAIPE agents. **Chat** starts their normal
+  conversation; **Open agent** opens their saved configuration with the usual
+  permission checks. Operator profiles, native sessions, and credentials stay in
+  their existing configuration. They are not copied into the A2A registry.
+- A2A Agent Card discovery and registration remain specific to A2A endpoints.
+  Arbitrary ACP endpoints and full ACP conformance are not implied by this view.
+- **Advanced → Subagents** provides one picker for local Deep Agents, configured
+  Harness children (including ACP), and registered A2A agents. Removing a selection
+  removes the parent's reference, not the remote agent or its credentials.
+- Harness children require the Engine delegation capability. Older backends keep
+  those choices disabled. ACP chat uses the configured worker directly; A2A
+  delegation currently runs through a Deep Agents supervisor.
 
 ## Knowledge and tool scope
 

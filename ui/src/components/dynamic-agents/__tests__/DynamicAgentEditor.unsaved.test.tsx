@@ -50,8 +50,8 @@ jest.mock("@/components/dynamic-agents/BuiltinToolsPicker", () => ({
 jest.mock("@/components/dynamic-agents/MiddlewarePicker", () => ({
   MiddlewarePicker: () => <div data-testid="middleware-picker" />,
 }));
-jest.mock("@/components/dynamic-agents/SubagentPicker", () => ({
-  SubagentPicker: () => <div data-testid="subagent-picker" />,
+jest.mock("@/components/dynamic-agents/DelegatedAgentsPicker", () => ({
+  DelegatedAgentsPicker: () => <div data-testid="subagent-picker" />,
 }));
 jest.mock("@/components/dynamic-agents/SkillsSelector", () => ({
   SkillsSelector: () => <div data-testid="skills-selector" />,
