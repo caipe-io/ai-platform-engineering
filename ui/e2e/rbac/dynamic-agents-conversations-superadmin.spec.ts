@@ -393,7 +393,7 @@ test.describe("mocked RBAC Dynamic Agents workspace", () => {
 
     const navigation = page.getByRole("navigation", { name: "Agent sections" });
     await expect(navigation.getByRole("button", { name: /Conversations/ })).toHaveCount(0);
-    await expect(navigation.getByRole("button", { name: /Agents/ })).toHaveAttribute(
+    await expect(navigation.getByRole("button", { name: "Agents", exact: true })).toHaveAttribute(
       "aria-current",
       "page",
     );
