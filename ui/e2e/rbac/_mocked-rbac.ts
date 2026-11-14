@@ -3,6 +3,34 @@
 import { encodeTestSession } from "./_session-cookie";
 import { type Page, type Route } from "@playwright/test";
 
+export const INACTIVE_ONBOARDING_RESPONSES: Record<string, unknown> = {
+  "/api/admin/setup-wizard": {
+    success: true,
+    data: {
+      enabled: false,
+      auto_start: false,
+      fresh_install: false,
+      inventory: {
+        agents: 0, custom_agents: 0, conversations: 0,
+        connected_credentials: 0, available_oauth_connectors: 0,
+        knowledge_sources: 0, mcp_servers: 0, models: 0, users: 1,
+      },
+      state: {
+        version: 1, status: "not_started", current_step: 1,
+        completed_steps: [], skipped_steps: [], run_count: 0,
+      },
+    },
+  },
+  "/api/onboarding/product-tour": {
+    success: true,
+    data: {
+      auto_start: false,
+      eligible: false,
+      state: { version: 1, status: "not_started", current_step: 1, run_count: 0 },
+    },
+  },
+};
+
 export const MOCK_RBAC_EMAIL = "non-manager@caipe.local";
 
 export type MockRouteContext = {
@@ -145,6 +173,12 @@ export async function installMockedRbacApp(page: Page, options: MockedRbacOption
       if (await handler(context)) {
         return;
       }
+    }
+
+    const onboardingResponse = INACTIVE_ONBOARDING_RESPONSES[path];
+    if (onboardingResponse) {
+      await fulfillJson(route, onboardingResponse);
+      return;
     }
 
     if (path === "/api/auth/session") {
