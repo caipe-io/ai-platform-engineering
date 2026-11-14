@@ -2,10 +2,11 @@ import {
   type WorkspaceNavigationGroup,
   type WorkspaceNavigationItem,
 } from "@/components/layout/WorkspaceNavigation";
-import { Bot,Cpu,KeyRound,MessageSquare,Server } from "lucide-react";
+import { Bot,Cpu,Globe,KeyRound,MessageSquare,Server } from "lucide-react";
 
 export const BASE_DYNAMIC_AGENT_TABS = [
   "agents",
+  "remote-agents",
   "mcp-servers",
   "model-providers",
   "llm-models",
@@ -45,6 +46,13 @@ export function buildDynamicAgentNavigationGroups({
         icon: Server,
         description: "Connect tools and services",
         ...destinationForTab("mcp-servers"),
+      },
+      {
+        id: "remote-agents",
+        label: "Remote Agents",
+        icon: Globe,
+        description: "Register and discover A2A agents",
+        ...destinationForTab("remote-agents"),
       },
       {
         id: "model-settings",

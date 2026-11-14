@@ -8,6 +8,7 @@ import { DynamicAgentsTab } from "@/components/dynamic-agents/DynamicAgentsTab";
 import { LLMModelsTab } from "@/components/dynamic-agents/LLMModelsTab";
 import { LLMProvidersTab } from "@/components/dynamic-agents/LLMProvidersTab";
 import { MCPServersTab } from "@/components/dynamic-agents/MCPServersTab";
+import { RemoteAgentsTab } from "@/components/dynamic-agents/RemoteAgentsTab";
 import { isAgentSetupStep,type AgentSetupStep } from "@/components/dynamic-agents/deep-linking";
 import {
   BASE_DYNAMIC_AGENT_TABS,
@@ -138,6 +139,7 @@ function DynamicAgentsPageContent() {
     conversations: "Review agent conversations and manage their checkpoint history.",
     "llm-models": "Register the provider and model identifiers available to agents.",
     "mcp-servers": "Configure MCP connections and authorize each tool call through AgentGateway.",
+    "remote-agents": "Register A2A agents manually, read Agent Cards, or discover agents from URLs and Kubernetes Services.",
     "model-providers": "Save the provider credentials agents need to use each model.",
   }[activeTab] ?? activeNavigationItem.description ?? "";
   const agentHomeHref = hrefForTab("agents");
@@ -229,6 +231,7 @@ function DynamicAgentsPageContent() {
         ) : null}
 
         {activeTab === "model-providers" ? <LLMProvidersTab /> : null}
+        {activeTab === "remote-agents" ? <RemoteAgentsTab /> : null}
 
         {activeTab === "llm-models" ? (
           <LLMModelsTab

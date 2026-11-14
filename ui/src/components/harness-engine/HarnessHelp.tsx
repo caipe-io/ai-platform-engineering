@@ -2,7 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { harnessDisplayName, harnessStatusLabel } from "@/lib/harness-builder";
+import { harnessDisplayName, harnessFamily, harnessStatusLabel } from "@/lib/harness-builder";
 import { cn } from "@/lib/utils";
 import type { HarnessDescriptor } from "@/types/harness-engine";
 import { Info } from "lucide-react";
@@ -16,22 +16,17 @@ const RUNTIME_GUIDES = [
   },
   {
     id: "claude_agent_sdk",
-    label: "Claude Agent SDK (Local)",
-    description: "Runs the Claude Agent SDK directly inside the Harness Engine service, sharing its compute resources.",
-  },
-  {
-    id: "claude_agent_sdk_remote",
-    label: "Claude Agent SDK (Remote worker)",
-    description: "Runs the SDK on a separate worker so execution uses the worker's compute resources.",
+    label: "Claude Agent SDK",
+    description: "Runs the Claude Agent SDK. Choose an operator profile for local execution inside Harness Engine or execution on a separate worker.",
   },
   {
     id: "claude_code_acp",
-    label: "Claude Agent SDK (ACP)",
+    label: "Claude Agent SDK (Advanced ACP)",
     description: "Runs the SDK through an Agent Client Protocol (ACP) adapter process on a separate worker. Its saved workspace stays on that worker.",
   },
   {
     id: "claude_code_cli_acp",
-    label: "Claude Code CLI (ACP)",
+    label: "Claude Code",
     description: "Runs the Claude Code command-line application through ACP on a separate worker, with a saved conversation and workspace.",
   },
   {
@@ -75,12 +70,12 @@ export function HarnessHelp({ harnessId, descriptors }: { harnessId: string; des
         </p>
         <dl className="space-y-1">
           {RUNTIME_GUIDES.map(guide => {
-            const descriptor = descriptors.find(item => item.id === guide.id);
-            return <div key={guide.id} className={cn("rounded-md p-2", harnessId === guide.id && "bg-accent")}>
+            const descriptor = descriptors.find(item => item.id === harnessId && harnessFamily(item.id) === guide.id) ?? descriptors.find(item => item.id === guide.id);
+            return <div key={guide.id} className={cn("rounded-md p-2", harnessFamily(harnessId) === guide.id && "bg-accent")}>
               <dt className="flex flex-wrap items-center gap-2 text-xs font-medium">
                 {descriptor ? harnessDisplayName(descriptor) : guide.label}
                 <Badge variant="outline" className="text-[10px] font-normal">{harnessStatusLabel(guide.id, descriptor?.certification)}</Badge>
-                {harnessId === guide.id && <span className="text-[10px] text-muted-foreground">Selected</span>}
+                {harnessFamily(harnessId) === guide.id && <span className="text-[10px] text-muted-foreground">Selected</span>}
               </dt>
               <dd className="mt-1 text-xs leading-relaxed text-muted-foreground">{guide.description}</dd>
               {descriptor && descriptor.availability !== "available" && <dd className="mt-1 text-xs text-muted-foreground">Runtime setup is required before this option can be used.</dd>}

@@ -14,8 +14,9 @@ describe("agent presentation", () => {
   it("presents provider harnesses with human-readable labels", () => {
     expect(getHarnessPresentation("agentcore").shortLabel).toBe("AgentCore");
     expect(getHarnessPresentation("claude_agent_sdk").label).toBe("Claude Agent SDK");
-    expect(getHarnessPresentation("claude_code_acp").label).toBe("Claude Agent SDK (ACP)");
-    expect(getHarnessPresentation("claude_code_cli_acp").label).toBe("Claude Code CLI (ACP)");
+    expect(getHarnessPresentation("claude_agent_sdk_remote").label).toBe("Claude Agent SDK");
+    expect(getHarnessPresentation("claude_code_acp").label).toBe("Claude Agent SDK (Advanced ACP)");
+    expect(getHarnessPresentation("claude_code_cli_acp").label).toBe("Claude Code");
   });
 
   it("assigns stable and visibly varied fallback themes by agent id", () => {
