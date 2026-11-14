@@ -77,6 +77,31 @@ describe("ProductTourGate", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it.each([null, { success: true }, { success: true, data: {} }, { success: false, data: {} }])(
+    "keeps the workspace usable when automatic tour progress is incomplete: %j",
+    async (payload) => {
+      global.fetch = jest.fn(() => response(payload));
+      await act(async () => {
+        render(<><button>Workspace action</button><ProductTourGate /></>);
+      });
+
+      expect(screen.getByRole("button", { name: "Workspace action" })).toBeEnabled();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    },
+  );
+
+  it("reports incomplete progress for a manually requested tour without crashing", async () => {
+    mockGetConfig.mockReturnValue(false);
+    global.fetch = jest.fn(() => response({ success: true, data: {} }));
+    render(<ProductTourGate />);
+
+    act(() => requestProductTour());
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Tour progress is unavailable");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("waits for the initial start save before accepting progress", async () => {
     const originalFetch = global.fetch;
     let finishStart!: (value: Response) => void;
