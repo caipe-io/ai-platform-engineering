@@ -1,3 +1,5 @@
+import { sendWebexNotification } from "./webex.server";
+import { linkedNotificationAccounts } from "./destinations.server";
 import { ApiError } from "@/lib/api-error";
 import type { NotificationDelivery } from "./delivery-types";
 import { NotificationDeliveryError } from "./delivery-types";
@@ -11,7 +13,12 @@ export interface NotificationChannelAdapter {
   publicKey?(): string | null;
 }
 /** Optional channel integrations extend this registry; core has no provider dependency. */
-export const notificationChannelAdapters: Partial<Record<ExternalChannel, NotificationChannelAdapter>> = {};
+export const notificationChannelAdapters: Partial<Record<ExternalChannel, NotificationChannelAdapter>> = {
+  webex: {
+    available: async (subject) => process.env.NOTIFICATION_WEBEX_ENABLED === "true" && Boolean((await linkedNotificationAccounts(subject)).webex),
+    send: sendWebexNotification,
+  },
+};
 
 export async function notificationChannelAvailability(subject: string): Promise<ChannelChoices> {
   const choices: ChannelChoices = { in_app: true, web_push: false, webex: false, slack: false };

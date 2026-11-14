@@ -301,12 +301,13 @@ class WebexBotAdminService:
         self._resolver.invalidate_all()
         return {"reloaded": "all"}
 
-    def send_notification(self, *, space_id: str, markdown: str) -> dict[str, str]:
+    def send_notification(self, *, markdown: str, space_id: str = "", person_id: str = "") -> dict[str, str]:
         """Send an operator-configured publication approval notification."""
         normalized_space_id = space_id.strip()
+        normalized_person_id = person_id.strip()
         normalized_markdown = markdown.strip()
-        if not normalized_space_id:
-            raise ValueError("space_id is required")
+        if bool(normalized_space_id) == bool(normalized_person_id):
+            raise ValueError("Provide exactly one space_id or person_id")
         if not normalized_markdown:
             raise ValueError("markdown is required")
         if len(normalized_markdown) > 4000:
@@ -336,7 +337,8 @@ class WebexBotAdminService:
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             },
-            json={"roomId": normalized_space_id, "markdown": normalized_markdown},
+            json=({"toPersonId": normalized_person_id, "text": normalized_markdown}
+                  if normalized_person_id else {"roomId": normalized_space_id, "markdown": normalized_markdown}),
             timeout=10,
         )
         response.raise_for_status()
@@ -620,7 +622,8 @@ class _WebexAdminRequestHandler(BaseHTTPRequestHandler):
             try:
                 self._write_json(
                     self.service.send_notification(
-                        space_id=_required_string(body.get("space_id"), "space_id"),
+                        space_id=_optional_string(body.get("space_id")) or "",
+                        person_id=_optional_string(body.get("person_id")) or "",
                         markdown=_required_string(body.get("markdown"), "markdown"),
                     )
                 )
