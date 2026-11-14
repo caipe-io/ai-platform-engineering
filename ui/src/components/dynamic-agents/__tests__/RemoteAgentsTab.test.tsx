@@ -21,6 +21,7 @@ it("reviews a public discovery result and registers it without sending a JWT or 
   });
   global.fetch = fetcher as unknown as typeof fetch;
   render(<RemoteAgentsTab />);
+  fireEvent.click(await screen.findByRole("button", { name: "Discover agents", exact: true }));
   fireEvent.change(await screen.findByLabelText("Agent URLs or Agent Card URLs"), { target: { value: "https://example.test" } });
   fireEvent.click(screen.getByRole("button", { name: "Discover", exact: true }));
   fireEvent.click(await screen.findByRole("button", { name: "Review", exact: true }));
@@ -71,7 +72,10 @@ it("unifies authorized A2A and both ACP runtimes without duplicating their regis
   expect(within(catalog).getByText("Network specialist")).toBeInTheDocument();
   expect(within(catalog).queryByText("Native specialist")).not.toBeInTheDocument();
   expect(within(catalog).queryByText("Unsupported specialist")).not.toBeInTheDocument();
-  expect(within(code).getByRole("link", { name: "Open agent" })).toHaveAttribute("href", "/dynamic-agents?tab=agents&agent=same-id");
+  fireEvent.click(within(code).getByRole("button", { name: "Details for Code specialist" }));
+  expect(screen.getByRole("dialog", { name: "Code specialist" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open agent" })).toHaveAttribute("href", "/dynamic-agents?tab=agents&agent=same-id");
+  fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
   expect(within(code).queryByRole("button", { name: /Read Agent Card|Remove|Edit/ })).not.toBeInTheDocument();
   expect(fetcher.mock.calls).toHaveLength(2);
   fireEvent.change(screen.getByRole("textbox", { name: "Search remote agents" }), { target: { value: "ACP" } });
@@ -132,4 +136,56 @@ it("shows dependency problems and disables Chat without changing the agent", asy
   expect(await screen.findByRole("button", { name: "Chat with Code specialist" })).toBeDisabled();
   expect(await screen.findByRole("status")).toHaveTextContent("Needs attention");
   expect(mockCreateConversation).not.toHaveBeenCalled();
+});
+
+it("opens an A2A connection test in a modal and renders advertised skills without running a task", async () => {
+  const fetcher = jest.fn(async (url: RequestInfo | URL) => {
+    if (String(url).includes("available-subagents")) return response({ agents: [] });
+    if (String(url).endsWith("/probe")) return response({ agent_card: { skills: [{ name: "DNS lookup", description: "Resolve a hostname" }], capabilities: { streaming: true } } });
+    return response({ items: [{ ...registeredA2a, endpoint: "https://agent.example.test", credential_source: { kind: "caller_token", target: "header", name: "Authorization" } }], can_manage_registry: true });
+  });
+  global.fetch = fetcher as typeof fetch;
+  render(<RemoteAgentsTab />);
+  await screen.findByText("Network specialist");
+  expect(screen.queryByLabelText("Agent URL")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Agent URLs or Agent Card URLs")).not.toBeInTheDocument();
+  expect(screen.getByText("Connection not tested")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Test connection", exact: true }));
+  const dialog = await screen.findByRole("dialog", { name: "Network specialist" });
+  expect(await within(dialog).findByText("DNS lookup")).toBeInTheDocument();
+  expect(within(dialog).getByText("streaming")).toBeInTheDocument();
+  expect(within(dialog).getByText(/does not run a task/)).toBeInTheDocument();
+  const probes = fetcher.mock.calls.filter(([url]) => String(url).endsWith("/probe"));
+  expect(probes).toHaveLength(1);
+  expect(JSON.parse(probes[0][1]!.body as string)).toEqual({ endpoint: "https://agent.example.test", credential_source: { kind: "caller_token", target: "header", name: "Authorization" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close", exact: true }));
+  fireEvent.change(screen.getByLabelText("Search remote agents"), { target: { value: "DNS lookup" } });
+  expect(screen.getByRole("article", { name: "Network specialist A2A agent" })).toBeInTheDocument();
+});
+
+it("keeps a denied A2A test inside its modal without retrying anonymously", async () => {
+  const fetcher = jest.fn(async (url: RequestInfo | URL) => {
+    if (String(url).includes("available-subagents")) return response({ agents: [] });
+    if (String(url).endsWith("/probe")) return { ok: false, json: async () => ({ success: false, error: "Access denied" }) };
+    return response({ items: [registeredA2a], can_manage_registry: true });
+  });
+  global.fetch = fetcher as typeof fetch;
+  render(<RemoteAgentsTab />);
+  fireEvent.click(await screen.findByRole("button", { name: "Test connection", exact: true }));
+  const dialog = await screen.findByRole("dialog", { name: "Network specialist" });
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("Access denied");
+  expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/probe"))).toHaveLength(1);
+  expect(screen.queryByText(/Connection verified/)).not.toBeInTheDocument();
+});
+
+it("filters protocols and clears the empty state when switching back", async () => {
+  global.fetch = catalogFetch() as typeof fetch;
+  render(<RemoteAgentsTab />);
+  await screen.findByText("Network specialist");
+  fireEvent.change(screen.getByLabelText("Filter by protocol"), { target: { value: "a2a" } });
+  expect(screen.queryByText("Code specialist")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Search remote agents"), { target: { value: "missing" } });
+  expect(screen.getByText("No matching remote agents.")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Search remote agents"), { target: { value: "" } });
+  expect(screen.getByText("Network specialist")).toBeInTheDocument();
 });
