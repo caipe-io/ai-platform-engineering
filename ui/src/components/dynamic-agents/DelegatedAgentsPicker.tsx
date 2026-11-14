@@ -1,6 +1,8 @@
 "use client";
 
 import React from "react";
+import { AgentIdentity } from "./AgentIdentity";
+import type { AgentAvatarAgent } from "./AgentAvatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,7 +10,7 @@ import { SearchablePicker } from "@/components/ui/searchable-picker";
 import type { AvailableSubagent, DynamicAgentConfig, RemoteAgentRegistryEntry, SubAgentRef, VisibilityType } from "@/types/dynamic-agent";
 import type { RemoteAgentsPickerProps } from "./RemoteAgentRegistry";
 
-type Choice = { key: string; id: string; source: "caipe" | "a2a"; name: string; description?: string; runtime: string; visibility?: VisibilityType; timeout?: number; readiness?: string };
+type Choice = { key: string; id: string; source: "caipe" | "a2a"; name: string; description?: string; runtime: string; visibility?: VisibilityType; timeout?: number; readiness?: string; framework?: string; identity?: AgentAvatarAgent };
 const runtimes: Record<string, string> = {
   dynamic_agents: "Deep Agents", claude_agent_sdk: "Claude Agent SDK", claude_agent_sdk_remote: "Claude Agent SDK",
   claude_code_acp: "Claude Agent SDK · ACP", claude_code_cli_acp: "Claude Code · ACP", agentcore: "AgentCore",
@@ -35,12 +37,12 @@ export function DelegatedAgentsPicker({ agentId, value, onChange, remote, disabl
         if (!Array.isArray(items)) throw new Error(`Invalid ${source} agent catalog`);
         const loaded: Choice[] = source === "a2a" ? items.map((item: RemoteAgentRegistryEntry) => ({
           key: `a2a:${item._id}`, id: item._id, source, name: item.name, description: item.description,
-          runtime: "A2A", timeout: item.timeout_seconds,
+          runtime: "A2A", timeout: item.timeout_seconds, framework: item.framework, identity: item,
         })) : items.map((item: AvailableSubagent & DynamicAgentConfig) => {
           const id = item.id || item._id;
           return { key: `caipe:${id}`, id, source, name: item.name, description: item.description,
             readiness: item.execution_readiness?.ready === false ? item.execution_readiness.message || "Agent configuration needs attention" : undefined,
-            runtime: item.execution_harness_id || "dynamic_agents", visibility: item.visibility === "global" ? "global" : "team" };
+            identity: { ...item, _id: id }, runtime: item.execution_harness_id || "dynamic_agents", visibility: item.visibility === "global" ? "global" : "team" };
         });
         if (!controller.signal.aborted) setChoices(previous => [...previous.filter(item => item.source !== source), ...loaded]);
       } catch (error) {
@@ -71,9 +73,9 @@ export function DelegatedAgentsPicker({ agentId, value, onChange, remote, disabl
     <div className="flex flex-wrap gap-2 items-center">
       <div className="flex-1 min-w-0"><SearchablePicker options={available} onSelect={add} getOptionKey={item => item.key}
         getOptionLabel={item => item.name} getSearchText={item => [item.name, item.description || "", runtimes[item.runtime] || item.runtime]}
-        isOptionDisabled={incompatible} renderOption={item => <div>{item.name}<span className="ml-2 text-xs text-muted-foreground">{item.source === "a2a" ? "A2A" : `CAIPE · ${runtimes[item.runtime] || "Unavailable runtime"}`}</span>
+        isOptionDisabled={incompatible} renderOption={item => <div className="flex items-start gap-3"><AgentIdentity agent={item.identity} harnessId={item.source === "caipe" ? item.runtime : undefined} protocol={item.source === "a2a" ? "a2a" : undefined} framework={item.framework} /><div>{item.name}<span className="ml-2 text-xs text-muted-foreground">{item.source === "a2a" ? "A2A" : `CAIPE · ${runtimes[item.runtime] || "Unavailable runtime"}`}</span>
           {item.description && <p className="text-xs text-muted-foreground">{item.description}</p>}
-          {incompatible(item) && <p className="text-xs text-muted-foreground">{item.readiness || "Runtime or sharing permissions are incompatible."}</p>}</div>}
+          {incompatible(item) && <p className="text-xs text-muted-foreground">{item.readiness || "Runtime or sharing permissions are incompatible."}</p>}</div></div>}
         ariaLabel="Add subagent" placeholder="Add subagent…" searchPlaceholder="Search agents…" emptyLabel="No available agents"
         loading={loading} disabled={disabled || loading} /></div>
       <Button type="button" variant="outline" size="sm" disabled={disabled || loading} onClick={refresh}>Refresh agents</Button>
@@ -87,7 +89,7 @@ export function DelegatedAgentsPicker({ agentId, value, onChange, remote, disabl
       const isHarness = saved.source === "caipe" && item && item.runtime !== "dynamic_agents";
       const update = (patch: Partial<SubAgentRef>) => onChange(value.map(ref => ref.agent_id === saved.id ? { ...ref, ...patch } : ref));
       return <div key={saved.key} className="rounded-lg border p-3 space-y-2">
-        <div className="flex items-center justify-between"><div className="font-medium">{name}<span className="ml-2 text-xs text-muted-foreground">{saved.source === "a2a" ? "A2A" : `CAIPE · ${item ? runtimes[item.runtime] || "Unavailable runtime" : "Saved agent"}`}</span></div>
+        <div className="flex items-center justify-between"><div className="flex items-center gap-3">{item && <AgentIdentity agent={item.identity} harnessId={item.source === "caipe" ? item.runtime : undefined} protocol={item.source === "a2a" ? "a2a" : undefined} framework={item.framework} />}<div className="font-medium">{name}<span className="ml-2 text-xs text-muted-foreground">{saved.source === "a2a" ? "A2A" : `CAIPE · ${item ? runtimes[item.runtime] || "Unavailable runtime" : "Saved agent"}`}</span></div></div>
           <Button type="button" size="sm" variant="ghost" disabled={disabled} aria-label={`Remove ${name} subagent`} onClick={() => saved.source === "a2a" ? remote.onChange(remote.value.filter(id => id !== saved.id)) : onChange(value.filter(ref => ref.agent_id !== saved.id))}>Remove</Button></div>
         {saved.source === "caipe" ? <>
           <Label htmlFor={`route-${saved.key}`}>Routing name</Label><Input id={`route-${saved.key}`} value={saved.name} disabled={disabled} onChange={event => update({ name: event.target.value })} />

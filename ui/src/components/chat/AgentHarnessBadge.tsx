@@ -11,6 +11,8 @@ import Image from "next/image";
 interface AgentHarnessBadgeProps {
   harnessId?: string | null;
   presentation?: AgentPresentation;
+  protocol?: "a2a" | "acp";
+  framework?: string;
   compact?: boolean;
   className?: string;
 }
@@ -18,10 +20,12 @@ interface AgentHarnessBadgeProps {
 export function AgentHarnessBadge({
   harnessId,
   presentation,
+  protocol,
+  framework,
   compact = false,
   className,
 }: AgentHarnessBadgeProps) {
-  const identity = getAgentPresentation(harnessId, presentation);
+  const identity = getAgentPresentation(harnessId, presentation, { protocol, framework });
   const { label } = identity;
 
   return (

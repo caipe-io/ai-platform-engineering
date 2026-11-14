@@ -17,6 +17,8 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
+import { readRemoteAgentRegistry } from "@/lib/remote-agent-registry.server";
+import { normalizeHarnessId } from "@/lib/agent-presentation";
 import { withAgentMutationLock } from "@/lib/agent-mutation-lock";
 import { getHarnessToolReadiness } from "@/lib/harness-tool-readiness";
 import { prepareAgentExecution } from "@/lib/harness-agent-publication";
@@ -56,7 +58,7 @@ import {
 } from "@/lib/rbac/unlinked-service-account";
 import type {
   DynamicAgentConfig,
-  DynamicAgentConfigWithPermissions,
+  AgentCatalogEntry,
   LegacyVisibilityType,
   ModelConfig,
   SubAgentRef,
@@ -661,6 +663,11 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const { searchParams } = new URL(request.url);
   const enabledOnly = searchParams.get("enabled_only") === "true";
   const search = searchParams.get("search")?.trim() || "";
+  const unified = searchParams.get("catalog") === "true";
+  const source = unified ? searchParams.get("source") || "all" : "created";
+  if (unified && !["all", "created", "connected"].includes(source)) throw new ApiError("Unknown catalog source", 400, "INVALID_CATALOG_SOURCE");
+  const runtime = unified ? searchParams.get("runtime") || "all" : "all";
+  if (!["all", "dynamic_agents", "claude_agent_sdk", "claude_code_cli_acp", "agentcore", "google_adk", "app", "a2a", "acp"].includes(runtime)) throw new ApiError("Unknown runtime filter", 400, "INVALID_CATALOG_RUNTIME");
 
   const query: Record<string, unknown> = enabledOnly
     ? { $or: [{ enabled: true }, { enabled: { $exists: false } }] }
@@ -708,19 +715,40 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     listTarget,
   );
   const projectedItems = projectAgentAppIdentity(visibleItems, session, { availableOnly: enabledOnly });
-  const pageItems = projectedItems.slice(skip, skip + pageSize);
+  let catalog: (DynamicAgentConfig | import("@/types/dynamic-agent").ConnectedAgentCatalogEntry)[] = source === "connected" ? [] : projectedItems;
+  let registryError: string | undefined;
+  if (unified && source !== "created") {
+    try {
+      const registry = await readRemoteAgentRegistry(session);
+      catalog = [...catalog, ...registry.items.filter(item => !search || `${item.name} ${item.description || ""}`.toLowerCase().includes(search.toLowerCase())).map(item => ({ ...item, catalog_source: "a2a" as const }))];
+    } catch {
+      registryError = "Connected agents are temporarily unavailable. Refresh to retry.";
+    }
+  }
+  if (runtime !== "all") catalog = catalog.filter(item => {
+    if ("catalog_source" in item) return runtime === "a2a" || ({ dynamic_agents: "deepagents", claude_agent_sdk: "claude_agent_sdk", claude_code_cli_acp: "claude_code", agentcore: "agentcore", google_adk: "google_adk" } as Record<string, string>)[runtime] === item.framework && !!item.framework;
+    const harness = normalizeHarnessId(item.execution_harness_id);
+    if (runtime === "app" || item.presentation?.app) return runtime === "app";
+    if (runtime === "acp") return ["claude_code_acp", "claude_code_cli_acp"].includes(harness);
+    if (runtime === "claude_agent_sdk") return ["claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp"].includes(harness);
+    return harness === runtime;
+  });
+  if (unified) catalog = [...catalog].sort((a, b) => a.name.localeCompare(b.name) || String(a._id).localeCompare(String(b._id)));
+  const pageItems = catalog.slice(skip, skip + pageSize);
+  const nativePage = pageItems.filter((agent): agent is DynamicAgentConfig => !("catalog_source" in agent));
   const { rows } = await resolveAgentListPermissions(
     session,
-    pageItems.map((agent) => String(agent._id)),
+    nativePage.map((agent) => String(agent._id)),
   );
 
-  const readiness = await getHarnessToolReadiness(pageItems);
-  const items: DynamicAgentConfigWithPermissions[] = pageItems.map((agent) => ({
+  const readiness = await getHarnessToolReadiness(nativePage);
+  const items: AgentCatalogEntry[] = pageItems.map((agent) => "catalog_source" in agent ? agent : ({
     ...(agent as DynamicAgentConfig),
     permissions: agentRowPermissionsOrDefault(rows, String(agent._id)),
     ...(readiness.has(String(agent._id)) && { execution_readiness: readiness.get(String(agent._id)) }),
   }));
 
+  if (unified) return successResponse({ items, total: catalog.length, page, page_size: pageSize, has_more: page * pageSize < catalog.length, registry_error: registryError });
   return paginatedResponse(items, projectedItems.length, page, pageSize);
 });
 

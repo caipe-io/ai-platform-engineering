@@ -5,14 +5,13 @@ import { getErrorMessage } from "@/lib/error-utils";
 // assisted-by Codex Codex-sonnet-4-6
 
 import { LastReviewBadge } from "@/components/ai-review";
-import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
 import { Card,CardContent } from "@/components/ui/card";
 import { toYaml } from "@/lib/yaml-serializer";
 import { useChatStore } from "@/store/chat-store";
-import type { DynamicAgentConfigWithPermissions } from "@/types/dynamic-agent";
+import { isConnectedAgent, type AgentCatalogEntry, type DynamicAgentConfigWithPermissions } from "@/types/dynamic-agent";
 import {
 Bot,
 AlertCircle,
@@ -36,7 +35,11 @@ import { useRouter } from "next/navigation";
 import React from "react";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { AgentAvatar } from "./AgentAvatar";
+import { AgentIdentity } from "./AgentIdentity";
+import { NativeAgentCatalogCard } from "./NativeAgentCatalogCard";
+import { RemoteAgentRegistry } from "./RemoteAgentRegistry";
+import { AGENT_CARD_SIZES, useAgentCatalogCardSize, useAgentCatalogView } from "@/hooks/use-agent-catalog-view";
+import { LayoutGrid, List } from "lucide-react";
 import { AgentEditorSkeleton,AgentsListSkeleton } from "./AgentsLoadingSkeleton";
 import { DynamicAgentEditor } from "./DynamicAgentEditor";
 import type { AgentSetupStep } from "./deep-linking";
@@ -61,6 +64,8 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 interface DynamicAgentsTabProps {
+  creating?: boolean;
+  onCreateAgent?: () => void;
   selectedAgentId?: string | null;
   initialStep?: AgentSetupStep;
   onSelectedAgentChange?: (agentId: string | null) => void;
@@ -69,6 +74,8 @@ interface DynamicAgentsTabProps {
 }
 
 export function DynamicAgentsTab({
+  creating,
+  onCreateAgent,
   selectedAgentId,
   initialStep,
   onSelectedAgentChange,
@@ -77,7 +84,7 @@ export function DynamicAgentsTab({
 }: DynamicAgentsTabProps = {}) {
   const router = useRouter();
   const createConversation = useChatStore((state) => state.createConversation);
-  const [agents, setAgents] = React.useState<DynamicAgentConfigWithPermissions[]>([]);
+  const [agents, setAgents] = React.useState<AgentCatalogEntry[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [editingAgent, setEditingAgent] = React.useState<DynamicAgentConfigWithPermissions | null>(null);
@@ -85,7 +92,9 @@ export function DynamicAgentsTab({
   const [selectionError, setSelectionError] = React.useState<string | null>(null);
   const selectionRequestRef = React.useRef(0);
   const loadedSelectionIdRef = React.useRef<string | null>(null);
-  const [isCreating, setIsCreating] = React.useState(false);
+  const [localCreating, setIsCreating] = React.useState(false);
+  const isCreating = creating ?? localCreating;
+  const startCreating = () => { if (onCreateAgent) onCreateAgent(); else setIsCreating(true); };
   const [cloningAgent, setCloningAgent] = React.useState<DynamicAgentConfigWithPermissions | null>(null);
   const [pendingDeleteAgentId, setPendingDeleteAgentId] = React.useState<string | null>(null);
   const [deletingAgentId, setDeletingAgentId] = React.useState<string | null>(null);
@@ -96,40 +105,55 @@ export function DynamicAgentsTab({
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(20);
   const [total, setTotal] = React.useState(0);
+  const [view, setView] = useAgentCatalogView();
+  const [cardSize, setCardSize] = useAgentCatalogCardSize();
+  const cardSizeIndex = AGENT_CARD_SIZES.findIndex(size => size.id === cardSize);
+  const cardSizeOption = AGENT_CARD_SIZES[cardSizeIndex];
+  const [source, setSource] = React.useState("all");
+  const [runtime, setRuntime] = React.useState("all");
+  const [registryError, setRegistryError] = React.useState<string | null>(null);
+  const requestRef = React.useRef(0);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   const fetchAgents = React.useCallback(async () => {
+    const request = ++requestRef.current;
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams({
+        catalog: "true",
+        source,
         page: page.toString(),
         page_size: pageSize.toString(),
       });
       if (search.trim()) params.set("search", search.trim());
+      if (runtime !== "all") params.set("runtime", runtime);
       const response = await fetch(`/api/dynamic-agents?${params}`);
       const data = await response.json();
+      if (request !== requestRef.current) return;
       if (data.success) {
         setAgents(
-          (data.data.items || []).map((agent: DynamicAgentConfigWithPermissions) => ({
+          (data.data.items || []).map((agent: AgentCatalogEntry) => isConnectedAgent(agent) ? agent : ({
             ...agent,
             permissions: agent.permissions ?? DEFAULT_ROW_PERMISSIONS,
           })),
         );
         setTotal(data.data.total ?? 0);
+        setRegistryError(data.data.registry_error || null);
       } else {
         setError(data.error || "Failed to fetch agents");
       }
     } catch (err) {
-      setError(getErrorMessage(err, "") || "Failed to fetch agents");
+      if (request === requestRef.current) setError(getErrorMessage(err, "") || "Failed to fetch agents");
     } finally {
-      setLoading(false);
+      if (request === requestRef.current) setLoading(false);
     }
-  }, [page, pageSize, search]);
+  }, [page, pageSize, search, source, runtime]);
 
   React.useEffect(() => {
-    fetchAgents();
+    void fetchAgents();
+    return () => { requestRef.current += 1; };
   }, [fetchAgents]);
 
   React.useEffect(() => {
@@ -414,29 +438,43 @@ export function DynamicAgentsTab({
   }
 
   return (
-    <>
+    <RemoteAgentRegistry onRegistryChange={() => void fetchAgents()} renderCatalog={remote => <>
       <WorkspacePageActions>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <div className="relative">
+        <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
+          <div className="relative col-span-2 min-w-0 sm:flex-[1_0_12rem] xl:flex-none">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Search by name or ID..."
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              className="h-9 w-48 pl-9"
+              aria-label="Search agents"
+              className="h-9 w-full pl-9 sm:min-w-48 xl:w-48"
             />
           </div>
-          <Button variant="outline" size="sm" onClick={fetchAgents} disabled={loading}>
+          <Button variant="outline" size="sm" className="h-10 sm:h-9" onClick={() => { void fetchAgents(); remote.refresh(); }} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
-          <Button size="sm" onClick={() => setIsCreating(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            New Agent
+          {remote.toolbar}
+          <Button size="sm" className="h-auto min-h-10 whitespace-normal px-2 py-2 text-xs leading-tight sm:h-9 sm:min-h-0 sm:whitespace-nowrap sm:px-3 sm:text-sm" onClick={startCreating}>
+            <Plus className="mr-2 hidden h-4 w-4 sm:block" />
+            Create CAIPE Agent
           </Button>
         </div>
       </WorkspacePageActions>
-      <Card className="rounded-none border-0 bg-transparent shadow-none">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="grid w-full grid-cols-3 gap-1 sm:flex sm:w-auto" role="group" aria-label="Agent source">{[["all", "All agents"], ["created", "Created in CAIPE"], ["connected", "Connected"]].map(([key, label]) => <Button key={key} type="button" className="h-auto min-h-9 min-w-0 whitespace-normal px-2 py-2 text-xs leading-tight sm:whitespace-nowrap sm:px-3 sm:text-sm" variant={source === key ? "secondary" : "ghost"} size="sm" aria-pressed={source === key} onClick={() => { setSource(key); setPage(1); }}>{label}</Button>)}</div>
+        <div className="grid w-full min-w-0 grid-cols-1 items-center gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_auto] sm:ml-auto sm:w-auto sm:flex sm:flex-wrap">
+          <Select aria-label="Filter runtime or connection" className="w-full min-w-0 sm:w-48" value={runtime} onChange={event => { setRuntime(event.target.value); setPage(1); }}><option value="all">All runtimes</option><optgroup label="Runtime"><option value="dynamic_agents">Deep Agents</option><option value="claude_agent_sdk">Claude Agent SDK</option><option value="claude_code_cli_acp">Claude Code</option><option value="agentcore">AgentCore</option><option value="google_adk">Google ADK</option><option value="app">App assistant</option></optgroup><optgroup label="Connection"><option value="a2a">A2A</option><option value="acp">ACP</option></optgroup></Select>
+          <div className="flex shrink-0 gap-1 rounded-lg border p-1 [&>button]:flex-1" role="group" aria-label="Catalog view"><Button type="button" size="sm" variant={view === "grid" ? "secondary" : "ghost"} aria-pressed={view === "grid"} onClick={() => setView("grid")}><LayoutGrid className="mr-2 h-4 w-4" />Grid</Button><Button type="button" size="sm" variant={view === "list" ? "secondary" : "ghost"} aria-pressed={view === "list"} onClick={() => setView("list")}><List className="mr-2 h-4 w-4" />List</Button></div>
+          {view === "grid" && <label className="col-span-full flex h-10 min-w-0 items-center gap-3 rounded-lg border px-3 sm:w-56">
+            <span className="shrink-0 text-xs">Card size<span aria-hidden="true" className="block text-[10px] text-muted-foreground">{cardSizeOption.label}</span></span>
+            <input type="range" aria-label="Card size" aria-valuetext={cardSizeOption.label} min={0} max={AGENT_CARD_SIZES.length - 1} step={1} value={cardSizeIndex} onChange={event => setCardSize(AGENT_CARD_SIZES[Number(event.target.value)].id)} className="h-8 min-w-0 flex-1 cursor-pointer accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" />
+          </label>}
+        </div>
+      </div>
+      {registryError && <p role="alert" className="mb-3 text-sm text-destructive">{registryError}</p>}
+      <Card className="@container/catalog min-w-0 rounded-none border-0 bg-transparent shadow-none">
         <CardContent className="px-0 pt-0">
         {loading ? (
           <AgentsListSkeleton />
@@ -464,9 +502,9 @@ export function DynamicAgentsTab({
                 <p className="text-muted-foreground mb-4">
                   Create an agent when you are ready to give your team a tailored assistant.
                 </p>
-                <Button onClick={() => setIsCreating(true)}>
+                <Button onClick={startCreating}>
                   <Plus className="h-4 w-4 mr-2" />
-                  Create Agent
+                  Create CAIPE Agent
                 </Button>
               </>
             )}
@@ -474,13 +512,13 @@ export function DynamicAgentsTab({
         ) : (
           <div className="space-y-3">
             {/* Header */}
-            <div className="grid grid-cols-12 gap-4 pb-2 border-b text-xs font-medium text-muted-foreground px-2">
-              <div className="col-span-4">Name</div>
-              <div className="col-span-2">Visibility</div>
-              <div className="col-span-1">Tools</div>
-              <div className="col-span-1">Grade</div>
-              <div className="col-span-2">Status</div>
-              <div className="col-span-2 text-right">Actions</div>
+            <div className={`${view === "grid" ? "hidden" : "hidden @[64rem]/catalog:grid"} grid-cols-12 gap-4 pb-2 border-b text-xs font-medium text-muted-foreground px-2`}>
+              <div className="@[64rem]/catalog:col-span-4">Name</div>
+              <div className="@[64rem]/catalog:col-span-2">Visibility</div>
+              <div className="@[64rem]/catalog:col-span-1">Tools</div>
+              <div className="@[64rem]/catalog:col-span-1">Grade</div>
+              <div className="@[64rem]/catalog:col-span-2">Status</div>
+              <div className="@[64rem]/catalog:col-span-2 text-right">Actions</div>
             </div>
 
             {/* Result count */}
@@ -493,61 +531,13 @@ export function DynamicAgentsTab({
             )}
 
             {/* Agent rows */}
+            <div className={view === "grid" ? "grid gap-3" : "space-y-2"} style={view === "grid" ? { gridTemplateColumns: `repeat(auto-fill,minmax(min(100%,${cardSizeOption.minWidth}px),1fr))` } : undefined} aria-label="Agent catalog">
             {agents.map((agent) => {
+              if (isConnectedAgent(agent)) return remote.renderAgent(agent, view);
               const canManage = agentCanManage(agent);
               const rowActionError = rowActionErrors[agent._id];
-              return (
-              <div key={agent._id} className="space-y-2">
-              <div
-                className="grid grid-cols-12 gap-4 py-3 px-2 rounded-lg hover:bg-muted/50 items-center cursor-pointer"
-                onClick={() => openAgent(agent)}
-              >
-                <div className="col-span-4 min-w-0">
-                    <div className="flex items-center gap-3">
-                      <AgentAvatar
-                        agent={agent}
-                        rounded="rounded-lg"
-                        size="h-9 w-9"
-                        iconSize="h-5 w-5"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <div className="truncate font-medium text-sm" title={agent.name}>{agent.name}</div>
-                          <AgentHarnessBadge
-                            harnessId={agent.execution_harness_id}
-                            presentation={agent.presentation}
-                          />
-                        </div>
-                        {agent.description && (
-                          <div className="text-xs text-muted-foreground truncate">
-                            {agent.description}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                </div>
-
-                <div className="col-span-2">
-                  <Badge
-                    variant="outline"
-                    className={`gap-1 ${getVisibilityColor(agent.visibility)}`}
-                  >
-                    {getVisibilityIcon(agent.visibility)}
-                    {agent.visibility}
-                  </Badge>
-                </div>
-
-                <div className="col-span-1">
-                  <span className="text-sm text-muted-foreground">
-                    {Object.keys(agent.allowed_tools || {}).length}
-                  </span>
-                </div>
-
-                <div className="col-span-1">
-                  <LastReviewBadge review={agent.last_review} />
-                </div>
-
-                <div className="col-span-2">
+              const status = (
+                <div className="@[64rem]/catalog:col-span-2">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -578,8 +568,9 @@ export function DynamicAgentsTab({
                     )}
                   </button>
                 </div>
-
-                <div className="col-span-2 flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+);
+              const actions = (
+                <div className="col-span-2 flex min-w-0 flex-wrap items-center justify-start gap-1 @[64rem]/catalog:justify-end" onClick={(e) => e.stopPropagation()}>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -624,7 +615,7 @@ export function DynamicAgentsTab({
                   )}
                   {!agent.is_system && !agent.config_driven && canManage && (
                     pendingDeleteAgentId === agent._id ? (
-                      <div className="flex items-center gap-1 rounded-full border border-destructive/20 bg-destructive/10 px-2 py-1">
+                      <div className="flex flex-wrap items-center gap-1 rounded-full border border-destructive/20 bg-destructive/10 px-2 py-1">
                         <span className="max-w-[7rem] truncate text-xs font-medium text-destructive">
                           Delete {agent.name}?
                         </span>
@@ -670,15 +661,62 @@ export function DynamicAgentsTab({
                       </Button>
                     )
                   )}
+                </div>);
+              if (view === "grid") return <NativeAgentCatalogCard key={`caipe:${agent._id}`} agent={agent} actions={actions} status={status} onOpen={() => openAgent(agent)} onChat={() => void handleStartChat(agent)} chatDisabled={!agent.enabled || agent.execution_readiness?.ready === false || startingChatAgentId !== null} error={rowActionError} onDismiss={() => clearRowActionError(agent._id)} />;
+              return (
+              <div key={agent._id} className="space-y-2">
+              <div
+                className="grid min-w-0 grid-cols-2 items-center gap-3 rounded-lg border p-3 hover:bg-muted/50 cursor-pointer @[64rem]/catalog:grid-cols-12 @[64rem]/catalog:gap-4 @[64rem]/catalog:border-0 @[64rem]/catalog:px-2"
+                onClick={() => openAgent(agent)}
+              >
+                <div className="col-span-2 min-w-0 @[64rem]/catalog:col-span-4">
+                    <div className="flex items-center gap-3">
+                      <AgentIdentity agent={agent} harnessId={agent.execution_harness_id} presentation={agent.presentation} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className="truncate font-medium text-sm" title={agent.name}>{agent.name}</div>
+
+                        </div>
+                        {agent.description && (
+                          <div className="text-xs text-muted-foreground truncate">
+                            {agent.description}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                 </div>
+
+                <div className="@[64rem]/catalog:col-span-2">
+                  <Badge
+                    variant="outline"
+                    className={`gap-1 ${getVisibilityColor(agent.visibility)}`}
+                  >
+                    {getVisibilityIcon(agent.visibility)}
+                    {agent.visibility}
+                  </Badge>
+                </div>
+
+                <div className="@[64rem]/catalog:col-span-1">
+                  <span className="text-sm text-muted-foreground">
+                    <span className="@[64rem]/catalog:hidden">MCP servers: </span>{Object.keys(agent.allowed_tools || {}).length}
+                  </span>
+                </div>
+
+                <div className="@[64rem]/catalog:col-span-1">
+                  <span className="mr-1 text-xs text-muted-foreground @[64rem]/catalog:hidden">Review:</span><LastReviewBadge review={agent.last_review} />{!agent.last_review && <span className="text-xs text-muted-foreground">—</span>}
+                </div>
+
+                {status}
+
+                {actions}
               </div>
 
               {rowActionError && (
-                <div className="ml-12 pl-4 border-l-2 border-destructive/30">
+                <div className="min-w-0 border-l-2 border-destructive/30 pl-3 sm:ml-12 sm:pl-4">
                   <div className="flex items-start gap-2 rounded-lg bg-destructive/10 border border-destructive/30 p-3">
                     <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
-                    <div className="flex flex-1 items-start justify-between gap-3">
-                      <p className="text-sm text-destructive">{rowActionError}</p>
+                    <div className="flex min-w-0 flex-1 flex-wrap items-start justify-between gap-3">
+                      <p className="min-w-0 text-sm text-destructive [overflow-wrap:anywhere]">{rowActionError}</p>
                       <Button
                         type="button"
                         variant="ghost"
@@ -695,14 +733,15 @@ export function DynamicAgentsTab({
               </div>
             );
             })}
+            </div>
 
             {/* Pagination */}
-            {total > pageSize && (
-              <div className="flex items-center justify-between pt-4 gap-4 border-t">
+            {total > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
                 <span className="text-sm text-muted-foreground whitespace-nowrap">
                   Showing {Math.min((page - 1) * pageSize + 1, total)}–{Math.min(page * pageSize, total)} of {total}
                 </span>
-                <div className="flex items-center gap-1">
+                {totalPages > 1 && <div className="flex flex-wrap items-center gap-1">
                   <Button
                     variant="outline"
                     size="icon"
@@ -743,13 +782,14 @@ export function DynamicAgentsTab({
                   >
                     <ChevronRight className="h-4 w-4" />
                   </Button>
-                </div>
+                </div>}
                 <div className="flex items-center gap-2">
-                  <label className="text-sm text-muted-foreground whitespace-nowrap">Rows</label>
+                  <label htmlFor="agent-catalog-page-size" className="text-sm text-muted-foreground whitespace-nowrap">Agents per page</label>
                   <Select
+                    id="agent-catalog-page-size"
                     value={pageSize}
                     onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-                    className="h-8 rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="h-9 w-20 shrink-0 px-2 py-1"
                   >
                     {[10, 20, 50, 100].map((size) => (
                       <option key={size} value={size}>{size}</option>
@@ -762,6 +802,6 @@ export function DynamicAgentsTab({
         )}
         </CardContent>
       </Card>
-    </>
+    </>} />
   );
 }
