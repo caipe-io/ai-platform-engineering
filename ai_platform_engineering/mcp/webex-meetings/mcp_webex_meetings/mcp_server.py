@@ -26,6 +26,7 @@ RECORDING_PRIVILEGE_PATH = "/wbxappapi/v2/recordings/wbxapp/privilege"
 USERHUB_RECORDINGS_PAGE_SIZE = 100
 USERHUB_RECORDINGS_MAX_RESULTS = 1000
 USERHUB_RECORDING_DETAIL_LIMIT = 100
+USERHUB_RECORDING_DETAIL_CONCURRENCY = 4
 USERHUB_RECORDING_DISCOVERY_WINDOW = timedelta(days=2)
 USERHUB_OCCURRENCE_MATCH_WINDOW = timedelta(hours=12)
 USERHUB_RECORDING_SUFFIX = re.compile(r"-\d{8}\s+\d{4}(?:-\d+)?$")
@@ -913,7 +914,7 @@ async def _userhub_transcripts_for_meeting(
     if meeting_id is not None and verified_occurrence_start is not None:
         occurrence_starts[meeting_id] = verified_occurrence_start
     unavailable_instances: set[str] = set()
-    semaphore = asyncio.Semaphore(4)
+    semaphore = asyncio.Semaphore(USERHUB_RECORDING_DETAIL_CONCURRENCY)
     candidate_read_failed = False
 
     async def read_candidate(recording: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str] | None:
@@ -929,8 +930,10 @@ async def _userhub_transcripts_for_meeting(
                 )
                 detail_response.raise_for_status()
             detail = detail_response.json()
-        except httpx.HTTPStatusError:
-            logger.warning("User Hub recording detail request failed for %s", recording_uuid)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429 or exc.response.status_code >= 500:
+                candidate_read_failed = True
+            logger.warning("User Hub recording detail HTTP %s for %s", exc.response.status_code, recording_uuid)
             return None
         except (httpx.RequestError, ValueError):
             # An unread candidate must not make another instance appear unique.
@@ -982,16 +985,18 @@ async def _userhub_transcripts_for_meeting(
             occurrence_starts[instance_id] = _parse_iso_datetime(start if isinstance(start, str) else None)
 
     if meeting_id is not None:
-        # An exact identity can stop as soon as the requested segment count is
-        # satisfied. Title/time matching must inspect every bounded candidate.
-        for recording in candidates:
-            candidate = await read_candidate(recording)
+        # Keep exact-ID early exit without serially inspecting a full library
+        # when a recording is absent or renamed. Title/time matching still
+        # inspects every bounded candidate to detect ambiguous occurrences.
+        for offset in range(0, len(candidates), USERHUB_RECORDING_DETAIL_CONCURRENCY):
+            batch = candidates[offset:offset + USERHUB_RECORDING_DETAIL_CONCURRENCY]
+            checked = await asyncio.gather(*(read_candidate(recording) for recording in batch))
+            resolved.extend(candidate for candidate in checked if candidate is not None)
+            if len(resolved) >= max_results:
+                resolved = resolved[:max_results]
+                break
             if candidate_read_failed:
                 raise RuntimeError("User Hub recording metadata could not be verified.")
-            if candidate is not None:
-                resolved.append(candidate)
-                if len(resolved) >= max_results:
-                    break
     else:
         checked = await asyncio.gather(*(read_candidate(recording) for recording in candidates))
         if candidate_read_failed:
