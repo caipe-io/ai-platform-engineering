@@ -107,6 +107,8 @@ export interface ChatMessage {
   /** Stream events for Dynamic Agents (stored per-message) */
   streamEvents?: StreamEvent[];
   isFinal?: boolean;
+  /** View-only Engine replay; reconcile with the persisted answer before saving. */
+  isReadOnlyReplay?: boolean;
   feedback?: MessageFeedback;
   /** Turn ID links user message to its assistant response for event grouping */
   turnId?: string;

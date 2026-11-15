@@ -1,3 +1,16 @@
+## 1.4.0-rc.5 (2026-11-12)
+
+### Fix
+
+- **harness**: accept private fsGroup workspaces for Claude isolation (#3383)
+
+## 1.4.0-rc.4 (2026-11-12)
+
+### Fix
+
+- **harness**: isolate remote Claude Code sessions by default (#3377)
+- **chat**: discover new Harness turns in shared tabs (#3376)
+
 ## 1.4.0-rc.3 (2026-11-12)
 
 ### Fix
