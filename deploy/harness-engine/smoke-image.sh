@@ -42,6 +42,12 @@ if [[ "$target" == harness-engine-deep ]]; then
 fi
 if [[ "$target" == claude-cli-acp-worker ]]; then
   docker run "${restrictions[@]}" --entrypoint claude "$image" --version
+  # Test the actual kernel policy and CLI/MCP path on each native build runner.
+  # Requires Landlock ABI 6; unsupported hosts must fail rather than skip.
+  tests_dir=$(cd "$(dirname "$0")/../../ai_platform_engineering/harness_engine/tests" && pwd)
+  for test in claude_isolation_linux.py claude_isolation_integration.py; do
+    docker run "${restrictions[@]}" -v "$tests_dir:/tests:ro" --entrypoint python "$image" "/tests/$test"
+  done
 fi
 if [[ "$target" == claude-cli-acp-worker || "$target" == claude-acp-worker ]]; then
   docker run "${restrictions[@]}" -i --entrypoint python "$image" - <<'PY'

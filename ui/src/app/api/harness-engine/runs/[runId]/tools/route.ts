@@ -13,6 +13,19 @@ import type { AgentBlueprint } from "@/types/harness-engine";
 export const runtime = "nodejs";
 export const maxDuration = 960;
 
+function connectionAuthRequired(error: unknown): boolean {
+  return error instanceof ApiError && error.statusCode === 401 &&
+    ["MCP_AUTH_REQUIRED", "MCP_CREDENTIAL_UNAVAILABLE"].includes(error.code ?? "");
+}
+
+function connectionMessage(server: MCPServerConfig): string {
+  return `Your connection to ${server.name} is unavailable. Connect or reconnect your own provider account in Settings > Connected apps, then start a new turn. This tool has not executed.`;
+}
+
+function permissionMessage(server: MCPServerConfig): string {
+  return `Access to ${server.name} is not permitted for your account. Ask the resource owner for access before using this tool. This tool has not executed.`;
+}
+
 /** Claude tool calls retain the user's identity and the real agent's current policy. */
 export const POST = withErrorHandler(async (
   request: NextRequest,
@@ -59,7 +72,7 @@ export const POST = withErrorHandler(async (
   const permitted = await filterResourcesByPermission(session, selected, {
     type: "mcp_server", action: "invoke", id: server => String(server._id),
   });
-  if (permitted.length !== selected.length) throw new ApiError("MCP server access denied", 403);
+  const permittedIds = new Set(permitted.map(server => String(server._id)));
   const connection = (binding: typeof bindings[number]) => ({
     request, session, agentId: run.agent_id, serverId: binding.serverId,
     server: { ...binding.server, source: "agentgateway" as const,
@@ -68,17 +81,50 @@ export const POST = withErrorHandler(async (
   if (body.operation === "call") {
     const binding = bindings.find(item => item.tool_id === body.tool_id);
     if (!binding) throw new ApiError("Tool is not in the pinned execution allowlist", 403);
+    if (!permittedIds.has(binding.serverId)) throw new ApiError("MCP server access denied", 403);
     if (!body.arguments || typeof body.arguments !== "object" || Array.isArray(body.arguments)) {
       throw new ApiError("Tool arguments must be an object", 400);
     }
-    const result = await callHttpMcpTool({ ...connection(binding), toolName: binding.toolName, args: body.arguments });
-    return NextResponse.json({ success: true, data: result }, { headers: { "Cache-Control": "no-store" } });
+    try {
+      const result = await callHttpMcpTool({ ...connection(binding), toolName: binding.toolName, args: body.arguments });
+      return NextResponse.json({ success: true, data: result }, { headers: { "Cache-Control": "no-store" } });
+    } catch (error) {
+      if (!connectionAuthRequired(error)) throw error;
+      // A confirmed authentication rejection is an MCP tool error, not a
+      // failed conversation. Never retry it or change the caller's identity.
+      return NextResponse.json({ success: true, data: {
+        isError: true, content: [{ type: "text", text: connectionMessage(binding.server) }],
+      } }, { headers: { "Cache-Control": "no-store" } });
+    }
   }
   const schemas = new Map<string, Awaited<ReturnType<typeof listHttpMcpTools>>["tools"]>();
+  const unavailable = new Map<string, string>();
   for (const binding of bindings) {
-    if (!schemas.has(binding.serverId)) schemas.set(binding.serverId, (await listHttpMcpTools(connection(binding))).tools);
+    if (schemas.has(binding.serverId) || unavailable.has(binding.serverId)) continue;
+    if (!permittedIds.has(binding.serverId)) {
+      unavailable.set(binding.serverId, permissionMessage(binding.server));
+      continue;
+    }
+    try {
+      schemas.set(binding.serverId, (await listHttpMcpTools(connection(binding))).tools);
+    } catch (error) {
+      if (connectionAuthRequired(error)) {
+        unavailable.set(binding.serverId, connectionMessage(binding.server));
+      } else if (error instanceof ApiError && error.statusCode === 403 && error.code === "MCP_TOOL_ACCESS_DENIED") {
+        unavailable.set(binding.serverId, permissionMessage(binding.server));
+      } else {
+        throw error;
+      }
+    }
   }
   const tools = bindings.map(binding => {
+    if (unavailable.has(binding.serverId)) {
+      // Preserve the exact pinned tool IDs expected by the worker. These
+      // entries disclose no provider schema or data and confer no access;
+      // calls still pass every live policy and caller-credential check above.
+      return { tool_id: binding.tool_id, description: unavailable.get(binding.serverId)!,
+        input_schema: { type: "object", properties: {}, additionalProperties: false } };
+    }
     const schema = schemas.get(binding.serverId)?.find(tool => tool.name === binding.toolName || tool.namespaced_name === binding.toolName);
     if (!schema) throw new ApiError("A selected MCP tool is unavailable", 409);
     return { tool_id: binding.tool_id, description: schema.description ?? "", input_schema: schema.inputSchema ?? { type: "object" } };

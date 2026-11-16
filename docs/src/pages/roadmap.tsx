@@ -145,7 +145,7 @@ export default function RoadmapPage() {
             <div className={styles.heroCtas}>
               <Link
                 className={styles.primaryBtn}
-                href="https://github.com/orgs/cnoe-io/projects/9"
+                href="https://github.com/orgs/caipe-io/projects/1"
               >
                 View on GitHub Projects ↗
               </Link>
