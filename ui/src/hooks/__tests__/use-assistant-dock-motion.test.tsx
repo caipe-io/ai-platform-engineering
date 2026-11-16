@@ -77,6 +77,30 @@ it("cancels a closing flight when reopened and ignores its stale completion", as
   expect(flights[2].cancel).toHaveBeenCalled();
 });
 
+it("preserves focus moved to a page input during the closing flight", async () => {
+  const view = render(<><Window open /><input aria-label="Page search" /></>);
+  await act(async () => flights[0].finish());
+  screen.getByRole("button", { name: "Minimize" }).focus();
+  view.rerender(<><Window open={false} /><input aria-label="Page search" /></>);
+  const pageInput = screen.getByRole("textbox", { name: "Page search" });
+  pageInput.focus();
+  await act(async () => flights[1].finish());
+  expect(pageInput).toHaveFocus();
+  expect(screen.getByRole("dialog", { hidden: true })).toHaveStyle({ display: "none" });
+});
+
+it("restores launcher focus when inert content releases focus to the body", async () => {
+  const view = render(<Window open />);
+  await act(async () => flights[0].finish());
+  const minimize = screen.getByRole("button", { name: "Minimize" });
+  minimize.focus();
+  view.rerender(<Window open={false} />);
+  minimize.blur();
+  expect(document.body).toHaveFocus();
+  await act(async () => flights[1].finish());
+  expect(screen.getByRole("button", { name: "Open assistant" })).toHaveFocus();
+});
+
 it("settles immediately with reduced motion or without Web Animations", () => {
   reduced = true;
   const view = render(<Window open />);

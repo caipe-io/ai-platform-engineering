@@ -25,8 +25,11 @@ export function useAssistantDockMotion(
     else panel.setAttribute("aria-hidden", "true");
     const settle = () => {
       if (disposed) return;
+      const activeElement = document.activeElement;
+      // Inert content can release focus to the body; preserve a user's new target.
+      const restoreFocus = focusWasInside && (panel.contains(activeElement) || activeElement === document.body);
       panel.style.display = open ? "" : "none";
-      if (!open && focusWasInside) launcher.focus({ preventScroll: true });
+      if (!open && restoreFocus) launcher.focus({ preventScroll: true });
     };
     const from = panel.getBoundingClientRect(), to = launcher.getBoundingClientRect();
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
