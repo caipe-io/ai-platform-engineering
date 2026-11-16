@@ -1226,6 +1226,8 @@ def register_tools(server) -> None:
             # Existing metadata-only privileges supply the exact recording title,
             # without downloading transcripts or returning signed media links.
             semaphore = asyncio.Semaphore(ACTIVITY_WORKERS)
+            result["enrichment_complete"] = True
+            result["enrichment_warnings"] = []
 
             async def enrich(item: dict[str, Any]) -> None:
                 async with semaphore:
@@ -1234,7 +1236,13 @@ def register_tools(server) -> None:
                             client, bearer=bearer, site_url=site, meeting_id=item["id"],
                             max_results=1, download=False,
                         )
-                    except (httpx.HTTPError, ValueError):
+                    except (httpx.HTTPError, ValueError) as error:
+                        logger.warning("Meeting recording metadata lookup failed (meeting=%s, error=%s)", item["id"], type(error).__name__)
+                        result["enrichment_complete"] = False
+                        message = "Some meeting recording details could not be verified."
+                        warnings = result["enrichment_warnings"]
+                        if message not in warnings:
+                            warnings.append(message)
                         return
                 if records:
                     name = records[0].get("meetingTopic")
@@ -1286,8 +1294,8 @@ def register_tools(server) -> None:
                     await asyncio.gather(*(enrich(item) for item in result["items"]))
                     await fill_series_titles()
             except TimeoutError:
-                result["complete"] = False
-                result.setdefault("warnings", []).append("Some meeting titles could not be verified.")
+                result["enrichment_complete"] = False
+                result["enrichment_warnings"].append("Some meeting metadata could not be verified before the time limit.")
             return result
 
     @server.tool(name="webex_userhub_calendar")

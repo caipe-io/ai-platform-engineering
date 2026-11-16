@@ -522,7 +522,7 @@ async def test_exact_id_parallel_batch_preserves_satisfied_early_exit(max_result
             assert [item["id"] for item in await lookup] == ["readable"]
         else:
             with pytest.raises(RuntimeError, match="could not be verified"):
-                await lookup
+                _ = await lookup
 
 
 @pytest.mark.parametrize("download", [False, True])

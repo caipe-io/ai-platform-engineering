@@ -117,6 +117,7 @@ def _retry_after_seconds(value: str | None) -> float:
             if date.tzinfo is not None:
                 return max(0.0, (date - datetime.now(timezone.utc)).total_seconds())
         except (ValueError, TypeError, OverflowError):
+            # Malformed dates use the default backoff below.
             pass
     return 1.0
 

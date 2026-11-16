@@ -199,8 +199,19 @@ page boundaries but do not represent unfinished activity reads.
 
 An intentional result, request-count, activity page or catalog page boundary returns `complete: true` for the
 page and `has_more: true`; callers must continue before claiming full coverage.
-Provider failures and timeouts return `complete: false`, retain
+Discovery provider failures and timeouts return `complete: false`, retain
 resumable work and explain the interruption in `warnings`.
+
+Optional recording/title enrichment is separate from discovery coverage.
+`enrichment_complete: false` and `enrichment_warnings` identify failed recording
+checks or an enrichment timeout without changing discovery's `complete` or
+discarding meetings or already verified content. Inaccessible optional parent
+titles remain in server diagnostics.
+Discovery continuation advances past the returned page; it does not retry that
+page's enrichment. To retry enrichment, keep the returned meetings and repeat
+the same request with its original input `continuation` (or no token for the
+first page), preserving the date bounds and merging rows by actual meeting ID.
+This also applies when `next_continuation` is null on the last page.
 
 Apply `excluded_meeting_ids` to accumulated results and selections before adding
 each page. These exact actual IDs retract an earlier share when session timing

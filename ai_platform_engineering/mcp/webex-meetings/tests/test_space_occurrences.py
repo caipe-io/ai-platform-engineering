@@ -1029,6 +1029,118 @@ async def test_recap_metadata_enrichment_uses_eight_bounded_requests(monkeypatch
     assert all("transcriptVerified" not in row for row in result["items"])
 
 
+@pytest.mark.parametrize("failure", ["http", "timeout", "invalid-json", "invalid-shape"])
+@pytest.mark.parametrize("continuation", [None, "original-input-page"])
+@pytest.mark.asyncio
+async def test_failed_enrichment_preserves_discovery_and_successes_and_can_retry_the_same_page(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    failure: str, continuation: str | None,
+) -> None:
+    recovered = False
+    inputs: list[str | None] = []
+    originals = [{"id": f"{SERIES}_I_{index}", "title": "Existing title", "hasSummary": True} for index in range(3)]
+    originals[1]["transcriptVerified"] = True
+
+    async def occurrences(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        inputs.append(kwargs["continuation"])
+        return {"items": [dict(item) for item in originals], "complete": True, "warnings": [],
+                "has_more": False, "next_continuation": None}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == mcp_server.RECORDING_PRIVILEGE_PATH
+        actual = request.url.params["meetingInstanceId"]
+        if not recovered and actual != originals[0]["id"]:
+            if failure == "http":
+                return httpx.Response(503, text="example-secret")
+            if failure == "timeout":
+                raise httpx.ReadTimeout("example-secret", request=request)
+            if failure == "invalid-json":
+                return httpx.Response(200, content=b"not json: example-secret")
+            return httpx.Response(200, json={"invalid": "example-secret"})
+        return httpx.Response(200, json={"privileges": [{
+            "meetingInstanceId": actual, "recordUUID": f"recording-{actual}",
+            "recordName": "Verified title", "transcriptURL": "https://media.webex.com/transcript.vtt?token=example-secret",
+        }]})
+
+    client_class = httpx.AsyncClient
+    monkeypatch.setattr(mcp_server.httpx, "AsyncClient", lambda **kwargs: client_class(transport=httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr(mcp_server, "_bearer_from_request", lambda: "Bearer example-user-token")
+    monkeypatch.setattr(mcp_server, "list_space_meeting_occurrences", occurrences)
+    registry = ToolRegistry()
+    mcp_server.register_tools(registry)
+    args = mcp_server.SpaceMeetingOccurrences(
+        from_iso=LOWER.isoformat(), to_iso=UPPER.isoformat(), site_url="primary.webex.com", continuation=continuation,
+    )
+    result = await registry.tools["webex_space_meeting_occurrences"](args)
+    assert result["complete"] is True and result["warnings"] == []
+    assert result["has_more"] is False and result["next_continuation"] is None
+    assert result["enrichment_complete"] is False
+    assert result["enrichment_warnings"] == ["Some meeting recording details could not be verified."]
+    assert result["items"][0] == {**originals[0], "title": "Verified title", "hasRecording": True, "transcriptVerified": True}
+    assert result["items"][1:] == originals[1:]
+    assert "example-secret" not in str(result) + caplog.text
+    assert "example-user-token" not in caplog.text
+    assert "Meeting recording metadata lookup failed" in caplog.text
+
+    recovered = True
+    retried = await registry.tools["webex_space_meeting_occurrences"](args)
+    assert inputs == [continuation, continuation]
+    assert retried["complete"] is True and retried["warnings"] == []
+    assert retried["enrichment_complete"] is True and retried["enrichment_warnings"] == []
+    assert [item["id"] for item in retried["items"]] == [item["id"] for item in originals]
+    assert all(item["hasSummary"] and item["hasRecording"] and item["transcriptVerified"] for item in retried["items"])
+
+
+@pytest.mark.parametrize("discovery_complete", [True, False])
+@pytest.mark.asyncio
+async def test_enrichment_deadline_keeps_discovery_state_and_known_content(
+    monkeypatch: pytest.MonkeyPatch, discovery_complete: bool,
+) -> None:
+    slow = f"{SERIES}_I_42"
+    blocked = asyncio.Event()
+    cancelled = asyncio.Event()
+    warnings = [] if discovery_complete else ["Discovery provider failed."]
+
+    async def occurrences(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"items": [{"id": ACTUAL, "title": "Existing title"},
+                          {"id": slow, "title": "Summary title", "hasSummary": True}],
+                "complete": discovery_complete, "warnings": list(warnings),
+                "has_more": True, "next_continuation": "next-discovery-page"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == mcp_server.RECORDING_PRIVILEGE_PATH
+        if request.url.params["meetingInstanceId"] == slow:
+            try:
+                await blocked.wait()
+            finally:
+                cancelled.set()
+        return httpx.Response(200, json={"privileges": [{
+            "meetingInstanceId": ACTUAL, "recordUUID": "recording", "recordName": "Verified title",
+            "transcriptURL": "https://media.webex.com/transcript.vtt",
+        }]})
+
+    client_class = httpx.AsyncClient
+    original_timeout = asyncio.timeout
+    monkeypatch.setattr(mcp_server.asyncio, "timeout", lambda seconds: original_timeout(0.01))
+    monkeypatch.setattr(mcp_server.httpx, "AsyncClient", lambda **kwargs: client_class(transport=httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr(mcp_server, "_bearer_from_request", lambda: "Bearer example-user-token")
+    monkeypatch.setattr(mcp_server, "list_space_meeting_occurrences", occurrences)
+    registry = ToolRegistry()
+    mcp_server.register_tools(registry)
+    result = await registry.tools["webex_space_meeting_occurrences"](mcp_server.SpaceMeetingOccurrences(
+        from_iso=LOWER.isoformat(), to_iso=UPPER.isoformat(), site_url="primary.webex.com",
+    ))
+    assert cancelled.is_set()
+    assert result["complete"] is discovery_complete and result["warnings"] == warnings
+    assert result["has_more"] is True and result["next_continuation"] == "next-discovery-page"
+    assert result["enrichment_complete"] is False
+    assert result["enrichment_warnings"] == ["Some meeting metadata could not be verified before the time limit."]
+    assert result["items"] == [
+        {"id": ACTUAL, "title": "Verified title", "hasRecording": True, "transcriptVerified": True},
+        {"id": slow, "title": "Summary title", "hasSummary": True},
+    ]
+
+
 @pytest.mark.parametrize("metadata", ["valid", "denied", "different-series", "wrong-type", "blank", "malformed", "invalid-json", "timeout"])
 @pytest.mark.asyncio
 async def test_summary_only_recaps_recover_only_the_exact_parent_title(
