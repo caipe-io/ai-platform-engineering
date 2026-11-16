@@ -1,6 +1,7 @@
 "use client";
 
 import { getConfig } from "@/lib/config";
+import { debugLog } from "@/lib/debug-log";
 import { useEffect } from "react";
 
 /**
@@ -16,7 +17,7 @@ export function ThemeInjector() {
     const spinnerColor = getConfig('spinnerColor');
     const defaultGradientTheme = getConfig('defaultGradientTheme');
 
-    console.log('[ThemeInjector] Applying theme:', { gradientFrom, gradientTo, spinnerColor, defaultGradientTheme });
+    debugLog('[ThemeInjector] Applying theme:', { gradientFrom, gradientTo, spinnerColor, defaultGradientTheme });
 
     const root = document.documentElement;
 

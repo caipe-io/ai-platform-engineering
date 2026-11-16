@@ -169,6 +169,8 @@ export interface Config {
   schedulerEnabled: boolean;
   /** Whether the Schedules navigation tab is limited to administrators */
   schedulerAdminOnly: boolean;
+  /** Whether verbose browser-console debug logging is enabled (off unless UI_DEBUG_LOGGING is enabled; server-side runtime env) */
+  uiDebugLogging: boolean;
   /** Whether Jira ticket creation from feedback/report is enabled */
   jiraTicketEnabled: boolean;
   /** Jira project key for ticket creation (e.g., "OPENSD") */
@@ -285,6 +287,7 @@ const DEFAULT_CONFIG: Config = {
   scheduleEditorAgentId: null,
   schedulerEnabled: false,
   schedulerAdminOnly: false,
+  uiDebugLogging: false,
   agentProtocol: 'agui',
   reportProblemEnabled: true,
   provideFeedbackEnabled: false,
@@ -490,6 +493,7 @@ export function getServerConfig(): Config {
     scheduleEditorAgentId: env('SCHEDULE_EDITOR_AGENT_ID') || null,
     schedulerEnabled: env('SCHEDULER_ENABLED') === 'true',
     schedulerAdminOnly: env('SCHEDULER_ADMIN_ONLY') === 'true',
+    uiDebugLogging: enabledEnv('UI_DEBUG_LOGGING'),
     agentProtocol,
     reportProblemEnabled,
     provideFeedbackEnabled,

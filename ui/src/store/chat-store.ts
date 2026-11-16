@@ -9,6 +9,7 @@ import { apiClient, type ConversationListFilter } from "@/lib/api-client";
 import { getStorageMode, shouldUseLocalStorage } from "@/lib/storage-config";
 import type { Artifact, Message as StoredMessage, StoredStreamEvent } from "@/types/mongodb";
 import { MAX_INLINE_PERSIST_BYTES } from "@/lib/file-attachments";
+import { debugLog, isDebugLoggingEnabled } from "@/lib/debug-log";
 
 const LAST_ACTIVE_CONVERSATION_KEY = "caipe-chat-last-active-conversation";
 
@@ -520,7 +521,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             // Clear input-required when streaming resumes (user submitted input)
             const newInputRequired = new Set(prev.inputRequiredConversations);
             newInputRequired.delete(conversationId);
-            console.log(`[Store] Started streaming for conversation: ${conversationId}`);
+            debugLog(`[Store] Started streaming for conversation: ${conversationId}`);
             return {
               streamingConversations: newMap,
               isStreaming: true,
@@ -528,9 +529,9 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             };
           }
           newMap.delete(conversationId);
-          console.log(`[Store] Stopped streaming for conversation: ${conversationId}, remaining: ${newMap.size}`);
+          debugLog(`[Store] Stopped streaming for conversation: ${conversationId}, remaining: ${newMap.size}`);
           const newIsStreaming = newMap.size > 0;
-          console.log(`[Store] Global isStreaming: ${newIsStreaming}`);
+          debugLog(`[Store] Global isStreaming: ${newIsStreaming}`);
           return {
             streamingConversations: newMap,
             isStreaming: newIsStreaming,
@@ -545,7 +546,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             const newUnviewed = new Set(current.unviewedConversations);
             newUnviewed.add(conversationId);
             set({ unviewedConversations: newUnviewed });
-            console.log(`[Store] Marked conversation as unviewed: ${conversationId.substring(0, 8)}`);
+            debugLog(`[Store] Marked conversation as unviewed: ${conversationId.substring(0, 8)}`);
           }
 
           // Reset periodic save counter for this conversation
@@ -560,7 +561,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             get().saveMessagesToServer(conversationId)
               .then(() => {
                 pendingSaveTimestamps.delete(conversationId);
-                console.log(`[ChatStore] Post-stream save completed for: ${conversationId.substring(0, 8)}`);
+                debugLog(`[ChatStore] Post-stream save completed for: ${conversationId.substring(0, 8)}`);
               })
               .catch((error) => {
                 pendingSaveTimestamps.delete(conversationId);
@@ -607,11 +608,11 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           if (streamingState.streamAdapter) {
             const agentId = conv ? getAgentId(conv) : undefined;
             if (agentId) {
-              console.log(`[ChatStore] Cancelling Dynamic Agent stream: conv=${conversationId.substring(0, 8)}, agent=${agentId}`);
+              debugLog(`[ChatStore] Cancelling Dynamic Agent stream: conv=${conversationId.substring(0, 8)}, agent=${agentId}`);
               // Fire-and-forget backend cancel - the abort below will close the client connection
               streamingState.streamAdapter.cancelStream(conversationId, agentId)
                 .then((cancelled) => {
-                  console.log(`[ChatStore] Backend cancel result: cancelled=${cancelled}`);
+                  debugLog(`[ChatStore] Backend cancel result: cancelled=${cancelled}`);
                 })
                 .catch((error) => {
                   console.error('[ChatStore] Backend cancel failed:', error);
@@ -653,7 +654,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             get().saveMessagesToServer(conversationId)
               .then(() => {
                 pendingSaveTimestamps.delete(conversationId);
-                console.log(`[ChatStore] Post-cancel save completed for: ${conversationId.substring(0, 8)}`);
+                debugLog(`[ChatStore] Post-cancel save completed for: ${conversationId.substring(0, 8)}`);
               })
               .catch((error) => {
                 pendingSaveTimestamps.delete(conversationId);
@@ -690,7 +691,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           const newInputRequired = new Set(current.inputRequiredConversations);
           newInputRequired.add(convId);
           set({ inputRequiredConversations: newInputRequired });
-          console.log(`[Store] Marked conversation as input-required: ${convId.substring(0, 8)}`);
+          debugLog(`[Store] Marked conversation as input-required: ${convId.substring(0, 8)}`);
         }
 
         // Periodic save: trigger a background save every PERIODIC_SAVE_EVENT_THRESHOLD
@@ -699,7 +700,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         eventCountSinceLastSave.set(convId, count);
         if (count >= PERIODIC_SAVE_EVENT_THRESHOLD) {
           eventCountSinceLastSave.set(convId, 0);
-          console.log(`[ChatStore] Periodic save triggered after ${PERIODIC_SAVE_EVENT_THRESHOLD} events for: ${convId}`);
+          debugLog(`[ChatStore] Periodic save triggered after ${PERIODIC_SAVE_EVENT_THRESHOLD} events for: ${convId}`);
           get().saveMessagesToServer(convId, { skipNonFinal: true }).catch((error) => {
             console.error('[ChatStore] Periodic save failed:', error);
           });
@@ -788,11 +789,11 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         if (storageMode === 'mongodb') {
           try {
             await apiClient.deleteConversation(id);
-            console.log('[ChatStore] Deleted conversation from MongoDB:', id);
+            debugLog('[ChatStore] Deleted conversation from MongoDB:', id);
           } catch (error) {
             // 404 is expected for conversations that were never saved to MongoDB
             if (isConversationMissingError(error)) {
-              console.log('[ChatStore] Conversation not in MongoDB (expected for new conversations):', id);
+              debugLog('[ChatStore] Conversation not in MongoDB (expected for new conversations):', id);
               return;
             }
 
@@ -864,7 +865,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
               : conv
           ),
         }));
-        console.log('[ChatStore] Updated conversation sharing:', conversationId, sharing);
+        debugLog('[ChatStore] Updated conversation sharing:', conversationId, sharing);
       },
 
       updateConversationTitle: async (conversationId: string, title: string) => {
@@ -887,7 +888,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         if (storageMode === 'mongodb') {
           try {
             await apiClient.updateConversation(conversationId, { title });
-            console.log('[ChatStore] Updated conversation title in MongoDB:', conversationId, title);
+            debugLog('[ChatStore] Updated conversation title in MongoDB:', conversationId, title);
           } catch (error) {
             console.error('[ChatStore] Failed to update conversation title in MongoDB:', error);
             // Revert optimistic update on error
@@ -923,7 +924,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
         // Only load from server in MongoDB mode
         if (storageMode !== 'mongodb') {
-          console.log('[ChatStore] localStorage mode - no server sync needed');
+          debugLog('[ChatStore] localStorage mode - no server sync needed');
           return;
         }
 
@@ -945,13 +946,13 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         const requestKey = `${filter}:${page}`;
         const existingRequest = conversationLoadsInFlight.get(requestKey);
         if (existingRequest) {
-          console.log('[ChatStore] Joining in-flight conversation load:', requestKey);
+          debugLog('[ChatStore] Joining in-flight conversation load:', requestKey);
           return existingRequest;
         }
 
         const request = (async () => {
           try {
-            console.log(`[ChatStore] Loading ${filter} conversations from MongoDB (page ${page})...`);
+            debugLog(`[ChatStore] Loading ${filter} conversations from MongoDB (page ${page})...`);
             let response;
             try {
               response = await apiClient.getConversations({
@@ -964,7 +965,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             // Check if it's an auth error (expected when not logged in)
             const errorMessage = apiError instanceof Error ? apiError.message : String(apiError);
             if (errorMessage.includes('Unauthorized') || errorMessage.includes('401')) {
-              console.log('[ChatStore] User not authenticated - using local storage only');
+              debugLog('[ChatStore] User not authenticated - using local storage only');
             } else {
               console.error('[ChatStore] API call failed:', {
                 error: apiError,
@@ -976,7 +977,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
               return;
             }
 
-          console.log('[ChatStore] API Response:', {
+          debugLog('[ChatStore] API Response:', {
             responseType: typeof response,
             responseIsNull: response === null,
             responseIsUndefined: response === undefined,
@@ -1013,7 +1014,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           }
 
           const serverItems = response.items;
-          console.log(`[ChatStore] Received ${serverItems.length} conversations from server (total: ${response.total})`);
+          debugLog(`[ChatStore] Received ${serverItems.length} conversations from server (total: ${response.total})`);
 
           // MongoDB is the sole source of truth for the conversation list.
           // Messages start empty — loadMessagesFromServer fills them when the
@@ -1071,7 +1072,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           );
 
           if (localOnlyPreserved.length > 0) {
-            console.log(`[ChatStore] Keeping ${localOnlyPreserved.length} local-only conversations (streaming or active audit/shared)`);
+            debugLog(`[ChatStore] Keeping ${localOnlyPreserved.length} local-only conversations (streaming or active audit/shared)`);
           }
 
           const allConversations = [...serverConversations, ...localOnlyPreserved];
@@ -1094,10 +1095,10 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
           if (activeId && !activeStillExists) {
             persistLastActiveConversationId(get().activeConversationId);
-            console.log(`[ChatStore] Active conversation ${activeId.substring(0, 8)} was deleted on another device, switching to first conversation`);
+            debugLog(`[ChatStore] Active conversation ${activeId.substring(0, 8)} was deleted on another device, switching to first conversation`);
           }
 
-          console.log(`[ChatStore] Loaded ${serverConversations.length} conversations from MongoDB (${localOnlyPreserved.length} local-only preserved)`);
+          debugLog(`[ChatStore] Loaded ${serverConversations.length} conversations from MongoDB (${localOnlyPreserved.length} local-only preserved)`);
           } catch (error) {
             console.error('[ChatStore] Failed to load conversations from MongoDB:', error);
             console.error('[ChatStore] Error details:', {
@@ -1158,7 +1159,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
         const toolStartCount = convStreamEvents.filter((e: StreamEvent) => e.type === 'tool_start').length;
         const toolEndCount = convStreamEvents.filter((e: StreamEvent) => e.type === 'tool_end').length;
-        console.log(`[Stream-DEBUG] saveMessagesToServer: conv=${conversationId.substring(0, 8)}, msgs=${conv.messages.length}, streamEvents=${convStreamEvents.length} (${toolStartCount} tool_starts, ${toolEndCount} tool_ends), lastAssistantIdx=${lastAssistantIdx}`);
+        debugLog(`[Stream-DEBUG] saveMessagesToServer: conv=${conversationId.substring(0, 8)}, msgs=${conv.messages.length}, streamEvents=${convStreamEvents.length} (${toolStartCount} tool_starts, ${toolEndCount} tool_ends), lastAssistantIdx=${lastAssistantIdx}`);
 
         let savedCount = 0;
 
@@ -1194,7 +1195,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           // content is written only by the post-stream save (which omits
           // skipNonFinal), ensuring MongoDB always ends up with the right data.
           if (options?.skipNonFinal && msg.role === 'assistant' && !msg.isFinal) {
-            console.log(`[ChatStore] Periodic save: skipping non-final assistant message ${msg.id.substring(0, 8)} (intermediate streaming content)`);
+            debugLog(`[ChatStore] Periodic save: skipping non-final assistant message ${msg.id.substring(0, 8)} (intermediate streaming content)`);
             continue;
           }
 
@@ -1203,7 +1204,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             let serializedStreamEvents: StoredStreamEvent[] | undefined;
             if (idx === lastAssistantIdx && persistableStreamEvents.length > 0) {
               serializedStreamEvents = persistableStreamEvents.map(serializeStreamEvent);
-              console.log(`[ChatStore] Attaching ${persistableStreamEvents.length} conversation-level stream events to assistant message ${msg.id}`);
+              debugLog(`[ChatStore] Attaching ${persistableStreamEvents.length} conversation-level stream events to assistant message ${msg.id}`);
             }
 
             // Persist user attachments as artifacts so the upload stays in the
@@ -1260,7 +1261,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           }
         }
 
-        console.log(`[ChatStore] Upserted ${savedCount} messages (current turn) to MongoDB`);
+        debugLog(`[ChatStore] Upserted ${savedCount} messages (current turn) to MongoDB`);
       },
 
       // Load messages from MongoDB when opening a conversation.
@@ -1276,7 +1277,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
         // Prevent concurrent loads for the same conversation
         if (loadState?.inFlight) {
-          console.log('[ChatStore] Already loading messages for:', conversationId);
+          debugLog('[ChatStore] Already loading messages for:', conversationId);
           return;
         }
 
@@ -1290,7 +1291,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           if (savePendingSince) {
             const elapsed = Date.now() - savePendingSince;
             if (elapsed < PENDING_SAVE_GRACE_MS) {
-              console.log(`[ChatStore] Skipping load — save pending for ${conversationId.substring(0, 8)} (${elapsed}ms ago, grace ${PENDING_SAVE_GRACE_MS}ms)`);
+              debugLog(`[ChatStore] Skipping load — save pending for ${conversationId.substring(0, 8)} (${elapsed}ms ago, grace ${PENDING_SAVE_GRACE_MS}ms)`);
               return;
             }
             // Grace period expired but flag wasn't cleared (save may have failed silently)
@@ -1302,7 +1303,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         if (!force && loadState?.lastLoadedAt) {
           const elapsed = Date.now() - loadState.lastLoadedAt;
           if (elapsed < MESSAGE_LOAD_COOLDOWN_MS) {
-            console.log(`[ChatStore] Skipping reload for ${conversationId} (loaded ${elapsed}ms ago, cooldown ${MESSAGE_LOAD_COOLDOWN_MS}ms)`);
+            debugLog(`[ChatStore] Skipping reload for ${conversationId} (loaded ${elapsed}ms ago, cooldown ${MESSAGE_LOAD_COOLDOWN_MS}ms)`);
             return;
           }
         }
@@ -1310,7 +1311,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         messageLoadState.set(conversationId, { inFlight: true, lastLoadedAt: loadState?.lastLoadedAt ?? 0 });
 
         try {
-          console.log(`[ChatStore] Loading messages from MongoDB for: ${conversationId}`);
+          debugLog(`[ChatStore] Loading messages from MongoDB for: ${conversationId}`);
           const response = await apiClient.getMessages(conversationId, {
             page: 1,
             page_size: MESSAGE_PAGE_SIZE,
@@ -1318,7 +1319,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           });
 
           if (!response?.items || response.items.length === 0) {
-            console.log('[ChatStore] No messages found in MongoDB for:', conversationId);
+            debugLog('[ChatStore] No messages found in MongoDB for:', conversationId);
             set((state: ChatState) => ({
               messageHistory: {
                 ...state.messageHistory,
@@ -1356,13 +1357,13 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
           const toolStartCount = lastTurnStreamEvents.filter((e: StreamEvent) => e.type === 'tool_start').length;
           const toolEndCount = lastTurnStreamEvents.filter((e: StreamEvent) => e.type === 'tool_end').length;
-          console.log(`[Stream-DEBUG] loadMessagesFromServer: conv=${conversationId.substring(0, 8)}, msgs=${messages.length}, lastAssistant=${lastAssistantMsg?.id?.substring(0, 8) ?? 'NONE'}, lastTurnStreamEvents=${lastTurnStreamEvents.length} (${toolStartCount} tool_starts, ${toolEndCount} tool_ends), isStreaming=${isCurrentlyStreaming}`);
+          debugLog(`[Stream-DEBUG] loadMessagesFromServer: conv=${conversationId.substring(0, 8)}, msgs=${messages.length}, lastAssistant=${lastAssistantMsg?.id?.substring(0, 8) ?? 'NONE'}, lastTurnStreamEvents=${lastTurnStreamEvents.length} (${toolStartCount} tool_starts, ${toolEndCount} tool_ends), isStreaming=${isCurrentlyStreaming}`);
 
           if (isCurrentlyStreaming) {
             // Conversation is actively streaming — the in-memory Zustand state is the
             // live buffer being built by the stream. Don't overwrite it with stale MongoDB
             // data. Only merge stream events from MongoDB into local messages that lack them.
-            console.log(`[Stream-DEBUG] ⚠️ loadMessagesFromServer: conversation is streaming — merging events only, preserving live messages`);
+            debugLog(`[Stream-DEBUG] ⚠️ loadMessagesFromServer: conversation is streaming — merging events only, preserving live messages`);
 
             const serverEventsByMsgId = new Map<string, StreamEvent[]>();
             for (const msg of messages) {
@@ -1412,14 +1413,14 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
               };
             });
 
-            console.log(`[ChatStore] Loaded ${messages.length} messages with ${lastTurnStreamEvents.length} stream events from MongoDB for: ${conversationId}`);
+            debugLog(`[ChatStore] Loaded ${messages.length} messages with ${lastTurnStreamEvents.length} stream events from MongoDB for: ${conversationId}`);
           }
 
         } catch (error) {
           if (getErrorMessage(error, "")?.includes('401') || getErrorMessage(error, "")?.includes('Unauthorized')) {
-            console.log('[ChatStore] Not authenticated, skipping message load');
+            debugLog('[ChatStore] Not authenticated, skipping message load');
           } else if (getErrorMessage(error, "")?.includes('404')) {
-            console.log('[ChatStore] Conversation not found in MongoDB (normal for new conversations)');
+            debugLog('[ChatStore] Conversation not found in MongoDB (normal for new conversations)');
           } else {
             console.error('[ChatStore] Failed to load messages from MongoDB:', error);
           }
@@ -1512,7 +1513,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           }),
         }));
 
-        console.log(`[ChatStore] Evicted content from ${evictedCount} messages (~${(freedChars / 1024).toFixed(0)}KB freed) for: ${conversationId.substring(0, 8)}`);
+        debugLog(`[ChatStore] Evicted content from ${evictedCount} messages (~${(freedChars / 1024).toFixed(0)}KB freed) for: ${conversationId.substring(0, 8)}`);
       },
 
       markConversationUnviewed: (conversationId: string) => {
@@ -1619,131 +1620,133 @@ export const useChatStore = shouldUseLocalStorage()
 //                           __caipeDebug.localStorage()    — raw localStorage data
 // ═══════════════════════════════════════════════════════════════
 if (typeof window !== 'undefined') {
-  window.__caipeDebug = {
-    /** Show local messages for the active conversation */
-    messages: () => {
-      const state = useChatStore.getState();
-      const conv = state.conversations.find((c: Conversation) => c.id === state.activeConversationId);
-      if (!conv) { console.log('No active conversation'); return; }
-      console.log(`Conversation: ${conv.id} (${conv.title || 'untitled'})`);
-      console.log(`Messages: ${conv.messages.length}`);
-      console.table(conv.messages.map((m: ChatMessage) => ({
-        id: m.id?.substring(0, 8),
-        role: m.role,
-        contentLen: m.content?.length || 0,
-        contentPreview: (m.content || '').substring(0, 80),
-        isFinal: m.isFinal,
-        isInterrupted: m.isInterrupted,
-        taskId: m.taskId?.substring(0, 8),
-        turnId: m.turnId?.substring(0, 8),
-        streamEvents: m.streamEvents?.length || 0,
-      })));
-      return conv.messages;
-    },
-    /** Fetch messages from MongoDB for the active conversation and compare */
-    compare: async () => {
-      const state = useChatStore.getState();
-      const convId = state.activeConversationId;
-      if (!convId) { console.log('No active conversation'); return; }
-      const conv = state.conversations.find((c: Conversation) => c.id === convId);
-      const localMsgs = conv?.messages || [];
+  if (isDebugLoggingEnabled()) {
+    window.__caipeDebug = {
+      /** Show local messages for the active conversation */
+      messages: () => {
+        const state = useChatStore.getState();
+        const conv = state.conversations.find((c: Conversation) => c.id === state.activeConversationId);
+        if (!conv) { console.log('No active conversation'); return; }
+        console.log(`Conversation: ${conv.id} (${conv.title || 'untitled'})`);
+        console.log(`Messages: ${conv.messages.length}`);
+        console.table(conv.messages.map((m: ChatMessage) => ({
+          id: m.id?.substring(0, 8),
+          role: m.role,
+          contentLen: m.content?.length || 0,
+          contentPreview: (m.content || '').substring(0, 80),
+          isFinal: m.isFinal,
+          isInterrupted: m.isInterrupted,
+          taskId: m.taskId?.substring(0, 8),
+          turnId: m.turnId?.substring(0, 8),
+          streamEvents: m.streamEvents?.length || 0,
+        })));
+        return conv.messages;
+      },
+      /** Fetch messages from MongoDB for the active conversation and compare */
+      compare: async () => {
+        const state = useChatStore.getState();
+        const convId = state.activeConversationId;
+        if (!convId) { console.log('No active conversation'); return; }
+        const conv = state.conversations.find((c: Conversation) => c.id === convId);
+        const localMsgs = conv?.messages || [];
 
-      try {
+        try {
+          const res = await fetch(`/api/chat/conversations/${encodeURIComponent(convId)}/messages?pageSize=100`);
+          const data = await res.json();
+          const mongoMsgs = data.items || data.data || [];
+
+          console.log(`\n=== COMPARISON for ${convId} ===`);
+          console.log(`Local: ${localMsgs.length} messages | MongoDB: ${mongoMsgs.length} messages`);
+
+          const maxLen = Math.max(localMsgs.length, mongoMsgs.length);
+          const rows = [];
+          for (let i = 0; i < maxLen; i++) {
+            const local = localMsgs[i] as ChatMessage | undefined;
+            const mongo = mongoMsgs[i] as StoredMessage | undefined;
+            rows.push({
+              '#': i,
+              localId: local?.id?.substring(0, 8) || '—',
+              mongoId: (mongo?.message_id || mongo?._id?.toString())?.substring(0, 8) || '—',
+              role: local?.role || mongo?.role || '—',
+              localContentLen: local?.content?.length || 0,
+              mongoContentLen: mongo?.content?.length || 0,
+              contentMatch: local && mongo ? (local.content?.length === mongo.content?.length ? '✅' : `❌ Δ${(local.content?.length || 0) - (mongo.content?.length || 0)}`) : '—',
+              localIsFinal: local?.isFinal,
+              mongoIsFinal: mongo?.metadata?.is_final,
+              finalMatch: local && mongo ? (Boolean(local.isFinal) === Boolean(mongo.metadata?.is_final) ? '✅' : '❌') : '—',
+              localInterrupted: local?.isInterrupted,
+              mongoInterrupted: mongo?.metadata?.is_interrupted,
+              localEvents: local?.streamEvents?.length || 0,
+              mongoEvents: mongo?.stream_events?.length || 0,
+            });
+          }
+          console.table(rows);
+          return { local: localMsgs, mongo: mongoMsgs, rows };
+        } catch (err) {
+          console.error('Failed to fetch from MongoDB:', err);
+        }
+      },
+      /** Fetch raw MongoDB messages for active conversation */
+      mongo: async () => {
+        const convId = useChatStore.getState().activeConversationId;
+        if (!convId) { console.log('No active conversation'); return; }
         const res = await fetch(`/api/chat/conversations/${encodeURIComponent(convId)}/messages?pageSize=100`);
         const data = await res.json();
-        const mongoMsgs = data.items || data.data || [];
-
-        console.log(`\n=== COMPARISON for ${convId} ===`);
-        console.log(`Local: ${localMsgs.length} messages | MongoDB: ${mongoMsgs.length} messages`);
-
-        const maxLen = Math.max(localMsgs.length, mongoMsgs.length);
-        const rows = [];
-        for (let i = 0; i < maxLen; i++) {
-          const local = localMsgs[i] as ChatMessage | undefined;
-          const mongo = mongoMsgs[i] as StoredMessage | undefined;
-          rows.push({
-            '#': i,
-            localId: local?.id?.substring(0, 8) || '—',
-            mongoId: (mongo?.message_id || mongo?._id?.toString())?.substring(0, 8) || '—',
-            role: local?.role || mongo?.role || '—',
-            localContentLen: local?.content?.length || 0,
-            mongoContentLen: mongo?.content?.length || 0,
-            contentMatch: local && mongo ? (local.content?.length === mongo.content?.length ? '✅' : `❌ Δ${(local.content?.length || 0) - (mongo.content?.length || 0)}`) : '—',
-            localIsFinal: local?.isFinal,
-            mongoIsFinal: mongo?.metadata?.is_final,
-            finalMatch: local && mongo ? (Boolean(local.isFinal) === Boolean(mongo.metadata?.is_final) ? '✅' : '❌') : '—',
-            localInterrupted: local?.isInterrupted,
-            mongoInterrupted: mongo?.metadata?.is_interrupted,
-            localEvents: local?.streamEvents?.length || 0,
-            mongoEvents: mongo?.stream_events?.length || 0,
-          });
-        }
-        console.table(rows);
-        return { local: localMsgs, mongo: mongoMsgs, rows };
-      } catch (err) {
-        console.error('Failed to fetch from MongoDB:', err);
-      }
-    },
-    /** Fetch raw MongoDB messages for active conversation */
-    mongo: async () => {
-      const convId = useChatStore.getState().activeConversationId;
-      if (!convId) { console.log('No active conversation'); return; }
-      const res = await fetch(`/api/chat/conversations/${encodeURIComponent(convId)}/messages?pageSize=100`);
-      const data = await res.json();
-      const items = (data.items || data.data || []) as StoredMessage[];
-      console.log(`MongoDB: ${items.length} messages for ${convId}`);
-      console.table(items.map((message) => ({
-        id: (message.message_id || message._id?.toString())?.substring(0, 8),
-        role: message.role,
-        contentLen: message.content?.length || 0,
-        contentPreview: (message.content || '').substring(0, 80),
-        is_final: message.metadata?.is_final,
-        is_interrupted: message.metadata?.is_interrupted,
-        task_id: message.metadata?.task_id?.substring(0, 8),
-        events: message.stream_events?.length || 0,
-      })));
-      return items;
-    },
-    /** Show raw localStorage cache data */
-    localStorage: () => {
-      for (const key of ['caipe-chat-history', 'caipe-chat-history-mongodb-cache']) {
-        const raw = window.localStorage.getItem(key);
-        if (raw) {
-          try {
-            const parsed = JSON.parse(raw);
-            const convs = (parsed?.state?.conversations || []) as DebugLocalConversation[];
-            console.log(`\n=== ${key} ===`);
-            console.log(`Conversations: ${convs.length}`);
-            for (const conv of convs) {
-              console.log(`  ${conv.id?.substring(0, 8)}: "${conv.title}" — ${conv.messages?.length || 0} messages`);
-              if (conv.messages) {
-                console.table(conv.messages.map((message) => ({
-                  id: message.id?.substring(0, 8),
-                  role: message.role,
-                  contentLen: message.content?.length || 0,
-                  isFinal: message.isFinal,
-                  isInterrupted: message.isInterrupted,
-                })));
+        const items = (data.items || data.data || []) as StoredMessage[];
+        console.log(`MongoDB: ${items.length} messages for ${convId}`);
+        console.table(items.map((message) => ({
+          id: (message.message_id || message._id?.toString())?.substring(0, 8),
+          role: message.role,
+          contentLen: message.content?.length || 0,
+          contentPreview: (message.content || '').substring(0, 80),
+          is_final: message.metadata?.is_final,
+          is_interrupted: message.metadata?.is_interrupted,
+          task_id: message.metadata?.task_id?.substring(0, 8),
+          events: message.stream_events?.length || 0,
+        })));
+        return items;
+      },
+      /** Show raw localStorage cache data */
+      localStorage: () => {
+        for (const key of ['caipe-chat-history', 'caipe-chat-history-mongodb-cache']) {
+          const raw = window.localStorage.getItem(key);
+          if (raw) {
+            try {
+              const parsed = JSON.parse(raw);
+              const convs = (parsed?.state?.conversations || []) as DebugLocalConversation[];
+              console.log(`\n=== ${key} ===`);
+              console.log(`Conversations: ${convs.length}`);
+              for (const conv of convs) {
+                console.log(`  ${conv.id?.substring(0, 8)}: "${conv.title}" — ${conv.messages?.length || 0} messages`);
+                if (conv.messages) {
+                  console.table(conv.messages.map((message) => ({
+                    id: message.id?.substring(0, 8),
+                    role: message.role,
+                    contentLen: message.content?.length || 0,
+                    isFinal: message.isFinal,
+                    isInterrupted: message.isInterrupted,
+                  })));
+                }
               }
-            }
-          } catch { console.log(`${key}: parse error`); }
-        } else {
-          console.log(`${key}: not found`);
+            } catch { console.log(`${key}: parse error`); }
+          } else {
+            console.log(`${key}: not found`);
+          }
         }
-      }
-    },
-    /** Show storage mode info */
-    storageMode: () => {
-      const mode = getStorageMode();
-      console.log(`Storage mode: ${mode}`);
-      if (mode === 'mongodb') {
-        console.log('MongoDB is sole source of truth — no localStorage cache');
-      } else {
-        console.log('localStorage mode — data persisted in browser only');
-      }
-    },
-  };
-  console.log('[CAIPE] Debug helpers available: __caipeDebug.messages(), __caipeDebug.compare(), __caipeDebug.mongo(), __caipeDebug.localStorage(), __caipeDebug.storageMode()');
+      },
+      /** Show storage mode info */
+      storageMode: () => {
+        const mode = getStorageMode();
+        console.log(`Storage mode: ${mode}`);
+        if (mode === 'mongodb') {
+          console.log('MongoDB is sole source of truth — no localStorage cache');
+        } else {
+          console.log('localStorage mode — data persisted in browser only');
+        }
+      },
+    };
+    console.log('[CAIPE] Debug helpers available: __caipeDebug.messages(), __caipeDebug.compare(), __caipeDebug.mongo(), __caipeDebug.localStorage(), __caipeDebug.storageMode()');
+  }
 
   // ── ONE-TIME CLEANUP: Remove stale localStorage cache from MongoDB mode ──
   // Previous versions used localStorage as a cache in MongoDB mode under the key
@@ -1752,7 +1755,7 @@ if (typeof window !== 'undefined') {
   if (getStorageMode() === 'mongodb') {
     const staleKey = 'caipe-chat-history-mongodb-cache';
     if (window.localStorage.getItem(staleKey)) {
-      console.log(`[ChatStore] Removing stale localStorage cache: ${staleKey}`);
+      debugLog(`[ChatStore] Removing stale localStorage cache: ${staleKey}`);
       window.localStorage.removeItem(staleKey);
     }
   }
@@ -1769,7 +1772,7 @@ if (typeof window !== 'undefined') {
     const state = useChatStore.getState();
     if (state.streamingConversations.size === 0) return;
 
-    console.log(`[ChatStore] Tab hidden/closing — saving ${state.streamingConversations.size} in-flight conversation(s)`);
+    debugLog(`[ChatStore] Tab hidden/closing — saving ${state.streamingConversations.size} in-flight conversation(s)`);
     for (const [conversationId] of state.streamingConversations) {
       // Reset periodic save counter
       eventCountSinceLastSave.delete(conversationId);

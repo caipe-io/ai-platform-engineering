@@ -43,6 +43,7 @@ MessageSquareText,
 import { useSession } from "next-auth/react";
 import { usePathname,useRouter } from "next/navigation";
 import React from "react";
+import { debugLog } from "@/lib/debug-log";
 
 const APPLICATION_SECTION_LABELS: Record<string,string> = {
   "agent-builder": "Agent Builder",
@@ -148,9 +149,9 @@ export function AppHeader() {
   // Debug logging for admin tab
   React.useEffect(() => {
     if (session) {
-      console.log('[AppHeader] Session role:', session.role);
+      debugLog('[AppHeader] Session role:', session.role);
       // Note: groups removed from session to prevent oversized cookies
-      console.log('[AppHeader] Is admin (with MongoDB check)?', isAdmin);
+      debugLog('[AppHeader] Is admin (with MongoDB check)?', isAdmin);
     }
   }, [session, isAdmin]);
 
