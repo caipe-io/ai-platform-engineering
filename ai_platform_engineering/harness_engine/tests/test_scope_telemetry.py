@@ -3,13 +3,12 @@ from collections.abc import Iterator
 from unittest.mock import Mock
 
 import pytest
+from agent_telemetry import scope as scope_module
+from agent_telemetry.scope import current_scope_run, scope_session
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-
-from agent_telemetry import scope as scope_module
-from agent_telemetry.scope import current_scope_run, scope_session
 
 
 @pytest.fixture
