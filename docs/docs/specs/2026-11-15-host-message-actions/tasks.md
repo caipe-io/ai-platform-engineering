@@ -120,7 +120,7 @@
 
 ## Phase 8: Polish
 
-- [ ] T039 Run the full quickstart in `quickstart.md`, including the negative checks. Not run yet: it needs a running stack with a test app. The negative checks and the call contract are covered by automated tests.
+- [x] T039 Run the full quickstart in `quickstart.md`, including the negative checks. Done against the demo app (`ui/examples/external-apps/actions-demo`): the real UI in headless Chrome and the real routes. Verified: stored message id matches, actions on fresh and reloaded answers, dialog prefill, edit and submit, app error text, length limit, Escape and focus return, per-user show and hide, 404, 409, 400, bad response, redirect, app 401 mapping, 30 s timeout. Not verifiable under the dev bypass: 401, service account, non-owner (unit tests cover them). Left for a person: visual polish, screen reader, Safari and Firefox, a real second user.
 - [x] T040 Run `cd ui && npm run lint && npm run build` and the Jest paths from T001. Fix failures.
 - [x] T041 Check that no real product, company or person names appear in code, tests, docs or fixtures (repo rule). Check that no audit event or log line contains action text.
 - [x] T042 Confirm SC-008: an app with no `messageActions` renders and behaves as before. Add a regression assertion to `DynamicAgentChatPanel.messageActions.test.tsx`.
