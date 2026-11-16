@@ -303,15 +303,8 @@ describe("AgentGateway MCP discovery", () => {
     ]);
   });
 
-  it("attaches built-in provider_connection credential source for confluence", () => {
-    expect(builtinCredentialSourcesFor("confluence")).toEqual([
-      {
-        kind: "provider_connection",
-        name: "X-CAIPE-Provider-Token",
-        provider: "atlassian",
-        target: "header",
-      },
-    ]);
+  it("returns empty credential_sources for confluence (uses service-account token, not per-user OAuth)", () => {
+    expect(builtinCredentialSourcesFor("confluence")).toEqual([]);
   });
 
   it("attaches the caller's Webex connection to webex_meetings", () => {

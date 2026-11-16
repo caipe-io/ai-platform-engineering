@@ -34,31 +34,9 @@ export const BUILTIN_MCP_CREDENTIAL_SOURCES: Record<string, MCPCredentialSource[
       fallback_env: "GITLAB_PERSONAL_ACCESS_TOKEN",
     },
   ],
-  jira: [
-    {
-      kind: "provider_connection",
-      name: "X-CAIPE-Provider-Token",
-      provider: "atlassian",
-      target: "header",
-    },
-  ],
-  confluence: [
-    {
-      kind: "provider_connection",
-      name: "X-CAIPE-Provider-Token",
-      provider: "atlassian",
-      target: "header",
-    },
-  ],
-  pagerduty: [
-    {
-      kind: "provider_connection",
-      name: "X-CAIPE-Provider-Token",
-      provider: "pagerduty",
-      target: "header",
-    },
-  ],
-  // assisted-by claude code claude-sonnet-4-6
+  jira: [],
+  confluence: [],
+  pagerduty: [],
   // webex (messaging) must use X-CAIPE-Provider-Token, not Authorization.
   // Agentgateway jwtAuth validates Authorization as Keycloak JWT; the bridge
   // then rewrites it to the resolved provider token for the upstream MCP pod.

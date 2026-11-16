@@ -277,12 +277,28 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     try {
       if (isHttpMcpServer(server)) {
         if (isAgentGatewayEndpoint(server)) {
-          const listed = await listHttpMcpTools({
-            request,
-            session,
-            server,
-            serverId: id,
-          });
+          let listed: Awaited<ReturnType<typeof listHttpMcpTools>>;
+          try {
+            listed = await listHttpMcpTools({
+              request,
+              session,
+              server,
+              serverId: id,
+            });
+          } catch (gwErr: unknown) {
+            if (gwErr instanceof ApiError) throw gwErr;
+            const msg = gwErr instanceof Error ? gwErr.message : "";
+            const code = gwErr instanceof Error && typeof (gwErr as NodeJS.ErrnoException).cause === "object"
+              ? String(((gwErr as NodeJS.ErrnoException).cause as { code?: unknown })?.code ?? "")
+              : "";
+            if (code === "ECONNREFUSED" || msg.includes("fetch failed")) {
+              throw new ApiError(
+                "AgentGateway is not reachable. Check that the agentgateway service is running and healthy.",
+                503,
+              );
+            }
+            throw new ApiError(msg || "AgentGateway request failed", 502);
+          }
           const toolTest = await smokeTestNoArgumentTool(server, listed.tools, listed.sessionId);
           try {
             await cacheMcpToolCatalog({
@@ -386,10 +402,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         ? String((err.cause as { code?: unknown }).code)
         : "";
 
-      // Handle connection errors to the backend
+      // Handle connection errors to the dynamic-agents backend
       if (causeCode === "ECONNREFUSED" || message.includes("fetch failed")) {
         throw new ApiError(
-          "Dynamic agents service is not available. Please ensure it is running.",
+          "Dynamic agents service is not reachable. Check that the dynamic-agents container is running.",
           503,
         );
       }
