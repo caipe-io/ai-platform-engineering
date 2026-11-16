@@ -377,6 +377,7 @@ export function KeycloakMigrationHealthPanel({ compact = false }: KeycloakMigrat
       setHealth(nextHealth);
     } catch (err) {
       if (hasLoadedHealthRef.current && isTransientFetchFailure(err)) {
+        setError("Failed to refresh — connection error. Try again.");
         return;
       }
       setError(err instanceof Error ? err.message : "Failed to load Keycloak migration health");
