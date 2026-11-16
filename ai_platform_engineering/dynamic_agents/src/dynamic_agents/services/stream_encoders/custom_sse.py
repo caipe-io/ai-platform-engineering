@@ -103,6 +103,7 @@ class CustomStreamEncoder(StreamEncoder[FrameT]):
         namespace: tuple[str, ...],
     ) -> list[FrameT]:
         """Encode transport-neutral runtime signals in the custom protocol."""
+        data, namespace = self._helper.normalize_remote_output(data, namespace)
         if isinstance(data, dict) and data.get("type") == STRUCTURED_OUTPUT_EVENT:
             if isinstance(data.get("payload"), dict):
                 return self.on_structured_output(data["payload"], data.get("schema_id"))
@@ -213,7 +214,7 @@ class CustomStreamEncoder(StreamEncoder[FrameT]):
         if not content:
             return []
 
-        self._helper.accumulate_content(content)
+        self._helper.accumulate_content(content, namespace)
 
         # Old format: event type "content", data wrapped as {"text": ..., "namespace": [...]}
         return [self._frame("content", {"text": content, "namespace": list(namespace)})]
@@ -279,7 +280,7 @@ class CustomStreamEncoder(StreamEncoder[FrameT]):
                             continue
 
                         logger.debug(f"[sse:tool_start] {tool_name} id={tool_call_id[:8]}... ns={namespace}")
-                        self._helper.reset_accumulated_content()
+                        self._helper.reset_accumulated_content(namespace)
                         results.append(
                             self._frame(
                                 "tool_start",

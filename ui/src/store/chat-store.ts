@@ -293,10 +293,14 @@ function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
 }
 
 function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
-  const messagesById = new Map(existing.map((message) => [message.id, message]));
+  const replaysByTurn = new Map(existing.filter(message => message.isReadOnlyReplay && message.turnId)
+    .map(message => [message.turnId, message]));
+  const savedReplies = new Set(incoming.filter(message => message.role === 'assistant' && message.turnId).map(message => message.turnId));
+  const messagesById = new Map(existing.filter(message => !message.isReadOnlyReplay || !savedReplies.has(message.turnId))
+    .map((message) => [message.id, message]));
   for (const message of incoming) {
-    const localMessage = messagesById.get(message.id);
-    messagesById.set(message.id, localMessage?.isFinal && !message.isFinal ? localMessage : message);
+    const localMessage = messagesById.get(message.id) ?? (message.role === 'assistant' ? replaysByTurn.get(message.turnId) : undefined);
+    messagesById.set(message.id, localMessage?.isFinal && !message.isFinal ? { ...localMessage, id: message.id } : message);
   }
 
   const ordered = [...messagesById.values()].sort(
@@ -1164,6 +1168,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         // saveMessagesToServer calls. Re-saving them all is wasteful and causes
         // request spam (one POST per message × every turn).
         const lastAssistantMsg = lastAssistantIdx >= 0 ? conv.messages[lastAssistantIdx] : null;
+        if (lastAssistantMsg?.isReadOnlyReplay) return;
         const messagesToSave: { msg: typeof conv.messages[0]; idx: number }[] = [];
         const currentTurnId = lastAssistantMsg?.turnId;
         if (currentTurnId) {

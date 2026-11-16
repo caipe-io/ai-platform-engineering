@@ -28,7 +28,7 @@ from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.state import StateBackend
 from deepagents.backends.store import StoreBackend
 from deepagents.middleware.skills import SkillsMiddleware
-from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
+from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT, SubAgentMiddleware
 from jinja2 import ChainableUndefined, TemplateSyntaxError
 from jinja2.sandbox import ImmutableSandboxedEnvironment, SecurityError
 from langchain.agents.middleware.pii import PIIMiddleware
@@ -94,6 +94,7 @@ from dynamic_agents.services.model_capabilities import (
     ModelCapabilities,
     get_model_capabilities,
 )
+from dynamic_agents.services.remote_agent_subagent import create_remote_agent_subagent
 from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills, verify_skill_pins
 from dynamic_agents.services.skills_backend import ReadOnlySkillsBackend
@@ -988,9 +989,10 @@ class AgentRuntime:
         if builtin_tools:
             tools = tools + builtin_tools
 
-        # 2b. Add remote A2A agents as delegation tools
+        # 2b. Resolve selected A2A transports; native mode registers them as subagents
         remote_agent_tools = await self._build_remote_agent_tools()
-        if remote_agent_tools:
+        native_remote = self._uses_remote_subagents(self.config)
+        if not native_remote:
             tools = tools + remote_agent_tools
 
         # 3. Wrap all tools with error handling
@@ -1031,6 +1033,10 @@ class AgentRuntime:
 
         # 6. Subagents
         subagents = await self._resolve_subagents(self.config.subagents)
+        if native_remote:
+            subagents.extend(create_remote_agent_subagent(tool) for tool in remote_agent_tools)
+        if native_remote and len({spec["name"] for spec in subagents}) != len(subagents):
+            raise ValueError("Remote and local subagent names must be unique")
         if subagents:
             logger.info(
                 f"Agent '{self.config.name}': resolved {len(subagents)} subagents: {[s['name'] for s in subagents]}"
@@ -1269,6 +1275,10 @@ class AgentRuntime:
             f"tools={len(tools)}, subagents={len(subagents) if subagents else 0}"
         )
 
+    @staticmethod
+    def _uses_remote_subagents(config: DynamicAgentConfig) -> bool:
+        return bool(getattr(getattr(config, "features", None), "remote_agents_as_subagents", False))
+
     async def _build_remote_agent_tools(self, config: DynamicAgentConfig | None = None) -> list:
         """Build tools for a dynamic agent's selected A2A registry entries."""
         agent_config = config or self.config
@@ -1292,6 +1302,7 @@ class AgentRuntime:
                     allowed_http_origins=self.settings.remote_a2a_allowed_http_origins,
                     max_response_bytes=self.settings.remote_a2a_max_response_bytes,
                     max_output_bytes=self.settings.remote_a2a_max_output_bytes,
+                    registry_id=remote_agent["_id"] if self._uses_remote_subagents(agent_config) else None,
                     name=remote_agent.get("name"),
                     description=remote_agent.get("description"),
                     bearer_token=self._auth_bearer,
@@ -1316,6 +1327,11 @@ class AgentRuntime:
                 logger.warning("Skipping remote agent %s: %s", remote_agent.get("_id"), result)
                 continue
             tools.append(result)
+
+        if self._uses_remote_subagents(agent_config):
+            policies = self._build_interrupt_config(tools, set(), agent_config)
+            if any(policies.get(tool.name) for tool in tools):
+                raise ValueError("Migrate remote tool approvals to builtin.task before enabling remote subagents")
 
         logger.info(
             f"Agent '{self.config.name}': added {len(tools)} remote agent tools: "
@@ -1608,7 +1624,12 @@ class AgentRuntime:
                 ),
             }
 
-            # Note: Nested subagents (subagent of subagent) are not supported in this MVP.
+            if self._uses_remote_subagents(subagent_config):
+                remote_specs = [create_remote_agent_subagent(tool) for tool in await self._build_remote_agent_tools(subagent_config)]
+                if remote_specs:
+                    subagent_dict["middleware"].append(SubAgentMiddleware(backend=StateBackend, subagents=remote_specs))
+
+            # Note: Nested local subagents (subagent of subagent) are not supported in this MVP.
             # If needed in the future, we could recursively resolve subagent_config.subagents
             # by passing the updated visited set.
 
@@ -1686,8 +1707,8 @@ class AgentRuntime:
                 tools.extend(mcp_tools)
 
         # 2. Add only the remote A2A agents selected on this subagent.
-        remote_tools = await self._build_remote_agent_tools(subagent_config)
-        tools.extend(remote_tools)
+        if not self._uses_remote_subagents(subagent_config):
+            tools.extend(await self._build_remote_agent_tools(subagent_config))
 
         # 3. Add built-in tools based on subagent's config
         client_ctx = self._client_context.model_dump() if self._client_context else None
