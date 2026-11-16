@@ -622,6 +622,44 @@ async def test_result_resume_keeps_unread_queued_spaces_and_the_next_catalog_pag
 
 
 @pytest.mark.asyncio
+async def test_request_budget_yields_healthy_pages_without_losing_queued_or_catalog_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(spaces, "MAX_REQUESTS", 4)
+    urls = [CONVERSATION.replace("11111111-1111-4111-8111-111111111111", f"{index:08x}-1111-4111-8111-111111111111") for index in range(14)]
+    next_url = "https://conv-primary.wbx2.com/conversation/api/v1/conversations?cursor=next"
+    requests = 0
+    catalog_requests = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requests, catalog_requests
+        requests += 1
+        if request.url.path == "/u2c/api/v1/catalog":
+            return httpx.Response(200, json={"serviceLinks": {"conversation": "https://conv-primary.wbx2.com/conversation/api/v1"}})
+        if request.url.path.endswith("/conversations"):
+            catalog_requests += 1
+            selected = urls[7:] if request.url.params.get("cursor") else urls[:7]
+            return httpx.Response(200, json={"items": [{"url": url} for url in selected]},
+                                  headers={} if request.url.params.get("cursor") else {"Link": f'<{next_url}>; rel="next"'})
+        url = str(request.url).split("?")[0].removesuffix("/activities")
+        index = urls.index(url)
+        cursor = int(request.url.params["maxDate"])
+        return httpx.Response(200, json={"items": [activity(actual=f"{SERIES}_I_{index}", activity_id=f"event-{index}")] if cursor >= 1767636000000 else []})
+
+    pages = [await discover(handler)]
+    assert requests <= 4
+    while pages[-1]["has_more"]:
+        assert len(pages) < 20
+        requests = 0
+        pages.append(await discover(handler, continuation=pages[-1]["next_continuation"]))
+        assert requests <= 4
+    assert len(pages) > 1
+    assert all(page["complete"] and page["warnings"] == [] for page in pages)
+    ids = [row["id"] for page in pages for row in page["items"]]
+    assert len(ids) == len(set(ids)) == 14
+    assert set(ids) == {f"{SERIES}_I_{index}" for index in range(14)}
+    assert catalog_requests == 2
+
+
+@pytest.mark.asyncio
 async def test_timeout_resume_preserves_inflight_queued_and_not_yet_queued_spaces(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(spaces, "DISCOVERY_TIMEOUT", 0.02)
     urls = [CONVERSATION.replace("11111111-1111-4111-8111-111111111111", f"{index:08x}-1111-4111-8111-111111111111") for index in range(14)]

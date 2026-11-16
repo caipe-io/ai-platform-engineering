@@ -165,7 +165,8 @@ class _Discovery:
                 return None
             if self.requests >= MAX_REQUESTS:
                 self.stopped = True
-                self.warn("Discovery request limit reached; results are incomplete.")
+                # Unstarted and in-flight work is retained in the continuation.
+                # Yield a healthy bounded page, just like the catalog/result caps.
                 return None
             self.requests += 1
             try:
