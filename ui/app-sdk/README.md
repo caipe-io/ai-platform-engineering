@@ -4,7 +4,7 @@ The **CAIPE App Contract** covers the shared application manifest and the
 rendering-profile interfaces. The SDK supplies its types and conformance checks;
 neither the contract nor its version checks provide a security sandbox.
 
-Package `@caipe-io/app-sdk@2.0.0-rc.1` supports native component contract `2.0` and the shared
+Package `@caipe-io/app-sdk@2.0.0-rc.2` supports native component contract `2.0` and the shared
 `AgenticAppManifest` API version `2.0`. Native `1.1` is explicitly retained
 for compatibility; a legacy module is never silently relabeled as `2.0`.
 The checker is intentionally
@@ -20,7 +20,7 @@ must run integration checks against each supported host release.
 After registry publication:
 
 ```bash
-npm install --save-dev --save-exact @caipe-io/app-sdk@2.0.0-rc.1
+npm install --save-dev --save-exact @caipe-io/app-sdk@2.0.0-rc.2
 npx caipe-app-check ./manifest.json
 npx caipe-native-check ./unpacked-app-package
 ```
@@ -454,6 +454,25 @@ Declare `ui.assistant.overlay: "host"` to use CAIPE's popup. Optional
   by the session-stream authentication fix.
 - Standalone apps can retain their own assistant when no host exists. Keep it
   outside native bundles; host-owned embedded apps use the host renderer/store.
+
+### Message actions
+
+Apps using the host popup can declare up to four buttons for finished assistant
+answers in `ui.assistant.hostOptions.messageActions`. Full contract:
+[Message actions](../../docs/docs/ui/message-actions.md).
+
+- Check `messageActions.v1` in `chat.assistant.extensions` (native) or
+  `composerExtensions` (iframe) before declaring or enabling actions.
+- Declare `{ id, label, icon, path, dialog? }`. `path` follows the `streamPath`
+  rules. `dialog` adds one editable text field, prefilled with the answer or empty.
+- Enable per user with `configure({ ..., messageActions: { id: { visible } } })`.
+  Actions stay hidden until configured and reset on unmount or account change.
+- Visibility is not authorization. The app endpoint must re-check the caller.
+- The host calls the declared path as the user with
+  `{ conversation_id, message_id, turn_id, action_id, text? }` and expects JSON.
+  Failures return `{ error, code }`.
+- Older hosts reject manifests that declare `messageActions`; require a host
+  release that includes this feature.
 
 ### Open the assistant with a question draft
 

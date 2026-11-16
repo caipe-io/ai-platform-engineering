@@ -79,7 +79,7 @@ export interface AppAssistantContext {
   resourceRefs?: Array<Record<string, string>>;
   suggestedPrompts?: string[];
 }
-export type { AssistantOptions, AssistantConfiguration } from "./assistant-options.mjs";
+export type { AssistantOptions, AssistantConfiguration, MessageActionDeclaration, MessageActionDialog } from "./assistant-options.mjs";
 export interface HostAssistantCapability {
   extensions?: readonly string[];
   configure?(configuration: import("./assistant-options.mjs").AssistantConfiguration): void;
