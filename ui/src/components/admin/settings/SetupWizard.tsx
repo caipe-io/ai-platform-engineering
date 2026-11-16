@@ -17,9 +17,10 @@ import { ModelPicker } from "@/components/ui/model-picker";
 import { getConfig } from "@/lib/config";
 import { useAdminRole } from "@/hooks/use-admin-role";
 import { requestProductTour } from "@/lib/product-tour";
-import type {
-  SetupWizardPayload,
-  SetupWizardSelection,
+import {
+  setupSelectionsMatch,
+  type SetupWizardPayload,
+  type SetupWizardSelection,
 } from "@/lib/setup-wizard";
 import { cn } from "@/lib/utils";
 import {
@@ -53,7 +54,7 @@ import {
   Workflow,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 interface ModelOption {
@@ -412,7 +413,7 @@ export function SetupWizardDialog({
     setSaving(true);
     setError(null);
     try {
-      const state = await patchState({ action: payload?.state.status === "completed" ? "complete" : "progress", current_step: step, selection });
+      const state = await patchState({ action: payload.state.status === "completed" && setupSelectionsMatch(selection, payload.state.selection) ? "complete" : "progress", current_step: step, selection });
       const savedPayload = { ...payload, state };
       onStateChange?.(savedPayload);
       window.dispatchEvent(new Event("caipe:platform-features-updated"));
@@ -511,9 +512,9 @@ export function SetupWizardDialog({
         recipe_id: saved?.recipe_id ?? "sre",
         model_id: defaultModel?._id,
         model_provider: defaultModel?.provider,
-        mcp_server_ids: saved?.mcp_server_ids ?? defaultMcpServerIds,
-        enable_knowledge_base: saved?.enable_knowledge_base
-          ?? defaults.includes("knowledge-base"),
+        mcp_server_ids: (saved?.mcp_server_ids ?? defaultMcpServerIds).filter((id) => id !== "knowledge-base" && defaults.includes(id)),
+        enable_knowledge_base: defaults.includes("knowledge-base")
+          && (saved?.enable_knowledge_base ?? true),
         enabled_features: {
           ...defaultFeatures,
           ...(saved?.enabled_features ?? {}),
@@ -651,7 +652,7 @@ export function SetupWizardDialog({
     setTestResult(null);
     try {
       const selectedMcp = [...new Set([
-        ...(selection.mcp_server_ids ?? []).filter((serverId) => serverId !== "knowledge-base"),
+        ...(selection.mcp_server_ids ?? []).filter((serverId) => serverId !== "knowledge-base" && mcpServers.some((server) => server._id === serverId)),
         ...(selection.enable_knowledge_base && mcpServers.some((server) => server._id === "knowledge-base")
           ? ["knowledge-base"]
           : []),
@@ -698,9 +699,10 @@ export function SetupWizardDialog({
       if (invokePayload.success === false) {
         throw new Error(messageFromPayload(invokePayload, "The starter agent test failed"));
       }
-      const content = typeof invokePayload.content === "string"
-        ? invokePayload.content
-        : "The agent returned a successful response.";
+      const content = typeof invokePayload.content === "string" ? invokePayload.content : "";
+      if (!content.trim()) {
+        throw new Error("The starter agent test returned no reply");
+      }
       await patchState({
         action: "complete",
         current_step: 5,
@@ -1497,6 +1499,8 @@ export function SetupWizardSettings({ readOnly = false }: { readOnly?: boolean }
 export function SetupWizardGate(): React.ReactElement | null {
   const { isAdmin, loading } = useAdminRole();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const readOnly = ["simulate_type", "simulate_id", "simulate_relation"].some((key) => Boolean(searchParams?.get(key)));
   const [payload, setPayload] = useState<SetupWizardPayload | null>(null);
   const [open, setOpen] = useState(false);
   const [restart, setRestart] = useState(false);
@@ -1530,7 +1534,7 @@ export function SetupWizardGate(): React.ReactElement | null {
   }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (loading || !isAdmin || !getConfig("setupWizardEnabled")) return;
+    if (readOnly || loading || !isAdmin || !getConfig("setupWizardEnabled")) return;
     let cancelled = false;
     void jsonRequest<ApiEnvelope<SetupWizardPayload>>("/api/admin/setup-wizard")
       .then((response) => {
@@ -1546,7 +1550,7 @@ export function SetupWizardGate(): React.ReactElement | null {
         // global error. The permanent Admin card exposes actionable failures.
       });
     return () => { cancelled = true; };
-  }, [isAdmin, loading]);
+  }, [isAdmin, loading, readOnly]);
 
   const refreshPayload = () => {
     void jsonRequest<ApiEnvelope<SetupWizardPayload>>("/api/admin/setup-wizard")
@@ -1555,12 +1559,14 @@ export function SetupWizardGate(): React.ReactElement | null {
   };
 
   const openWizard = (shouldRestart = false) => {
+    if (readOnly) return;
     setRestart(shouldRestart);
     setChecklistOpen(false);
     setOpen(true);
   };
 
   const restartSetup = async () => {
+    if (readOnly) return;
     try {
       await jsonRequest<ApiEnvelope<{ state: SetupWizardPayload["state"] }>>("/api/admin/setup-wizard", {
         method: "PATCH",
@@ -1575,6 +1581,7 @@ export function SetupWizardGate(): React.ReactElement | null {
   };
 
   const hideChecklist = async () => {
+    if (readOnly) return;
     setHidingChecklist(true);
     try {
       await jsonRequest<ApiEnvelope<{ state: SetupWizardPayload["state"] }>>("/api/admin/setup-wizard", {
@@ -1589,7 +1596,7 @@ export function SetupWizardGate(): React.ReactElement | null {
     }
   };
 
-  if (pathname === "/admin/configuration/setup-wizard" || !payload || checklistHidden || payload.state.status === "dismissed" || (!resumeAvailable && (payload.state.checklist_hidden || payload.state.status === "completed" || !payload.auto_start))) return null;
+  if (readOnly || pathname === "/admin/configuration/setup-wizard" || !payload || checklistHidden || payload.state.status === "dismissed" || (!resumeAvailable && (payload.state.checklist_hidden || payload.state.status === "completed" || !payload.auto_start))) return null;
 
   const checklistItems: Array<{
     label: string;

@@ -2493,7 +2493,7 @@ _discover_gateway_embedding_model() {
   # namespace than OpenAI's public API. Discover an allowed embedding model so
   # a LiteLLM-backed chat configuration does not fail RAG startup with a 403.
   [[ "${EMBEDDINGS_PROVIDER:-openai}" == "openai" ]] || return 0
-  [[ -z "${_EMBEDDINGS_MODEL_EXPLICIT:-}" ]] || return 0
+  [[ -z "${_EMBEDDINGS_MODEL_EXPLICIT:-}" && -z "${_EMBEDDINGS_MODEL_DEPLOYED:-}" ]] || return 0
   [[ -n "${OPENAI_API_KEY:-}" ]] || return 0
   [[ -n "${OPENAI_ENDPOINT:-}" && "${OPENAI_ENDPOINT%/}" != "https://api.openai.com/v1" ]] || return 0
 
@@ -4877,6 +4877,7 @@ JSON
   # Store in k8s secret so both rag-server and web-ingestor can mount it via envFrom
   kubectl create secret generic rag-ingestor-secret -n caipe \
     --from-literal=INGESTOR_OIDC_ISSUER="${issuer}" \
+    --from-literal=INGESTOR_OIDC_DISCOVERY_URL="$(_internal_oidc_issuer)/.well-known/openid-configuration" \
     --from-literal=INGESTOR_OIDC_CLIENT_ID="${client_id}" \
     --from-literal=INGESTOR_OIDC_CLIENT_SECRET="${client_secret}" \
     --dry-run=client -o yaml | kubectl apply -f - &>/dev/null
@@ -6824,6 +6825,8 @@ deploy_caipe() {
       --set "caipe-ui.config.OIDC_DISCOVERY_URL=$(_internal_oidc_issuer)"
       --set "openfga-authz-bridge.tokenValidation.issuer=$(_browser_oidc_issuer)"
       --set "rag-stack.rag-server.env.OIDC_ISSUER=$(_browser_oidc_issuer)"
+      --set "rag-stack.rag-server.env.OIDC_DISCOVERY_URL=$(_internal_oidc_issuer)"
+      --set "rag-stack.rag-server.env.OIDC_JWKS_URL=$(_internal_oidc_issuer)/protocol/openid-connect/certs"
       --set 'rag-stack.rag-server.env.OIDC_CLIENT_ID=caipe-ui'
       --set 'rag-stack.rag-server.env.OIDC_GROUP_CLAIM=members\,groups'
     )
@@ -7201,6 +7204,8 @@ DAEOF
         # Pass non-secret OIDC config directly as env so the rag-server auth manager
         # can validate ingestor tokens even before the envFrom template fix ships.
         --set "rag-stack.rag-server.env.INGESTOR_OIDC_ISSUER=${RAG_INGESTOR_OIDC_ISSUER}"
+        --set "rag-stack.rag-server.env.INGESTOR_OIDC_DISCOVERY_URL=$(_internal_oidc_issuer)"
+        --set "rag-stack.rag-server.env.INGESTOR_OIDC_JWKS_URL=$(_internal_oidc_issuer)/protocol/openid-connect/certs"
         --set "rag-stack.rag-server.env.INGESTOR_OIDC_CLIENT_ID=${RAG_INGESTOR_OIDC_CLIENT_ID}"
       )
       log "RAG web-ingestor: Keycloak OIDC credentials wired via rag-ingestor-secret"
@@ -8906,7 +8911,10 @@ detect_deployed_features() {
       _dem=$(echo "$_rag_vals" | jq -r '."rag-stack"."rag-server".env.EMBEDDINGS_MODEL // empty' 2>/dev/null || true)
       if [[ -n "$_dep" ]]; then
         EMBEDDINGS_PROVIDER="$_dep"
-        [[ -n "$_dem" && -z "${_EMBEDDINGS_MODEL_EXPLICIT:-}" ]] && EMBEDDINGS_MODEL="$_dem"
+        if [[ -n "$_dem" && -z "${_EMBEDDINGS_MODEL_EXPLICIT:-}" ]]; then
+          EMBEDDINGS_MODEL="$_dem"
+          _EMBEDDINGS_MODEL_DEPLOYED=true
+        fi
         log "Detected RAG embeddings: ${EMBEDDINGS_PROVIDER}/${EMBEDDINGS_MODEL}"
       fi
     fi

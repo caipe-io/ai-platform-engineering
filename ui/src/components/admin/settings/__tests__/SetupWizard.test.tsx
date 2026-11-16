@@ -2,9 +2,11 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { SetupWizardDialog, SetupWizardGate, SetupWizardSettings } from "../SetupWizard";
 
 const mockPush = jest.fn();
+let mockSearchParams = new URLSearchParams();
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
   usePathname: () => "/",
+  useSearchParams: () => mockSearchParams,
 }));
 
 jest.mock("@/hooks/use-admin-role", () => ({
@@ -59,6 +61,7 @@ function response(data: unknown, status = 200): Promise<Response> {
 describe("SetupWizardSettings", () => {
   beforeEach(() => {
     mockPush.mockClear();
+    mockSearchParams = new URLSearchParams();
     global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/admin/setup-wizard" && init?.method === "PATCH") {
@@ -129,6 +132,93 @@ describe("SetupWizardSettings", () => {
     fireEvent.click(screen.getByRole("button", { name: /run setup again/i }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect((global.fetch as jest.Mock).mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+  });
+
+  it("removes the checklist and an open wizard when View as starts", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/admin/setup-wizard" && !init?.method) return response({ ...setupPayload, data: { ...setupPayload.data,
+        auto_start: true, state: { ...setupPayload.data.state, status: "in_progress", current_step: 1 },
+      } });
+      return originalFetch(input, init);
+    }) as jest.Mock;
+    const view = render(<SetupWizardGate />);
+    fireEvent.click(await screen.findByRole("button", { name: "Resume setup" }));
+    await screen.findByRole("heading", { name: "Welcome" });
+    const mutations = () => (global.fetch as jest.Mock).mock.calls.filter(([, init]) => init?.method === "PATCH");
+    const before = mutations().length;
+    mockSearchParams = new URLSearchParams("simulate_type=user&simulate_id=example-user");
+    view.rerender(<SetupWizardGate />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /resume setup|setup checklist/i })).not.toBeInTheDocument();
+    expect(mutations()).toHaveLength(before);
+  });
+
+  it.each([undefined, 42, "", "   "])("rejects a smoke test with empty or non-text content: %p", async (content) => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/dynamic-agents") return response({ success: true, data: { _id: "example-agent" } }, 201);
+      if (url === "/api/chat/conversations") return response({ success: true, data: { conversation: { _id: "example-chat" } } });
+      if (url === "/api/v1/chat/invoke") return response({ success: true, content });
+      return originalFetch(input, init);
+    }) as jest.Mock;
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+    await screen.findByRole("heading", { name: "Try your agent" });
+    fireEvent.click(screen.getByRole("button", { name: /create agent and run test/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("returned no reply");
+    expect((global.fetch as jest.Mock).mock.calls.some(([, init]) => init?.method === "PATCH" && JSON.parse(String(init.body)).action === "complete")).toBe(false);
+  });
+
+  it("drops disabled and missing saved tools before creating a starter agent", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/admin/setup-wizard" && !init?.method) return response({ ...setupPayload, data: { ...setupPayload.data,
+        state: { ...setupPayload.data.state, selection: { mcp_server_ids: ["netutils", "disabled", "missing"], enable_knowledge_base: true } },
+      } });
+      if (url.startsWith("/api/mcp-servers")) return response({ success: true, data: { items: [
+        { _id: "netutils", name: "Network utilities", enabled: true },
+        { _id: "disabled", name: "Disabled", enabled: false },
+        { _id: "knowledge-base", name: "Knowledge", enabled: false },
+      ] } });
+      if (url === "/api/dynamic-agents") return response({ error: "Stop after inspecting the request" }, 400);
+      return originalFetch(input, init);
+    }) as jest.Mock;
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+    await screen.findByRole("heading", { name: "Try your agent" });
+    fireEvent.click(screen.getByRole("button", { name: /create agent and run test/i }));
+    await screen.findByRole("alert");
+    const create = (global.fetch as jest.Mock).mock.calls.find(([url]) => url === "/api/dynamic-agents");
+    expect(JSON.parse(create![1].body).allowed_tools).toEqual({ netutils: true });
+  });
+
+  it("saves progress instead of completing after a completed model selection changes", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/admin/setup-wizard" && !init?.method) return response({ ...setupPayload, data: { ...setupPayload.data,
+        state: { ...setupPayload.data.state, selection: { model_id: "model-primary", model_provider: "openai", recipe_id: "sre", mcp_server_ids: [] } },
+      } });
+      if (url.startsWith("/api/llm-models")) return response({ success: true, data: { items: [
+        { _id: "model-primary", name: "Primary", provider: "openai" },
+        { _id: "model-secondary", name: "Secondary", provider: "openai" },
+      ] } });
+      return originalFetch(input, init);
+    }) as jest.Mock;
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+    await screen.findByRole("heading", { name: "Try your agent" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose a model" }));
+    fireEvent.click(screen.getByText("Change model"));
+    fireEvent.click(screen.getByRole("combobox", { name: "AI model for your first agent" }));
+    fireEvent.click(await screen.findByRole("option", { name: /Secondary/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save & minimize" }));
+    await waitFor(() => expect((global.fetch as jest.Mock).mock.calls.some(([, init]) => {
+      if (init?.method !== "PATCH") return false;
+      const body = JSON.parse(String(init.body));
+      return body.action === "progress" && body.selection?.model_id === "model-secondary";
+    })).toBe(true));
+    expect((global.fetch as jest.Mock).mock.calls.some(([, init]) => init?.method === "PATCH" && JSON.parse(String(init.body)).action === "complete")).toBe(false);
   });
 
   it("restarts from the checklist with exactly one reset request", async () => {
