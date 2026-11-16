@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 from uuid import UUID
 
@@ -13,11 +15,33 @@ class ScopeCallbackHandler(BaseCallbackHandler):
     # Keep callbacks in the execution context that owns the Scope session.
     run_inline = True
 
+    def __init__(self) -> None:
+        self._parents: dict[str, str | None] = {}
+        self._delegates: set[str] = set()
+
+    def _parent_delegate(self, run_id: UUID, parent_run_id: UUID | None) -> str | None:
+        key = str(run_id)
+        parent = str(parent_run_id) if parent_run_id else None
+        self._parents[key] = parent
+        seen: set[str] = set()
+        while parent is not None and parent not in seen:
+            if parent in self._delegates:
+                return parent
+            seen.add(parent)
+            parent = self._parents.get(parent)
+        return None
+
+    def on_chain_start(self, serialized: Any, inputs: Any, *, run_id: UUID,
+                       parent_run_id: UUID | None = None, **kwargs: Any) -> None:
+        # Remember identifiers only; chain inputs can contain private content.
+        self._parent_delegate(run_id, parent_run_id)
+
     def on_chat_model_start(self, serialized: dict[str, Any], messages: Any, *, run_id: UUID, **kwargs: Any) -> None:
         if (run := current_scope_run()) is not None:
+            parent = self._parent_delegate(run_id, kwargs.get("parent_run_id"))
             params = kwargs.get("invocation_params") or {}
             model = str(params.get("model") or params.get("model_name") or params.get("model_id") or "unknown")
-            run.start(str(run_id), model, "chat", {"gen_ai.request.model": model})
+            run.start(str(run_id), model, "chat", {"gen_ai.request.model": model}, parent_key=parent)
 
     def on_llm_start(self, serialized: dict[str, Any], prompts: Any, *, run_id: UUID, **kwargs: Any) -> None:
         self.on_chat_model_start(serialized, None, run_id=run_id, **kwargs)
@@ -46,7 +70,20 @@ class ScopeCallbackHandler(BaseCallbackHandler):
 
     def on_tool_start(self, serialized: dict[str, Any], input_str: str, *, run_id: UUID, **kwargs: Any) -> None:
         if (run := current_scope_run()) is not None and not run.canonical_tools:
-            run.start(str(run_id), str(serialized.get("name") or "tool"), "tool")
+            parent = self._parent_delegate(run_id, kwargs.get("parent_run_id"))
+            name = str(serialized.get("name") or "tool")
+            delegate = None
+            if name == "task":
+                try:
+                    inputs = json.loads(input_str)
+                    candidate = inputs.get("subagent_type") if isinstance(inputs, dict) else None
+                    if isinstance(candidate, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", candidate):
+                        delegate = candidate
+                except (TypeError, ValueError):
+                    pass
+            if delegate:
+                self._delegates.add(str(run_id))
+            run.start(str(run_id), delegate or name, "agent" if delegate else "tool", parent_key=parent)
 
     def on_tool_end(self, output: Any, *, run_id: UUID, **kwargs: Any) -> None:
         if (run := current_scope_run()) is not None and not run.canonical_tools:

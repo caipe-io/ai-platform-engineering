@@ -35,7 +35,6 @@ from jinja2 import ChainableUndefined, TemplateSyntaxError
 from jinja2.sandbox import ImmutableSandboxedEnvironment, SecurityError
 from langchain.agents.middleware.pii import PIIMiddleware
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.checkpoint.mongodb.saver import MongoDBSaver
 from langgraph.config import get_stream_writer
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
@@ -73,6 +72,7 @@ from dynamic_agents.services.builtin_tools import (
     create_wait_tool,
     create_workflow_tools,
 )
+from dynamic_agents.services.checkpoint import MongoDBCheckpointSaver
 from dynamic_agents.services.credential_exchange import CredentialExchangeClient
 from dynamic_agents.services.gridfs_store import MongoDBGridFSStore
 from dynamic_agents.services.llm_clients import get_llm
@@ -674,8 +674,7 @@ class AgentRuntime:
                     writes_coll = f"{config.backend.config.checkpoint_collection}_writes"
                 if config.backend.config.checkpoint_ttl is not None:
                     checkpoint_ttl = config.backend.config.checkpoint_ttl
-            # Use MongoDBSaver from langgraph-checkpoint-mongodb for persistent chat history
-            self._checkpointer = MongoDBSaver(
+            self._checkpointer = MongoDBCheckpointSaver(
                 self._mongo_client,
                 db_name=self.settings.mongodb_database,
                 checkpoint_collection_name=checkpoint_coll,

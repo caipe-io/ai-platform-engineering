@@ -21,6 +21,9 @@ flowchart LR
   the active Scope context; browser subscriptions do not own its lifecycle.
 - LangChain callbacks add model/tool metadata. Other harness adapters contribute
   their canonical reported tool events. Remote worker internals are not inferred.
+- Local Deep Agents delegations create child agent spans, with model and tool
+  spans attributed to the delegate that executed them. Only the selected delegate
+  identifier is read from a task request; its instructions and results are omitted.
 - Scope exports metadata only. Existing Langfuse capture and redaction rules remain
   unchanged. Collector failures do not fail an agent execution.
 

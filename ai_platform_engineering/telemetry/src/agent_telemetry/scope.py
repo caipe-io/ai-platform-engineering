@@ -83,11 +83,22 @@ class ScopeRun:
         }):
             pass
 
-    def start(self, key: str, name: str, kind: str, attributes: dict[str, Any] | None = None) -> None:
+    def start(self, key: str, name: str, kind: str, attributes: dict[str, Any] | None = None,
+              *, parent_key: str | None = None) -> None:
         with self._lock:
             if not self._closed and key not in self._operations:
-                self._operations[key] = self.tracer.start_span(f"{name}.{kind}", context=self.context, attributes={
-                    **self.child_attributes, "ioa_observe.entity.name": name, **(attributes or {}),
+                parent = self._operations.get(parent_key) if parent_key else None
+                child_attributes = self.child_attributes
+                if parent is not None:
+                    child_attributes = {
+                        **self.child_attributes,
+                        "agent_id": str(parent.attributes["agent_id"]),
+                        "ioa_observe.agent.span_id": format(parent.get_span_context().span_id, "016x"),
+                    }
+                self._operations[key] = self.tracer.start_span(f"{name}.{kind}",
+                    context=trace.set_span_in_context(parent) if parent is not None else self.context, attributes={
+                    **child_attributes, "ioa_observe.entity.name": name,
+                    **({"agent_id": name} if kind == "agent" else {}), **(attributes or {}),
                 })
 
     def end(self, key: str, *, error: bool = False, attributes: dict[str, Any] | None = None) -> None:

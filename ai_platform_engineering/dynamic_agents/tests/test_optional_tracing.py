@@ -1,3 +1,4 @@
+import json
 import sys
 from types import SimpleNamespace
 from uuid import uuid4
@@ -76,5 +77,41 @@ def test_scope_without_langfuse_credentials(monkeypatch: pytest.MonkeyPatch) -> 
             manager = TracingManager()
             assert not manager.is_enabled
             assert isinstance(manager.create_config('thread-primary')['callbacks'][0], ScopeCallbackHandler)
+    finally:
+        provider.shutdown()
+
+
+def test_delegates_keep_separate_model_and_tool_ownership(monkeypatch: pytest.MonkeyPatch) -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(scope_module, '_provider', lambda: provider)
+    handler = ScopeCallbackHandler()
+    first, second, chain, model, tool = (uuid4() for _ in range(5))
+    try:
+        with scope_session('primary', 'conversation-primary', 'run-primary'):
+            for run_id, name in [(first, 'specialist-primary'), (second, 'specialist-secondary')]:
+                handler.on_tool_start({'name': 'task'}, json.dumps({
+                    'subagent_type': name, 'description': 'private-delegation-prompt',
+                }), run_id=run_id)
+            handler.on_chain_start(None, 'private-chain-input', run_id=chain, parent_run_id=first)
+            handler.on_chat_model_start({}, 'private-prompt', run_id=model, parent_run_id=chain,
+                                        invocation_params={'model': 'model-primary'})
+            handler.on_tool_start({'name': 'lookup'}, 'private-tool-input', run_id=tool, parent_run_id=second)
+            handler.on_llm_end(SimpleNamespace(llm_output={}, generations=[]), run_id=model)
+            handler.on_tool_end('private-output', run_id=tool)
+            handler.on_tool_end('private-delegate-output', run_id=first)
+            handler.on_tool_end('private-delegate-output', run_id=second)
+        spans = {s.name: s for s in exporter.get_finished_spans()}
+        root = spans['primary.agent']
+        first_agent, second_agent = spans['specialist-primary.agent'], spans['specialist-secondary.agent']
+        assert first_agent.parent.span_id == root.context.span_id
+        assert second_agent.parent.span_id == root.context.span_id
+        for child, owner in [(spans['model-primary.chat'], first_agent), (spans['lookup.tool'], second_agent)]:
+            assert child.parent.span_id == owner.context.span_id
+            assert child.attributes['agent_id'] == owner.attributes['agent_id']
+            assert child.attributes['ioa_observe.agent.span_id'] == format(owner.context.span_id, '016x')
+        assert {s.attributes['session.id'] for s in spans.values()} == {'run-primary'}
+        assert not any('private-' in str(s.attributes) for s in spans.values())
     finally:
         provider.shutdown()
