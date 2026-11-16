@@ -2299,7 +2299,7 @@ services:
       - rbac
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.3
+    image: quay.io/keycloak/keycloak:26.8.2
     container_name: keycloak
     environment:
       # Keycloak 26 requires hostname as a full URL when backchannel-dynamic

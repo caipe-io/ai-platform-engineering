@@ -7,6 +7,7 @@ on:
       - 'charts/**'
       - '.github/workflows/helm-chart-test.yml'
       - 'tests/test_caipe_ui_oidc_endpoint.py'
+      - 'tests/test_keycloak_mcp_resources.py'
       - 'tests/test_harness_helm.py'
       - 'deploy/harness-engine/squid.conf'
   pull_request:
@@ -15,6 +16,7 @@ on:
       - 'charts/**'
       - '.github/workflows/helm-chart-test.yml'
       - 'tests/test_caipe_ui_oidc_endpoint.py'
+      - 'tests/test_keycloak_mcp_resources.py'
       - 'tests/test_harness_helm.py'
       - 'deploy/harness-engine/squid.conf'
   schedule:
@@ -55,6 +57,9 @@ jobs:
 
     - name: Test UI OIDC endpoint routing
       run: uv run --no-project --with pytest==9.1.1 --with PyYAML==6.0.3 pytest -q tests/test_caipe_ui_oidc_endpoint.py
+
+    - name: Test MCP resource registration
+      run: uv run --no-project --with pytest==9.1.1 --with PyYAML==6.0.3 pytest -q tests/test_keycloak_mcp_resources.py
 
     - name: Test optional durable runtime contracts
       run: uv run --no-project --with pytest==9.1.1 --with PyYAML==6.0.3 pytest -q tests/test_harness_helm.py

@@ -129,7 +129,7 @@ helm show values oci://ghcr.io/caipe-io/charts/keycloak --version 1.1.0
 | idp.secretRef | string | `""` |  |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
 | image.repository | string | `"quay.io/keycloak/keycloak"` |  |
-| image.tag | string | `"26.8.1"` |  |
+| image.tag | string | `"26.8.2"` |  |
 | ingress.annotations | object | `{}` |  |
 | ingress.className | string | `""` |  |
 | ingress.enabled | bool | `false` |  |
@@ -166,6 +166,7 @@ helm show values oci://ghcr.io/caipe-io/charts/keycloak --version 1.1.0
 | mcpDcr.platformClientIds[7] | string | `"caipe-rag-ingestor"` |  |
 | mcpDcr.resourceClientId | string | `"caipe-mcp-dcr"` |  |
 | mcpDcr.resourceUrl | string | `""` |  |
+| mcpResources | list | `[]` |  |
 | nameOverride | string | `""` |  |
 | nodeSelector | object | `{}` |  |
 | platformClient.externalSecret.enabled | bool | `false` |  |

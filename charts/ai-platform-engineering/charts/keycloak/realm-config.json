@@ -773,6 +773,27 @@
             "saml-user-attribute-mapper"
           ]
         }
+      },
+      {
+        "name": "Default Roles Disabled",
+        "providerId": "default-roles",
+        "subType": "anonymous",
+        "subComponents": {},
+        "config": {}
+      },
+      {
+        "name": "Default Roles Disabled",
+        "providerId": "default-roles",
+        "subType": "authenticated",
+        "subComponents": {},
+        "config": {}
+      },
+      {
+        "name": "Full Scope Disabled",
+        "providerId": "scope",
+        "subType": "authenticated",
+        "subComponents": {},
+        "config": {}
       }
     ]
   },

@@ -462,6 +462,31 @@ json.dump(client, sys.stdout)
 
 _reconcile_caipe_platform_client_secret
 
+# Patched Keycloak requires its native Admin API audience on custom admin clients.
+_ensure_platform_admin_api_scope() {
+  local scope_id client_id assigned
+  scope_id=$(curl -sf -H "${AUTH}" "${KC_URL}/admin/realms/${REALM}/client-scopes" \
+    | json_id_by_field name kc-admin-api)
+  [ -n "${scope_id}" ] || return 0
+  client_id=$(curl -sf -G -H "${AUTH}" \
+    --data-urlencode "clientId=${KEYCLOAK_PLATFORM_CLIENT_ID:-caipe-platform}" \
+    "${KC_URL}/admin/realms/${REALM}/clients" | json_id_by_field clientId "${KEYCLOAK_PLATFORM_CLIENT_ID:-caipe-platform}")
+  if [ -z "${client_id}" ]; then
+    echo "[init-idp] ERROR: platform admin client is missing." >&2
+    return 1
+  fi
+  assigned=$(curl -sf -H "${AUTH}" \
+    "${KC_URL}/admin/realms/${REALM}/clients/${client_id}/default-client-scopes" \
+    | json_id_by_field name kc-admin-api)
+  if [ -z "${assigned}" ]; then
+    curl -sf -o /dev/null -X PUT -H "${AUTH}" \
+      "${KC_URL}/admin/realms/${REALM}/clients/${client_id}/default-client-scopes/${scope_id}" || return 1
+    echo "[init-idp] Assigned native Admin API scope to the trusted platform client."
+  fi
+}
+
+_ensure_platform_admin_api_scope
+
 # -------------------------------------------------------------------
 # Reconcile the public CLI client (caipe-cli / forge-cli).
 #
@@ -608,6 +633,10 @@ print(json.dumps(existing))
 
 _reconcile_cli_client
 
+if [ "${MCP_RESOURCES_JSON:-[]}" != "[]" ]; then
+  python3 "${MCP_RESOURCES_HELPER_PATH:-/scripts/mcp-resources.py}"
+fi
+
 # Reconcile anonymous MCP registration only when the operator enables it.
 # The CLI client is created first so its first token retains platform access
 # after the realm-wide profile audience mapper is moved.
@@ -687,7 +716,7 @@ _ensure_default_role_offline_access() {
     echo "[init-idp]   WARNING: failed to add offline_access to ${DEFAULT_REALM_ROLE}."
 }
 
-if [ "${MCP_DCR_ENABLED:-false}" = "true" ]; then
+if [ "${MCP_DCR_ENABLED:-false}" = "true" ] || [ "${MCP_RESOURCES_JSON:-[]}" != "[]" ]; then
   _ensure_default_role_offline_access
 fi
 
@@ -1165,7 +1194,7 @@ fi
 
 # Preserve the existing brokered-SSO role reconciliation when MCP DCR is off.
 # When enabled, it already ran before the local-Keycloak early exit.
-if [ "${MCP_DCR_ENABLED:-false}" != "true" ]; then
+if [ "${MCP_DCR_ENABLED:-false}" != "true" ] && [ "${MCP_RESOURCES_JSON:-[]}" = "[]" ]; then
   _ensure_default_role_offline_access
 fi
 

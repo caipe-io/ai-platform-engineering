@@ -188,7 +188,6 @@ def test_init_idp_uses_configured_realm_default_role_name() -> None:
     script = INIT_IDP_PATH.read_text()
 
     assert 'DEFAULT_REALM_ROLE="default-roles-${REALM}"' in script
-    assert 'grep -B1 "\\"${DEFAULT_REALM_ROLE}\\""' in script
 
 
 def test_init_token_exchange_reconciles_webex_impersonation_role() -> None:

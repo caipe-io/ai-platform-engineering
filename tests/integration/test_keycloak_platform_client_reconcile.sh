@@ -5,7 +5,7 @@
 # End-to-end test for the caipe-platform client_secret reconciliation
 # added to charts/.../keycloak/scripts/init-idp.sh.
 #
-# Spins up a throwaway Keycloak 26.8.1 container (the same image the
+# Spins up a throwaway Keycloak 26.8.2 container (the same image the
 # Helm chart pins), imports the realm shipped with the chart, then:
 #
 #   1. Confirms the realm placeholder "caipe-platform-dev-secret" is
@@ -58,7 +58,7 @@ INIT_IMAGE_CANDIDATES=(
   "ghcr.io/cnoe-io/keycloak-init:latest"
 )
 INIT_IMAGE_LOCAL_BUILD="caipe/keycloak-init:local-test"
-KC_IMAGE="quay.io/keycloak/keycloak:26.8.1"
+KC_IMAGE="quay.io/keycloak/keycloak:26.8.2"
 
 # --- Pretty output -------------------------------------------------
 RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; RESET=$'\033[0m'
@@ -302,6 +302,10 @@ else
   info "response: ${NEW_TOKEN_RESP}"
   fail "could not mint token with new secret"
 fi
+ADMIN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${NEW_TOKEN}" \
+  "${KC_URL}/admin/realms/${KC_REALM}/users/count")
+[ "${ADMIN_STATUS}" = "200" ] || fail "trusted platform client cannot access the Admin API (HTTP ${ADMIN_STATUS})"
+pass "trusted platform client has the native Admin API audience"
 
 # --- 6. The OLD placeholder must now be REJECTED -------------------
 step "Step 6: client_credentials grant with the OLD placeholder MUST fail"
@@ -319,9 +323,17 @@ else
   fail "unexpected response — expected invalid_client"
 fi
 
+step "Step 7: imported realm rejects default-role injection through registration"
+REGISTRATION_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"clientId":"example-untrusted","publicClient":true,"defaultRoles":["example-role"]}' \
+  "${KC_URL}/realms/${KC_REALM}/clients-registrations/default")
+[ "${REGISTRATION_STATUS}" = "403" ] || fail "default-role injection was not rejected (HTTP ${REGISTRATION_STATUS})"
+pass "native default-role registration policy is active after realm import"
+
 # --- Done ----------------------------------------------------------
 echo
 echo "${GREEN}=============================================${RESET}"
-echo "${GREEN}  All 6 steps passed.${RESET}"
+echo "${GREEN}  All 7 steps passed.${RESET}"
 echo "${GREEN}  caipe-platform reconcile is working end-to-end.${RESET}"
 echo "${GREEN}=============================================${RESET}"

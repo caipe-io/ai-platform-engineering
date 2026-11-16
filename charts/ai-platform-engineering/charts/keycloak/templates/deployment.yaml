@@ -1,7 +1,9 @@
-{{- if .Values.mcpDcr.enabled }}
-{{- if not (semverCompare ">=26.8.0" .Values.image.tag) }}
-{{- fail "keycloak.mcpDcr.enabled requires keycloak.image.tag >= 26.8.0 for resource-indicators" }}
+{{- if or .Values.mcpDcr.enabled .Values.mcpResources }}
+{{- if not (semverCompare ">=26.8.2" .Values.image.tag) }}
+{{- fail "MCP registration requires keycloak.image.tag >= 26.8.2 for native registration policy protections" }}
 {{- end }}
+{{- end }}
+{{- if .Values.mcpDcr.enabled }}
 {{- if not (regexMatch "^https://[^/]+/.+" .Values.mcpDcr.resourceUrl) }}
 {{- fail "keycloak.mcpDcr.resourceUrl must be the public HTTPS MCP endpoint" }}
 {{- end }}

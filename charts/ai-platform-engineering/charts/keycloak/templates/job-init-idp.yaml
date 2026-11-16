@@ -1,3 +1,4 @@
+{{- if or .Values.idp.enabled .Values.mcpResources }}
 {{- if .Values.idp.enabled }}
 {{- if not .Values.idp.issuer -}}
 {{- fail "keycloak.idp.issuer is required when keycloak.idp.enabled=true" -}}
@@ -8,6 +9,7 @@
 {{- if not (or .Values.idp.secretRef .Values.idp.externalSecret.enabled) -}}
 {{- fail "keycloak.idp.secretRef or keycloak.idp.externalSecret.enabled is required when keycloak.idp.enabled=true; init-idp requires IDP_CLIENT_SECRET" -}}
 {{- end -}}
+{{- end }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -62,6 +64,10 @@ spec:
                   key: password
             - name: KC_REALM
               value: {{ .Values.realm.name | quote }}
+            {{- with .Values.mcpResources }}
+            - name: MCP_RESOURCES_JSON
+              value: {{ . | toJson | quote }}
+            {{- end }}
             - name: MCP_DCR_ENABLED
               value: {{ .Values.mcpDcr.enabled | quote }}
             {{- if .Values.mcpDcr.enabled }}

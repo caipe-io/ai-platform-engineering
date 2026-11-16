@@ -1665,8 +1665,12 @@ webex-bot:
 keycloak:
   image:
     repository: "quay.io/keycloak/keycloak"
-    tag: "26.8.1"
+    tag: "26.8.2"
     pullPolicy: IfNotPresent
+
+  # Optional MCP resource URLs and scope-to-consent-text maps. Reconciled by
+  # the existing initializer on install/upgrade; see the keycloak chart values.
+  mcpResources: []
 
   # Admin credentials — auto-generated random password by default.
   # For prod: set admin.secretRef to an existing Secret, or enable

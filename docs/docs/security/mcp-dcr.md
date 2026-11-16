@@ -1,16 +1,51 @@
 # MCP dynamic client registration
 
-The Keycloak chart ships version 26.8.1 with MCP dynamic client registration
-(DCR) off by default. An operator can enable DCR for a public MCP server by
-configuring that server's exact HTTPS resource URL:
+The chart uses Keycloak 26.8.2. Keycloak provides the DCR protocol; operators
+can declare additional MCP resource permissions through configuration.
+
+## Configuring multiple MCP resources
+
+```yaml
+keycloak:
+  mcpResources:
+    - name: primary
+      resourceUrl: https://tools.example.com/mcp
+      scopes:
+        tools:access: Use tools with my existing permissions
+    - name: secondary
+      resourceUrl: https://secondary.example.com/mcp
+      scopes:
+        secondary:read: Inspect permitted resources
+        secondary:exec: Run permitted commands
+```
+
+- Match each MCP server's expected audience and scope names to these values.
+- Scope-only values changes run the initializer without restarting Keycloak.
+- The existing initializer applies them after install/upgrade, including when
+  no upstream identity-provider broker is configured. No extra dependency is needed.
+- It registers optional scopes, audience mappers and the actual verified-email
+  claim. Native policies require consent and S256 for new public DCR clients.
+- Only owned scopes/mappers are updated. Other clients, shared audiences,
+  callback-host restrictions and registration limits are preserved.
+- Existing unmanaged scope-name collisions fail without taking ownership.
+  Removing an entry does not delete its scopes or revoke existing tokens.
+
+The initializer checks the running server is patched before registering scopes.
+The pre-upgrade hook does not run this registration against the old server.
+
+## Legacy single-resource bootstrap
+
+The separate `mcpDcr` option is disabled by default. It also migrates the shared
+platform audience, so it is not required to add entries to `mcpResources`.
+Operators already using that mode can retain its existing configuration:
 
 ```yaml
 keycloak:
   image:
-    tag: "26.8.1"
+    tag: "26.8.2"
   mcpDcr:
     enabled: true
-    resourceUrl: "https://example.com/api/tome/mcp"
+    resourceUrl: "https://tools.example.com/api/mcp"
     # Helm replaces lists. Retain these defaults and append any additional
     # first-party clients that need the platform API audience.
     platformClientIds:
@@ -25,23 +60,22 @@ keycloak:
 ```
 
 For existing 26.3 installations, follow the
-[Keycloak upgrade guide](https://www.keycloak.org/docs/26.8.1/upgrading/)
+[Keycloak upgrade guide](https://www.keycloak.org/docs/26.8.2/upgrading/)
 and back up the database before upgrading the chart. The Deployment uses
 `Recreate` so old and new versions do not run concurrently against the same
 database. A rollback after schema migration requires restoring the database
 backup along with the previous image.
 
 For a hosted app, include its public path in `resourceUrl`, for example
-`https://example.com/apps/example/api/tome/mcp`. It must exactly match the
+`https://tools.example.com/apps/primary/api/mcp`. It must exactly match the
 `resource` value in the app's protected-resource metadata. Enable the app's
-resource-audience check at the same time. For Tome, set
-`TOME_MCP_REQUIRE_RESOURCE_AUDIENCE=true`.
+resource-audience check at the same time.
 
 The Keycloak reconcile job creates the `caipe-mcp-dcr` resource client and
 scope, enables resource indicators, and requires PKCE for anonymous public
 registrations. The MCP client requests `caipe-mcp-dcr` and the server's URL as
 the OAuth `resource`. Keycloak then issues an access token whose audience is
-the MCP URL. Tokens without that audience are rejected by Tome's MCP route.
+the MCP URL. The MCP server must reject tokens without its audience.
 
 To stop DCR clients from using the platform audience when they omit `resource`,
 the reconcile job moves the `caipe-platform` audience mapper out of the

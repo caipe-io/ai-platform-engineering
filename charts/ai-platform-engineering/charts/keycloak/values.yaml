@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: quay.io/keycloak/keycloak
-  tag: "26.8.1"
+  tag: "26.8.2"
   pullPolicy: IfNotPresent
 
 # Anonymous MCP OAuth client registration is an operator decision. Enabling it
@@ -22,6 +22,18 @@ mcpDcr:
     - caipe-scheduler-runner
     - caipe-webex-bot-admin
     - caipe-rag-ingestor
+
+# Optional MCP permissions registered on install/upgrade. Values are data;
+# the existing initializer manages only the declared scopes and their mappers.
+# Existing clients, other audiences and callback-host policies are preserved.
+# Example:
+# mcpResources:
+#   - name: primary
+#     resourceUrl: https://tools.example.com/mcp
+#     scopes:
+#       tools:read: List and inspect permitted resources
+#       tools:exec: Run commands on permitted resources
+mcpResources: []
 
 # Init container image used by post-install Jobs (init-idp + init-token-exchange).
 #
