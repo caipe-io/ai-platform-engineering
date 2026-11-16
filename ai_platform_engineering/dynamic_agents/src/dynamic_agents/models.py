@@ -529,6 +529,11 @@ class FeaturesConfig(BaseModel):
     same type where the registry allows it.
     """
 
+    remote_agents_as_subagents: bool = Field(
+        False, strict=True, exclude_if=lambda value: not value,
+        description="Opt in to native Deep Agents task delegation for selected A2A agents"
+    )
+
     middleware: list[MiddlewareEntry] = Field(
         default_factory=list,
         description="Ordered list of middleware entries",
