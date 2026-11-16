@@ -78,6 +78,46 @@ async def test_series_discovers_missed_actual_id_without_a_device_or_chat_decryp
 
 
 @pytest.mark.asyncio
+async def test_series_without_an_associated_space_finishes_without_a_retry() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/wbxappapi/v1/meetingInfo"
+        return httpx.Response(200, json={
+            "meetingId": SERIES, "meetingSeriesId": SERIES,
+            "unifiedSpaceMeeting": False, "webexScheduled": True,
+        })
+
+    result = await discover(handler, meeting_series_id=SERIES)
+    assert result["items"] == []
+    assert result["complete"] is True
+    assert result["warnings"] == []
+    assert result["has_more"] is False
+    assert result["next_continuation"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [
+    {},
+    {"meetingSeriesId": SERIES, "unifiedSpaceMeeting": True},
+    {"meetingSeriesId": OTHER_SERIES, "unifiedSpaceMeeting": False},
+    {"meetingSeriesId": SERIES, "unifiedSpaceMeeting": "false"},
+    {"meetingSeriesId": SERIES, "unifiedSpaceMeeting": False, "conversationUrl": 0},
+])
+async def test_missing_space_metadata_is_not_mistaken_for_a_confirmed_absent_space(payload: dict[str, Any]) -> None:
+    result = await discover(lambda _: httpx.Response(200, json=payload), meeting_series_id=SERIES)
+    assert result["complete"] is False
+    assert result["warnings"]
+    assert result["has_more"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [403, 429, 500])
+async def test_failed_series_metadata_remains_retryable(status: int) -> None:
+    result = await discover(lambda _: httpx.Response(status), meeting_series_id=SERIES)
+    assert result["complete"] is False
+    assert result["has_more"] is True
+
+
+@pytest.mark.asyncio
 async def test_share_does_not_invent_an_end_time_or_recording_availability() -> None:
     calls = 0
 

@@ -550,8 +550,16 @@ async def list_space_meeting_occurrences(
             )
             if result is not None:
                 conversation_url = result[0].get("conversationUrl")
-                if isinstance(conversation_url, str):
+                if isinstance(conversation_url, str) and conversation_url:
                     discovery.queue_activity(conversation_url)
+                    discovery.series_lookup_pending = False
+                elif (
+                    result[0].get("meetingSeriesId") == meeting_series_id
+                    and result[0].get("unifiedSpaceMeeting") is False
+                    and conversation_url in (None, "")
+                ):
+                    # An ordinary scheduled series can have no associated chat.
+                    # This source is finished, not a failed or resumable lookup.
                     discovery.series_lookup_pending = False
                 else:
                     discovery.warn("Meeting space: no conversation URL was returned; results are incomplete.")
