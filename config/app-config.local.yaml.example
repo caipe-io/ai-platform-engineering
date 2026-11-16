@@ -12,6 +12,9 @@
 # Same schema as config/app-config.yaml. Entities here override / replace the
 # shared defaults — config-driven items in MongoDB are reconciled on every
 # Next.js startup (additions are upserted, removals are cleaned up).
+#
+# For a ready-made Grid FinOps agent wired to LiteLLM + Cloudability MCP,
+# use config/app-config.finops.yaml instead of copying this minimal template.
 
 models:
   # Example: pin a single Bedrock model for fast iteration.

@@ -253,6 +253,29 @@ def test_oauth2_enforces_client_id_allowlist(
     )
 
 
+def test_oauth2_rejects_missing_client_id_when_allowlist_configured(
+    reload_middleware, rsa_keypair, monkeypatch
+):
+    private_pem, jwk = rsa_keypair
+    mod = reload_middleware(
+        {
+            "MCP_AUTH_MODE": "oauth2",
+            "JWKS_URI": "https://issuer.example/jwks",
+            "AUDIENCE": "mcp-test",
+            "ISSUER": "https://issuer.example",
+            "OAUTH2_CLIENT_ID": "trusted-app",
+        }
+    )
+    _install_jwks(monkeypatch, mod, jwk)
+    token = _mint(private_pem)
+
+    response = _client(mod).get(
+        "/", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 401
+
+
 def test_oauth2_requires_jwks_uri_at_import(reload_middleware):
     with pytest.raises(ValueError, match="JWKS_URI"):
         reload_middleware({"MCP_AUTH_MODE": "oauth2", "AUDIENCE": "x", "ISSUER": "y"})

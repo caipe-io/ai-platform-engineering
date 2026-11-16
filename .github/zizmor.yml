@@ -8,3 +8,7 @@ rules:
       # pinned to github.workflow_sha, never the PR head; only trusted labeling
       # code/configuration runs, using PR file metadata from the GitHub API.
       - pr-size-label.yml
+      # Completion consumes metadata only, never upstream code/artifacts. It
+      # accepts same-repository pushes only after matching a semver tag's SHA.
+      # Regression tests reject PRs, forks, non-tags and mismatched commits.
+      - release-finalize.yml

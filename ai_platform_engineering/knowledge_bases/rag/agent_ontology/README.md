@@ -45,10 +45,23 @@ LOG_LEVEL=DEBUG python src/agent_ontology/restapi.py
 
 ### LLM Configuration
 
-Requires LLM configuration. Set one of:
+Set `LLM_PROVIDER` (for example, `openai` or `anthropic-claude`), the provider's model variable, and the matching provider credentials:
 - `OPENAI_API_KEY` - For OpenAI models
 - `ANTHROPIC_API_KEY` - For Anthropic Claude
 - Custom LLM provider environment variables
+
+| `LLM_PROVIDER` | Model variable |
+|---|---|
+| `openai` | `OPENAI_MODEL_NAME` |
+| `azure-openai` | `AZURE_OPENAI_DEPLOYMENT` |
+| `anthropic-claude` | `ANTHROPIC_MODEL_NAME` |
+| `aws-bedrock` | `AWS_BEDROCK_MODEL_ID` |
+| `google-gemini` | `GOOGLE_GEMINI_MODEL_NAME` (optional, defaults to `gemini-2.0-flash`) |
+| `gcp-vertexai` | `VERTEXAI_MODEL_NAME` |
+| `groq` | `GROQ_MODEL_NAME` |
+| `openai-compatible` | `OPENAI_COMPATIBLE_MODEL` |
+
+If processing or evaluation fails, the run raises an error without publishing the new version or cleaning up older ontology versions. A later run can retry regeneration after the underlying error is corrected.
 
 ## Connections
 

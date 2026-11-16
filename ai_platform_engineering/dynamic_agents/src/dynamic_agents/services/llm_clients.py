@@ -180,6 +180,8 @@ def get_llm(
     provider: str,
     model_id: str,
     reasoning_effort: ReasoningEffort | None = None,
+    *,
+    streaming: bool | None = None,
 ) -> BaseChatModel:
     """Get a LangChain chat model for the given provider and model.
 
@@ -193,12 +195,17 @@ def get_llm(
     defaults (`LLM_PROVIDER` and provider-specific model vars). Raises
     `LLMConfigError` with an actionable message if neither agent nor env
     define a usable provider.
+
+    An explicit ``streaming`` choice overrides the LLM_STREAMING deployment
+    default. None inherits that default through the shared model factory.
     """
     from llm_wrapper.build import build_chat_model
 
     resolved_provider, resolved_model = _resolve_llm_defaults(provider, model_id)
 
     kwargs: dict[str, Any] = {}
+    if streaming is not None:
+        kwargs["disable_streaming"] = not streaming
     model_supports_effort = (
         reasoning_effort is not None
         and supports_reasoning_effort(resolved_model, reasoning_effort)

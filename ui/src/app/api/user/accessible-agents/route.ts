@@ -15,6 +15,7 @@ getAuthFromBearerOrSession,
 successResponse,
 withErrorHandler,
 } from "@/lib/api-middleware";
+import { getHarnessPresentation } from "@/lib/agent-presentation";
 import { getCollection } from "@/lib/mongodb";
 import { filterResourcesByPermission } from "@/lib/rbac/resource-authz";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
@@ -29,6 +30,8 @@ interface AgentPickerEntry {
   id: string;
   name: string;
   description: string;
+  harness_id: string;
+  harness_name: string;
 }
 
 function parsePagination(url: URL): { page: number; pageSize: number } {
@@ -46,10 +49,13 @@ function parsePagination(url: URL): { page: number; pageSize: number } {
 }
 
 function toPickerEntry(agent: DynamicAgentConfig & { _id: unknown }): AgentPickerEntry {
+  const harness = getHarnessPresentation(agent.execution_harness_id);
   return {
     id: String(agent._id),
     name: typeof agent.name === "string" ? agent.name : String(agent._id),
     description: typeof agent.description === "string" ? agent.description : "",
+    harness_id: harness.id,
+    harness_name: harness.label,
   };
 }
 

@@ -673,3 +673,22 @@ def test_admin_http_missing_required_scope_returns_403(
 
     assert status == 403
     assert "missing scope" in str(payload.get("error", ""))
+
+
+def test_identity_confirmation_targets_verified_person_with_selected_bot(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PRIMARY_TOKEN", "example-token")
+    service = WebexBotAdminService(config=_config(), resolver=_Resolver())
+    with patch("ai_platform_engineering.integrations.webex_bot.utils.webex_admin_api.requests.post") as post:
+        post.return_value.raise_for_status.return_value = None
+        assert service.notify_identity_linked(bot_id="primary", webex_user_id="person1234") == {"notified": True}
+        kwargs = post.call_args.kwargs
+        assert kwargs["json"]["toPersonId"] == "person1234"
+        assert "roomId" not in kwargs["json"]
+        assert "Agent access is checked separately" in kwargs["json"]["markdown"]
+        assert kwargs["headers"]["Authorization"] == "Bearer example-token"
+
+
+def test_identity_confirmation_rejects_unknown_bot() -> None:
+    service = WebexBotAdminService(config=_config(), resolver=_Resolver())
+    with pytest.raises(ValueError, match="Unknown Webex bot"):
+        service.notify_identity_linked(bot_id="missing", webex_user_id="person1234")

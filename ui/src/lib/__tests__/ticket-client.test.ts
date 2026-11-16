@@ -150,7 +150,7 @@ describe("createTicketViaAgent", () => {
     ).rejects.toThrow("Ticket provider is not configured");
   });
 
-  it("creates stream adapter with correct protocol and accessToken", async () => {
+  it("creates a same-origin browser stream adapter with the correct protocol", async () => {
     await createTicketViaAgent({
       request: {
         description: "something broke",
@@ -163,7 +163,6 @@ describe("createTicketViaAgent", () => {
     expect(createStreamAdapter).toHaveBeenCalledWith(
       expect.objectContaining({
         protocol: "custom",
-        accessToken: "tok-123",
       })
     );
   });

@@ -14,7 +14,8 @@ import { config } from "@/lib/config";
 import { cn } from "@/lib/utils";
 import { AnimatePresence,motion } from "framer-motion";
 import { Bug,ChevronDown,ChevronRight,ExternalLink,Info,Lightbulb,Loader2,LogIn,LogOut,Shield,Tag } from "lucide-react";
-import { signIn,signOut,useSession } from "next-auth/react";
+import { signIn,useSession } from "next-auth/react";
+import { signOutWithFeedback } from "@/lib/sign-out";
 import Image from "next/image";
 import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
 import { useCallback,useEffect,useRef,useState } from "react";
@@ -222,7 +223,7 @@ export function UserMenu(): React.ReactElement | null {
                 className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-destructive transition-colors hover:bg-destructive/10"
                 onClick={() => {
                   setOpen(false);
-                  void signOut({ callbackUrl: "/login" });
+                  void signOutWithFeedback({ callbackUrl: "/login" });
                 }}
                 type="button"
               >

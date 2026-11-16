@@ -1,10 +1,11 @@
 import { createRequire } from "node:module";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { copyFileSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tailwindSourceForEntry } from "./native-extension-source.mjs";
 import {
   normalizeNativeExtensionManifest,
+  resolveAgenticAppIcon,
   validateAgenticAppManifest,
 } from "../app-sdk/agentic-app-manifest.mjs";
 import {
@@ -16,6 +17,19 @@ import {
   readPackageManifest,
   resolveNativePackageRoot,
 } from "./native-extension-contract.mjs";
+
+/** Native app logo assets travel with the pinned package, under an owned namespace. */
+export function installAppIcon(uiRoot, packageRoot, manifest) {
+  const icon = resolveAgenticAppIcon(manifest.id, manifest.catalog?.icon);
+  if (!icon) return;
+  const source = realpathSync(join(packageRoot, "public", icon.slice(1)));
+  const location = relative(realpathSync(packageRoot), source);
+  if (isAbsolute(location) || location.startsWith("..") || !statSync(source).isFile() || statSync(source).size > 256 * 1024)
+    throw new Error(`${manifest.id}: catalog icon must be a packaged image of at most 256 KiB`);
+  const target = join(uiRoot, "public", icon.slice(1));
+  mkdirSync(dirname(target), { recursive: true });
+  copyFileSync(source, target);
+}
 
 export function generateNativeExtensions(
   uiRoot = join(dirname(fileURLToPath(import.meta.url)), ".."),
@@ -54,6 +68,7 @@ export function generateNativeExtensions(
         `${moduleName}: application version/package must match the artifact`,
       );
     }
+    installAppIcon(uiRoot, packageRoot, appManifest);
     return {
       moduleName,
       manifest,

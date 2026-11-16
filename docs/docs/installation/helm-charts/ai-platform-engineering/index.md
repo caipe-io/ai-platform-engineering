@@ -114,6 +114,7 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | caipe-ui.config.KEYCLOAK_RESOURCE_SERVER_ID | string | `"caipe-platform"` |  |
 | caipe-ui.config.KEYCLOAK_URL | string | `""` |  |
 | caipe-ui.config.LOGO_STYLE | string | `"default"` |  |
+| caipe-ui.config.LOGO_THEMED | string | `""` |  |
 | caipe-ui.config.LOGO_URL | string | `"/logo.svg"` |  |
 | caipe-ui.config.MONGODB_DATABASE | string | `"caipe"` |  |
 | caipe-ui.config.NEXTAUTH_URL | string | `"http://localhost:3000"` |  |
@@ -201,6 +202,11 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | caipe-ui.volumes[1].configMap.name | string | `"skills-live-skills"` |  |
 | caipe-ui.volumes[1].configMap.optional | bool | `true` |  |
 | caipe-ui.volumes[1].name | string | `"skills-live-skills"` |  |
+| caipeDatabase.backend | string | `"mongodb"` | Shared URI backend: mongodb or documentdb (AWS DocumentDB). See docs/docs/installation/persistence.md. |
+| caipeDatabase.documentdb.host | string | `""` | DocumentDB hostname used by UI health checks. |
+| caipeDatabase.documentdb.remoteKey | string | `""` | Secret-store key containing the DocumentDB MONGODB_URI property. |
+| caipeDatabase.manageExternalSecret | bool | `false` | Let the parent chart manage the shared UI database ExternalSecret. |
+| caipeDatabase.secretName | string | `""` | Target Secret name; must match caipe-ui.existingSecret. |
 | dynamic-agents.agentContext.existingSecret.key | string | `"CAIPE_AGENT_CONTEXT_HMAC_SECRET"` |  |
 | dynamic-agents.agentContext.existingSecret.name | string | `""` |  |
 | dynamic-agents.config.AGENT_GATEWAY_MCP_SERVER_IDS | string | `"all"` |  |
@@ -326,7 +332,7 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | keycloak.idp.secretRef | string | `""` |  |
 | keycloak.image.pullPolicy | string | `"IfNotPresent"` |  |
 | keycloak.image.repository | string | `"quay.io/keycloak/keycloak"` |  |
-| keycloak.image.tag | string | `"26.3"` |  |
+| keycloak.image.tag | string | `"26.8.1"` |  |
 | keycloak.platformClient.secretRef | string | `"caipe-platform-secret"` |  |
 | keycloak.realm.name | string | `"caipe"` |  |
 | keycloak.realm.sslRequired | string | `"external"` |  |

@@ -5,6 +5,7 @@ import { getErrorMessage } from "@/lib/error-utils";
 // assisted-by Codex Codex-sonnet-4-6
 
 import { LastReviewBadge } from "@/components/ai-review";
+import { AgentHarnessBadge } from "@/components/chat/AgentHarnessBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
@@ -239,10 +240,19 @@ export function DynamicAgentsTab({
     if (!agentCanManage(agent)) return;
     clearRowActionError(agent._id);
     try {
-      const response = await fetch(`/api/dynamic-agents?id=${agent._id}`, {
+      const update: Record<string, unknown> = { enabled: !agent.enabled };
+      if (agent.execution_harness_id && agent.execution_harness_id !== "dynamic_agents") {
+        const published = await fetch(`/api/harness-engine/agents/${encodeURIComponent(agent._id)}`);
+        const saved = await published.json();
+        if (!published.ok || !saved.success || !saved.data?.version?.blueprint) {
+          throw new Error(saved.error || "The published execution configuration is unavailable");
+        }
+        update.harness_save = { blueprint: saved.data.version.blueprint };
+      }
+      const response = await fetch(`/api/dynamic-agents?id=${encodeURIComponent(agent._id)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: !agent.enabled }),
+        body: JSON.stringify(update),
       });
       const data = await response.json();
       if (data.success) {
@@ -492,7 +502,7 @@ export function DynamicAgentsTab({
                 className="grid grid-cols-12 gap-4 py-3 px-2 rounded-lg hover:bg-muted/50 items-center cursor-pointer"
                 onClick={() => openAgent(agent)}
               >
-                <div className="col-span-4">
+                <div className="col-span-4 min-w-0">
                     <div className="flex items-center gap-3">
                       <AgentAvatar
                         agent={agent}
@@ -501,7 +511,13 @@ export function DynamicAgentsTab({
                         iconSize="h-5 w-5"
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="font-medium text-sm truncate">{agent.name}</div>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className="truncate font-medium text-sm" title={agent.name}>{agent.name}</div>
+                          <AgentHarnessBadge
+                            harnessId={agent.execution_harness_id}
+                            presentation={agent.presentation}
+                          />
+                        </div>
                         {agent.description && (
                           <div className="text-xs text-muted-foreground truncate">
                             {agent.description}

@@ -3,6 +3,8 @@ import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import styles from './index.module.css';
 
 const CURL_CMD = 'bash <(curl -fsSL https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/setup-caipe.sh)';
@@ -217,6 +219,7 @@ function TypewriterAudience() {
 }
 
 function HeroSection({ onOpenTour }: { onOpenTour: () => void }) {
+  const cncfIcon = useBaseUrl('/img/foundation/cncf-icon-white.svg');
   const [stars, setStars] = useState<string | null>(null);
   useEffect(() => {
     fetch('https://api.github.com/repos/caipe-io/ai-platform-engineering')
@@ -239,6 +242,16 @@ function HeroSection({ onOpenTour }: { onOpenTour: () => void }) {
               Open Source AI Platform for{' '}
               <span className={styles.heroAccent}>All</span>
             </Heading>
+            <a
+              href="https://landscape.cncf.io/?group=projects-and-products&view-mode=card&item=provisioning--automation-configuration--caipe#artificial-intelligence--machine-learning"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.heroBadge}
+            >
+              <img src={cncfIcon} alt="" width={20} height={20} />
+              <span>A CNCF Sandbox Project</span>
+              <span aria-hidden="true">↗</span>
+            </a>
             <p className={styles.heroSubtitle}>
               Build, govern, and operate secure AI agents and workflows for <TypewriterAudience />
             </p>
@@ -556,6 +569,26 @@ function DemoLightbox({ onClose }: { onClose: () => void }) {
   );
 }
 
+function FoundationSection() {
+  const lightLogo = useBaseUrl('/img/foundation/cncf-color.svg');
+  const darkLogo = useBaseUrl('/img/foundation/cncf-white.svg');
+
+  return (
+    <section className={styles.foundation} aria-label="CNCF Sandbox project">
+      <p>We are a Cloud Native Computing Foundation sandbox project.</p>
+      <Link href="https://www.cncf.io/">
+        <ThemedImage
+          alt="Cloud Native Computing Foundation"
+          className={styles.foundationLogo}
+          sources={{light: lightLogo, dark: darkLogo}}
+          width={300}
+          height={57}
+        />
+      </Link>
+    </section>
+  );
+}
+
 function CtaSection() {
   return (
     <section className={styles.cta}>
@@ -568,6 +601,12 @@ function CtaSection() {
           href="https://github.com/caipe-io/ai-platform-engineering"
         >
           Star on GitHub ↗
+        </Link>
+        <Link
+          className={styles.heroSecondary}
+          href="https://landscape.cncf.io/?group=projects-and-products&view-mode=card&item=provisioning--automation-configuration--caipe#artificial-intelligence--machine-learning"
+        >
+          CNCF Sandbox Project ↗
         </Link>
       </div>
     </section>
@@ -590,6 +629,7 @@ export default function Home() {
         <FeaturesSection />
         <AgentsSection />
         <CtaSection />
+        <FoundationSection />
       </main>
       {isTourOpen && <DemoLightbox onClose={() => setIsTourOpen(false)} />}
     </Layout>

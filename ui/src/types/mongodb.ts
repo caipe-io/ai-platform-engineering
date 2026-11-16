@@ -250,6 +250,9 @@ export interface UserSettings {
     gradient_theme: 'default' | 'minimal' | 'professional' | 'ocean' | 'sunset' | 'cyberpunk' | 'tron' | 'matrix';
     font_family: 'inter' | 'source-sans' | 'ibm-plex' | 'system';
     font_size: 'small' | 'medium' | 'large' | 'x-large';
+    shadows_enabled?: boolean;
+    assistant_glass_enabled?: boolean;
+    assistant_font_scale?: "auto" | "compact" | "default" | "large";
     sidebar_collapsed: boolean;
     context_panel_visible: boolean;
     debug_mode: boolean;
@@ -269,10 +272,14 @@ export interface UserSettings {
     releaseNotesDismissedAnnouncementIds?: string[];
     /** Ids of Home page widgets the user has enabled, in display order. */
     home_widgets?: string[];
+    /** Private chat folders and grouping; does not change sharing or ownership. */
+    chat_history?: import("@/lib/chat-history-organization").ChatHistoryOrganization;
     /** Schema version used to migrate widget defaults without undoing explicit removals. */
     home_widgets_version?: number;
     /** Which Home page layout the user sees — the new default, or the previous fixed layout. */
     home_experience?: "new" | "classic";
+    /** Favorite app IDs shown in the Apps catalog. */
+    favorite_agentic_apps?: string[];
   };
   notifications: {
     email_enabled: boolean;
@@ -305,6 +312,9 @@ export const DEFAULT_USER_SETTINGS: Omit<
     gradient_theme: "default",
     font_family: "inter",
     font_size: "medium",
+    shadows_enabled: false,
+    assistant_glass_enabled: true,
+    assistant_font_scale: "auto",
     sidebar_collapsed: false,
     context_panel_visible: true,
     debug_mode: false,
@@ -437,7 +447,7 @@ export interface AddMessageRequest {
     // same label. Ignored when agent_name is provided directly.
     agent_id?: string;
     is_final?: boolean;
-    turn_status?: string; // "done" | "interrupted" | "waiting_for_input"
+    turn_status?: string; // "done" | "interrupted" | "waiting_for_input" | "cancelled"
     is_interrupted?: boolean;
     task_id?: string;
     timeline_segments?: TimelineSegment[]; // Plan/thinking/answer reconstruction

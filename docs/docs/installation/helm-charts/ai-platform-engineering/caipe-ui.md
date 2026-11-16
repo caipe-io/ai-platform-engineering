@@ -93,12 +93,14 @@ helm show values oci://ghcr.io/caipe-io/charts/caipe-ui --version 1.1.0
 | config.KEYCLOAK_RESOURCE_SERVER_ID | string | `"caipe-platform"` |  |
 | config.KEYCLOAK_URL | string | `""` |  |
 | config.LOGO_STYLE | string | `"default"` |  |
+| config.LOGO_THEMED | string | `""` |  |
 | config.LOGO_URL | string | `"/logo.svg"` |  |
 | config.MONGODB_DATABASE | string | `"caipe"` |  |
 | config.NEXTAUTH_URL | string | `"http://localhost:3000"` |  |
 | config.NODE_ENV | string | `"production"` |  |
 | config.OIDC_CLIENT_ID | string | `"caipe-ui"` |  |
 | config.OIDC_DISCOVERY_URL | string | `""` |  |
+| config.OIDC_TOKEN_ENDPOINT | string | `""` |  |
 | config.OIDC_ENABLE_REFRESH_TOKEN | string | `"true"` |  |
 | config.OIDC_REQUIRED_ADMIN_GROUP | string | `""` |  |
 | config.OIDC_REQUIRED_GROUP | string | `""` |  |

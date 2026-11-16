@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import uuid
 from contextlib import contextmanager
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -128,7 +128,22 @@ def test_stream_chat_parses_sse_lines_and_metadata() -> None:
     assert events[0].delta == "final answer chunk"
     assert streaming_metadata_from_event(events[0]) == {"is_final_answer": True}
     mock_client.stream.assert_called_once()
-    assert mock_client.stream.call_args.kwargs["json"]["reasoning_effort"] == "high"
+    assert json.loads(mock_client.stream.call_args.kwargs["content"])["reasoning_effort"] == "high"
+
+
+@pytest.mark.parametrize("preparation", ["WebexSSEClient._get_headers", "json.dumps", "native_assistant_headers"])
+def test_stream_sse_preparation_failure_does_not_allocate_http_client(preparation: str) -> None:
+    client = WebexSSEClient("https://example.test")
+    module = "ai_platform_engineering.integrations.webex_bot.a2a_client"
+
+    with (
+        patch(f"{module}.{preparation}", side_effect=RuntimeError("request preparation failed")),
+        patch(f"{module}.httpx.Client") as http_client,
+    ):
+        with pytest.raises(RuntimeError, match="request preparation failed"):
+            list(client._stream_sse("https://example.test/api/v1/chat/stream/start", {"message": "hello"}))
+
+        http_client.assert_not_called()
 
 
 def test_redact_sse_error_body_strips_secrets_and_truncates() -> None:

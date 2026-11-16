@@ -1,8 +1,8 @@
 "use client";
 
-import { getConfig,getLogoFilterClass } from "@/lib/config";
+import { BrandLogo } from "@/components/brand/BrandLogo";
+import { getConfig } from "@/lib/config";
 import { cn } from "@/lib/utils";
-import Image from "next/image";
 
 interface CAIPESpinnerProps {
   /** Size of the spinner */
@@ -77,13 +77,14 @@ export function CAIPESpinner({
           "relative rounded-xl gradient-primary-br flex items-center justify-center shadow-xl",
           config.container
         )}>
-          <Image
-            src={getConfig('logoUrl')}
+          <BrandLogo
             alt={getConfig('appName')}
-            width={48}
-            height={48}
-            unoptimized
-            className={cn(config.logo, getLogoFilterClass())}
+            className={config.logo}
+            logoStyle={getConfig('logoStyle')}
+            size={48}
+            themed={getConfig('logoThemed')}
+            src={getConfig('logoUrl')}
+            variant="on-accent"
           />
         </div>
       </div>

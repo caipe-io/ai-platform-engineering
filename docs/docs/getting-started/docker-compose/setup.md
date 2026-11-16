@@ -187,7 +187,8 @@ The `tracing` profile starts Langfuse v3.
 docker compose --profile tracing up
 ```
 
-Open Langfuse at **http://localhost:3001**, create an account, copy the keys,
+Open Langfuse at **http://localhost:3001** (set `LANGFUSE_PORT` in `.env` to change
+the host port), create an account, copy the keys,
 then add them to `.env`:
 
 ```bash

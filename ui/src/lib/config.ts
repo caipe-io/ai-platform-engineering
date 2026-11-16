@@ -64,6 +64,8 @@ export interface Config {
   gradientTo: string;
   /** Logo style: "default" (original colors) or "white" (inverted) */
   logoStyle: 'default' | 'white';
+  /** Themed inline SVG logo: true for any built-in logo, false never, null (unset) only for the grid logo */
+  logoThemed: boolean | null;
   /** Spinner/loading indicator color (CSS color value) */
   spinnerColor: string | null;
   /** Whether to show "Powered by OSS caipe.io" footer */
@@ -233,7 +235,7 @@ const DEFAULT_GRADIENT_THEME = 'default';
 const VALID_FONT_SIZES = ['small', 'medium', 'large', 'x-large'];
 const VALID_FONT_FAMILIES = ['inter', 'source-sans', 'ibm-plex', 'system'];
 const VALID_THEMES = ['light', 'legacy-light', 'dark', 'system', 'midnight', 'nord', 'tokyo', 'cyberpunk', 'tron', 'matrix'];
-const VALID_GRADIENT_THEMES = ['default', 'minimal', 'professional', 'ocean', 'sunset', 'cyberpunk', 'tron', 'matrix'];
+const VALID_GRADIENT_THEMES = ['default', 'neon', 'minimal', 'professional', 'ocean', 'sunset', 'cyberpunk', 'tron', 'matrix'];
 
 /** Default config used as client fallback before the layout script executes. */
 const DEFAULT_CONFIG: Config = {
@@ -253,6 +255,7 @@ const DEFAULT_CONFIG: Config = {
   gradientFrom: DEFAULT_GRADIENT_FROM,
   gradientTo: DEFAULT_GRADIENT_TO,
   logoStyle: 'default',
+  logoThemed: null,
   spinnerColor: null,
   showPoweredBy: true,
   supportEmail: DEFAULT_SUPPORT_EMAIL,
@@ -437,6 +440,8 @@ export function getServerConfig(): Config {
 
   const logoStyleEnv = env('LOGO_STYLE');
   const logoStyle: 'default' | 'white' = logoStyleEnv === 'white' ? 'white' : 'default';
+  const logoThemedEnv = env('LOGO_THEMED');
+  const logoThemed = logoThemedEnv === 'true' ? true : logoThemedEnv === 'false' ? false : null;
 
   return {
     ragUrl,
@@ -455,6 +460,7 @@ export function getServerConfig(): Config {
     gradientFrom: env('GRADIENT_FROM') || DEFAULT_GRADIENT_FROM,
     gradientTo: env('GRADIENT_TO') || DEFAULT_GRADIENT_TO,
     logoStyle,
+    logoThemed,
     spinnerColor: env('SPINNER_COLOR') || null,
     showPoweredBy,
     supportEmail: env('SUPPORT_EMAIL') || DEFAULT_SUPPORT_EMAIL,

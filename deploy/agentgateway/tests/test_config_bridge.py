@@ -913,6 +913,39 @@ def test_apply_agentgateway_logging_honors_env(monkeypatch) -> None:
     assert config["config"]["logging"]["level"] == "warn"
 
 
+def test_apply_agentgateway_jwt_auth_honors_deployment_overrides(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "AGENTGATEWAY_JWT_ISSUER",
+        "https://example.test/realms/caipe",
+    )
+    monkeypatch.setenv(
+        "AGENTGATEWAY_JWKS_URL",
+        "http://keycloak:7080/realms/caipe/protocol/openid-connect/certs",
+    )
+    monkeypatch.setenv("AGENTGATEWAY_JWT_AUDIENCES", "caipe-platform, agentgateway")
+    config = _baseline_config()
+
+    bridge.apply_agentgateway_jwt_auth(config)
+
+    jwt_auth = config["binds"][0]["listeners"][0]["policies"]["jwtAuth"]
+    assert jwt_auth["issuer"] == "https://example.test/realms/caipe"
+    assert jwt_auth["jwks"]["url"] == (
+        "http://keycloak:7080/realms/caipe/protocol/openid-connect/certs"
+    )
+    assert jwt_auth["audiences"] == ["caipe-platform", "agentgateway"]
+
+
+def test_apply_agentgateway_jwt_auth_leaves_unconfigured_listener_unchanged(monkeypatch) -> None:
+    monkeypatch.setenv("AGENTGATEWAY_JWT_ISSUER", "https://example.test/realms/caipe")
+    config = _baseline_config()
+    listener = config["binds"][0]["listeners"][0]
+    listener["policies"] = {"cors": {"allowOrigins": ["*"]}}
+
+    bridge.apply_agentgateway_jwt_auth(config)
+
+    assert listener["policies"] == {"cors": {"allowOrigins": ["*"]}}
+
+
 def test_reconcile_once_enforces_logging_level(tmp_path: Path, monkeypatch) -> None:
     config_path = tmp_path / "generated" / "config.yaml"
     config_path.parent.mkdir()
@@ -929,3 +962,22 @@ def test_reconcile_once_enforces_logging_level(tmp_path: Path, monkeypatch) -> N
 
     rendered = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     assert rendered["config"]["logging"]["level"] == "info"
+
+
+def test_reconcile_once_enforces_jwt_issuer(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "generated" / "config.yaml"
+    config_path.parent.mkdir()
+    config_path.write_text("binds: []\n", encoding="utf-8")
+    monkeypatch.setenv("AGENTGATEWAY_JWT_ISSUER", "https://example.test/realms/caipe")
+    monkeypatch.setattr(bridge, "_load_targets", lambda: [])
+    monkeypatch.setattr(
+        bridge,
+        "fetch_agentgateway_config",
+        lambda _admin_config_url: _baseline_config(),
+    )
+
+    bridge.reconcile_once(config_path=config_path, admin_config_url="http://agentgateway:15000/config")
+
+    rendered = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    jwt_auth = rendered["binds"][0]["listeners"][0]["policies"]["jwtAuth"]
+    assert jwt_auth["issuer"] == "https://example.test/realms/caipe"

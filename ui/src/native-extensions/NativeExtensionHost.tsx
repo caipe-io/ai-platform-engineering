@@ -2,14 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { isSupportedNativeContractVersion } from "../../app-sdk/contract-version.mjs";
 
+import { ReportProblemDialog } from "@/components/ticket/ReportProblemDialog";
+import { getConfig } from "@/lib/config";
 import { HeaderBreadcrumbPortal } from "@/components/layout/HeaderBreadcrumbSlot";
 import { WorkspaceBreadcrumbs } from "@/components/layout/WorkspacePageHeader";
+import { createHostChatCapability } from "./host-chat";
 import { NativeExtensionAssistant } from "./NativeExtensionAssistant";
 import { installedNativeExtensions } from "./installed.generated";
 import { isSafeHostHref } from "./navigation";
+import type { NativeExtensionProps } from "../../app-sdk";
 import type { NativeExtensionBreadcrumb } from "./types";
 
 export function NativeExtensionHost({
@@ -22,9 +27,15 @@ export function NativeExtensionHost({
   slot?: boolean;
 }): React.ReactElement {
   const router = useRouter();
+  const { data: session, status } = useSession();
+  const identity = JSON.stringify([status, session?.sub, session?.user?.email, session?.org, session?.role]);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const search = searchParams.toString();
+  const [feedbackRequest, setFeedbackRequest] = useState<({ identity: string } & NonNullable<Parameters<NonNullable<NativeExtensionProps["feedback"]>["open"]>[0]>) | null>(null);
+  const feedback = useMemo(() => !slot && getConfig("reportProblemEnabled") ? {
+    open: (options?: Parameters<NonNullable<NativeExtensionProps["feedback"]>["open"]>[0]) => setFeedbackRequest({ ...options, identity }),
+  } : undefined, [identity, slot]);
   const extension = useMemo(
     () =>
       installedNativeExtensions.find(
@@ -32,6 +43,8 @@ export function NativeExtensionHost({
       ),
     [extensionId],
   );
+  const chat = useMemo(() => createHostChatCapability(extensionId,
+    !slot && Boolean(extension?.manifest.assistant && extension.manifest.assistant.overlay !== "app"), extension?.manifest.assistant?.hostOptions), [extensionId, extension, slot]);
   const [breadcrumbs, setBreadcrumbs] = useState<
     NativeExtensionBreadcrumb[]
   >(() =>
@@ -76,21 +89,27 @@ export function NativeExtensionHost({
       {!slot && <HeaderBreadcrumbPortal>
         <WorkspaceBreadcrumbs breadcrumbs={breadcrumbs} portal={false} />
       </HeaderBreadcrumbPortal>}
-      <Component
+      {!slot && extension.manifest.assistant && extension.manifest.assistant.overlay !== "app" && (
+        <NativeExtensionAssistant
+          assistant={extension.manifest.assistant}
+          extensionId={extensionId}
+          pathname={pathname}
+          search={search}
+        />
+      )}
+      <Component key={identity}
         apiBasePath={extension.manifest.api.basePath}
         pathname={pathname}
         search={search}
         navigate={navigate}
         Link={Link}
         setBreadcrumbs={setBreadcrumbs}
+        chat={chat}
+        feedback={feedback}
       />
-      {!slot && extension.manifest.assistant && (
-        <NativeExtensionAssistant
-          assistant={extension.manifest.assistant}
-          extensionId={extensionId}
-          pathname={pathname}
-        />
-      )}
+      {feedbackRequest?.identity === identity && <ReportProblemDialog open
+        onOpenChange={open => { if (!open) setFeedbackRequest(null); }}
+        initialComponentId={extensionId} initialFeature={feedbackRequest.feature} appContext={feedbackRequest.appContext} onBeforeSubmit={feedbackRequest.onBeforeSubmit} />}
       {children}
     </div>
   );

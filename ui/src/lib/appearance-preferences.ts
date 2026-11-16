@@ -32,10 +32,14 @@ export type FontSize = typeof FONT_SIZES[number]["id"];
 export type FontFamily = typeof FONT_FAMILIES[number]["id"];
 export type ColorTheme = typeof COLOR_THEMES[number]["id"];
 export type GradientTheme = GradientThemeId;
+export type AssistantFontScale = "auto" | "compact" | "default" | "large";
 export type AppearancePreferenceKey =
   | "font_size"
   | "font_family"
   | "gradient_theme"
+  | "shadows_enabled"
+  | "assistant_glass_enabled"
+  | "assistant_font_scale"
   | "theme";
 
 export interface AppearancePreferences {
@@ -43,6 +47,9 @@ export interface AppearancePreferences {
   fontSize: FontSize;
   gradientTheme: GradientTheme;
   theme: ColorTheme;
+  shadowsEnabled: boolean;
+  assistantGlassEnabled: boolean;
+  assistantFontScale: AssistantFontScale;
 }
 
 export type AppearanceInteractionSnapshot = Record<keyof AppearancePreferences,number>;
@@ -52,12 +59,18 @@ const appearanceInteractionVersions: AppearanceInteractionSnapshot = {
   fontSize: 0,
   gradientTheme: 0,
   theme: 0,
+  shadowsEnabled: 0,
+  assistantGlassEnabled: 0,
+  assistantFontScale: 0,
 };
 
 const STORAGE_KEYS = {
   fontFamily: "caipe-font-family",
   fontSize: "caipe-font-size",
   gradientTheme: "caipe-gradient-theme",
+  shadowsEnabled: "caipe-shadows-enabled",
+  assistantGlassEnabled: "agentic-app-assistant-glass",
+  assistantFontScale: "agentic-app-assistant-font-scale",
 } as const;
 
 function isOption<Value extends string>(
@@ -81,6 +94,9 @@ export function getDefaultAppearancePreferences(): AppearancePreferences {
     fontSize: getConfig("defaultFontSize") as FontSize,
     gradientTheme: getConfig("defaultGradientTheme") as GradientTheme,
     theme: isOption(configuredTheme,COLOR_THEMES) ? configuredTheme : "system",
+    shadowsEnabled: false,
+    assistantGlassEnabled: false,
+    assistantFontScale: "auto",
   };
 }
 
@@ -91,11 +107,17 @@ export function readCachedAppearancePreferences(): Partial<AppearancePreferences
   const fontSize = localStorage.getItem(STORAGE_KEYS.fontSize);
   const gradientTheme = localStorage.getItem(STORAGE_KEYS.gradientTheme);
   const theme = localStorage.getItem("theme");
+  const shadowsEnabled = localStorage.getItem(STORAGE_KEYS.shadowsEnabled);
+  const assistantGlass = localStorage.getItem(STORAGE_KEYS.assistantGlassEnabled);
+  const assistantFontScale = localStorage.getItem(STORAGE_KEYS.assistantFontScale);
   return {
     ...(isOption(fontFamily,FONT_FAMILIES) ? { fontFamily } : {}),
     ...(isOption(fontSize,FONT_SIZES) ? { fontSize } : {}),
     ...(isOption(gradientTheme,gradientThemes) ? { gradientTheme } : {}),
     ...(isOption(theme,COLOR_THEMES) ? { theme } : {}),
+    ...(assistantGlass === "true" || assistantGlass === "false" ? { assistantGlassEnabled: assistantGlass === "true" } : {}),
+    ...(isAssistantFontScale(assistantFontScale) ? { assistantFontScale } : {}),
+    ...(shadowsEnabled === "true" || shadowsEnabled === "false" ? { shadowsEnabled: shadowsEnabled === "true" } : {}),
   };
 }
 
@@ -130,6 +152,12 @@ export function mergeUnchangedServerAppearance(
       appearanceInteractionVersions.theme === snapshot.theme && server.theme
         ? server.theme
         : current.theme,
+    assistantGlassEnabled: appearanceInteractionVersions.assistantGlassEnabled === snapshot.assistantGlassEnabled && typeof server.assistantGlassEnabled === "boolean" ? server.assistantGlassEnabled : current.assistantGlassEnabled,
+    assistantFontScale: appearanceInteractionVersions.assistantFontScale === snapshot.assistantFontScale && server.assistantFontScale ? server.assistantFontScale : current.assistantFontScale,
+    shadowsEnabled:
+      appearanceInteractionVersions.shadowsEnabled === snapshot.shadowsEnabled && typeof server.shadowsEnabled === "boolean"
+        ? server.shadowsEnabled
+        : current.shadowsEnabled,
   };
 }
 
@@ -150,6 +178,9 @@ export function normalizeServerAppearancePreferences(
     ...(isOption(preferences.theme,COLOR_THEMES)
       ? { theme: preferences.theme }
       : {}),
+    ...(typeof preferences.assistant_glass_enabled === "boolean" ? { assistantGlassEnabled: preferences.assistant_glass_enabled } : {}),
+    ...(isAssistantFontScale(preferences.assistant_font_scale) ? { assistantFontScale: preferences.assistant_font_scale } : {}),
+    ...(typeof preferences.shadows_enabled === "boolean" ? { shadowsEnabled: preferences.shadows_enabled } : {}),
   };
 }
 
@@ -203,4 +234,31 @@ export function applyCachedAppearance(preferences: AppearancePreferences): void 
   applyFontSize(preferences.fontSize);
   applyGradientTheme(preferences.gradientTheme);
   applyColorTheme(preferences.theme);
+  applyInterfaceShadows(preferences.shadowsEnabled);
+  applyAssistantGlass(preferences.assistantGlassEnabled);
+  applyAssistantFontScale(preferences.assistantFontScale);
+}
+
+export const INTERFACE_SHADOWS_EVENT = "caipe:interface-shadows-change";
+
+export function applyInterfaceShadows(enabled: boolean): void {
+  document.documentElement.setAttribute("data-interface-shadows",enabled ? "on" : "off");
+  localStorage.setItem(STORAGE_KEYS.shadowsEnabled,String(enabled));
+  window.dispatchEvent(new Event(INTERFACE_SHADOWS_EVENT));
+}
+
+export const ASSISTANT_APPEARANCE_EVENT = "caipe:assistant-appearance-change";
+
+export function isAssistantFontScale(value: unknown): value is AssistantFontScale {
+  return value === "auto" || value === "compact" || value === "default" || value === "large";
+}
+
+export function applyAssistantGlass(enabled: boolean): void {
+  localStorage.setItem(STORAGE_KEYS.assistantGlassEnabled,String(enabled));
+  window.dispatchEvent(new Event(ASSISTANT_APPEARANCE_EVENT));
+}
+
+export function applyAssistantFontScale(value: AssistantFontScale): void {
+  localStorage.setItem(STORAGE_KEYS.assistantFontScale,value);
+  window.dispatchEvent(new Event(ASSISTANT_APPEARANCE_EVENT));
 }

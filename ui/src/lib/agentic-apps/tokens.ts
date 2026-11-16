@@ -9,6 +9,8 @@ export type MintAgenticAppTokenInput = {
   decisionId: string;
   correlationId: string;
   ttlSeconds?: number;
+  /** Host-validated assistant invocation, never populated from public request fields. */
+  assistantContext?: Record<string, unknown>;
 };
 
 export type VerifiedAgenticAppToken = Record<string, unknown> & {
@@ -48,6 +50,7 @@ export async function mintAgenticAppToken(
     scope: input.scopes.join(" "),
     decision_id: input.decisionId,
     correlation_id: input.correlationId,
+    ...(input.assistantContext ? { purpose: "assistant-stream", assistant_context: input.assistantContext } : {}),
     jti: randomUUID(),
     iat: issuedAt,
     exp: expiresAt,

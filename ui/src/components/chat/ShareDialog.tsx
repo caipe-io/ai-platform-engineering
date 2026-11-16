@@ -500,6 +500,11 @@ export function ShareDialog({
           </div>
         </div>
 
+        <p className="mb-4 text-xs text-muted-foreground">
+          Chat sharing does not grant agent access. People with Can edit access also need
+          access to the agent to send messages.
+        </p>
+
         {/* Add people and teams section */}
         {canManageSharing && (
         <div className="mb-6">

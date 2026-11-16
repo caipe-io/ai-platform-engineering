@@ -1,11 +1,12 @@
 """Pydantic models for Dynamic Agents service."""
 
 import logging
+import re
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +196,11 @@ class ModelConfig(BaseModel):
     reasoning_effort: ReasoningEffort = Field(
         "medium",
         description="Portable default reasoning effort; ignored when the model does not support configurable reasoning",
+    )
+    streaming: bool | None = Field(
+        None,
+        strict=True,
+        description="Stream model responses; null inherits the LLM_STREAMING deployment default",
     )
 
 
@@ -523,6 +529,11 @@ class FeaturesConfig(BaseModel):
     same type where the registry allows it.
     """
 
+    remote_agents_as_subagents: bool = Field(
+        False, strict=True, exclude_if=lambda value: not value,
+        description="Opt in to native Deep Agents task delegation for selected A2A agents"
+    )
+
     middleware: list[MiddlewareEntry] = Field(
         default_factory=list,
         description="Ordered list of middleware entries",
@@ -547,12 +558,46 @@ class InterruptConfig(BaseModel):
     )
 
 
+class AppContextPromptConfig(BaseModel):
+    """Deployment-owned opt-in projection of untrusted app data into model input."""
+
+    model_config = ConfigDict(extra="forbid")
+    app_ids: list[Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")]] = Field(min_length=1, max_length=16)
+    fields: list[
+        Annotated[str, Field(max_length=128, pattern=r"^(title|summary|route|selection\.[A-Za-z_][A-Za-z0-9_.-]*)$")]
+    ] = Field(min_length=1, max_length=12)
+    max_bytes: int = Field(default=4096, ge=512, le=8192, strict=True)
+
+    @field_validator("fields")
+    @classmethod
+    def validate_projection(cls, fields: list[str]) -> list[str]:
+        for path in fields:
+            if len(path.split(".")) > 8 or any(
+                part in {"__proto__", "prototype", "constructor"}
+                or not part
+                or re.search(r"api[_-]?key|authorization|cookie|password|secret|token", part, re.I)
+                for part in path.split(".")
+            ):
+                raise ValueError("app context fields must be bounded, non-sensitive data paths")
+        return list(dict.fromkeys(fields))
+
+
+class SkillPackagePin(BaseModel):
+    """Hashes of the scanned skill surface selected by the agent owner."""
+
+    content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    ancillary_sha256: dict[str, str] = Field(default_factory=dict)
+
+
 class DynamicAgentConfigBase(BaseModel):
     """Base fields for dynamic agent configuration."""
 
     name: str = Field(..., description="Display name")
     description: str | None = Field(None, description="Optional description")
     system_prompt: str = Field(..., description="Main system prompt / instructions")
+    app_context_prompt: AppContextPromptConfig | None = Field(
+        None, description="Deployment-owned app context projection; off by default"
+    )
     allowed_tools: dict[str, list[str] | bool] = Field(
         default_factory=dict,
         description=(
@@ -579,6 +624,10 @@ class DynamicAgentConfigBase(BaseModel):
     skills: list[str] = Field(
         default_factory=list,
         description="Skill document IDs from agent_skills collection",
+    )
+    skill_pins: dict[str, SkillPackagePin] = Field(
+        default_factory=dict,
+        description="Optional exact skill package hashes; changed or missing pinned packages fail closed.",
     )
     datasource_ids: list[str] | None = Field(
         None,
@@ -624,6 +673,12 @@ class DynamicAgentConfigBase(BaseModel):
         None,
         description="Backend configuration (storage type, TTL). None = use server defaults.",
     )
+
+    @model_validator(mode="after")
+    def require_attached_skill_pins(self) -> "DynamicAgentConfigBase":
+        if set(self.skill_pins) - set(self.skills):
+            raise ValueError("Pinned skills must remain attached to the agent")
+        return self
 
     @model_validator(mode="before")
     @classmethod

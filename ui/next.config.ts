@@ -3,6 +3,10 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
 
+  // The app gateway must carry the embedded Next app's routing headers through
+  // proxy.ts before the host consumes them while resolving its own routes.
+  skipProxyUrlNormalize: true,
+
   // Keep the Okta SDK as a native Node require instead of bundling it. The SDK
   // does `const nodeFetch = require('node-fetch')` and calls it directly;
   // when bundled, CJS/ESM interop turns that into `{ default: fn }`, so the call
@@ -21,6 +25,12 @@ const nextConfig: NextConfig = {
 
   // HTTP security headers — applied to all responses
   headers: async () => [
+    {
+      source: '/app-icons/:path*',
+      headers: [
+        { key: 'Content-Security-Policy', value: "default-src 'none'; style-src 'unsafe-inline'; sandbox" },
+      ],
+    },
     {
       // External App responses arrive on their canonical /apps/* URLs after
       // an internal proxy rewrite. Keep every route outside that surface and

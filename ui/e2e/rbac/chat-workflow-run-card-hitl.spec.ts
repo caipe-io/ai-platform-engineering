@@ -129,7 +129,8 @@ async function installChatWorkflowMocks(
       return;
     }
 
-    await route.continue();
+    // Preserve the shared fixture's conversation-list route for unhandled paths.
+    await route.fallback();
   });
 
   await page.route("**/api/dynamic-agents/**", async (route) => {

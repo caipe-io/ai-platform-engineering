@@ -2,6 +2,8 @@
 
 import { AutoSaveStatus } from "@/components/settings/shared/AutoSaveStatus";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
+import { SettingsSwitch } from "@/components/settings/shared/SettingsSwitch";
+import { Select } from "@/components/ui/select";
 import { apiClient } from "@/lib/api-client";
 import {
   COLOR_THEMES,
@@ -12,6 +14,9 @@ import {
   applyFontFamily,
   applyFontSize,
   applyGradientTheme,
+  applyInterfaceShadows,
+  applyAssistantFontScale,
+  isAssistantFontScale,
   getDefaultAppearancePreferences,
   markAppearanceInteraction,
   mergeUnchangedServerAppearance,
@@ -83,7 +88,7 @@ export function AppearanceSettings(): React.ReactElement {
   const [loading,setLoading] = useState(true);
   const [loadError,setLoadError] = useState<string | null>(null);
 
-  const autoSave = useKeyedAutoSave<AppearancePreferenceKey,string>({
+  const autoSave = useKeyedAutoSave<AppearancePreferenceKey,string | boolean>({
     persist: async (key,value) => {
       await apiClient.updatePreferences({ [key]: value });
     },
@@ -100,8 +105,10 @@ export function AppearanceSettings(): React.ReactElement {
       // Yield past hydration before reflecting browser-only storage in React.
       await Promise.resolve();
       if (cancelled) return;
-      setPreferences(cached);
-      applyCachedAppearance(cached);
+      setPreferences(current => {
+        const initial = mergeUnchangedServerAppearance(current,cached,interactionSnapshot);
+        return initial;
+      });
 
       try {
         const settings = await apiClient.getSettings();
@@ -115,7 +122,6 @@ export function AppearanceSettings(): React.ReactElement {
             serverPreferences,
             interactionSnapshot,
           );
-          applyCachedAppearance(server);
           return server;
         });
       } catch (reason: unknown) {
@@ -135,6 +141,10 @@ export function AppearanceSettings(): React.ReactElement {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!loading) applyCachedAppearance(preferences);
+  }, [loading,preferences]);
 
   useEffect(() => {
     if (loading) return;
@@ -169,6 +179,21 @@ export function AppearanceSettings(): React.ReactElement {
     setPreferences((current) => ({ ...current,gradientTheme: value }));
     applyGradientTheme(value);
     autoSave.enqueue("gradient_theme",value);
+  };
+
+  const changeShadows = (value: boolean) => {
+    markAppearanceInteraction("shadowsEnabled");
+    setPreferences(current => ({ ...current,shadowsEnabled: value }));
+    applyInterfaceShadows(value);
+    autoSave.enqueue("shadows_enabled",value);
+  };
+
+  const changeAssistantFont = (value: string) => {
+    if (!isAssistantFontScale(value)) return;
+    markAppearanceInteraction("assistantFontScale");
+    setPreferences(current => ({ ...current,assistantFontScale: value }));
+    applyAssistantFontScale(value);
+    autoSave.enqueue("assistant_font_scale",value);
   };
 
   return (
@@ -283,6 +308,23 @@ export function AppearanceSettings(): React.ReactElement {
           onRetry={() => autoSave.retry("gradient_theme")}
           state={autoSave.stateFor("gradient_theme")}
         />
+      </SettingsCard>
+
+      <SettingsCard title="Interface shadows" description="Show decorative shadows and glow around panels, cards, and chat. Borders and keyboard focus remain visible.">
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-sm">Show shadows</span>
+          <SettingsSwitch checked={preferences.shadowsEnabled} label="Show interface shadows" onCheckedChange={changeShadows} />
+        </div>
+        <AutoSaveStatus className="mt-3" onRetry={() => autoSave.retry("shadows_enabled")} state={autoSave.stateFor("shadows_enabled")} />
+      </SettingsCard>
+
+      <SettingsCard title="Assistant appearance" description="Your display preferences apply to the shared assistant across apps.">
+        <label className="mt-4 block text-sm font-medium">Chat text size
+          <Select className="mt-2 max-w-xs" value={preferences.assistantFontScale} onChange={event => changeAssistantFont(event.target.value)}>
+            <option value="auto">App default</option><option value="compact">Small</option><option value="default">Default</option><option value="large">Large</option>
+          </Select>
+        </label>
+        <AutoSaveStatus className="mt-3" onRetry={() => autoSave.retry("assistant_font_scale")} state={autoSave.stateFor("assistant_font_scale")} />
       </SettingsCard>
 
       <SettingsCard

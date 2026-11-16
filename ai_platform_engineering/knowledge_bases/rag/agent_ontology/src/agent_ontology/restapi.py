@@ -100,7 +100,7 @@ async def accept_relation(relation_id: str, relation_name: str, property_mapping
 
   """
   logger.warning("Accepting foreign key relation %s", relation_id)
-  if agent.is_evaluating or agent.is_processing:
+  if agent.is_busy:
     return JSONResponse(status_code=400, content={"message": "Ontology processing/evaluation is in progress"})
 
   rc_manager = await get_rc_manager_with_latest_ontology()
@@ -144,7 +144,7 @@ async def reject_relation(relation_id: str, justification: str):
       justification: Justification for rejecting the relation
   """
   logger.warning("Rejecting foreign key relation %s", relation_id)
-  if agent.is_evaluating or agent.is_processing:
+  if agent.is_busy:
     return JSONResponse(status_code=400, content={"message": "Ontology processing/evaluation is in progress"})
   rc_manager = await get_rc_manager_with_latest_ontology()
   if rc_manager is None:
@@ -184,7 +184,7 @@ async def undo_evaluation(relation_id: str):
   Undo an accepted or rejected foreign key relation
   """
   logger.warning("Un-rejecting foreign key relation %s", relation_id)
-  if agent.is_evaluating or agent.is_processing:
+  if agent.is_busy:
     return JSONResponse(status_code=400, content={"message": "Ontology processing/evaluation is in progress"})
 
   rc_manager = await get_rc_manager_with_latest_ontology()
@@ -219,7 +219,7 @@ async def sync_relation(relation_id: str):
   Syncs a single foreign key relation with the graph database
   """
   logger.warning("Syncing foreign key relation %s", relation_id)
-  if agent.is_evaluating or agent.is_processing:
+  if agent.is_busy:
     return JSONResponse(status_code=400, content={"message": "Ontology processing/evaluation is in progress"})
   rc_manager = await get_rc_manager_with_latest_ontology()
   if rc_manager is None:
@@ -303,7 +303,7 @@ async def regenerate_ontology(background_tasks: BackgroundTasks):
   Asks the agent to regenerate the ontology graph based on current foreign key relations in the data graph
   """
   logger.warning("Regenerating ontology graph")
-  if agent.is_processing or agent.is_evaluating:
+  if agent.is_busy:
     return JSONResponse(status_code=400, content={"message": "Heuristics processing is in progress"})
   background_tasks.add_task(agent.process_and_evaluate_all)
   return JSONResponse(status_code=200, content={"message": "Submitted"})
@@ -315,7 +315,7 @@ async def clear_ontology():
   Clears all foreign key relations and the ontology graph
   """
   logger.warning("Clearing all foreign key relations and the ontology graph")
-  if agent.is_processing or agent.is_evaluating:
+  if agent.is_busy:
     return JSONResponse(status_code=400, content={"message": "Ontology processing is in progress"})
   ontology_version_id = await redis_client.get(constants.KV_ONTOLOGY_VERSION_ID_KEY)
   if ontology_version_id is None:
@@ -405,6 +405,7 @@ async def healthz():
     "ontology_graph_db_ready": "true",
     "is_processing": agent.is_processing,
     "is_evaluating": agent.is_evaluating,
+    "is_generating": agent.is_generating,
     "last_evaluation_run_timestamp": agent.last_evaluation_run_timestamp,
     "max_concurrent_processing": MAX_CONCURRENT_PROCESSING,
     "max_concurrent_evaluation": MAX_CONCURRENT_EVALUATION,

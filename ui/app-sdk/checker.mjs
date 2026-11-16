@@ -1,3 +1,4 @@
+import { validateAssistantOptions } from "./assistant-options.mjs";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { nativeUiDescriptor, validateAgenticAppManifest } from "./agentic-app-manifest.mjs";
@@ -60,7 +61,8 @@ function validPath(path) {
 }
 
 export function validateManifest(moduleName, manifest) {
-  if (manifest?.apiVersion === "2.0") {
+  const apiVersion = manifest?.apiVersion;
+  if (apiVersion === "2.0") {
     const app = validateAgenticAppManifest(manifest);
     const profile = app.ui.profiles.find((candidate) => candidate.mode === "native-package");
     if (!profile || (moduleName.startsWith("@") && profile.package !== moduleName)) throw new Error(`${moduleName}: native package binding mismatch`);
@@ -89,7 +91,7 @@ export function validateManifest(moduleName, manifest) {
     const nav = manifest.navigation;
     if (!nav || typeof nav.label !== "string" || !nav.label.trim() || nav.placement !== "after-chat"
       || !validPath(nav.href) || !paths.some((path) => ownsPath(path, nav.href))
-      || (nav.icon !== undefined && !["book-open", "layout-grid"].includes(nav.icon))) {
+      || (nav.icon !== undefined && !["book-open", "folder-kanban", "layout-grid"].includes(nav.icon))) {
       fail("navigation must reference an owned route and use a supported placement/icon");
     }
   }
@@ -99,8 +101,29 @@ export function validateManifest(moduleName, manifest) {
       || typeof assistant.agentId !== "string" || !ID.test(assistant.agentId)
       || typeof assistant.label !== "string" || !assistant.label.trim() || assistant.label.length > 48
       || typeof assistant.name !== "string" || !assistant.name.trim() || assistant.name.length > 80
-      || Object.keys(assistant).some((key) => !["agentId", "label", "name"].includes(key))) {
+      || Object.keys(assistant).some((key) => !["agentId", "label", "name", "streamPath", "resumePath", "cancelPath", "statusPath", "overlay", "supportedClients", "webexGroupChat", "hostOptions"].includes(key))) {
       fail("assistant must declare a valid agentId, label, and name");
+    }
+    if (assistant.supportedClients !== undefined &&
+        (!assistant.streamPath || !Array.isArray(assistant.supportedClients) || !assistant.supportedClients.length ||
+         new Set(assistant.supportedClients).size !== assistant.supportedClients.length ||
+         assistant.supportedClients.some(client => !["webui", "webex"].includes(client))))
+      fail("assistant supportedClients must declare distinct webui/webex clients and a streamPath");
+    if (assistant.webexGroupChat !== undefined &&
+        (typeof assistant.webexGroupChat !== "boolean" || !assistant.supportedClients?.includes("webex")))
+      fail("assistant webexGroupChat requires explicit Webex support");
+    if (assistant.hostOptions !== undefined) validateAssistantOptions(assistant.hostOptions);
+    if (assistant.overlay !== undefined && !["host", "app"].includes(assistant.overlay)) {
+      fail("assistant overlay must be host or app");
+    }
+    if (apiVersion !== "2.0" && ["streamPath", "resumePath", "cancelPath", "statusPath"].some(field => assistant[field] !== undefined)) {
+      fail("assistant paths require an apiVersion 2.0 manifest");
+    }
+    for (const field of ["streamPath", "resumePath", "cancelPath", "statusPath"]) {
+      if (assistant[field] !== undefined && (!validPath(assistant[field])
+        || !assistant[field].startsWith("/api/") || (field !== "streamPath" && !assistant.streamPath))) {
+        fail(`assistant ${field} must be a runtime API path with streamPath declared`);
+      }
     }
   }
   const api = manifest.api;

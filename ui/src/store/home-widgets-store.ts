@@ -6,8 +6,8 @@ const STORAGE_KEY = "caipe-home-widgets";
 const STORAGE_VERSION_KEY = "caipe-home-widgets-version";
 const LEGACY_EXPERIENCE_STORAGE_KEY = "caipe-home-experience";
 
-export const HOME_WIDGETS_SCHEMA_VERSION = 2;
-export const DEFAULT_HOME_WIDGETS = ["heroComposer", "quickStart"];
+export const HOME_WIDGETS_SCHEMA_VERSION = 3;
+export const DEFAULT_HOME_WIDGETS = ["heroComposer", "quickStart", "favoriteApps"];
 
 export interface HomeWidgetDefinition {
   id: string;
@@ -21,6 +21,7 @@ export interface HomeWidgetDefinition {
 export const HOME_WIDGET_DEFINITIONS: HomeWidgetDefinition[] = [
   { id: "heroComposer", label: "Ask CAIPE", width: "full" },
   { id: "quickStart", label: "Quick Start", width: "full" },
+  { id: "favoriteApps", label: "Favorite Apps", width: "full", requiresMongo: true },
   { id: "shortcuts", label: "Shortcuts", width: "full" },
   { id: "recentChats", label: "Recent Chats", width: "half" },
   { id: "insights", label: "Your Insights", width: "half", requiresMongo: true },
@@ -47,6 +48,13 @@ function normalizeWidgetIds(widgets: unknown[]): string[] {
 function migrateWidgetIds(widgets: unknown[], version: number | undefined): string[] {
   const normalized = normalizeWidgetIds(widgets);
   if (version !== undefined && version >= HOME_WIDGETS_SCHEMA_VERSION) return normalized;
+  if (version === 2) {
+    if (normalized.length === 0 || normalized.includes("favoriteApps")) return normalized;
+    const next = [...normalized];
+    const quickStartIndex = next.indexOf("quickStart");
+    next.splice(quickStartIndex < 0 ? next.length : quickStartIndex + 1, 0, "favoriteApps");
+    return next;
+  }
   return [...DEFAULT_HOME_WIDGETS, ...normalized.filter((id) => !DEFAULT_HOME_WIDGETS.includes(id))];
 }
 

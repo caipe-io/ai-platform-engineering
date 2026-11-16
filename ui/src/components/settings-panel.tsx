@@ -13,6 +13,7 @@ import { apiClient } from "@/lib/api-client";
 import { GuardedNavigationLink } from "@/components/layout/GuardedNavigationLink";
 import { useTheme } from "@/components/theme-provider";
 import { useHydrated } from "@/hooks/use-hydrated";
+import { useInterfaceShadows } from "@/hooks/use-interface-shadows";
 import { Palette } from "lucide-react";
 import { useEffect,useRef } from "react";
 
@@ -23,6 +24,8 @@ import { useEffect,useRef } from "react";
  * is only one canonical editing surface.
  */
 export function SettingsPanel(): React.ReactElement {
+  // Keep the root appearance and any hosted frames current across tabs.
+  useInterfaceShadows();
   const { theme,setTheme } = useTheme();
   const hydrated = useHydrated();
   const setThemeRef = useRef(setTheme);

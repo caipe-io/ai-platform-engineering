@@ -1,4 +1,8 @@
 import fs from "node:fs";
+import { parseFeedbackIssueStyle } from "@/lib/feedback-issue-style";
+import { parseFeedbackFeatures } from "@/lib/feedback-features";
+import { RESERVED_HOST_PATHS, pathsOverlap } from "../../../app-sdk/reserved-paths.mjs";
+import { agenticAppHostPaths } from "./host-routes";
 import { load as loadYaml } from "js-yaml";
 import {
   normalizeLegacyAgenticAppManifest,
@@ -21,6 +25,19 @@ import type {
 import { MAX_AGENTIC_APP_REQUEST_BODY_BYTES } from "@/types/agentic-app";
 
 const APP_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const routingState = globalThis as typeof globalThis & {
+  __caipeAgenticAppRoutingSnapshot?: { path: string; apps: ConfiguredAgenticApp[] };
+};
+
+/** Latest successful validation at this deployment path; refresh by loading the catalog. */
+export function getAgenticAppRoutingSnapshot(): ConfiguredAgenticApp[] {
+  if (!isAgenticAppsEnabled()) return [];
+  const path = process.env.AGENTIC_APPS_CONFIG_PATH?.trim();
+  const snapshot = routingState.__caipeAgenticAppRoutingSnapshot;
+  if (!snapshot || snapshot.path !== path) return loadConfiguredAgenticApps();
+  return snapshot.apps;
+}
+
 const HTTP_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]);
 const AUTH_MODES = new Set<AgenticAppAuthMode>([
   "app-scoped-token",
@@ -41,6 +58,10 @@ type RawInstallation = {
   runtime_mount_path?: unknown;
   runtime_origin_override?: unknown;
   access_overrides?: unknown;
+  host_route_claims?: unknown;
+  navigation_overrides?: unknown;
+  feedback_path?: unknown;
+  feedback_features?: unknown;
   selected_ui_profile?: unknown;
   app_version?: unknown;
   bindings?: unknown;
@@ -142,6 +163,8 @@ export function loadConfiguredAgenticApps(
     }
   });
 
+  const feedbackHandlers = process.env.FEEDBACK_COMPONENTS_JSON === undefined ? {} :
+    asRecord(JSON.parse(process.env.FEEDBACK_COMPONENTS_JSON), "FEEDBACK_COMPONENTS_JSON");
   const apps: ConfiguredAgenticApp[] = rawInstallations.map((entry, index) => {
     const path = `agentic_apps.installations[${index}]`;
     const raw = asRecord(entry, path) as RawInstallation;
@@ -195,6 +218,14 @@ export function loadConfiguredAgenticApps(
             ),
           }
         : {}),
+      ...(raw.host_route_claims !== undefined
+        ? { hostRouteClaims: requiredStringArray(raw.host_route_claims, `${path}.host_route_claims`, true) } : {}),
+      ...(raw.feedback_features !== undefined
+        ? { feedbackFeatures: parseFeedbackFeatures(raw.feedback_features, `${path}.feedback_features`) } : {}),
+      ...(raw.feedback_path !== undefined
+        ? { feedbackPath: requiredFeedbackPath(raw.feedback_path, `${path}.feedback_path`) } : {}),
+      ...(raw.navigation_overrides !== undefined
+        ? { navigationOverrides: parseNavigationOverrides(raw.navigation_overrides, `${path}.navigation_overrides`) } : {}),
       ...(raw.access_overrides !== undefined
         ? {
             accessOverrides: parseAccessOverrides(
@@ -216,6 +247,21 @@ export function loadConfiguredAgenticApps(
       throw new Error(
         `${path}: select an explicit UI profile for a multi-profile application`,
       );
+    if (Object.hasOwn(feedbackHandlers, appId)) {
+      const feedback = asRecord(feedbackHandlers[appId], `Feedback component ${appId}`);
+      if (feedback.handler !== "github") throw new Error(`Unsupported feedback handler for ${appId}`);
+      const repository = requiredString(feedback.repository, "Feedback repository");
+      const tokenEnv = requiredString(feedback.tokenEnv, "Feedback token environment key");
+      const validRepo = (value: string) => /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+$/.test(value) && ![".", ".."].includes(value.split("/")[1]);
+      if (!validRepo(repository) || !/^FEEDBACK_[A-Z][A-Z0-9_]*_TOKEN$/.test(tokenEnv)) throw new Error(`Invalid feedback destination for ${appId}`);
+      const screenshotsRepository = feedback.screenshotsRepository === undefined ? undefined : requiredString(feedback.screenshotsRepository, "Feedback screenshots repository");
+      if (screenshotsRepository && !validRepo(screenshotsRepository)) throw new Error(`Invalid feedback screenshots repository for ${appId}`);
+      installation.feedbackGitHub = { repository, tokenEnv, screenshotsRepository,
+        ...(feedback.style === undefined ? {} : { style: parseFeedbackIssueStyle(feedback.style) }),
+        ...(feedback.label === undefined ? {} : { label: requiredString(feedback.label, "Feedback label") }) };
+      installation.feedbackFeatures = parseFeedbackFeatures(feedback.features, `Feedback features for ${appId}`);
+      delete installation.feedbackPath;
+    }
     if (
       installation.bindings?.runtimeOrigin &&
       installation.runtimeOriginOverride &&
@@ -233,7 +279,7 @@ export function loadConfiguredAgenticApps(
     if (
       profile?.mode !== "native-package" &&
       manifest.consumes.platformApis.some(
-        (api) => api.required && api.id.startsWith("host."),
+        (api) => api.required && api.id.startsWith("host.") && api.id !== "host.notifications",
       )
     )
       throw new Error(
@@ -248,12 +294,50 @@ export function loadConfiguredAgenticApps(
       throw new Error(
         `${path}: native package is not compiled into this image`,
       );
-    return { manifest, installation };
+    for (const claim of installation.hostRouteClaims ?? []) {
+      if (!manifest.ui.routes.some(route => route.path === claim) ||
+          RESERVED_HOST_PATHS.some(root => claim === root || claim.startsWith(`${root}/`)))
+        throw new Error(`${path}: host_route_claims must approve non-reserved declared routes`);
+    }
+    // Resource identities belong to the installation, not the publisher artifact.
+    const assistantId = installation.bindings?.resources?.assistant;
+    if (assistantId && !APP_ID_PATTERN.test(assistantId)) throw new Error(`${path}: invalid assistant agent ID`);
+    if (assistantId && !manifest.ui.assistant) {
+      throw new Error(`${path}: assistant binding requires a declared assistant`);
+    }
+    const boundManifest = assistantId ? {
+      ...manifest,
+      ui: { ...manifest.ui, assistant: { ...manifest.ui.assistant!, agentId: assistantId } },
+    } : manifest;
+    return { manifest: boundManifest, installation };
   });
 
+  const assistantIds = new Map<string, boolean>();
   const appIds = new Set<string>();
   const mountPaths = new Map<string, string>();
+  const serviceAccountClients = new Map<string, string>();
   for (const app of apps) {
+    const clientId = app.installation.bindings?.serviceAccountClientId;
+    if (clientId) {
+      const owner = serviceAccountClients.get(clientId);
+      if (owner) {
+        throw new Error(
+          `serviceAccountClientId "${clientId}" is bound to both "${owner}" and "${app.installation.appId}"`,
+        );
+      }
+      serviceAccountClients.set(clientId, app.installation.appId);
+    }
+    const assistant = app.manifest.ui.assistant;
+    const assistantId = assistant?.agentId;
+    if (assistantId) {
+      const appOwned = Boolean(assistant.streamPath);
+      // An app-owned stream must resolve to one app. Platform agents may be
+      // shared by multiple app overlays without claiming their chat runtime.
+      if (assistantIds.has(assistantId) && (appOwned || assistantIds.get(assistantId))) {
+        throw new Error("Multiple installed apps claim the assistant");
+      }
+      assistantIds.set(assistantId, appOwned);
+    }
     if (appIds.has(app.installation.appId)) {
       throw new Error(
         `Duplicate External App installation: ${app.installation.appId}`,
@@ -280,7 +364,7 @@ export function loadConfiguredAgenticApps(
       app.installation.runtimeOriginOverride ??
       app.manifest.runtime?.origin;
     if (
-      (app.manifest.runtime || app.manifest.api.mounts.length > 0) &&
+      (app.manifest.runtime || app.manifest.api.mounts.length > 0 || app.installation.feedbackPath) &&
       app.installation.installed &&
       app.installation.enabled &&
       !origin
@@ -291,27 +375,23 @@ export function loadConfiguredAgenticApps(
     }
   }
 
-  validateAgenticAppOwnership(
-    apps.map((app) => {
-      const profile = app.manifest.ui.profiles.find(
-        (candidate) => candidate.id === app.installation.selectedUiProfile,
-      );
-      return {
-        ...app.manifest,
-        ui: {
-          ...app.manifest.ui,
-          routes:
-            profile?.mode === "iframe"
-              ? [{ id: "home", path: `/apps/${app.manifest.id}` }]
-              : app.manifest.ui.routes,
-          slots:
-            profile?.mode === "native-package" ? app.manifest.ui.slots : [],
-        },
-      };
-    }),
-  );
+  const activeApps = apps.filter(app => app.installation.installed && app.installation.enabled);
+  const claims = activeApps.flatMap(app => agenticAppHostPaths(app).map(path => ({ appId: app.installation.appId, path })));
+  for (let index = 0; index < claims.length; index++) {
+    for (const other of claims.slice(index + 1)) {
+      if (other.appId !== claims[index].appId && pathsOverlap(claims[index].path, other.path))
+        throw new Error("Conflicting application host route claims");
+    }
+  }
+  validateAgenticAppOwnership(activeApps.map(app => ({
+    ...app.manifest,
+    ui: { ...app.manifest.ui,
+      routes: app.manifest.ui.profiles.find(p => p.id === app.installation.selectedUiProfile)?.mode === "iframe"
+        ? [{ id: "home", path: `/apps/${app.manifest.id}` }] : app.manifest.ui.routes,
+    },
+  })));
 
-  return apps.sort((left, right) => {
+  const sorted = apps.sort((left, right) => {
     const leftOrder =
       left.manifest.surfaces.navOrder ?? Number.MAX_SAFE_INTEGER;
     const rightOrder =
@@ -321,6 +401,8 @@ export function loadConfiguredAgenticApps(
       left.manifest.displayName.localeCompare(right.manifest.displayName)
     );
   });
+  routingState.__caipeAgenticAppRoutingSnapshot = { path: configPath, apps: sorted };
+  return sorted;
 }
 
 export function getConfiguredAgenticApp(
@@ -650,12 +732,24 @@ function parseAccessOverrides(
   };
 }
 
+function parseNavigationOverrides(value: unknown, path: string): AgenticAppInstallation["navigationOverrides"] {
+  const raw = asRecord(value, path);
+  assertKnownKeys(raw, ["visible", "label", "order"], path);
+  if (raw.order !== undefined && (typeof raw.order !== "number" || !Number.isFinite(raw.order)))
+    throw new Error(`${path}.order must be finite`);
+  return {
+    ...(raw.visible !== undefined ? { visible: optionalBoolean(raw.visible, true, `${path}.visible`) } : {}),
+    ...(raw.label !== undefined ? { label: requiredString(raw.label, `${path}.label`) } : {}),
+    ...(raw.order !== undefined ? { order: raw.order as number } : {}),
+  };
+}
+
 function parseBindings(
   value: unknown,
   path: string,
 ): NonNullable<AgenticAppInstallation["bindings"]> {
   const raw = asRecord(value, path);
-  assertKnownKeys(raw, ["runtimeOrigin", "resources"], path);
+  assertKnownKeys(raw, ["runtimeOrigin", "resources", "serviceAccountClientId"], path);
   const resources =
     raw.resources === undefined
       ? undefined
@@ -666,6 +760,14 @@ function parseBindings(
           runtimeOrigin: requiredHttpOrigin(
             raw.runtimeOrigin,
             `${path}.runtimeOrigin`,
+          ),
+        }
+      : {}),
+    ...(raw.serviceAccountClientId !== undefined
+      ? {
+          serviceAccountClientId: requiredString(
+            raw.serviceAccountClientId,
+            `${path}.serviceAccountClientId`,
           ),
         }
       : {}),
@@ -801,4 +903,12 @@ function requiredHttpOrigin(
     throw new Error(`${path} must be an HTTP(S) origin without credentials`);
   }
   return allowPath ? parsed.toString() : parsed.origin;
+}
+
+function requiredFeedbackPath(value: unknown, label: string): string {
+  const path = requiredString(value, label);
+  if (!/^\/[a-zA-Z0-9_/-]+$/.test(path) || path.includes("//")) {
+    throw new Error(`${label} must be a canonical app-relative path without query parameters`);
+  }
+  return path;
 }

@@ -1,5 +1,8 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from fastapi import HTTPException
+
 from dynamic_agents.models import (
     ChatRequest,
     ClientContext,
@@ -7,7 +10,8 @@ from dynamic_agents.models import (
     ModelConfig,
     UserContext,
 )
-from dynamic_agents.routes.chat import chat_invoke
+from dynamic_agents.routes.chat import _validate_allowed_tools_subset, chat_invoke
+from dynamic_agents.services.execution_lease import NativeThreadBusyError
 
 
 class _AsyncRuntimeContext:
@@ -121,3 +125,45 @@ async def test_regular_invoke_stays_ephemeral() -> None:
     assert response["success"] is True
     cache.get_or_create.assert_not_awaited()
     cache.ephemeral.assert_called_once()
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+async def test_only_persistent_invoke_contends_for_native_lease(persistent: bool) -> None:
+    agent = _agent()
+    cache = MagicMock()
+    cache.ephemeral.return_value = _AsyncRuntimeContext(_runtime())
+    class BusyLease:
+        async def __aenter__(self) -> None:
+            raise NativeThreadBusyError("busy")
+
+        async def __aexit__(self, *args: object) -> bool:
+            return False
+
+    with (
+        patch("dynamic_agents.routes.chat.get_runtime_cache", return_value=cache),
+        patch("dynamic_agents.routes.chat.require_agent_use_permission", new=AsyncMock()),
+        patch("dynamic_agents.routes.chat.get_settings", return_value=MagicMock(invoke_persist_history=persistent)),
+        patch("dynamic_agents.routes.chat.reserve_native_thread", return_value=BusyLease()) as reserve,
+    ):
+        response = await chat_invoke(ChatRequest(message="example", conversation_id="example", agent_id=agent.id),
+                                     user=UserContext(email="user@example.test"), mongo=_mongo(agent))
+    if persistent:
+        assert response.status_code == 409
+        reserve.assert_called_once()
+    else:
+        assert response["success"] is True
+        reserve.assert_not_called()
+
+
+def test_per_turn_tools_cannot_widen_a_saved_tool_list() -> None:
+    with pytest.raises(HTTPException, match="widen"):
+        _validate_allowed_tools_subset({"example": ["read"]}, {"example": True})
+    _validate_allowed_tools_subset({"example": ["read", "list"]}, {"example": ["read"]})
+
+
+def test_empty_tool_list_cannot_widen_a_saved_specific_allowlist() -> None:
+    with pytest.raises(HTTPException, match="widen"):
+        _validate_allowed_tools_subset({"example": ["read"]}, {"example": []})
+    _validate_allowed_tools_subset({"example": []}, {"example": True})
+    _validate_allowed_tools_subset({"example": True}, {"example": []})
+    _validate_allowed_tools_subset({"example": []}, {"example": ["read"]})

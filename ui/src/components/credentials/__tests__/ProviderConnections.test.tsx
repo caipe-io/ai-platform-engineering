@@ -906,8 +906,12 @@ describe("ProviderConnections", () => {
       await userEvent.click(await screen.findByRole("button", { name: /permissions/i }));
       expect(screen.getByRole("checkbox", { name: /^read:jira-work/i })).toBeChecked();
       expect(screen.getByRole("checkbox", { name: /write:jira-work/i })).not.toBeChecked();
-      expect(screen.getByText(/Current permissions: read:jira-work, offline_access/i)).toBeInTheDocument();
+      expect(screen.getByText(/provider did not report the granted permissions/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Reconnect Atlassian for permission changes to take effect/i)).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole("checkbox", { name: /write:jira-work/i }));
       expect(screen.getByText(/Reconnect Atlassian for permission changes to take effect/i)).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("checkbox", { name: /write:jira-work/i }));
+      expect(screen.queryByText(/Reconnect Atlassian for permission changes to take effect/i)).not.toBeInTheDocument();
 
       // Reconnect preserves the stored narrowing.
       const relink = screen.getByRole("link", { name: /reconnect atlassian/i });
@@ -919,6 +923,25 @@ describe("ProviderConnections", () => {
       );
 
       open.mockRestore();
+    });
+
+    it("shows granted GitHub scopes without suggesting an unchanged connection needs reconnecting", async () => {
+      mockFetch(
+        [{ id: "connector-1", name: "GitHub", provider: "github", enabled: true, scopes: ["repo", "read:user"] }],
+        [{
+          id: "conn-1", connectorId: "connector-1", provider: "github", status: "connected",
+          grantedScopes: ["read:user", "repo"],
+        }],
+      );
+
+      render(<ProviderConnections />);
+      await userEvent.click(await screen.findByRole("button", { name: /permissions/i }));
+      expect(screen.getByText("Granted by GitHub: read:user, repo")).toBeInTheDocument();
+      expect(screen.getByText(/Reconnecting does not approve an organization/)).toBeInTheDocument();
+      expect(screen.queryByText(/Reconnect GitHub for permission changes/)).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole("checkbox", { name: /^repo$/ }));
+      expect(screen.getByText(/Reconnect GitHub for permission changes/)).toBeInTheDocument();
+      expect(screen.getByText("Granted by GitHub: read:user, repo")).toBeInTheDocument();
     });
 
     it("drops a stored scope the connector no longer offers (connector shrink)", async () => {

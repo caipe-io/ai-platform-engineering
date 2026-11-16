@@ -1,0 +1,37 @@
+# Load once before the selected worker overlays; owns their shared network boundary.
+services:
+  worker-egress:
+    profiles: [harness-engine]
+    image: ${WORKER_EGRESS_IMAGE:-ghcr.io/caipe-io/caipe-worker-egress:${HARNESS_IMAGE_TAG:?set a release, prebuild or source SHA tag}}
+    pull_policy: always
+    build: !reset null
+    user: "65532:65532"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 0.5
+    mem_limit: 256m
+    pids_limit: 64
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+    networks: [harness-workers, worker-egress]
+    volumes:
+      - type: bind
+        source: ${CLAUDE_WORKER_ALLOWED_DOMAINS_FILE:?set an absolute path to the approved model hostname list}
+        target: /etc/squid/allowed-domains.txt
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: [CMD, squid, -k, check, -f, /etc/squid/squid.conf]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+networks:
+  harness-workers:
+    internal: true
+  worker-egress:

@@ -1,3 +1,14 @@
+{{- if .Values.mcpDcr.enabled }}
+{{- if not (semverCompare ">=26.8.0" .Values.image.tag) }}
+{{- fail "keycloak.mcpDcr.enabled requires keycloak.image.tag >= 26.8.0 for resource-indicators" }}
+{{- end }}
+{{- if not (regexMatch "^https://[^/]+/.+" .Values.mcpDcr.resourceUrl) }}
+{{- fail "keycloak.mcpDcr.resourceUrl must be the public HTTPS MCP endpoint" }}
+{{- end }}
+{{- if or (not (has "caipe-ui" .Values.mcpDcr.platformClientIds)) (not (has "caipe-platform" .Values.mcpDcr.platformClientIds)) }}
+{{- fail "keycloak.mcpDcr.platformClientIds must retain caipe-ui and caipe-platform" }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -6,6 +17,11 @@ metadata:
     {{- include "keycloak.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  # Keycloak minor upgrades can change database/cache formats. Stop the old
+  # version before starting the replacement against the shared database.
+  strategy:
+    type: Recreate
+    rollingUpdate: null
   selector:
     matchLabels:
       {{- include "keycloak.selectorLabels" . | nindent 6 }}
@@ -13,6 +29,9 @@ spec:
     metadata:
       annotations:
         checksum/keycloak-realm: {{ include (print $.Template.BasePath "/configmap-realm.yaml") . | sha256sum }}
+        {{- if .Values.mcpDcr.enabled }}
+        checksum/keycloak-openid-configuration: {{ include (print $.Template.BasePath "/configmap-openid-configuration.yaml") . | sha256sum }}
+        {{- end }}
         {{- if and .Values.theme.enabled (not .Values.theme.existingConfigMap) }}
         checksum/keycloak-theme: {{ include (print $.Template.BasePath "/configmap-theme.yaml") . | sha256sum }}
         {{- end }}
@@ -35,12 +54,21 @@ spec:
           args:
             - {{ if .Values.database.enabled }}start{{ else }}start-dev{{ end }}
             - --import-realm
+            {{- /* Codex currently loses the RFC 9207 `iss` parameter while relaying
+                   its loopback callback. Keep Keycloak emitting `iss`, but advertise
+                   false so the client does not require the missing relayed value. */}}
+            {{- if .Values.mcpDcr.enabled }}
+            - --spi-well-known--openid-configuration--openid-configuration-override=/opt/keycloak/conf/openid-configuration-override.json
+            {{- end }}
             {{- $features := list }}
             {{- if .Values.features.tokenExchange }}
             {{- $features = append $features "token-exchange" }}
             {{- end }}
             {{- if .Values.features.adminFineGrainedAuthz }}
             {{- $features = append $features "admin-fine-grained-authz:v1" }}
+            {{- end }}
+            {{- if .Values.mcpDcr.enabled }}
+            {{- $features = append $features "resource-indicators" }}
             {{- end }}
             {{- if $features }}
             - --features={{ join "," $features }}
@@ -117,6 +145,12 @@ spec:
             - name: realm-config
               mountPath: /opt/keycloak/data/import
               readOnly: true
+            {{- if .Values.mcpDcr.enabled }}
+            - name: openid-configuration
+              mountPath: /opt/keycloak/conf/openid-configuration-override.json
+              subPath: openid-configuration-override.json
+              readOnly: true
+            {{- end }}
             {{- if .Values.theme.enabled }}
             - name: keycloak-theme
               mountPath: /opt/keycloak/themes/{{ .Values.theme.name }}
@@ -133,6 +167,11 @@ spec:
         - name: realm-config
           configMap:
             name: {{ include "keycloak.fullname" . }}-realm
+        {{- if .Values.mcpDcr.enabled }}
+        - name: openid-configuration
+          configMap:
+            name: {{ include "keycloak.fullname" . }}-openid-configuration
+        {{- end }}
         {{- if .Values.theme.enabled }}
         - name: keycloak-theme
           configMap:

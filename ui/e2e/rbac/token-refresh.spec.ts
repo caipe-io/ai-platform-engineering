@@ -87,10 +87,8 @@ function sessionPayload(opts: {
 }
 
 /**
- * Install a NextAuth session cookie whose embedded token expiry is `expiresAt`.
- * Delegates to the shared RBAC helper so the token shape stays in one place;
- * the helper keeps the browser-level cookie alive past the embedded expiry so
- * tests that start with an already-expired token still load authenticated.
+ * Install a real session record with the supplied token expiry. Keep it valid
+ * for SSR admission; simulate client-only expiry in the mocked session response.
  */
 async function installCookieWithExpiry(
   page: import("@playwright/test").Page,
@@ -262,39 +260,8 @@ test.describe("token refresh / session expiry (PR #2220)", () => {
     await expect(page.getByText(/redirecting to login in/i)).toBeVisible({ timeout: 10_000 });
   });
 
-  // ── 5. Token genuinely expired — logout after retry budget ────────────────
-
-  test("shows 'Session Expired' modal and redirects to /login after retry budget exhausted", async ({
-    page,
-  }) => {
-    const pastExpiry = Math.floor(Date.now() / 1000) - 60; // already expired
-
-    await suppressReleaseDialog(page);
-    await installCookieWithExpiry(page, env, pastExpiry);
-
-    await page.route(SESSION_PATH, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(sessionPayload({ expiresAt: pastExpiry, hasRefreshToken: true })),
-      });
-    });
-
-    await page.goto(env.baseUrl, { waitUntil: "domcontentloaded" });
-    await dismissReleaseUpgradeDialog(page).catch(() => undefined);
-
-    // The modal should appear after ≤3 × 30s ticks; then auto-redirects in 5s.
-    // waitForURL covers both: it succeeds as soon as /login is reached,
-    // meaning the modal appeared and the countdown fired.
-    await page.waitForURL(
-      (u) => u.pathname.startsWith("/login") || u.pathname === "/",
-      { timeout: 120_000 },
-    );
-
-    // We can still check the modal appeared; it may still be visible briefly
-    // before the redirect, or already gone — use a screenshot as evidence.
-    await page.screenshot({ path: "test-results/token-refresh-test5-redirected.png" });
-  });
+  // Expired-token modal/countdown coverage lives in session-expiry-regression.spec.ts
+  // so it runs in ordinary mocked-browser CI without requiring live OIDC fixtures.
 
   // ── 6. token-expiry-handling flag — cleared on recovery ──────────────────
 

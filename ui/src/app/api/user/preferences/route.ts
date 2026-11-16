@@ -149,7 +149,10 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   }
   const tenantId = resolveTenant(session);
   const integrations = getIntegrationAvailability();
-  const webexSettings = integrations.webex
+  // Chat entry points only need Web defaults. Keep the optional bot lookup out
+  // of that critical path when the Webex service is slow or unavailable.
+  const includeWebex = request.nextUrl.searchParams.get("include_webex") !== "false";
+  const webexSettings = includeWebex && integrations.webex
     ? buildOptionalWebexBotSettings(subject)
     : Promise.resolve([]);
   const [preference, platformDefaultAgentId, webexBots] = await Promise.all([

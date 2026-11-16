@@ -9,7 +9,7 @@
 # This covers the SSO bootstrap path NOT exercised by the client-secret
 # reconcile tests:
 #
-#   1. Boot a throwaway Keycloak 26.3 + import the chart's realm.
+#   1. Boot a throwaway Keycloak 26.8.1 + import the chart's realm.
 #   2. Run init-idp.sh against that Keycloak with IDP_* env vars set,
 #      pointing IDP_ISSUER at the *same* Keycloak's master realm so
 #      OIDC discovery succeeds without needing a second IdP container.
@@ -60,7 +60,7 @@ INIT_IMAGE_CANDIDATES=(
   "ghcr.io/cnoe-io/keycloak-init:latest"
 )
 INIT_IMAGE_LOCAL_BUILD="caipe/keycloak-init:local-test"
-KC_IMAGE="quay.io/keycloak/keycloak:26.3"
+KC_IMAGE="quay.io/keycloak/keycloak:26.8.1"
 
 # --- Pretty output -------------------------------------------------
 RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; RESET=$'\033[0m'

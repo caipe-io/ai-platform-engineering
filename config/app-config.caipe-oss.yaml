@@ -1,0 +1,34 @@
+# Environment-owned seed catalog for the caipe-oss Harness Engine preview.
+# Provider credentials remain in the host .env and are never stored here.
+
+models:
+  - model_id: "bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    name: "Claude Haiku 4.5 (LiteLLM)"
+    provider: "openai"
+    description: "Fast Claude 4.5 Haiku through the configured LiteLLM gateway"
+  - model_id: "bedrock/global.anthropic.claude-sonnet-4-6"
+    name: "Claude Sonnet 4.6 (LiteLLM)"
+    provider: "openai"
+    description: "Claude Sonnet 4.6 through the configured LiteLLM gateway"
+  - model_id: "bedrock/global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    name: "Claude Sonnet 4.5 (LiteLLM)"
+    provider: "openai"
+    description: "Claude Sonnet 4.5 through the configured LiteLLM gateway"
+  - model_id: "gpt-4o"
+    name: "GPT-4o (Azure)"
+    provider: "azure-openai"
+    description: "GPT-4o through the configured Azure OpenAI endpoint"
+  - model_id: "gpt-4o-mini"
+    name: "GPT-4o Mini (Azure)"
+    provider: "azure-openai"
+    description: "GPT-4o Mini through the configured Azure OpenAI endpoint"
+  - model_id: "onprem/gemma4"
+    name: "Gemma 4 (On-Prem)"
+    provider: "openai"
+    description: "On-prem Gemma 4 through the configured LiteLLM gateway"
+
+# MCP servers are discovered from AgentGateway so target-specific internal
+# ports and health state remain authoritative instead of being hard-coded.
+mcp_servers: []
+
+agents: []

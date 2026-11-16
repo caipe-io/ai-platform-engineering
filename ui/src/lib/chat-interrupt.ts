@@ -1,4 +1,5 @@
 import { StreamError } from "@/lib/streaming";
+import { APIClientError } from "@/lib/api-client";
 import type { AuthFailureReason } from "@/lib/auth-error";
 
 const SIGN_IN_AUTH_REASONS: ReadonlySet<AuthFailureReason> = new Set([
@@ -15,7 +16,8 @@ export function interruptedTurnFallbackText(error?: string): string {
 }
 
 export function interruptedAuthReason(error: unknown): AuthFailureReason | undefined {
-  if (error instanceof StreamError && error.isAuthError()) {
+  if ((error instanceof StreamError && error.isAuthError()) ||
+      (error instanceof APIClientError && (error.reason || error.status === 401 || error.status === 403))) {
     if (error.reason && SIGN_IN_AUTH_REASONS.has(error.reason)) {
       return error.reason;
     }

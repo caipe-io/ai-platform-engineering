@@ -173,7 +173,10 @@ async function openShareDialog(page: Page): Promise<Locator> {
 }
 
 function sidebarShareButton(page: Page): Locator {
-  return page.getByRole("button", { name: "Share conversation" }).first();
+  return page
+    .getByTestId("conversation-history-scroll")
+    .getByRole("button", { name: "Share conversation" })
+    .first();
 }
 
 async function expectSidebarShareIcon(
@@ -189,12 +192,17 @@ async function expectSidebarShareIcon(
   },
 ) {
   const button = sidebarShareButton(page);
+  const conversationRow = page
+    .getByTestId("conversation-history-scroll")
+    .locator("[data-chat-conversation-id]")
+    .first();
+  await conversationRow.hover({ force: true });
   await expect(button).toBeVisible();
   const icon = button.locator("svg").first();
   await expect(icon).toHaveClass(expectedIconClass);
   await expect(icon).not.toHaveClass(forbiddenIconClass);
 
-  await button.hover();
+  await button.hover({ force: true });
   await expect(page.getByRole("tooltip", { name: tooltip })).toBeVisible();
 }
 

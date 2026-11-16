@@ -48,6 +48,69 @@ Dynamic Agents provide a flexible way to create purpose-built AI assistants with
 - Exactly one terminal outcome per turn: `success`, `error`, `interrupted`, or `cancelled`
 - Time to first user-visible response and end-to-end turn latency histograms
 
+### Optional structured responses
+
+- Enable the `structured_response` middleware on the agent. It is disabled by
+  default and exposes one option: `allowed_schema_ids`, a comma-separated
+  allowlist. An empty allowlist accepts any schema ID.
+- Chat `config_override` cannot add, remove, or change this middleware or its
+  schema allowlist. Other middleware overrides remain available.
+- A caller may send `client_context.response_format` with `type: json_schema`,
+  an optional `schema_id`, and an object-root `schema`. The root agent receives
+  a `submit_structured_response` tool and instructions to use it. Subagents do
+  not receive this tool.
+- Schemas use their declared supported JSON Schema dialect, or Draft 2020-12
+  when omitted. Nullable types, nested objects/arrays, constraints, and local
+  references within the schema are validated. Root references and external
+  references are rejected; reference resolution never fetches URLs. Invalid active requests return an invocation
+  error; disabled agents retain their existing behavior.
+- Rejected submissions return validation feedback without publishing output.
+  The agent may correct and resubmit. A model that cannot obtain required data
+  can explain the limitation; a valid structured submission is not guaranteed.
+- Each accepted submission is carried by its graph invocation and captured by
+  its request's encoder. Custom SSE emits `structured_output` with
+  `{payload, schema_id}`. AG-UI emits `CUSTOM` / `STRUCTURED_OUTPUT` with the same
+  value. Events are delivered before any later approval interrupt; resume uses
+  a fresh encoder and never reuses another request's result.
+- Send the original `client_context.response_format` again on resume, including
+  after runtime eviction. A changed response format on a later turn rebuilds
+  the cached graph; a conflicting request during an active stream must retry.
+- `/chat/invoke` includes `structured_output` and `structured_output_schema_id`
+  only after an accepted submission. Otherwise its legacy response fields are
+  unchanged. An accepted empty object is still returned.
+
+### Optional app-context prompt adapter
+
+- Structured `client_context` remains separate from the user's message.
+- Off by default. Operators may opt in an agent through its deployment-owned YAML definition:
+
+```yaml
+app_context_prompt:
+  app_ids: [example-app]
+  fields: [title, selection.city, selection.forecast.temperature]
+  max_bytes: 4096
+```
+
+- A chat `config_override` cannot enable or change this policy; the ordinary agent editor does not edit it.
+- Send `source: agentic_app_context`, `trust: untrusted_user_visible_data`, the matching `appId`,
+  and a timezone-qualified `expiresAt` in the next ten minutes. `selection` may be an object or JSON string.
+- Only configured scalar paths are projected: `title`, `summary`, `route`, or dotted `selection.*` paths.
+  Whole objects/arrays, credential-named paths, bearer/JWT-looking values and strings over 2,048 characters are omitted.
+- Invalid/expired context, input over 16 KiB, or formatted output over the configured limit is omitted.
+  Limits include the complete formatted reference block; oversize data is not silently truncated into invalid JSON.
+  Expiration is rechecked when preparing model requests, including after a long-running tool.
+- When PII middleware is enabled, the adapter omits the projection. PII middleware checks graph-state
+  messages before this request-only block is added, so it cannot redact or block the projected data.
+- The root agent receives a labelled, untrusted reference block in a copy of its current model request.
+  The UI question, system instructions, attachments, and checkpoint messages are not rewritten.
+  Subagents are not implicitly opted in. Context is task-local and reset on success, exception or cancellation.
+- Streaming, invoke and resume use only the current request, including when the runtime is cached. Resume requires
+  resending fresh context; no old snapshot is replayed. This adapter does not add snapshots to checkpoint state.
+- App IDs, resource references and trust labels from the browser are not authorization evidence. Existing API/tool
+  permissions remain authoritative. Delimiters and heuristics are not a prompt-injection defense or a secret scanner.
+- Selected data reaches the model and may appear in provider traces/logs. Include only necessary, approved data.
+  Existing raw-context tooling/templates and their telemetry are unchanged; this adapter is not a general DLP layer.
+
 ## Running Locally
 
 ### Prerequisites
@@ -141,6 +204,22 @@ The API documentation is available at:
 - Swagger UI: http://localhost:8001/docs
 - ReDoc: http://localhost:8001/redoc
 
+## Tool call recovery
+
+Every agent and subagent checks model output before executing tools:
+
+- Output-limit stops (`length` / `max_tokens`), invalid tool-call JSON, and invalid
+  Pydantic tool arguments trigger recovery. Remote JSON-schema tools are checked
+  for missing required top-level arguments and malformed `required` metadata.
+- The entire defective parallel batch is rejected, including otherwise complete
+  calls. Rejected calls never run and raw tool-use blocks are removed from history.
+- The model gets one repair attempt, with feedback to use smaller file edits.
+  Consecutive failure counts belong to each invocation and reset after success.
+- Exhaustion emits an actionable stream error for start/resume, or HTTP 422 for
+  invoke. A later conversation turn can continue from the sanitized checkpoint.
+
+This guard does not change context compaction thresholds or model output budgets.
+
 ## Configuration Reference
 
 ### Environment Variables
@@ -151,6 +230,7 @@ The API documentation is available at:
 | `PORT` | Server port | `8001` |
 | `METRICS_PORT` | Dedicated port for `/metrics` (0 = same as `PORT`) | `0` |
 | `DEBUG` | Enable debug mode / hot reload | `false` |
+| `LLM_STREAMING` | Set `false` to disable streaming requests to the model provider; browser chat events still use SSE | `true` |
 | `MONGODB_URI` | MongoDB connection string | `mongodb://localhost:27017` |
 | `MONGODB_DATABASE` | Database name | `caipe` |
 | `DYNAMIC_AGENTS_COLLECTION` | Agents collection name | `dynamic_agents` |
@@ -161,6 +241,24 @@ The API documentation is available at:
 | `CORS_ORIGINS` | Allowed CORS origins | `["*"]` |
 
 ### Models Configuration
+
+#### Change streaming from the UI
+
+Open **Agents → Agents**, edit an agent, and find **Model response streaming**
+on **Basic Info**:
+
+- **Use deployment default**: inherit `LLM_STREAMING` (enabled when unset).
+- **Enabled**: request streaming responses from the model provider.
+- **Disabled**: request complete responses, for proxies without streaming support.
+
+Save the agent. Its next chat turn uses the new setting without a pod restart;
+an already running turn keeps its existing model. This setting is stored as
+`model.streaming` (`true`, `false`, or `null` for inheritance) and takes precedence
+over the deployment default. Existing agent editing permissions still apply.
+Subagents use their own saved model settings. The browser continues to receive
+agent progress events over SSE in every mode.
+
+#### Available models
 
 Available LLM models are configured in `src/dynamic_agents/services/config.yaml`:
 
@@ -432,6 +530,21 @@ dynamic_agents/
 - Agent Card discovery and calls use the official A2A SDK with JSON-RPC or HTTP+JSON negotiation.
 - Calls use the registered endpoint. Register a gateway URL to gate A2A calls; `AGENT_GATEWAY_URL` configures MCP routing only.
 
+### Native remote subagents (opt-in)
+
+The runtime pins Deep Agents **0.7.37**. Dynamic Agents and the Deep Agents
+Harness Engine image resolve the same version through their lockfiles.
+
+- Set `features.remote_agents_as_subagents: true` on an agent configuration to register its selected A2A entries as LangChain `CompiledSubAgent` runnables. Set it separately on a configured local subagent to enable that subagent's remote delegation.
+- Existing configurations keep the named-tool path. The flag defaults to false and is omitted from legacy serialized settings; no migration or package upgrade is required.
+- The supervisor uses upstream `task(description, subagent_type="remote_<registry-id>")`. LangChain owns dispatch, isolated message state, tracing and result delivery; no extra model is created for the remote adapter.
+- Both modes share the official A2A SDK transport, per-invocation caller credentials, deadline, origin checks, response/output limits and streaming negotiation. Partial output is attributed to the enclosing task, including nested delegation.
+- To require human approval, configure `interrupt_on.builtin.task`. Enabling native mode with existing remote-tool approval rules fails validation: migrate those rules explicitly so the change cannot bypass an approval. Task-level approval also applies to local delegations.
+- The middleware editor preserves the opt-in flag when editing other features. This initial rollout is configured through the agent API/configuration; it does not add an editor toggle.
+- This phase supports synchronous, bounded text delegation. Parent tool middleware receives execution failures as an explicit error result rather than automatically resubmitting an uncertain remote command.
+- Local cancellation unwinds the graph and closes the A2A client. It does **not** prove the remote task stopped. Persisted remote task/context IDs, acknowledged remote cancellation, input/auth-required continuation, durable child runs and ACP delegation remain separate milestones. Native mode reports input/auth-required tasks as unsupported continuations, never completed work.
+- Harness Engine remains the execution authority. LangSmith Agent Server is not introduced. Remaining delivery stages are tracked in [#3381](https://github.com/caipe-io/ai-platform-engineering/issues/3381).
+
 ### Standalone examples
 
 - [sample_a2a_agents](https://github.com/caipe-io/sample_a2a_agents) owns the Netutils and Weather example servers, their SDK adapter, tests, Docker image, and Compose/gateway configuration.
@@ -463,3 +576,16 @@ dynamic_agents/
 - Requests use `Accept-Encoding: identity`; compressed responses are rejected to keep decompression from bypassing the response budget.
 - Exceeding a limit fails the tool call and closes the active response stream and SDK client. Oversized snapshots are not emitted; partial output is not returned as a successful answer. Closing a local stream does not guarantee cancellation of work already running on the remote service.
 - Remote endpoints must be trusted and administrator-approved. Mandatory AgentGateway routing, verified calling-agent identity and CAS delegation authorization are tracked in [#2914](https://github.com/caipe-io/ai-platform-engineering/issues/2914).
+
+### Original GitHub skill packages
+
+Agents can attach stable GitHub Hub IDs and optional `skill_pins` with the
+SHA-256 of the original entry content and every ancillary file. The runtime
+checks the complete scanned package before loading it; missing, changed or
+unscanned packages fail closed. Chat overrides cannot clear pins or detach a
+pinned skill. Authorized agent management can explicitly reselect a new version.
+Original Hub command Markdown is materialized without adding frontmatter or
+rewriting its instructions. Supporting references retain their relative paths.
+Legacy unpinned Hub entries without frontmatter retain generated discovery
+metadata; original imports and pinned Hub entries preserve their exact bytes.
+Upstream tool declarations do not grant runtime tools or execution permission.

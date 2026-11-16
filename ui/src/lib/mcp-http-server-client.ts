@@ -7,7 +7,7 @@
 import crypto from "crypto";
 
 import { ApiError } from "@/lib/api-middleware";
-import { resolveMcpHeaderCredentials } from "@/lib/mcp-credential-headers";
+import { isMcpCredentialUnavailableError, resolveMcpHeaderCredentials } from "@/lib/mcp-credential-headers";
 import { writeOpenFgaTuples, type OpenFgaTupleKey } from "@/lib/rbac/openfga";
 import type { MCPServerConfig, MCPToolInfo } from "@/types/dynamic-agent";
 import type { NextRequest } from "next/server";
@@ -174,6 +174,9 @@ async function mcpJsonRpc(input: {
       },
       body: JSON.stringify(input.payload),
     });
+    // Authentication failures may have an empty or non-JSON body. Preserve the
+    // HTTP status before decoding so callers can handle unavailable connections.
+    rejectMcpAuthorization(response.status);
     return {
       ok: response.ok,
       status: response.status,
@@ -226,6 +229,7 @@ async function buildMcpRequestHeaders(input: {
   server: MCPServerConfig;
   viaAgentGateway: boolean;
   serverId: string;
+  agentId?: string;
 }): Promise<Record<string, string>> {
   try {
     const { headers } = await resolveMcpHeaderCredentials({
@@ -235,11 +239,18 @@ async function buildMcpRequestHeaders(input: {
       viaAgentGateway: input.viaAgentGateway,
       retrievalCaller: "mcp-http-server-client",
     });
+    const contextHeaders = buildAgentContextHeaders(input.agentId ?? diagnosticAgentId(input.serverId, input.session));
+    if (input.agentId && Object.keys(contextHeaders).length === 0) {
+      throw new ApiError("Agent context signing is unavailable", 503, "AGENT_CONTEXT_UNAVAILABLE");
+    }
     return {
       ...headers,
-      ...buildAgentContextHeaders(diagnosticAgentId(input.serverId, input.session)),
+      ...contextHeaders,
     };
   } catch (error) {
+    if (isMcpCredentialUnavailableError(error)) {
+      throw new ApiError("Connect or reconnect your provider account to use this MCP connection", 401, "MCP_CREDENTIAL_UNAVAILABLE");
+    }
     if (error instanceof Error && error.message === "MCP_AUTH_REQUIRED") {
       throw new ApiError(
         "A signed-in user token is required for AgentGateway-routed MCP servers",
@@ -256,10 +267,11 @@ export async function listHttpMcpTools(input: {
   session: AuthSession;
   server: MCPServerConfig & { endpoint: string };
   serverId: string;
+  agentId?: string;
 }): Promise<{ tools: MCPToolInfo[]; sessionId?: string }> {
   const viaAgentGateway = isAgentGatewayEndpoint(input.server);
   const diagnosticAgent = diagnosticAgentId(input.serverId, input.session);
-  const diagnosticTuples = viaAgentGateway
+  const diagnosticTuples = viaAgentGateway && !input.agentId
     ? await grantDiagnosticAgentAccess(input.serverId, diagnosticAgent, input.session)
     : [];
 
@@ -270,6 +282,7 @@ export async function listHttpMcpTools(input: {
       server: input.server,
       viaAgentGateway,
       serverId: input.serverId,
+      agentId: input.agentId,
     });
 
     const first = await mcpJsonRpc({
@@ -283,6 +296,7 @@ export async function listHttpMcpTools(input: {
       },
       timeoutMs: 5_000,
     });
+    rejectMcpAuthorization(first.status);
     if (first.ok) {
       const tools = extractTools(first.payload);
       if (tools) return { tools, sessionId: first.sessionId };
@@ -303,6 +317,7 @@ export async function listHttpMcpTools(input: {
       },
       timeoutMs: 5_000,
     });
+    rejectMcpAuthorization(initialized.status);
     if (!initialized.ok || !initialized.sessionId) {
       throw new ApiError(`MCP initialize failed with HTTP ${initialized.status}`, 502, "MCP_INIT_FAILED");
     }
@@ -319,6 +334,7 @@ export async function listHttpMcpTools(input: {
       },
       timeoutMs: 5_000,
     });
+    rejectMcpAuthorization(listed.status);
     if (!listed.ok) {
       throw new ApiError(`MCP tools/list failed with HTTP ${listed.status}`, 502, "MCP_LIST_FAILED");
     }
@@ -330,6 +346,49 @@ export async function listHttpMcpTools(input: {
   } finally {
     await revokeDiagnosticAgentAccess(diagnosticTuples, "mcp-http-server-client");
   }
+}
+
+function rejectMcpAuthorization(status: number): void {
+  if (status === 401) {
+    throw new ApiError("MCP authentication was rejected; check your sign-in and connected credentials", 401, "MCP_AUTH_REQUIRED");
+  }
+  if (status === 403) {
+    throw new ApiError("MCP tool access denied; check your MCP server and tool-call permissions", 403, "MCP_TOOL_ACCESS_DENIED");
+  }
+}
+
+/** Invoke once under the real agent policy; retries must never repeat tool side effects. */
+export async function callHttpMcpTool(input: {
+  request: NextRequest;
+  session: AuthSession;
+  server: MCPServerConfig & { endpoint: string };
+  serverId: string;
+  agentId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+}): Promise<unknown> {
+  const headers = await buildMcpRequestHeaders({ ...input, viaAgentGateway: true });
+  const initialized = await mcpJsonRpc({ endpoint: input.server.endpoint, headers,
+    payload: { jsonrpc: "2.0", id: crypto.randomUUID(), method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "harness-tool-broker", version: "1" } } } });
+  rejectMcpAuthorization(initialized.status);
+  if (!initialized.ok || (initialized.payload as { error?: unknown })?.error) {
+    throw new ApiError("MCP initialization failed", 502, "MCP_INIT_FAILED");
+  }
+  const ready = await mcpJsonRpc({ endpoint: input.server.endpoint, headers, sessionId: initialized.sessionId,
+    payload: { jsonrpc: "2.0", method: "notifications/initialized" } });
+  rejectMcpAuthorization(ready.status);
+  if (!ready.ok) throw new ApiError("MCP initialization was not acknowledged", 502, "MCP_INIT_FAILED");
+  const result = await mcpJsonRpc({ endpoint: input.server.endpoint, headers,
+    sessionId: initialized.sessionId, timeoutMs: 900_000,
+    payload: { jsonrpc: "2.0", id: crypto.randomUUID(), method: "tools/call",
+      params: { name: input.toolName, arguments: input.args } } });
+  rejectMcpAuthorization(result.status);
+  const payload = result.payload as { result?: unknown; error?: unknown } | null;
+  if (!result.ok || !payload || payload.error || payload.result === undefined) {
+    throw new ApiError("MCP tool invocation failed; the request was not retried", 502, "MCP_CALL_FAILED");
+  }
+  return payload.result;
 }
 
 export async function listDirectHttpMcpTools(input: {

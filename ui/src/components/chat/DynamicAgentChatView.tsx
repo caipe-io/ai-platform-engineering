@@ -1,6 +1,7 @@
 "use client";
 
 import { ChatPanel } from "@/components/chat/DynamicAgentChatPanel";
+import { useAppAssistantPresentation, useAssistantComposerOptions } from "@/components/agentic-apps/AssistantComposerOptions";
 import { DynamicAgentContext } from "@/components/dynamic-agents/DynamicAgentContext";
 import { ResizableHandle,ResizablePanel,ResizablePanelGroup } from "@/components/ui/resizable";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
@@ -16,6 +17,8 @@ interface ChatViewProps {
   agent?: DynamicAgentConfig | null;
   /** Whether the agent has been deleted */
   agentNotFound?: boolean;
+  /** Metadata may be hidden from a shared viewer; this does not prove deletion. */
+  agentUnavailable?: boolean;
   /** Whether the chat is read-only */
   readOnly?: boolean;
   /** Reason for read-only mode */
@@ -24,8 +27,6 @@ interface ChatViewProps {
   apiConversation?: boolean;
   /** Whether messages are still loading (show skeleton) */
   isLoadingMessages?: boolean;
-  /** Called after a deprecated conversation is linked to a usable agent. */
-  onAgentRelinked?: (agentId: string) => void;
 }
 
 /**
@@ -37,15 +38,19 @@ export function ChatView({
   selectedAgentId,
   agent,
   agentNotFound,
+  agentUnavailable,
   readOnly,
   readOnlyReason,
   apiConversation,
   isLoadingMessages,
-  onAgentRelinked,
 }: ChatViewProps) {
   const [contextPanelCollapsed, setContextPanelCollapsed] = useState(true);
   const [isAnimating, setIsAnimating] = useState(false);
   const contextPanelRef = usePanelRef();
+  const { app, configuration } = useAppAssistantPresentation(agent?.presentation?.available ? agent.presentation.app.id : undefined, selectedAgentId);
+  const options = app?.assistantOptions;
+  const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration, app?.appId);
+  const assistantLabel = app ? app.assistantLabel?.trim() || "Ask CAIPE" : undefined;
 
   const handleCollapse = useCallback((collapsed: boolean) => {
     // Enable transition for programmatic expand/collapse, disable after animation
@@ -59,7 +64,7 @@ export function ChatView({
     setTimeout(() => setIsAnimating(false), 300);
   }, [contextPanelRef]);
 
-  const isDisabled = agentNotFound || agent?.enabled === false;
+  const isDisabled = agentNotFound || agentUnavailable || agent?.enabled === false;
 
   return (
     <ResizablePanelGroup
@@ -73,17 +78,22 @@ export function ChatView({
           <ChatPanel
             conversationId={conversationId}
             readOnly={readOnly || isDisabled}
-            readOnlyReason={agentNotFound ? 'agent_deleted' : agent?.enabled === false ? 'agent_disabled' : readOnlyReason}
+            readOnlyReason={readOnlyReason ?? (agentUnavailable ? 'agent_unavailable' : agentNotFound ? 'agent_deleted' : agent?.enabled === false ? 'agent_disabled' : undefined)}
             apiConversation={apiConversation}
             agentId={selectedAgentId}
             agent={agent}
             isLoadingMessages={isLoadingMessages}
-            onAgentRelinked={onAgentRelinked}
+            requestOptions={app ? requestOptions : undefined}
+            composerHeader={composerHeader}
+            placeholder={options?.presentation?.placeholder ?? (assistantLabel ? `${assistantLabel}…` : undefined)}
+            emptyStateTitle={assistantLabel}
+            showAuditNotice={options?.presentation?.showAuditNotice}
+            feedbackPrompt={options?.presentation?.feedbackPrompt}
           />
         </div>
       </ResizablePanel>
 
-      <ResizableHandle />
+      <ResizableHandle className="bg-transparent hover:bg-primary/40 focus-visible:bg-primary/40" />
 
       {/* Context Panel - Dynamic Agent variant */}
       <ResizablePanel

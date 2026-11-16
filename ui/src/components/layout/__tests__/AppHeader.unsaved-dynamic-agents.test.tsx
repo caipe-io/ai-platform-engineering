@@ -74,6 +74,23 @@ describe("GuardedNavigationLink", () => {
     expect(document.documentElement).toHaveAttribute("data-navigation-pending","true");
   });
 
+  it.each([
+    { ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 },
+  ])("preserves modified navigation with a dirty editor: %o", (modifiers) => {
+    mockPathname = "/dynamic-agents";
+    (useUnsavedChangesStore as unknown as jest.Mock).mockReturnValue({
+      hasUnsavedChanges: true, requestNavigation: mockRequestNavigation,
+    });
+    const onClick = jest.fn();
+    const { getByRole } = render(<GuardedNavigationLink href="/chat/example" onClick={onClick}>Live chat</GuardedNavigationLink>);
+    // Cancel jsdom's document navigation after React handles the click.
+    document.addEventListener("click", event => event.preventDefault(), { once: true });
+    fireEvent.click(getByRole("link", { name: "Live chat" }), modifiers);
+    expect(mockRequestNavigation).not.toHaveBeenCalled();
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(document.documentElement).not.toHaveAttribute("data-navigation-pending");
+  });
+
   it("on collection editing with unsaved changes: click is intercepted", () => {
     mockPathname = "/knowledge-bases/collections";
     (useUnsavedChangesStore as unknown as jest.Mock).mockReturnValue({

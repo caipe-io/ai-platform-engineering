@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2600 1860" role="img" aria-labelledby="title desc">
+  <title id="title">Harness Engine — high-level source graph</title>
+  <desc id="desc">Dependency direction and source ownership in PR #2401 · paths are repository-relative</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/></marker>
+  </defs>
+  <rect width="2600" height="1860" fill="#ffffff"/>
+  <text x="40" y="65" text-anchor="start" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="42" font-weight="700" fill="#0f172a"><tspan x="40" dy="0">Harness Engine — high-level source graph</tspan></text>
+  <text x="40" y="110" text-anchor="start" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="400" fill="#475569"><tspan x="40" dy="0">Dependency direction and source ownership in PR #2401 · paths are repository-relative</tspan></text>
+
+    <rect x="40" y="150" width="460" height="820" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="60" y="185" text-anchor="start" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" fill="#475569"><tspan x="60" dy="0">CHANNELS &amp; ROUTES</tspan></text>
+    <rect x="540" y="150" width="600" height="820" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="560" y="185" text-anchor="start" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" fill="#475569"><tspan x="560" dy="0">NEXT.JS BFF / HARNESS GATEWAY</tspan></text>
+    <rect x="1180" y="150" width="780" height="1240" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="1200" y="185" text-anchor="start" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" fill="#475569"><tspan x="1200" dy="0">HARNESS ENGINE SERVICE</tspan></text>
+    <rect x="2000" y="150" width="560" height="1240" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="2020" y="185" text-anchor="start" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" fill="#475569"><tspan x="2020" dy="0">ADAPTERS &amp; INFRASTRUCTURE</tspan></text>
+    <rect x="40" y="1430" width="2520" height="350" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="60" y="1465" text-anchor="start" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" fill="#475569"><tspan x="60" dy="0">DEPLOYMENT · CONTRACTS · TESTS</tspan></text>
+  <polyline points="460,310 520,310 520,315 580,315" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><text x="520" y="303.5" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="520" dy="0">calls</tspan></text><polyline points="460,550 520,550 520,315 580,315" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><text x="520" y="423.5" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="520" dy="0">same gateway</tspan></text><polyline points="460,800 520,800 520,900 580,900" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><text x="520" y="841" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="520" dy="0">catalog + validation</tspan></text><polyline points="840,400 840,435 840,435 840,470" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="840,400 840,540 840,540 840,680" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1100,545 1160,545 1160,305 1220,305" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><text x="1160" y="416" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#475569"><tspan x="1160" dy="0">internal HTTP</tspan></text><polyline points="840,860 840,620 1385,620 1385,380" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1550,305 1570,305 1570,305 1590,305" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1590,305 1570,305 1570,535 1550,535" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1755,380 1755,420 1755,420 1755,460" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1755,380 1755,535 1385,535 1385,690" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1755,380 1755,535 1755,535 1755,690" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1755,380 1755,665 1570,665 1570,950" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1920,535 1980,535 1980,300 2040,300" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="2280,370 2280,405 2150,405 2150,440" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="2280,370 2280,405 2410,405 2410,440" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1550,775 1795,775 1795,300 2040,300" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="1920,775 1980,775 1980,795 2040,795" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#arrow)"/><polyline points="360,1510 360,945 1385,945 1385,380" fill="none" stroke="#64748b" stroke-width="2.5" stroke-dasharray="10 8" marker-end="url(#arrow)"/><polyline points="990,1510 990,1060 1385,1060 1385,610" fill="none" stroke="#64748b" stroke-width="2.5" stroke-dasharray="10 8" marker-end="url(#arrow)"/><polyline points="1620,1510 1620,945 1755,945 1755,380" fill="none" stroke="#64748b" stroke-width="2.5" stroke-dasharray="10 8" marker-end="url(#arrow)"/><polyline points="1970,1605 1535,1605 1535,315 1100,315" fill="none" stroke="#64748b" stroke-width="2.5" stroke-dasharray="10 8" marker-end="url(#arrow)"/>
+
+      <rect x="80" y="230" width="380" height="160" rx="14" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5" />
+      <text x="270" y="264" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="270" dy="0">Public chat routes</tspan></text>
+      <text x="270" y="296" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14" font-weight="400" fill="#475569"><tspan x="270" dy="0">ui/src/app/api/v1/chat/</tspan><tspan x="270" dy="17.92">start · resume · cancel · invoke</tspan></text>
+
+
+      <rect x="80" y="460" width="380" height="180" rx="14" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5" />
+      <text x="270" y="494" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="270" dy="0">Channel entry points</tspan></text>
+      <text x="270" y="526" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14" font-weight="400" fill="#475569"><tspan x="270" dy="0">ui/src/app/api/integrations/</tspan><tspan x="270" dy="17.92">Slack · Webex</tspan><tspan x="270" dy="17.92">Scheduler / invoke callers</tspan></text>
+
+
+      <rect x="80" y="710" width="380" height="180" rx="14" fill="#ccfbf1" stroke="#0f766e" stroke-width="2.5" />
+      <text x="270" y="744" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="270" dy="0">Agent creation + chat UX</tspan></text>
+      <text x="270" y="776" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="270" dy="0">DynamicAgentEditor.tsx</tspan><tspan x="270" dy="17.92">HarnessOptionsForm.tsx</tspan><tspan x="270" dy="17.92">AgentSelector.tsx + harness badges</tspan></text>
+
+
+      <rect x="580" y="230" width="520" height="170" rx="14" fill="#ccfbf1" stroke="#0f766e" stroke-width="2.5" />
+      <text x="840" y="264" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#0f172a"><tspan x="840" dy="0">ui/src/lib/harness-gateway.ts</tspan></text>
+      <text x="840" y="296" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="840" dy="0">runtime resolution · detached run orchestration</tspan><tspan x="840" dy="17.92">canonical event → AG-UI translation</tspan></text>
+
+
+      <rect x="580" y="470" width="520" height="150" rx="14" fill="#ccfbf1" stroke="#0f766e" stroke-width="2.5" />
+      <text x="840" y="504" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#0f172a"><tspan x="840" dy="0">harness-engine-proxy.ts</tspan></text>
+      <text x="840" y="536" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="840" dy="0">internal service credential</tspan><tspan x="840" dy="17.92">request and stream proxy</tspan></text>
+
+
+      <rect x="580" y="680" width="520" height="150" rx="14" fill="#ccfbf1" stroke="#0f766e" stroke-width="2.5" />
+      <text x="840" y="714" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#0f172a"><tspan x="840" dy="0">harness-engine-session-client.ts</tspan></text>
+      <text x="840" y="746" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="840" dy="0">session clear / lifecycle client</tspan><tspan x="840" dy="17.92">used by compatibility routes</tspan></text>
+
+
+      <rect x="580" y="860" width="520" height="80" rx="14" fill="#f1f5f9" stroke="#64748b" stroke-width="2.5" />
+      <text x="840" y="894" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#0f172a"><tspan x="840" dy="0">ui/src/app/api/harness-engine/**</tspan></text>
+      <text x="840" y="926" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="840" dy="0">authorized BFF administration + runtime proxy</tspan></text>
+
+
+      <rect x="1220" y="230" width="330" height="150" rx="14" fill="#ede9fe" stroke="#7c3aed" stroke-width="2.5" />
+      <text x="1385" y="264" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1385" dy="0">main.py</tspan></text>
+      <text x="1385" y="296" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1385" dy="0">FastAPI routes</tspan><tspan x="1385" dy="17.92">startup + internal auth</tspan></text>
+
+
+      <rect x="1590" y="230" width="330" height="150" rx="14" fill="#ede9fe" stroke="#7c3aed" stroke-width="2.5" />
+      <text x="1755" y="264" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1755" dy="0">coordinator.py</tspan></text>
+      <text x="1755" y="296" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1755" dy="0">detached tasks</tspan><tspan x="1755" dy="17.92">run lifecycle + replay</tspan></text>
+
+
+      <rect x="1220" y="460" width="330" height="150" rx="14" fill="#f1f5f9" stroke="#64748b" stroke-width="2.5" />
+      <text x="1385" y="494" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1385" dy="0">models.py</tspan></text>
+      <text x="1385" y="526" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1385" dy="0">portable blueprints</tspan><tspan x="1385" dy="17.92">descriptors · runs · events</tspan></text>
+
+
+      <rect x="1590" y="460" width="330" height="150" rx="14" fill="#ccfbf1" stroke="#0f766e" stroke-width="2.5" />
+      <text x="1755" y="494" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1755" dy="0">registry.py</tspan></text>
+      <text x="1755" y="526" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1755" dy="0">adapter catalog</tspan><tspan x="1755" dy="17.92">validation + fingerprints</tspan></text>
+
+
+      <rect x="1220" y="690" width="330" height="170" rx="14" fill="#ccfbf1" stroke="#0f766e" stroke-width="2.5" />
+      <text x="1385" y="724" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1385" dy="0">sessions.py</tspan></text>
+      <text x="1385" y="756" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1385" dy="0">CAIPEAgentSessionManager</tspan><tspan x="1385" dy="17.92">ProviderSessionManager</tspan><tspan x="1385" dy="17.92">epoch + clear</tspan></text>
+
+
+      <rect x="1590" y="690" width="330" height="170" rx="14" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5" />
+      <text x="1755" y="724" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1755" dy="0">repository.py</tspan></text>
+      <text x="1755" y="756" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1755" dy="0">memory + Mongo backends</tspan><tspan x="1755" dy="17.92">versions · bindings</tspan><tspan x="1755" dy="17.92">runs · ordered events</tspan></text>
+
+
+      <rect x="1220" y="950" width="700" height="170" rx="14" fill="#f1f5f9" stroke="#64748b" stroke-width="2.5" />
+      <text x="1570" y="984" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1570" dy="0">brokers.py</tspan></text>
+      <text x="1570" y="1016" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1570" dy="0">Protocols: Prompt · Tool · ThreadState · Memory · Sandbox</tspan><tspan x="1570" dy="17.92">Delegation · Telemetry · Limits</tspan></text>
+
+
+      <rect x="1220" y="1190" width="700" height="140" rx="14" fill="#f1f5f9" stroke="#64748b" stroke-width="2.5" />
+      <text x="1570" y="1224" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1570" dy="0">config.py + claude_session_store.py</tspan></text>
+      <text x="1570" y="1256" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1570" dy="0">operator profile aliases · managed targets · Mongo transcript mirroring</tspan></text>
+
+
+      <rect x="2040" y="230" width="480" height="140" rx="14" fill="#ede9fe" stroke="#7c3aed" stroke-width="2.5" />
+      <text x="2280" y="264" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#0f172a"><tspan x="2280" dy="0">adapters/base.py</tspan></text>
+      <text x="2280" y="296" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="2280" dy="0">HarnessAdapter protocol · descriptor · evaluate · stream</tspan></text>
+
+
+      <rect x="2040" y="440" width="220" height="190" rx="14" fill="#ffedd5" stroke="#c2410c" stroke-width="2.5" />
+      <text x="2150" y="474" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#0f172a"><tspan x="2150" dy="0">agentcore.py</tspan></text>
+      <text x="2150" y="506" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="2150" dy="0">managed / custom</tspan><tspan x="2150" dy="17.92">session IDs</tspan><tspan x="2150" dy="17.92">canonical events</tspan></text>
+
+
+      <rect x="2300" y="440" width="220" height="190" rx="14" fill="#ffedd5" stroke="#c2410c" stroke-width="2.5" />
+      <text x="2410" y="474" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#0f172a"><tspan x="2410" dy="0">claude_sdk.py</tspan></text>
+      <text x="2410" y="506" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="2410" dy="0">SDK + Bedrock</tspan><tspan x="2410" dy="17.92">resume + mirror</tspan><tspan x="2410" dy="17.92">canonical events</tspan></text>
+
+
+      <rect x="2040" y="720" width="480" height="150" rx="14" fill="#dbeafe" stroke="#2563eb" stroke-width="2.5" />
+      <text x="2280" y="754" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="2280" dy="0">MongoDB collections</tspan></text>
+      <text x="2280" y="786" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="2280" dy="0">agents · versions · sessions</tspan><tspan x="2280" dy="17.92">runs · events · Claude transcripts</tspan></text>
+
+
+      <rect x="2040" y="950" width="480" height="170" rx="14" fill="#dcfce7" stroke="#15803d" stroke-width="2.5" />
+      <text x="2280" y="984" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="2280" dy="0">External execution dependencies</tspan></text>
+      <text x="2280" y="1016" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="2280" dy="0">AgentCore · Claude SDK / Bedrock</tspan><tspan x="2280" dy="17.92">AgentGateway / MCP</tspan><tspan x="2280" dy="17.92">future Agent Sandbox + OTel</tspan></text>
+
+
+      <rect x="80" y="1510" width="560" height="190" rx="14" fill="#fef3c7" stroke="#b45309" stroke-width="2.5" />
+      <text x="360" y="1544" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="360" dy="0">Deployment</tspan></text>
+      <text x="360" y="1576" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="360" dy="0">docker-compose.harness-engine.yaml</tspan><tspan x="360" dy="17.92">ai_platform_engineering/harness_engine/build/Dockerfile</tspan><tspan x="360" dy="17.92">env.example + preview overlay</tspan></text>
+
+
+      <rect x="710" y="1510" width="560" height="190" rx="14" fill="#f1f5f9" stroke="#64748b" stroke-width="2.5" />
+      <text x="990" y="1544" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="990" dy="0">SpecKit + API contracts</tspan></text>
+      <text x="990" y="1576" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="990" dy="0">docs/docs/specs/2026-08-17-harness-engine/**</tspan><tspan x="990" dy="17.92">architecture · data model · REST · events</tspan><tspan x="990" dy="17.92">sandbox · state / memory / tracing</tspan></text>
+
+
+      <rect x="1340" y="1510" width="560" height="190" rx="14" fill="#dcfce7" stroke="#15803d" stroke-width="2.5" />
+      <text x="1620" y="1544" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="1620" dy="0">Harness Engine tests</tspan></text>
+      <text x="1620" y="1576" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="1620" dy="0">adapter contract tests · registry validation</tspan><tspan x="1620" dy="17.92">session managers · disconnect / replay E2E</tspan></text>
+
+
+      <rect x="1970" y="1510" width="510" height="190" rx="14" fill="#dcfce7" stroke="#15803d" stroke-width="2.5" />
+      <text x="2225" y="1544" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="700" fill="#0f172a"><tspan x="2225" dy="0">BFF + UI regression tests</tspan></text>
+      <text x="2225" y="1576" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="400" fill="#475569"><tspan x="2225" dy="0">gateway routes · RBAC · agent editor</tspan><tspan x="2225" dy="17.92">legacy default routing · picker + harness identity</tspan></text>
+
+
+</svg>

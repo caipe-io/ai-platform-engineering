@@ -274,3 +274,48 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- default (include "ai-platform-engineering.litellmMcp.fullname" .) $secret.name -}}
 {{- end -}}
 {{- end -}}
+
+{{- define "ai-platform-engineering.cloudabilityMcp.name" -}}
+{{- $values := .Values.cloudabilityMcp | default dict -}}
+{{- default "cloudability-mcp" $values.nameOverride | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "ai-platform-engineering.cloudabilityMcp.fullname" -}}
+{{- $values := .Values.cloudabilityMcp | default dict -}}
+{{- if $values.fullnameOverride -}}
+{{- $values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- $name := default "cloudability-mcp" $values.nameOverride -}}
+{{- if contains $name .Release.Name -}}
+{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ai-platform-engineering.cloudabilityMcp.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "ai-platform-engineering.cloudabilityMcp.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: mcp
+{{- end -}}
+
+{{- define "ai-platform-engineering.cloudabilityMcp.labels" -}}
+helm.sh/chart: {{ include "ai-platform-engineering.chart" . }}
+{{ include "ai-platform-engineering.cloudabilityMcp.selectorLabels" . }}
+app.kubernetes.io/part-of: {{ include "ai-platform-engineering.name" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "ai-platform-engineering.cloudabilityMcp.secretName" -}}
+{{- $values := .Values.cloudabilityMcp | default dict -}}
+{{- if $values.existingSecret -}}
+{{- $values.existingSecret -}}
+{{- else -}}
+{{- $secret := $values.secret | default dict -}}
+{{- default (include "ai-platform-engineering.cloudabilityMcp.fullname" .) $secret.name -}}
+{{- end -}}
+{{- end -}}

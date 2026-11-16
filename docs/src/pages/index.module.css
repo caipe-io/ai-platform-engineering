@@ -1,3 +1,23 @@
+.foundation {
+  padding: 4rem 1.5rem;
+  text-align: center;
+  background: var(--ifm-background-color);
+  color: var(--ifm-font-color-base);
+}
+
+.foundation p {
+  margin-bottom: 2rem;
+  font-size: 1.15rem;
+}
+
+.foundationLogo {
+  display: block;
+  width: 300px;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
 /* ── Hero ───────────────────────────────────────────────────────── */
 .hero {
   background: linear-gradient(150deg, #0f172a 0%, #0c4a6e 55%, #0e7490 100%);
@@ -96,12 +116,21 @@
   border: 1px solid rgba(56, 189, 248, 0.28);
   border-radius: 999px;
   padding: 0.28rem 0.85rem;
-  font-size: 0.78rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  color: #7dd3fc;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  margin-bottom: 1.5rem;
+  color: #e0f2fe;
+  text-decoration: none !important;
+  margin-bottom: 1rem;
+}
+
+.heroBadge:hover {
+  color: #fff;
+  background: rgba(56, 189, 248, 0.2);
+  border-color: #38bdf8;
+}
+
+.heroBadge img {
+  flex-shrink: 0;
 }
 
 .heroTitle {

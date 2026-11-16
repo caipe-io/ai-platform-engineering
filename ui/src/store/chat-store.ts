@@ -73,6 +73,11 @@ interface StreamingState {
   client: { abort: () => void };
   // For Dynamic Agents: adapter reference for backend cancellation
   streamAdapter?: StreamAdapter;
+  /** View-only subscriptions must never send execution controls. */
+  readOnly?: boolean;
+  /** Keep the subscription and execution fence until the server confirms stop. */
+  stopping?: boolean;
+  stopError?: string;
 }
 
 interface MessageHistoryState {
@@ -81,10 +86,18 @@ interface MessageHistoryState {
   isLoadingOlder: boolean;
 }
 
+export interface ExternalChatActivity {
+  agentId: string;
+  state: "checking" | "running" | "saving";
+  turnId?: string;
+}
+
 interface ChatState {
   conversations: Conversation[];
   activeConversationId: string | null;
   isStreaming: boolean;
+  externalActivity: Record<string, ExternalChatActivity>;
+  setExternalActivity: (id: string, activity: ExternalChatActivity | null) => void;
   streamingConversations: Map<string, StreamingState>;
   pendingMessage: string | null; // Message to auto-submit when the chat panel mounts
   contextUsageByConversation: Record<string,ContextUsageEventData>;
@@ -101,8 +114,11 @@ interface ChatState {
   inputRequiredConversations: Set<string>;
 
   // Actions
-  createConversation: (agentId: string) => Promise<string>;
-  setActiveConversation: (id: string) => void;
+  createConversation: (
+    agentId: string,
+    options?: { title?: string; metadata?: Record<string, unknown>; activate?: boolean },
+  ) => Promise<string>;
+  setActiveConversation: (id: string | null) => void;
   addMessage: (conversationId: string, message: Omit<ChatMessage, "id" | "timestamp">, turnId?: string, messageId?: string) => string;
   updateMessage: (conversationId: string, messageId: string, updates: Partial<ChatMessage>) => void;
   appendToMessage: (conversationId: string, messageId: string, content: string) => void;
@@ -116,7 +132,7 @@ interface ChatState {
   setContextUsage: (conversationId: string,usage: ContextUsageEventData) => void;
   clearStreamEvents: (conversationId?: string) => void;
   getConversationStreamEvents: (conversationId: string) => StreamEvent[];
-  deleteConversation: (id: string) => Promise<void>;
+  deleteConversation: (id: string, options?: { selectNext?: boolean }) => Promise<void>;
   clearAllConversations: () => void;
   getActiveConversation: () => Conversation | undefined;
   updateMessageFeedback: (conversationId: string, messageId: string, feedback: MessageFeedback) => void;
@@ -125,7 +141,7 @@ interface ChatState {
   setPendingMessage: (message: string | null) => void;
   consumePendingMessage: () => string | null;
   loadConversationsFromServer: (options?: { filter?: ConversationListFilter; append?: boolean }) => Promise<void>; // Load conversations from server (MongoDB mode only)
-  saveMessagesToServer: (conversationId: string, options?: { skipNonFinal?: boolean }) => Promise<void>; // Save messages to MongoDB after streaming
+  saveMessagesToServer: (conversationId: string, options?: { skipNonFinal?: boolean; requireSuccess?: boolean }) => Promise<void>; // Save messages to MongoDB after streaming
   loadMessagesFromServer: (conversationId: string, options?: { force?: boolean }) => Promise<void>; // Load messages from MongoDB when opening conversation
   loadOlderMessagesFromServer: (conversationId: string) => Promise<void>;
   evictOldMessageContent: (conversationId: string, messageIdsToEvict: string[]) => void; // Evict content from old messages to free memory
@@ -255,9 +271,11 @@ function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
       autonomousMessageKind: msg.metadata?.kind,
       autonomousExecutionContextId: msg.metadata?.execution_context_id,
       turnStatus: msg.metadata?.turn_status as TurnStatus | undefined,
-      isInterrupted: hasHitlForm
-        ? false
-        : Boolean(msg.metadata?.is_interrupted) || (msg.role === 'assistant' && !isFinal),
+      // A non-final message may still be streaming in another tab. Only a
+      // persisted terminal status can confirm that its response was interrupted.
+      isInterrupted: !hasHitlForm && (
+        Boolean(msg.metadata?.is_interrupted) || msg.metadata?.turn_status === 'interrupted'
+      ),
       feedback: msg.feedback ? {
         type: msg.feedback.rating === 'positive'
           ? 'like' as const
@@ -275,10 +293,14 @@ function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
 }
 
 function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
-  const messagesById = new Map(existing.map((message) => [message.id, message]));
+  const replaysByTurn = new Map(existing.filter(message => message.isReadOnlyReplay && message.turnId)
+    .map(message => [message.turnId, message]));
+  const savedReplies = new Set(incoming.filter(message => message.role === 'assistant' && message.turnId).map(message => message.turnId));
+  const messagesById = new Map(existing.filter(message => !message.isReadOnlyReplay || !savedReplies.has(message.turnId))
+    .map((message) => [message.id, message]));
   for (const message of incoming) {
-    const localMessage = messagesById.get(message.id);
-    messagesById.set(message.id, localMessage?.isFinal && !message.isFinal ? localMessage : message);
+    const localMessage = messagesById.get(message.id) ?? (message.role === 'assistant' ? replaysByTurn.get(message.turnId) : undefined);
+    messagesById.set(message.id, localMessage?.isFinal && !message.isFinal ? { ...localMessage, id: message.id } : message);
   }
 
   const ordered = [...messagesById.values()].sort(
@@ -300,6 +322,13 @@ function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMe
 const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       conversations: [],
       activeConversationId: null,
+      externalActivity: {},
+      setExternalActivity: (id, activity) => set(state => {
+        const next = { ...state.externalActivity };
+        if (activity && state.conversations.some(c => c.id === id)) next[id] = activity;
+        else delete next[id];
+        return { externalActivity: next };
+      }),
       isStreaming: false,
       streamingConversations: new Map<string, StreamingState>(),
       pendingMessage: null,
@@ -312,9 +341,13 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       unviewedConversations: new Set<string>(),
       inputRequiredConversations: new Set<string>(),
 
-      createConversation: async (agentId: string) => {
+      createConversation: async (
+        agentId: string,
+        options?: { title?: string; metadata?: Record<string, unknown>; activate?: boolean },
+      ) => {
         const storageMode = getStorageMode();
         const normalizedAgentId = agentId.trim();
+        const title = options?.title?.trim() || "New Conversation";
         if (!normalizedAgentId) {
           throw new Error("agentId is required to create a chat conversation");
         }
@@ -324,9 +357,10 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         if (storageMode === 'mongodb') {
           // MongoDB mode: server owns ID generation
           const result = await apiClient.createConversation({
-            title: 'New Conversation',
+            title,
             client_type: 'webui',
             agent_id: normalizedAgentId,
+            ...(options?.metadata ? { metadata: options.metadata } : {}),
           });
           id = result.conversation._id;
         } else {
@@ -336,33 +370,34 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
         const newConversation: Conversation = {
           id,
-          title: "New Conversation",
+          title,
           createdAt: new Date(),
           updatedAt: new Date(),
           messages: [],
           streamEvents: [],
           participants: buildParticipants(normalizedAgentId),
+          ...(options?.metadata ? { metadata: options.metadata } : {}),
         };
 
         // Update local state
         set((state: ChatState) => ({
           conversations: [newConversation, ...state.conversations],
-          ...(state.conversationFilter === 'web' || state.conversationFilter === 'all'
+          ...(options?.activate === false || state.conversationFilter === 'web' || state.conversationFilter === 'all'
             ? {}
             : { conversationFilter: 'all' as const, conversationPage: 1 }),
-          activeConversationId: id,
+          ...(options?.activate === false ? {} : { activeConversationId: id }),
         }));
-        persistLastActiveConversationId(id);
+        if (options?.activate !== false) persistLastActiveConversationId(id);
 
         return id;
       },
 
-      setActiveConversation: (id: string) => {
+      setActiveConversation: (id: string | null) => {
         const prev = get();
         const newUnviewed = new Set(prev.unviewedConversations);
-        newUnviewed.delete(id);
+        if (id) newUnviewed.delete(id);
         const newInputRequired = new Set(prev.inputRequiredConversations);
-        newInputRequired.delete(id);
+        if (id) newInputRequired.delete(id);
         set({
           activeConversationId: id,
           unviewedConversations: newUnviewed,
@@ -391,7 +426,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         const state = get();
         const conversation = state.conversations.find((c: Conversation) => c.id === conversationId);
         const isFirstUserMessage = conversation && conversation.messages.length === 0 && message.role === "user";
-        const newTitle = isFirstUserMessage
+        const newTitle = isFirstUserMessage && conversation.title === "New Conversation"
           ? message.content.substring(0, 50).trim() || "New Conversation"
           : undefined;
 
@@ -477,6 +512,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       },
 
       setConversationStreaming: (conversationId: string, state: StreamingState | null) => {
+        const wasReadOnly = get().streamingConversations.get(conversationId)?.readOnly;
         set((prev: ChatState) => {
           const newMap = new Map(prev.streamingConversations);
           if (state) {
@@ -514,6 +550,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
           // Reset periodic save counter for this conversation
           eventCountSinceLastSave.delete(conversationId);
+          if (wasReadOnly) return;
           // Mark save as pending — prevents loadMessagesFromServer from
           // overwriting the correct in-memory state with stale MongoDB data
           // before this save completes.
@@ -541,8 +578,30 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         const state = get();
         const streamingState = state.streamingConversations.get(conversationId);
         if (streamingState) {
+          if (streamingState.readOnly) return;
           // Get conversation to check if it's a Dynamic Agent
           const conv = state.conversations.find((c: Conversation) => c.id === conversationId);
+          const persistentAdapter = streamingState.streamAdapter;
+          if (persistentAdapter?.canRecoverOnRefresh) {
+            if (streamingState.stopping) return;
+            const agentId = conv ? getAgentId(conv) : undefined;
+            if (!agentId) return;
+            const pending = { ...streamingState, stopping: true, stopError: undefined };
+            set({ streamingConversations: new Map(get().streamingConversations).set(conversationId, pending) });
+            void persistentAdapter.cancelStream(conversationId, agentId).catch((error) => {
+              console.error('[ChatStore] Backend cancel failed:', error);
+              return false;
+            }).then((accepted) => {
+              // A completed response or a newer turn must not be changed by a
+              // late cancellation reply. Keep following the current producer.
+              if (!accepted && get().streamingConversations.get(conversationId) === pending) {
+                set({ streamingConversations: new Map(get().streamingConversations).set(conversationId, {
+                  ...pending, stopping: false, stopError: 'Could not confirm Stop. The response is still active; try again.',
+                }) });
+              }
+            });
+            return;
+          }
           
           // For Dynamic Agents, send backend cancel request before aborting client
           if (streamingState.streamAdapter) {
@@ -676,7 +735,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         return conv?.streamEvents || [];
       },
 
-      deleteConversation: async (id: string) => {
+      deleteConversation: async (id: string, options?: { selectNext?: boolean }) => {
         const storageMode = await getStorageMode();
 
         // Snapshot for rollback. The removal below is optimistic, so a server
@@ -699,7 +758,8 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
           // If this was the active conversation, select the next one intelligently
           let newActiveId = state.activeConversationId;
-          if (wasActiveConversation) {
+          if (wasActiveConversation && options?.selectNext === false) newActiveId = null;
+          if (wasActiveConversation && options?.selectNext !== false) {
             if (newConversations.length === 0) {
               // No conversations left
               newActiveId = null;
@@ -714,6 +774,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
           return {
             conversations: newConversations,
+            externalActivity: Object.fromEntries(Object.entries(state.externalActivity).filter(([key]) => key !== id)),
             activeConversationId: newActiveId,
             contextUsageByConversation: Object.fromEntries(
               Object.entries(state.contextUsageByConversation).filter(([conversationId]) => conversationId !== id),
@@ -765,6 +826,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           conversations: [],
           activeConversationId: null,
           contextUsageByConversation: {},
+          externalActivity: {},
         });
         persistLastActiveConversationId(null);
       },
@@ -1063,17 +1125,21 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       // No localStorage cache, no "saved vs stale" tracking needed.
       //
       // Options:
+      //   requireSuccess: Reject on a failed write so a new run cannot start
+      //     without the persisted user turn needed to recover it after tab close.
       //   skipNonFinal: When true, skip saving assistant messages that don't have
       //     isFinal=true. Used by periodic saves during streaming to avoid writing
       //     stale intermediate content to MongoDB. The final save (after streaming
       //     ends) omits this flag so the correct final content is written.
-      saveMessagesToServer: async (conversationId: string, options?: { skipNonFinal?: boolean }) => {
+      saveMessagesToServer: async (conversationId: string, options?: { skipNonFinal?: boolean; requireSuccess?: boolean }) => {
         const storageMode = getStorageMode();
         if (storageMode !== 'mongodb') return;
 
         const state = get();
         const conv = state.conversations.find((c: Conversation) => c.id === conversationId);
         if (!conv || conv.messages.length === 0) return;
+        if (conv.accessLevel === 'shared_readonly' || conv.accessLevel === 'admin_audit' ||
+            state.streamingConversations.get(conversationId)?.readOnly) return;
 
         // Stream events during streaming are stored at the conversation level
         // (conv.streamEvents) via addStreamEvent(). To persist them to MongoDB,
@@ -1102,6 +1168,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         // saveMessagesToServer calls. Re-saving them all is wasteful and causes
         // request spam (one POST per message × every turn).
         const lastAssistantMsg = lastAssistantIdx >= 0 ? conv.messages[lastAssistantIdx] : null;
+        if (lastAssistantMsg?.isReadOnlyReplay) return;
         const messagesToSave: { msg: typeof conv.messages[0]; idx: number }[] = [];
         const currentTurnId = lastAssistantMsg?.turnId;
         if (currentTurnId) {
@@ -1189,6 +1256,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             savedCount++;
           } catch (error) {
             console.error(`[ChatStore] Failed to save message ${msg.id}:`, getErrorMessage(error, ""));
+            if (options?.requireSuccess) throw error;
           }
         }
 
@@ -1514,12 +1582,10 @@ export const useChatStore = shouldUseLocalStorage()
               updatedAt: new Date(conv.updatedAt),
               streamEvents: [],
               messages: conv.messages.map((msg, idx, allMsgs) => {
-                // CRASH RECOVERY: Mark non-final assistant messages as interrupted.
-                // After a page crash/reload, streamingConversations is empty (not persisted),
-                // so any assistant message without isFinal=true was mid-stream when the tab died.
-                //
-                // HEAL: If a subsequent user message exists, the response actually completed
-                // — the original session just didn't persist isFinal=true before crashing.
+                // A different tab may own a non-final turn. Rehydration cannot
+                // tell whether that tab is still running, so only an explicit
+                // terminal status should show the interruption banner.
+                // A later user turn proves a stale non-final answer completed.
                 let healed = false;
                 if (msg.role === 'assistant' && !msg.isFinal) {
                   const hasFollowUp = allMsgs.slice(idx + 1).some(m => m.role === 'user');
@@ -1530,9 +1596,7 @@ export const useChatStore = shouldUseLocalStorage()
                   timestamp: new Date(msg.timestamp),
                   streamEvents: undefined,
                   isFinal: healed ? true : msg.isFinal,
-                  isInterrupted: healed
-                    ? false
-                    : (msg.role === 'assistant' && !msg.isFinal ? true : msg.isInterrupted),
+                  isInterrupted: !healed && msg.turnStatus === 'interrupted',
                 };
               }),
             }));
@@ -1585,7 +1649,7 @@ if (typeof window !== 'undefined') {
       const localMsgs = conv?.messages || [];
 
       try {
-        const res = await fetch(`/api/chat/conversations/${convId}/messages?pageSize=100`);
+        const res = await fetch(`/api/chat/conversations/${encodeURIComponent(convId)}/messages?pageSize=100`);
         const data = await res.json();
         const mongoMsgs = data.items || data.data || [];
 
@@ -1624,7 +1688,7 @@ if (typeof window !== 'undefined') {
     mongo: async () => {
       const convId = useChatStore.getState().activeConversationId;
       if (!convId) { console.log('No active conversation'); return; }
-      const res = await fetch(`/api/chat/conversations/${convId}/messages?pageSize=100`);
+      const res = await fetch(`/api/chat/conversations/${encodeURIComponent(convId)}/messages?pageSize=100`);
       const data = await res.json();
       const items = (data.items || data.data || []) as StoredMessage[];
       console.log(`MongoDB: ${items.length} messages for ${convId}`);
@@ -1726,19 +1790,21 @@ if (typeof window !== 'undefined') {
   });
 
   // Fallback: beforeunload for older browsers and explicit tab close.
-  // Also prompts the user to confirm if any conversations are actively streaming,
-  // so they don't accidentally lose an in-flight response.
+  // Engine runs survive a subscriber disconnect. Warn only for streams whose
+  // server has not confirmed refresh recovery, including legacy execution.
   window.addEventListener('beforeunload', (e: BeforeUnloadEvent) => {
     saveInflightConversations();
 
     const state = useChatStore.getState();
-    if (state.streamingConversations.size > 0) {
+    const interruptedCount = [...state.streamingConversations.values()].filter(
+      stream => !stream.streamAdapter?.canRecoverOnRefresh,
+    ).length;
+    if (interruptedCount > 0) {
       e.preventDefault();
-      const count = state.streamingConversations.size;
       const msg =
-        count === 1
+        interruptedCount === 1
           ? 'You have 1 live chat receiving a response. Refreshing will interrupt it.'
-          : `You have ${count} live chats receiving responses. Refreshing will interrupt them.`;
+          : `You have ${interruptedCount} live chats receiving responses. Refreshing will interrupt them.`;
       e.returnValue = msg;
     }
   });

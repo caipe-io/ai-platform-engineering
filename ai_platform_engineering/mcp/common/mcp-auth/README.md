@@ -14,6 +14,11 @@ without forcing each MCP to re-implement JWT parsing and JWKS validation.
 - `MCP_AUTH_MODE=oauth2` — validates JWTs against `JWKS_URI`, `AUDIENCE`, and
   `ISSUER`
 
+In OAuth2 mode, `OAUTH2_CLIENT_ID` optionally defines a comma-separated client
+ID allow-list. When configured, a token must contain a non-empty `cid` claim in
+the allow-list. When unset or empty, client ID filtering is disabled and a
+token without `cid` is accepted after the other JWT checks pass.
+
 ## Local development carve-out
 
 Set `MCP_TRUSTED_LOCALHOST=true` to bypass auth for requests that originate from

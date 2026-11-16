@@ -3,6 +3,7 @@ import type { Conversation } from "@/types/a2a";
 import { ChatContainer } from "../ChatContainer";
 
 const mockGetConversation = jest.fn();
+let mockRouteId = "task-chat";
 const mockSetActiveConversation = jest.fn();
 const mockLoadMessages = jest.fn().mockResolvedValue(undefined);
 const mockState = {
@@ -26,7 +27,7 @@ jest.mock("@/lib/api-client", () => ({
 }));
 jest.mock("@/lib/storage-config", () => ({ getStorageMode: () => "mongodb" }));
 jest.mock("next/navigation", () => ({
-  useParams: () => ({ uuid: "task-chat" }),
+  useParams: () => ({ uuid: mockRouteId }),
   useRouter: () => ({ push: jest.fn() }),
 }));
 jest.mock("next-auth/react", () => ({
@@ -39,12 +40,28 @@ jest.mock("../DynamicAgentChatView", () => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockRouteId = "task-chat";
   mockState.conversations = [];
   global.fetch = jest.fn().mockResolvedValue({
     ok: true,
     json: async () => ({ data: { _id: "example-agent", name: "Example agent" } }),
   });
 });
+
+it.each(["example:legacy", "example%3Aliteral", "example/legacy?query#fragment", "example%invalid"])(
+  "uses the original conversation ID for route %s", async id => {
+    mockRouteId = encodeURIComponent(id);
+    mockGetConversation.mockResolvedValue({
+      _id: id, title: "Example investigation", created_at: "2026-09-01T10:00:00Z", updated_at: "2026-09-01T10:00:00Z",
+      participants: [{ type: "agent", id: "example-agent" }], owner_id: "owner@example.com", access_level: "owner",
+    });
+    render(<ChatContainer />);
+    await screen.findByText(id);
+    expect(mockGetConversation).toHaveBeenCalledWith(id);
+    await waitFor(() => expect(mockSetActiveConversation).toHaveBeenCalledWith(id));
+    expect(mockState.conversations).toEqual([expect.objectContaining({ id, title: "Example investigation" })]);
+  },
+);
 
 it("keeps task provenance on a direct-open chat so run follow-ups work without the sidebar list", async () => {
   const metadata = { task_name: "Example task", source: "autonomous" };

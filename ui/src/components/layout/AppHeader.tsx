@@ -5,6 +5,7 @@ import {
   MobileApplicationBrand,
 } from "@/components/layout/ApplicationNavigation";
 import { ApplicationNavigationSearchTrigger } from "@/components/layout/ApplicationNavigationSearch";
+import { RunningChats } from "@/components/layout/RunningChats";
 import { isOnHeaderDialogEditor } from "@/components/layout/GuardedNavigationLink";
 import { ReleaseUpgradeDialog } from "@/components/release/ReleaseUpgradeDialog";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
@@ -154,7 +155,7 @@ export function AppHeader() {
   }, [session, isAdmin]);
 
   const releasePrompt = useReleaseUpgradePrompt();
-  const migrationStatus = useMigrationStatus();
+  const migrationStatus = useMigrationStatus({ enabled: isAdmin });
   // Admin-only Keycloak health summary so the header chip can surface
   // invariant failures (e.g. missing OBO scope binding, AFFIRMATIVE policy
   // misconfiguration) without making the admin navigate to Security &
@@ -253,8 +254,8 @@ export function AppHeader() {
   const adminAlerts = adminOnlyAlerts;
   return (
     <>
-    <header className="relative z-50 flex h-14 shrink-0 items-center gap-2 bg-card/50 px-3 backdrop-blur-xl sm:px-4">
-      <div className="flex min-w-0 shrink-0 items-center gap-1">
+    <header className="relative z-50 flex min-h-14 shrink-0 flex-wrap items-center gap-x-2 bg-card/50 px-3 backdrop-blur-xl sm:h-14 sm:flex-nowrap sm:px-4">
+      <div className="flex min-h-14 min-w-0 shrink-0 items-center gap-1 sm:min-h-0">
         <ApplicationNavigationMenuButton />
         <MobileApplicationBrand />
       </div>
@@ -264,7 +265,7 @@ export function AppHeader() {
           floating in its own row underneath it. */}
       <div
         ref={breadcrumbSlot?.setTarget}
-        className="flex min-w-0 flex-1 items-center overflow-hidden"
+        className="order-last flex min-w-0 basis-full items-center overflow-hidden pb-2 empty:hidden sm:order-none sm:flex-1 sm:basis-auto sm:pb-0 [&_nav]:w-full [&_ol]:flex-nowrap"
         data-testid="app-header-breadcrumb-slot"
       >
         {breadcrumbSlot && !breadcrumbSlot.hasPortalContent && fallbackBreadcrumbs.length > 0 ? (
@@ -276,7 +277,7 @@ export function AppHeader() {
       </div>
 
       {/* Status & Actions */}
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="ml-auto flex shrink-0 items-center gap-1.5">
         <div className="flex items-center gap-1.5">
           {noAuthConfigured && (
             <Popover>
@@ -472,6 +473,7 @@ export function AppHeader() {
               </a>
             </Button>
           )}
+          <RunningChats />
           <NotificationBell enabled={Boolean(session)} />
           <UserMenu />
         </div>

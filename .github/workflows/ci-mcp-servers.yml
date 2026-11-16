@@ -1,5 +1,4 @@
 name: "[CI][MCP] MCP Servers Docker Build and Push"
-description: "Build and push MCP server Docker images"
 
 on:
   push:
@@ -38,7 +37,6 @@ jobs:
     if: always()
     outputs:
       all_agents: ${{ steps.read-config.outputs.all_agents }}
-      mcp_build_args: ${{ steps.read-config.outputs.mcp_build_args }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -50,9 +48,7 @@ jobs:
         id: read-config
         run: |
           ALL_AGENTS=$(jq -c '.mcp_agents' .github/agents.json)
-          MCP_BUILD_ARGS=$(jq -c '.mcp_build_args // {}' .github/agents.json)
           echo "all_agents=$ALL_AGENTS" >> $GITHUB_OUTPUT
-          echo "mcp_build_args=$MCP_BUILD_ARGS" >> $GITHUB_OUTPUT
 
   determine-agents:
     runs-on: ubuntu-latest
@@ -155,6 +151,8 @@ jobs:
       packages: write
 
     strategy:
+      # Bound simultaneous per-architecture image pushes to GHCR.
+      max-parallel: 8
       matrix:
         agent: ${{ fromJson(needs.determine-agents.outputs.agents_to_build) }}
         platform: [linux/amd64, linux/arm64]
@@ -173,16 +171,30 @@ jobs:
 
     steps:
       - name: 🔒 harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25  # v2.22.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
           egress-policy: audit
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Resolve per-agent build arguments
+        id: build-args
+        env:
+          AGENT_NAME: ${{ matrix.agent }}
+        run: |
+          for build_arg in INSTALL_NETUTILS INSTALL_AWS_CLI INSTALL_KUBECTL; do
+            value=$(jq -r --arg agent "$AGENT_NAME" --arg key "$build_arg" \
+              '.mcp_build_args[$agent][$key] // "false"' .github/agents.json)
+            if [[ "$value" != "true" && "$value" != "false" ]]; then
+              echo "Invalid $build_arg value for $AGENT_NAME: $value"
+              exit 1
+            fi
+            echo "${build_arg,,}=$value" >> "$GITHUB_OUTPUT"
+          done
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -199,31 +211,24 @@ jobs:
             type=ref,event=tag,prefix=
             type=sha,format=short,prefix=,enable=${{ github.ref != 'refs/heads/main' }}
 
-      - name: Resolve per-agent MCP build args
-        id: mcp_build_args
-        env:
-          MCP_BUILD_ARGS: ${{ needs.load-config.outputs.mcp_build_args }}
-          AGENT: ${{ matrix.agent }}
-        run: |
-          EXTRA=$(jq -r --arg a "$AGENT" '.[$a] // {} | to_entries | map("\(.key)=\(.value)") | .[]' <<< "$MCP_BUILD_ARGS")
-          {
-            echo 'extra<<EOF'
-            echo "$EXTRA"
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
-
       - name: Build and push MCP image by digest
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: build/agents/Dockerfile.mcp
+          # Refresh AWS runtime packages on every build, including new tags.
+          # Keep the Python dependency builder cached.
+          pull: ${{ matrix.agent == 'aws' }}
+          no-cache-filters: ${{ matrix.agent == 'aws' && 'runtime' || '' }}
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' }}
           build-args: |
             AGENT_NAME=${{ matrix.agent }}
-            ${{ steps.mcp_build_args.outputs.extra }}
+            INSTALL_NETUTILS=${{ steps.build-args.outputs.install_netutils }}
+            INSTALL_AWS_CLI=${{ steps.build-args.outputs.install_aws_cli }}
+            INSTALL_KUBECTL=${{ steps.build-args.outputs.install_kubectl }}
           cache-from: type=gha,scope=${{ matrix.agent }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.agent }}-${{ matrix.arch }}
 
@@ -257,6 +262,8 @@ jobs:
       packages: write
 
     strategy:
+      # Publish multi-architecture manifest lists in smaller batches.
+      max-parallel: 4
       matrix:
         agent: ${{ fromJson(needs.determine-agents.outputs.agents_to_build) }}
       fail-fast: false
@@ -267,7 +274,7 @@ jobs:
 
     steps:
       - name: 🔒 harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25  # v2.22.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
           egress-policy: audit
 
@@ -282,7 +289,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}

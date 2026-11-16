@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 const mockToast = jest.fn();
 jest.mock("@/components/ui/toast", () => ({
@@ -746,6 +746,102 @@ it("uses one top-level Webex bot selector for space discovery", async () => {
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) =>
     new URL(String(url), "http://localhost").searchParams.get("bot_id") === "secondary",
   )).toBe(true));
+});
+
+it("repairs a configured space with no agent through its existing bot-scoped route editor", async () => {
+  const baseFetch = fetchMock.getMockImplementation();
+  let repaired = false;
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url.startsWith("/api/admin/webex/spaces?health=1")) {
+      return response({ data: { spaces: [{
+        workspace_id: "workspace-primary", space_id: "space-primary", space_name: "Example Room",
+        team_slug: "example-team", bot_id: "primary", can_manage: true,
+        ...(repaired ? { primary_agent_id: "incident-agent" } : {}),
+      }] } });
+    }
+    if (url.includes("/routes?")) {
+      if (init?.method === "PUT") repaired = true;
+      return response({ data: { routes: repaired
+        ? [{ agent_id: "incident-agent", enabled: true, users: { enabled: true, listen: "mention" } }]
+        : [] } });
+    }
+    return baseFetch?.(url, init) ?? response({});
+  });
+
+  render(<WebexSpaceRebacPanel />);
+  fireEvent.click(await screen.findByRole("button", { name: /Example Room/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add Agent", exact: true }));
+  await pickAgent("Dynamic Agent", "incident-agent");
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add Agent", exact: true }));
+
+  await screen.findByRole("button", { name: "Edit agent:incident-agent" });
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/admin/webex/spaces/workspace-primary/space-primary/routes?bot_id=primary",
+    expect.objectContaining({ method: "PUT", body: JSON.stringify({ routes: [{
+      agent_id: "incident-agent", enabled: true, priority: 100,
+      users: { enabled: true, listen: "mention" },
+    }] }) }),
+  );
+  expect(fetchMock.mock.calls.some(([url]) => url === "/api/admin/webex/spaces/onboard")).toBe(false);
+});
+
+it("clears the previous bot's rows immediately and seeds only the selected bot's configured spaces", async () => {
+  const baseFetch = fetchMock.getMockImplementation();
+  let resolveSecondary!: (value: Response) => void;
+  const secondary = new Promise<Response>((resolve) => { resolveSecondary = resolve; });
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url.startsWith("/api/admin/webex/spaces?health=1") && url.includes("bot_id=secondary")) return secondary;
+    return baseFetch?.(url, init) ?? response({});
+  });
+  render(<WebexSpaceRebacPanel />);
+  await clickFindSpaces();
+  await screen.findByLabelText("Team for Incident War Room");
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Webex bot", exact: true })).toBeEnabled());
+  fireEvent.click(screen.getByRole("combobox", { name: "Webex bot", exact: true }));
+  fireEvent.click(await screen.findByRole("option", { name: "Primary bot" }));
+  expect(screen.getByLabelText("Team for Platform Alerts")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("combobox", { name: "Webex bot", exact: true }));
+  fireEvent.click(await screen.findByRole("option", { name: "Secondary bot" }));
+
+  expect(screen.queryByLabelText("Team for Platform Alerts")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Team for Incident War Room")).not.toBeInTheDocument();
+  await act(async () => resolveSecondary(response({ data: { spaces: [{
+    workspace_id: "workspace-secondary", space_id: "secondary-space", space_name: "Secondary Room",
+    bot_id: "secondary", team_slug: "example-team", primary_agent_id: "incident-agent",
+  }] } })));
+  expect(await screen.findByLabelText("Team for Secondary Room")).toBeDisabled();
+  expect(screen.queryByLabelText("Team for Platform Alerts")).not.toBeInTheDocument();
+});
+
+it("ignores a discovery response from a bot selected before switching through the configured tab", async () => {
+  const baseFetch = fetchMock.getMockImplementation();
+  let resolveDiscovery!: (value: Response) => void;
+  const discovery = new Promise<Response>((resolve) => { resolveDiscovery = resolve; });
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url.startsWith("/api/admin/webex/available-spaces") && url.includes("bot_id=primary")) return discovery;
+    if (url.startsWith("/api/admin/webex/spaces?health=1") && url.includes("bot_id=secondary")) {
+      return response({ data: { spaces: [] } });
+    }
+    return baseFetch?.(url, init) ?? response({});
+  });
+  render(<WebexSpaceRebacPanel />);
+  await clickFindSpaces();
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) =>
+    String(url).startsWith("/api/admin/webex/available-spaces"),
+  )).toBe(true));
+  fireEvent.click(screen.getByRole("tab", { name: "Configured spaces" }));
+  const selector = await screen.findByRole("combobox", { name: "Webex bot for configured spaces" });
+  fireEvent.click(selector);
+  fireEvent.click(await screen.findByRole("option", { name: "Secondary bot" }));
+  await screen.findByText("No spaces configured yet.");
+  fireEvent.click(screen.getByRole("tab", { name: "Configure spaces" }));
+  await act(async () => resolveDiscovery(response({ data: { spaces: [{
+    id: "stale-space", name: "Previous Bot Room", type: "group", available_bot_ids: ["primary"],
+  }], has_more: false } })));
+
+  expect(screen.getByRole("combobox", { name: "Webex bot", exact: true })).toHaveTextContent("Secondary bot");
+  expect(screen.queryByText(/Previous Bot Room/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Find spaces" })).toBeEnabled();
 });
 
 it("forces a fresh Webex discovery when Refresh spaces is clicked", async () => {

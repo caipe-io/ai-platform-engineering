@@ -1,155 +1,117 @@
 "use client";
 
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { MessageCircle, Plus, X } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 
-import { useChatStore } from "@/store/chat-store";
+import { validateAssistantConfiguration, type AssistantConfiguration } from "../../app-sdk/assistant-options.mjs";
+import { readAssistantDeepLink } from "@/lib/agentic-apps/assistant-links";
+import { rememberAssistantPresentation } from "@/lib/agentic-apps/assistant-presentation";
+import { validateAssistantContextMessage } from "@/lib/agentic-apps/assistant-context";
+import { resolveUsableChatAgent } from "@/lib/chat-agent-selection";
+import { HOST_ASSISTANT_EVENT, HOST_ASSISTANT_STATE_EVENT } from "@/lib/agentic-apps/assistant-events";
+import type { AgenticAppAssistantContextRecord, PublicAgenticApp } from "@/types/agentic-app";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import type { NativeExtensionManifest } from "./types";
 
-const ChatPanel = lazy(() =>
-  import("@/components/chat/DynamicAgentChatPanel").then((module) => ({
-    default: module.ChatPanel,
-  })),
-);
+const AgenticAppAssistantOverlay = lazy(() => import("@/components/agentic-apps/AgenticAppAssistantOverlay")
+  .then(module => ({ default: module.AgenticAppAssistantOverlay })));
 
-type Assistant = NonNullable<NativeExtensionManifest["assistant"]>;
-
-export function NativeExtensionAssistant({
-  assistant,
-  extensionId,
-  pathname,
-}: {
-  assistant: Assistant;
+/** Native and iframe renderers share one host popup and conversation lifecycle. */
+function NativeAssistantSession({ assistant, extensionId, pathname, search = "" }: {
+  assistant: NonNullable<NativeExtensionManifest["assistant"]>;
   extensionId: string;
   pathname: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [agent, setAgent] = useState<DynamicAgentConfig | null>(null);
-  const [conversationId, setConversationId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const startingConversation = useRef(false);
-  const autoStartAttempted = useRef(false);
-
+  search?: string;
+}): React.ReactElement | null {
+  const { data: session, status } = useSession();
+  const key = JSON.stringify([status, session?.sub, session?.user?.email, session?.org, session?.role, extensionId]);
+  const [configuration, setConfiguration] = useState<AssistantConfiguration | null>(null);
+  const [retry, setRetry] = useState(0);
+  const [error, setError] = useState<{ key: string; message: string } | null>(null);
+  const [binding, setBinding] = useState<{ key: string; app: PublicAgenticApp; agent?: DynamicAgentConfig } | null>(null);
+  const [request, setRequest] = useState<{ key: string; open: boolean; context: AgenticAppAssistantContextRecord | null }>(
+    { key, open: false, context: null });
+  const open = request.key === key && request.open;
+  const context = request.key === key ? request.context : null;
+  const setOpen = useCallback((value: boolean) => setRequest(previous => ({ key, open: value,
+    context: previous.key === key ? previous.context : null })), [key]);
+  const app = status === "authenticated" && binding?.key === key ? binding.app : null;
+  const canLaunch = Boolean(app?.canLaunch);
   useEffect(() => {
-    if (!open || agent) return;
+    if (configuration && app?.assistantAgentId) rememberAssistantPresentation(extensionId, app.assistantAgentId, session, configuration, app.assistantOptions);
+  }, [configuration, app, extensionId, session]);
+  const requestedLink = readAssistantDeepLink(search, app?.assistantOptions);
+  useEffect(() => {
+    if (status !== "authenticated") return;
     const controller = new AbortController();
-    setError(null);
-    fetch(`/api/dynamic-agents/agents/${encodeURIComponent(assistant.agentId)}`, {
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Assistant is unavailable or access was denied.");
-        const payload: { success?: boolean; data?: DynamicAgentConfig } = await response.json();
-        if (!payload.success || !payload.data?.enabled) {
-          throw new Error("Assistant is unavailable or access was denied.");
-        }
-        setAgent(payload.data);
-      })
-      .catch((reason: unknown) => {
-        if (!controller.signal.aborted) {
-          setError(reason instanceof Error ? reason.message : "Assistant is unavailable.");
-        }
+    fetch(`/api/agentic-apps/${encodeURIComponent(extensionId)}`, { cache: "no-store", signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) throw new Error("Assistant app is unavailable or access was denied");
+        const payload: { item: PublicAgenticApp } = await response.json();
+        if (!payload.item?.canLaunch || !payload.item.assistantAgentId) throw new Error("Assistant is unavailable or access was denied");
+        const agent = await resolveUsableChatAgent({ signal: controller.signal, requestedAgentId: payload.item.assistantAgentId, requireAvailableAgent: true });
+        if (!controller.signal.aborted) { setBinding({ key, app: payload.item, agent: agent.config }); setError(null); }
+      }).catch((reason: unknown) => {
+        if (!controller.signal.aborted) { setBinding(null); setError({ key, message: reason instanceof Error ? reason.message : "Assistant is unavailable" }); }
       });
     return () => controller.abort();
-  }, [agent, assistant.agentId, open]);
-
+  }, [key, extensionId, status, retry]);
   useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open]);
-
-  const startConversation = useCallback(async () => {
-    if (!agent || startingConversation.current) return;
-    startingConversation.current = true;
-    setLoading(true);
-    setError(null);
-    try {
-      const id = await useChatStore.getState().createConversation(assistant.agentId);
-      setConversationId(id);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not start a conversation.");
-    } finally {
-      startingConversation.current = false;
-      setLoading(false);
+    if (canLaunch && requestedLink.requested) queueMicrotask(() => setOpen(true));
+  }, [canLaunch, requestedLink.requested, requestedLink.id, requestedLink.error, setOpen]);
+  // Listen before native mount effects; requests stay inside this binding's component state.
+  useLayoutEffect(() => {
+    function onRequest(event: Event) {
+      const detail = (event as CustomEvent).detail;
+      if (status !== "authenticated" || detail?.appId !== extensionId) return;
+      let record: AgenticAppAssistantContextRecord | null = null;
+      if (detail.configuration) {
+        try {
+          validateAssistantConfiguration(detail.configuration, assistant.hostOptions);
+          setConfiguration(detail.configuration);
+          if (!detail.configuration.visible) setOpen(false);
+        } catch (reason) {
+          setError({ key, message: reason instanceof Error ? reason.message : "Unsupported assistant configuration" });
+        }
+        return;
+      }
+      if (detail.context) {
+        const result = validateAssistantContextMessage({ appId: extensionId, message: {
+          type: "caipe.agenticApp.context.v1", version: "1.0", appId: extensionId, context: detail.context,
+        } });
+        if (!result.ok) return;
+        record = result.record;
+      }
+      setRequest(previous => ({ key, open: detail.close ? false : Boolean(detail.open) || (previous.key === key && previous.open),
+        context: record ?? (previous.key === key ? previous.context : null) }));
     }
-  }, [agent, assistant.agentId]);
-
+    window.addEventListener(HOST_ASSISTANT_EVENT, onRequest);
+    return () => window.removeEventListener(HOST_ASSISTANT_EVENT, onRequest);
+  }, [extensionId, assistant.hostOptions, key, status, setOpen]);
   useEffect(() => {
-    if (open && agent && !conversationId && !loading && !autoStartAttempted.current) {
-      autoStartAttempted.current = true;
-      void startConversation();
-    }
-  }, [agent, conversationId, loading, open, startConversation]);
+    window.dispatchEvent(new CustomEvent(HOST_ASSISTANT_STATE_EVENT, { detail: { appId: extensionId, open } }));
+  }, [extensionId, open]);
+  if (error?.key === key) return <div role="alert" className="fixed bottom-6 right-6 z-40 rounded-lg border bg-background p-3 text-sm">
+    {error.message} <button type="button" onClick={() => setRetry(n => n + 1)} className="underline">Retry assistant</button>
+  </div>;
+  if (!app?.canLaunch || !app.assistantAgentId || app.assistantOverlay === "app") return null;
+  if (!(configuration?.visible ?? !app.assistantOptions?.requireConfiguration)) return null;
+  return <Suspense fallback={<p role="status" className="p-3 text-sm">Loading assistant…</p>}><AgenticAppAssistantOverlay key={`${key}:${app.assistantAgentId}`}
+    options={app.assistantOptions} configuration={configuration ?? undefined}
+    assistantAgent={binding?.key === key ? binding.agent : undefined}
+    appId={app.appId} appName={app.displayName} assistantLabel={app.assistantLabel}
+    assistantAgentName={app.assistantAgentName} assistantIcon={app.icon}
+    assistantAgentId={app.assistantAgentId} open={open} onOpenChange={setOpen}
+    activeContext={context?.route === pathname ? context : null}
+    onClearContext={() => setRequest(previous => previous.key === key ? { ...previous, context: null } : previous)} /></Suspense>;
+}
 
-  return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-[70] flex flex-col items-end gap-3">
-      {open && (
-        <section
-          role="dialog"
-          aria-label={assistant.name}
-          className="pointer-events-auto flex h-[min(720px,calc(100dvh-7rem))] w-[min(520px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-border bg-background text-foreground shadow-2xl"
-        >
-          <header className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-3">
-            <MessageCircle className="h-4 w-4 text-primary" aria-hidden="true" />
-            <div className="min-w-0 flex-1">
-              <h2 className="text-sm font-semibold">{assistant.name}</h2>
-              <p className="truncate text-xs text-muted-foreground">{pathname} context active</p>
-            </div>
-            <button
-              type="button"
-              aria-label="Start new assistant chat"
-              title="New chat"
-              onClick={() => void startConversation()}
-              disabled={!agent || loading}
-              className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-            >
-              <Plus className="h-4 w-4" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              aria-label="Close assistant"
-              onClick={() => setOpen(false)}
-              className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-            >
-              <X className="h-4 w-4" aria-hidden="true" />
-            </button>
-          </header>
-          {error ? (
-            <p role="alert" className="p-4 text-sm text-destructive">{error}</p>
-          ) : loading || !agent || !conversationId ? (
-            <p className="p-4 text-sm text-muted-foreground">Starting {assistant.label}…</p>
-          ) : (
-            <div className="min-h-0 flex-1">
-              <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">Loading chat…</p>}>
-                <ChatPanel
-                  conversationId={conversationId}
-                  agentId={assistant.agentId}
-                  agent={agent}
-                  clientContext={{ app_id: extensionId, app_path: pathname.slice(0, 512) }}
-                />
-              </Suspense>
-            </div>
-          )}
-        </section>
-      )}
-      <button
-        type="button"
-        aria-label={open ? "Close assistant" : assistant.label}
-        aria-expanded={open}
-        onClick={() => {
-          setOpen((current) => !current);
-        }}
-        className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <MessageCircle className="h-4 w-4" aria-hidden="true" />
-        {assistant.label}
-      </button>
-    </div>
-  );
+/** Remount the complete controller on account/role changes, including runtime configuration. */
+export function NativeExtensionAssistant(props: {
+  assistant: NonNullable<NativeExtensionManifest["assistant"]>;
+  extensionId: string; pathname: string; search?: string;
+}) {
+  const { data: session, status } = useSession();
+  const key = JSON.stringify([status, session?.sub, session?.user?.email, session?.org, session?.role, props.extensionId]);
+  return <NativeAssistantSession key={key} {...props} />;
 }

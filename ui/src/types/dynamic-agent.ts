@@ -296,6 +296,7 @@ export interface MiddlewareEntry {
  * are applied with their default params on the server side.
  */
 export interface FeaturesConfig {
+  remote_agents_as_subagents?: boolean;
   middleware: MiddlewareEntry[];
 }
 
@@ -332,6 +333,8 @@ export interface ModelConfig {
   id: string; // LLM model identifier (e.g., 'claude-sonnet-4-20250514')
   provider: string; // LLM provider (anthropic-claude, openai, azure-openai, aws-bedrock, etc.)
   reasoning_effort?: ReasoningEffort;
+  /** null/omitted inherits the deployment's LLM_STREAMING default. */
+  streaming?: boolean | null;
 }
 
 export type ReasoningEffort = "low" | "medium" | "high" | "max";
@@ -428,8 +431,20 @@ export type ResumeData =
       }>;
     };
 
+/** Read-only catalog projection. Never persisted or used to select a runtime or grant access. */
+export interface AgentPresentation {
+  app: { id: string; name: string; icon?: string };
+  available: boolean;
+}
+
 export interface DynamicAgentConfig {
+  /** Deployment-owned, opt-in model-input projection. Not a permission grant. */
+  app_context_prompt?: { app_ids: string[]; fields: string[]; max_bytes?: number };
   _id: string;
+  readonly presentation?: AgentPresentation;
+  /** Runtime selected by Harness Gateway. Missing legacy values mean Dynamic Agents. */
+  execution_harness_id?: string;
+  execution_blueprint_version?: number;
   name: string;
   description?: string;
   system_prompt: string;
@@ -437,11 +452,12 @@ export interface DynamicAgentConfig {
   allowed_remote_agents?: string[];
   remote_agent_timeouts?: Record<string, number>;
   builtin_tools?: BuiltinToolsConfig; // Built-in tools configuration
-  model: ModelConfig; // Required: LLM model configuration
+  model?: ModelConfig; // Required for Deep Agents; other harnesses use their operator profile.
   visibility: VisibilityType;
   shared_with_teams?: string[];
   subagents: SubAgentRef[]; // Other dynamic agents that can be delegated to
-  skills: string[]; // Skill document IDs from agent_skills collection
+  skills: string[]; // Stable default, agent-skill or Hub skill IDs
+  skill_pins?: Record<string, { content_sha256: string; ancillary_sha256: Record<string, string> }>;
   /**
    * RAG datasource ids (== source_id == knowledge_base_id) this agent's
    * search tool is pinned to. Narrows, never widens: the runtime intersects
@@ -505,7 +521,9 @@ export interface DynamicAgentConfigWithPermissions extends DynamicAgentConfig {
 }
 
 export interface DynamicAgentConfigCreate {
+  harness_save?: unknown;
   id: string; // Required: User-friendly slug ID derived from name
+  execution_harness_id?: string;
   name: string;
   description?: string;
   system_prompt: string;
@@ -513,7 +531,7 @@ export interface DynamicAgentConfigCreate {
   allowed_remote_agents?: string[];
   remote_agent_timeouts?: Record<string, number>;
   builtin_tools?: BuiltinToolsConfig;
-  model: ModelConfig; // Required: LLM model configuration
+  model?: ModelConfig; // Required for Deep Agents; other harnesses use their operator profile.
   /** Accepts legacy `'private'` for back-compat; the BFF coerces it to `'team'`. */
   visibility?: LegacyVisibilityType;
   shared_with_teams?: string[];
@@ -534,6 +552,8 @@ export interface DynamicAgentConfigCreate {
 }
 
 export interface DynamicAgentConfigUpdate {
+  harness_save?: unknown;
+  execution_harness_id?: string;
   name?: string;
   description?: string;
   system_prompt?: string;

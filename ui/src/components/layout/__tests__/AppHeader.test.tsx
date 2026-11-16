@@ -15,6 +15,7 @@ import {
   render as testingRender,
   screen,
   fireEvent,
+  waitFor,
   within,
   type RenderOptions,
   type RenderResult,
@@ -31,6 +32,10 @@ const mockSession = {
 }
 jest.mock('next-auth/react', () => ({
   useSession: jest.fn(() => mockSession),
+}))
+
+jest.mock('@/components/agentic-apps/AssistantConnectionGuidance', () => ({
+  AssistantConnectionGuidance: () => null,
 }))
 
 let mockPathname = '/chat'
@@ -102,6 +107,11 @@ jest.mock('@/hooks/use-kb-tab-gates', () => ({
 }))
 
 // Mock chat store
+// Header assertions must not initialize the chat editor or its transport stack.
+jest.mock('@/components/chat/DynamicAgentChatPanel', () => ({
+  DynamicAgentChatPanel: () => <div data-testid="chat-panel" />,
+}))
+
 let mockStreamingConversations = new Map<string, unknown>()
 let mockUnviewedConversations = new Set<string>()
 let mockInputRequiredConversations = new Set<string>()
@@ -123,6 +133,7 @@ jest.mock('@/store/chat-store', () => ({
 let mockStorageMode = 'mongodb'
 let mockRagEnabled = false
 let mockEnvBadge = ''
+let mockAgenticAppsEnabled = false
 const mockReportProblemEnabled = true
 let mockProvideFeedbackEnabled = false
 
@@ -170,6 +181,8 @@ jest.mock('@/components/notifications/NotificationBell', () => ({
   NotificationBell: () => <button aria-label="Notifications" />,
 }))
 
+jest.mock('@/components/layout/RunningChats', () => ({ RunningChats: () => null }))
+
 const mockToast = jest.fn()
 jest.mock('@/components/ui/toast', () => ({
   useToast: () => ({ toast: mockToast }),
@@ -201,6 +214,7 @@ jest.mock('@/lib/config', () => ({
     get reportProblemEnabled() { return mockReportProblemEnabled },
     get provideFeedbackEnabled() { return mockProvideFeedbackEnabled },
     get autonomousAgentsEnabled() { return mockAutonomousAgentsEnabled },
+    get agenticAppsEnabled() { return mockAgenticAppsEnabled },
   },
   getConfig: jest.fn((key: string) => {
     const configs: Record<string, unknown> = {
@@ -328,6 +342,7 @@ jest.mock('@/lib/utils', () => ({
 // ============================================================================
 
 import { AppHeader } from '../AppHeader'
+import { AgenticAppShell } from '@/components/agentic-apps/AgenticAppShell'
 import { ApplicationNavigationRail } from '../ApplicationNavigation'
 import { HeaderBreadcrumbSlotProvider } from '../HeaderBreadcrumbSlot'
 import { WorkspaceHierarchicalNavigationList } from '../WorkspaceNavigation'
@@ -392,6 +407,7 @@ function applicationButton(name: string): HTMLElement {
 // ============================================================================
 
 beforeEach(() => {
+  mockAgenticAppsEnabled = false
   mockMigrationStatus = {
     status: null,
     isLoading: false,
@@ -536,6 +552,35 @@ describe('AppHeader — application chrome', () => {
   })
 
   describe('header breadcrumbs', () => {
+    it('renders one complete app trail in the header, using the configured name', async () => {
+      mockPathname = '/apps/example'
+      const previousFetch = global.fetch
+      global.fetch = jest.fn((input, init) =>
+        input === '/api/agentic-apps/example'
+          ? Promise.resolve({
+            ok: true,
+            json: async () => ({ item: {
+              appId: 'example', displayName: 'Example workspace', canLaunch: true,
+              uiMode: 'iframe',
+            } }),
+          } as Response)
+          : previousFetch(input, init),
+      )
+      render(
+        <HeaderBreadcrumbSlotProvider>
+          <AppHeader />
+          <AgenticAppShell appId="example" path={[]} />
+        </HeaderBreadcrumbSlotProvider>,
+      )
+      const slot = screen.getByTestId('app-header-breadcrumb-slot')
+      await waitFor(() => expect(within(slot).getByText('Example workspace')).toHaveAttribute('aria-current', 'page'))
+      expect(screen.getAllByRole('navigation', { name: 'Breadcrumb' })).toHaveLength(1)
+      expect(within(slot).getByText('Home')).toHaveAttribute('href', '/')
+      expect(within(slot).queryByText('Apps')).not.toBeInTheDocument()
+      expect(screen.getByTitle('Example workspace')).toHaveAttribute('src', '/apps/example')
+      global.fetch = previousFetch
+    })
+
     it('provides a section breadcrumb for routes without a page-specific trail', () => {
       mockPathname = '/skills/workspace/new'
 
@@ -571,6 +616,13 @@ describe('AppHeader — application chrome', () => {
       render(<AppHeader />)
       expect(screen.getByText('Skills')).toBeInTheDocument()
       expect(applicationLink('Chat')).toHaveTextContent('Chat')
+    })
+
+    it('keeps the nine-dot Apps launcher in the sidebar', () => {
+      mockAgenticAppsEnabled = true
+      render(<AppHeader />)
+      expect(applicationLink('Apps').querySelectorAll('.lucide-grip circle')).toHaveLength(9)
+      expect(applicationLink('Apps').querySelector('.lucide-app-tile')).toBeNull()
     })
 
     it('keeps global destinations in the rail and discloses active section navigation', () => {

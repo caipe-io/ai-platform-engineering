@@ -50,6 +50,7 @@ sequenceDiagram
 | Login and session (OIDC, NextAuth, token refresh) | [Auth Flow](./auth-flow.md) |
 | AgentGateway jwtAuth + extAuthz + MCP proxy | [AgentGateway](../architecture/gateway.md) |
 | Agent identity HMAC — end to end with OpenFGA checks | [Agent Context HMAC](./agent-context-hmac.md) |
+| Managed Claude worker credentials, capabilities, isolation and residual risks | [Claude ACP Threat Model](./claude-acp-threat-model.md) |
 | RBAC role assignment and permission workflows | [RBAC Workflows](./rbac/workflows.md) |
 | Enterprise identity federation (Keycloak + external IdP) | [Enterprise Identity Federation](../architecture/enterprise-identity-federation.md) |
 | Slack bot authorization flows | [Slack Bot Authorization](../architecture/slack-bot-authorization.md) |

@@ -659,6 +659,49 @@ def apply_agentgateway_logging(config: dict[str, Any]) -> None:
     logging_config.setdefault("format", "json")
 
 
+def apply_agentgateway_jwt_auth(config: dict[str, Any]) -> None:
+    """Apply deployment JWT overrides to every listener that enables JWT auth.
+
+    The generated config is normally based on AgentGateway's live admin state.
+    Without reapplying these values, a persisted bootstrap issuer can survive a
+    deployment hostname change even when the config bridge has the correct
+    environment. JWKS remains independently configurable so it can use Docker
+    DNS while the issuer matches the browser-facing URL embedded in tokens.
+    """
+
+    issuer = os.getenv("AGENTGATEWAY_JWT_ISSUER", "").strip()
+    jwks_url = os.getenv("AGENTGATEWAY_JWKS_URL", "").strip()
+    audiences_value = os.getenv("AGENTGATEWAY_JWT_AUDIENCES")
+    audiences = (
+        [value.strip() for value in audiences_value.split(",") if value.strip()]
+        if audiences_value is not None
+        else None
+    )
+    if not issuer and not jwks_url and audiences is None:
+        return
+
+    for bind in config.get("binds", []):
+        if not isinstance(bind, dict):
+            continue
+        for listener in bind.get("listeners", []):
+            if not isinstance(listener, dict):
+                continue
+            policies = listener.get("policies")
+            if not isinstance(policies, dict):
+                continue
+            jwt_auth = policies.get("jwtAuth")
+            if not isinstance(jwt_auth, dict):
+                continue
+            if issuer:
+                jwt_auth["issuer"] = issuer
+            if jwks_url:
+                jwks = jwt_auth.setdefault("jwks", {})
+                if isinstance(jwks, dict):
+                    jwks["url"] = jwks_url
+            if audiences is not None:
+                jwt_auth["audiences"] = audiences
+
+
 def write_config_atomically(path: Path, config: dict[str, Any]) -> bool:
     """Write config as JSON/YAML-compatible content; return true when changed."""
 
@@ -835,6 +878,7 @@ def reconcile_once(
         raise
     builtin_routes = load_builtin_mcp_routes(bootstrap_path)
     rendered = merge_agentgateway_mcp_routes(baseline, targets, builtin_routes=builtin_routes)
+    apply_agentgateway_jwt_auth(rendered)
     apply_agentgateway_logging(rendered)
     changed = write_config_atomically(config_path, rendered)
     result = {

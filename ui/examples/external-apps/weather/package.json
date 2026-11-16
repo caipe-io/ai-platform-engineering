@@ -5,7 +5,7 @@
   "type": "module",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=24"
+    "node": ">=24.22.1 <25"
   },
   "scripts": {
     "start": "node server.mjs",
