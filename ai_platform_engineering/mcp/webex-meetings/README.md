@@ -126,7 +126,10 @@ an empty/short page, or 1,000 rows. Title/time discovery filters by normalized
 title (including removal of User Hub's timestamp suffix) and recording creation
 times within two days. An empty neighborhood never falls back to older rows.
 At most 100 candidate recording details and one public meeting detail per
-distinct candidate instance are inspected.
+distinct candidate instance are inspected. Recording details use four concurrent
+reads for both exact-ID and title/time lookups. Exact-ID reads stop after the
+batch that satisfies the requested segment count; title/time reads inspect all
+bounded candidates to reject ambiguous matches.
 
 The two-day discovery window does not establish an occurrence match. Public
 metadata must identify an actual `meeting` instance starting within 12 hours
