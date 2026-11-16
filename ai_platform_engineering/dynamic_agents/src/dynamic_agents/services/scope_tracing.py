@@ -75,7 +75,11 @@ class ScopeCallbackHandler(BaseCallbackHandler):
             delegate = None
             if name == "task":
                 try:
-                    inputs = json.loads(input_str)
+                    # LangChain passes dict tool arguments separately; input_str
+                    # is their Python representation, not necessarily JSON.
+                    inputs = kwargs.get("inputs")
+                    if not isinstance(inputs, dict):
+                        inputs = json.loads(input_str)
                     candidate = inputs.get("subagent_type") if isinstance(inputs, dict) else None
                     if isinstance(candidate, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", candidate):
                         delegate = candidate

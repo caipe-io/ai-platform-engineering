@@ -6,6 +6,10 @@ from uuid import uuid4
 import pytest
 from agent_telemetry import scope as scope_module
 from agent_telemetry.scope import scope_session
+from deepagents import create_deep_agent
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+from langchain_core.messages import AIMessage
+from langchain_core.tools import tool
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -113,5 +117,71 @@ def test_delegates_keep_separate_model_and_tool_ownership(monkeypatch: pytest.Mo
             assert child.attributes['ioa_observe.agent.span_id'] == format(owner.context.span_id, '016x')
         assert {s.attributes['session.id'] for s in spans.values()} == {'run-primary'}
         assert not any('private-' in str(s.attributes) for s in spans.values())
+    finally:
+        provider.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_real_langchain_delegation_events_preserve_ownership(monkeypatch: pytest.MonkeyPatch) -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(scope_module, '_provider', lambda: provider)
+    handler = ScopeCallbackHandler()
+    model = FakeMessagesListChatModel(responses=[AIMessage(content='private-result')])
+
+    @tool
+    async def task(description: str, subagent_type: str) -> str:
+        """Execute the selected delegate."""
+        result = await model.ainvoke(description)
+        return str(result.content)
+
+    try:
+        with scope_session('primary', 'conversation-primary'):
+            result = await task.ainvoke(
+                {'description': 'private-prompt', 'subagent_type': 'specialist-primary'},
+                config={'callbacks': [handler]},
+            )
+        assert result == 'private-result'
+        spans = exporter.get_finished_spans()
+        delegate = next(s for s in spans if s.name == 'specialist-primary.agent')
+        chat = next(s for s in spans if s.name.endswith('.chat'))
+        assert chat.parent.span_id == delegate.context.span_id
+        assert chat.attributes['agent_id'] == 'specialist-primary'
+        assert not any('private-' in str(s.attributes) for s in spans)
+    finally:
+        provider.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_real_parallel_deep_agent_graph_attributes_both_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
+    class ToolCallingModel(FakeMessagesListChatModel):
+        def bind_tools(self, tools: object, **kwargs: object) -> 'ToolCallingModel':
+            return self
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(scope_module, '_provider', lambda: provider)
+    names = ['specialist-primary', 'specialist-secondary']
+    parent = ToolCallingModel(responses=[AIMessage(content='', tool_calls=[{
+        'name': 'task', 'args': {'description': 'private-task', 'subagent_type': name}, 'id': f'call-{i}',
+    } for i, name in enumerate(names)]), AIMessage(content='private-final')])
+    graph = create_deep_agent(parent, subagents=[{
+        'name': name, 'description': 'Example specialist', 'system_prompt': 'Return a short answer.',
+        'model': ToolCallingModel(responses=[AIMessage(content='private-result')]), 'tools': [],
+    } for name in names])
+    try:
+        with scope_session('primary', 'conversation-primary', 'run-primary'):
+            await graph.ainvoke({'messages': [('user', 'private-query')]},
+                               config={'callbacks': [ScopeCallbackHandler()]})
+        spans = exporter.get_finished_spans()
+        delegates = [s for s in spans if s.name in {f'{name}.agent' for name in names}]
+        assert len(delegates) == 2
+        for delegate in delegates:
+            children = [s for s in spans if s.name.endswith('.chat') and s.parent.span_id == delegate.context.span_id]
+            assert len(children) == 1
+            assert children[0].attributes['agent_id'] == delegate.attributes['agent_id']
+        assert not any('private-' in str(s.attributes) for s in spans)
     finally:
         provider.shutdown()
