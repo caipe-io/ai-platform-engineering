@@ -197,7 +197,7 @@ instead of dropping work. Transport the token in a request body, not a URL.
 The older `next_catalog_urls`/`catalog_urls` fields remain compatible for catalog
 page boundaries but do not represent unfinished activity reads.
 
-An intentional result or catalog page boundary returns `complete: true` for the
+An intentional result, activity page or catalog page boundary returns `complete: true` for the
 page and `has_more: true`; callers must continue before claiming full coverage.
 Provider failures, request limits and timeouts return `complete: false`, retain
 resumable work and explain the interruption in `warnings`.

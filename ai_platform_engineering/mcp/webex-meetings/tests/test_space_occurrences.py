@@ -244,7 +244,7 @@ async def test_one_slow_space_does_not_block_spaces_beyond_the_first_four() -> N
 
 
 @pytest.mark.asyncio
-async def test_catalog_truncation_keeps_queued_results_and_never_claims_complete(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_catalog_page_boundary_keeps_queued_results_and_marks_remaining_work(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(spaces, "MAX_CATALOG_PAGES", 1)
     activity_requests = 0
 
@@ -261,8 +261,35 @@ async def test_catalog_truncation_keeps_queued_results_and_never_claims_complete
 
     result = await discover(handler)
     assert result["items"][0]["id"] == ACTUAL
-    assert result["complete"] is False
-    assert any("page limit" in warning for warning in result["warnings"])
+    assert result["complete"] is True
+    assert result["has_more"] is True
+    assert result["next_continuation"]
+    assert result["warnings"] == []
+
+
+@pytest.mark.asyncio
+async def test_activity_page_boundary_resumes_without_a_false_failure_or_lost_meetings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(spaces, "MAX_ACTIVITY_PAGES", 1)
+    first_time = int(datetime(2026, 1, 5, 18, tzinfo=timezone.utc).timestamp() * 1000)
+    second_time = first_time - 3_600_000
+    visited: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        cursor = int(request.url.params["maxDate"])
+        visited.append(cursor)
+        rows = [activity()] if cursor >= first_time else [activity(
+            actual=f"{SERIES}_I_2", activity_id="second", published="2026-01-05T17:00:00Z",
+        )] if cursor >= second_time else []
+        return httpx.Response(200, json={"items": rows})
+
+    first = await discover(handler, conversation_urls=[CONVERSATION])
+    second = await discover(handler, continuation=first["next_continuation"])
+    last = await discover(handler, continuation=second["next_continuation"])
+    assert all(page["complete"] and page["warnings"] == [] for page in [first, second, last])
+    assert first["has_more"] and second["has_more"]
+    assert last["has_more"] is False and last["next_continuation"] is None
+    assert [row["id"] for page in [first, second, last] for row in page["items"]] == [ACTUAL, f"{SERIES}_I_2"]
+    assert visited[1:] == [first_time - 1, second_time - 1]
 
 
 @pytest.mark.asyncio

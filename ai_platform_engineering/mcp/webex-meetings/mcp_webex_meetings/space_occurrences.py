@@ -310,7 +310,8 @@ class _Discovery:
                     and _epoch_ms(published) == next_date
                 }
             state.max_date = next_date
-        self.warn("Activity page limit reached; results are incomplete.")
+        # This is a successful batch boundary. The unfinished activity cursor
+        # is retained in next_continuation, just like a catalog page boundary.
 
 
 def _conversation_bases(payload: dict[str, Any]) -> list[str]:
@@ -341,8 +342,6 @@ async def _catalog(discovery: _Discovery, page_limit: int) -> AsyncIterator[str]
         if len(visited) >= page_limit or len(discovery.seen_conversations) >= MAX_CONVERSATIONS:
             if len(discovery.seen_conversations) >= MAX_CONVERSATIONS:
                 discovery.warn("Conversation limit reached; results are incomplete.")
-            elif page_limit == MAX_CATALOG_PAGES:
-                discovery.warn("Conversation page limit reached; results are incomplete.")
             break
         # Keep the in-flight page in the frontier until its rows and successors
         # have been captured. Cancellation before that point safely retries it.
