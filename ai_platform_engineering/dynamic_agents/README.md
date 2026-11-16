@@ -598,3 +598,19 @@ agent/tool/model spans and available token usage. Either backend, both, or neith
 can be enabled. Scope does not require Langfuse credentials.
 
 See [configuration, lifecycle and capture limits](../harness_engine/README.md#optional-scope-tracing).
+
+#### Protocol skill evidence
+
+Set `SCOPE_PROTOCOL_EVIDENCE_ENABLED=true` with Scope tracing to export the
+available ACCORD/CONCORD initiator/receiver skill names and advertised `/skills/`
+paths from system-message catalog entries. For matching `read_file` calls only,
+export the advertised file path; for `activate_skill`/`run_skill_script`, export
+only the matching protocol skill name. Descriptions, conversation text, script
+arguments, file contents and tool results remain excluded. This defaults off.
+
+Scope must support unprefixed `accord-*`/`concord-*` names and successful
+Deep Agents `read_file` skill loads. Loading instructions establishes skill
+activation; it does not prove the protocol scripts ran or an agreement completed.
+Protocol metric evaluation still needs script execution evidence. The flag does
+not enable cognitive-failure assessment of conversation content or grant execution
+tools to agents. Assign and approve skills through the normal agent configuration.

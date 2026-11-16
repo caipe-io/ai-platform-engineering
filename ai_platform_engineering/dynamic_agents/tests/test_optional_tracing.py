@@ -185,3 +185,39 @@ async def test_real_parallel_deep_agent_graph_attributes_both_delegates(monkeypa
         assert not any('private-' in str(s.attributes) for s in spans)
     finally:
         provider.shutdown()
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+def test_protocol_evidence_is_opt_in_and_excludes_content(monkeypatch: pytest.MonkeyPatch, enabled: bool) -> None:
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    monkeypatch.setenv('SCOPE_PROTOCOL_EVIDENCE_ENABLED', str(enabled).lower())
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(scope_module, '_provider', lambda: provider)
+    handler = ScopeCallbackHandler()
+    model_run, tool_run = uuid4(), uuid4()
+    path = '/skills/hub-example/concord-initiator/SKILL.md'
+    prompt = f'private-system\n- **concord-initiator**: private-description\n  -> Read `{path}` for full instructions'
+    try:
+        with scope_session('primary', 'example-conversation'):
+            handler.on_chat_model_start({}, [[SystemMessage(content=prompt), HumanMessage(content='private-user')]], run_id=model_run)
+            handler.on_llm_end(SimpleNamespace(llm_output={}, generations=[]), run_id=model_run)
+            handler.on_tool_start({'name': 'read_file'}, 'private-input', run_id=tool_run,
+                                  inputs={'file_path': path, 'other': 'private-secret'})
+            handler.on_tool_end('private-result', run_id=tool_run)
+        spans = exporter.get_finished_spans()
+        model = next(s for s in spans if s.name.endswith('.chat'))
+        tool_span = next(s for s in spans if s.name == 'read_file.tool')
+        assert ('gen_ai.prompt.0.content' in model.attributes) is enabled
+        assert ('ioa_observe.entity.input' in tool_span.attributes) is enabled
+        if enabled:
+            assert json.loads(tool_span.attributes['ioa_observe.entity.input']) == {'file_path': path}
+            assert 'concord-initiator' in model.attributes['gen_ai.prompt.0.content']
+        assert not any('private-' in str(s.attributes) for s in spans)
+        assert handler._protocol_arguments('read_file', {'file_path': '/etc/private-file'}) == {}
+        assert handler._protocol_arguments('lookup', {'name': 'concord-initiator'}) == {}
+        assert handler._protocol_arguments('activate_skill', {'name': 'concord-initiator-private-token'}) == {}
+    finally:
+        provider.shutdown()

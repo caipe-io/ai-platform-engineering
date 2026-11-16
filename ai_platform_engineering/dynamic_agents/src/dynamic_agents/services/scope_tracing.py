@@ -1,8 +1,9 @@
-"""Scope callbacks capture model/tool metadata, never prompts or tool payloads."""
+"""Scope metadata callbacks with optional, restricted protocol skill evidence."""
 
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any
 from uuid import UUID
@@ -18,6 +19,47 @@ class ScopeCallbackHandler(BaseCallbackHandler):
     def __init__(self) -> None:
         self._parents: dict[str, str | None] = {}
         self._delegates: set[str] = set()
+        self._protocol_paths: dict[str, str] = {}
+
+    def _protocol_catalog(self, messages: Any) -> dict[str, str]:
+        """Export only protocol names and their advertised skill paths, never descriptions."""
+        if os.getenv("SCOPE_PROTOCOL_EVIDENCE_ENABLED", "false").lower() != "true":
+            return {}
+        names: list[str] = []
+        for batch in messages if isinstance(messages, list) else []:
+            for message in batch if isinstance(batch, list) else []:
+                if getattr(message, "type", None) != "system":
+                    continue
+                content = getattr(message, "content", "")
+                if not isinstance(content, str):
+                    continue
+                lines = content.splitlines()
+                for index, line in enumerate(lines):
+                    match = re.fullmatch(r"\s*[-*]\s*\*\*((?:l9-)?(?:accord|concord)-(?:initiator|receiver))\*\*:.*", line)
+                    if not match:
+                        continue
+                    name = match.group(1)
+                    names.append(f"- **{name}**:")
+                    for following in lines[index + 1:index + 4]:
+                        path_match = re.fullmatch(r"\s*-> Read `(/skills/[A-Za-z0-9_./-]{1,512}/SKILL\.md)` for full instructions", following)
+                        if path_match and ".." not in path_match.group(1).split("/"):
+                            path = path_match.group(1)
+                            self._protocol_paths[path] = name
+                            names.append(f"  -> Read `{path}` for full instructions")
+        return {"gen_ai.prompt.0.role": "system", "gen_ai.prompt.0.content": "\n".join(dict.fromkeys(names))} if names else {}
+
+    def _protocol_arguments(self, name: str, inputs: Any) -> dict[str, str]:
+        if os.getenv("SCOPE_PROTOCOL_EVIDENCE_ENABLED", "false").lower() != "true" or not isinstance(inputs, dict):
+            return {}
+        selected: dict[str, str] = {}
+        if name == "read_file" and isinstance(inputs.get("file_path"), str) and inputs["file_path"] in self._protocol_paths:
+            selected = {"file_path": inputs["file_path"]}
+        elif name in {"activate_skill", "run_skill_script"}:
+            field = "name" if name == "activate_skill" else "skill"
+            candidate = inputs.get(field)
+            if isinstance(candidate, str) and re.fullmatch(r"(?:l9-)?(?:accord|concord)-(?:initiator|receiver)", candidate):
+                selected = {field: candidate}
+        return {"ioa_observe.entity.input": json.dumps(selected)} if selected else {}
 
     def _parent_delegate(self, run_id: UUID, parent_run_id: UUID | None) -> str | None:
         key = str(run_id)
@@ -41,7 +83,7 @@ class ScopeCallbackHandler(BaseCallbackHandler):
             parent = self._parent_delegate(run_id, kwargs.get("parent_run_id"))
             params = kwargs.get("invocation_params") or {}
             model = str(params.get("model") or params.get("model_name") or params.get("model_id") or "unknown")
-            run.start(str(run_id), model, "chat", {"gen_ai.request.model": model}, parent_key=parent)
+            run.start(str(run_id), model, "chat", {"gen_ai.request.model": model, **self._protocol_catalog(messages)}, parent_key=parent)
 
     def on_llm_start(self, serialized: dict[str, Any], prompts: Any, *, run_id: UUID, **kwargs: Any) -> None:
         self.on_chat_model_start(serialized, None, run_id=run_id, **kwargs)
@@ -87,7 +129,8 @@ class ScopeCallbackHandler(BaseCallbackHandler):
                     pass
             if delegate:
                 self._delegates.add(str(run_id))
-            run.start(str(run_id), delegate or name, "agent" if delegate else "tool", parent_key=parent)
+            run.start(str(run_id), delegate or name, "agent" if delegate else "tool",
+                      self._protocol_arguments(name, kwargs.get("inputs")), parent_key=parent)
 
     def on_tool_end(self, output: Any, *, run_id: UUID, **kwargs: Any) -> None:
         if (run := current_scope_run()) is not None and not run.canonical_tools:
