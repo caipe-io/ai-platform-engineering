@@ -1,5 +1,9 @@
 /** Shared publisher/runtime validation for native packages and iframe messages. */
-export const ASSISTANT_EXTENSIONS = Object.freeze(["configuration.v1", "choices.v1", "presentation.v1"]);
+export const ASSISTANT_EXTENSIONS = Object.freeze(["configuration.v1", "choices.v1", "presentation.v1", "messageActions.v1"]);
+export const MESSAGE_ACTION_ICONS = Object.freeze(["flag", "bookmark", "check", "star", "clipboard", "send"]);
+export const MAX_MESSAGE_ACTIONS = 4;
+export const MAX_MESSAGE_ACTION_LABEL = 24;
+export const MAX_MESSAGE_ACTION_TEXT = 60000;
 const ID = /^[a-z][a-z0-9_-]{0,47}$/;
 const PROTECTED = /(agent|conversation|thread|session|user|role|permission|scope|auth|token|secret|cookie|header|origin|url|path|protocol|message|file|context|tool|model|__proto__|constructor|prototype)/i;
 function object(value, keys) {
@@ -14,8 +18,29 @@ function unique(values) { if (new Set(values).size !== values.length) throw new 
 function bounded(value, min, max) {
   if (!Number.isInteger(value) || value < min || value > max) throw new Error("Assistant option out of bounds");
 }
+function validateMessageActions(actions) {
+  if (!Array.isArray(actions) || actions.length > MAX_MESSAGE_ACTIONS) throw new Error("Too many message actions");
+  for (const action of actions) {
+    object(action, ["id", "label", "icon", "path", "dialog"]);
+    identifier(action.id); text(action.label, MAX_MESSAGE_ACTION_LABEL);
+    if (!MESSAGE_ACTION_ICONS.includes(action.icon)) throw new Error("Unknown message action icon");
+    // The manifest validator applies the route and policy rules shared with the stream paths.
+    if (typeof action.path !== "string" || !action.path) throw new Error("Invalid message action path");
+    if (action.dialog === undefined) continue;
+    const { dialog } = action;
+    object(dialog, ["title", "description", "submitLabel", "field"]);
+    text(dialog.title, 80); text(dialog.submitLabel, 40);
+    if (dialog.description !== undefined) text(dialog.description, 240);
+    object(dialog.field, ["label", "prefill", "optional", "maxLength"]);
+    text(dialog.field.label, 80);
+    if (!["message", "empty"].includes(dialog.field.prefill)) throw new Error("Invalid message action prefill");
+    if (typeof dialog.field.optional !== "boolean") throw new Error("Invalid message action field flag");
+    bounded(dialog.field.maxLength, 1, MAX_MESSAGE_ACTION_TEXT);
+  }
+  unique(actions.map(a => a.id));
+}
 export function validateAssistantOptions(value) {
-  object(value, ["version", "requireConfiguration", "includeLegacyAgentHistory", "legacyConversationQueryParams", "controls", "presentation"]);
+  object(value, ["version", "requireConfiguration", "includeLegacyAgentHistory", "legacyConversationQueryParams", "controls", "presentation", "messageActions"]);
   if (value.version !== "1.0") throw new Error("Unsupported assistant options version");
   for (const key of ["requireConfiguration", "includeLegacyAgentHistory"]) {
     if (value[key] !== undefined && typeof value[key] !== "boolean") throw new Error("Invalid assistant boolean");
@@ -48,6 +73,7 @@ export function validateAssistantOptions(value) {
     }
     unique(value.controls.map(c => c.id)); unique(value.controls.map(c => c.requestKey));
   }
+  if (value.messageActions !== undefined) validateMessageActions(value.messageActions);
   if (value.presentation !== undefined) {
     const p = value.presentation;
     object(p, ["placeholder", "showAuditNotice", "feedbackPrompt", "fontScale", "width", "height", "showSuggestions", "suggestedPrompts"]);
@@ -71,8 +97,16 @@ export function validateAssistantOptions(value) {
 }
 export function validateAssistantConfiguration(value, options) {
   if (options) validateAssistantOptions(options);
-  object(value, ["version", "visible", "controls", "bottomInset"]);
+  object(value, ["version", "visible", "controls", "bottomInset", "messageActions"]);
   if (value.version !== "1.0" || typeof value.visible !== "boolean") throw new Error("Unsupported assistant configuration");
+  if (value.messageActions !== undefined) {
+    // Visibility is cosmetic; only ids the manifest declared may be toggled.
+    object(value.messageActions, (options?.messageActions ?? []).map(a => a.id));
+    for (const state of Object.values(value.messageActions)) {
+      object(state, ["visible"]);
+      if (typeof state.visible !== "boolean") throw new Error("Invalid message action visibility");
+    }
+  }
   if (value.bottomInset !== undefined) bounded(value.bottomInset, 0, 400);
   if (value.controls !== undefined) {
     object(value.controls, (options?.controls ?? []).map(c => c.id));

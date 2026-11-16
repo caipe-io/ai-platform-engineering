@@ -20,6 +20,7 @@ import { ChatPanel } from "@/components/chat/DynamicAgentChatPanel";
 import { buildAssistantClientContext } from "@/lib/agentic-apps/assistant-context";
 import { useAssistantAppearance } from "@/hooks/use-assistant-appearance";
 import { useChatStore } from "@/store/chat-store";
+import { enabledMessageActions } from "@/lib/agentic-apps/assistant-presentation";
 import { findLatestAppConversation, matchesAssistantConversation, mergeAppConversation } from "@/lib/agentic-apps/assistant-conversations";
 import { getAgentId } from "@/types/a2a";
 import type { AgenticAppAssistantContextRecord } from "@/types/agentic-app";
@@ -83,6 +84,7 @@ export function AgenticAppAssistantOverlay({
   const renderPanel = useAssistantDockMotion(open, appId === "tome", panelRef, launcherRef);
   const resizeRef = useRef<{ pointerId: number; x: number; y: number; width: number; height: number; maxWidth: number; maxHeight: number } | null>(null);
   const [historyRevision, setHistoryRevision] = useState(0);
+  const messageActions = useMemo(() => enabledMessageActions(options, configuration), [options, configuration]);
   const [assistantConversation, setAssistantConversation] = useState<{
     key: string;
     id: string;
@@ -437,6 +439,7 @@ export function AgenticAppAssistantOverlay({
                 showAgentHeader={false}
                 showAuditNotice={options?.presentation?.showAuditNotice}
                 feedbackPrompt={options?.presentation?.feedbackPrompt}
+                messageActions={messageActions}
                 clientContext={clientContext}
                 suggestedPrompts={suggestedPrompts}
                 composerDraft={composerDraft}

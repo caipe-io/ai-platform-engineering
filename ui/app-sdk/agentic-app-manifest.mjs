@@ -382,6 +382,16 @@ export function validateAgenticAppManifest(value) {
     if (!policy || policy.defaultEffect !== "allow")
       throw new Error(`assistant ${field} requires an allowed POST policy`);
   }
+  // Message actions are routed exactly like the stream paths, so they need the same policy.
+  for (const action of ui.assistant?.hostOptions?.messageActions ?? []) {
+    pathValue(action.path, "ui.assistant.hostOptions.messageActions.path");
+    if (!action.path.startsWith("/api/") || !app.runtime || !ui.assistant.streamPath)
+      throw new Error("assistant message actions require an app runtime API path and a stream");
+    if (ui.assistant.overlay === "app") throw new Error("assistant message actions require the host overlay");
+    const policy = resolveAgenticAppHttpPolicyAction(app, "POST", action.path);
+    if (!policy || policy.defaultEffect !== "allow")
+      throw new Error(`assistant message action ${action.id} requires an allowed POST policy`);
+  }
   record(app.provides, ["mcp", "agents", "workflows"], "provides");
   for (const kind of ["mcp", "agents", "workflows"])
     strings(app.provides[kind], `provides.${kind}`);

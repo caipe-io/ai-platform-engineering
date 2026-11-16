@@ -58,6 +58,7 @@ jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
     emptyStateTitle,
     showAgentHeader,
     suggestedPrompts,
+    messageActions,
   }: {
     conversationId?: string;
     agentId: string;
@@ -67,6 +68,7 @@ jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
     emptyStateTitle?: string;
     showAgentHeader?: boolean;
     suggestedPrompts?: string[];
+    messageActions?: Array<{ id: string }>;
   }) => (
     <div
       data-testid="chat-panel"
@@ -75,6 +77,7 @@ jest.mock("@/components/chat/DynamicAgentChatPanel", () => ({
       data-empty-title={emptyStateTitle}
       data-agent-header={String(showAgentHeader)}
       data-suggestions={JSON.stringify(suggestedPrompts ?? [])}
+      data-message-actions={JSON.stringify((messageActions ?? []).map(a => a.id))}
       data-draft={composerDraft?.text ?? ""}
       data-context={JSON.stringify(clientContext ?? {})}
       data-read-only={String(Boolean(readOnly))}
@@ -178,6 +181,41 @@ describe("AgenticAppAssistantOverlay", () => {
     expect(chat).toHaveAttribute("data-empty-title", "Ask Example");
     expect(chat).toHaveAttribute("data-agent-header", "false");
     expect(chat).toHaveAttribute("data-suggestions", "[]");
+  });
+
+  describe("app message actions", () => {
+    const actions = [
+      { id: "flag-answer", label: "Flag answer", icon: "flag" as const, path: "/api/example/actions/flag" },
+      { id: "mark", label: "Mark", icon: "check" as const, path: "/api/example/actions/mark" },
+    ];
+    const options = { version: "1.0" as const, messageActions: actions };
+    const props = { appId: "example-app", appName: "Example App", assistantAgentId: "agent-example", activeContext: null,
+      onClearContext: jest.fn(), open: true, onOpenChange: jest.fn(), options };
+
+    it("hides every action until the app configures visibility", async () => {
+      render(<AgenticAppAssistantOverlay {...props} />);
+      expect(await screen.findByTestId("chat-panel")).toHaveAttribute("data-message-actions", "[]");
+    });
+
+    it("passes on only the actions the app enabled", async () => {
+      render(<AgenticAppAssistantOverlay {...props}
+        configuration={{ version: "1.0", visible: true, messageActions: { mark: { visible: true }, "flag-answer": { visible: false } } }} />);
+      expect(await screen.findByTestId("chat-panel")).toHaveAttribute("data-message-actions", '["mark"]');
+    });
+
+    it("hides the actions again when the configuration is cleared", async () => {
+      const view = render(<AgenticAppAssistantOverlay {...props}
+        configuration={{ version: "1.0", visible: true, messageActions: { mark: { visible: true } } }} />);
+      expect(await screen.findByTestId("chat-panel")).toHaveAttribute("data-message-actions", '["mark"]');
+      view.rerender(<AgenticAppAssistantOverlay {...props} configuration={undefined} />);
+      expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-message-actions", "[]");
+    });
+
+    it("ignores enablement for an app that declared no actions", async () => {
+      render(<AgenticAppAssistantOverlay {...props} options={{ version: "1.0" }}
+        configuration={{ version: "1.0", visible: true, messageActions: { mark: { visible: true } } }} />);
+      expect(await screen.findByTestId("chat-panel")).toHaveAttribute("data-message-actions", "[]");
+    });
   });
 
   it("shows only prompts explicitly enabled by the app", async () => {
