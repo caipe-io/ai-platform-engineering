@@ -11,6 +11,12 @@
 {{- $h := $root.Values.harnessEngine -}}
 {{- $w := .settings -}}
 {{- $reservedEnv := list "HARNESS_ENGINE_INTERNAL_TOKEN" "HARNESS_ENGINE_MONGODB_URI" "HARNESS_ENGINE_STORAGE_BACKEND" "HARNESS_ENGINE_MONGODB_DATABASE" -}}
+{{- if eq .component "cli-acp" -}}
+{{- $reservedEnv = append $reservedEnv "HARNESS_ENGINE_CLAUDE_CLI_ISOLATION" -}}
+{{- if not (has ($w.isolation | default "landlock") (list "landlock" "disabled")) -}}
+{{- fail "cli-acp isolation must be landlock or disabled" -}}
+{{- end -}}
+{{- end -}}
 {{- $name := include "ai-platform-engineering.harnessName" . -}}
 {{- $claim := $w.persistence.existingClaim | default $name -}}
 {{- $image := printf "%s:%s" $w.image.repository ($w.image.tag | default (include "ai-platform-engineering.appVersion" $root)) -}}
@@ -94,6 +100,10 @@ spec:
             - name: http
               containerPort: 8010
           env:
+            {{- if eq .component "cli-acp" }}
+            - name: HARNESS_ENGINE_CLAUDE_CLI_ISOLATION
+              value: {{ $w.isolation | default "landlock" | quote }}
+            {{- end }}
             - name: HOME
               value: /workspace
             - name: PYTHONDONTWRITEBYTECODE
