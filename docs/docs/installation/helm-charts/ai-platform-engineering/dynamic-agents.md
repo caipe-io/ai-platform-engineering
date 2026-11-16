@@ -14,17 +14,17 @@ A Helm chart for Dynamic Agents - Standalone agent builder service with MCP tool
 
 | | |
 |---|---|
-| **Version** | `1.1.0` |
+| **Version** | `1.1.1` |
 | **Type** | application |
 
 ## Quick Start
 
 ```bash
 # Add and install the chart
-helm install dynamic-agents oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.1.0
+helm install dynamic-agents oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.1.1
 
 # Upgrade an existing release
-helm upgrade dynamic-agents oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.1.0
+helm upgrade dynamic-agents oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.1.1
 ```
 
 ## Customizing Values
@@ -33,15 +33,15 @@ Override default values using `--set` flags or a custom values file:
 
 ```bash
 # Override individual values
-helm install dynamic-agents oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.1.0 \
+helm install dynamic-agents oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.1.1 \
   --set replicaCount=2
 
 # Use a custom values file
-helm install dynamic-agents oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.1.0 \
+helm install dynamic-agents oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.1.1 \
   -f custom-values.yaml
 
 # Show all configurable values
-helm show values oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.1.0
+helm show values oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.1.1
 ```
 
 ## Reading the Values Table
@@ -82,6 +82,9 @@ helm show values oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.1.0
 | config.OIDC_ISSUER | string | `""` |  |
 | config.OPENFGA_HTTP | string | `""` |  |
 | config.OPENFGA_STORE_NAME | string | `"caipe-openfga"` |  |
+| config.SCOPE_OTLP_ENDPOINT | string | `""` |  |
+| config.SCOPE_SERVICE_NAME | string | `"agent-runtime"` |  |
+| config.SCOPE_TRACING_ENABLED | string | `"false"` |  |
 | config.SKILL_TRACE_MAX_ATTR_BYTES | string | `"262144"` |  |
 | config.SKILL_TRACE_SCRUB_ENABLED | string | `"true"` |  |
 | config.USE_IMPERSONATION_TOKENS | string | `"false"` |  |
@@ -92,6 +95,7 @@ helm show values oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.1.0
 | externalSecrets.secretStoreRef.kind | string | `"ClusterSecretStore"` |  |
 | externalSecrets.secretStoreRef.name | string | `"vault"` |  |
 | fullnameOverride | string | `""` |  |
+| image.args | list | `[]` |  |
 | image.pullPolicy | string | `"Always"` |  |
 | image.repository | string | `"ghcr.io/caipe-io/caipe-dynamic-agents"` |  |
 | image.tag | string | `""` |  |
@@ -112,6 +116,9 @@ helm show values oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.1.0
 | nameOverride | string | `""` |  |
 | nodeSelector | object | `{}` |  |
 | podAnnotations | object | `{}` |  |
+| podDisruptionBudget.annotations | object | `{}` |  |
+| podDisruptionBudget.enabled | bool | `false` |  |
+| podDisruptionBudget.maxUnavailable | int | `1` |  |
 | podLabels | object | `{}` |  |
 | podSecurityContext.runAsNonRoot | bool | `true` |  |
 | readinessProbe.failureThreshold | int | `3` |  |
@@ -130,6 +137,7 @@ helm show values oci://ghcr.io/caipe-io/charts/dynamic-agents --version 1.1.0
 | securityContext.seccompProfile.type | string | `"RuntimeDefault"` |  |
 | service.metricsPort | int | `0` |  |
 | service.port | int | `8001` |  |
+| service.targetPort | string | `"http"` |  |
 | service.type | string | `"ClusterIP"` |  |
 | serviceAccount.annotations | object | `{}` |  |
 | serviceAccount.automount | bool | `false` |  |

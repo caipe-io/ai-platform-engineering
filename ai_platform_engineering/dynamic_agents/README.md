@@ -589,3 +589,12 @@ rewriting its instructions. Supporting references retain their relative paths.
 Legacy unpinned Hub entries without frontmatter retain generated discovery
 metadata; original imports and pinned Hub entries preserve their exact bytes.
 Upstream tool declarations do not grant runtime tools or execution permission.
+
+### Optional Scope alongside Langfuse
+
+`ENABLE_TRACING` continues to control Langfuse. Set `SCOPE_TRACING_ENABLED=true`
+and `SCOPE_OTLP_ENDPOINT` independently to export metadata-only Scope sessions,
+agent/tool/model spans and available token usage. Either backend, both, or neither
+can be enabled. Scope does not require Langfuse credentials.
+
+See [configuration, lifecycle and capture limits](../harness_engine/README.md#optional-scope-tracing).

@@ -21,6 +21,7 @@ WORKDIR /app/dynamic_agents
 # `llm-wrapper = { path = "../llm_wrapper" }`. WORKDIR is /app/dynamic_agents, so
 # it must land at /app/llm_wrapper for that relative path to resolve, and it must
 # exist before `uv sync` runs.
+COPY ai_platform_engineering/telemetry/ /app/telemetry/
 COPY ai_platform_engineering/llm_wrapper/ /app/llm_wrapper/
 
 RUN --mount=type=cache,target=/root/.cache/uv \

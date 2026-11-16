@@ -39,6 +39,21 @@ wheels = [
 ]
 
 [[package]]
+name = "agent-telemetry"
+version = "0.1.0"
+source = { directory = "../telemetry" }
+dependencies = [
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-sdk" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "opentelemetry-exporter-otlp-proto-http", specifier = "==1.45.2" },
+    { name = "opentelemetry-sdk", specifier = "==1.45.2" },
+]
+
+[[package]]
 name = "annotated-doc"
 version = "0.0.5"
 source = { registry = "https://pypi.org/simple" }
@@ -200,6 +215,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "agent-client-protocol" },
+    { name = "agent-telemetry" },
     { name = "boto3" },
     { name = "claude-agent-sdk" },
     { name = "fastapi" },
@@ -225,6 +241,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-client-protocol", specifier = "==0.12.1" },
+    { name = "agent-telemetry", directory = "../telemetry" },
     { name = "boto3", specifier = "==1.43.16" },
     { name = "claude-agent-sdk", specifier = "==0.2.139" },
     { name = "dynamic-agents", marker = "python_full_version >= '3.14' and extra == 'deep-agents'", editable = "../dynamic_agents" },
@@ -533,13 +550,13 @@ name = "deepagents"
 version = "0.7.37"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "langchain", marker = "python_full_version >= '3.14'" },
-    { name = "langchain-anthropic", marker = "python_full_version >= '3.14'" },
-    { name = "langchain-core", marker = "python_full_version >= '3.14'" },
-    { name = "langchain-google-genai", marker = "python_full_version >= '3.14'" },
-    { name = "langsmith", marker = "python_full_version >= '3.14'" },
-    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
-    { name = "wcmatch", marker = "python_full_version >= '3.14'" },
+    { name = "langchain" },
+    { name = "langchain-anthropic" },
+    { name = "langchain-core" },
+    { name = "langchain-google-genai" },
+    { name = "langsmith" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "wcmatch" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a4/34/4722cc3ab97db8fe130acce9a0c557ef222de554aeca4b58ecb2abdbf6de/deepagents-0.7.37.tar.gz", hash = "sha256:de62c200e000fb4ec138cbe4e3a30cf737cebd6bed9df0f470e92bc32cc0c23d", size = 348044, upload-time = "2026-11-12T20:03:34.501Z" }
 wheels = [
@@ -579,6 +596,7 @@ version = "0.1.0"
 source = { editable = "../dynamic_agents" }
 dependencies = [
     { name = "a2a-sdk" },
+    { name = "agent-telemetry" },
     { name = "beautifulsoup4" },
     { name = "boto3" },
     { name = "deepagents" },
@@ -610,6 +628,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "a2a-sdk", specifier = "==1.2.2" },
+    { name = "agent-telemetry", directory = "../telemetry" },
     { name = "beautifulsoup4", specifier = "==4.15.0" },
     { name = "boto3", specifier = "==1.43.16" },
     { name = "deepagents", specifier = "==0.7.37" },
@@ -1331,17 +1350,17 @@ name = "langchain-core"
 version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi", marker = "python_full_version >= '3.14'" },
-    { name = "httpx", marker = "python_full_version >= '3.14'" },
-    { name = "jsonpatch", marker = "python_full_version >= '3.14'" },
-    { name = "langchain-protocol", marker = "python_full_version >= '3.14'" },
-    { name = "langsmith", marker = "python_full_version >= '3.14'" },
-    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
-    { name = "pydantic", marker = "python_full_version >= '3.14'" },
-    { name = "pyyaml", marker = "python_full_version >= '3.14'" },
-    { name = "tenacity", marker = "python_full_version >= '3.14'" },
-    { name = "typing-extensions", marker = "python_full_version >= '3.14'" },
-    { name = "uuid-utils", marker = "python_full_version >= '3.14'" },
+    { name = "certifi" },
+    { name = "httpx" },
+    { name = "jsonpatch" },
+    { name = "langchain-protocol" },
+    { name = "langsmith" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "tenacity" },
+    { name = "typing-extensions" },
+    { name = "uuid-utils" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/de/1e/ce7b06cecfc41a8f179571f9e228ae9d2f7d090492d2c312322fd4f4380f/langchain_core-1.8.0.tar.gz", hash = "sha256:8c571299ae83acec89599cbbb6890018f54225da336a6e315c9e882dd5da6502", size = 1016937, upload-time = "2026-11-11T15:21:53.683Z" }
 wheels = [

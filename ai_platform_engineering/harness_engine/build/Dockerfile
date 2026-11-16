@@ -1,6 +1,7 @@
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
 WORKDIR /app
+COPY ai_platform_engineering/telemetry /telemetry
 COPY ai_platform_engineering/harness_engine/pyproject.toml ai_platform_engineering/harness_engine/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
