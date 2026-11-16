@@ -320,9 +320,12 @@ disposable.
 
 ### Claude SDK execution and MCP tools
 
-- Choose **Claude Agent SDK** for an Engine-local SDK process or **Claude Agent
-  SDK (Remote worker)** for a separately deployed worker. Operator profiles own
-  model credentials, model ID, workspace root and SDK permission mode.
+- Agent Builder offers **Claude Agent SDK** and **Claude Code**. SDK operator
+  profiles select local execution inside Engine or a separate worker.
+  **Show advanced runtimes** exposes the SDK-over-ACP adapter. Existing saved
+  runtime IDs, profiles and conversation bindings remain unchanged.
+- Operator profiles own model credentials, model ID, workspace root and SDK
+  permission mode.
 - SDK built-in shell/filesystem tools and settings discovery are disabled.
   Each binding gets its own working directory. These directories provide
   separation, not an operating-system sandbox.
